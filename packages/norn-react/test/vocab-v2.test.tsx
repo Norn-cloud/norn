@@ -1535,7 +1535,9 @@ describe("Capabilities parity and zero-Radix invariant", () => {
     expect(referencesRecordVersion('({ 10: 0, ["wrapped"]: input }).wrapped.recordVersion')).toBe(true)
     expect(referencesRecordVersion('({ 10: input })[10].recordVersion')).toBe(true)
     expect(referencesRecordVersion('({ 10: input })["10"].recordVersion')).toBe(true)
+    expect(referencesRecordVersion('({ 10.: input })["10."].recordVersion')).toBe(true)
     expect(referencesRecordVersion("`${input.recordVersion}`")).toBe(true)
+    expect(referencesRecordVersion("`\\${input.recordVersion}`")).toBe(true)
     expect(referencesRecordVersion('input["record" + "Version"]')).toBe(true)
     expect(referencesRecordVersion("(input.record.amount > 10 ? input : input).recordVersion")).toBe(true)
     expect(referencesRecordVersion("(input.record.amount in [1..5] ? input : input).recordVersion")).toBe(true)
@@ -1550,6 +1552,7 @@ describe("Capabilities parity and zero-Radix invariant", () => {
     expect(referencesRecordVersion("input.record.recordVersion")).toBe(false)
     expect(referencesRecordVersion("((input).record).recordVersion")).toBe(false)
     expect(referencesRecordVersion('input.draft["recordVersion"]')).toBe(false)
+    expect(referencesRecordVersion("({ v12: input, v3: input.record })[`v${1 + 2}`].recordVersion")).toBe(false)
   })
 
   test("runtime.readSecurity synchronously captures withholding across batched ok -> pending transitions", async () => {

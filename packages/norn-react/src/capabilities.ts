@@ -115,6 +115,7 @@ type ZenToken =
   | { readonly kind: "ident"; readonly value: string }
   | { readonly kind: "number"; readonly value: string }
   | { readonly kind: "string"; readonly value: string }
+  | { readonly kind: "template"; readonly parts: readonly ({ readonly kind: "text"; readonly value: string } | { readonly kind: "expr"; readonly tokens: readonly ZenToken[] })[] }
   | { readonly kind: "punct"; readonly value: string }
 
 function tokenizeZen(expression: string): ZenToken[] {
@@ -127,42 +128,24 @@ function tokenizeZen(expression: string): ZenToken[] {
       continue
     }
     if (ch === '"' || ch === "'") {
+      // Match vendor/zen lexer.rs:188 — simple strings scan directly to matching quote without backslash escapes.
       const quote = ch
-      let value = ""
+      const start = i + 1
       i += 1
-      while (i < expression.length && expression[i] !== quote) {
-        if (expression[i] === "\\" && i + 1 < expression.length) {
-          value += expression[i + 1]!
-          i += 2
-        } else {
-          value += expression[i]!
-          i += 1
-        }
-      }
+      while (i < expression.length && expression[i] !== quote) i += 1
+      const value = expression.slice(start, i)
       if (i < expression.length) i += 1
       tokens.push({ kind: "string", value })
       continue
     }
     if (ch === "`") {
-      // Tokenize Zen template strings into `("chunk" + (expr) + ...)` so `${input.recordVersion}` is analyzed.
-      tokens.push({ kind: "punct", value: "(" })
-      let value = ""
-      let emitted = false
-      const flushChunk = () => {
-        if (emitted) tokens.push({ kind: "punct", value: "+" })
-        tokens.push({ kind: "string", value })
-        value = ""
-        emitted = true
-      }
+      // Match vendor/zen lexer.rs:131 — template strings do not escape `${` with backslashes.
+      const parts: Array<{ readonly kind: "text"; readonly value: string } | { readonly kind: "expr"; readonly tokens: readonly ZenToken[] }> = []
       i += 1
+      let textStart = i
       while (i < expression.length && expression[i] !== "`") {
-        if (expression[i] === "\\" && i + 1 < expression.length) {
-          value += expression[i + 1]!
-          i += 2
-          continue
-        }
         if (expression[i] === "$" && expression[i + 1] === "{") {
-          flushChunk()
+          if (i > textStart) parts.push({ kind: "text", value: expression.slice(textStart, i) })
           i += 2
           let depth = 1
           const exprStart = i
@@ -171,9 +154,7 @@ function tokenizeZen(expression: string): ZenToken[] {
             if (c === '"' || c === "'") {
               const q = c
               i += 1
-              while (i < expression.length && expression[i] !== q) {
-                i += expression[i] === "\\" && i + 1 < expression.length ? 2 : 1
-              }
+              while (i < expression.length && expression[i] !== q) i += 1
               if (i < expression.length) i += 1
               continue
             }
@@ -183,32 +164,42 @@ function tokenizeZen(expression: string): ZenToken[] {
           }
           const innerExpr = expression.slice(exprStart, i)
           if (i < expression.length && expression[i] === "}") i += 1
-          tokens.push({ kind: "punct", value: "+" })
-          tokens.push({ kind: "punct", value: "(" })
-          tokens.push(...tokenizeZen(innerExpr))
-          tokens.push({ kind: "punct", value: ")" })
+          parts.push({ kind: "expr", tokens: tokenizeZen(innerExpr) })
+          textStart = i
           continue
         }
-        value += expression[i]!
         i += 1
       }
-      if (i < expression.length) i += 1
-      if (!emitted || value !== "") flushChunk()
-      tokens.push({ kind: "punct", value: ")" })
+      if (i > textStart) parts.push({ kind: "text", value: expression.slice(textStart, i) })
+      if (i < expression.length && expression[i] === "`") i += 1
+      tokens.push({ kind: "template", parts })
       continue
     }
     if (/[0-9]/.test(ch)) {
+      // Match vendor/zen lexer.rs:221 — consume digits, `_`, and at most one `.` (including trailing `10.`,
+      // stopping before `..` range operator), followed by optional lowercase `e[+-]?digits`.
       let end = i + 1
-      while (end < expression.length && /[0-9_]/.test(expression[end]!)) end += 1
-      // Consume decimal fraction ONLY when `.` is followed by a digit (never consume `..` range operator).
-      if (expression[end] === "." && /[0-9]/.test(expression[end + 1] ?? "")) {
-        end += 1
-        while (end < expression.length && /[0-9_]/.test(expression[end]!)) end += 1
+      let fractal = false
+      while (end < expression.length) {
+        const c = expression[end]!
+        if (/[0-9_]/.test(c)) {
+          end += 1
+          continue
+        }
+        if (c === ".") {
+          if (fractal || expression[end + 1] === ".") break
+          fractal = true
+          end += 1
+          continue
+        }
+        break
       }
-      if ((expression[end] === "e" || expression[end] === "E") && /[0-9+-]/.test(expression[end + 1] ?? "")) {
-        end += 1
-        if (expression[end] === "+" || expression[end] === "-") end += 1
-        while (end < expression.length && /[0-9_]/.test(expression[end]!)) end += 1
+      if (expression[end] === "e") {
+        let expEnd = end + 1
+        if (expression[expEnd] === "+" || expression[expEnd] === "-") expEnd += 1
+        const digitsStart = expEnd
+        while (expEnd < expression.length && /[0-9]/.test(expression[expEnd]!)) expEnd += 1
+        if (expEnd > digitsStart) end = expEnd
       }
       tokens.push({ kind: "number", value: expression.slice(i, end) })
       i = end
@@ -250,6 +241,7 @@ function tokenizeZen(expression: string): ZenToken[] {
 type TaintValue =
   | { readonly kind: "root_input" }
   | { readonly kind: "string"; readonly value: string }
+  | { readonly kind: "number"; readonly raw: string; readonly num: number }
   | { readonly kind: "object"; readonly fields: Readonly<Record<string, TaintValue>> }
   | { readonly kind: "array"; readonly elements: readonly TaintValue[] }
   | { readonly kind: "union"; readonly members: readonly TaintValue[] }
@@ -272,8 +264,24 @@ function mayBeRootInput(value: TaintValue): boolean {
 
 function stringLiteralsOf(value: TaintValue): readonly string[] {
   if (value.kind === "string") return [value.value]
+  if (value.kind === "number") return [value.raw]
   if (value.kind === "union") return value.members.flatMap(stringLiteralsOf)
   return []
+}
+
+function templateStringsOf(value: TaintValue): readonly string[] | null {
+  if (value.kind === "string") return [value.value]
+  if (value.kind === "number") return [Number.isFinite(value.num) ? String(value.num) : value.raw]
+  if (value.kind === "union") {
+    const out: string[] = []
+    for (const member of value.members) {
+      const part = templateStringsOf(member)
+      if (part === null) return null
+      out.push(...part)
+    }
+    return out
+  }
+  return null
 }
 
 function accessProperty(receiver: TaintValue, prop: string): TaintValue {
@@ -328,157 +336,198 @@ function accessIndex(receiver: TaintValue, key: TaintValue): TaintValue {
  * and nested domain properties (`((input).record).recordVersion`) are never misclassified.
  */
 export function referencesRecordVersion(expression: string): boolean {
-  const tokens = tokenizeZen(expression)
-  let pos = 0
   let found = false
 
-  const peek = (offset = 0): ZenToken | undefined => tokens[pos + offset]
-  const eat = (): ZenToken | undefined => {
-    const token = tokens[pos]
-    if (token !== undefined) pos += 1
-    return token
-  }
-  const isPunct = (token: ZenToken | undefined, value: string): boolean => token?.kind === "punct" && token.value === value
-  const isIdent = (token: ZenToken | undefined, value: string): boolean => token?.kind === "ident" && token.value === value
+  const analyzeTokens = (tokens: readonly ZenToken[]): TaintValue => {
+    let pos = 0
 
-  const parseExpr = (): TaintValue => parseTernary()
+    const peek = (offset = 0): ZenToken | undefined => tokens[pos + offset]
+    const eat = (): ZenToken | undefined => {
+      const token = tokens[pos]
+      if (token !== undefined) pos += 1
+      return token
+    }
+    const isPunct = (token: ZenToken | undefined, value: string): boolean => token?.kind === "punct" && token.value === value
+    const isIdent = (token: ZenToken | undefined, value: string): boolean => token?.kind === "ident" && token.value === value
 
-  const parseTernary = (): TaintValue => {
-    const cond = parseNullishOr()
-    if (isPunct(peek(), "?")) {
-      eat()
-      const consequent = parseExpr()
-      if (isPunct(peek(), ":")) {
+    const parseExpr = (): TaintValue => parseTernary()
+
+    const parseTernary = (): TaintValue => {
+      const cond = parseNullishOr()
+      if (isPunct(peek(), "?")) {
         eat()
-        const alternate = parseExpr()
-        return unionTaint(consequent, alternate)
+        const consequent = parseExpr()
+        if (isPunct(peek(), ":")) {
+          eat()
+          const alternate = parseExpr()
+          return unionTaint(consequent, alternate)
+        }
+        return consequent
       }
-      return consequent
+      return cond
     }
-    return cond
-  }
 
-  const parseNullishOr = (): TaintValue => {
-    let left = parseAnd()
-    while (true) {
-      const t0 = peek()
-      const t1 = peek(1)
-      if ((isPunct(t0, "?") && isPunct(t1, "?")) || (isPunct(t0, "|") && isPunct(t1, "|"))) {
-        eat()
-        eat()
-        left = unionTaint(left, parseAnd())
-      } else if (isIdent(t0, "or")) {
-        eat()
-        left = unionTaint(left, parseAnd())
-      } else {
-        break
+    const parseNullishOr = (): TaintValue => {
+      let left = parseAnd()
+      while (true) {
+        const t0 = peek()
+        const t1 = peek(1)
+        if ((isPunct(t0, "?") && isPunct(t1, "?")) || (isPunct(t0, "|") && isPunct(t1, "|"))) {
+          eat()
+          eat()
+          left = unionTaint(left, parseAnd())
+        } else if (isIdent(t0, "or")) {
+          eat()
+          left = unionTaint(left, parseAnd())
+        } else {
+          break
+        }
       }
+      return left
     }
-    return left
-  }
 
-  const parseAnd = (): TaintValue => {
-    let left = parseComparison()
-    while (true) {
-      const t0 = peek()
-      const t1 = peek(1)
-      if (isPunct(t0, "&") && isPunct(t1, "&")) {
-        eat()
-        eat()
-        left = unionTaint(left, parseComparison())
-      } else if (isIdent(t0, "and")) {
-        eat()
-        left = unionTaint(left, parseComparison())
-      } else {
-        break
+    const parseAnd = (): TaintValue => {
+      let left = parseComparison()
+      while (true) {
+        const t0 = peek()
+        const t1 = peek(1)
+        if (isPunct(t0, "&") && isPunct(t1, "&")) {
+          eat()
+          eat()
+          left = unionTaint(left, parseComparison())
+        } else if (isIdent(t0, "and")) {
+          eat()
+          left = unionTaint(left, parseComparison())
+        } else {
+          break
+        }
       }
+      return left
     }
-    return left
-  }
 
-  const parseComparison = (): TaintValue => {
-    let left = parseRange()
-    while (true) {
-      const t0 = peek()
-      const t1 = peek(1)
-      if (
-        (isPunct(t0, "=") && isPunct(t1, "=")) ||
-        (isPunct(t0, "!") && isPunct(t1, "=")) ||
-        (isPunct(t0, "<") && isPunct(t1, "=")) ||
-        (isPunct(t0, ">") && isPunct(t1, "="))
-      ) {
-        eat()
-        eat()
-        if (isPunct(peek(), "=")) eat()
-        parseRange()
-        left = OTHER
-      } else if (isPunct(t0, "<") || isPunct(t0, ">") || isIdent(t0, "in")) {
-        eat()
-        parseRange()
-        left = OTHER
-      } else if (isIdent(t0, "not") && isIdent(t1, "in")) {
-        eat()
-        eat()
-        parseRange()
-        left = OTHER
-      } else {
-        break
+    const parseComparison = (): TaintValue => {
+      let left = parseRange()
+      while (true) {
+        const t0 = peek()
+        const t1 = peek(1)
+        if (
+          (isPunct(t0, "=") && isPunct(t1, "=")) ||
+          (isPunct(t0, "!") && isPunct(t1, "=")) ||
+          (isPunct(t0, "<") && isPunct(t1, "=")) ||
+          (isPunct(t0, ">") && isPunct(t1, "="))
+        ) {
+          eat()
+          eat()
+          if (isPunct(peek(), "=")) eat()
+          parseRange()
+          left = OTHER
+        } else if (isPunct(t0, "<") || isPunct(t0, ">") || isIdent(t0, "in")) {
+          eat()
+          parseRange()
+          left = OTHER
+        } else if (isIdent(t0, "not") && isIdent(t1, "in")) {
+          eat()
+          eat()
+          parseRange()
+          left = OTHER
+        } else {
+          break
+        }
       }
+      return left
     }
-    return left
-  }
 
-  const parseRange = (): TaintValue => {
-    let left = parseAdditive()
-    if (isPunct(peek(), "..")) {
-      eat()
-      parseAdditive()
-      left = OTHER
-    }
-    return left
-  }
-
-  const parseAdditive = (): TaintValue => {
-    let left = parseMultiplicative()
-    while (isPunct(peek(), "+") || isPunct(peek(), "-")) {
-      const op = eat()!
-      const right = parseMultiplicative()
-      if (op.value === "+" && left.kind === "string" && right.kind === "string") {
-        left = { kind: "string", value: left.value + right.value }
-      } else {
+    const parseRange = (): TaintValue => {
+      let left = parseAdditive()
+      if (isPunct(peek(), "..")) {
+        eat()
+        parseAdditive()
         left = OTHER
       }
+      return left
     }
-    return left
-  }
 
-  const parseMultiplicative = (): TaintValue => {
-    let left = parseUnary()
-    while (isPunct(peek(), "*") || isPunct(peek(), "/") || isPunct(peek(), "%") || isPunct(peek(), "**")) {
-      eat()
-      parseUnary()
-      left = OTHER
+    const parseAdditive = (): TaintValue => {
+      let left = parseMultiplicative()
+      while (isPunct(peek(), "+") || isPunct(peek(), "-")) {
+        const op = eat()!
+        const opChar = op.kind === "punct" ? op.value : ""
+        const right = parseMultiplicative()
+        if (opChar === "+" && left.kind === "string" && right.kind === "string") {
+          left = { kind: "string", value: left.value + right.value }
+        } else if (left.kind === "number" && right.kind === "number") {
+          const n = opChar === "+" ? left.num + right.num : left.num - right.num
+          left = Number.isFinite(n) ? { kind: "number", raw: String(n), num: n } : OTHER
+        } else {
+          left = OTHER
+        }
+      }
+      return left
     }
-    return left
-  }
 
-  const parseUnary = (): TaintValue => {
-    const t0 = peek()
-    if (isPunct(t0, "!") || isPunct(t0, "-") || isPunct(t0, "+") || isIdent(t0, "not")) {
-      eat()
-      parseUnary()
-      return OTHER
+    const parseMultiplicative = (): TaintValue => {
+      let left = parseUnary()
+      while (isPunct(peek(), "*") || isPunct(peek(), "/") || isPunct(peek(), "%") || isPunct(peek(), "**")) {
+        const op = eat()!
+        const opChar = op.kind === "punct" ? op.value : ""
+        const right = parseUnary()
+        if (left.kind === "number" && right.kind === "number") {
+          const n =
+            opChar === "*"
+              ? left.num * right.num
+              : opChar === "/"
+                ? left.num / right.num
+                : opChar === "%"
+                  ? left.num % right.num
+                  : left.num ** right.num
+          left = Number.isFinite(n) ? { kind: "number", raw: String(n), num: n } : OTHER
+        } else {
+          left = OTHER
+        }
+      }
+      return left
     }
-    return parsePostfix()
-  }
 
-  const parsePostfix = (): TaintValue => {
-    let value = parsePrimary()
-    while (pos < tokens.length) {
+    const parseUnary = (): TaintValue => {
       const t0 = peek()
-      if (isPunct(t0, ".") || isPunct(t0, "?.")) {
-        eat()
-        if (isPunct(peek(), "[")) {
+      if (isPunct(t0, "!") || isPunct(t0, "-") || isPunct(t0, "+") || isIdent(t0, "not")) {
+        const op = eat()!
+        const opChar = op.kind === "punct" ? op.value : ""
+        const operand = parseUnary()
+        if ((opChar === "-" || opChar === "+") && operand.kind === "number") {
+          const n = opChar === "-" ? -operand.num : operand.num
+          return Number.isFinite(n) ? { kind: "number", raw: String(n), num: n } : OTHER
+        }
+        return OTHER
+      }
+      return parsePostfix()
+    }
+
+    const parsePostfix = (): TaintValue => {
+      let value = parsePrimary()
+      while (pos < tokens.length) {
+        const t0 = peek()
+        if (isPunct(t0, ".") || isPunct(t0, "?.")) {
+          eat()
+          if (isPunct(peek(), "[")) {
+            eat()
+            const key = parseExpr()
+            if (isPunct(peek(), "]")) eat()
+            if (mayBeRootInput(value) && stringLiteralsOf(key).includes("recordVersion")) found = true
+            value = accessIndex(value, key)
+            continue
+          }
+          const member = peek()
+          if (member?.kind === "ident") {
+            eat()
+            if (mayBeRootInput(value) && member.value === "recordVersion") found = true
+            value = accessProperty(value, member.value)
+            continue
+          }
+          value = OTHER
+          continue
+        }
+        if (isPunct(t0, "[")) {
           eat()
           const key = parseExpr()
           if (isPunct(peek(), "]")) eat()
@@ -486,140 +535,150 @@ export function referencesRecordVersion(expression: string): boolean {
           value = accessIndex(value, key)
           continue
         }
-        const member = peek()
-        if (member?.kind === "ident") {
+        if (isPunct(t0, "(")) {
           eat()
-          if (mayBeRootInput(value) && member.value === "recordVersion") found = true
-          value = accessProperty(value, member.value)
+          while (pos < tokens.length && !isPunct(peek(), ")")) {
+            parseExpr()
+            if (isPunct(peek(), ",")) eat()
+            else break
+          }
+          if (isPunct(peek(), ")")) eat()
+          value = OTHER
           continue
         }
-        value = OTHER
-        continue
+        break
+      }
+      return value
+    }
+
+    const parsePrimary = (): TaintValue => {
+      const t0 = peek()
+      if (t0 === undefined) return OTHER
+      if (isPunct(t0, "(")) {
+        eat()
+        const startPos = pos
+        const inner = parseExpr()
+        const sawRange = tokens.slice(startPos, pos).some((tok) => tok.kind === "punct" && tok.value === "..")
+        if (isPunct(peek(), ")")) {
+          eat()
+        } else if (sawRange && isPunct(peek(), "]")) {
+          eat()
+          return OTHER
+        }
+        return inner
       }
       if (isPunct(t0, "[")) {
         eat()
-        const key = parseExpr()
-        if (isPunct(peek(), "]")) eat()
-        if (mayBeRootInput(value) && stringLiteralsOf(key).includes("recordVersion")) found = true
-        value = accessIndex(value, key)
-        continue
-      }
-      if (isPunct(t0, "(")) {
-        eat()
-        while (pos < tokens.length && !isPunct(peek(), ")")) {
-          parseExpr()
+        const elements: TaintValue[] = []
+        const startPos = pos
+        while (pos < tokens.length && !isPunct(peek(), "]") && !isPunct(peek(), ")")) {
+          elements.push(parseExpr())
           if (isPunct(peek(), ",")) eat()
           else break
         }
-        if (isPunct(peek(), ")")) eat()
-        value = OTHER
-        continue
-      }
-      break
-    }
-    return value
-  }
-
-  const parsePrimary = (): TaintValue => {
-    const t0 = peek()
-    if (t0 === undefined) return OTHER
-    if (isPunct(t0, "(")) {
-      eat()
-      const startPos = pos
-      const inner = parseExpr()
-      const sawRange = tokens.slice(startPos, pos).some((tok) => tok.kind === "punct" && tok.value === "..")
-      if (isPunct(peek(), ")")) {
-        eat()
-      } else if (sawRange && isPunct(peek(), "]")) {
-        // Zen half-open interval `(a..b]`.
-        eat()
-        return OTHER
-      }
-      return inner
-    }
-    if (isPunct(t0, "[")) {
-      eat()
-      const elements: TaintValue[] = []
-      const startPos = pos
-      while (pos < tokens.length && !isPunct(peek(), "]") && !isPunct(peek(), ")")) {
-        elements.push(parseExpr())
-        if (isPunct(peek(), ",")) eat()
-        else break
-      }
-      const sawRange = tokens.slice(startPos, pos).some((tok) => tok.kind === "punct" && tok.value === "..")
-      if (isPunct(peek(), "]")) {
-        eat()
-      } else if (sawRange && isPunct(peek(), ")")) {
-        // Zen half-open interval `[a..b)`.
-        eat()
-        return OTHER
-      }
-      return { kind: "array", elements }
-    }
-    if (isPunct(t0, "{")) {
-      eat()
-      const fields: Record<string, TaintValue> = Object.create(null) as Record<string, TaintValue>
-      while (pos < tokens.length && !isPunct(peek(), "}")) {
-        const keyToken = peek()
-        if (keyToken === undefined) break
-        if (isPunct(keyToken, "[")) {
+        const sawRange = tokens.slice(startPos, pos).some((tok) => tok.kind === "punct" && tok.value === "..")
+        if (isPunct(peek(), "]")) {
           eat()
-          const computedKey = parseExpr()
-          if (isPunct(peek(), "]")) eat()
-          if (isPunct(peek(), ":")) {
+        } else if (sawRange && isPunct(peek(), ")")) {
+          eat()
+          return OTHER
+        }
+        return { kind: "array", elements }
+      }
+      if (isPunct(t0, "{")) {
+        eat()
+        const fields: Record<string, TaintValue> = Object.create(null) as Record<string, TaintValue>
+        while (pos < tokens.length && !isPunct(peek(), "}")) {
+          const keyToken = peek()
+          if (keyToken === undefined) break
+          if (isPunct(keyToken, "[")) {
             eat()
-            const fieldVal = parseExpr()
-            for (const keyName of stringLiteralsOf(computedKey)) {
+            const computedKey = parseExpr()
+            if (isPunct(peek(), "]")) eat()
+            if (isPunct(peek(), ":")) {
+              eat()
+              const fieldVal = parseExpr()
+              for (const keyName of stringLiteralsOf(computedKey)) {
+                if (keyName !== "__proto__" && keyName !== "constructor" && keyName !== "prototype") {
+                  fields[keyName] = fieldVal
+                }
+              }
+            }
+          } else if (keyToken.kind === "ident" || keyToken.kind === "string" || keyToken.kind === "number") {
+            const keyName = keyToken.value
+            eat()
+            if (isPunct(peek(), ":")) {
+              eat()
+              const fieldVal = parseExpr()
+              if (keyName !== "__proto__" && keyName !== "constructor" && keyName !== "prototype") {
+                fields[keyName] = fieldVal
+              }
+            } else if (keyToken.kind === "ident") {
+              const fieldVal = keyToken.value === "input" ? ROOT_INPUT : OTHER
               if (keyName !== "__proto__" && keyName !== "constructor" && keyName !== "prototype") {
                 fields[keyName] = fieldVal
               }
             }
-          }
-        } else if (keyToken.kind === "ident" || keyToken.kind === "string" || keyToken.kind === "number") {
-          const keyName = keyToken.value
-          eat()
-          if (isPunct(peek(), ":")) {
+          } else {
             eat()
-            const fieldVal = parseExpr()
-            if (keyName !== "__proto__" && keyName !== "constructor" && keyName !== "prototype") {
-              fields[keyName] = fieldVal
-            }
-          } else if (keyToken.kind === "ident") {
-            const fieldVal = keyToken.value === "input" ? ROOT_INPUT : OTHER
-            if (keyName !== "__proto__" && keyName !== "constructor" && keyName !== "prototype") {
-              fields[keyName] = fieldVal
+          }
+          if (isPunct(peek(), ",")) eat()
+          else break
+        }
+        if (isPunct(peek(), "}")) eat()
+        return { kind: "object", fields }
+      }
+      if (t0.kind === "template") {
+        eat()
+        let variants: string[] | null = [""]
+        for (const part of t0.parts) {
+          if (part.kind === "text") {
+            if (variants !== null) variants = variants.map((prefix) => prefix + part.value)
+          } else {
+            const val = analyzeTokens(part.tokens)
+            const strs = templateStringsOf(val)
+            if (strs === null || variants === null) {
+              variants = null
+            } else {
+              const next: string[] = []
+              for (const prefix of variants) {
+                for (const suffix of strs) next.push(prefix + suffix)
+              }
+              variants = next
             }
           }
-        } else {
-          eat()
         }
-        if (isPunct(peek(), ",")) eat()
-        else break
+        if (variants === null) return OTHER
+        if (variants.length === 1) return { kind: "string", value: variants[0]! }
+        return { kind: "union", members: variants.map((value) => ({ kind: "string" as const, value })) }
       }
-      if (isPunct(peek(), "}")) eat()
-      return { kind: "object", fields }
-    }
-    if (t0.kind === "string") {
+      if (t0.kind === "string") {
+        eat()
+        return { kind: "string", value: t0.value }
+      }
+      if (t0.kind === "number") {
+        eat()
+        const num = Number(t0.value.replace(/_/g, ""))
+        return { kind: "number", raw: t0.value, num }
+      }
+      if (t0.kind === "ident") {
+        eat()
+        return t0.value === "input" ? ROOT_INPUT : OTHER
+      }
       eat()
-      return { kind: "string", value: t0.value }
+      return OTHER
     }
-    if (t0.kind === "number") {
-      eat()
-      return { kind: "string", value: t0.value }
+
+    let result: TaintValue = OTHER
+    while (pos < tokens.length) {
+      const before = pos
+      result = parseExpr()
+      if (pos === before) pos += 1
     }
-    if (t0.kind === "ident") {
-      eat()
-      return t0.value === "input" ? ROOT_INPUT : OTHER
-    }
-    eat()
-    return OTHER
+    return result
   }
 
-  while (pos < tokens.length && !found) {
-    const before = pos
-    parseExpr()
-    if (pos === before) pos += 1
-  }
+  analyzeTokens(tokenizeZen(expression))
   return found
 }
 
