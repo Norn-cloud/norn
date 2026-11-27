@@ -224,7 +224,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         match self.process_mapping_bundle(observation_id) {
             Ok(true) => Ok(MappingOutcome::Landed),
             Ok(false) => Ok(MappingOutcome::AlreadyLanded),
-            Err(error @ (CellError::Sqlite(_) | CellError::Engine(_))) => Err(error),
+            Err(error) if crate::mapping_page::is_store_failure(&error) => Err(error),
             Err(error) => Ok(MappingOutcome::Quarantined(vec![
                 QuarantineReason::refused(&error),
             ])),

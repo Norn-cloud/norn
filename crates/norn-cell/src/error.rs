@@ -58,6 +58,32 @@ pub enum CellError {
     /// OBS-EVIDENCE-1: retained evidence disagrees with cell-owned recomputation.
     #[error("core.boundary.bundle_mismatch")]
     MappingBundleMismatch,
+    /// SOURCE-CAPTURE-1: a source sync lease is missing, expired, or superseded
+    /// by a newer fencing generation.
+    #[error(
+        "source.lease_fenced: connection {connection_id} lease {lease_id} (generation {generation}) is not active"
+    )]
+    SourceLeaseFenced {
+        /// The configured connection id.
+        connection_id: String,
+        /// The lease id attempted by the caller.
+        lease_id: String,
+        /// The fencing generation attempted or active.
+        generation: u64,
+    },
+    /// SOURCE-CAPTURE-1: the durable source cursor no longer matches the
+    /// expected previous cursor for this page.
+    #[error("source.cursor_conflict: connection {connection_id}/{dataset} cursor moved")]
+    SourceCursorConflict {
+        /// The configured connection id.
+        connection_id: String,
+        /// The dataset whose cursor conflicted.
+        dataset: String,
+        /// Expected previous cursor JSON.
+        expected: Option<String>,
+        /// Actual durable cursor JSON in the store.
+        actual: Option<String>,
+    },
     /// Law-bearing definitions predate authenticated law retention.
     #[error(
         "core.boundary.legacy_law_snapshot: legacy stores must be recreated; migration is out of scope"
