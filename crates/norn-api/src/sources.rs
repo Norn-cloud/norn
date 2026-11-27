@@ -801,7 +801,7 @@ fn advance<E: SqlEngine>(
         config,
         &profile,
         accepted,
-        capture::CaptureTurn {
+        &mut capture::CaptureTurn {
             lease,
             committed_cursor_json: &mut run.committed_cursor_json,
             step_rows: run.step_rows,

@@ -366,10 +366,12 @@ fn candidate<E: SqlEngine>(
             "provision the cell with POST /v1/cell:provision first".to_owned(),
         )
     })?;
-    let admitted = kernel_set::admit_over(
+    let exact_tenant = kernel_set::extract_artifacts_json(body, tenant.len());
+    let admitted = kernel_set::admit_over_with_values(
         &active.canonical_set,
         active.admission_receipt.as_deref(),
         &tenant,
+        exact_tenant.as_deref(),
     )
     .map_err(|refusal| match refusal {
         KernelRefusal::Refused(findings) => refused(crate::provision::placed(&findings, &tenant)),

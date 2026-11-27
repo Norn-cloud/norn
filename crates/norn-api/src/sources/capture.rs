@@ -82,6 +82,9 @@ pub(super) fn load_connector_profile<E: SqlEngine>(
     Ok((profile, payload))
 }
 
+/// Parsed watermarks paired with their exact stored `_norn_source_cursor` JSON strings.
+pub(super) type LoadedWatermarks = (BTreeMap<String, Watermark>, BTreeMap<String, String>);
+
 /// Read the connection's durably committed watermarks alongside their exact
 /// stored cursor JSON strings (so restarting over a legacy spelling such as
 /// `1e-7` preserves the exact bytes for CAS compare-and-set).
@@ -91,7 +94,7 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     lease: &SourceLease,
     known: Option<BTreeMap<String, Watermark>>,
     now_ms: u64,
-) -> Result<(BTreeMap<String, Watermark>, BTreeMap<String, String>), Failure> {
+) -> Result<LoadedWatermarks, Failure> {
     let cursors = host
         .source_cursors(connection_id)
         .map_err(|r| fail("source.ingest", r.message))?;
@@ -248,7 +251,7 @@ pub(super) fn capture_accepted_page<E: SqlEngine>(
     config: &ConnectionConfig,
     profile: &PullProfile,
     accepted: AcceptedPage,
-    turn: CaptureTurn<'_>,
+    turn: &mut CaptureTurn<'_>,
 ) -> Result<(Option<ActiveCapture>, CursorAdvance), Failure> {
     let recorded_at = norn_ir::provenance::UtcTimestamp(rfc3339(turn.now_ms));
     let batch = accepted

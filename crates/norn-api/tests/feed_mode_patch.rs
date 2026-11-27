@@ -31,13 +31,16 @@ mod tests {
     use super::hosted_read::Mapping;
     use norn_api::authz::{AccessRequest, Authorizer, ReadRequest};
     use norn_api::host::DevHost;
+    use norn_api::kernel_set::admit_kernel_set_json;
     use norn_api::object_links::{ObjectLinkParams, get_object_links};
+    use norn_api::provision::{TrustedBase, admit_submission};
     use norn_api::pull::{
         Feed, Limits, Method, Paging, Pull, PullError, PullProfile, RequestTemplate, Watermark,
         observation,
     };
     use norn_api::refusal::Refusal;
     use norn_api::scope::{CellScope, ScopeQuery};
+    use norn_api::sources::{Sources, Step, Trigger};
     use norn_cell::engine::NativeEngine;
     use norn_cell::mapping_bundle::MappingInput;
     use norn_cell::{CellStore, InstalledDefinitionInput, MappingOutcome, Model};
@@ -1088,6 +1091,118 @@ mod tests {
         assert!(
             matches!(clash, MappingOutcome::Quarantined(_)),
             "equivalent Uint64 spellings 99 vs 099 with differing payloads must conflict: {clash:?}"
+        );
+    }
+
+    fn erpnext_with_sources_raw_json(connector_raw: &str) -> (Vec<String>, Vec<String>) {
+        let mut set = erpnext_artifacts();
+        for name in [
+            "source.Synced.interface",
+            "source.Connection.entity",
+            "source.SyncRun.entity",
+            "source.Upload.entity",
+            "norn.connect.source",
+            "norn.connect.mapping",
+        ] {
+            set.push(load_artifact(&format!(
+                "registry/packs/sources/artifacts/{name}.json"
+            )));
+        }
+        let mut base_json = Vec::new();
+        let mut tenant_json = Vec::new();
+        for artifact in set {
+            if artifact.artifact_id == "erpnext.rest.connector" {
+                tenant_json.push(connector_raw.to_owned());
+            } else if artifact.artifact_id.starts_with("core.")
+                || artifact.artifact_id.starts_with("std.")
+            {
+                base_json.push(serde_json::to_string(&artifact).expect("base json"));
+            } else {
+                tenant_json.push(serde_json::to_string(&artifact).expect("tenant json"));
+            }
+        }
+        (base_json, tenant_json)
+    }
+
+    #[test]
+    fn installed_connector_preserves_exact_decimal_initial_id_in_first_request() {
+        let connector_raw = std::fs::read_to_string(
+            root().join("fixtures/packs/erpnext-rest/artifacts/erpnext.rest.connector.json"),
+        )
+        .expect("connector json")
+        .replacen(r#""id": """#, r#""id": 9007199254740992.1"#, 1);
+        assert!(
+            connector_raw.contains("9007199254740992.1"),
+            "connector fixture must carry exact >53-bit initial.id"
+        );
+        let (base_json, tenant_json) = erpnext_with_sources_raw_json(&connector_raw);
+        let all_json = format!(
+            "[{}]",
+            base_json
+                .iter()
+                .chain(tenant_json.iter())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let scope = CellScope {
+            org_id: "org_demo".into(),
+            environment_id: "dev".into(),
+        };
+
+        // 1. Provisioning submission path preserves exact decimal token.
+        let base_refs: Vec<&str> = base_json.iter().map(String::as_str).collect();
+        let trusted_base = TrustedBase::from_sources(&base_refs).expect("trusted base");
+        let submission = format!(
+            r#"{{"baseSha256":"{}","artifacts":[{}]}}"#,
+            trusted_base.sha256(),
+            tenant_json.join(",")
+        );
+        let provisioned = admit_submission(&trusted_base, &scope, &submission).expect("provision");
+        assert!(
+            provisioned.canonical_set.contains("9007199254740992.1"),
+            "provisioned canonical_set must retain exact initial.id"
+        );
+
+        // 2. Full installation -> admit_over -> Sources::step first HTTP request preserves it.
+        let admitted = admit_kernel_set_json(&all_json).expect("admit json");
+        assert!(admitted.canonical_set.contains("9007199254740992.1"));
+        let input = InstalledDefinitionInput {
+            canonical_set: admitted.canonical_set,
+            registry: vec![],
+            receipt_sha256: admitted.receipt_sha256,
+            admission_receipt: Some(admitted.receipt),
+            readmission: None,
+            diff: json!({}),
+            installed_at: 1,
+            layout: None,
+        };
+        let mut store = CellStore::open_in_memory(admitted.model.clone()).expect("store");
+        store
+            .install_definitions(admitted.model, input, Some(0), &scope.key())
+            .expect("install");
+        let host = DevHost::from_store(store, scope.clone(), |_| BTreeMap::new())
+            .expect("host")
+            .with_authorizer(AllowAll);
+        host.install_artifacts(&[], T0)
+            .expect("admit_over re-install must preserve exact decimal token");
+        let config = r#"[{"id":"erpnext.rest","system":"erpnext","label":"ERPNext REST","connector":"erpnext.rest.connector","mapping":"erpnext.rest.mapping","instance":"sandbox","baseUrl":"http://erpnext-rest:8000","orgId":"org_demo","environmentId":"dev","secretRefs":["erpnext_rest_token"],"headers":{"X-Frappe-Site-Name":"frontend"}}]"#;
+        let secrets = BTreeMap::from([(
+            "NORN_SECRET_ERPNEXT_REST_TOKEN".to_owned(),
+            "key:secret".to_owned(),
+        )]);
+        let mut sources =
+            Sources::with_allowed_hosts(&scope, config, &secrets, "erpnext-rest").expect("sources");
+        sources
+            .claim("erpnext.rest", Trigger::Manual, "user:owner@demo", T0)
+            .expect("claim");
+        let Step::Request(first_req) = sources.step(&host, "erpnext.rest", None, T0) else {
+            panic!("expected first pull HTTP request");
+        };
+        assert!(
+            first_req.url.contains("9007199254740992.1"),
+            "first HTTP request must carry exact unrounded initial.id: {}",
+            first_req.url
         );
     }
 }

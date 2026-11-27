@@ -91,23 +91,100 @@ pub fn admit_kernel_set_with_base(
     admit_with(artifacts, |artifact| base.contains(&artifact.artifact_id))
 }
 
+/// Admit the full set `artifacts` from raw JSON text, preserving exact decimal
+/// tokens (such as >53-bit `initial.id` in connector extensions) in the
+/// admitted `canonical_set` and checker receipt instead of round-tripping
+/// through binary64 `JsonValue`.
+///
+/// # Errors
+/// Invalid JSON, the checker's findings, or a set that cannot be encoded or projected.
+pub fn admit_kernel_set_json(artifacts_json: &str) -> Result<AdmittedSet, KernelRefusal> {
+    let RuntimeValue::Array(exact_values) = RuntimeValue::from_json_text(artifacts_json)
+        .map_err(|e| invalid("artifact set json")(&e))?
+    else {
+        return Err(KernelRefusal::Invalid(
+            "artifact set json must be an array".to_owned(),
+        ));
+    };
+    let artifacts: Vec<ArtifactEnvelope> = exact_values
+        .iter()
+        .map(|rv| norn_ir::runtime::decode(rv).map_err(KernelRefusal::Invalid))
+        .collect::<Result<_, _>>()?;
+    admit_with_exact_values(&artifacts, &exact_values, |artifact| {
+        is_reserved(&artifact.artifact_id)
+    })
+}
+
+/// Extract exact [`RuntimeValue`] entries from a JSON submission body's
+/// `"artifacts"` array when its length matches `expected_len`, preserving
+/// exact decimal tokens (such as >53-bit connector `initial.id`) before
+/// binary64 decoding.
+#[must_use]
+pub fn extract_artifacts_json(body: &str, expected_len: usize) -> Option<Vec<RuntimeValue>> {
+    let RuntimeValue::Object(mut map) = RuntimeValue::from_json_text(body).ok()? else {
+        return None;
+    };
+    match map.remove("artifacts") {
+        Some(RuntimeValue::Array(items)) if items.len() == expected_len => Some(items),
+        _ => None,
+    }
+}
+
+/// Admit `artifacts` paired with exact [`RuntimeValue`] wire forms (same order
+/// and length as `artifacts`) against `base`.
+///
+/// # Errors
+/// Mismatched lengths, the checker's findings, or encoding/projection failure.
+pub fn admit_kernel_set_with_base_and_values(
+    artifacts: &[ArtifactEnvelope],
+    exact_values: &[RuntimeValue],
+    base: &BTreeSet<String>,
+) -> Result<AdmittedSet, KernelRefusal> {
+    admit_with_exact_values(artifacts, exact_values, |artifact| {
+        base.contains(&artifact.artifact_id)
+    })
+}
+
+fn encode_artifact_value(artifact: &ArtifactEnvelope) -> Result<RuntimeValue, KernelRefusal> {
+    serde_json::to_string(artifact)
+        .map_err(|e| invalid("artifact wire")(&e))
+        .and_then(|wire| {
+            RuntimeValue::from_json_text(&wire).map_err(|e| invalid("artifact value")(&e))
+        })
+}
+
 fn admit_with(
     artifacts: &[ArtifactEnvelope],
     is_base: impl Fn(&ArtifactEnvelope) -> bool,
 ) -> Result<AdmittedSet, KernelRefusal> {
-    let value = |artifact: &ArtifactEnvelope| {
-        serde_json::to_string(artifact)
-            .map_err(|e| invalid("artifact wire")(&e))
-            .and_then(|wire| {
-                RuntimeValue::from_json_text(&wire).map_err(|e| invalid("artifact value")(&e))
-            })
-    };
-    let (base, candidates): (Vec<_>, Vec<_>) = artifacts.iter().cloned().partition(is_base);
-    let candidate_values = candidates
+    let exact_values = artifacts
         .iter()
-        .map(value)
+        .map(encode_artifact_value)
         .collect::<Result<Vec<_>, _>>()?;
-    let base_values = base.iter().map(value).collect::<Result<Vec<_>, _>>()?;
+    admit_with_exact_values(artifacts, &exact_values, is_base)
+}
+
+fn admit_with_exact_values(
+    artifacts: &[ArtifactEnvelope],
+    exact_values: &[RuntimeValue],
+    is_base: impl Fn(&ArtifactEnvelope) -> bool,
+) -> Result<AdmittedSet, KernelRefusal> {
+    if artifacts.len() != exact_values.len() {
+        return Err(KernelRefusal::Invalid(
+            "artifact envelopes and exact values length mismatch".to_owned(),
+        ));
+    }
+    let mut base = Vec::new();
+    let mut base_values = Vec::new();
+    let mut candidate_values = Vec::new();
+    for (artifact, rv) in artifacts.iter().zip(exact_values) {
+        if is_base(artifact) {
+            base.push(artifact.clone());
+            base_values.push(rv.clone());
+        } else {
+            candidate_values.push(rv.clone());
+        }
+    }
     let checked = check_artifact_set_with_receipt(
         &ReceiptSources::new(&candidate_values, &base_values)
             .map_err(|e| invalid("receipt sources")(&e))?,
@@ -128,8 +205,7 @@ fn admit_with(
         .receipt
         .canonical_json()
         .map_err(|e| invalid("receipt")(&e))?;
-    let sources = artifacts.iter().map(value).collect::<Result<Vec<_>, _>>()?;
-    let canonical_set = RuntimeValue::Array(sources)
+    let canonical_set = RuntimeValue::Array(exact_values.to_vec())
         .canonical_json()
         .map_err(|e| invalid("canonical set")(&e))?;
     Ok(AdmittedSet {
@@ -313,15 +389,50 @@ pub fn admit_over(
     receipt: Option<&str>,
     added: &[ArtifactEnvelope],
 ) -> Result<AdmittedSet, KernelRefusal> {
+    admit_over_with_values(canonical_set, receipt, added, None)
+}
+
+/// Like [`admit_over`], optionally pairing `added` with exact [`RuntimeValue`]
+/// wire forms (same order and length as `added`) so decimal tokens above 2^53
+/// survive admission without binary64 rounding.
+///
+/// # Errors
+/// The checker's findings, or a retained set or receipt that cannot be read.
+pub fn admit_over_with_values(
+    canonical_set: &str,
+    receipt: Option<&str>,
+    added: &[ArtifactEnvelope],
+    added_values: Option<&[RuntimeValue]>,
+) -> Result<AdmittedSet, KernelRefusal> {
     let base = base_ids(receipt).map_err(KernelRefusal::Invalid)?;
     let replaced: BTreeSet<&str> = added.iter().map(|a| a.artifact_id.as_str()).collect();
-    let mut artifacts: Vec<ArtifactEnvelope> = retained_artifacts(canonical_set)
-        .map_err(KernelRefusal::Invalid)?
-        .into_iter()
-        .filter(|a| !replaced.contains(a.artifact_id.as_str()))
-        .collect();
-    artifacts.extend(added.iter().cloned());
-    admit_kernel_set_with_base(&artifacts, &base)
+    let RuntimeValue::Array(retained_values) =
+        RuntimeValue::from_json_text(canonical_set).map_err(|e| invalid("retained set")(&e))?
+    else {
+        return Err(KernelRefusal::Invalid(
+            "retained definitions must be an artifact array".to_owned(),
+        ));
+    };
+    let mut artifacts = Vec::new();
+    let mut exact_values = Vec::new();
+    for rv in retained_values {
+        let env: ArtifactEnvelope =
+            norn_ir::runtime::decode(&rv).map_err(KernelRefusal::Invalid)?;
+        if !replaced.contains(env.artifact_id.as_str()) {
+            artifacts.push(env);
+            exact_values.push(rv);
+        }
+    }
+    let exact_added = added_values.filter(|vals| vals.len() == added.len());
+    for (idx, env) in added.iter().enumerate() {
+        let rv = match exact_added.and_then(|vals| vals.get(idx)) {
+            Some(exact) => exact.clone(),
+            None => encode_artifact_value(env)?,
+        };
+        exact_values.push(rv);
+        artifacts.push(env.clone());
+    }
+    admit_kernel_set_with_base_and_values(&artifacts, &exact_values, &base)
 }
 
 /// The artifact envelopes of an installed set's canonical text.
