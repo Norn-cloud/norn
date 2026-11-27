@@ -1,8 +1,10 @@
 //! D03 (#1699) & D1: perform claims, durable reconciliation, and late-outcome
 //! attachment over the immutable per-generation outbox ledger.
 //!
-//! A claim reads one FIFO row, replays its [`OperationLedger`] from
-//! `_norn_outbox_record` to derive its [`HeadProjection`], and applies
+//! A claim reads one FIFO row, replays its
+//! [`norn_kernel::world::outbox_ledger::OperationLedger`] from
+//! `_norn_outbox_record` to derive its
+//! [`norn_kernel::world::outbox_ledger::HeadProjection`], and applies
 //! [`OutboxEvent::Claim`] through the kernel's total [`step`]. Each answer is
 //! its own [`ClaimOutcome`] variant: an empty queue is never confused with a
 //! head a restore fenced, and a reconciled claim names its target rather than

@@ -177,6 +177,59 @@ pub(crate) enum SystemWrite {
 }
 
 impl SystemWrite {
+    fn outbox_effects(self) -> Vec<EffectRow> {
+        match self {
+            Self::ClaimPerform {
+                command_id,
+                generation,
+            } => vec![EffectRow::ClaimPerform {
+                command_id,
+                generation,
+            }],
+            Self::ReconcileOutbox {
+                command_id,
+                generation,
+                decision,
+                confirmed_outcome,
+                fenced_at,
+            } => vec![EffectRow::ReconcileOutbox {
+                command_id,
+                generation,
+                decision,
+                confirmed_outcome,
+                fenced_at,
+            }],
+            Self::RecordCompensation {
+                command_id,
+                generation,
+                ok,
+                fenced_at,
+            } => vec![EffectRow::RecordCompensation {
+                command_id,
+                generation,
+                ok,
+                fenced_at,
+            }],
+            Self::RecordLateOutcome {
+                command_id,
+                proof,
+                ok,
+                outcome,
+            } => vec![EffectRow::RecordLateOutcome {
+                command_id,
+                proof,
+                ok,
+                outcome,
+            }],
+            Self::HostEvents { .. }
+            | Self::Privacy { .. }
+            | Self::Quantity { .. }
+            | Self::Provision { .. }
+            | Self::DatasetManifest { .. }
+            | Self::RestatementSlot { .. } => Vec::new(),
+        }
+    }
+
     /// The batch this write commits at `at`.
     fn batch(self, at: &At<'_>) -> Result<CommitBatch, CellError> {
         let mut batch = CommitBatch {
@@ -215,55 +268,11 @@ impl SystemWrite {
                     incarnation,
                 });
             }
-            Self::ClaimPerform {
-                command_id,
-                generation,
-            } => {
-                batch.effects = vec![EffectRow::ClaimPerform {
-                    command_id,
-                    generation,
-                }];
-            }
-            Self::ReconcileOutbox {
-                command_id,
-                generation,
-                decision,
-                confirmed_outcome,
-                fenced_at,
-            } => {
-                batch.effects = vec![EffectRow::ReconcileOutbox {
-                    command_id,
-                    generation,
-                    decision,
-                    confirmed_outcome,
-                    fenced_at,
-                }];
-            }
-            Self::RecordCompensation {
-                command_id,
-                generation,
-                ok,
-                fenced_at,
-            } => {
-                batch.effects = vec![EffectRow::RecordCompensation {
-                    command_id,
-                    generation,
-                    ok,
-                    fenced_at,
-                }];
-            }
-            Self::RecordLateOutcome {
-                command_id,
-                proof,
-                ok,
-                outcome,
-            } => {
-                batch.effects = vec![EffectRow::RecordLateOutcome {
-                    command_id,
-                    proof,
-                    ok,
-                    outcome,
-                }];
+            write @ (Self::ClaimPerform { .. }
+            | Self::ReconcileOutbox { .. }
+            | Self::RecordCompensation { .. }
+            | Self::RecordLateOutcome { .. }) => {
+                batch.effects = write.outbox_effects();
             }
             Self::Provision {
                 idempotency_key,
