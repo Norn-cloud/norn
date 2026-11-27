@@ -9,6 +9,10 @@
   "payload": {
     "entityVersion": "2.0",
     "interface": {
+      "disjointWith": [
+        "supply.CountEvidence",
+        "supply.OrderLifecycle"
+      ],
       "name": "supply.ReceiptEvidence",
       "properties": [
         {
