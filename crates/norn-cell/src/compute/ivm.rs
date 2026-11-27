@@ -329,15 +329,15 @@ impl IncrementalQuestion {
         let verified = store.verified_head()?;
         let limits = ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
         let mut budget = DecodeBudget::new(&limits);
-        let (head, receipt) = if let Some(cutoff) = self.knowledge {
-            super::historical::frame(&reader, cutoff, context.now_ms, &mut budget)?
+        let (head, mut as_of) = if let Some(cutoff) = self.knowledge {
+            let as_of = super::AsOfReader::open(&reader, cutoff, context.now_ms, &mut budget)?;
+            (as_of.revision().clone(), Some(as_of))
         } else {
             (verified, None)
         };
         let mut changed = self.changed_keys(store, &context, &head)?;
         let receipt_changed = changed.clone();
         let mut source_pins = BTreeMap::new();
-        let mut history = reader.history_read_seeded(receipt);
         for refresh_source in [false, true] {
             if refresh_source {
                 // QUERY-ENGINE-1: inbox evidence can change without a canonical receipt.
@@ -361,16 +361,8 @@ impl IncrementalQuestion {
                 for (_, previous) in self.contributions.remove(&id).unwrap_or_default() {
                     self.totals.adjust(&previous, true)?;
                 }
-                let selected = if let Some(cutoff) = self.knowledge {
-                    super::historical::historical_record(
-                        &mut history,
-                        &context.world,
-                        self.plan.grain().as_str(),
-                        &id,
-                        cutoff,
-                        store.model().model_hash(),
-                        &mut budget,
-                    )?
+                let selected = if let Some(as_of) = as_of.as_mut() {
+                    as_of.record(&context.world, self.plan.grain().as_str(), &id, &mut budget)?
                 } else {
                     reader.object_with_budget(
                         &context.world,
@@ -381,25 +373,42 @@ impl IncrementalQuestion {
                 };
                 match selected {
                     BudgetedRead::Found(record) => {
-                        let authorized = context.include_record(
-                            &reader,
-                            &record,
-                            self.knowledge.map(|c| c.frontier),
-                            &mut exclusions,
-                            &mut self.finding_members,
-                            visible,
-                        )?;
+                        let authorized = if let Some(as_of) = as_of.as_ref() {
+                            as_of.include_record(
+                                &context,
+                                &record,
+                                &mut exclusions,
+                                &mut self.finding_members,
+                                visible,
+                            )?
+                        } else {
+                            context.include_record(
+                                &reader,
+                                &record,
+                                &mut exclusions,
+                                &mut self.finding_members,
+                                visible,
+                            )?
+                        };
                         self.members.insert(id.clone());
                         if authorized {
                             // The member's contributions exactly as recompute derives them.
-                            let (entries, timeless) = subject_contributions(
-                                &reader,
-                                &self.plan,
-                                &context,
-                                (&id, &record),
-                                self.knowledge,
-                                &mut budget,
-                            )?;
+                            let (entries, timeless) = if let Some(as_of) = as_of.as_ref() {
+                                as_of.subject_contributions(
+                                    &self.plan,
+                                    &context,
+                                    (&id, &record),
+                                    &mut budget,
+                                )?
+                            } else {
+                                subject_contributions(
+                                    &reader,
+                                    &self.plan,
+                                    &context,
+                                    (&id, &record),
+                                    &mut budget,
+                                )?
+                            };
                             for (_, value) in &entries {
                                 self.totals.adjust(value, false)?;
                             }

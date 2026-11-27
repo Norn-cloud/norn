@@ -346,7 +346,7 @@ impl<E: SqlEngine> CellStore<E> {
         let mut exclusions = BTreeMap::new();
         for key in candidates {
             if let Some(record) = reader.object(world, grain, &key)?
-                && let Some(finding) = reader.question_findings(world, &record, None)?.first()
+                && let Some(finding) = reader.question_findings(world, &record)?.first()
             {
                 exclusions.insert(key, finding.id.clone());
             }

@@ -1,6 +1,8 @@
 //! Result/frontier contracts; producing evaluators must qualify their snapshot pins.
 use std::collections::{BTreeMap, BTreeSet};
 
+/// ASOF-KNOWLEDGE-1: cutoff-bound reader for historical evaluation.
+mod as_of;
 /// VIEW-ENGINE-1: admitted transforms lowered to `DataFusion` (#1765).
 #[cfg(feature = "datafusion")]
 mod df_transform;
@@ -19,6 +21,7 @@ pub mod restatement;
 mod restatement_state;
 /// VIEW-ROWS-1 / VIEW-ENGINE-1: admitted transforms over one authorized snapshot.
 pub mod transform;
+pub(crate) use as_of::{AsOfReader, CollectedMembers};
 pub use historical::HistoricalQuestionResult;
 
 use crate::{
@@ -69,12 +72,11 @@ pub struct QueryContext {
     pub watermarks: BTreeMap<String, BTreeMap<String, Watermark>>,
 }
 impl QueryContext {
-    // DATA-QUARANTINE: shared cell/IVM population selection pins retained evidence.
+    // DATA-QUARANTINE: shared live cell/IVM population selection pins retained evidence.
     fn include_record<E: SqlEngine>(
         &self,
         reader: &crate::StoreReader<'_, E>,
         record: &ObjectRecord,
-        frontier: Option<u64>,
         exclusions: &mut BTreeMap<String, String>,
         finding_members: &mut BTreeSet<String>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
@@ -86,10 +88,7 @@ impl QueryContext {
             return Ok(false);
         }
         finding_members.insert(record.id.clone());
-        if let Some(finding) = reader
-            .question_findings(&self.world, record, frontier)?
-            .first()
-        {
+        if let Some(finding) = reader.question_findings(&self.world, record)?.first() {
             exclusions.insert(record.id.clone(), finding.id.clone());
             return Ok(false);
         }
@@ -381,41 +380,49 @@ impl<E: SqlEngine> CellStore<E> {
             }
             let mut budget = question_budget()?;
             let grain = plan.grain().as_str();
-            let frontier_receipt = match cutoff {
-                Some(cutoff) => historical::frame(&reader, cutoff, context.now_ms, &mut budget)?.1,
-                None => None,
-            };
-            let mut history = reader.history_read_seeded(frontier_receipt);
-            let model = self.model().model_hash().to_owned();
-            let mut member = |id: &str| -> Result<bool, CellError> {
-                let selected = match cutoff {
-                    Some(cutoff) => historical::historical_record(
-                        &mut history,
-                        &context.world,
-                        grain,
-                        id,
-                        cutoff,
-                        &model,
-                        &mut budget,
-                    )?,
-                    None => reader.object_with_budget(&context.world, grain, id, &mut budget)?,
+            if let Some(cutoff) = cutoff {
+                let mut as_of = AsOfReader::open(&reader, cutoff, context.now_ms, &mut budget)?;
+                let mut member = |id: &str| -> Result<bool, CellError> {
+                    let record = match as_of.record(&context.world, grain, id, &mut budget)? {
+                        BudgetedRead::Found(record) => record,
+                        BudgetedRead::Missing => return Ok(false),
+                        BudgetedRead::Exhausted => {
+                            return Err(refused("core.compute.bound_exceeded"));
+                        }
+                    };
+                    let (entries, _) =
+                        as_of.subject_contributions(plan, context, (id, &record), &mut budget)?;
+                    Ok(!entries.is_empty())
                 };
-                let record = match selected {
-                    BudgetedRead::Found(record) => record,
-                    BudgetedRead::Missing => return Ok(false),
-                    BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
+                reader.answer_disagreements(
+                    &context.world,
+                    grain,
+                    known_as_of,
+                    &mut member,
+                    visible,
+                )
+            } else {
+                let mut member = |id: &str| -> Result<bool, CellError> {
+                    let record =
+                        match reader.object_with_budget(&context.world, grain, id, &mut budget)? {
+                            BudgetedRead::Found(record) => record,
+                            BudgetedRead::Missing => return Ok(false),
+                            BudgetedRead::Exhausted => {
+                                return Err(refused("core.compute.bound_exceeded"));
+                            }
+                        };
+                    let (entries, _) =
+                        subject_contributions(&reader, plan, context, (id, &record), &mut budget)?;
+                    Ok(!entries.is_empty())
                 };
-                let (entries, _) = subject_contributions(
-                    &reader,
-                    plan,
-                    context,
-                    (id, &record),
-                    cutoff,
-                    &mut budget,
-                )?;
-                Ok(!entries.is_empty())
-            };
-            reader.answer_disagreements(&context.world, grain, known_as_of, &mut member, visible)
+                reader.answer_disagreements(
+                    &context.world,
+                    grain,
+                    known_as_of,
+                    &mut member,
+                    visible,
+                )
+            }
         })
     }
 
@@ -453,37 +460,18 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<BTreeMap<String, String>, CellError> {
         let reader = self.read();
         let mut budget = question_budget()?;
-        let (_, frontier_receipt) =
-            historical::frame(&reader, cutoff, cutoff.recorded_at.as_millis(), &mut budget)?;
-        let mut history = reader.history_read_seeded(frontier_receipt);
+        let mut as_of =
+            AsOfReader::open(&reader, cutoff, cutoff.recorded_at.as_millis(), &mut budget)?;
         let mut candidates = candidates;
-        candidates.extend(historical::foreign_model_deletions(
-            &reader,
-            world,
-            grain,
-            cutoff.frontier,
-            self.model().model_hash(),
-            &budget,
-        )?);
+        candidates.extend(as_of.foreign_model_deletions(world, grain, &budget)?);
         let mut exclusions = BTreeMap::new();
         for key in candidates {
-            let record = match historical::historical_record(
-                &mut history,
-                world,
-                grain,
-                &key,
-                cutoff,
-                self.model().model_hash(),
-                &mut budget,
-            )? {
+            let record = match as_of.record(world, grain, &key, &mut budget)? {
                 BudgetedRead::Found(record) => record,
                 BudgetedRead::Missing => continue,
                 BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
             };
-            if let Some(finding) = reader
-                .question_findings(world, &record, Some(cutoff.frontier))?
-                .first()
-            {
+            if let Some(finding) = as_of.findings(world, &record)?.first() {
                 exclusions.insert(key, finding.id.clone());
             }
         }
@@ -514,10 +502,6 @@ impl<E: SqlEngine> CellStore<E> {
     /// rows are read as of `cutoff`, but it is pinned as the live answer was
     /// (no slice pin, no historical receipt), so it reproduces that answer's
     /// lineage pin exactly when nothing it read has changed since.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one snapshot: read, gate, project, pin, in order"
-    )]
     fn question_snapshot_at_with<T>(
         &self,
         plan: &QuestionPlan,
@@ -528,132 +512,57 @@ impl<E: SqlEngine> CellStore<E> {
         consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
     ) -> Result<T, CellError> {
         self.conn.transaction(|| {
-            let mut exclusions = BTreeMap::new();
             self.check_question_scope(&context.scope)?;
             check_question_cutoff(plan, cutoff)?;
             let max = self.check_question_plan(plan)?;
-            let mut revision = self.verified_head()?;
             let reader = self.read();
             // S7 (#1551): gate historical/as-of compute before population selection.
             if cutoff.is_some() || plan.as_of() {
                 reader.check_history("historical compute")?;
             }
             let mut budget = question_budget()?;
-            let mut historical_receipt = None;
-            let mut frontier_receipt = None;
-            let (ids, complete) = if let Some(cutoff) = cutoff {
-                (revision, frontier_receipt) =
-                    historical::frame(&reader, cutoff, context.now_ms, &mut budget)?;
-                if !answered {
-                    historical_receipt = frontier_receipt.as_ref().map(|r| r.hash.clone());
-                }
-                historical::history_ids(
-                    &reader,
-                    &context.world,
-                    plan.grain().as_str(),
-                    cutoff.frontier,
-                    max,
-                    &mut budget,
-                )?
+            let (revision, historical_receipt, collected) = if let Some(cutoff) = cutoff {
+                let mut as_of = AsOfReader::open(&reader, cutoff, context.now_ms, &mut budget)?;
+                let revision = as_of.revision().clone();
+                let historical_receipt = (!answered)
+                    .then(|| as_of.receipt_hash().map(str::to_owned))
+                    .flatten();
+                let collected = as_of.collect_members(plan, &context, max, visible, &mut budget)?;
+                (revision, historical_receipt, collected)
             } else {
-                let (rows, complete) = reader.root_rows_with_budget(
-                    &context.world,
-                    plan.grain().as_str(),
-                    max,
-                    &mut budget,
-                )?;
-                (rows.into_iter().map(|(id, _)| id).collect(), complete)
+                let revision = self.verified_head()?;
+                let collected =
+                    collect_live_members(&reader, plan, &context, max, visible, &mut budget)?;
+                (revision, None, collected)
             };
-            if !complete {
-                return Err(refused("core.compute.bound_exceeded"));
-            }
-            let mut history = reader.history_read_seeded(frontier_receipt);
-            let mut contributions = BTreeMap::new();
-            let mut unlinked = 0u64;
-            let mut unlinked_members = BTreeSet::new();
-            let mut members = BTreeSet::new();
-            let mut finding_members = BTreeSet::new();
-            for id in ids {
-                let selected = if let Some(cutoff) = cutoff {
-                    historical::historical_record(
-                        &mut history,
-                        &context.world,
-                        plan.grain().as_str(),
-                        &id,
-                        cutoff,
-                        self.model().model_hash(),
-                        &mut budget,
-                    )?
-                } else {
-                    reader.object_with_budget(
-                        &context.world,
-                        plan.grain().as_str(),
-                        &id,
-                        &mut budget,
-                    )?
-                };
-                let record = match selected {
-                    BudgetedRead::Found(record) => record,
-                    BudgetedRead::Missing if cutoff.is_some() => continue,
-                    BudgetedRead::Missing | BudgetedRead::Exhausted => {
-                        return Err(refused("core.compute.bound_exceeded"));
-                    }
-                };
-                members.insert(id.clone());
-                if !context.include_record(
-                    &reader,
-                    &record,
-                    cutoff.map(|c| c.frontier),
-                    &mut exclusions,
-                    &mut finding_members,
-                    visible,
-                )? {
-                    continue;
-                }
-                let (entries, timeless) = subject_contributions(
-                    &reader,
-                    plan,
-                    &context,
-                    (&id, &record),
-                    cutoff,
-                    &mut budget,
-                )?;
-                unlinked = unlinked.saturating_add(u64::from(timeless));
-                if timeless {
-                    unlinked_members.insert(id.clone());
-                }
-                if !entries.is_empty() {
-                    contributions.insert(id, entries);
-                }
-            }
             let (query_pin, definition_pin) =
                 self.question_pins(plan, cutoff.filter(|_| !answered))?;
             let mut result = materialize(
                 plan,
-                (context, exclusions),
+                (context, collected.exclusions),
                 revision,
                 query_pin,
                 definition_pin,
-                &contributions,
+                &collected.contributions,
             )?;
-            result.unlinked = unlinked;
+            result.unlinked = collected.unlinked;
             // SOURCE-AGREE-1: the members two sources disagree on, at this
             // answer's own frontier, as the reader may see them.
             result.source_disagreements = reader.answer_disagreements(
                 &result.context.world,
                 plan.grain().as_str(),
                 result.known_as_of,
-                &mut |id| Ok(contributions.contains_key(id)),
+                &mut |id| Ok(collected.contributions.contains_key(id)),
                 visible,
             )?;
             consume(
                 Snapshot {
                     historical_receipt,
                     result,
-                    contributions,
-                    members,
-                    finding_members,
-                    unlinked_members,
+                    contributions: collected.contributions,
+                    members: collected.members,
+                    finding_members: collected.finding_members,
+                    unlinked_members: collected.unlinked_members,
                 },
                 &mut budget,
             )
@@ -748,24 +657,63 @@ fn null_counts(counts: Option<&Vec<u64>>) -> Vec<u64> {
         .unwrap_or_default()
 }
 
-/// One root identity's contributions: its current row's, one per bucket from
-/// every stored version for a snapshot sum (METRIC-SNAPSHOT-ASOF-1), or its
-/// row's at its linked object's time (METRIC-GRAIN-LINK-1); `true` when the
-/// row would count but its optional time link is absent.
+fn collect_live_members<E: SqlEngine>(
+    reader: &crate::read::StoreReader<'_, E>,
+    plan: &QuestionPlan,
+    context: &QueryContext,
+    max: usize,
+    visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    budget: &mut DecodeBudget,
+) -> Result<CollectedMembers, CellError> {
+    let (rows, complete) =
+        reader.root_rows_with_budget(&context.world, plan.grain().as_str(), max, budget)?;
+    if !complete {
+        return Err(refused("core.compute.bound_exceeded"));
+    }
+    let mut collected = CollectedMembers::default();
+    for (id, _) in rows {
+        let record =
+            match reader.object_with_budget(&context.world, plan.grain().as_str(), &id, budget)? {
+                BudgetedRead::Found(record) => record,
+                BudgetedRead::Missing | BudgetedRead::Exhausted => {
+                    return Err(refused("core.compute.bound_exceeded"));
+                }
+            };
+        collected.members.insert(id.clone());
+        if !context.include_record(
+            reader,
+            &record,
+            &mut collected.exclusions,
+            &mut collected.finding_members,
+            visible,
+        )? {
+            continue;
+        }
+        let (entries, timeless) =
+            subject_contributions(reader, plan, context, (&id, &record), budget)?;
+        collected.unlinked = collected.unlinked.saturating_add(u64::from(timeless));
+        if timeless {
+            collected.unlinked_members.insert(id.clone());
+        }
+        if !entries.is_empty() {
+            collected.contributions.insert(id, entries);
+        }
+    }
+    Ok(collected)
+}
+
+/// One live root identity's contributions: its current row's, one per bucket
+/// from every stored version for a snapshot sum (METRIC-SNAPSHOT-ASOF-1), or
+/// its row's at its linked object's time (METRIC-GRAIN-LINK-1); `true` when
+/// the row would count but its optional time link is absent.
 pub(crate) fn subject_contributions<E: SqlEngine>(
     reader: &crate::read::StoreReader<'_, E>,
     plan: &QuestionPlan,
     context: &QueryContext,
     (id, record): (&str, &ObjectRecord),
-    cutoff: Option<crate::KnowledgeCutoff>,
     budget: &mut DecodeBudget,
 ) -> Result<(Vec<(u64, Contribution)>, bool), CellError> {
     if let Some(link) = plan.time_link() {
-        // METRIC-GRAIN-LINK-1 / ASOF-KNOWLEDGE-1: linked-time answers at a
-        // knowledge cutoff are refused here just as in IVM and DataFusion.
-        if cutoff.is_some() {
-            return Err(refused(UNSUPPORTED_ENGINE));
-        }
         let targets = match reader.link_targets_with_budget(
             &context.world,
             plan.grain().as_str(),
@@ -809,14 +757,7 @@ pub(crate) fn subject_contributions<E: SqlEngine>(
         ));
     }
     let versions = reader
-        // METRIC-SNAPSHOT-ASOF-1 at a knowledge cutoff: the versions known then.
-        .object_versions_with_budget(
-            &context.world,
-            plan.grain().as_str(),
-            id,
-            cutoff.map(|c| c.frontier),
-            budget,
-        )?
+        .object_versions_with_budget(&context.world, plan.grain().as_str(), id, None, budget)?
         .ok_or_else(|| refused("core.compute.bound_exceeded"))?
         .into_iter()
         .map(|version| (version.version, version.values))
