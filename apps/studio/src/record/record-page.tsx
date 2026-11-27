@@ -77,7 +77,7 @@ export function RecordPage() {
   if (read.isPending || read.isError || builtins.isPending || builtins.isError || calls === null) {
     return (
       <LoadState status={read.isError || builtins.isError ? "error" : "pending"} error={read.error ?? builtins.error} isFetching={read.isFetching || builtins.isFetching}
-        onRetry={() => { void read.refetch(); void builtins.refetch() }} skeleton="detail" loadingLabel={say("Reading the record")}>
+        onRetry={() => void retryWorkspace(queries).then((ok) => { if (ok) { void read.refetch({ cancelRefetch: false }); void builtins.refetch({ cancelRefetch: false }) } })} skeleton="detail" loadingLabel={say("Reading the record")}>
         {() => null}
       </LoadState>
     )

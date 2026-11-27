@@ -234,10 +234,10 @@ fn pull(
         let (status, body) = pages
             .remove(&request.dataset)
             .unwrap_or_else(|| (200, empty_page(&profile, &request.dataset)));
-        for row in pull
+        let page = pull
             .accept(status, body.to_string().as_bytes())
-            .expect("a page in the declared shape")
-        {
+            .expect("a page in the declared shape");
+        for row in page.rows {
             let raw = observation(&profile, &row, EXTRACTED_AT_MS).expect("sealed");
             rows.push((
                 raw,
@@ -250,6 +250,7 @@ fn pull(
                 },
             ));
         }
+        pull.confirm(&page.advance);
     }
     (rows, pull.watermarks().clone())
 }
@@ -894,9 +895,10 @@ fn the_scans_connector_pulls_extractor_rows_into_the_source_schema_fields() {
     );
     let body: Value = serde_json::from_str(first.body.as_deref().expect("a body")).expect("JSON");
     assert_eq!(body, json!({"after": ["", ""], "limit": 100}));
-    let rows = pull
+    let accepted = pull
         .accept(200, &page)
         .expect("a page in the declared shape");
+    let rows = &accepted.rows;
     assert_eq!(rows.len(), 10);
     let nested = |row: &norn_api::pull::Row, field: &str| {
         row.payload
@@ -907,7 +909,7 @@ fn the_scans_connector_pulls_extractor_rows_into_the_source_schema_fields() {
                 Vec::len,
             )
     };
-    for row in &rows {
+    for row in rows {
         assert_eq!(row.dataset, "Scanned Document");
         assert!(row.source_id.starts_with("SCAN-"), "{}", row.source_id);
     }
@@ -916,6 +918,7 @@ fn the_scans_connector_pulls_extractor_rows_into_the_source_schema_fields() {
     assert!(rows.iter().all(|r| nested(r, "evidence") > 0));
     // A short page ends the feed; the next sync resumes after its last row.
     assert!(pull.next_request().is_none());
+    pull.confirm(&accepted.advance);
     let mut resumed = Pull::new(profile, pull.watermarks().clone(), Limits::default());
     let next = resumed.next_request().expect("a resumed request");
     let body: Value = serde_json::from_str(next.body.as_deref().expect("a body")).expect("JSON");
