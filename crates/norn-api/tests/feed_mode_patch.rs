@@ -1083,8 +1083,8 @@ mod tests {
             .expect("explicit default replay");
         assert_eq!(
             replay[0].outcome,
-            MappingOutcome::Landed,
-            "explicit default full_snapshot must not spuriously conflict with omitted default"
+            MappingOutcome::AlreadyLanded,
+            "explicit default full_snapshot must replay idempotently without spurious conflict"
         );
         let second = ingest_patch_row(&host, &patch_profile, &row, T0.saturating_add(2));
         assert!(
@@ -1127,7 +1127,7 @@ mod tests {
         row_099_same["seq"] = json!("099");
         assert_eq!(
             ingest_patch_row(&host, &uint_profile, &row_099_same, T0.saturating_add(3)),
-            MappingOutcome::Landed,
+            MappingOutcome::AlreadyLanded,
             "equivalent Uint64 spelling 099 with identical payload must replay idempotently"
         );
         let after_replay = host
