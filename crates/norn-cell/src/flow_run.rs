@@ -25,7 +25,7 @@ use crate::store::{CommitBatch, WrittenRow};
 /// cell under the run starter's authority. Hosts reach the built-in through
 /// the cell.
 pub use norn_builtins::action::{
-    ActionStep, FUNCTION_ID as ACTION_FUNCTION, StepRefusal as ActionStepRefusal,
+    ActionStep, ActionStepPin, FUNCTION_ID as ACTION_FUNCTION, StepRefusal as ActionStepRefusal,
     parse_step as parse_action_step,
 };
 
