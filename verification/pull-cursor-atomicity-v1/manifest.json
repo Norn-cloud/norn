@@ -1,0 +1,104 @@
+{
+  "schemaVersion": "norn.verification.pull-cursor-atomicity-v1/1",
+  "issue": "#1923 (Lane C2: PullCursorAtomicity over #1895 Lane B3 SOURCE-CAPTURE-1)",
+  "quint": "0.32.0",
+  "apalache": "0.56.1",
+  "models": [
+    {
+      "path": "models/pull-cursor-atomicity.qnt",
+      "module": "pull_cursor_atomicity",
+      "scope": "SOURCE-CAPTURE-1 durable source-sync lease fencing, atomic complete-page inbox + pending + cursor persistence in one SQLite transaction, exact full-page idempotent replay vs conflicting-digest refusal, and post-commit crash recovery (crates/norn-cell/src/source_cursor.rs, crates/norn-cell/src/mapping_page.rs, crates/norn-api/src/host/source_capture.rs)",
+      "invariants": [
+        "typeOk",
+        "leaseGenerationMonotonic",
+        "noFencedWrite",
+        "cursorInboxAtomic",
+        "noDoubleCapture",
+        "pendingRecoversAll"
+      ],
+      "bounds": {
+        "workers": 2,
+        "pages": 3,
+        "time": [0, 6],
+        "leaseTtl": 2,
+        "faults": 2,
+        "maxSteps": 10
+      },
+      "assumptions": [
+        "A1 SQLite write_tx is atomic and durable on commit and rolls back completely on error or crash before commit.",
+        "A2 Logical/wall clock now_ms is monotonically non-decreasing across ticks on the single cell.",
+        "A3 Page content digests (norn.source.page.v2) are collision-free across distinct page payloads or cursor transitions.",
+        "A4 At most MAX_FAULTS (2) store/crash faults occur in one bounded trace."
+      ],
+      "variants": [
+        {
+          "step": "stepUnfencedCapture",
+          "invariant": "noFencedWrite",
+          "maxSteps": 6,
+          "meaning": "M1: capture omits active lease (owner, generation, expiry) check, allowing an expired or superseded worker to advance the cursor"
+        },
+        {
+          "step": "stepSplitCursorCommit",
+          "invariant": "cursorInboxAtomic",
+          "maxSteps": 5,
+          "meaning": "M2: _norn_source_cursor commits outside the inbox transaction, leaving the cursor advanced without captured inbox rows after a pre-commit fault"
+        },
+        {
+          "step": "stepNoIdempotentReplay",
+          "invariant": "noDoubleCapture",
+          "maxSteps": 5,
+          "meaning": "M3: duplicate page delivery bypasses IdempotentReplay and writes duplicate rows into _norn_inbox"
+        },
+        {
+          "step": "stepDropPendingBeforeLand",
+          "invariant": "pendingRecoversAll",
+          "maxSteps": 6,
+          "meaning": "M4: _norn_source_pending is cleared during a post-commit ledger fault before canonical landing succeeds, stranding captured rows"
+        },
+        {
+          "step": "stepStaleRelease",
+          "invariant": "noFencedWrite",
+          "maxSteps": 6,
+          "meaning": "M5: release_source_lease ignores (lease_id, generation), letting a stale worker expire a newer active worker's lease"
+        },
+        {
+          "step": "stepResetGenOnRelease",
+          "invariant": "leaseGenerationMonotonic",
+          "maxSteps": 5,
+          "meaning": "M6: release deletes the lease row instead of zeroing expires_at_ms, resetting fencing generation back to 1 on next acquire"
+        }
+      ],
+      "witnesses": [
+        { "invariant": "witnessAdvancedAndLanded", "maxSteps": 8 },
+        { "invariant": "witnessCrashBeforeCommitRollsBack", "maxSteps": 7 },
+        { "invariant": "witnessCrashAfterCommitRecovers", "maxSteps": 7 },
+        { "invariant": "witnessIdempotentReplay", "maxSteps": 6 },
+        { "invariant": "witnessExpiredLeaseTakeoverFencesOldWorker", "maxSteps": 7 }
+      ],
+      "checks": [
+        {
+          "name": "pull-cursor-atomicity-quint",
+          "promoted": false,
+          "profile": "fast",
+          "invariants": [
+            "typeOk",
+            "leaseGenerationMonotonic",
+            "noFencedWrite",
+            "cursorInboxAtomic",
+            "noDoubleCapture",
+            "pendingRecoversAll"
+          ],
+          "maxSteps": 10
+        }
+      ],
+      "conformance": {
+        "test": "crates/norn-api/tests/pull_cursor_atomicity_quint.rs"
+      }
+    }
+  ],
+  "notProved": [
+    "Bounded model check: covers 2 competing workers, 1 connection, 1 dataset, 3 sequential pages, logical time 0..6, TTL 2, and up to 2 faults; unbounded runs and multi-dataset interactions are not proved by Apalache.",
+    "Conformance is state-machine and SQLite mutant replay against real CellStore/DevHost SQLite transactions (crates/norn-api/tests/pull_cursor_atomicity_quint.rs), not a mechanized Rust-to-Quint refinement proof.",
+    "Nonterminal multi-page cursor progression and OBS-LINK-DISPUTE-1 one-by-one fallback are exercised in Rust SQLite conformance tests rather than modeled as separate sub-page states inside this bounded Quint model."
+  ]
+}
