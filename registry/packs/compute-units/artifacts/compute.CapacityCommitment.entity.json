@@ -1,0 +1,218 @@
+{
+  "artifactId": "compute.CapacityCommitment.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Compute capacity commitment",
+  "namespace": "compute",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Reserved GPU hours, monthly token plan, or storage tier commitment (implements core.Commitment with LIFE-SOUND-1..8 lifecycle).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Commitment"
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "completed",
+              "state": "fulfilled"
+            },
+            {
+              "outcome": "cancelled",
+              "state": "cancelled"
+            },
+            {
+              "outcome": "breached_visible",
+              "state": "breached"
+            }
+          ],
+          "immutable": [
+            "fulfilled",
+            "cancelled",
+            "breached"
+          ],
+          "initial": [
+            "requested"
+          ],
+          "property": "status",
+          "terminal": [
+            "fulfilled",
+            "cancelled",
+            "breached"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "requested"
+              ],
+              "id": "promise",
+              "to": "promised"
+            },
+            {
+              "from": [
+                "promised"
+              ],
+              "id": "fulfil",
+              "to": "fulfilled"
+            },
+            {
+              "from": [
+                "requested",
+                "promised"
+              ],
+              "id": "cancel",
+              "to": "cancelled"
+            },
+            {
+              "from": [
+                "promised"
+              ],
+              "id": "breach",
+              "to": "breached"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Cloud or AI provider promising capacity.",
+          "id": "provider",
+          "target": "compute.Agent"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Customer receiving reserved capacity.",
+          "id": "receiver",
+          "target": "compute.Agent"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Compute resource promised by this commitment.",
+          "id": "resource",
+          "target": "core.Resource"
+        }
+      ],
+      "name": "compute.CapacityCommitment",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "requested",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "requested"
+              },
+              {
+                "value": "promised"
+              },
+              {
+                "value": "fulfilled"
+              },
+              {
+                "value": "cancelled"
+              },
+              {
+                "value": "breached"
+              }
+            ]
+          }
+        },
+        {
+          "id": "due_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.quantity",
+            "unitSource": [
+              "unit",
+              "currency"
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "plan_kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "reserved_gpu_hours"
+              },
+              {
+                "value": "monthly_token_plan"
+              },
+              {
+                "value": "storage_tier"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/compute.CapacityCommitment.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

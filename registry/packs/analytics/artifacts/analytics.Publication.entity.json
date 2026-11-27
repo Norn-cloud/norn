@@ -1,0 +1,109 @@
+{
+  "artifactId": "analytics.Publication.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Analytical publication record",
+  "namespace": "analytics",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Governed decision record for publishing or withholding a preregistered study, retaining exact population and receipt digests (DATA-PUBLISH-GUARD).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Preregistered study governed by this publication decision.",
+          "id": "study",
+          "target": "analytics.Study"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Accountable reviewer who authorized or withheld publication.",
+          "id": "reviewer",
+          "target": "analytics.Analyst"
+        }
+      ],
+      "name": "analytics.Publication",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "study_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "receipt_digest",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "population_digest",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "published_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "diagnostics_passed",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "id": "decision",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "published"
+              },
+              {
+                "value": "withheld"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/analytics.Publication.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
