@@ -5,8 +5,10 @@
     reason = "integration-test crate"
 )]
 
+use std::collections::BTreeSet;
+
 use norn_ir::ActionRoot;
-use norn_projections::mcp::{McpProjectionError, action_tool};
+use norn_projections::mcp::{McpProjectionError, action_tool, action_tool_with_server_filled};
 use serde_json::{Value, json};
 
 fn action_from_fixture(source: &str) -> ActionRoot {
@@ -536,4 +538,132 @@ fn decimal_wire_schema_rewrites_nested_arrays_and_server_filled_ignores_string_a
     // Already-nullable property is not wrapped in nested anyOf.
     assert_eq!(props["already_nullable"]["anyOf"][0]["type"], "string");
     assert_eq!(props["already_nullable"]["anyOf"][1]["type"], "null");
+}
+
+#[test]
+fn nullable_decimal_type_arrays_rewrite_number_to_string() {
+    let mut action = fixture_action();
+    action.input_schema = serde_json::from_value(json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "price": {"type": ["number", "null"], "nornType": {"kind": "decimal", "scale": 2}},
+            "discount": {"type": ["null", "number"], "nornType": {"kind": "decimal", "scale": 4}},
+            "plain_num": {"type": ["number", "null"]}
+        },
+        "required": ["price"]
+    }))
+    .expect("schema decodes");
+    let tool = serde_json::to_value(action_tool(&action).expect("projects")).expect("encodes");
+    let props = &tool["inputSchema"]["properties"];
+    assert_eq!(props["price"]["type"], json!(["string", "null"]));
+    assert!(
+        props["price"]["description"]
+            .as_str()
+            .is_some_and(|desc| desc.contains("Exact decimal text"))
+    );
+    assert_eq!(props["discount"]["type"], json!(["null", "string"]));
+    assert!(
+        props["discount"]["description"]
+            .as_str()
+            .is_some_and(|desc| desc.contains("Exact decimal text"))
+    );
+    assert_eq!(props["plain_num"]["type"], json!(["number", "null"]));
+}
+
+#[test]
+fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived_omitted() {
+    let mut action = fixture_action();
+    action.input_schema = serde_json::from_value(json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "code": {"type": "string"},
+            "owner": {"type": "string"},
+            "root_actor": {"type": "string"},
+            "root_input": {"type": "string"},
+            "extra_secret": {"type": "string"}
+        },
+        "required": ["code", "owner", "root_actor", "root_input", "extra_secret"]
+    }))
+    .expect("schema decodes");
+    action.derive = serde_json::from_value(json!([
+        {"field": "code", "expression": "trim(input.code)", "inputRequired": true},
+        {"field": "code", "expression": "input.code ?? 'FALLBACK'", "inputRequired": false},
+        {"field": "owner", "expression": "input.owner ?? actor.subjectId", "inputRequired": false},
+        {"field": "root_actor", "expression": "$.actor.subjectId", "inputRequired": false},
+        {"field": "root_input", "expression": "$.input.root_input ?? 'DEFAULT'", "inputRequired": false}
+    ]))
+    .expect("derivations decode");
+
+    let extra = BTreeSet::from(["extra_secret".to_owned()]);
+    let tool =
+        serde_json::to_value(action_tool_with_server_filled(&action, &extra).expect("projects"))
+            .expect("encodes");
+    let schema = &tool["inputSchema"];
+    assert_eq!(schema["required"], json!(["code"]));
+    assert_eq!(schema["properties"]["code"], json!({"type": "string"}));
+    assert!(
+        schema["properties"].get("owner").is_none(),
+        "actor-reading optional derivation is server-filled even when also referencing input"
+    );
+    assert!(
+        schema["properties"].get("root_actor").is_none(),
+        "$.actor optional derivation is server-filled"
+    );
+    assert!(
+        schema["properties"].get("root_input").is_none(),
+        "$ whole-environment root fails closed as server-filled, matching kernel actor_derived_fields"
+    );
+    assert!(
+        schema["properties"].get("extra_secret").is_none(),
+        "extra_server_filled fields leave the caller schema"
+    );
+}
+
+#[test]
+fn destructive_hint_covers_deleted_writes_and_writes_alongside_create_only_effect() {
+    let mut parent_delete = fixture_action();
+    parent_delete.writes.clear();
+    parent_delete.effect_program = Some(norn_ir::ActionEffectProgram::MutateParentWithRows {
+        object_id_field: "orderId".to_owned(),
+        object_kind: "commerce.SalesOrder".to_owned(),
+        entity_artifact_id: "commerce.SalesOrder.entity".to_owned(),
+        entity_artifact_version: "0.1.0".to_owned(),
+        parent_values_field: "parent".to_owned(),
+        row_ops_field: "rows".to_owned(),
+        parent_version_field: "version".to_owned(),
+        parent_delete_field: Some("deleteParent".to_owned()),
+        collections: Vec::new(),
+    });
+    let annotations = action_tool(&parent_delete)
+        .expect("projects")
+        .annotations
+        .expect("annotations");
+    assert_eq!(annotations.destructive_hint, Some(true));
+
+    for change in [
+        norn_ir::WriteChange::Modified,
+        norn_ir::WriteChange::Deleted,
+    ] {
+        let mut create_effect_with_destructive_write = fixture_action();
+        create_effect_with_destructive_write.writes[0].change = change;
+        create_effect_with_destructive_write.effect_program =
+            Some(norn_ir::ActionEffectProgram::UpsertInputObject {
+                object_id_field: "requestId".to_owned(),
+                object_kind: "retail.PurchaseRequest".to_owned(),
+                entity_artifact_id: "retail.PurchaseRequest.entity".to_owned(),
+                entity_artifact_version: "0.1.0".to_owned(),
+                write_mode: norn_ir::UpsertWriteMode::CreateOnly,
+            });
+        let annotations = action_tool(&create_effect_with_destructive_write)
+            .expect("projects")
+            .annotations
+            .expect("annotations");
+        assert_eq!(
+            annotations.destructive_hint,
+            Some(true),
+            "CreateOnly effect program must not mask {change:?} in action.writes"
+        );
+    }
 }

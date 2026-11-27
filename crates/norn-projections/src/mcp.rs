@@ -4,6 +4,8 @@
 //! The target shape is [`McpTool`], the `Tool` definition of MCP schema
 //! revision 2026-07-28.
 
+use std::collections::BTreeSet;
+
 use norn_ir::{
     ActionCommandOperation, ActionEffectProgram, ActionRoot, ActionUiEffect, JsonObject, JsonValue,
     McpTool, McpToolAnnotations, WriteChange,
@@ -67,6 +69,26 @@ impl std::error::Error for McpProjectionError {}
 /// [`McpProjectionError::InputSchemaNotObject`] when the action's input schema
 /// is not an object schema; MCP tool arguments are always JSON objects.
 pub fn action_tool(action: &ActionRoot) -> Result<McpTool, McpProjectionError> {
+    action_tool_with_server_filled(action, &BTreeSet::new())
+}
+
+/// Project a typed action root onto its MCP tool definition, additionally
+/// omitting caller-forbidden `extra_server_filled` fields (such as the kernel's
+/// `actor_derived_fields` set for `ACTION-ACTOR-1`).
+///
+/// Keeping this parameter explicit allows Ring-0 `norn-projections` to stay
+/// decoupled from `norn-expr` while hosted callers (`norn-cell-do`) supply the
+/// exact kernel-evaluated actor-derived field set, including fail-closed
+/// unparseable derivations.
+///
+/// # Errors
+///
+/// [`McpProjectionError::InputSchemaNotObject`] when the action's input schema
+/// is not an object schema; MCP tool arguments are always JSON objects.
+pub fn action_tool_with_server_filled(
+    action: &ActionRoot,
+    extra_server_filled: &BTreeSet<String>,
+) -> Result<McpTool, McpProjectionError> {
     if action
         .input_schema
         .get("type")
@@ -89,20 +111,18 @@ pub fn action_tool(action: &ActionRoot) -> Result<McpTool, McpProjectionError> {
         && !irreversible
         && !explicitly_destructive
         && !has_money_effect;
-    // Keep the legacy local-risk predicate intact so newly understood
-    // outbound commands can add risk without downgrading an existing hint.
     let legacy_read_only =
         !action.ledgered && action.effect_program.is_none() && action.writes.is_empty();
-    let legacy_additive = action.effect_program.as_ref().map_or_else(
-        || {
-            !action.writes.is_empty()
-                && action
-                    .writes
-                    .iter()
-                    .all(|write| write.change == WriteChange::Created)
-        },
-        |program| !program.changes().contains(&WriteChange::Modified),
-    );
+    let writes_additive = action
+        .writes
+        .iter()
+        .all(|write| is_additive_write(write.change));
+    let legacy_additive = match action.effect_program.as_ref() {
+        None => !action.writes.is_empty() && writes_additive,
+        Some(program) => {
+            writes_additive && program.changes().iter().copied().all(is_additive_write)
+        }
+    };
     let legacy_destructive = !legacy_read_only && !legacy_additive;
     let has_non_create_command = action
         .commands
@@ -115,7 +135,7 @@ pub fn action_tool(action: &ActionRoot) -> Result<McpTool, McpProjectionError> {
         name: action.action_id.clone(),
         title: action.title.clone(),
         description: action.description.clone(),
-        input_schema: caller_input_schema(action),
+        input_schema: caller_input_schema(action, extra_server_filled),
         output_schema: Some(action.output_schema.clone()),
         annotations: Some(McpToolAnnotations {
             title: action.title.clone(),
@@ -128,7 +148,15 @@ pub fn action_tool(action: &ActionRoot) -> Result<McpTool, McpProjectionError> {
     })
 }
 
+const fn is_additive_write(change: WriteChange) -> bool {
+    match change {
+        WriteChange::Created => true,
+        WriteChange::Modified | WriteChange::Deleted => false,
+    }
+}
+
 const MAX_SCHEMA_DEPTH: usize = 64;
+const DECIMAL_WIRE_DESCRIPTION: &str = "Exact decimal text as a JSON string, for example \"125\". Use a dot decimal separator; do not send a JSON number.";
 
 fn decimal_wire_schema(schema: &mut JsonObject) {
     decimal_wire_object(schema, 0);
@@ -138,18 +166,40 @@ fn decimal_wire_object(schema: &mut JsonObject, depth: usize) {
     if depth >= MAX_SCHEMA_DEPTH {
         return;
     }
-    if schema.get("type").and_then(JsonValue::as_string) == Some("number")
-        && schema
-            .get("nornType")
-            .and_then(JsonValue::as_object)
-            .and_then(|site| site.get("kind"))
-            .and_then(JsonValue::as_string)
-            == Some("decimal")
-    {
-        schema.insert("type".to_owned(), JsonValue::String("string".to_owned()));
-        schema.entry("description".to_owned()).or_insert_with(|| {
-            JsonValue::String("Exact decimal text as a JSON string, for example \"125\". Use a dot decimal separator; do not send a JSON number.".to_owned())
-        });
+    let is_decimal = schema
+        .get("nornType")
+        .and_then(JsonValue::as_object)
+        .and_then(|site| site.get("kind"))
+        .and_then(JsonValue::as_string)
+        == Some("decimal");
+    let mut rewrote_decimal = false;
+    if is_decimal && let Some(kind) = schema.get_mut("type") {
+        match kind {
+            JsonValue::String(text) if text == "number" => {
+                *text = "string".to_owned();
+                rewrote_decimal = true;
+            }
+            JsonValue::Array(items) => {
+                for item in items {
+                    if let JsonValue::String(text) = item
+                        && text == "number"
+                    {
+                        *text = "string".to_owned();
+                        rewrote_decimal = true;
+                    }
+                }
+            }
+            JsonValue::Null
+            | JsonValue::Bool(_)
+            | JsonValue::Number(_)
+            | JsonValue::String(_)
+            | JsonValue::Object(_) => {}
+        }
+    }
+    if rewrote_decimal {
+        schema
+            .entry("description".to_owned())
+            .or_insert_with(|| JsonValue::String(DECIMAL_WIRE_DESCRIPTION.to_owned()));
     } else {
         for value in schema.values_mut() {
             decimal_wire_value(value, depth.saturating_add(1));
@@ -208,15 +258,39 @@ fn schema_allows_null(schema: &JsonValue) -> bool {
 }
 
 /// Project caller requirements without evaluating or parsing ZEN.
-fn caller_input_schema(action: &ActionRoot) -> JsonObject {
+fn caller_input_schema(action: &ActionRoot, extra_server_filled: &BTreeSet<String>) -> JsonObject {
     let mut input_schema = action.input_schema.clone();
     decimal_wire_schema(&mut input_schema);
-    if action.derive.iter().any(|step| step.input_required) {
+    // A field the server fills from its own context (the actor, the clock) is
+    // not the caller's to send: it leaves the schema, so an agent never offers
+    // a value the call would refuse.
+    let filled = server_filled(action, extra_server_filled);
+    let required_derived: BTreeSet<&str> = action
+        .derive
+        .iter()
+        .filter(|step| step.input_required && !filled.contains(step.field.as_str()))
+        .map(|step| step.field.as_str())
+        .collect();
+    let optional_only_derived: BTreeSet<&str> = action
+        .derive
+        .iter()
+        .filter(|step| {
+            !step.input_required
+                && !filled.contains(step.field.as_str())
+                && !required_derived.contains(step.field.as_str())
+        })
+        .map(|step| step.field.as_str())
+        .collect();
+    if !required_derived.is_empty() {
         let required = input_schema
             .entry("required".to_owned())
             .or_insert_with(|| JsonValue::Array(Vec::new()));
         if let JsonValue::Array(required) = required {
-            for step in action.derive.iter().filter(|step| step.input_required) {
+            for step in action
+                .derive
+                .iter()
+                .filter(|step| required_derived.contains(step.field.as_str()))
+            {
                 if !required
                     .iter()
                     .any(|field| field.as_string() == Some(step.field.as_str()))
@@ -226,25 +300,21 @@ fn caller_input_schema(action: &ActionRoot) -> JsonObject {
             }
         }
     }
-    // A field the server fills from its own context (the actor, the clock) is
-    // not the caller's to send: it leaves the schema, so an agent never offers
-    // a value the call would refuse.
-    let filled = server_filled(action);
     if let Some(JsonValue::Array(required)) = input_schema.get_mut("required") {
         required.retain(|field| {
             field.as_string().is_some_and(|field| {
-                !filled.contains(field)
-                    && !action
-                        .derive
-                        .iter()
-                        .any(|derivation| !derivation.input_required && derivation.field == field)
+                !filled.contains(field) && !optional_only_derived.contains(field)
             })
         });
     }
     if let Some(JsonValue::Object(properties)) = input_schema.get_mut("properties") {
         properties.retain(|field, _| !filled.contains(field.as_str()));
-        let mut projected = std::collections::BTreeSet::new();
-        for derivation in action.derive.iter().filter(|step| !step.input_required) {
+        let mut projected = BTreeSet::new();
+        for derivation in action
+            .derive
+            .iter()
+            .filter(|step| optional_only_derived.contains(step.field.as_str()))
+        {
             // Repeated steps for a field share one caller requirement.
             // A null source has the same meaning as an omitted source.
             if let Some(schema) = properties.get_mut(&derivation.field)
@@ -267,9 +337,11 @@ fn caller_input_schema(action: &ActionRoot) -> JsonObject {
     input_schema
 }
 
-/// Whether a ZEN expression references the root identifier `input` outside
-/// string literals and not as a member after `.`.
-fn expression_reads_input(expression: &str) -> bool {
+/// Whether a ZEN expression references the root identifier `target` (or the
+/// whole-environment root `$`) outside string literals and not as a member
+/// after `.`. Mirrors `norn_expr::expression_read_paths`, where `Node::Root`
+/// conservatively counts as reading every root variable.
+fn expression_reads_root_ident(expression: &str, target: &str) -> bool {
     let mut chars = expression.chars().peekable();
     let mut prev_dot = false;
     while let Some(ch) = chars.next() {
@@ -283,6 +355,11 @@ fn expression_reads_input(expression: &str) -> bool {
                 }
             }
             prev_dot = false;
+        } else if ch == '$' {
+            if !prev_dot {
+                return true;
+            }
+            prev_dot = false;
         } else if ch.is_ascii_alphabetic() || ch == '_' {
             let mut ident = String::new();
             ident.push(ch);
@@ -294,7 +371,7 @@ fn expression_reads_input(expression: &str) -> bool {
                     break;
                 }
             }
-            if !prev_dot && ident == "input" {
+            if !prev_dot && ident == target {
                 return true;
             }
             prev_dot = false;
@@ -307,24 +384,41 @@ fn expression_reads_input(expression: &str) -> bool {
     false
 }
 
-/// Fields every derivation of which is optional for the caller and reads no
-/// caller input (`actor.subjectId`, `now`): the server's to fill, never the
-/// caller's. A derivation that reads `input` (a default, a normalization)
-/// keeps its field in the schema.
-fn server_filled(action: &ActionRoot) -> std::collections::BTreeSet<&str> {
-    let mut filled = std::collections::BTreeSet::new();
+/// Fields the server fills and the caller must not supply:
+/// - Any field in `extra_server_filled` (e.g. `norn_kernel::actor_derived_fields`).
+/// - ACTION-ACTOR-1: any field with an `inputRequired: false` derivation that
+///   reads `actor` (even if it also reads `input` or shares the field with
+///   another step), because the kernel refuses caller-supplied values for it.
+/// - Any field whose derivations are all `inputRequired: false` and never read
+///   `input` (e.g. `now` or a constant).
+fn server_filled<'a>(
+    action: &'a ActionRoot,
+    extra_server_filled: &'a BTreeSet<String>,
+) -> BTreeSet<&'a str> {
+    let mut filled: BTreeSet<&'a str> = extra_server_filled.iter().map(String::as_str).collect();
+    let mut derived_fields = BTreeSet::new();
     for derivation in &action.derive {
-        filled.insert(derivation.field.as_str());
+        let field = derivation.field.as_str();
+        derived_fields.insert(field);
+        if !derivation.input_required
+            && expression_reads_root_ident(&derivation.expression.0, "actor")
+        {
+            filled.insert(field);
+        }
     }
-    filled.retain(|field| {
-        action
+    for field in derived_fields {
+        if action
             .derive
             .iter()
-            .filter(|derivation| derivation.field == *field)
+            .filter(|derivation| derivation.field == field)
             .all(|derivation| {
-                !derivation.input_required && !expression_reads_input(&derivation.expression.0)
+                !derivation.input_required
+                    && !expression_reads_root_ident(&derivation.expression.0, "input")
             })
-    });
+        {
+            filled.insert(field);
+        }
+    }
     filled
 }
 
