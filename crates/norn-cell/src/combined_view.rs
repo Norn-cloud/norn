@@ -102,6 +102,8 @@ pub struct ReconciliationGate<'a> {
     pub expected_filters: &'a [(&'a str, RuntimeValue)],
     /// Optional exact-match column filters applied to `observed_plan` rows before reconciling.
     pub observed_filters: &'a [(&'a str, RuntimeValue)],
+    /// When `true`, every observed row must have a matching expected row (even when observed is `0`).
+    pub require_expected_match: bool,
     /// Pre-evaluation authorization check for `expected_plan` (`VIEW-READ-1`).
     pub authorize_expected: TransformAuthorizer<'a>,
     /// Pre-evaluation authorization check for `observed_plan` (`VIEW-READ-1`).
@@ -174,6 +176,9 @@ pub struct ReconciliationSpec {
     /// Optional exact string column filters on `observed_transform_id`.
     #[serde(default)]
     pub observed_filters: Vec<(String, String)>,
+    /// When `true`, every observed row must match an expected row (absent expected never falls back to `0`).
+    #[serde(default)]
+    pub require_expected_match: bool,
 }
 
 /// Serializable declarative spec for one [`ExpectedGrainGate`].
@@ -208,6 +213,9 @@ pub struct CellCoverageSpec {
     pub feed_max_age_ms: u64,
     /// Evidence object types scanned for open data-quality findings.
     pub evidence_types: Vec<String>,
+    /// Mapping artifact ID -> target evidence object type for scoped inbox quarantine diagnostics.
+    #[serde(default)]
+    pub feed_mappings: BTreeMap<String, String>,
     /// Named questions evaluated at this cut.
     pub questions: Vec<String>,
     /// Boolean coverage transform gates.
@@ -265,6 +273,8 @@ pub struct CellViewInput<'a, E: SqlEngine> {
     pub min_fresh_ms: u64,
     /// Evidence object types scanned for open data-quality findings.
     pub evidence_types: &'a [&'a str],
+    /// Monitored `(mapping_id, evidence_object_type)` pairs for scoped inbox quarantine diagnostics.
+    pub feed_mappings: &'a [(&'a str, &'a str)],
     /// Per-row visibility callback checked before reading evidence findings (`HOST-READ-2`).
     pub evidence_access: RowAccessDecider<'a>,
     /// Declared transforms whose boolean coverage column must be `true` on every row.
@@ -372,38 +382,39 @@ fn authorized_evidence_types<E: SqlEngine>(
     Ok(allowed)
 }
 
-/// Count unconsumed inbox observations scoped strictly to `input.required_feeds`
-/// and authorized `input.evidence_types` (`HOST-READ-2`), keeping unrelated or
-/// unauthorized inbox observations invisible to published coverage diagnostics.
+/// Count unconsumed inbox observations scoped strictly to `input.feed_mappings`
+/// and each mapping's authorized evidence type (`HOST-READ-2`), keeping
+/// unrelated mappings and unauthorized evidence types invisible even when a
+/// quarantined mapping bundle emitted zero records.
 fn count_scoped_pending_observations<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
 ) -> Result<usize, CellError> {
     let allowed_evidence = authorized_evidence_types(input)?;
-    if allowed_evidence.is_empty() || input.required_feeds.is_empty() {
+    if allowed_evidence.is_empty() || input.feed_mappings.is_empty() {
         return Ok(0);
     }
-    let feeds: BTreeSet<&str> = input.required_feeds.iter().copied().collect();
+    let mappings: BTreeMap<&str, &str> = input.feed_mappings.iter().copied().collect();
     let mut count = 0_usize;
     for obs in input.store.read().pending_observations()? {
         let bundle = obs.observed.get("input");
-        let feed = bundle
+        let mapping_id = bundle
             .and_then(|b| b.get("input"))
-            .and_then(|i| i.get("connectorInstance"))
-            .and_then(serde_json::Value::as_str);
-        if !feed.is_some_and(|f| feeds.contains(f)) {
+            .and_then(|i| i.get("mapping"))
+            .and_then(RuntimeValue::as_str);
+        let Some(expected_evidence) = mapping_id.and_then(|id| mappings.get(id).copied()) else {
+            continue;
+        };
+        if !allowed_evidence.contains(expected_evidence) {
             continue;
         }
-        let records = bundle
-            .and_then(|b| b.get("records"))
-            .and_then(serde_json::Value::as_array);
-        let visible = records.is_none_or(|rows| {
-            rows.is_empty()
-                || rows.iter().any(|rec| {
-                    rec.get("objectType")
-                        .and_then(serde_json::Value::as_str)
-                        .is_some_and(|ty| allowed_evidence.contains(ty))
-                })
-        });
+        let visible = match bundle.and_then(|b| b.get("records")) {
+            Some(RuntimeValue::Array(rows)) if !rows.is_empty() => rows.iter().any(|rec| {
+                rec.get("objectType")
+                    .and_then(RuntimeValue::as_str)
+                    .is_some_and(|ty| allowed_evidence.contains(ty))
+            }),
+            _ => true,
+        };
         if visible {
             count = count.saturating_add(1);
         }
@@ -724,6 +735,9 @@ fn check_reconciliation_gate(
     for (key, obs_row) in &obs_map {
         if exp_keys.contains(key) {
             continue;
+        }
+        if gate.require_expected_match {
+            return false;
         }
         let Some(RuntimeValue::Number(obs_val)) = obs_row.values.get(gate.observed_value_column)
         else {
@@ -1171,6 +1185,7 @@ fn build_spec_reconciliation_gates<'a, E: SqlEngine>(
                 max_age_ms: g.max_age_ms,
                 expected_filters: expected_filters.get(idx).ok_or_else(stale)?,
                 observed_filters: observed_filters.get(idx).ok_or_else(stale)?,
+                require_expected_match: g.require_expected_match,
                 authorize_expected: binding.authorize_transform,
                 authorize_observed: binding.authorize_transform,
                 row_access: binding.row_access,
@@ -1214,6 +1229,25 @@ fn string_filters(raw: &[(String, String)]) -> Vec<(&str, RuntimeValue)> {
         .collect()
 }
 
+fn build_spec_coverage_transforms<'a, E: SqlEngine>(
+    spec: &'a CellCoverageSpec,
+    binding: &SpecCellBinding<'a, E>,
+) -> Result<Vec<CoverageTransformGate<'a>>, CellError> {
+    let stale = || CellError::ComputeRefused("core.compute.stale_input");
+    spec.coverage_transforms
+        .iter()
+        .map(|g| {
+            Ok(CoverageTransformGate {
+                name: g.name.as_str(),
+                plan: binding.transforms.get(&g.transform_id).ok_or_else(stale)?,
+                required_true_column: g.required_true_column.as_str(),
+                authorize_transform: binding.authorize_transform,
+                row_access: binding.row_access,
+            })
+        })
+        .collect()
+}
+
 /// Evaluate one cell's pinned cut directly from a pack-authored
 /// [`CellCoverageSpec`], removing any need for hard-coded host/test gate wiring.
 ///
@@ -1229,6 +1263,11 @@ pub fn evaluate_cell_cut_from_spec<E: SqlEngine>(
     let stale = || CellError::ComputeRefused("core.compute.stale_input");
     let required_feeds: Vec<&str> = spec.required_feeds.iter().map(String::as_str).collect();
     let evidence_types: Vec<&str> = spec.evidence_types.iter().map(String::as_str).collect();
+    let feed_mappings: Vec<(&str, &str)> = spec
+        .feed_mappings
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
     let questions: Vec<(&str, &QuestionPlan)> = spec
         .questions
         .iter()
@@ -1239,19 +1278,7 @@ pub fn evaluate_cell_cut_from_spec<E: SqlEngine>(
             ))
         })
         .collect::<Result<_, CellError>>()?;
-    let coverage_transforms: Vec<CoverageTransformGate<'_>> = spec
-        .coverage_transforms
-        .iter()
-        .map(|g| {
-            Ok(CoverageTransformGate {
-                name: g.name.as_str(),
-                plan: binding.transforms.get(&g.transform_id).ok_or_else(stale)?,
-                required_true_column: g.required_true_column.as_str(),
-                authorize_transform: binding.authorize_transform,
-                row_access: binding.row_access,
-            })
-        })
-        .collect::<Result<_, CellError>>()?;
+    let coverage_transforms = build_spec_coverage_transforms(spec, binding)?;
     let recon_key_refs: Vec<Vec<&str>> = spec
         .reconciliation_gates
         .iter()
@@ -1304,6 +1331,7 @@ pub fn evaluate_cell_cut_from_spec<E: SqlEngine>(
         read_frontier: binding.read_frontier,
         min_fresh_ms: binding.context.now_ms.saturating_sub(spec.feed_max_age_ms),
         evidence_types: &evidence_types,
+        feed_mappings: &feed_mappings,
         evidence_access: binding.row_access,
         coverage_transforms: &coverage_transforms,
         reconciliation_gates: &reconciliation_gates,

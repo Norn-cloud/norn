@@ -106,6 +106,15 @@ const EVIDENCE_TYPES: [&str; 4] = [
     "supply.RetailReceiptEvidence",
     "supply.UnitCostEvidence",
 ];
+const FEED_MAPPINGS: [(&str, &str); 4] = [
+    ("supply.pos_sales.mapping", "supply.PosSaleEvidence"),
+    ("supply.store_counts.mapping", "supply.StoreCountEvidence"),
+    (
+        "supply.retail_receipts.mapping",
+        "supply.RetailReceiptEvidence",
+    ),
+    ("supply.unit_costs.mapping", "supply.UnitCostEvidence"),
+];
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -426,10 +435,19 @@ impl EntityBook {
     /// cursor + mapping pipeline on this cell so `_norn_source_cursor` and
     /// `_norn_source_pending` stay durably synchronized with the cell frontier.
     fn ingest_feed(&mut self, row: &FeedRow<'_>) -> Result<(String, bool), String> {
+        self.ingest_feed_with_instance(row, "retail-lab")
+    }
+
+    fn ingest_feed_with_instance(
+        &mut self,
+        row: &FeedRow<'_>,
+        instance: &str,
+    ) -> Result<(String, bool), String> {
         self.tick = self.tick.saturating_add(1_000);
         let observed_at = self.now().as_millis();
         let obs = raw_obs(row.source, row.event, row.record, row.payload)?;
-        let input = map_input(row.mapping, row.dataset);
+        let mut input = map_input(row.mapping, row.dataset);
+        input.connector_instance = instance.to_owned();
         let next_cursor = format!("cursor:{}:{}", row.feed_id, row.event);
         let clean = self.with_map_cell(|map_cell| {
             let lease = map_cell
@@ -4166,8 +4184,10 @@ fn verify_shipped_rollup_stock_staleness(
 }
 
 fn verify_unsealed_rollup_fails_closing_cut_gates(spec: &CellCoverageSpec) -> Result<(), String> {
-    // 1d. A verified rollup without a matching sealed closing cut MUST fail closed on both
-    //     `rollup_on_hand_reconciliation` and `rollup_closing_value_reconciliation`.
+    // 1d. Even a sold-out SKU (`on_hand_qty = 0`, `closing_stock_value = 0`, positive
+    //     opening value, reconciled sales) without a sealed closing cut MUST fail closed
+    //     on `rollup_on_hand_reconciliation` and `rollup_closing_value_reconciliation`
+    //     (`requireExpectedMatch: true`, never falling back to 0).
     let mut unsealed = EntityBook::open(
         PARTNER_CELL_ID,
         "org_family_partnership",
@@ -4184,6 +4204,39 @@ fn verify_unsealed_rollup_fails_closing_cut_gates(spec: &CellCoverageSpec) -> Re
     seed_partnership(&mut unsealed)?;
     seed_partner_operations(&mut unsealed)?;
     ingest_baseline_entity_feeds(&mut sole_dummy, &mut unsealed)?;
+    // Sell out remaining 12 units before period_end without sealing a closing cut.
+    unsealed.ok(
+        "supply.stock_lot.update_balance",
+        "clerk:hana",
+        json!({
+            "lot_id": "LOT-P1-W3", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
+            "remaining_qty": "0", "depleted_qty": "20",
+            "as_of": "2026-09-06T08:00:00Z", "unit_cost": "250", "stock_value": "0"
+        }),
+    )?;
+    for basis in ["on_hand", "available"] {
+        unsealed.ok(
+            "supply.store_count.recount",
+            "clerk:hana",
+            json!({
+                "store_count_id": format!("ST-PART-CFC-1/SKU-RING-18K/{basis}"),
+                "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
+                "on_hand_qty": "0", "unit": "each", "quantity_basis": basis,
+                "as_of": "2026-09-06T11:00:00Z", "count_source": "store_audit", "count_ref": "AUD-P2-ZERO"
+            }),
+        )?;
+    }
+    unsealed.ok(
+        "supply.pos_sale.record",
+        "clerk:hana",
+        json!({
+            "sale_id": "SALE-P1-SELLOUT", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
+            "sold_qty": "12", "unit": "each", "net_revenue": "4800", "applied_unit_cost": "250",
+            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
+            "cost_status": "costed", "costed_ref": "COST-RING-1",
+            "currency": "USD", "sold_at": "2026-09-06T09:00:00Z"
+        }),
+    )?;
     unsealed.ok(
         "supply.store_kpi.record",
         "planner:omar",
@@ -4192,13 +4245,13 @@ fn verify_unsealed_rollup_fails_closing_cut_gates(spec: &CellCoverageSpec) -> Re
             "sku_id": "SKU-RING-18K", "period_week": "2026-08-31",
             "unit": "each", "currency": "USD", "cost_status": "costed", "count_status": "verified",
             "on_hand_count_id": "ST-PART-CFC-1/SKU-RING-18K/on_hand",
-            "opening_cut_id": "CUT-P1-2026-08-31", "count_ref": "AUD-P2",
-            "count_as_of": "2026-09-06T10:00:00Z", "costed_ref": "COST-RING-1",
+            "opening_cut_id": "CUT-P1-2026-08-31", "count_ref": "AUD-P2-ZERO",
+            "count_as_of": "2026-09-06T11:00:00Z", "costed_ref": "COST-RING-1",
             "book_epoch": "1970-01-01T00:00:00Z",
             "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T23:59:59.999999999Z",
-            "sales_weeks": 1, "on_hand_qty": "12", "avg_weekly_sales_qty": "8",
-            "weeks_of_supply": "0", "period_gross_margin": "1200",
-            "opening_stock_value": "5000", "closing_stock_value": "3000",
+            "sales_weeks": 1, "on_hand_qty": "0", "avg_weekly_sales_qty": "20",
+            "weeks_of_supply": "0", "period_gross_margin": "3000",
+            "opening_stock_value": "5000", "closing_stock_value": "0",
             "average_inventory_value": "0", "gmroi": "0"
         }),
     )?;
@@ -4377,6 +4430,7 @@ fn verify_library_cut_row_access_gate(partner: &EntityBook) -> Result<(), String
         read_frontier: &partner_frontier,
         min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
         evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access: &allow_all,
         coverage_transforms: &[CoverageTransformGate {
             name: "supply.retail.entity_management_summary",
@@ -4434,6 +4488,7 @@ fn verify_library_cut_population_only_disclosure(
         read_frontier: &partner_frontier,
         min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
         evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access: &allow_all,
         coverage_transforms: &[],
         reconciliation_gates: &[],
@@ -4497,6 +4552,7 @@ fn verify_non_inlined_and_short_key_disclosure(
             read_frontier: &partner_frontier,
             min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
             evidence_types: &EVIDENCE_TYPES,
+            feed_mappings: &FEED_MAPPINGS,
             evidence_access: &allow_all,
             coverage_transforms: &[],
             reconciliation_gates: &[],
@@ -4564,6 +4620,7 @@ fn verify_non_inlined_denied_and_short_key(
         read_frontier: &partner_frontier,
         min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
         evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access: &allow_all,
         coverage_transforms: &[],
         reconciliation_gates: &[],
@@ -4612,6 +4669,7 @@ fn verify_short_handle_key_refusal(
         read_frontier: &partner_frontier,
         min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
         evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access: &allow_all,
         coverage_transforms: &[],
         reconciliation_gates: &[],
@@ -4653,6 +4711,7 @@ fn verify_library_cut_hidden_and_denied_gate(
         read_frontier: &partner_frontier,
         min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
         evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access: &hide_all,
         coverage_transforms: &[CoverageTransformGate {
             name: "supply.retail.entity_management_summary",
@@ -4729,6 +4788,7 @@ fn verify_library_cut_denied_transform_gate(
         read_frontier: &partner_frontier,
         min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
         evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access: &allow_all,
         coverage_transforms: &[CoverageTransformGate {
             name: "supply.retail.entity_management_summary",
@@ -5126,18 +5186,20 @@ fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> R
 }
 
 fn verify_scoped_pending_observations_privacy(sole: &EntityBook) -> Result<(), String> {
-    // HOST-READ-2: a caller lacking Population on evidence types must NOT observe
-    // quarantined feed observations via `pending_observations`, and unrelated inbox
-    // observations outside `required_feeds` must NOT inflate `pending_observations`.
-    let hide_evidence = |obj: &norn_cell::ObjectRecord| {
-        if EVIDENCE_TYPES.contains(&obj.object_type.as_str()) {
+    // HOST-READ-2 (mixed grants): a caller allowed to read `UnitCostEvidence` (and all
+    // non-POS evidence) but denied `PosSaleEvidence` MUST NOT observe an empty quarantined
+    // POS mapping bundle via `pending_observations`.
+    let hide_pos_only = |obj: &norn_cell::ObjectRecord| {
+        if obj.object_type == "supply.PosSaleEvidence" {
             Ok(RowAccess::None)
         } else {
             Ok(RowAccess::Read)
         }
     };
-    let hidden_pending = evaluate_single_library_cut_with_access(sole, "LE-SOLE", &hide_evidence)?;
+    let hidden_pending = evaluate_single_library_cut_with_access(sole, "LE-SOLE", &hide_pos_only)?;
     assert_eq!(hidden_pending.pending_observations, 0);
+    // Unrelated admitted mapping (`supply.wms_scan.mapping`) quarantined in the same cell
+    // MUST stay invisible to `pending_observations` and must NOT block `complete == true`.
     let mut clean = EntityBook::open(
         PARTNER_CELL_ID,
         "org_family_partnership",
@@ -5155,16 +5217,19 @@ fn verify_scoped_pending_observations_privacy(sole: &EntityBook) -> Result<(), S
     seed_partner_operations(&mut clean)?;
     seed_partner_commercial_rollup(&mut clean)?;
     ingest_baseline_entity_feeds(&mut sole_dummy, &mut clean)?;
-    let (_, clean_other) = clean.ingest_feed(&FeedRow {
-        feed_id: "other.unrelated_feed",
-        mapping: "supply.pos_sales.mapping",
-        dataset: "pos_sale_line",
-        source: "other-pos",
-        event: "ev-other-box",
-        record: "OTHER-BOX-1",
-        payload: r#"{"pos_line_id":"OTHER-BOX-1","branch_code":"ST-PART-CFC-1","barcode_sku":"SKU-RING-18K","qty":1,"uom":"BOX","net_amount":100,"ccy":"USD","sold_at":"2026-09-02T15:00:00Z"}"#,
-    })?;
-    assert!(!clean_other);
+    let (_, clean_wms) = clean.ingest_feed_with_instance(
+        &FeedRow {
+            feed_id: "supply.wms_scan",
+            mapping: "supply.wms_scan.mapping",
+            dataset: "stock_count",
+            source: "synthetic-wms",
+            event: "ev-wms-bad-1",
+            record: "WMS-BAD-1",
+            payload: r#"{"scan_id":"WMS-BAD-1"}"#,
+        },
+        "supply-lab",
+    )?;
+    assert!(!clean_wms);
     assert_eq!(
         clean
             .cell()?
@@ -5205,6 +5270,7 @@ fn evaluate_single_library_cut_with_access(
         read_frontier: &live_frontier,
         min_fresh_ms: book.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
         evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access,
         coverage_transforms: &[],
         reconciliation_gates: &[],
@@ -5252,6 +5318,7 @@ fn verify_library_cut_tampering_refusals(sole: &EntityBook) -> Result<(), String
         read_frontier: &live_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
         evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access: &allow_all,
         coverage_transforms: &[],
         reconciliation_gates: &[],
@@ -5285,6 +5352,7 @@ fn verify_library_cut_tampering_refusals(sole: &EntityBook) -> Result<(), String
         read_frontier: &live_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
         evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access: &allow_all,
         coverage_transforms: &[],
         reconciliation_gates: &[],
@@ -5338,6 +5406,7 @@ fn verify_library_cut_bad_authority_refusal(
         read_frontier: &live_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
         evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access: &allow_all,
         coverage_transforms: &[],
         reconciliation_gates: &[],
@@ -5383,6 +5452,7 @@ fn verify_library_cut_bad_authority_refusal(
         read_frontier: &shifting_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
         evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access: &allow_all,
         coverage_transforms: &[],
         reconciliation_gates: &[],
@@ -5443,6 +5513,7 @@ fn verify_library_cut_durable_cursor_mismatch(
         read_frontier: &forged_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
         evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access: &allow_all,
         coverage_transforms: &[],
         reconciliation_gates: &[],
@@ -5459,7 +5530,21 @@ fn verify_library_cut_durable_cursor_mismatch(
         forged,
         Err(CellError::ComputeRefused("core.compute.stale_input"))
     ));
+    verify_library_cut_missing_durable_cursor(rev_plan, &forged_ctx)
+}
+
+fn verify_library_cut_missing_durable_cursor(
+    rev_plan: &QuestionPlan,
+    forged_ctx: &QueryContext,
+) -> Result<(), String> {
     // 6. Claiming a consumed cursor when durable `_norn_source_cursor` has no record must refuse.
+    let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
+    let forged_frontier = || {
+        Ok((
+            forged_ctx.source_cursors.clone(),
+            forged_ctx.watermarks.clone(),
+        ))
+    };
     let mut missing = EntityBook::open(
         SOLE_CELL_ID,
         "org_family_sole_prop",
@@ -5481,6 +5566,7 @@ fn verify_library_cut_durable_cursor_mismatch(
         read_frontier: &forged_frontier,
         min_fresh_ms: missing.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
         evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access: &allow_all,
         coverage_transforms: &[],
         reconciliation_gates: &[],

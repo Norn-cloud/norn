@@ -12,6 +12,12 @@
     "supply.RetailReceiptEvidence",
     "supply.UnitCostEvidence"
   ],
+  "feedMappings": {
+    "supply.pos_sales.mapping": "supply.PosSaleEvidence",
+    "supply.store_counts.mapping": "supply.StoreCountEvidence",
+    "supply.retail_receipts.mapping": "supply.RetailReceiptEvidence",
+    "supply.unit_costs.mapping": "supply.UnitCostEvidence"
+  },
   "questions": [
     "supply.retail.store_revenue_weekly",
     "supply.retail.store_gross_margin_weekly",
@@ -54,7 +60,8 @@
       "observedTimestampColumn": "as_of",
       "maxAgeMs": 604800000,
       "expectedFilters": [],
-      "observedFilters": []
+      "observedFilters": [],
+      "requireExpectedMatch": false
     },
     {
       "name": "supply.retail.available_count_reconciliation",
@@ -71,7 +78,8 @@
       "observedTimestampColumn": "as_of",
       "maxAgeMs": 604800000,
       "expectedFilters": [],
-      "observedFilters": []
+      "observedFilters": [],
+      "requireExpectedMatch": false
     },
     {
       "name": "supply.retail.rollup_sales_reconciliation",
@@ -103,7 +111,8 @@
           "period_end",
           "2026-09-06T23:59:59.999999999Z"
         ]
-      ]
+      ],
+      "requireExpectedMatch": false
     },
     {
       "name": "supply.retail.rollup_margin_reconciliation",
@@ -135,7 +144,8 @@
           "period_end",
           "2026-09-06T23:59:59.999999999Z"
         ]
-      ]
+      ],
+      "requireExpectedMatch": false
     },
     {
       "name": "supply.retail.rollup_on_hand_reconciliation",
@@ -167,7 +177,8 @@
           "period_end",
           "2026-09-06T23:59:59.999999999Z"
         ]
-      ]
+      ],
+      "requireExpectedMatch": true
     },
     {
       "name": "supply.retail.rollup_closing_value_reconciliation",
@@ -199,7 +210,8 @@
           "period_end",
           "2026-09-06T23:59:59.999999999Z"
         ]
-      ]
+      ],
+      "requireExpectedMatch": true
     }
   ],
   "expectedGrainGates": [

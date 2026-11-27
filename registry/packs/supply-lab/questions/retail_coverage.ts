@@ -7,6 +7,7 @@ export interface RetailCoverageManifest {
   readonly requiredFeeds: readonly string[]
   readonly feedMaxAgeMs: number
   readonly evidenceTypes: readonly string[]
+  readonly feedMappings: Readonly<Record<string, string>>
   readonly questions: readonly string[]
   readonly coverageTransforms: ReadonlyArray<{
     readonly name: string
@@ -25,6 +26,7 @@ export interface RetailCoverageManifest {
     readonly maxAgeMs: number | null
     readonly expectedFilters: ReadonlyArray<readonly [string, string]>
     readonly observedFilters: ReadonlyArray<readonly [string, string]>
+    readonly requireExpectedMatch: boolean
   }>
   readonly expectedGrainGates: ReadonlyArray<{
     readonly name: string
@@ -51,6 +53,12 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
     "supply.RetailReceiptEvidence",
     "supply.UnitCostEvidence",
   ],
+  feedMappings: {
+    "supply.pos_sales.mapping": "supply.PosSaleEvidence",
+    "supply.store_counts.mapping": "supply.StoreCountEvidence",
+    "supply.retail_receipts.mapping": "supply.RetailReceiptEvidence",
+    "supply.unit_costs.mapping": "supply.UnitCostEvidence",
+  },
   questions: [
     "supply.retail.store_revenue_weekly",
     "supply.retail.store_gross_margin_weekly",
@@ -90,6 +98,7 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
       maxAgeMs: 7 * 24 * 60 * 60 * 1000,
       expectedFilters: [],
       observedFilters: [],
+      requireExpectedMatch: false,
     },
     {
       name: "supply.retail.available_count_reconciliation",
@@ -103,6 +112,7 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
       maxAgeMs: 7 * 24 * 60 * 60 * 1000,
       expectedFilters: [],
       observedFilters: [],
+      requireExpectedMatch: false,
     },
     {
       name: "supply.retail.rollup_sales_reconciliation",
@@ -119,6 +129,7 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
         ["period_week", "2026-08-31"],
         ["period_end", "2026-09-06T23:59:59.999999999Z"],
       ],
+      requireExpectedMatch: false,
     },
     {
       name: "supply.retail.rollup_margin_reconciliation",
@@ -135,6 +146,7 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
         ["period_week", "2026-08-31"],
         ["period_end", "2026-09-06T23:59:59.999999999Z"],
       ],
+      requireExpectedMatch: false,
     },
     {
       name: "supply.retail.rollup_on_hand_reconciliation",
@@ -151,6 +163,7 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
         ["period_week", "2026-08-31"],
         ["period_end", "2026-09-06T23:59:59.999999999Z"],
       ],
+      requireExpectedMatch: true,
     },
     {
       name: "supply.retail.rollup_closing_value_reconciliation",
@@ -167,6 +180,7 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
         ["period_week", "2026-08-31"],
         ["period_end", "2026-09-06T23:59:59.999999999Z"],
       ],
+      requireExpectedMatch: true,
     },
   ],
   expectedGrainGates: [
