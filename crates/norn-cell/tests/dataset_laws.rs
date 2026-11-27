@@ -2716,8 +2716,8 @@ fn decimal_widening_short_circuit_and_eager_unless_parity() {
     ];
     let deep_or_expr = format!(
         "{} or (self.large != self.small)",
-        (0..16)
-            .map(|i| format!("self.id == 'm{i}'"))
+        (1..=16)
+            .map(|i| format!("self.large == -{i}"))
             .chain(std::iter::once("self.id == 'null-big'".to_owned()))
             .collect::<Vec<_>>()
             .join(" or ")
@@ -2804,6 +2804,10 @@ fn decimal_widening_short_circuit_and_eager_unless_parity() {
         big_landed.residue_total, 2,
         "only the two 10^26 overflow rows go to residue"
     );
+    assert_eq!(
+        big_landed.residue.iter().map(|r| r.row).collect::<Vec<_>>(),
+        vec![1, 3]
+    );
     assert_eq!(big_landed.residue[0].rules.len(), 7);
     assert_eq!(big_landed.residue[1].rules.len(), 4);
     assert_eq!(big_landed.held_by_rules, 1);
@@ -2872,6 +2876,14 @@ fn decimal_widening_short_circuit_and_eager_unless_parity() {
     };
     let boundary_landed = land_both(&boundary_req, &big_csv);
     assert_eq!(boundary_landed.residue_total, 2);
+    assert_eq!(
+        boundary_landed
+            .residue
+            .iter()
+            .map(|r| r.row)
+            .collect::<Vec<_>>(),
+        vec![1, 3]
+    );
     assert_eq!(boundary_landed.residue[0].rules.len(), 3);
     assert_eq!(boundary_landed.residue[1].rules.len(), 3);
     assert_eq!(boundary_landed.held_by_rules, 0);
