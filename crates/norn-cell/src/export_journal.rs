@@ -81,11 +81,14 @@ pub(crate) fn consumed_input<E: SqlEngine>(
             } else {
                 Vec::new()
             };
+            let source_evidence =
+                read_source_evidence(reader.conn, &pending.observation_id, &members)?;
             preimage(&ConsumedInput::Observation {
                 position: pending.position,
                 observation_id: pending.observation_id,
                 observed: pending.observed,
                 members,
+                source_evidence,
             })
         }
         Consumption::Result {
@@ -120,6 +123,107 @@ pub(crate) fn consumed_input<E: SqlEngine>(
     }
 }
 
+/// One `_norn_source_evidence` capture-attribution row preserved across export
+/// and replay so historical pinned `:trace` queries keep identical attribution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SourceEvidenceEntry {
+    pub(crate) observation_id: String,
+    pub(crate) connection_id: String,
+    pub(crate) captured_commit_seq: i64,
+}
+
+fn read_source_evidence<E: SqlEngine>(
+    conn: &E,
+    observation_id: &str,
+    members: &[crate::PendingObservation],
+) -> Result<Vec<SourceEvidenceEntry>, CellError> {
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    let mut ids = Vec::with_capacity(members.len().saturating_add(1));
+    ids.push(observation_id);
+    for member in members {
+        ids.push(member.observation_id.as_str());
+    }
+    let mut out = Vec::new();
+    for id in ids {
+        let rows = conn.query(
+            &format!(
+                "SELECT \"observation_id\", \"connection_id\", \"captured_commit_seq\" \
+                 FROM \"{table}\" WHERE \"observation_id\" = ?1 \
+                 ORDER BY \"connection_id\", \"captured_commit_seq\""
+            ),
+            params![id],
+        )?;
+        for values in rows {
+            let row = SqlRow(values);
+            out.push(SourceEvidenceEntry {
+                observation_id: row.get(0)?,
+                connection_id: row.get(1)?,
+                captured_commit_seq: row.get(2)?,
+            });
+        }
+    }
+    out.sort_by(|a, b| {
+        a.observation_id
+            .cmp(&b.observation_id)
+            .then_with(|| a.connection_id.cmp(&b.connection_id))
+            .then_with(|| a.captured_commit_seq.cmp(&b.captured_commit_seq))
+    });
+    out.dedup();
+    Ok(out)
+}
+
+/// Restore exported `_norn_source_evidence` rows for one consumed observation
+/// and its page members during `rebuild_export_history`.
+pub(crate) fn restore_source_evidence<E: SqlEngine>(
+    conn: &E,
+    observation_id: &str,
+    members: &[crate::PendingObservation],
+    entries: &[SourceEvidenceEntry],
+) -> Result<bool, CellError> {
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    for entry in entries {
+        let allowed = entry.observation_id == observation_id
+            || members
+                .iter()
+                .any(|member| member.observation_id == entry.observation_id);
+        if !allowed || entry.captured_commit_seq < -1 {
+            return Ok(false);
+        }
+        conn.execute(
+            &format!(
+                "INSERT OR IGNORE INTO \"{table}\" \
+                 (\"observation_id\", \"connection_id\", \"captured_commit_seq\") \
+                 VALUES (?1, ?2, ?3)"
+            ),
+            params![
+                entry.observation_id.as_str(),
+                entry.connection_id.as_str(),
+                entry.captured_commit_seq
+            ],
+        )?;
+    }
+    Ok(true)
+}
+
+/// Decode one `ConsumedInput::Observation` preimage without buffering decimals.
+pub(crate) fn decode_observation_input(input: &Value) -> Result<ConsumedInput, String> {
+    let row: crate::PendingObservation = norn_ir::runtime::decode(input)?;
+    let members = input
+        .get("members")
+        .map_or_else(|| Ok(Vec::new()), norn_ir::runtime::decode)?;
+    let source_evidence = input
+        .get("sourceEvidence")
+        .map_or_else(|| Ok(Vec::new()), norn_ir::runtime::decode)?;
+    Ok(ConsumedInput::Observation {
+        position: row.position,
+        observation_id: row.observation_id,
+        observed: row.observed,
+        members,
+        source_evidence,
+    })
+}
+
 /// The preimage of a consumed delivery, as recorded in the export.
 #[derive(Debug, Serialize)]
 #[serde(
@@ -136,6 +240,9 @@ pub(crate) enum ConsumedInput {
         /// order; absent for every other delivery.
         #[serde(skip_serializing_if = "Vec::is_empty")]
         members: Vec<crate::PendingObservation>,
+        /// Durable `_norn_source_evidence` attribution rows for this delivery.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        source_evidence: Vec<SourceEvidenceEntry>,
     },
     Result {
         position: u64,

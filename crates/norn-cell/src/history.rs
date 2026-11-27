@@ -2292,6 +2292,7 @@ pub(crate) fn restore_input<E: SqlEngine>(
             observation_id,
             observed,
             members,
+            source_evidence,
         } => {
             if position == 0
                 || record.batch.consumes
@@ -2308,11 +2309,19 @@ pub(crate) fn restore_input<E: SqlEngine>(
                 params![to_i64(position, "position")?, observation_id, canonical_json(&observed)?],
             ).map_err(|_invalid| mismatch())?;
             // OBS-PAGE-1: the page's members, pending again at their old positions.
-            for member in members {
+            for member in &members {
                 store.conn.execute(
                     &format!("INSERT INTO \"{INBOX}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, NULL)"),
                     params![to_i64(member.position, "position")?, member.observation_id, canonical_json(&member.observed)?],
                 ).map_err(|_invalid| mismatch())?;
+            }
+            if !crate::export_journal::restore_source_evidence(
+                &store.conn,
+                &observation_id,
+                &members,
+                &source_evidence,
+            )? {
+                return Err(mismatch());
             }
         }
         ConsumedInput::Timer { commit_seq, timer } => {
@@ -2446,19 +2455,7 @@ fn restore_run_history<E: SqlEngine>(
 // numeric values, which would round exact runtime decimals in these preimages.
 fn decode_input(input: &norn_ir::RuntimeValue) -> Result<ConsumedInput, String> {
     match input.get("kind").and_then(norn_ir::RuntimeValue::as_str) {
-        Some("observation") => {
-            let row: crate::PendingObservation = norn_ir::runtime::decode(input)?;
-            let members = match input.get("members") {
-                Some(members) => norn_ir::runtime::decode(members)?,
-                None => Vec::new(),
-            };
-            Ok(ConsumedInput::Observation {
-                position: row.position,
-                observation_id: row.observation_id,
-                observed: row.observed,
-                members,
-            })
-        }
+        Some("observation") => crate::export_journal::decode_observation_input(input),
         Some("timer") => {
             let row: crate::PendingTimer = norn_ir::runtime::decode(input)?;
             Ok(ConsumedInput::Timer {

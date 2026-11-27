@@ -1199,7 +1199,7 @@ mod tests {
         profile: &PullProfile,
         party_name: &str,
         ver: &str,
-        payload: Value,
+        payload: &Value,
         now_ms: u64,
     ) -> norn_kernel::Observed<RuntimeValue> {
         let mapped = json!({
@@ -1237,7 +1237,7 @@ mod tests {
             &profile,
             &name,
             "2026-11-12 20:00:00",
-            bad_payload,
+            &bad_payload,
             T0.saturating_add(100),
         );
         let out_q = ingest_party_row(
@@ -1258,7 +1258,7 @@ mod tests {
             &profile,
             &name,
             "2099-01-01 00:00:00",
-            party_row,
+            &party_row,
             T0.saturating_add(110),
         );
         let out_b = ingest_party_row(
@@ -1404,13 +1404,13 @@ mod tests {
         let mut bad_payload = party_row.clone();
         bad_payload["custom_norn_ref"] = Value::Null;
         let (t100, t110) = (T0.saturating_add(100), T0.saturating_add(110));
-        let bad = party_obs(&profile, &name, "2026-11-12 20:00:00", bad_payload, t100);
+        let bad = party_obs(&profile, &name, "2026-11-12 20:00:00", &bad_payload, t100);
         let q_out = ingest_party_row(&host, "erpnext.a", bad, &name, "2026-11-12 20:00:00", t100);
         assert!(matches!(
             q_out[0].outcome,
             norn_cell::MappingOutcome::Quarantined(_)
         ));
-        let corr = party_obs(&profile, &name, "2099-01-01 00:00:00", party_row, t110);
+        let corr = party_obs(&profile, &name, "2099-01-01 00:00:00", &party_row, t110);
         ingest_party_row(
             &host,
             "erpnext.b",
@@ -1491,7 +1491,7 @@ mod tests {
             &profile,
             &name,
             "2026-11-12 20:00:00",
-            bad1.clone(),
+            &bad1,
             T0.saturating_add(100),
         );
         let q1 = ingest_party_row(
@@ -1521,7 +1521,7 @@ mod tests {
             &profile,
             &name,
             "2099-01-01 00:00:00",
-            party_row,
+            &party_row,
             T0.saturating_add(130),
         );
         ingest_party_row(
@@ -1538,7 +1538,7 @@ mod tests {
             &profile,
             &name,
             "2099-01-02 00:00:00",
-            bad1,
+            &bad1,
             T0.saturating_add(140),
         );
         let q2 = ingest_party_row(

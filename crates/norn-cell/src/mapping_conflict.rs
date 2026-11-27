@@ -979,3 +979,185 @@ pub(crate) fn verify_source_fence_in_tx<E: SqlEngine>(
     }
     Ok(())
 }
+
+#[cfg(all(test, feature = "native"))]
+#[allow(
+    clippy::expect_used,
+    reason = "unit tests for source evidence preservation"
+)]
+mod tests {
+    use super::*;
+    use crate::mapping_bundle::{CURRENT_DERIVATION, MappingInput};
+    use norn_ir::provenance::UtcTimestamp;
+    use norn_kernel::Provenance;
+
+    fn sample_bundle(
+        source_version: &str,
+        event_id: &str,
+        recorded_at: &str,
+    ) -> Observed<RuntimeValue> {
+        let bundle = MappingBundle {
+            digest: format!("d-{event_id}"),
+            raw: norn_ir::runtime_object! {
+                "kind" => "upsert",
+                "source" => "erp",
+                "source_id" => "P-1",
+                "event_id" => event_id,
+                "source_version" => source_version,
+                "payload_digest" => "p",
+            },
+            input: MappingInput {
+                mapping: "m.mapping".into(),
+                dataset: "Party".into(),
+                connector_instance: "inst".into(),
+                partition: "Party".into(),
+                recorded_at: UtcTimestamp(recorded_at.into()),
+            },
+            definitions_version: 1,
+            definitions_digest: "def".into(),
+            artifact_pins: Vec::new(),
+            records: Vec::new(),
+            diagnostics: Vec::new(),
+            derivation: CURRENT_DERIVATION,
+            reprocesses: None,
+        };
+        Observed {
+            id: ObservationId(format!("mapping-bundle:d-{event_id}")),
+            provenance: Provenance {
+                source: "erp".into(),
+                source_id: "P-1".into(),
+                observed_at: norn_kernel::LogicalTime::from_millis(100),
+                mapping_version: "1.0.0".into(),
+            },
+            input: norn_ir::runtime::encode(&bundle).expect("encode bundle"),
+        }
+    }
+
+    fn open_test_store() -> (CellStore<crate::engine::NativeEngine>, crate::Model) {
+        let def: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "demo.Item",
+            "properties": [{"id": "name", "type": {"kind": "text"}}]
+        }))
+        .expect("type");
+        let model = crate::Model::from_definitions(&[def], &[]).expect("model");
+        let store = CellStore::open_in_memory(model.clone()).expect("store");
+        (store, model)
+    }
+
+    #[test]
+    fn unattributed_quarantine_evidence_persists_after_later_reprocess() {
+        let (store, _) = open_test_store();
+        let q_obs = sample_bundle("2026-01-01", "ev-q", "2026-01-01T00:00:00Z");
+        let q_json = serde_json::to_string(&q_obs).expect("q json");
+        // Unattributed quarantine captured at seq 1, later consumed by reprocess at seq 3
+        // (with an earlier consumed inbox row at position 1 and q at position 2).
+        store
+            .conn
+            .execute(
+                &format!(
+                    "INSERT INTO \"{INBOX}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") \
+                     VALUES (1, 'other:1', '{{}}', 1), (2, ?1, ?2, 3)"
+                ),
+                params![q_obs.id.0.as_str(), q_json.as_str()],
+            )
+            .expect("insert q");
+        store
+            .conn
+            .execute(
+                &format!(
+                    "INSERT INTO \"{}\" (\"observation_id\", \"connection_id\", \"captured_commit_seq\") \
+                     VALUES (?1, '', 1)",
+                    crate::source_cursor::SOURCE_EVIDENCE
+                ),
+                params![q_obs.id.0.as_str()],
+            )
+            .expect("insert q evidence");
+        let at_frontier_2 = store
+            .read()
+            .unresolved_quarantined_datasets_at("m.mapping", Some("conn.a"), Some((2, 100)))
+            .expect("quarantined at 2");
+        assert!(at_frontier_2.contains("Party"));
+    }
+
+    #[test]
+    fn unattributed_correction_resolves_quarantine_and_survives_export_replay() {
+        let (store, model) = open_test_store();
+        let q_obs = sample_bundle("2026-01-01", "ev-q2", "2026-01-01T00:00:00Z");
+        let c_obs = sample_bundle("2026-01-02", "ev-c", "2026-01-02T00:00:00Z");
+        let q_json = serde_json::to_string(&q_obs).expect("q json");
+        let c_json = serde_json::to_string(&c_obs).expect("c json");
+        store
+            .conn
+            .execute(
+                &format!(
+                    "INSERT INTO \"{INBOX}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") \
+                     VALUES (1, ?1, ?2, NULL), (2, ?3, ?4, NULL)"
+                ),
+                params![
+                    q_obs.id.0.as_str(),
+                    q_json.as_str(),
+                    c_obs.id.0.as_str(),
+                    c_json.as_str(),
+                ],
+            )
+            .expect("insert q + c");
+        store
+            .conn
+            .execute(
+                &format!(
+                    "INSERT INTO \"{}\" (\"observation_id\", \"connection_id\", \"captured_commit_seq\") \
+                     VALUES (?1, 'conn.a', 1), (?2, '', 1)",
+                    crate::source_cursor::SOURCE_EVIDENCE
+                ),
+                params![q_obs.id.0.as_str(), c_obs.id.0.as_str()],
+            )
+            .expect("insert q + c evidence");
+        let pre = crate::export_journal::consumed_input(
+            &store.read(),
+            Some(&crate::Consumption::Observation {
+                observation_id: c_obs.id.0.clone(),
+            }),
+        )
+        .expect("consumed_input")
+        .expect("preimage");
+        let decoded = crate::export_journal::decode_observation_input(&pre).expect("decode");
+        let replayed = CellStore::open_in_memory(model).expect("replayed");
+        let restored = match decoded {
+            crate::export_journal::ConsumedInput::Observation {
+                observation_id,
+                members,
+                source_evidence,
+                ..
+            } => {
+                assert_eq!(source_evidence.len(), 1);
+                crate::export_journal::restore_source_evidence(
+                    &replayed.conn,
+                    &observation_id,
+                    &members,
+                    &source_evidence,
+                )
+                .expect("restore")
+            }
+            crate::export_journal::ConsumedInput::Result { .. }
+            | crate::export_journal::ConsumedInput::Timer { .. } => false,
+        };
+        assert!(restored);
+        store
+            .conn
+            .execute(
+                &format!(
+                    "UPDATE \"{INBOX}\" SET \"consumed_commit_seq\" = 2 WHERE \"observation_id\" = ?1"
+                ),
+                params![c_obs.id.0.as_str()],
+            )
+            .expect("consume c");
+        let live = store
+            .read()
+            .unresolved_quarantined_datasets_at("m.mapping", Some("conn.a"), None)
+            .expect("live quarantined");
+        assert!(
+            live.is_empty(),
+            "unattributed correction must resolve conn.a: {live:?}"
+        );
+    }
+}
