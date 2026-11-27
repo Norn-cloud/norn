@@ -1856,19 +1856,38 @@ mod tests {
             Some("partial")
         );
 
-        // Landing a corrected version of the same source row clears unresolved quarantine.
-        host.ingest(&[rows[0].clone()]).expect("land corrected row");
+        let with_version = |ver: &str, event_id: &str| {
+            let mut row = rows[0].clone();
+            if let RuntimeValue::Object(obj) = &mut row.0.input {
+                obj.insert("source_version".into(), RuntimeValue::String(ver.into()));
+                obj.insert("event_id".into(), RuntimeValue::String(event_id.into()));
+            }
+            row
+        };
+        // Landing an OLDER source version must NOT clear the unresolved quarantine.
+        host.ingest(&[with_version("2020-01-01 00:00:00", "older-party-1")])
+            .expect("land older version");
         assert!(
             host.unresolved_quarantined_datasets("erpnext.rest.mapping")
-                .expect("unresolved after fix")
+                .expect("still unresolved")
+                .contains(&dataset)
+        );
+        // Landing a STRICTLY NEWER corrected version clears unresolved quarantine.
+        host.ingest(&[with_version("2099-01-01 00:00:00", "corrected-party-1")])
+            .expect("land newer version");
+        assert!(
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping")
+                .expect("cleared")
                 .is_empty()
         );
         let t2 = T0.saturating_add(20);
         sources
             .claim("erpnext.rest", Trigger::Manual, "user:owner@demo", t2)
             .expect("claim 2");
-        let ok_summary = run_erpnext_sync(&host, &mut sources, &profile, t2, BTreeMap::new());
-        assert_eq!(ok_summary.outcome, "ok", "{ok_summary:#?}");
+        assert_eq!(
+            run_erpnext_sync(&host, &mut sources, &profile, t2, BTreeMap::new()).outcome,
+            "ok"
+        );
     }
 
     /// Regression 18: retained pre-upgrade B3 `norn.source.page.v2` digests

@@ -15,6 +15,14 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
     /// Changed pins/outputs refuse `core.boundary.bundle_mismatch`. Source deletes
     /// remain outside this mapping-bundle profile.
     pub fn process_mapping_bundle(&mut self, observation_id: &str) -> Result<bool, CellError> {
+        self.process_mapping_bundle_with_lease(observation_id, None)
+    }
+
+    pub(crate) fn process_mapping_bundle_with_lease(
+        &mut self,
+        observation_id: &str,
+        source_lease: Option<(&str, &str, u64, u64)>,
+    ) -> Result<bool, CellError> {
         let Some(pending) = self.store().read().pending_observation(observation_id)? else {
             return Ok(false);
         };
@@ -68,8 +76,11 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         authorization
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-        self.commit_observed_evidence(commit, &authorization, &bundles)
-            .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
+        self.commit_observed_evidence_with_lease(commit, &authorization, &bundles, source_lease)
+            .map_err(|e| match e {
+                norn_kernel::CommitError::Host(err @ CellError::SourceLeaseFenced { .. }) => err,
+                other => CellError::ObservationCommit(Box::new(other)),
+            })?;
         Ok(true)
     }
 }
@@ -187,6 +198,20 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         &mut self,
         observation_id: &str,
     ) -> Result<MappingOutcome, CellError> {
+        self.process_mapping_outcome_checked(observation_id, None)
+    }
+
+    /// Like [`Self::process_mapping_outcome`], additionally verifying an active
+    /// source lease inside the SQLite commit transaction so a multi-host
+    /// takeover between capture and promotion cannot publish stale reports.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store failures.
+    pub fn process_mapping_outcome_checked(
+        &mut self,
+        observation_id: &str,
+        source_lease: Option<(&str, &str, u64, u64)>,
+    ) -> Result<MappingOutcome, CellError> {
         if observation_id.starts_with("mapping-conflict:")
             || observation_id.starts_with("mapping-identity:")
         {
@@ -221,13 +246,50 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             reasons.dedup();
             return Ok(MappingOutcome::Quarantined(reasons));
         }
-        match self.process_mapping_bundle(observation_id) {
+        match self.process_mapping_bundle_with_lease(observation_id, source_lease) {
             Ok(true) => Ok(MappingOutcome::Landed),
             Ok(false) => Ok(MappingOutcome::AlreadyLanded),
             Err(error) if crate::mapping_page::is_store_failure(&error) => Err(error),
             Err(error) => Ok(MappingOutcome::Quarantined(vec![
                 QuarantineReason::refused(&error),
             ])),
+        }
+    }
+
+    /// Like [`Self::process_mapping_page`], additionally verifying an active
+    /// source lease inside the SQLite commit transaction that promotes the page.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store failures.
+    pub fn process_mapping_page_checked(
+        &mut self,
+        page_id: &str,
+        source_lease: Option<(&str, &str, u64, u64)>,
+    ) -> Result<Option<Vec<(String, MappingOutcome)>>, CellError> {
+        let Some((observed, members)) = self.pending_page(page_id)? else {
+            return Ok(None);
+        };
+        match self.commit_page_with_lease(&observed, &members, source_lease) {
+            Ok(()) => Ok(Some(
+                members
+                    .into_iter()
+                    .map(|(id, _)| (id, MappingOutcome::Landed))
+                    .collect(),
+            )),
+            Err(error) if crate::mapping_page::is_store_failure(&error) => Err(error),
+            Err(_refused) => {
+                let mut outcomes = Vec::with_capacity(members.len());
+                for (id, _) in members {
+                    let outcome = self.process_mapping_outcome_checked(&id, source_lease)?;
+                    outcomes.push((id, outcome));
+                }
+                if let Some((page_obs, remaining)) = self.pending_page(page_id)?
+                    && remaining.is_empty()
+                {
+                    self.commit_page_with_lease(&page_obs, &[], source_lease)?;
+                }
+                Ok(Some(outcomes))
+            }
         }
     }
 

@@ -516,9 +516,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// Datasets of `mapping_id` that still hold unresolved quarantined inbox
-    /// rows (`mapping-bundle:` without a later landed correction for the same
-    /// source identity, or any unconsumed `mapping-conflict:` /
-    /// `mapping-identity:`).
+    /// rows (`mapping-bundle:` without a strictly newer landed correction under
+    /// the declared [`norn_ir::VersionKind`] ordering, or any unconsumed
+    /// `mapping-conflict:` / `mapping-identity:`).
     ///
     /// # Errors
     /// Store query errors.
@@ -526,26 +526,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         mapping_id: &str,
     ) -> Result<BTreeSet<String>, CellError> {
-        let sql = format!(
-            "SELECT DISTINCT json_extract(b1.\"observed\", '$.input.input.dataset') \
-             FROM \"{INBOX}\" b1 \
-             WHERE b1.\"consumed_commit_seq\" IS NULL \
-               AND b1.\"observation_id\" LIKE 'mapping-bundle:%' \
-               AND json_extract(b1.\"observed\", '$.input.input.mapping') = ?1 \
-               AND NOT EXISTS ( \
-                 SELECT 1 FROM \"{INBOX}\" b2 \
-                 WHERE b2.\"consumed_commit_seq\" IS NOT NULL \
-                   AND b2.\"position\" > b1.\"position\" \
-                   AND b2.\"observation_id\" LIKE 'mapping-bundle:%' \
-                   AND json_extract(b2.\"observed\", '$.input.input.mapping') = ?1 \
-                   AND json_extract(b2.\"observed\", '$.input.input.dataset') = json_extract(b1.\"observed\", '$.input.input.dataset') \
-                   AND json_extract(b2.\"observed\", '$.input.input.connectorInstance') = json_extract(b1.\"observed\", '$.input.input.connectorInstance') \
-                   AND json_extract(b2.\"observed\", '$.input.input.partition') = json_extract(b1.\"observed\", '$.input.input.partition') \
-                   AND json_extract(b2.\"observed\", '$.input.raw.source') = json_extract(b1.\"observed\", '$.input.raw.source') \
-                   AND json_extract(b2.\"observed\", '$.input.raw.source_id') = json_extract(b1.\"observed\", '$.input.raw.source_id') \
-               ) \
-             UNION \
-             SELECT DISTINCT json_extract(\"observed\", '$.input.incoming.input.dataset') \
+        let mut datasets = BTreeSet::new();
+        let disputes_sql = format!(
+            "SELECT DISTINCT json_extract(\"observed\", '$.input.incoming.input.dataset') \
              FROM \"{INBOX}\" \
              WHERE \"consumed_commit_seq\" IS NULL \
                AND \"observation_id\" LIKE 'mapping-conflict:%' \
@@ -557,17 +540,160 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                AND \"observation_id\" LIKE 'mapping-identity:%' \
                AND json_extract(\"observed\", '$.input.bundle.input.mapping') = ?1"
         );
-        let rows = self.conn.query(&sql, params![mapping_id])?;
-        let mut datasets = BTreeSet::new();
-        for values in rows {
+        for values in self.conn.query(&disputes_sql, params![mapping_id])? {
             if let Some(ds) = crate::engine::SqlRow(values).get::<Option<String>>(0)?
                 && !ds.is_empty()
             {
                 datasets.insert(ds);
             }
         }
+        let pending_sql = format!(
+            "SELECT \"observed\" FROM \"{INBOX}\" \
+             WHERE \"consumed_commit_seq\" IS NULL \
+               AND \"observation_id\" LIKE 'mapping-bundle:%' \
+               AND json_extract(\"observed\", '$.input.input.mapping') = ?1"
+        );
+        let landed_sql = format!(
+            "SELECT json_extract(\"observed\", '$.input.raw.source_version'), \
+                    json_extract(\"observed\", '$.input.raw.version_kind') \
+             FROM \"{INBOX}\" \
+             WHERE \"consumed_commit_seq\" IS NOT NULL \
+               AND \"observation_id\" LIKE 'mapping-bundle:%' \
+               AND json_extract(\"observed\", '$.input.input.mapping') = ?1 \
+               AND json_extract(\"observed\", '$.input.input.dataset') = ?2 \
+               AND json_extract(\"observed\", '$.input.input.connectorInstance') = ?3 \
+               AND json_extract(\"observed\", '$.input.input.partition') = ?4 \
+               AND json_extract(\"observed\", '$.input.raw.source') = ?5 \
+               AND json_extract(\"observed\", '$.input.raw.source_id') = ?6"
+        );
+        for values in self.conn.query(&pending_sql, params![mapping_id])? {
+            let encoded: String = crate::engine::SqlRow(values).get(0)?;
+            let Ok(observed) = serde_json::from_str::<Observed<RuntimeValue>>(&encoded) else {
+                continue;
+            };
+            let Ok(bundle) = norn_ir::runtime::decode::<MappingBundle>(&observed.input) else {
+                continue;
+            };
+            if datasets.contains(&bundle.input.dataset) {
+                continue;
+            }
+            let Some(q_ver) = parse_raw_source_version(&bundle.raw) else {
+                datasets.insert(bundle.input.dataset);
+                continue;
+            };
+            let (Some(source), Some(source_id)) = (
+                bundle.raw.get("source").and_then(RuntimeValue::as_str),
+                bundle.raw.get("source_id").and_then(RuntimeValue::as_str),
+            ) else {
+                datasets.insert(bundle.input.dataset);
+                continue;
+            };
+            let landed = self.conn.query(
+                &landed_sql,
+                params![
+                    mapping_id,
+                    bundle.input.dataset.as_str(),
+                    bundle.input.connector_instance.as_str(),
+                    bundle.input.partition.as_str(),
+                    source,
+                    source_id,
+                ],
+            )?;
+            let superseded = landed.into_iter().any(|row_vals| {
+                let row = crate::engine::SqlRow(row_vals);
+                let Ok(Some(ver)) = row.get::<Option<String>>(0) else {
+                    return false;
+                };
+                let kind_wire = row.get::<Option<String>>(1).ok().flatten();
+                parse_version_parts(&ver, kind_wire.as_deref())
+                    .is_some_and(|lv| lv.try_cmp(&q_ver) == Ok(std::cmp::Ordering::Greater))
+            });
+            if !superseded {
+                datasets.insert(bundle.input.dataset);
+            }
+        }
         Ok(datasets)
     }
+
+    /// Whether legacy (unbound) durable cursors or `source.Connection.watermark`
+    /// for `source_id` carry direct proof of belonging to `expected_binding`
+    /// (`<id>@<version>#<sha256>`).
+    ///
+    /// # Errors
+    /// Store or definition decoding errors.
+    pub fn legacy_cursors_match_mapping_binding(
+        &self,
+        world: &str,
+        source_id: &str,
+        mapping_id: &str,
+        expected_binding: &str,
+    ) -> Result<bool, CellError> {
+        let cursors = self.source_cursors(source_id)?;
+        if !cursors.is_empty() {
+            let mut fallback = BTreeMap::new();
+            for (dataset, record) in &cursors {
+                match legacy_source_replay_allowed(
+                    self.conn,
+                    &record.records,
+                    Some(mapping_id),
+                    Some(expected_binding),
+                )? {
+                    true if !record.records.is_empty() => {}
+                    false if !record.records.is_empty() => return Ok(false),
+                    _ => {
+                        let Some(canonical) =
+                            crate::compute::freshness::validate_cursor_json(&record.cursor_json)
+                        else {
+                            return Ok(false);
+                        };
+                        fallback.insert(dataset.clone(), canonical);
+                    }
+                }
+            }
+            if fallback.is_empty() {
+                return Ok(true);
+            }
+            return self.connection_history_proves_cursors(
+                world,
+                source_id,
+                (mapping_id, expected_binding),
+                &fallback,
+            );
+        }
+        if !self.model().has_type("source.Connection") {
+            return Ok(false);
+        }
+        let Some(conn) = self.object(world, "source.Connection", source_id)? else {
+            return Ok(false);
+        };
+        let conn_cursors = crate::compute::freshness::strict_connection_cursors(&conn);
+        if conn_cursors.is_empty() {
+            return Ok(false);
+        }
+        self.connection_history_proves_cursors(
+            world,
+            source_id,
+            (mapping_id, expected_binding),
+            &conn_cursors,
+        )
+    }
+}
+
+fn parse_version_parts(version: &str, kind_wire: Option<&str>) -> Option<norn_ir::SourceVersion> {
+    let kind = match kind_wire {
+        Some(wire) => norn_ir::VersionKind::parse_wire(wire)?,
+        None => norn_ir::VersionKind::Lexicographical,
+    };
+    norn_ir::SourceVersion::parse(kind, version).ok()
+}
+
+fn parse_raw_source_version(raw: &RuntimeValue) -> Option<norn_ir::SourceVersion> {
+    let ver = raw.get("source_version").and_then(RuntimeValue::as_str)?;
+    let kind_wire = match raw.get("version_kind").filter(|v| !v.is_null()) {
+        Some(v) => Some(v.as_str()?),
+        None => None,
+    };
+    parse_version_parts(ver, kind_wire)
 }
 
 #[derive(Serialize)]
@@ -665,12 +791,8 @@ pub(crate) fn legacy_source_replay_allowed<E: SqlEngine>(
     mapping: Option<&str>,
     active_binding: Option<&str>,
 ) -> Result<bool, CellError> {
-    let mut saw_bundle = false;
+    let mut saw_evidence = false;
     for id in records {
-        if !id.starts_with("mapping-bundle:") {
-            continue;
-        }
-        saw_bundle = true;
         let encoded: Option<String> = conn.query_optional(
             &format!("SELECT \"observed\" FROM \"{INBOX}\" WHERE \"observation_id\" = ?1"),
             params![id.as_str()],
@@ -682,9 +804,27 @@ pub(crate) fn legacy_source_replay_allowed<E: SqlEngine>(
         let Ok(observed) = serde_json::from_str::<Observed<RuntimeValue>>(&encoded) else {
             return Ok(false);
         };
-        let Ok(bundle) = norn_ir::runtime::decode::<MappingBundle>(&observed.input) else {
+        let bundle = if id.starts_with("mapping-bundle:") {
+            let Ok(bundle) = norn_ir::runtime::decode::<MappingBundle>(&observed.input) else {
+                return Ok(false);
+            };
+            bundle
+        } else if id.starts_with("mapping-conflict:") {
+            let Ok(conflict) = norn_ir::runtime::decode::<MappingConflict>(&observed.input) else {
+                return Ok(false);
+            };
+            conflict.incoming
+        } else if id.starts_with("mapping-identity:") {
+            let Ok(identity) = norn_ir::runtime::decode::<crate::mapping_identity::IdentityEvidence>(
+                &observed.input,
+            ) else {
+                return Ok(false);
+            };
+            identity.bundle
+        } else {
             return Ok(false);
         };
+        saw_evidence = true;
         if mapping.is_some_and(|m| bundle.input.mapping != m) {
             return Ok(false);
         }
@@ -697,5 +837,5 @@ pub(crate) fn legacy_source_replay_allowed<E: SqlEngine>(
             return Ok(false);
         }
     }
-    Ok(saw_bundle || (records.is_empty() && mapping.is_none()))
+    Ok(saw_evidence || (records.is_empty() && mapping.is_none()))
 }

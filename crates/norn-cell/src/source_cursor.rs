@@ -347,17 +347,24 @@ pub(crate) fn check_capture_precondition<E: SqlEngine>(
     if let Some((v2, mapping, active_binding)) = legacy_v2
         && let Some(existing_pending) =
             read_pending_by_digest(conn, &advance.connection_id, &advance.dataset, v2)?
-        && crate::mapping_conflict::legacy_source_replay_allowed(
+    {
+        if crate::mapping_conflict::legacy_source_replay_allowed(
             conn,
             &existing_pending.records,
             mapping,
             active_binding,
-        )?
-    {
-        return Ok(Precondition::IdempotentReplay {
-            matched_digest: v2.to_owned(),
-            pages: existing_pending.pages,
-            records: existing_pending.records,
+        )? {
+            return Ok(Precondition::IdempotentReplay {
+                matched_digest: v2.to_owned(),
+                pages: existing_pending.pages,
+                records: existing_pending.records,
+            });
+        }
+        return Err(CellError::SourceCursorConflict {
+            connection_id: advance.connection_id.clone(),
+            dataset: advance.dataset.clone(),
+            expected: advance.expected_previous_cursor.clone(),
+            actual: Some(v2.to_owned()),
         });
     }
     let current = read_cursor(conn, &advance.connection_id, &advance.dataset)?;

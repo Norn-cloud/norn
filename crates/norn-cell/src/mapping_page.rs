@@ -115,6 +115,7 @@ pub(crate) fn is_store_failure(error: &CellError) -> bool {
             | CellError::Engine(_)
             | CellError::Verifying(_)
             | CellError::Fenced(_)
+            | CellError::SourceLeaseFenced { .. }
             | CellError::LedgerCorrupt { .. }
     )
 }
@@ -619,7 +620,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         clippy::type_complexity,
         reason = "the page row with its pending members"
     )]
-    fn pending_page(
+    pub(crate) fn pending_page(
         &self,
         page_id: &str,
     ) -> Result<Option<(Observed<RuntimeValue>, Vec<(String, MappingBundle)>)>, CellError> {
@@ -646,6 +647,17 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         &mut self,
         page: &Observed<RuntimeValue>,
         members: &[(String, MappingBundle)],
+    ) -> Result<(), CellError> {
+        self.commit_page_with_lease(page, members, None)
+    }
+
+    /// One commit consuming `page` and applying `members` in page order,
+    /// optionally verifying an active source lease inside the commit write tx.
+    pub(crate) fn commit_page_with_lease(
+        &mut self,
+        page: &Observed<RuntimeValue>,
+        members: &[(String, MappingBundle)],
+        source_lease: Option<(&str, &str, u64, u64)>,
     ) -> Result<(), CellError> {
         let model = self.store().model().clone();
         let catalog = TypeCatalog::new(model.object_types())
@@ -696,8 +708,11 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         authorization
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-        self.commit_observed_evidence(commit, &authorization, &bundles)
-            .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
+        self.commit_observed_evidence_with_lease(commit, &authorization, &bundles, source_lease)
+            .map_err(|e| match e {
+                norn_kernel::CommitError::Host(err @ CellError::SourceLeaseFenced { .. }) => err,
+                other => CellError::ObservationCommit(Box::new(other)),
+            })?;
         Ok(())
     }
 }
@@ -895,91 +910,4 @@ impl<E: SqlEngine> crate::StoreReader<'_, E> {
             |row| row.get(0),
         )
     }
-
-    /// Whether legacy (unbound) durable cursors or `source.Connection.watermark`
-    /// for `source_id` carry direct proof of belonging to `expected_binding`
-    /// (`<id>@<version>#<sha256>`).
-    ///
-    /// # Errors
-    /// Store or definition decoding errors.
-    pub fn legacy_cursors_match_mapping_binding(
-        &self,
-        world: &str,
-        source_id: &str,
-        mapping_id: &str,
-        expected_binding: &str,
-    ) -> Result<bool, CellError> {
-        let cursors = self.source_cursors(source_id)?;
-        if !cursors.is_empty() {
-            let mut fallback = BTreeMap::new();
-            for (dataset, record) in &cursors {
-                match cursor_bundles_match_binding(self, record, mapping_id, expected_binding) {
-                    Some(true) => {}
-                    Some(false) => return Ok(false),
-                    None => {
-                        let Some(canonical) =
-                            crate::compute::freshness::validate_cursor_json(&record.cursor_json)
-                        else {
-                            return Ok(false);
-                        };
-                        fallback.insert(dataset.clone(), canonical);
-                    }
-                }
-            }
-            if fallback.is_empty() {
-                return Ok(true);
-            }
-            return self.connection_history_proves_cursors(
-                world,
-                source_id,
-                (mapping_id, expected_binding),
-                &fallback,
-            );
-        }
-        if !self.model().has_type("source.Connection") {
-            return Ok(false);
-        }
-        let Some(conn) = self.object(world, "source.Connection", source_id)? else {
-            return Ok(false);
-        };
-        let conn_cursors = crate::compute::freshness::strict_connection_cursors(&conn);
-        if conn_cursors.is_empty() {
-            return Ok(false);
-        }
-        self.connection_history_proves_cursors(
-            world,
-            source_id,
-            (mapping_id, expected_binding),
-            &conn_cursors,
-        )
-    }
-}
-
-fn cursor_bundles_match_binding<E: SqlEngine>(
-    reader: &StoreReader<'_, E>,
-    record: &crate::source_cursor::SourceCursorRecord,
-    mapping_id: &str,
-    expected_binding: &str,
-) -> Option<bool> {
-    let mut saw_bundle = false;
-    for id in &record.records {
-        if !id.starts_with("mapping-bundle:") {
-            continue;
-        }
-        saw_bundle = true;
-        let Ok(bundle) = reader.inbox_bundle(id) else {
-            return Some(false);
-        };
-        if bundle.input.mapping != mapping_id {
-            return Some(false);
-        }
-        let pin_matches = bundle
-            .artifact_pins
-            .iter()
-            .any(|(art_id, ver, sha)| format!("{art_id}@{ver}#{sha}") == expected_binding);
-        if !pin_matches {
-            return Some(false);
-        }
-    }
-    saw_bundle.then_some(true)
 }

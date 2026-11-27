@@ -457,7 +457,7 @@ impl<E: SqlEngine> DevHost<E> {
                 let captured =
                     cell.capture_source_report_checked(std::slice::from_ref(raw), input, lease)?;
                 for (page_id, _) in &captured.pages {
-                    if let Some(outcomes) = cell.process_mapping_page(page_id)? {
+                    if let Some(outcomes) = cell.process_mapping_page_checked(page_id, lease)? {
                         for (_, outcome) in outcomes {
                             if let MappingOutcome::Quarantined(reasons) = outcome {
                                 return Err(CellError::Engine(format!(
@@ -469,7 +469,7 @@ impl<E: SqlEngine> DevHost<E> {
                 }
                 for record_id in &captured.records {
                     if let MappingOutcome::Quarantined(reasons) =
-                        cell.process_mapping_outcome(record_id)?
+                        cell.process_mapping_outcome_checked(record_id, lease)?
                     {
                         return Err(CellError::Engine(format!(
                             "source report quarantined: {reasons:?}"

@@ -98,6 +98,7 @@ pub(crate) struct CommitOptions<'a> {
     pub(crate) mode: crate::function_receipt::ReceiptCommitMode,
     pub(crate) stamp: Option<norn_kernel::CreatorStampProof>,
     pub(crate) settling: Option<crate::store::ParkedSettlement>,
+    pub(crate) source_lease: Option<(&'a str, &'a str, u64, u64)>,
 }
 
 /// The simulated outside world: maps a performed command to the kernel input
@@ -1614,9 +1615,22 @@ where
 
     pub(crate) fn commit_observed_evidence(
         &mut self,
+        commit: CellCommit<E, C, I>,
+        authorization: &ObservationAuthorization,
+        mapped: &[crate::mapping_bundle::MappingBundle],
+    ) -> Result<CommitReceipt, CommitError<CellError>>
+    where
+        E: From<ObservationEvent>,
+    {
+        self.commit_observed_evidence_with_lease(commit, authorization, mapped, None)
+    }
+
+    pub(crate) fn commit_observed_evidence_with_lease(
+        &mut self,
         mut commit: CellCommit<E, C, I>,
         authorization: &ObservationAuthorization,
         mapped: &[crate::mapping_bundle::MappingBundle],
+        source_lease: Option<(&str, &str, u64, u64)>,
     ) -> Result<CommitReceipt, CommitError<CellError>>
     where
         E: From<ObservationEvent>,
@@ -1632,6 +1646,7 @@ where
                 authorization: Some(authorization),
                 references: &references,
                 mapped,
+                source_lease,
                 ..Default::default()
             },
         )
@@ -1660,6 +1675,7 @@ where
             mode,
             stamp,
             settling,
+            source_lease,
         } = options;
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1769,6 +1785,22 @@ where
             }
         }
         let guard = |reader: &StoreReader<'_, S>| {
+            if let Some((connection_id, lease_id, generation, now_ms)) = source_lease {
+                let active = reader
+                    .source_lease(connection_id)
+                    .map_err(CommitError::Host)?;
+                if !active.is_some_and(|current| {
+                    current.lease_id == lease_id
+                        && current.generation == generation
+                        && now_ms < current.expires_at_ms
+                }) {
+                    return Err(CommitError::Host(CellError::SourceLeaseFenced {
+                        connection_id: connection_id.to_owned(),
+                        lease_id: lease_id.to_owned(),
+                        generation,
+                    }));
+                }
+            }
             let mapping_proof = crate::link_guard::verify_mapping_links(reader, &commit, mapped)?;
             if authorization.is_none() {
                 for key in commit
