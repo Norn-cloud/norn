@@ -656,7 +656,7 @@ echo "$plan"'''
                   "save-if": "${{ github.ref == 'refs/heads/main' }}"}},
         {"uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
          "with": {"path": "~/.bun/install/cache",
-                  "key": "bun-${{ hashFiles('tools/norn-ts/bun.lock', 'tools/norn-proofs/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock', 'packages/norn-react/bun.lock', 'apps/studio/bun.lock') }}"}},
+                  "key": "bun-${{ hashFiles('tools/norn-ts/bun.lock', 'tools/norn-proofs/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock', 'packages/norn-react/bun.lock', 'apps/studio/bun.lock', 'apps/sidekick-bridge/bun.lock') }}"}},
         # Digest-pinned interop schemas: erpnext_runtime.py re-verifies every cached file.
         {"uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
          "with": {"path": "~/.cache/norn-interop",

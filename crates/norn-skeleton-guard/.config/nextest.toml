@@ -16,6 +16,6 @@ filter = '''
   test(=provision::a_fault_anywhere_in_provisioning_leaves_nothing_half_made) |
   test(=tenant_isolation::another_tenants_principal_at_b_learns_nothing) |
   test(=dataset_laws::the_fuel_bound_pays_the_typed_property_charge) |
-  test(=definitions_install::data_quarantine_redelivery_persists_one_finding_and_correction_recovers)
+  test(=suites::definitions_install::data_quarantine_redelivery_persists_one_finding_and_correction_recovers)
 '''
 priority = 100

@@ -185,7 +185,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'tools/norn-proofs/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock', 'packages/norn-react/bun.lock', 'apps/studio/bun.lock') }}
+          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'tools/norn-proofs/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock', 'packages/norn-react/bun.lock', 'apps/studio/bun.lock', 'apps/sidekick-bridge/bun.lock') }}
       # Pinned interop schemas; erpnext_runtime.py re-checks every digest.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -374,7 +374,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'tools/norn-proofs/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock', 'packages/norn-react/bun.lock', 'apps/studio/bun.lock') }}
+          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'tools/norn-proofs/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock', 'packages/norn-react/bun.lock', 'apps/studio/bun.lock', 'apps/sidekick-bridge/bun.lock') }}
       # Pinned interop schemas; erpnext_runtime.py re-checks every digest.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
