@@ -447,6 +447,20 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         self.history_gate.history(what)
     }
 
+    /// Whether `_norn_fact_values` may contain writes from an external SQLite
+    /// connection since this handle verified history at open/scrub.
+    pub(crate) fn has_unverified_external_writes(&self) -> Result<bool, CellError> {
+        if self.conn.read_isolation() == crate::engine::ReadIsolation::ExclusiveSynchronous {
+            return Ok(false);
+        }
+        let Some(scrub) = self.live_scrub else {
+            return Ok(true);
+        };
+        let baseline = scrub.borrow().baseline_dv();
+        let current = self.conn.external_data_version()?;
+        Ok(baseline.is_none() || current.is_none() || current != baseline)
+    }
+
     /// S8/S12: fail closed on a durable fence first, then gate ledger reads
     /// that reach covered history.
     pub(crate) fn check_ledger(&self, after: u64) -> Result<(), CellError> {

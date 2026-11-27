@@ -1632,11 +1632,12 @@ mod tests {
             .expect("commit order line");
     }
 
-    fn commit_connection_poll(
+    fn commit_connection_poll_status(
         store: &mut CellStore<NativeEngine>,
         scope: &CellScope,
         conn_id: &str,
         mapping_id: &str,
+        status: &str,
         watermark: &str,
         logical_time: u64,
     ) {
@@ -1657,7 +1658,7 @@ mod tests {
                             RuntimeValue::from("http://erpnext-rest:8000"),
                         ),
                         ("auth".into(), RuntimeValue::from("api_key")),
-                        ("status".into(), RuntimeValue::from("ok")),
+                        ("status".into(), RuntimeValue::from(status)),
                         (
                             "last_sync_started_at".into(),
                             RuntimeValue::from("2026-11-12T12:00:00Z"),
@@ -1691,6 +1692,25 @@ mod tests {
                 ..CommitBatch::default()
             })
             .expect("commit connection poll");
+    }
+
+    fn commit_connection_poll(
+        store: &mut CellStore<NativeEngine>,
+        scope: &CellScope,
+        conn_id: &str,
+        mapping_id: &str,
+        watermark: &str,
+        logical_time: u64,
+    ) {
+        commit_connection_poll_status(
+            store,
+            scope,
+            conn_id,
+            mapping_id,
+            "ok",
+            watermark,
+            logical_time,
+        );
     }
 
     fn seed_order_cursor_binding(
@@ -1940,5 +1960,159 @@ mod tests {
         let forged_watermark = json!({ ORDER_DATASET: "2026-11-12 11:00:00" }).to_string();
         assert_tampered_eval_refused(3, "watermark", &forged_watermark, &stale_watermark);
         assert_tampered_eval_refused(1, "mapping_id", "erpnext.rest.mapping", &stale_watermark);
+
+        // Case 3 (A -> B -> A): tampering the skipped middle foreign mapping_id must fail closed.
+        let db = tempfile::NamedTempFile::new().expect("temp db");
+        let (mut store, scope) = open_store_at(&["erpnext"], Some(db.path()));
+        commit_sample_order_line(&mut store, &scope, T0);
+        commit_connection_poll(
+            &mut store,
+            &scope,
+            "erpnext.rest",
+            "erpnext.rest.mapping",
+            &stale_watermark,
+            T0.saturating_add(1),
+        );
+        commit_connection_poll(
+            &mut store,
+            &scope,
+            "erpnext.rest",
+            "other.mapping",
+            &stale_watermark,
+            T0.saturating_add(2),
+        );
+        commit_connection_poll(
+            &mut store,
+            &scope,
+            "erpnext.rest",
+            "erpnext.rest.mapping",
+            &stale_watermark,
+            T0.saturating_add(3),
+        );
+        let (host, principals, scope) = wrap_host(store, scope);
+        let derived = DerivedQuestions::new([7; 32], scope);
+        let runtime = derived.questions(&host).expect("runtime");
+        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+        let q = order_line_question(&metric, 60_000);
+        let baseline = eval_question(&host, &principals, &derived, &q);
+        assert_eq!(baseline["freshness"], "incomplete", "{baseline}");
+
+        tamper_connection_snapshot(db.path(), 2, "mapping_id", "erpnext.rest.mapping");
+        let resp = call_http_as(
+            &host,
+            &principals,
+            &runtime,
+            ADMIN,
+            "POST",
+            "/v1/questions:evaluate",
+            &json!({ "question": q }).to_string(),
+        );
+        assert_ne!(
+            resp.status, 200,
+            "tampered middle B in A->B->A must fail receipt authentication: {}",
+            resp.body
+        );
+    }
+
+    #[test]
+    fn foreign_failed_report_blocks_stale_cursor_reuse_across_rebind() {
+        let stale_watermark = json!({ ORDER_DATASET: "2026-11-12 12:00:00" }).to_string();
+        let (mut store, scope) = open_store(&["erpnext"]);
+        commit_sample_order_line(&mut store, &scope, T0);
+        commit_connection_poll_status(
+            &mut store,
+            &scope,
+            "erpnext.rest",
+            "other.mapping",
+            "failed",
+            &stale_watermark,
+            T0.saturating_add(1),
+        );
+        commit_connection_poll(
+            &mut store,
+            &scope,
+            "erpnext.rest",
+            "erpnext.rest.mapping",
+            &stale_watermark,
+            T0.saturating_add(2),
+        );
+        let (host, principals, scope) = wrap_host(store, scope);
+        let derived = DerivedQuestions::new([7; 32], scope);
+        let runtime = derived.questions(&host).expect("runtime");
+        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+        let ans = eval_question(
+            &host,
+            &principals,
+            &derived,
+            &order_line_question(&metric, 60_000),
+        );
+        assert_eq!(ans["freshness"], "incomplete", "{ans}");
+    }
+
+    #[test]
+    fn multi_dataset_rewind_and_post_pin_polls_preserve_pinned_trace() {
+        let db = tempfile::NamedTempFile::new().expect("temp db");
+        let (mut store, scope) = open_store_at(&["erpnext"], Some(db.path()));
+        let model = store.model().clone();
+        commit_sample_order_line(&mut store, &scope, T0);
+        let foreign_pair = json!({ ORDER_DATASET: "X", "Party": "a" }).to_string();
+        let middle_pair = json!({ ORDER_DATASET: "X", "Party": "b" }).to_string();
+        let target_pair = json!({ ORDER_DATASET: "X", "Party": "c" }).to_string();
+        let rewind_pair = json!({ ORDER_DATASET: "Y", "Party": "d" }).to_string();
+        commit_connection_poll(
+            &mut store,
+            &scope,
+            "erpnext.rest",
+            "other.mapping",
+            &foreign_pair,
+            T0.saturating_add(1),
+        );
+        for (idx, wm) in [&middle_pair, &target_pair, &rewind_pair, &target_pair]
+            .into_iter()
+            .enumerate()
+        {
+            let offset = u64::try_from(idx).unwrap_or(0).saturating_add(2);
+            commit_connection_poll(
+                &mut store,
+                &scope,
+                "erpnext.rest",
+                "erpnext.rest.mapping",
+                wm,
+                T0.saturating_add(offset),
+            );
+        }
+        seed_order_cursor_binding(&mut store, "erpnext.rest", "\"X\"", T0.saturating_add(6));
+        let (host, principals, scope) = wrap_host(store, scope);
+        let derived = DerivedQuestions::new([7; 32], scope.clone());
+        let runtime = derived.questions(&host).expect("runtime");
+        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+        let q = order_line_question(&metric, 60_000);
+        let ans = eval_question(&host, &principals, &derived, &q);
+        assert_eq!(ans["freshness"], "exact", "{ans}");
+        assert_pinned_trace_ok(&host, &principals, &runtime, &q, &ans);
+        drop(host);
+
+        // Append >4,096 post-pin polls with distinct watermarks/mappings sorting before `v4`.
+        let mut reopened =
+            CellStore::open(db.path(), model, StoreOptions::default()).expect("open");
+        for step in 0_u64..4_105 {
+            let later_wm =
+                json!({ ORDER_DATASET: format!("0000-{step:05}"), "Party": "z" }).to_string();
+            let later_map = format!("0000-map-{step:05}");
+            commit_connection_poll(
+                &mut reopened,
+                &scope,
+                "erpnext.rest",
+                &later_map,
+                &later_wm,
+                T0.saturating_add(100).saturating_add(step),
+            );
+        }
+        let (reopened_host, reopened_principals, reopened_scope) = wrap_host(reopened, scope);
+        let reopened_derived = DerivedQuestions::new([7; 32], reopened_scope);
+        let reopened_rt = reopened_derived
+            .questions(&reopened_host)
+            .expect("reopened runtime");
+        assert_pinned_trace_ok(&reopened_host, &reopened_principals, &reopened_rt, &q, &ans);
     }
 }

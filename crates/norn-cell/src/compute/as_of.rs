@@ -459,10 +459,43 @@ fn load_authenticated_connection<E: SqlEngine>(
     Ok((rec, seq_u64))
 }
 
+fn verify_all_connection_versions<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    hist_world: &str,
+    conn_id: &str,
+    max_ver: i64,
+) -> Result<(), CellError> {
+    use crate::engine::{SqlRow, params};
+    let mut after = 0_i64;
+    loop {
+        let rows = reader.conn.query(
+            "SELECT version FROM _norn_fact_values \
+             WHERE world=?1 AND root_type=?2 AND id=?3 AND version>?4 AND version<=?5 \
+             ORDER BY version ASC LIMIT 512",
+            params![
+                hist_world,
+                super::freshness::CONNECTION_TYPE,
+                conn_id,
+                after,
+                max_ver
+            ],
+        )?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+        for values in rows {
+            let ver = SqlRow(values).get::<i64>(0)?;
+            let _ = load_authenticated_connection(reader, hist_world, conn_id, ver)?;
+            after = ver;
+        }
+    }
+}
+
 fn next_indexed_mapping_id<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     hist_world: &str,
     conn_id: &str,
+    max_ver: i64,
     after: Option<&str>,
 ) -> Result<Option<String>, CellError> {
     use crate::engine::params;
@@ -470,18 +503,18 @@ fn next_indexed_mapping_id<E: SqlEngine>(
         None => reader.conn.query_optional(
             "SELECT COALESCE(json_extract(snapshot, '$.values.mapping_id'), '') AS mid \
              FROM _norn_fact_values INDEXED BY \"_norn_fact_values/connection_mapping\" \
-             WHERE world=?1 AND root_type='source.Connection' AND id=?2 \
+             WHERE world=?1 AND root_type='source.Connection' AND id=?2 AND version<=?3 \
              ORDER BY mid ASC LIMIT 1",
-            params![hist_world, conn_id],
+            params![hist_world, conn_id, max_ver],
             |row| row.get(0),
         ),
         Some(prev) => reader.conn.query_optional(
             "SELECT COALESCE(json_extract(snapshot, '$.values.mapping_id'), '') AS mid \
              FROM _norn_fact_values INDEXED BY \"_norn_fact_values/connection_mapping\" \
-             WHERE world=?1 AND root_type='source.Connection' AND id=?2 \
-               AND COALESCE(json_extract(snapshot, '$.values.mapping_id'), '') > ?3 \
+             WHERE world=?1 AND root_type='source.Connection' AND id=?2 AND version<=?3 \
+               AND COALESCE(json_extract(snapshot, '$.values.mapping_id'), '') > ?4 \
              ORDER BY mid ASC LIMIT 1",
-            params![hist_world, conn_id, prev],
+            params![hist_world, conn_id, max_ver, prev],
             |row| row.get(0),
         ),
     }
@@ -511,7 +544,8 @@ fn latest_foreign_connection_version<E: SqlEngine>(
     )?;
     let mut cursor: Option<String> = None;
     for _ in 0..super::freshness::MAX_HISTORICAL_CONNECTIONS {
-        let Some(mid) = next_indexed_mapping_id(reader, hist_world, conn_id, cursor.as_deref())?
+        let Some(mid) =
+            next_indexed_mapping_id(reader, hist_world, conn_id, max_ver, cursor.as_deref())?
         else {
             return Ok(Some(boundary));
         };
@@ -539,8 +573,10 @@ fn verify_failed_gap<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     hist_world: &str,
     conn_id: &str,
-    v_before: Option<i64>,
-    v_first: i64,
+    (v_before, v_first): (Option<i64>, i64),
+    bv: Option<i64>,
+    (valid_since, mapping_id): (u64, &str),
+    active: &BTreeMap<&str, &str>,
 ) -> Result<bool, CellError> {
     use crate::engine::{SqlRow, params};
     let gap_start = v_before.map_or(1, |v| v.saturating_add(1));
@@ -564,7 +600,8 @@ fn verify_failed_gap<E: SqlEngine>(
     }
     for values in rows {
         let fv = SqlRow(values).get::<i64>(0)?;
-        let (Some(rec), _) = load_authenticated_connection(reader, hist_world, conn_id, fv)? else {
+        let (Some(rec), seq) = load_authenticated_connection(reader, hist_world, conn_id, fv)?
+        else {
             return Ok(false);
         };
         if rec
@@ -575,6 +612,22 @@ fn verify_failed_gap<E: SqlEngine>(
         {
             return Ok(false);
         }
+        let is_foreign = bv.is_some_and(|b| fv <= b)
+            || seq < valid_since
+            || rec
+                .values
+                .get("mapping_id")
+                .and_then(norn_ir::RuntimeValue::as_str)
+                != Some(mapping_id);
+        if is_foreign {
+            let failed_cursors = super::freshness::strict_connection_cursors(&rec);
+            if active
+                .iter()
+                .any(|(&ds, &cj)| failed_cursors.get(ds).map(String::as_str) == Some(cj))
+            {
+                return Ok(false);
+            }
+        }
     }
     Ok(true)
 }
@@ -583,6 +636,7 @@ fn next_indexed_watermark<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     hist_world: &str,
     conn_id: &str,
+    (lower, upper): (i64, i64),
     after: Option<&str>,
 ) -> Result<Option<String>, CellError> {
     use crate::engine::params;
@@ -592,8 +646,9 @@ fn next_indexed_watermark<E: SqlEngine>(
              FROM _norn_fact_values INDEXED BY \"_norn_fact_values/connection_watermark\" \
              WHERE world=?1 AND root_type='source.Connection' AND id=?2 \
                AND COALESCE(json_extract(snapshot, '$.values.status'), '')!='failed' \
+               AND version>?3 AND version<?4 \
              ORDER BY wm ASC LIMIT 1",
-            params![hist_world, conn_id],
+            params![hist_world, conn_id, lower, upper],
             |row| row.get(0),
         ),
         Some(prev) => reader.conn.query_optional(
@@ -601,9 +656,10 @@ fn next_indexed_watermark<E: SqlEngine>(
              FROM _norn_fact_values INDEXED BY \"_norn_fact_values/connection_watermark\" \
              WHERE world=?1 AND root_type='source.Connection' AND id=?2 \
                AND COALESCE(json_extract(snapshot, '$.values.status'), '')!='failed' \
-               AND COALESCE(json_extract(snapshot, '$.values.watermark'), '') > ?3 \
+               AND version>?3 AND version<?4 \
+               AND COALESCE(json_extract(snapshot, '$.values.watermark'), '') > ?5 \
              ORDER BY wm ASC LIMIT 1",
-            params![hist_world, conn_id, prev],
+            params![hist_world, conn_id, lower, upper, prev],
             |row| row.get(0),
         ),
     }
@@ -613,22 +669,28 @@ fn prove_rewind_in_range<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     hist_world: &str,
     conn_id: &str,
-    (v_first, cur_ver): (i64, i64),
-    cur_wm: &str,
+    (lower, upper): (i64, i64),
+    initial_wm: &str,
     (valid_since, mapping_id): (u64, &str),
     active: &mut BTreeMap<&str, &str>,
 ) -> Result<bool, CellError> {
     use crate::engine::params;
-    if v_first >= cur_ver {
+    if lower >= upper {
         return Ok(false);
     }
     let mut cursor: Option<String> = None;
     for _ in 0..super::freshness::MAX_HISTORICAL_CONNECTIONS {
-        let Some(wm) = next_indexed_watermark(reader, hist_world, conn_id, cursor.as_deref())?
+        let Some(wm) = next_indexed_watermark(
+            reader,
+            hist_world,
+            conn_id,
+            (lower, upper),
+            cursor.as_deref(),
+        )?
         else {
             return Ok(active.is_empty());
         };
-        if wm != cur_wm
+        if wm != initial_wm
             && let Some(witness_ver) = reader.conn.query_optional(
                 "SELECT version FROM _norn_fact_values \
                  INDEXED BY \"_norn_fact_values/connection_watermark\" \
@@ -637,7 +699,7 @@ fn prove_rewind_in_range<E: SqlEngine>(
                    AND COALESCE(json_extract(snapshot, '$.values.watermark'), '')=?3 \
                    AND version>?4 AND version<?5 \
                  ORDER BY version DESC LIMIT 1",
-                params![hist_world, conn_id, wm.as_str(), v_first, cur_ver],
+                params![hist_world, conn_id, wm.as_str(), lower, upper],
                 |row| row.get::<i64>(0),
             )?
         {
@@ -741,10 +803,12 @@ fn prove_cursor_runs<E: SqlEngine>(
     conn_id: &str,
     bv: Option<i64>,
     (valid_since, mapping_id): (u64, &str),
-    (mut cur_ver, mut cur_wm): (i64, String),
+    (max_ver, initial_wm): (i64, String),
     mut active: BTreeMap<&str, &str>,
 ) -> Result<bool, CellError> {
     let lower = bv.unwrap_or(0);
+    let mut cur_ver = max_ver;
+    let mut cur_wm = initial_wm.clone();
     for _ in 0..super::freshness::MAX_HISTORICAL_CONNECTIONS {
         let Some((v_first, v_before)) =
             indexed_run_bounds(reader, hist_world, conn_id, &cur_wm, (lower, cur_ver))?
@@ -758,8 +822,15 @@ fn prove_cursor_runs<E: SqlEngine>(
             v_first,
             (valid_since, mapping_id),
             &active,
-        )? || !verify_failed_gap(reader, hist_world, conn_id, v_before, v_first)?
-        {
+        )? || !verify_failed_gap(
+            reader,
+            hist_world,
+            conn_id,
+            (v_before, v_first),
+            bv,
+            (valid_since, mapping_id),
+            &active,
+        )? {
             return Ok(false);
         }
         let Some(prev_ver) = v_before else {
@@ -795,8 +866,8 @@ fn prove_cursor_runs<E: SqlEngine>(
                 reader,
                 hist_world,
                 conn_id,
-                (v_first, cur_ver),
-                &cur_wm,
+                (lower, max_ver),
+                &initial_wm,
                 (valid_since, mapping_id),
                 &mut active,
             );
@@ -858,6 +929,9 @@ pub(super) fn connection_history_proves_cursors_at<E: SqlEngine>(
     };
     let max_ver =
         i64::try_from(conn.version).map_err(|_| CellError::OutOfRange("connection version"))?;
+    if reader.has_unverified_external_writes()? {
+        verify_all_connection_versions(reader, &hist_world, &conn.id, max_ver)?;
+    }
     let (Some(auth_conn), auth_seq) =
         load_authenticated_connection(reader, &hist_world, &conn.id, max_ver)?
     else {
