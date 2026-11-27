@@ -379,10 +379,45 @@ fn authorized_evidence_types<E: SqlEngine>(
     Ok(allowed)
 }
 
+fn pending_record_readable<E: SqlEngine>(
+    input: &CellViewInput<'_, E>,
+    allowed_evidence: &BTreeSet<String>,
+    rec: &RuntimeValue,
+) -> Result<bool, CellError> {
+    let Some(object_type) = rec.get("objectType").and_then(RuntimeValue::as_str) else {
+        return Ok(false);
+    };
+    if !allowed_evidence.contains(object_type) {
+        return Ok(false);
+    }
+    let Some(key) = rec.get("key").and_then(RuntimeValue::as_str) else {
+        return Ok(false);
+    };
+    let values = match rec
+        .get("invocations")
+        .and_then(|v| match v {
+            RuntimeValue::Array(items) => items.first(),
+            _ => None,
+        })
+        .and_then(|inv| inv.get("input"))
+    {
+        Some(RuntimeValue::Object(map)) => map.clone(),
+        _ => BTreeMap::new(),
+    };
+    let record = ObjectRecord {
+        object_type: object_type.to_owned(),
+        id: key.to_owned(),
+        scope: input.context.scope.clone(),
+        version: 0,
+        values,
+    };
+    Ok(matches!((input.evidence_access)(&record)?, RowAccess::Read))
+}
+
 /// Count unconsumed inbox observations scoped strictly to `input.feed_mappings`
-/// and each mapping's authorized evidence type (`HOST-READ-2`), keeping
-/// unrelated mappings and unauthorized evidence types invisible even when a
-/// quarantined mapping bundle emitted zero records.
+/// and each mapping's authorized evidence type (`HOST-READ-2`), applying
+/// per-row `RowAccess::Read` visibility on nonempty mapping bundles and keeping
+/// unrelated mappings or unauthorized evidence types invisible.
 fn count_scoped_pending_observations<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
 ) -> Result<usize, CellError> {
@@ -405,11 +440,16 @@ fn count_scoped_pending_observations<E: SqlEngine>(
             continue;
         }
         let visible = match bundle.and_then(|b| b.get("records")) {
-            Some(RuntimeValue::Array(rows)) if !rows.is_empty() => rows.iter().any(|rec| {
-                rec.get("objectType")
-                    .and_then(RuntimeValue::as_str)
-                    .is_some_and(|ty| allowed_evidence.contains(ty))
-            }),
+            Some(RuntimeValue::Array(rows)) if !rows.is_empty() => {
+                let mut any_readable = false;
+                for rec in rows {
+                    if pending_record_readable(input, &allowed_evidence, rec)? {
+                        any_readable = true;
+                        break;
+                    }
+                }
+                any_readable
+            }
             _ => true,
         };
         if visible {
@@ -1245,8 +1285,37 @@ fn build_spec_coverage_transforms<'a, E: SqlEngine>(
         .collect()
 }
 
+fn build_spec_questions<'a, E: SqlEngine>(
+    spec: &'a CellCoverageSpec,
+    binding: &SpecCellBinding<'a, E>,
+) -> Result<Vec<(&'a str, &'a QuestionPlan)>, CellError> {
+    let stale = || CellError::ComputeRefused("core.compute.stale_input");
+    spec.questions
+        .iter()
+        .map(|name| {
+            Ok((
+                name.as_str(),
+                binding.questions.get(name).ok_or_else(stale)?,
+            ))
+        })
+        .collect()
+}
+
+fn retain_required_feeds(
+    required: &BTreeSet<&str>,
+    cursors: &mut Frontier,
+    watermarks: &mut BTreeMap<String, BTreeMap<String, Watermark>>,
+) {
+    cursors.retain(|feed, _| required.contains(feed.as_str()));
+    watermarks.retain(|feed, _| required.contains(feed.as_str()));
+}
+
 /// Evaluate one cell's pinned cut directly from a pack-authored
 /// [`CellCoverageSpec`], removing any need for hard-coded host/test gate wiring.
+///
+/// Projects `binding.context` and `binding.read_frontier` strictly onto
+/// `spec.required_feeds` so unrelated cell feeds do not contaminate question
+/// freshness for this coverage cut.
 ///
 /// # Errors
 /// Returns `CellError::ComputeRefused("core.compute.stale_input")` if any
@@ -1257,24 +1326,15 @@ pub fn evaluate_cell_cut_from_spec<E: SqlEngine>(
     binding: &SpecCellBinding<'_, E>,
     evaluate: &mut impl FnMut(&str, &QuestionPlan, QueryContext) -> Result<QueryResult, CellError>,
 ) -> Result<CellCutSnapshot, CellError> {
-    let stale = || CellError::ComputeRefused("core.compute.stale_input");
     let required_feeds: Vec<&str> = spec.required_feeds.iter().map(String::as_str).collect();
+    let required_set: BTreeSet<&str> = required_feeds.iter().copied().collect();
     let evidence_types: Vec<&str> = spec.evidence_types.iter().map(String::as_str).collect();
     let feed_mappings: Vec<(&str, &str)> = spec
         .feed_mappings
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let questions: Vec<(&str, &QuestionPlan)> = spec
-        .questions
-        .iter()
-        .map(|name| {
-            Ok((
-                name.as_str(),
-                binding.questions.get(name).ok_or_else(stale)?,
-            ))
-        })
-        .collect::<Result<_, CellError>>()?;
+    let questions = build_spec_questions(spec, binding)?;
     let coverage_transforms = build_spec_coverage_transforms(spec, binding)?;
     let recon_key_refs: Vec<Vec<&str>> = spec
         .reconciliation_gates
@@ -1315,17 +1375,28 @@ pub fn evaluate_cell_cut_from_spec<E: SqlEngine>(
         .collect();
     let expected_grain_gates =
         build_spec_grain_gates(spec, binding, &grain_col_refs, &grain_filters)?;
+    let mut scoped_context = binding.context.clone();
+    retain_required_feeds(
+        &required_set,
+        &mut scoped_context.source_cursors,
+        &mut scoped_context.watermarks,
+    );
+    let scoped_frontier = || {
+        let (mut cursors, mut watermarks) = (binding.read_frontier)()?;
+        retain_required_feeds(&required_set, &mut cursors, &mut watermarks);
+        Ok((cursors, watermarks))
+    };
     let input = CellViewInput {
         store: binding.store,
         anchor_key: binding.anchor_key,
         authority: binding.authority,
-        context: binding.context.clone(),
+        context: scoped_context,
         handle_key: binding.handle_key,
         whole_world_values: binding.whole_world_values,
         member_access: binding.row_access,
         min_disclosed_bucket: binding.min_disclosed_bucket,
         required_feeds: &required_feeds,
-        read_frontier: binding.read_frontier,
+        read_frontier: &scoped_frontier,
         min_fresh_ms: binding.context.now_ms.saturating_sub(spec.feed_max_age_ms),
         evidence_types: &evidence_types,
         feed_mappings: &feed_mappings,

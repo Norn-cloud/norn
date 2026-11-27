@@ -3875,18 +3875,13 @@ fn evaluate_single_spec_cut(
     let (transforms, questions) = load_spec_plans(book.pack, spec)?;
     let allow_tf = |_: &norn_checker::transform::TransformPlan| Ok(());
     let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
-    let mut ctx = book.query_context();
-    ctx.source_cursors
-        .retain(|feed, _| spec.required_feeds.iter().any(|req| req == feed));
-    ctx.watermarks
-        .retain(|feed, _| spec.required_feeds.iter().any(|req| req == feed));
-    let frontier = || Ok((ctx.source_cursors.clone(), ctx.watermarks.clone()));
+    let frontier = || Ok((book.source_cursors.clone(), book.watermarks.clone()));
     let (anchor_key, authority) = legal_entity_read_authority(book, legal_entity_id);
     let binding = SpecCellBinding {
         store: book.cell()?.store(),
         anchor_key: &anchor_key,
         authority: &authority,
-        context: ctx.clone(),
+        context: book.query_context(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values,
         min_disclosed_bucket: 2,
@@ -5255,8 +5250,21 @@ fn verify_scoped_pending_observations_privacy(sole: &EntityBook) -> Result<(), S
             .len(),
         1
     );
-    let spec = load_retail_coverage_spec()?;
-    let snap = evaluate_single_spec_cut(&clean, "LE-PARTNER", &spec, false)?;
+    let report = evaluate_two_cell_report(
+        &sole_dummy,
+        "LE-SOLE",
+        &clean,
+        "LE-PARTNER",
+        |idx, _, plan, ctx| {
+            let store = if idx == 0 {
+                sole_dummy.cell().map_err(CellError::Engine)?.store()
+            } else {
+                clean.cell().map_err(CellError::Engine)?.store()
+            };
+            store.evaluate_question(plan, ctx, |_| Ok(true))
+        },
+    )?;
+    let snap = report.cells.get(1).ok_or("missing partner snap")?;
     assert_eq!(snap.pending_observations, 0);
     assert!(snap.complete, "{:?}", snap.failed_coverage_gates);
     Ok(())
