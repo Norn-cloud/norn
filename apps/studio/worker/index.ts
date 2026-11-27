@@ -13,7 +13,9 @@ import {
   acceptWorkspaceInvitation,
   activateWorkspace,
   createWorkspace,
+  listWorkspaceApiKeysRoute,
   listWorkspaces,
+  revokeWorkspaceApiKeyRoute,
 } from "./workspaces.ts"
 import { cellScope } from "./scope.ts"
 import { instrumented } from "./telemetry.ts"
@@ -192,6 +194,14 @@ async function workspaceRoute(request: Request, env: Env, pathname: string): Pro
     if (decoded.length === 2 && decoded[0] !== "" && decoded[1] === "activate") {
       if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
       return activateWorkspace(request, context, decoded[0]!)
+    }
+    if (decoded.length === 2 && decoded[0] !== "" && decoded[1] === "api-keys") {
+      if (request.method !== "GET") return refuse(405, "GET only.", { allow: "GET" })
+      return listWorkspaceApiKeysRoute(request, context, decoded[0]!)
+    }
+    if (decoded.length === 3 && decoded[0] !== "" && decoded[1] === "api-keys" && decoded[2] !== "") {
+      if (request.method !== "DELETE") return refuse(405, "DELETE only.", { allow: "DELETE" })
+      return revokeWorkspaceApiKeyRoute(request, context, decoded[0]!, decoded[2]!)
     }
     return refuse(404, "No such endpoint.")
   }

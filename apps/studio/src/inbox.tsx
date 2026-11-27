@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useRouter } from "@tanstack/react-router"
 import { ChevronRight, CircleAlert, Inbox as InboxIcon, Plug, ShieldAlert, type LucideIcon } from "lucide-react"
 import { Fragment, type ComponentProps, type MouseEvent, type ReactNode } from "react"
@@ -9,7 +9,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { conceptTitle } from "./lib/catalog.ts"
 import { heldRuleTitle } from "./lib/guarantees.ts"
 import { useLocale } from "./lib/locale.tsx"
-import { cellRead, useMode } from "./lib/live-transport.ts"
+import { cellRead, retryWorkspace, useMode } from "./lib/live-transport.ts"
 import { recordName } from "./lib/record-name.ts"
 import { formatLocale } from "./lib/timeline.ts"
 import type { Schemas } from "./lib/transport.ts"
@@ -45,6 +45,7 @@ export function useInbox() {
 
 /** The cell's work queue for this caller (`GET /v1/inbox`): what needs them, each item one click from where to act. */
 export function Inbox() {
+  const queries = useQueryClient()
   const live = useMode().data?.kind === "live"
   const inbox = useInbox()
   if (!live) return null
@@ -67,7 +68,7 @@ export function Inbox() {
         data={document}
         error={inbox.error}
         isFetching={inbox.isFetching}
-        onRetry={() => void inbox.refetch()}
+        onRetry={() => void retryWorkspace(queries).then((ok) => { if (ok) void inbox.refetch({ cancelRefetch: false }) })}
         bone="home-inbox"
         skeleton="list"
         loadingLabel="Reading what needs attention"
@@ -138,7 +139,10 @@ function GroupHead({ icon: Icon, title, count, description, children }: { readon
       <Icon aria-hidden strokeWidth={1.6} className="mt-[3px] size-4 shrink-0 text-muted-foreground" />
       <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
         <div className="min-w-0 flex-1">
-          <h3 className="text-body text-foreground text-pretty">{title}{count !== undefined && <span className="ms-2 text-muted-foreground tabular-nums">{count}</span>}</h3>
+          <h3 className="flex flex-wrap items-baseline gap-x-2 text-body text-foreground text-pretty">
+            <span>{title}</span>
+            {count !== undefined && <span className="text-muted-foreground tabular-nums">{count}</span>}
+          </h3>
           {description && <p className="text-meta text-muted-foreground">{description}</p>}
         </div>
         {children && <div className="flex shrink-0 items-center gap-1">{children}</div>}

@@ -116,27 +116,40 @@ mod tests {
         set
     }
 
-    /// ERPNext artifact set with nullable `valuation_method` and `owner_ref` on
-    /// `Warehouse Lot Balance` so explicit `null` clears and nullable guards
-    /// conform to the source schema.
+    /// `ERPNext` artifact set with nullable `valuation_method` and `owner_ref`
+    /// on `Warehouse Lot Balance` (with `erpnext.rest.mapping` repinned to the
+    /// mutated source schema's SHA-256) so explicit `null` clears and nullable
+    /// guards conform to the source schema.
     fn erpnext_patch_artifacts() -> Vec<ArtifactEnvelope> {
         let mut set = erpnext_artifacts();
-        let source = set
-            .iter_mut()
-            .find(|a| a.artifact_id == "erpnext.rest.source")
-            .expect("source");
-        let mut wire = serde_json::to_value(&*source).expect("wire");
-        for field in wire["payload"]["fields"].as_array_mut().expect("fields") {
-            if field["dataset"] == "Warehouse Lot Balance"
-                && matches!(
-                    field["name"].as_str(),
-                    Some("valuation_method" | "owner_ref")
-                )
-            {
-                field["required"] = json!(false);
+        let source_sha = {
+            let source = set
+                .iter_mut()
+                .find(|a| a.artifact_id == "erpnext.rest.source")
+                .expect("source");
+            let mut wire = serde_json::to_value(&*source).expect("wire");
+            for field in wire["payload"]["fields"].as_array_mut().expect("fields") {
+                if field["dataset"] == "Warehouse Lot Balance"
+                    && matches!(
+                        field["name"].as_str(),
+                        Some("valuation_method" | "owner_ref")
+                    )
+                {
+                    field["required"] = json!(false);
+                }
             }
-        }
-        *source = serde_json::from_value(wire).expect("source");
+            *source = serde_json::from_value(wire).expect("source");
+            norn_checker::ArtifactRef::of(source)
+                .expect("source ref")
+                .sha256
+        };
+        let mapping = set
+            .iter_mut()
+            .find(|a| a.artifact_id == "erpnext.rest.mapping")
+            .expect("mapping");
+        let mut map_wire = serde_json::to_value(&*mapping).expect("mapping wire");
+        map_wire["payload"]["source"]["sha256"] = json!(source_sha);
+        *mapping = serde_json::from_value(map_wire).expect("mapping");
         set
     }
 
@@ -230,8 +243,8 @@ mod tests {
             .into_iter()
             .find(|f| f.dataset == "Warehouse Lot Balance")
             .expect("holding feed");
-        feed.mode = mode;
-        feed.version_kind = version_kind;
+        feed.mode = Some(mode);
+        feed.version_kind = Some(version_kind);
         if version_kind == VersionKind::Uint64 {
             feed.initial.version = "0".into();
         } else if version_kind == VersionKind::Rfc3339 {
@@ -261,13 +274,14 @@ mod tests {
                 "name": "WLB-00001",
                 "modified": "2026-11-12 18:00:00.000000",
                 "custom_norn_ref": "demo/holding/owner/north/gold",
-                "quantity": 125000.0,
+                "quantity": 125_000.0,
                 "valuation_method": null
             }]
         });
-        let rows = pull
+        let accepted = pull
             .accept(200, body.to_string().as_bytes())
             .expect("accept patch page");
+        let rows = accepted.rows;
         assert_eq!(rows.len(), 1);
         let RuntimeValue::Object(ref fields) = rows[0].payload else {
             panic!("expected payload object");
@@ -293,7 +307,8 @@ mod tests {
         let _req = full_pull.next_request().expect("request");
         let full_rows = full_pull
             .accept(200, body.to_string().as_bytes())
-            .expect("accept full page");
+            .expect("accept full page")
+            .rows;
         let RuntimeValue::Object(ref full_fields) = full_rows[0].payload else {
             panic!("expected payload object");
         };
@@ -324,10 +339,11 @@ mod tests {
             ],
             "more": false
         });
-        let rows = pull
+        let page = pull
             .accept(200, body.to_string().as_bytes())
             .expect("uint64");
-        assert_eq!(rows.len(), 2);
+        assert_eq!(page.rows.len(), 2);
+        pull.confirm(&page.advance);
         assert_eq!(
             pull.watermarks()
                 .get("Warehouse Lot Balance")
@@ -352,9 +368,10 @@ mod tests {
             ],
             "more": false
         });
-        rfc_pull
+        let rfc_page = rfc_pull
             .accept(200, rfc_body.to_string().as_bytes())
             .expect("rfc3339");
+        rfc_pull.confirm(&rfc_page.advance);
         assert_eq!(
             rfc_pull
                 .watermarks()
@@ -382,7 +399,7 @@ mod tests {
             "Warehouse Lot Balance".to_owned(),
             Watermark {
                 version: "99".into(),
-                id: Value::from("WLB-0"),
+                id: RuntimeValue::from("WLB-0"),
             },
         )]);
         let mut reg_pull = Pull::new(keyset_uint.clone(), initial_wm.clone(), Limits::default());
@@ -454,9 +471,11 @@ mod tests {
             let body = pages
                 .remove(&req.dataset)
                 .unwrap_or_else(|| json!({ "data": [] }));
-            let rows = full_pull
+            let page = full_pull
                 .accept(200, body.to_string().as_bytes())
                 .expect("accept");
+            full_pull.confirm(&page.advance);
+            let rows = page.rows;
             if skip == Some(req.dataset.as_str()) || rows.is_empty() {
                 continue;
             }
@@ -492,7 +511,8 @@ mod tests {
         let body = json!({ "data": [row_json] });
         let rows = pull
             .accept(200, body.to_string().as_bytes())
-            .expect("accept patch");
+            .expect("accept patch")
+            .rows;
         let out = host
             .ingest(&[(
                 observation(profile, &rows[0], now_ms).expect("obs"),
@@ -679,9 +699,12 @@ mod tests {
     #[test]
     fn patch_omitting_nullable_guard_input_fails_closed() {
         let artifacts = erpnext_patch_artifacts();
-        let mut mapping_doc = serde_json::to_value(load_artifact(
-            "fixtures/packs/erpnext-rest/artifacts/erpnext.rest.mapping.json",
-        ))
+        let mut mapping_doc = serde_json::to_value(
+            artifacts
+                .iter()
+                .find(|a| a.artifact_id == "erpnext.rest.mapping")
+                .expect("repinned mapping"),
+        )
         .expect("mapping json");
         let maps = mapping_doc["payload"]["maps"].as_array_mut().expect("maps");
         let holding_map = maps
@@ -734,10 +757,10 @@ mod tests {
             fields: BTreeMap::from([("id".into(), "/id".into())]),
             initial: Watermark {
                 version: "1970-01-01".into(),
-                id: Value::from(""),
+                id: RuntimeValue::from(""),
             },
-            mode: FeedMode::FullSnapshot,
-            version_kind: VersionKind::Lexicographical,
+            mode: None,
+            version_kind: None,
         };
         let encoded = serde_json::to_value(&feed).expect("encode");
         assert!(encoded.get("mode").is_none());
@@ -782,20 +805,30 @@ mod tests {
         let _req = unbound_pull.next_request().expect("req");
         let unbound_rows = unbound_pull
             .accept(200, json!({"data": [v99]}).to_string().as_bytes())
-            .expect("accept");
+            .expect("accept")
+            .rows;
         let unbound_obs = observation(&unbound, &unbound_rows[0], T0.saturating_add(1)).expect("o");
         assert!(
             host.ingest(&[(unbound_obs, mapping_input("Warehouse Lot Balance"))])
                 .is_err(),
             "unbound snapshot/lexical envelope must refuse under Patch/Uint64 mapping"
         );
+        // Explicit `full_snapshot` / `lexicographical` on connector MUST refuse binding against Patch/Uint64.
+        let mut explicit_contradiction = unbound;
+        explicit_contradiction.feeds[0].initial.version = "0".into();
+        assert!(
+            explicit_contradiction.bind_feed_declaration(&decl).is_err(),
+            "explicit full_snapshot/lexicographical must not be silently overridden by norn.feed/1"
+        );
 
-        // Bind mapping's `norn.feed/1` onto the default profile BEFORE pull projection:
+        // Omitted connector mode/versionKind (`None`) adopts mapping `norn.feed/1` BEFORE pull projection:
         let mut bound = holding_profile(FeedMode::FullSnapshot, VersionKind::Lexicographical);
+        bound.feeds[0].mode = None;
+        bound.feeds[0].version_kind = None;
         bound.feeds[0].initial.version = "0".into();
         bound
             .bind_feed_declaration(&decl)
-            .expect("bind norn.feed/1 onto default profile");
+            .expect("bind norn.feed/1 onto omitted connector defaults");
         assert_eq!(bound.feed_mode("Warehouse Lot Balance"), FeedMode::Patch);
         assert_eq!(
             bound.version_kind("Warehouse Lot Balance"),
@@ -823,7 +856,7 @@ mod tests {
     fn keyset_decimal_id_and_rfc3339_equivalent_spelling_bounds() {
         // Fractional numeric id 10 -> 2.5 at a tied version moves backward.
         let keyset_uint = holding_profile(FeedMode::Patch, VersionKind::Uint64);
-        let mut dec = Pull::new(keyset_uint, BTreeMap::new(), Limits::default());
+        let mut dec = Pull::new(keyset_uint.clone(), BTreeMap::new(), Limits::default());
         let _req = dec.next_request().expect("req");
         let bad_ids = json!({
             "data": [
@@ -836,13 +869,45 @@ mod tests {
             Err(PullError::Bound { .. })
         ));
 
+        // High-precision decimals above 2^53 stay exact across watermark, next request, and advance.
+        let mut exact_profile = keyset_uint;
+        exact_profile.feeds[0].paging = Paging::Keyset { size: 1 };
+        exact_profile.feeds[0].request.method = Method::Post;
+        exact_profile.feeds[0].request.body = Some(json!({ "afterId": "{{id}}" }));
+        let mut exact = Pull::new(exact_profile, BTreeMap::new(), Limits::default());
+        let _req = exact.next_request().expect("req1");
+        let p1 = exact
+            .accept(
+                200,
+                br#"{"data":[{"name":9007199254740992.1,"modified":"100","custom_norn_ref":"demo/h/1"}]}"#,
+            )
+            .expect("accept 9007199254740992.1");
+        exact.confirm(&p1.advance);
+        let req2 = exact.next_request().expect("req2");
+        assert_eq!(
+            req2.body.as_deref(),
+            Some(r#"{"afterId":9007199254740992.1}"#),
+            "next request must preserve exact decimal id without binary64 rounding"
+        );
+        let p2 = exact
+            .accept(
+                200,
+                br#"{"data":[{"name":9007199254740992.2,"modified":"100","custom_norn_ref":"demo/h/2"}]}"#,
+            )
+            .expect("9007199254740992.2 advances past 9007199254740992.1");
+        exact.confirm(&p2.advance);
+        assert_eq!(
+            exact.watermarks()["Warehouse Lot Balance"].id,
+            RuntimeValue::from_json_text("9007199254740992.2").expect("exact")
+        );
+
         // Equivalent RFC 3339 spelling (+02:00 vs Z) with the same id did not advance.
         let keyset_rfc = holding_profile(FeedMode::Patch, VersionKind::Rfc3339);
         let saved = BTreeMap::from([(
             "Warehouse Lot Balance".to_owned(),
             Watermark {
                 version: "2026-11-12T10:00:00+02:00".into(),
-                id: Value::from("WLB-1"),
+                id: RuntimeValue::from("WLB-1"),
             },
         )]);
         let mut rfc = Pull::new(keyset_rfc, saved, Limits::default());
@@ -874,7 +939,7 @@ mod tests {
             "Warehouse Lot Balance".to_owned(),
             Watermark {
                 version: "100".into(),
-                id: Value::from("WLB-1"),
+                id: RuntimeValue::from("WLB-1"),
             },
         )]);
         let mut pull = Pull::new(cursor_uint, saved, Limits::default());
@@ -883,8 +948,10 @@ mod tests {
             "data": [{"name": "WLB-0", "modified": "99", "custom_norn_ref": "demo/h/0"}],
             "more": false
         });
-        pull.accept(200, older.to_string().as_bytes())
+        let page = pull
+            .accept(200, older.to_string().as_bytes())
             .expect("accept");
+        pull.confirm(&page.advance);
         assert_eq!(
             pull.watermarks()["Warehouse Lot Balance"].version,
             "100",
@@ -944,7 +1011,8 @@ mod tests {
         let _req = pull.next_request().expect("req");
         let rows = pull
             .accept(200, json!({ "data": [&row] }).to_string().as_bytes())
-            .expect("accept");
+            .expect("accept")
+            .rows;
         let mut explicit_default =
             observation(&full_profile, &rows[0], T0.saturating_add(1)).expect("obs");
         if let RuntimeValue::Object(ref mut map) = explicit_default.input {

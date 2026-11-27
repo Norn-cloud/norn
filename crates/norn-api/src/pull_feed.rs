@@ -1,41 +1,48 @@
-//! Typed source-version ordering, mapping-contract binding, and `FeedMode::Patch`
-//! projection helpers for [`crate::pull`] (`FEED-MODE-1`).
+//! Typed source-version ordering, mapping-contract binding, exact-decimal
+//! template rendering, and `FeedMode::Patch` projection helpers for
+//! [`crate::pull`] (`FEED-MODE-1`).
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 
 use norn_ir::feed::{FEED_EXTENSION_KEY, FeedDeclaration};
-use norn_ir::{Decimal, RuntimeValue, SourceVersion, VersionKind};
+use norn_ir::{RuntimeValue, SourceVersion, VersionKind};
 use serde_json::Value;
 
 use crate::pull::{PullError, PullProfile, Row, Watermark};
 
 /// Bind a mapping's `norn.feed/1` declaration onto `profile` before projection
-/// and pagination. Default connector settings (`FullSnapshot`, `Lexicographical`)
-/// adopt the mapping's contract; explicit contradictions refuse closed.
+/// and pagination. Omitted connector settings (`None`) adopt the mapping's
+/// contract; explicitly declared settings (`Some`) that contradict the mapping
+/// refuse closed before the first request.
 pub(crate) fn bind_feed_declaration(
     profile: &mut PullProfile,
     declaration: &FeedDeclaration,
 ) -> Result<(), PullError> {
     for feed in &mut profile.feeds {
         if let Some(contract) = declaration.feeds.get(&feed.dataset) {
-            if !feed.mode.is_default() && feed.mode != contract.mode {
+            if let Some(explicit) = feed.mode
+                && explicit != contract.mode
+            {
                 return Err(PullError::Profile(format!(
                     "feed {:?} mode {} contradicts mapping norn.feed/1 mode {}",
                     feed.dataset,
-                    feed.mode.as_str(),
+                    explicit.as_str(),
                     contract.mode.as_str()
                 )));
             }
-            if !feed.version_kind.is_default() && feed.version_kind != contract.version_kind {
+            if let Some(explicit) = feed.version_kind
+                && explicit != contract.version_kind
+            {
                 return Err(PullError::Profile(format!(
                     "feed {:?} versionKind {} contradicts mapping norn.feed/1 versionKind {}",
                     feed.dataset,
-                    feed.version_kind.as_str(),
+                    explicit.as_str(),
                     contract.version_kind.as_str()
                 )));
             }
-            feed.mode = contract.mode;
-            feed.version_kind = contract.version_kind;
+            feed.mode = Some(contract.mode);
+            feed.version_kind = Some(contract.version_kind);
         }
     }
     profile.validate()
@@ -87,23 +94,13 @@ pub(crate) fn update_greatest_version(
     Ok(())
 }
 
-fn cmp_keyset_id(a: &Value, b: &Value) -> Ordering {
+fn cmp_keyset_id(a: &RuntimeValue, b: &RuntimeValue) -> Ordering {
     match (a, b) {
-        (Value::Number(x), Value::Number(y)) => match (x.as_i64(), y.as_i64()) {
-            (Some(x), Some(y)) => x.cmp(&y),
-            _ => match (x.as_u64(), y.as_u64()) {
-                (Some(x), Some(y)) => x.cmp(&y),
-                _ => match (
-                    Decimal::parse(&x.to_string()),
-                    Decimal::parse(&y.to_string()),
-                ) {
-                    (Ok(x), Ok(y)) => x.cmp(&y),
-                    _ => x.to_string().cmp(&y.to_string()),
-                },
-            },
-        },
-        (Value::String(x), Value::String(y)) => x.cmp(y),
-        _ => a.to_string().cmp(&b.to_string()),
+        (RuntimeValue::Number(x), RuntimeValue::Number(y)) => x.cmp(y),
+        (RuntimeValue::String(x), RuntimeValue::String(y)) => x.cmp(y),
+        _ => serde_json::to_string(a)
+            .unwrap_or_default()
+            .cmp(&serde_json::to_string(b).unwrap_or_default()),
     }
 }
 
@@ -114,7 +111,7 @@ pub(crate) fn check_keyset_order(
     kind: VersionKind,
     current: &Watermark,
     rows: &[Row],
-    ids: &[Value],
+    ids: &[RuntimeValue],
     dataset: &impl Fn() -> String,
 ) -> Result<(), PullError> {
     let bound = |reason: String| PullError::Bound {
@@ -208,4 +205,112 @@ pub(crate) fn scalar_text(value: &RuntimeValue) -> Option<String> {
         | RuntimeValue::Array(_)
         | RuntimeValue::Object(_) => None,
     }
+}
+
+/// Exact-decimal request template tokens for [`crate::pull::Pull::next_request`].
+pub(crate) struct Tokens<'t> {
+    pub(crate) version: &'t str,
+    pub(crate) id: &'t RuntimeValue,
+    pub(crate) cursor: &'t Value,
+    pub(crate) size: u32,
+}
+
+impl Tokens<'_> {
+    fn runtime_value(&self, name: &str) -> Option<RuntimeValue> {
+        match name {
+            "version" => Some(RuntimeValue::String(self.version.to_owned())),
+            "id" => Some(self.id.clone()),
+            "cursor" => Some(RuntimeValue::from_json(self.cursor.clone()).unwrap_or_default()),
+            "size" => Some(RuntimeValue::Number(norn_ir::Decimal::from(self.size))),
+            _ => None,
+        }
+    }
+
+    fn text(&self, name: &str) -> Option<String> {
+        if let Some(inner) = name.strip_prefix("json:") {
+            return self
+                .runtime_value(inner)
+                .map(|value| serde_json::to_string(&value).unwrap_or_default());
+        }
+        self.runtime_value(name).map(|value| match value {
+            RuntimeValue::String(text) => text,
+            RuntimeValue::Null => String::new(),
+            RuntimeValue::Number(number) => number.to_string(),
+            RuntimeValue::Bool(_) | RuntimeValue::Array(_) | RuntimeValue::Object(_) => {
+                serde_json::to_string(&value).unwrap_or_default()
+            }
+        })
+    }
+
+    fn fill_str(&self, template: &str) -> RuntimeValue {
+        if let Some(name) = template
+            .strip_prefix("{{")
+            .and_then(|rest| rest.strip_suffix("}}"))
+            .filter(|name| !name.contains("{{") && !name.starts_with("json:"))
+            && let Some(value) = self.runtime_value(name)
+        {
+            return value;
+        }
+        RuntimeValue::String(self.splice(template))
+    }
+
+    pub(crate) fn splice(&self, template: &str) -> String {
+        let mut out = String::with_capacity(template.len());
+        let mut rest = template;
+        while let Some((before, after)) = rest.split_once("{{") {
+            out.push_str(before);
+            if let Some((text, tail)) = after
+                .split_once("}}")
+                .and_then(|(name, tail)| Some((self.text(name)?, tail)))
+            {
+                out.push_str(&text);
+                rest = tail;
+            } else {
+                out.push_str("{{");
+                rest = after;
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+
+    fn fill_runtime(&self, template: &Value) -> RuntimeValue {
+        match template {
+            Value::String(text) => self.fill_str(text),
+            Value::Array(items) => {
+                RuntimeValue::Array(items.iter().map(|v| self.fill_runtime(v)).collect())
+            }
+            Value::Object(entries) => RuntimeValue::Object(
+                entries
+                    .iter()
+                    .map(|(key, value)| (key.clone(), self.fill_runtime(value)))
+                    .collect(),
+            ),
+            Value::Null | Value::Bool(_) | Value::Number(_) => {
+                RuntimeValue::from_json(template.clone()).unwrap_or_default()
+            }
+        }
+    }
+
+    /// Render a JSON request body preserving exact decimal keyset IDs.
+    pub(crate) fn fill_json(&self, template: &Value) -> String {
+        serde_json::to_string(&self.fill_runtime(template)).unwrap_or_default()
+    }
+}
+
+/// `application/x-www-form-urlencoded` query text, in declared key order.
+pub(crate) fn form_urlencoded_pairs(
+    query: &BTreeMap<String, String>,
+    tokens: &Tokens<'_>,
+) -> String {
+    let mut out = String::new();
+    for (key, template) in query {
+        if !out.is_empty() {
+            out.push('&');
+        }
+        out.push_str(&crate::uploads::encode(key, false));
+        out.push('=');
+        out.push_str(&crate::uploads::encode(&tokens.splice(template), false));
+    }
+    out
 }

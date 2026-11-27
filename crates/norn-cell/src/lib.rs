@@ -89,6 +89,7 @@ mod scrub;
 pub use scrub::ScrubStatus;
 pub mod snapshot;
 pub mod source_agreement;
+pub mod source_cursor;
 pub mod source_provenance;
 pub mod store;
 pub mod system;

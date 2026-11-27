@@ -52,6 +52,8 @@ mod pull_rest;
 mod question_routes;
 #[path = "read_authority.rs"]
 mod read_authority;
+#[path = "source_capture_atomicity.rs"]
+mod source_capture_atomicity;
 #[path = "studio_access.rs"]
 mod studio_access;
 #[path = "sync_schedule.rs"]
