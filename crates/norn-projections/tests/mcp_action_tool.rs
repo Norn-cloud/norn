@@ -571,8 +571,7 @@ fn nullable_decimal_type_arrays_rewrite_number_to_string() {
     assert_eq!(props["plain_num"]["type"], json!(["number", "null"]));
 }
 
-#[test]
-fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived_omitted() {
+fn mixed_derivation_fixture_action() -> ActionRoot {
     let mut action = fixture_action();
     action.input_schema = serde_json::from_value(json!({
         "type": "object",
@@ -625,6 +624,12 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
         {"field": "escaped_quote_actor", "expression": "'x\\' + actor.subjectId", "inputRequired": false}
     ]))
     .expect("derivations decode");
+    action
+}
+
+#[test]
+fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived_omitted() {
+    let action = mixed_derivation_fixture_action();
 
     let extra = BTreeSet::from(["extra_secret".to_owned()]);
     let tool =
