@@ -273,6 +273,56 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(materialized == current.values)
     }
 
+    fn finding_subject_types(
+        &self,
+        object_type: &str,
+        current: Option<&ObjectRecord>,
+    ) -> Vec<String> {
+        if let Some(record) = current {
+            if let Ok(chain) = self.model().chain(record.object_type.as_str()) {
+                return chain.to_vec();
+            }
+            return vec![record.object_type.clone()];
+        }
+        let mut matching: Vec<String> = self
+            .model()
+            .object_types()
+            .filter(|def| self.model().is_a(def.name.as_str(), object_type))
+            .map(|def| def.name.0.clone())
+            .collect();
+        if matching.is_empty() {
+            matching.push(object_type.to_owned());
+        }
+        matching
+    }
+
+    /// Resolve the object type used to re-evaluate `finding` against its
+    /// retained `definitions_version` catalog. When `record` has a subtype
+    /// installed after that version, evaluate at the most specific ancestor
+    /// known to the retained model so older ancestor findings recover cleanly.
+    fn finding_eval_type(
+        &self,
+        retained: &crate::Model,
+        record: &ObjectRecord,
+        finding: &DataQualityFinding,
+    ) -> String {
+        if retained.has_type(record.object_type.as_str()) {
+            return record.object_type.clone();
+        }
+        if let Ok(chain) = self.model().chain(record.object_type.as_str())
+            && let Some(ancestor) = chain
+                .iter()
+                .rev()
+                .find(|name| retained.has_type(name.as_str()))
+        {
+            return ancestor.clone();
+        }
+        finding.subjects.first().map_or_else(
+            || record.object_type.clone(),
+            |subject| subject.object_type.as_str().to_owned(),
+        )
+    }
+
     fn review_findings(
         &self,
         world: &str,
@@ -281,12 +331,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<Vec<(DataQualityFinding, bool)>, CellError> {
         self.check_history("observation quality findings")?;
         let current = self.object(world, object_type, key)?;
+        let subject_type = current
+            .as_ref()
+            .map_or(object_type, |record| record.object_type.as_str());
         if let Some(record) = current.as_ref()
-            && !self.proves(world, object_type, key, record)?
+            && !self.proves(world, subject_type, key, record)?
         {
             return Err(CellError::UnprovenCorrection);
         }
-        self.review_findings_at(world, object_type, key, current.as_ref(), None)
+        self.review_findings_at(world, subject_type, key, current.as_ref(), None)
     }
 
     // DATA-QUARANTINE / ASOF-KNOWLEDGE-1: recovery uses the selected incarnation.
@@ -301,19 +354,22 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         // S8 (#1551 round 5): scanning `_norn_ledger` for findings requires
         // verified history so deleted covered events cannot un-quarantine records.
         self.check_history("observation quality findings")?;
+        let subject_type = current.map_or(object_type, |record| record.object_type.as_str());
+        let subject_types =
+            serde_json::to_string(&self.finding_subject_types(object_type, current))?;
         let mut seen = BTreeSet::new();
         let mut findings = Vec::new();
         let mut after = 0i64;
         loop {
             let sequences = self.conn.query(
-                &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.subjects[0].objectType') = ?2 AND json_extract(event, '$.fact.subjects[0].key') = ?3 AND seq > ?4 AND (?5 IS NULL OR commit_seq <= ?5) ORDER BY seq LIMIT 64"),
-                params![world, object_type, key, after, frontier.map(|f| to_i64(f, "finding frontier")).transpose()?],
+                &format!("SELECT seq FROM {LEDGER} WHERE world = ?1 AND json_extract(event, '$.op') = 'data_quality_finding' AND json_extract(event, '$.fact.subjects[0].objectType') IN (SELECT value FROM json_each(?2)) AND json_extract(event, '$.fact.subjects[0].key') = ?3 AND seq > ?4 AND (?5 IS NULL OR commit_seq <= ?5) ORDER BY seq LIMIT 64"),
+                params![world, &subject_types, key, after, frontier.map(|f| to_i64(f, "finding frontier")).transpose()?],
             )?;
             if sequences.is_empty() {
                 break;
             }
             if let Some(record) = current
-                && !self.proves(world, object_type, key, record)?
+                && !self.proves(world, subject_type, key, record)?
             {
                 return Err(CellError::UnprovenCorrection);
             }
@@ -343,7 +399,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                         if let Some(record) = current {
                             // Scope governing-law recovery to the finding's own rule so a
                             // pure-property finding on a mixed-law entity never touches an
-                            // unrelated linked law at a historical frontier.
+                            // unrelated linked law at a historical frontier, while preserving
+                            // subtype evaluation (`finding_eval_type`).
+                            let eval_type = self.finding_eval_type(&model, record, &finding);
                             let scoped_laws = scoped_finding_laws(model.law_artifacts(), &finding);
                             let eval_catalog = TypeCatalog::new(model.object_types())
                                 .with_interfaces(model.interfaces())
@@ -352,7 +410,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                             if !self.finding_is_violated(
                                 &eval_catalog,
                                 world,
-                                object_type,
+                                eval_type.as_str(),
                                 key,
                                 record,
                                 &finding,
