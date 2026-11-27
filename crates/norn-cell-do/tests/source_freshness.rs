@@ -1742,12 +1742,26 @@ mod tests {
             .expect("release");
     }
 
+    fn order_cursor_json(version: &str, id: &str) -> String {
+        format!(r#"{{"version":"{version}","id":"{id}"}}"#)
+    }
+
+    fn order_watermark_json(version: &str, id: &str) -> String {
+        format!(r#"{{"{ORDER_DATASET}":{{"version":"{version}","id":"{id}"}}}}"#)
+    }
+
+    fn pair_watermark_json(order_ver: &str, party_ver: &str) -> String {
+        format!(
+            r#"{{"{ORDER_DATASET}":{{"version":"{order_ver}","id":"SO-1"}},"Party":{{"version":"{party_ver}","id":"P-1"}}}}"#
+        )
+    }
+
     #[test]
     fn empty_polls_over_4096_without_rebind_preserve_pinned_trace() {
         const POLL_COUNT: u64 = 4_105;
         let (mut store, scope) = open_store(&["erpnext"]);
-        let cursor_json = "\"2026-11-12 12:00:00\"";
-        let watermark = json!({ ORDER_DATASET: "2026-11-12 12:00:00" }).to_string();
+        let cursor_json = order_cursor_json("2026-11-12 12:00:00", "SO-1");
+        let watermark = order_watermark_json("2026-11-12 12:00:00", "SO-1");
         commit_sample_order_line(&mut store, &scope, T0);
         for step in 1..=POLL_COUNT {
             commit_connection_poll(
@@ -1762,7 +1776,7 @@ mod tests {
         seed_order_cursor_binding(
             &mut store,
             "erpnext.rest",
-            cursor_json,
+            &cursor_json,
             T0.saturating_add(POLL_COUNT),
         );
         let (host, principals, scope) = wrap_host(store, scope);
@@ -1778,9 +1792,9 @@ mod tests {
     #[test]
     fn empty_polls_over_4096_after_rebind_preserve_pinned_trace_and_reject_stale() {
         const POLL_COUNT: u64 = 4_105;
-        let prior_watermark = json!({ ORDER_DATASET: "2026-11-12 12:00:00" }).to_string();
-        let advanced_cursor_json = "\"2026-11-12 13:00:00\"";
-        let advanced_watermark = json!({ ORDER_DATASET: "2026-11-12 13:00:00" }).to_string();
+        let prior_watermark = order_watermark_json("2026-11-12 12:00:00", "SO-1");
+        let advanced_cursor_json = order_cursor_json("2026-11-12 13:00:00", "SO-2");
+        let advanced_watermark = order_watermark_json("2026-11-12 13:00:00", "SO-2");
         let eval_now = T0.saturating_add(POLL_COUNT).saturating_add(2);
 
         // Stale cursor carried over across a mapping rebind must stay incomplete even after >4,096 empty polls.
@@ -1850,7 +1864,7 @@ mod tests {
         seed_order_cursor_binding(
             &mut fresh_store,
             "erpnext.rest",
-            advanced_cursor_json,
+            &advanced_cursor_json,
             eval_now,
         );
         let (fresh_host, fresh_principals, fresh_scope) = wrap_host(fresh_store, fresh_scope);
@@ -1891,6 +1905,17 @@ mod tests {
                 ],
             )
             .expect("update snapshot");
+    }
+
+    fn delete_connection_snapshot(path: &Path, version: i64) {
+        let engine = NativeEngine::open(path, StoreOptions::default()).expect("sqlite");
+        engine
+            .execute(
+                "DELETE FROM _norn_fact_values \
+                 WHERE root_type='source.Connection' AND id='erpnext.rest' AND version=?1",
+                &[SqlValue::Integer(version)],
+            )
+            .expect("delete snapshot");
     }
 
     fn assert_tampered_eval_refused(
@@ -1954,14 +1979,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn tampered_intermediate_connection_snapshot_cannot_forge_historical_cursor_proof() {
-        let stale_watermark = json!({ ORDER_DATASET: "2026-11-12 12:00:00" }).to_string();
-        let forged_watermark = json!({ ORDER_DATASET: "2026-11-12 11:00:00" }).to_string();
-        assert_tampered_eval_refused(3, "watermark", &forged_watermark, &stale_watermark);
-        assert_tampered_eval_refused(1, "mapping_id", "erpnext.rest.mapping", &stale_watermark);
-
-        // Case 3 (A -> B -> A): tampering the skipped middle foreign mapping_id must fail closed.
+    fn assert_aba_middle_corrupt_refused(stale_watermark: &str, delete_middle: bool) {
         let db = tempfile::NamedTempFile::new().expect("temp db");
         let (mut store, scope) = open_store_at(&["erpnext"], Some(db.path()));
         commit_sample_order_line(&mut store, &scope, T0);
@@ -1970,7 +1988,7 @@ mod tests {
             &scope,
             "erpnext.rest",
             "erpnext.rest.mapping",
-            &stale_watermark,
+            stale_watermark,
             T0.saturating_add(1),
         );
         commit_connection_poll(
@@ -1978,7 +1996,7 @@ mod tests {
             &scope,
             "erpnext.rest",
             "other.mapping",
-            &stale_watermark,
+            stale_watermark,
             T0.saturating_add(2),
         );
         commit_connection_poll(
@@ -1986,7 +2004,7 @@ mod tests {
             &scope,
             "erpnext.rest",
             "erpnext.rest.mapping",
-            &stale_watermark,
+            stale_watermark,
             T0.saturating_add(3),
         );
         let (host, principals, scope) = wrap_host(store, scope);
@@ -1997,7 +2015,11 @@ mod tests {
         let baseline = eval_question(&host, &principals, &derived, &q);
         assert_eq!(baseline["freshness"], "incomplete", "{baseline}");
 
-        tamper_connection_snapshot(db.path(), 2, "mapping_id", "erpnext.rest.mapping");
+        if delete_middle {
+            delete_connection_snapshot(db.path(), 2);
+        } else {
+            tamper_connection_snapshot(db.path(), 2, "mapping_id", "erpnext.rest.mapping");
+        }
         let resp = call_http_as(
             &host,
             &principals,
@@ -2009,19 +2031,33 @@ mod tests {
         );
         assert_ne!(
             resp.status, 200,
-            "tampered middle B in A->B->A must fail receipt authentication: {}",
+            "corrupted middle B in A->B->A (delete={delete_middle}) must fail closed: {}",
             resp.body
         );
     }
 
     #[test]
-    fn foreign_failed_report_blocks_stale_cursor_reuse_across_rebind() {
-        let stale_watermark = json!({ ORDER_DATASET: "2026-11-12 12:00:00" }).to_string();
-        let (mut store, scope) = open_store(&["erpnext"]);
-        commit_sample_order_line(&mut store, &scope, T0);
+    fn tampered_intermediate_connection_snapshot_cannot_forge_historical_cursor_proof() {
+        let stale_watermark = order_watermark_json("2026-11-12 12:00:00", "SO-1");
+        let forged_watermark = order_watermark_json("2026-11-12 11:00:00", "SO-0");
+        assert_tampered_eval_refused(3, "watermark", &forged_watermark, &stale_watermark);
+        assert_tampered_eval_refused(1, "mapping_id", "erpnext.rest.mapping", &stale_watermark);
+        assert_aba_middle_corrupt_refused(&stale_watermark, false);
+        assert_aba_middle_corrupt_refused(&stale_watermark, true);
+    }
+
+    #[test]
+    fn foreign_failed_report_blocks_stale_cursor_reuse_and_allows_post_boundary_rewind() {
+        let stale_watermark = order_watermark_json("2026-11-12 12:00:00", "SO-1");
+        let reset_watermark = order_watermark_json("2026-11-12 11:00:00", "SO-0");
+        let cursor_json = order_cursor_json("2026-11-12 12:00:00", "SO-1");
+
+        // Foreign failed/X -> A/X must stay incomplete.
+        let (mut stale_store, stale_scope) = open_store(&["erpnext"]);
+        commit_sample_order_line(&mut stale_store, &stale_scope, T0);
         commit_connection_poll_status(
-            &mut store,
-            &scope,
+            &mut stale_store,
+            &stale_scope,
             "erpnext.rest",
             "other.mapping",
             "failed",
@@ -2029,24 +2065,84 @@ mod tests {
             T0.saturating_add(1),
         );
         commit_connection_poll(
-            &mut store,
-            &scope,
+            &mut stale_store,
+            &stale_scope,
             "erpnext.rest",
             "erpnext.rest.mapping",
             &stale_watermark,
             T0.saturating_add(2),
         );
-        let (host, principals, scope) = wrap_host(store, scope);
-        let derived = DerivedQuestions::new([7; 32], scope);
-        let runtime = derived.questions(&host).expect("runtime");
-        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
-        let ans = eval_question(
-            &host,
-            &principals,
-            &derived,
-            &order_line_question(&metric, 60_000),
+        let (stale_host, stale_principals, stale_scope) = wrap_host(stale_store, stale_scope);
+        let stale_derived = DerivedQuestions::new([7; 32], stale_scope);
+        let stale_rt = stale_derived.questions(&stale_host).expect("stale runtime");
+        let stale_metric = metric_name_for(
+            &stale_host,
+            &stale_principals,
+            &stale_rt,
+            "canon.OrderLine",
+            "quantity",
         );
-        assert_eq!(ans["freshness"], "incomplete", "{ans}");
+        let stale_ans = eval_question(
+            &stale_host,
+            &stale_principals,
+            &stale_derived,
+            &order_line_question(&stale_metric, 60_000),
+        );
+        assert_eq!(stale_ans["freshness"], "incomplete", "{stale_ans}");
+
+        // Foreign failed/X -> A/X -> A/Y -> A/X must succeed via authenticated post-boundary rewind.
+        let (mut rewound_store, rewound_scope) = open_store(&["erpnext"]);
+        commit_sample_order_line(&mut rewound_store, &rewound_scope, T0);
+        commit_connection_poll_status(
+            &mut rewound_store,
+            &rewound_scope,
+            "erpnext.rest",
+            "other.mapping",
+            "failed",
+            &stale_watermark,
+            T0.saturating_add(1),
+        );
+        for (idx, wm) in [&stale_watermark, &reset_watermark, &stale_watermark]
+            .into_iter()
+            .enumerate()
+        {
+            let offset = u64::try_from(idx).unwrap_or(0).saturating_add(2);
+            commit_connection_poll(
+                &mut rewound_store,
+                &rewound_scope,
+                "erpnext.rest",
+                "erpnext.rest.mapping",
+                wm,
+                T0.saturating_add(offset),
+            );
+        }
+        seed_order_cursor_binding(
+            &mut rewound_store,
+            "erpnext.rest",
+            &cursor_json,
+            T0.saturating_add(5),
+        );
+        let (rewound_host, rewound_principals, rewound_scope) =
+            wrap_host(rewound_store, rewound_scope);
+        let rewound_derived = DerivedQuestions::new([7; 32], rewound_scope);
+        let rewound_rt = rewound_derived.questions(&rewound_host).expect("runtime");
+        let rewound_metric = metric_name_for(
+            &rewound_host,
+            &rewound_principals,
+            &rewound_rt,
+            "canon.OrderLine",
+            "quantity",
+        );
+        let q = order_line_question(&rewound_metric, 60_000);
+        let rewound_ans = eval_question(&rewound_host, &rewound_principals, &rewound_derived, &q);
+        assert_eq!(rewound_ans["freshness"], "exact", "{rewound_ans}");
+        assert_pinned_trace_ok(
+            &rewound_host,
+            &rewound_principals,
+            &rewound_rt,
+            &q,
+            &rewound_ans,
+        );
     }
 
     #[test]
@@ -2055,10 +2151,11 @@ mod tests {
         let (mut store, scope) = open_store_at(&["erpnext"], Some(db.path()));
         let model = store.model().clone();
         commit_sample_order_line(&mut store, &scope, T0);
-        let foreign_pair = json!({ ORDER_DATASET: "X", "Party": "a" }).to_string();
-        let middle_pair = json!({ ORDER_DATASET: "X", "Party": "b" }).to_string();
-        let target_pair = json!({ ORDER_DATASET: "X", "Party": "c" }).to_string();
-        let rewind_pair = json!({ ORDER_DATASET: "Y", "Party": "d" }).to_string();
+        let foreign_pair = pair_watermark_json("2026-11-12 12:00:00", "2026-11-12 01:00:00");
+        let middle_pair = pair_watermark_json("2026-11-12 12:00:00", "2026-11-12 02:00:00");
+        let target_pair = pair_watermark_json("2026-11-12 12:00:00", "2026-11-12 03:00:00");
+        let rewind_pair = pair_watermark_json("2026-11-12 13:00:00", "2026-11-12 04:00:00");
+        let target_cursor = order_cursor_json("2026-11-12 12:00:00", "SO-1");
         commit_connection_poll(
             &mut store,
             &scope,
@@ -2081,7 +2178,12 @@ mod tests {
                 T0.saturating_add(offset),
             );
         }
-        seed_order_cursor_binding(&mut store, "erpnext.rest", "\"X\"", T0.saturating_add(6));
+        seed_order_cursor_binding(
+            &mut store,
+            "erpnext.rest",
+            &target_cursor,
+            T0.saturating_add(6),
+        );
         let (host, principals, scope) = wrap_host(store, scope);
         let derived = DerivedQuestions::new([7; 32], scope.clone());
         let runtime = derived.questions(&host).expect("runtime");
@@ -2096,8 +2198,7 @@ mod tests {
         let mut reopened =
             CellStore::open(db.path(), model, StoreOptions::default()).expect("open");
         for step in 0_u64..4_105 {
-            let later_wm =
-                json!({ ORDER_DATASET: format!("0000-{step:05}"), "Party": "z" }).to_string();
+            let later_wm = pair_watermark_json(&format!("0000-{step:05}"), "9999");
             let later_map = format!("0000-map-{step:05}");
             commit_connection_poll(
                 &mut reopened,
