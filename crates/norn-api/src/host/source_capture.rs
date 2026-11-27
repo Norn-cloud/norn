@@ -8,7 +8,7 @@ use norn_cell::engine::SqlEngine;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::mapping_page::PageAttempt;
 use norn_cell::source_cursor::{
-    CursorAdvanceSpec, PendingSourceCapture, SourceCursorRecord, SourceLease,
+    CursorAdvanceSpec, PendingSourceCapture, SourceCursorRecord, SourceLease, SourceReportFence,
 };
 use norn_cell::{CellError, MappingOutcome};
 use norn_ir::RuntimeValue;
@@ -157,26 +157,15 @@ impl<E: SqlEngine> DevHost<E> {
     ) -> Result<(), SourceCaptureError> {
         let _epoch = self.definition_read()?;
         self.observing_raw(|cell| {
-            Self::verify_active_mapping_binding(
-                cell,
-                expected_binding,
-                Some((connection_id, &lease.lease_id, lease.generation)),
-            )?;
-            cell.seed_source_cursors(
-                connection_id,
-                &lease.lease_id,
-                lease.generation,
-                now_ms,
-                cursors,
-            )
+            cell.seed_source_cursors(connection_id, lease, now_ms, cursors, expected_binding)
         })?
         .map_err(SourceCaptureError::from_cell)
     }
 
     /// Clear durable dataset cursors/replays and rebind `connection_id` to
     /// `mapping.1` (`(mapping_id, expected_binding)`) under the active fencing
-    /// lease, verifying atomically that `mapping.1` is still the active mapping
-    /// revision.
+    /// lease, verifying atomically inside SQLite's write transaction that
+    /// `mapping.1` is still the active mapping revision.
     ///
     /// # Errors
     /// [`SourceCaptureError::LeaseFenced`], [`SourceCaptureError::CursorConflict`],
@@ -190,14 +179,9 @@ impl<E: SqlEngine> DevHost<E> {
     ) -> Result<(), SourceCaptureError> {
         let _epoch = self.definition_read()?;
         self.observing_raw(|cell| {
-            Self::verify_active_mapping_binding(
-                cell,
-                Some(mapping),
-                Some((connection_id, &lease.lease_id, lease.generation)),
-            )?;
             cell.reset_source_cursors(
                 connection_id,
-                mapping.1,
+                mapping,
                 &lease.lease_id,
                 lease.generation,
                 now_ms,
@@ -207,9 +191,10 @@ impl<E: SqlEngine> DevHost<E> {
     }
 
     /// Atomically verify the active mapping revision `mapping` (`(mapping_id,
-    /// expected_binding)`), persist `connection_id -> mapping.1` in
-    /// `_norn_source_binding`, and seed any `seed_cursors` into
-    /// `_norn_source_cursor` in one SQLite transaction under `lease`.
+    /// expected_binding)`) inside SQLite's write transaction, persist
+    /// `connection_id -> mapping.1` in `_norn_source_binding`, and seed any
+    /// `seed_cursors` into `_norn_source_cursor` in one SQLite transaction
+    /// under `lease`.
     ///
     /// # Errors
     /// [`SourceCaptureError::LeaseFenced`] or store failure.
@@ -223,14 +208,9 @@ impl<E: SqlEngine> DevHost<E> {
     ) -> Result<(), SourceCaptureError> {
         let _epoch = self.definition_read()?;
         self.observing_raw(|cell| {
-            Self::verify_active_mapping_binding(
-                cell,
-                Some(mapping),
-                Some((connection_id, &lease.lease_id, lease.generation)),
-            )?;
             cell.bind_source_mapping(
                 connection_id,
-                mapping.1,
+                mapping,
                 &lease.lease_id,
                 lease.generation,
                 now_ms,
@@ -453,11 +433,15 @@ impl<E: SqlEngine> DevHost<E> {
             {
                 return Ok(());
             }
+            let fence = SourceReportFence {
+                lease,
+                expected_binding,
+            };
             for (raw, input) in rows {
                 let captured =
-                    cell.capture_source_report_checked(std::slice::from_ref(raw), input, lease)?;
+                    cell.capture_source_report_checked(std::slice::from_ref(raw), input, fence)?;
                 for (page_id, _) in &captured.pages {
-                    if let Some(outcomes) = cell.process_mapping_page_checked(page_id, lease)? {
+                    if let Some(outcomes) = cell.process_mapping_page_checked(page_id, fence)? {
                         for (_, outcome) in outcomes {
                             if let MappingOutcome::Quarantined(reasons) = outcome {
                                 return Err(CellError::Engine(format!(
@@ -469,7 +453,7 @@ impl<E: SqlEngine> DevHost<E> {
                 }
                 for record_id in &captured.records {
                     if let MappingOutcome::Quarantined(reasons) =
-                        cell.process_mapping_outcome_checked(record_id, lease)?
+                        cell.process_mapping_outcome_checked(record_id, fence)?
                     {
                         return Err(CellError::Engine(format!(
                             "source report quarantined: {reasons:?}"
@@ -513,16 +497,10 @@ impl<E: SqlEngine> DevHost<E> {
         expected_binding: Option<(&str, &str)>,
     ) -> Result<SourceCapturePlan, SourceCaptureError> {
         let _epoch = self.definition_read()?;
-        let lease_tag = Some((
-            advance.connection_id.as_str(),
-            advance.lease_id.as_str(),
-            advance.generation,
-        ));
         let Some((_, input)) = rows.first() else {
             let captured = self
                 .observing_raw(|cell| {
-                    Self::verify_active_mapping_binding(cell, expected_binding, lease_tag)?;
-                    cell.capture_source_page(&[], None, advance, max_run_rows)
+                    cell.capture_source_page(&[], None, advance, max_run_rows, expected_binding)
                 })?
                 .map_err(SourceCaptureError::from_cell)?;
             return Ok(SourceCapturePlan::Captured(PendingSourceCapture {
@@ -542,8 +520,13 @@ impl<E: SqlEngine> DevHost<E> {
         let delivered: Vec<Observed<RuntimeValue>> =
             rows.iter().map(|(raw, _)| raw.clone()).collect();
         match self.observing_raw(|cell| {
-            Self::verify_active_mapping_binding(cell, expected_binding, lease_tag)?;
-            cell.capture_source_page(&delivered, Some(input), advance, max_run_rows)
+            cell.capture_source_page(
+                &delivered,
+                Some(input),
+                advance,
+                max_run_rows,
+                expected_binding,
+            )
         })? {
             Ok(captured) => Ok(SourceCapturePlan::Captured(PendingSourceCapture {
                 connection_id: advance.connection_id.clone(),
@@ -622,11 +605,6 @@ impl<E: SqlEngine> DevHost<E> {
             .expected_binding
             .as_ref()
             .map(|(m, b)| (m.as_str(), b.as_str()));
-        let lease_tag = Some((
-            state.advance.connection_id.as_str(),
-            state.advance.lease_id.as_str(),
-            state.advance.generation,
-        ));
         let limit = max_rows.max(1);
         let mut step_out = Vec::new();
         while step_out.len() < limit
@@ -635,12 +613,12 @@ impl<E: SqlEngine> DevHost<E> {
             let pending_key = format!("{}:row:{}", state.full_digest, state.next_index);
             let captured = self
                 .observing_raw(|cell| {
-                    Self::verify_active_mapping_binding(cell, binding_ref, lease_tag)?;
                     cell.capture_source_dispute_row(
                         &raw,
                         &state.input,
                         &state.advance,
                         &pending_key,
+                        binding_ref,
                     )
                 })?
                 .map_err(SourceCaptureError::from_cell)?;
@@ -676,12 +654,12 @@ impl<E: SqlEngine> DevHost<E> {
         }
         if state.rows.is_empty() && !state.cursor_committed {
             self.observing_raw(|cell| {
-                Self::verify_active_mapping_binding(cell, binding_ref, lease_tag)?;
                 cell.commit_source_page_cursor(
                     &state.advance,
                     &state.full_digest,
                     &state.all_pages,
                     &state.all_records,
+                    binding_ref,
                 )
             })?
             .map_err(SourceCaptureError::from_cell)?;

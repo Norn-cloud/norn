@@ -15,13 +15,16 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
     /// Changed pins/outputs refuse `core.boundary.bundle_mismatch`. Source deletes
     /// remain outside this mapping-bundle profile.
     pub fn process_mapping_bundle(&mut self, observation_id: &str) -> Result<bool, CellError> {
-        self.process_mapping_bundle_with_lease(observation_id, None)
+        self.process_mapping_bundle_with_fence(
+            observation_id,
+            crate::source_cursor::SourceReportFence::default(),
+        )
     }
 
-    pub(crate) fn process_mapping_bundle_with_lease(
+    pub(crate) fn process_mapping_bundle_with_fence(
         &mut self,
         observation_id: &str,
-        source_lease: Option<(&str, &str, u64, u64)>,
+        source_fence: crate::source_cursor::SourceReportFence<'_>,
     ) -> Result<bool, CellError> {
         let Some(pending) = self.store().read().pending_observation(observation_id)? else {
             return Ok(false);
@@ -76,7 +79,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         authorization
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-        self.commit_observed_evidence_with_lease(commit, &authorization, &bundles, source_lease)
+        self.commit_observed_evidence_with_fence(commit, &authorization, &bundles, source_fence)
             .map_err(|e| match e {
                 norn_kernel::CommitError::Host(err @ CellError::SourceLeaseFenced { .. }) => err,
                 other => CellError::ObservationCommit(Box::new(other)),
@@ -187,6 +190,56 @@ impl MappingOutcome {
     }
 }
 
+impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
+    /// See [`crate::CellStore::capture_source_page`].
+    /// # Errors
+    /// Lease fencing, cursor conflict, framing refusals, or store errors.
+    pub fn capture_source_page(
+        &mut self,
+        raws: &[Observed<RuntimeValue>],
+        input: Option<&crate::mapping_bundle::MappingInput>,
+        advance: &crate::source_cursor::CursorAdvanceSpec,
+        max_run_rows: usize,
+        expected_binding: Option<(&str, &str)>,
+    ) -> Result<crate::mapping_page::CapturedSourcePage, CellError> {
+        self.store_mut()
+            .capture_source_page(raws, input, advance, max_run_rows, expected_binding)
+    }
+
+    /// See [`crate::CellStore::capture_source_dispute_row`].
+    /// # Errors
+    /// Lease fencing, cursor conflict, framing refusals, or store errors.
+    pub fn capture_source_dispute_row(
+        &mut self,
+        raw: &Observed<RuntimeValue>,
+        input: &crate::mapping_bundle::MappingInput,
+        advance: &crate::source_cursor::CursorAdvanceSpec,
+        pending_key: &str,
+        expected_binding: Option<(&str, &str)>,
+    ) -> Result<crate::mapping_page::CapturedPage, CellError> {
+        self.store_mut().capture_source_dispute_row(
+            raw,
+            input,
+            advance,
+            pending_key,
+            expected_binding,
+        )
+    }
+
+    /// See [`crate::CellStore::capture_source_report_checked`].
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`], framing refusals, or store errors.
+    pub fn capture_source_report_checked(
+        &mut self,
+        raws: &[Observed<RuntimeValue>],
+        input: &crate::mapping_bundle::MappingInput,
+        fence: crate::source_cursor::SourceReportFence<'_>,
+    ) -> Result<crate::mapping_page::CapturedPage, CellError> {
+        self.store_mut()
+            .capture_source_report_checked(raws, input, fence)
+    }
+}
+
 impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
     /// [`Self::process_mapping_bundle`] for a sync: a bundle the mapping or the
     /// cell refuses is not an error but quarantined evidence, left pending in
@@ -198,19 +251,22 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         &mut self,
         observation_id: &str,
     ) -> Result<MappingOutcome, CellError> {
-        self.process_mapping_outcome_checked(observation_id, None)
+        self.process_mapping_outcome_checked(
+            observation_id,
+            crate::source_cursor::SourceReportFence::default(),
+        )
     }
 
-    /// Like [`Self::process_mapping_outcome`], additionally verifying an active
-    /// source lease inside the SQLite commit transaction so a multi-host
-    /// takeover between capture and promotion cannot publish stale reports.
+    /// Like [`Self::process_mapping_outcome`], additionally verifying `fence`
+    /// (active source lease and connector mapping revision pin) inside the
+    /// SQLite commit transaction.
     ///
     /// # Errors
     /// [`CellError::SourceLeaseFenced`] or store failures.
     pub fn process_mapping_outcome_checked(
         &mut self,
         observation_id: &str,
-        source_lease: Option<(&str, &str, u64, u64)>,
+        fence: crate::source_cursor::SourceReportFence<'_>,
     ) -> Result<MappingOutcome, CellError> {
         if observation_id.starts_with("mapping-conflict:")
             || observation_id.starts_with("mapping-identity:")
@@ -246,7 +302,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             reasons.dedup();
             return Ok(MappingOutcome::Quarantined(reasons));
         }
-        match self.process_mapping_bundle_with_lease(observation_id, source_lease) {
+        match self.process_mapping_bundle_with_fence(observation_id, fence) {
             Ok(true) => Ok(MappingOutcome::Landed),
             Ok(false) => Ok(MappingOutcome::AlreadyLanded),
             Err(error) if crate::mapping_page::is_store_failure(&error) => Err(error),
@@ -256,20 +312,21 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         }
     }
 
-    /// Like [`Self::process_mapping_page`], additionally verifying an active
-    /// source lease inside the SQLite commit transaction that promotes the page.
+    /// Like [`Self::process_mapping_page`], additionally verifying `fence`
+    /// (active source lease and connector mapping revision pin) inside the
+    /// SQLite commit transaction that promotes the page.
     ///
     /// # Errors
     /// [`CellError::SourceLeaseFenced`] or store failures.
     pub fn process_mapping_page_checked(
         &mut self,
         page_id: &str,
-        source_lease: Option<(&str, &str, u64, u64)>,
+        fence: crate::source_cursor::SourceReportFence<'_>,
     ) -> Result<Option<Vec<(String, MappingOutcome)>>, CellError> {
         let Some((observed, members)) = self.pending_page(page_id)? else {
             return Ok(None);
         };
-        match self.commit_page_with_lease(&observed, &members, source_lease) {
+        match self.commit_page_with_fence(&observed, &members, fence) {
             Ok(()) => Ok(Some(
                 members
                     .into_iter()
@@ -280,13 +337,13 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             Err(_refused) => {
                 let mut outcomes = Vec::with_capacity(members.len());
                 for (id, _) in members {
-                    let outcome = self.process_mapping_outcome_checked(&id, source_lease)?;
+                    let outcome = self.process_mapping_outcome_checked(&id, fence)?;
                     outcomes.push((id, outcome));
                 }
                 if let Some((page_obs, remaining)) = self.pending_page(page_id)?
                     && remaining.is_empty()
                 {
-                    self.commit_page_with_lease(&page_obs, &[], source_lease)?;
+                    self.commit_page_with_fence(&page_obs, &[], fence)?;
                 }
                 Ok(Some(outcomes))
             }

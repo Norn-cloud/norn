@@ -697,7 +697,7 @@ fn parse_raw_source_version(raw: &RuntimeValue) -> Option<norn_ir::SourceVersion
 }
 
 #[derive(Serialize)]
-struct SourceRowDigest<'a> {
+struct SourceRowDigestV2<'a> {
     observation_id: &'a str,
     source: &'a str,
     source_id: &'a str,
@@ -712,24 +712,22 @@ struct SourceRowDigest<'a> {
     payload: Option<&'a RuntimeValue>,
 }
 
-fn source_row_digests(observations: &[Observed<RuntimeValue>]) -> Vec<SourceRowDigest<'_>> {
-    observations
-        .iter()
-        .map(|raw| SourceRowDigest {
-            observation_id: raw.id.0.as_str(),
-            source: raw.provenance.source.as_str(),
-            source_id: raw.provenance.source_id.as_str(),
-            mapping_version: raw.provenance.mapping_version.as_str(),
-            input_source: raw.input.get("source"),
-            input_source_id: raw.input.get("source_id"),
-            event_id: raw.input.get("event_id"),
-            source_version: raw.input.get("source_version"),
-            pipeline_version: raw.input.get("pipeline_version"),
-            kind: raw.input.get("kind"),
-            payload_digest: raw.input.get("payload_digest"),
-            payload: raw.input.get("payload"),
-        })
-        .collect()
+#[derive(Serialize)]
+struct SourceRowDigestV3<'a> {
+    observation_id: &'a str,
+    source: &'a str,
+    source_id: &'a str,
+    mapping_version: &'a str,
+    input_source: Option<&'a RuntimeValue>,
+    input_source_id: Option<&'a RuntimeValue>,
+    event_id: Option<&'a RuntimeValue>,
+    source_version: Option<&'a RuntimeValue>,
+    pipeline_version: Option<&'a RuntimeValue>,
+    kind: Option<&'a RuntimeValue>,
+    feed_mode: Option<&'a RuntimeValue>,
+    version_kind: Option<&'a RuntimeValue>,
+    payload_digest: Option<&'a RuntimeValue>,
+    payload: Option<&'a RuntimeValue>,
 }
 
 pub(crate) fn source_page_digest_v3(
@@ -742,15 +740,34 @@ pub(crate) fn source_page_digest_v3(
         connection_id: &'a str,
         dataset: &'a str,
         mapping: Option<&'a str>,
-        rows: Vec<SourceRowDigest<'a>>,
+        rows: Vec<SourceRowDigestV3<'a>>,
         expected_previous_cursor: Option<&'a str>,
         next_cursor: Option<&'a str>,
     }
+    let rows = observations
+        .iter()
+        .map(|raw| SourceRowDigestV3 {
+            observation_id: raw.id.0.as_str(),
+            source: raw.provenance.source.as_str(),
+            source_id: raw.provenance.source_id.as_str(),
+            mapping_version: raw.provenance.mapping_version.as_str(),
+            input_source: raw.input.get("source"),
+            input_source_id: raw.input.get("source_id"),
+            event_id: raw.input.get("event_id"),
+            source_version: raw.input.get("source_version"),
+            pipeline_version: raw.input.get("pipeline_version"),
+            kind: raw.input.get("kind"),
+            feed_mode: raw.input.get("feed_mode"),
+            version_kind: raw.input.get("version_kind"),
+            payload_digest: raw.input.get("payload_digest"),
+            payload: raw.input.get("payload"),
+        })
+        .collect();
     let input = DigestInput {
         connection_id: &advance.connection_id,
         dataset: &advance.dataset,
         mapping,
-        rows: source_row_digests(observations),
+        rows,
         expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
         next_cursor: advance.next_cursor.as_deref(),
     };
@@ -768,14 +785,31 @@ pub(crate) fn source_page_digest_v2(
     struct DigestInputV2<'a> {
         connection_id: &'a str,
         dataset: &'a str,
-        rows: Vec<SourceRowDigest<'a>>,
+        rows: Vec<SourceRowDigestV2<'a>>,
         expected_previous_cursor: Option<&'a str>,
         next_cursor: Option<&'a str>,
     }
+    let rows = observations
+        .iter()
+        .map(|raw| SourceRowDigestV2 {
+            observation_id: raw.id.0.as_str(),
+            source: raw.provenance.source.as_str(),
+            source_id: raw.provenance.source_id.as_str(),
+            mapping_version: raw.provenance.mapping_version.as_str(),
+            input_source: raw.input.get("source"),
+            input_source_id: raw.input.get("source_id"),
+            event_id: raw.input.get("event_id"),
+            source_version: raw.input.get("source_version"),
+            pipeline_version: raw.input.get("pipeline_version"),
+            kind: raw.input.get("kind"),
+            payload_digest: raw.input.get("payload_digest"),
+            payload: raw.input.get("payload"),
+        })
+        .collect();
     let input = DigestInputV2 {
         connection_id: &advance.connection_id,
         dataset: &advance.dataset,
-        rows: source_row_digests(observations),
+        rows,
         expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
         next_cursor: advance.next_cursor.as_deref(),
     };
@@ -785,12 +819,66 @@ pub(crate) fn source_page_digest_v2(
     )?)
 }
 
+pub(crate) fn verify_mapping_binding_in_tx<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    expected_binding: Option<(&str, &str)>,
+    lease: Option<(&str, &str, u64)>,
+) -> Result<(), CellError> {
+    let Some((mapping_id, expected)) = expected_binding else {
+        return Ok(());
+    };
+    let current = reader
+        .active_mapping_binding(mapping_id)?
+        .unwrap_or_else(|| mapping_id.to_owned());
+    if current != expected {
+        let (connection_id, lease_id, generation) = lease.map_or_else(
+            || (String::new(), String::new(), 0),
+            |(c, l, g)| (c.to_owned(), l.to_owned(), g),
+        );
+        return Err(CellError::SourceLeaseFenced {
+            connection_id,
+            lease_id,
+            generation,
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_source_fence_in_tx<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    fence: crate::source_cursor::SourceReportFence<'_>,
+) -> Result<(), CellError> {
+    verify_mapping_binding_in_tx(
+        reader,
+        fence.expected_binding,
+        fence.lease.map(|(c, l, g, _)| (c, l, g)),
+    )?;
+    if let Some((connection_id, lease_id, generation, now_ms)) = fence.lease {
+        let active = reader.source_lease(connection_id)?;
+        if !active.is_some_and(|current| {
+            current.lease_id == lease_id
+                && current.generation == generation
+                && now_ms < current.expires_at_ms
+        }) {
+            return Err(CellError::SourceLeaseFenced {
+                connection_id: connection_id.to_owned(),
+                lease_id: lease_id.to_owned(),
+                generation,
+            });
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn legacy_source_replay_allowed<E: SqlEngine>(
     conn: &E,
     records: &[String],
     mapping: Option<&str>,
     active_binding: Option<&str>,
 ) -> Result<bool, CellError> {
+    if mapping.is_some() && active_binding.is_none() {
+        return Ok(false);
+    }
     let mut saw_evidence = false;
     for id in records {
         let encoded: Option<String> = conn.query_optional(

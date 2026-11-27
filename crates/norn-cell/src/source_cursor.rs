@@ -20,8 +20,6 @@ use serde::{Deserialize, Serialize};
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::host::SqliteCell;
-use crate::mapping_bundle::MappingInput;
-use crate::mapping_page::{CapturedPage, CapturedSourcePage};
 use crate::read::StoreReader;
 use crate::store::CellStore;
 
@@ -150,6 +148,17 @@ pub struct CursorAdvanceSpec {
     pub next_cursor: Option<String>,
     /// Optional lease TTL extension in ms applied inside the same transaction.
     pub renew_ttl_ms: Option<u64>,
+}
+
+/// Cross-host write-transaction fence for source sync report capture and
+/// canonical promotion: active durable lease plus active connector mapping
+/// revision pin, both rechecked inside SQLite's write transaction.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SourceReportFence<'a> {
+    /// Active lease `(connection_id, lease_id, generation, now_ms)`.
+    pub lease: Option<(&'a str, &'a str, u64, u64)>,
+    /// Active connector mapping revision `(mapping_id, expected_binding)`.
+    pub expected_binding: Option<(&'a str, &'a str)>,
 }
 
 /// Payload persisted into `_norn_source_cursor` / `_norn_source_pending` in one tx.
@@ -622,16 +631,27 @@ impl<E: SqlEngine> CellStore<E> {
     pub fn seed_source_cursors(
         &mut self,
         connection_id: &str,
-        lease_id: &str,
-        generation: u64,
+        lease: &SourceLease,
         now_ms: u64,
         cursors: &BTreeMap<String, String>,
+        expected_binding: Option<(&str, &str)>,
     ) -> Result<(), CellError> {
-        if cursors.is_empty() {
+        if cursors.is_empty() && expected_binding.is_none() {
             return Ok(());
         }
         self.write_tx(|| {
-            verify_active_lease(&self.conn, connection_id, lease_id, generation, now_ms)?;
+            verify_active_lease(
+                &self.conn,
+                connection_id,
+                &lease.lease_id,
+                lease.generation,
+                now_ms,
+            )?;
+            crate::mapping_conflict::verify_mapping_binding_in_tx(
+                &self.read(),
+                expected_binding,
+                Some((connection_id, &lease.lease_id, lease.generation)),
+            )?;
             for (dataset, cursor_json) in cursors {
                 self.conn.execute(
                     &format!(
@@ -644,7 +664,7 @@ impl<E: SqlEngine> CellStore<E> {
                         connection_id,
                         dataset.as_str(),
                         cursor_json.as_str(),
-                        to_i64(generation, "source cursor generation")?,
+                        to_i64(lease.generation, "source cursor generation")?,
                         to_i64(now_ms, "source cursor updated_at_ms")?,
                     ],
                 )?;
@@ -667,8 +687,18 @@ impl<E: SqlEngine> CellStore<E> {
         digest: &str,
         pages: &[String],
         records: &[String],
+        expected_binding: Option<(&str, &str)>,
     ) -> Result<(), CellError> {
         self.write_tx(|| {
+            crate::mapping_conflict::verify_mapping_binding_in_tx(
+                &self.read(),
+                expected_binding,
+                Some((
+                    advance.connection_id.as_str(),
+                    advance.lease_id.as_str(),
+                    advance.generation,
+                )),
+            )?;
             let precondition = check_capture_precondition(&self.conn, advance, digest, None)?;
             let payload = CaptureCommitPayload {
                 digest,
@@ -873,60 +903,24 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .release_source_lease(connection_id, lease_id, generation)
     }
 
-    /// See [`CellStore::capture_source_page`].
-    /// # Errors
-    /// Lease fencing, cursor conflict, framing refusals, or store errors.
-    pub fn capture_source_page(
-        &mut self,
-        raws: &[Observed<RuntimeValue>],
-        input: Option<&MappingInput>,
-        advance: &CursorAdvanceSpec,
-        max_run_rows: usize,
-    ) -> Result<CapturedSourcePage, CellError> {
-        self.store_mut()
-            .capture_source_page(raws, input, advance, max_run_rows)
-    }
-
-    /// See [`CellStore::capture_source_dispute_row`].
-    /// # Errors
-    /// Lease fencing, cursor conflict, framing refusals, or store errors.
-    pub fn capture_source_dispute_row(
-        &mut self,
-        raw: &Observed<RuntimeValue>,
-        input: &MappingInput,
-        advance: &CursorAdvanceSpec,
-        pending_key: &str,
-    ) -> Result<CapturedPage, CellError> {
-        self.store_mut()
-            .capture_source_dispute_row(raw, input, advance, pending_key)
-    }
-
-    /// See [`CellStore::capture_source_report_checked`].
-    /// # Errors
-    /// [`CellError::SourceLeaseFenced`], framing refusals, or store errors.
-    pub fn capture_source_report_checked(
-        &mut self,
-        raws: &[Observed<RuntimeValue>],
-        input: &MappingInput,
-        lease: Option<(&str, &str, u64, u64)>,
-    ) -> Result<CapturedPage, CellError> {
-        self.store_mut()
-            .capture_source_report_checked(raws, input, lease)
-    }
-
     /// See [`CellStore::seed_source_cursors`].
     /// # Errors
     /// Lease fencing or store errors.
     pub fn seed_source_cursors(
         &mut self,
         connection_id: &str,
-        lease_id: &str,
-        generation: u64,
+        lease: &SourceLease,
         now_ms: u64,
         cursors: &BTreeMap<String, String>,
+        expected_binding: Option<(&str, &str)>,
     ) -> Result<(), CellError> {
-        self.store_mut()
-            .seed_source_cursors(connection_id, lease_id, generation, now_ms, cursors)
+        self.store_mut().seed_source_cursors(
+            connection_id,
+            lease,
+            now_ms,
+            cursors,
+            expected_binding,
+        )
     }
 
     /// See [`CellStore::commit_source_page_cursor`].
@@ -938,9 +932,15 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         digest: &str,
         pages: &[String],
         records: &[String],
+        expected_binding: Option<(&str, &str)>,
     ) -> Result<(), CellError> {
-        self.store_mut()
-            .commit_source_page_cursor(advance, digest, pages, records)
+        self.store_mut().commit_source_page_cursor(
+            advance,
+            digest,
+            pages,
+            records,
+            expected_binding,
+        )
     }
 
     /// See [`CellStore::complete_source_pending`].

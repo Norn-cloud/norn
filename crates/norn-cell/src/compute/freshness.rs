@@ -898,7 +898,7 @@ fn connection_history_proves_cursors_at<E: SqlEngine>(
         let hist_cursors = strict_connection_cursors(&hist);
         let is_failed = hist.values.get("status").and_then(RuntimeValue::as_str) == Some("failed");
         if !is_failed {
-            active.retain(|&ds, &cj| hist_cursors.get(ds).map(String::as_str) == Some(cj));
+            active.retain(|&ds, cj| hist_cursors.get(ds).map(String::as_str) == Some(*cj));
             if active.is_empty() {
                 return Ok(true);
             }
