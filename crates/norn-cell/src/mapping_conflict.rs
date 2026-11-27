@@ -514,4 +514,188 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .map(|key| norn_ir::canonical::nfc(&key));
         self.with_source_dispute_index(|index| index.events.get(&keys).cloned())
     }
+
+    /// Datasets of `mapping_id` that still hold unresolved quarantined inbox
+    /// rows (`mapping-bundle:` without a later landed correction for the same
+    /// source identity, or any unconsumed `mapping-conflict:` /
+    /// `mapping-identity:`).
+    ///
+    /// # Errors
+    /// Store query errors.
+    pub fn unresolved_quarantined_datasets(
+        &self,
+        mapping_id: &str,
+    ) -> Result<BTreeSet<String>, CellError> {
+        let sql = format!(
+            "SELECT DISTINCT json_extract(b1.\"observed\", '$.input.input.dataset') \
+             FROM \"{INBOX}\" b1 \
+             WHERE b1.\"consumed_commit_seq\" IS NULL \
+               AND b1.\"observation_id\" LIKE 'mapping-bundle:%' \
+               AND json_extract(b1.\"observed\", '$.input.input.mapping') = ?1 \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM \"{INBOX}\" b2 \
+                 WHERE b2.\"consumed_commit_seq\" IS NOT NULL \
+                   AND b2.\"position\" > b1.\"position\" \
+                   AND b2.\"observation_id\" LIKE 'mapping-bundle:%' \
+                   AND json_extract(b2.\"observed\", '$.input.input.mapping') = ?1 \
+                   AND json_extract(b2.\"observed\", '$.input.input.dataset') = json_extract(b1.\"observed\", '$.input.input.dataset') \
+                   AND json_extract(b2.\"observed\", '$.input.input.connectorInstance') = json_extract(b1.\"observed\", '$.input.input.connectorInstance') \
+                   AND json_extract(b2.\"observed\", '$.input.input.partition') = json_extract(b1.\"observed\", '$.input.input.partition') \
+                   AND json_extract(b2.\"observed\", '$.input.raw.source') = json_extract(b1.\"observed\", '$.input.raw.source') \
+                   AND json_extract(b2.\"observed\", '$.input.raw.source_id') = json_extract(b1.\"observed\", '$.input.raw.source_id') \
+               ) \
+             UNION \
+             SELECT DISTINCT json_extract(\"observed\", '$.input.incoming.input.dataset') \
+             FROM \"{INBOX}\" \
+             WHERE \"consumed_commit_seq\" IS NULL \
+               AND \"observation_id\" LIKE 'mapping-conflict:%' \
+               AND json_extract(\"observed\", '$.input.incoming.input.mapping') = ?1 \
+             UNION \
+             SELECT DISTINCT json_extract(\"observed\", '$.input.bundle.input.dataset') \
+             FROM \"{INBOX}\" \
+             WHERE \"consumed_commit_seq\" IS NULL \
+               AND \"observation_id\" LIKE 'mapping-identity:%' \
+               AND json_extract(\"observed\", '$.input.bundle.input.mapping') = ?1"
+        );
+        let rows = self.conn.query(&sql, params![mapping_id])?;
+        let mut datasets = BTreeSet::new();
+        for values in rows {
+            if let Some(ds) = crate::engine::SqlRow(values).get::<Option<String>>(0)?
+                && !ds.is_empty()
+            {
+                datasets.insert(ds);
+            }
+        }
+        Ok(datasets)
+    }
+}
+
+#[derive(Serialize)]
+struct SourceRowDigest<'a> {
+    observation_id: &'a str,
+    source: &'a str,
+    source_id: &'a str,
+    mapping_version: &'a str,
+    input_source: Option<&'a RuntimeValue>,
+    input_source_id: Option<&'a RuntimeValue>,
+    event_id: Option<&'a RuntimeValue>,
+    source_version: Option<&'a RuntimeValue>,
+    pipeline_version: Option<&'a RuntimeValue>,
+    kind: Option<&'a RuntimeValue>,
+    payload_digest: Option<&'a RuntimeValue>,
+    payload: Option<&'a RuntimeValue>,
+}
+
+fn source_row_digests(observations: &[Observed<RuntimeValue>]) -> Vec<SourceRowDigest<'_>> {
+    observations
+        .iter()
+        .map(|raw| SourceRowDigest {
+            observation_id: raw.id.0.as_str(),
+            source: raw.provenance.source.as_str(),
+            source_id: raw.provenance.source_id.as_str(),
+            mapping_version: raw.provenance.mapping_version.as_str(),
+            input_source: raw.input.get("source"),
+            input_source_id: raw.input.get("source_id"),
+            event_id: raw.input.get("event_id"),
+            source_version: raw.input.get("source_version"),
+            pipeline_version: raw.input.get("pipeline_version"),
+            kind: raw.input.get("kind"),
+            payload_digest: raw.input.get("payload_digest"),
+            payload: raw.input.get("payload"),
+        })
+        .collect()
+}
+
+pub(crate) fn source_page_digest_v3(
+    advance: &crate::source_cursor::CursorAdvanceSpec,
+    mapping: Option<&str>,
+    observations: &[Observed<RuntimeValue>],
+) -> Result<String, CellError> {
+    #[derive(Serialize)]
+    struct DigestInput<'a> {
+        connection_id: &'a str,
+        dataset: &'a str,
+        mapping: Option<&'a str>,
+        rows: Vec<SourceRowDigest<'a>>,
+        expected_previous_cursor: Option<&'a str>,
+        next_cursor: Option<&'a str>,
+    }
+    let input = DigestInput {
+        connection_id: &advance.connection_id,
+        dataset: &advance.dataset,
+        mapping,
+        rows: source_row_digests(observations),
+        expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
+        next_cursor: advance.next_cursor.as_deref(),
+    };
+    Ok(norn_ir::canonical::domain_hash_hex(
+        b"norn.source.page.v3\0",
+        &input,
+    )?)
+}
+
+pub(crate) fn source_page_digest_v2(
+    advance: &crate::source_cursor::CursorAdvanceSpec,
+    observations: &[Observed<RuntimeValue>],
+) -> Result<String, CellError> {
+    #[derive(Serialize)]
+    struct DigestInputV2<'a> {
+        connection_id: &'a str,
+        dataset: &'a str,
+        rows: Vec<SourceRowDigest<'a>>,
+        expected_previous_cursor: Option<&'a str>,
+        next_cursor: Option<&'a str>,
+    }
+    let input = DigestInputV2 {
+        connection_id: &advance.connection_id,
+        dataset: &advance.dataset,
+        rows: source_row_digests(observations),
+        expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
+        next_cursor: advance.next_cursor.as_deref(),
+    };
+    Ok(norn_ir::canonical::domain_hash_hex(
+        b"norn.source.page.v2\0",
+        &input,
+    )?)
+}
+
+pub(crate) fn legacy_source_replay_allowed<E: SqlEngine>(
+    conn: &E,
+    records: &[String],
+    mapping: Option<&str>,
+    active_binding: Option<&str>,
+) -> Result<bool, CellError> {
+    let mut saw_bundle = false;
+    for id in records {
+        if !id.starts_with("mapping-bundle:") {
+            continue;
+        }
+        saw_bundle = true;
+        let encoded: Option<String> = conn.query_optional(
+            &format!("SELECT \"observed\" FROM \"{INBOX}\" WHERE \"observation_id\" = ?1"),
+            params![id.as_str()],
+            |row| row.get(0),
+        )?;
+        let Some(encoded) = encoded else {
+            return Ok(false);
+        };
+        let Ok(observed) = serde_json::from_str::<Observed<RuntimeValue>>(&encoded) else {
+            return Ok(false);
+        };
+        let Ok(bundle) = norn_ir::runtime::decode::<MappingBundle>(&observed.input) else {
+            return Ok(false);
+        };
+        if mapping.is_some_and(|m| bundle.input.mapping != m) {
+            return Ok(false);
+        }
+        if let Some(pin) = active_binding
+            && !bundle
+                .artifact_pins
+                .iter()
+                .any(|(art_id, ver, sha)| format!("{art_id}@{ver}#{sha}") == pin)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(saw_bundle || (records.is_empty() && mapping.is_none()))
 }

@@ -219,59 +219,20 @@ pub fn page_digest(
     mapping: Option<&str>,
     observations: &[Observed<RuntimeValue>],
 ) -> Result<String, CellError> {
-    #[derive(Serialize)]
-    struct RowDigest<'a> {
-        observation_id: &'a str,
-        source: &'a str,
-        source_id: &'a str,
-        mapping_version: &'a str,
-        input_source: Option<&'a RuntimeValue>,
-        input_source_id: Option<&'a RuntimeValue>,
-        event_id: Option<&'a RuntimeValue>,
-        source_version: Option<&'a RuntimeValue>,
-        pipeline_version: Option<&'a RuntimeValue>,
-        kind: Option<&'a RuntimeValue>,
-        payload_digest: Option<&'a RuntimeValue>,
-        payload: Option<&'a RuntimeValue>,
-    }
-    #[derive(Serialize)]
-    struct DigestInput<'a> {
-        connection_id: &'a str,
-        dataset: &'a str,
-        mapping: Option<&'a str>,
-        rows: Vec<RowDigest<'a>>,
-        expected_previous_cursor: Option<&'a str>,
-        next_cursor: Option<&'a str>,
-    }
-    let row_digests = observations
-        .iter()
-        .map(|raw| RowDigest {
-            observation_id: raw.id.0.as_str(),
-            source: raw.provenance.source.as_str(),
-            source_id: raw.provenance.source_id.as_str(),
-            mapping_version: raw.provenance.mapping_version.as_str(),
-            input_source: raw.input.get("source"),
-            input_source_id: raw.input.get("source_id"),
-            event_id: raw.input.get("event_id"),
-            source_version: raw.input.get("source_version"),
-            pipeline_version: raw.input.get("pipeline_version"),
-            kind: raw.input.get("kind"),
-            payload_digest: raw.input.get("payload_digest"),
-            payload: raw.input.get("payload"),
-        })
-        .collect();
-    let input = DigestInput {
-        connection_id: &advance.connection_id,
-        dataset: &advance.dataset,
-        mapping,
-        rows: row_digests,
-        expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
-        next_cursor: advance.next_cursor.as_deref(),
-    };
-    Ok(norn_ir::canonical::domain_hash_hex(
-        b"norn.source.page.v3\0",
-        &input,
-    )?)
+    crate::mapping_conflict::source_page_digest_v3(advance, mapping, observations)
+}
+
+/// Legacy B3 `norn.source.page.v2` digest (without `mapping`), used only to
+/// preserve exact idempotent replay of retained pages committed before B6
+/// under the same mapping revision.
+///
+/// # Errors
+/// Canonical encoding error.
+pub fn page_digest_v2(
+    advance: &CursorAdvanceSpec,
+    observations: &[Observed<RuntimeValue>],
+) -> Result<String, CellError> {
+    crate::mapping_conflict::source_page_digest_v2(advance, observations)
 }
 
 fn read_lease<E: SqlEngine>(
@@ -350,10 +311,14 @@ pub(crate) enum Precondition {
     /// nonterminal cursor pages recorded in `_norn_source_pending`); return
     /// the original captured observation ids without writing new inbox rows.
     IdempotentReplay {
+        matched_digest: String,
         pages: Vec<String>,
         records: Vec<String>,
     },
 }
+
+/// Optional legacy `norn.source.page.v2` replay context: `(v2_digest, mapping_id, active_binding)`.
+pub(crate) type LegacyReplay<'a> = (&'a str, Option<&'a str>, Option<&'a str>);
 
 /// Validate the active fencing lease and cursor precondition inside an open
 /// capture transaction before writing any inbox row.
@@ -361,6 +326,7 @@ pub(crate) fn check_capture_precondition<E: SqlEngine>(
     conn: &E,
     advance: &CursorAdvanceSpec,
     digest: &str,
+    legacy_v2: Option<LegacyReplay<'_>>,
 ) -> Result<Precondition, CellError> {
     verify_active_lease(
         conn,
@@ -373,6 +339,23 @@ pub(crate) fn check_capture_precondition<E: SqlEngine>(
         read_pending_by_digest(conn, &advance.connection_id, &advance.dataset, digest)?
     {
         return Ok(Precondition::IdempotentReplay {
+            matched_digest: digest.to_owned(),
+            pages: existing_pending.pages,
+            records: existing_pending.records,
+        });
+    }
+    if let Some((v2, mapping, active_binding)) = legacy_v2
+        && let Some(existing_pending) =
+            read_pending_by_digest(conn, &advance.connection_id, &advance.dataset, v2)?
+        && crate::mapping_conflict::legacy_source_replay_allowed(
+            conn,
+            &existing_pending.records,
+            mapping,
+            active_binding,
+        )?
+    {
+        return Ok(Precondition::IdempotentReplay {
+            matched_digest: v2.to_owned(),
             pages: existing_pending.pages,
             records: existing_pending.records,
         });
@@ -384,12 +367,29 @@ pub(crate) fn check_capture_precondition<E: SqlEngine>(
     }
     if let Some(existing) = &current
         && advance.next_cursor.as_deref() == Some(existing.cursor_json.as_str())
-        && existing.page_digest == digest
     {
-        return Ok(Precondition::IdempotentReplay {
-            pages: existing.pages.clone(),
-            records: existing.records.clone(),
-        });
+        if existing.page_digest == digest {
+            return Ok(Precondition::IdempotentReplay {
+                matched_digest: digest.to_owned(),
+                pages: existing.pages.clone(),
+                records: existing.records.clone(),
+            });
+        }
+        if let Some((v2, mapping, active_binding)) = legacy_v2
+            && existing.page_digest == v2
+            && crate::mapping_conflict::legacy_source_replay_allowed(
+                conn,
+                &existing.records,
+                mapping,
+                active_binding,
+            )?
+        {
+            return Ok(Precondition::IdempotentReplay {
+                matched_digest: v2.to_owned(),
+                pages: existing.pages.clone(),
+                records: existing.records.clone(),
+            });
+        }
     }
     Err(CellError::SourceCursorConflict {
         connection_id: advance.connection_id.clone(),
@@ -533,7 +533,6 @@ impl<E: SqlEngine> CellStore<E> {
             let existing = read_lease(&self.conn, connection_id)?;
             if let Some(current) = &existing
                 && now_ms < current.expires_at_ms
-                && current.lease_id != lease_id
             {
                 return Err(CellError::SourceLeaseFenced {
                     connection_id: connection_id.to_owned(),
@@ -663,7 +662,7 @@ impl<E: SqlEngine> CellStore<E> {
         records: &[String],
     ) -> Result<(), CellError> {
         self.write_tx(|| {
-            let precondition = check_capture_precondition(&self.conn, advance, digest)?;
+            let precondition = check_capture_precondition(&self.conn, advance, digest, None)?;
             let payload = CaptureCommitPayload {
                 digest,
                 pages,

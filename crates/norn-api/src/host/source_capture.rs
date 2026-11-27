@@ -292,6 +292,23 @@ impl<E: SqlEngine> DevHost<E> {
             .map_err(Refusal::host)
     }
 
+    /// Datasets of `mapping_id` that still hold unresolved quarantined inbox
+    /// rows (preventing an empty sync from marking coverage `Exact`).
+    ///
+    /// # Errors
+    /// Host or store failure.
+    pub fn unresolved_quarantined_datasets(
+        &self,
+        mapping_id: &str,
+    ) -> Result<std::collections::BTreeSet<String>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .unresolved_quarantined_datasets(mapping_id)
+            .map_err(Refusal::host)
+    }
+
     /// Read all durably committed dataset cursors for `connection_id`.
     ///
     /// # Errors

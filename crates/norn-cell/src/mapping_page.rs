@@ -312,35 +312,59 @@ impl<E: SqlEngine> CellStore<E> {
         };
         let digest =
             crate::source_cursor::page_digest(advance, input.map(|i| i.mapping.as_str()), raws)?;
+        let legacy_v2 = crate::source_cursor::page_digest_v2(advance, raws)?;
+        let active_binding = match input {
+            Some(input) => self.read().active_mapping_binding(&input.mapping)?,
+            None => None,
+        };
         let model = self.model().clone();
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
         self.write_tx(|| {
-            let precondition =
-                crate::source_cursor::check_capture_precondition(&self.conn, advance, &digest)?;
-            let captured = match &precondition {
-                crate::source_cursor::Precondition::IdempotentReplay { pages, records } => {
+            let precondition = crate::source_cursor::check_capture_precondition(
+                &self.conn,
+                advance,
+                &digest,
+                Some((
+                    legacy_v2.as_str(),
+                    input.map(|i| i.mapping.as_str()),
+                    active_binding.as_deref(),
+                )),
+            )?;
+            let (page_digest, captured) = match &precondition {
+                crate::source_cursor::Precondition::IdempotentReplay {
+                    matched_digest,
+                    pages,
+                    records,
+                } => (
+                    matched_digest.clone(),
                     // Exact replay returns the originally captured observation
                     // ids without creating fresh inbox rows (even if wall-clock
                     // `extracted_at` changed).
                     CapturedPage {
                         pages: pages.iter().cloned().map(|id| (id, false)).collect(),
                         records: records.clone(),
-                    }
-                }
-                crate::source_cursor::Precondition::Advance => match input {
-                    Some(input) => {
-                        self.capture_mapping_page_rows_in_tx(raws, input, canonical, max_run_rows)?
-                    }
-                    None => CapturedPage {
-                        pages: Vec::new(),
-                        records: Vec::new(),
                     },
-                },
+                ),
+                crate::source_cursor::Precondition::Advance => (
+                    digest.clone(),
+                    match input {
+                        Some(input) => self.capture_mapping_page_rows_in_tx(
+                            raws,
+                            input,
+                            canonical,
+                            max_run_rows,
+                        )?,
+                        None => CapturedPage {
+                            pages: Vec::new(),
+                            records: Vec::new(),
+                        },
+                    },
+                ),
             };
             let page_ids: Vec<String> = captured.pages.iter().map(|(id, _)| id.clone()).collect();
             let payload = crate::source_cursor::CaptureCommitPayload {
-                digest: &digest,
+                digest: &page_digest,
                 pages: &page_ids,
                 records: &captured.records,
                 record_pending: true,
@@ -352,7 +376,7 @@ impl<E: SqlEngine> CellStore<E> {
                 &payload,
             )?;
             Ok(CapturedSourcePage {
-                page_digest: digest,
+                page_digest,
                 captured,
             })
         })
@@ -380,9 +404,13 @@ impl<E: SqlEngine> CellStore<E> {
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
         self.write_tx(|| {
-            let precondition =
-                crate::source_cursor::check_capture_precondition(&self.conn, advance, pending_key)?;
-            if let crate::source_cursor::Precondition::IdempotentReplay { pages, records } =
+            let precondition = crate::source_cursor::check_capture_precondition(
+                &self.conn,
+                advance,
+                pending_key,
+                None,
+            )?;
+            if let crate::source_cursor::Precondition::IdempotentReplay { pages, records, .. } =
                 precondition
             {
                 return Ok(CapturedPage {

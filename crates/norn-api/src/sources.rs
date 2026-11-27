@@ -609,9 +609,15 @@ impl Sources {
             ));
         };
         let superseded = capture::is_lease_superseded(host, config, &run, error.as_ref(), now_ms);
+        let has_unresolved_quarantine = error.is_none()
+            && run.quarantined == 0
+            && !config.mapping.is_empty()
+            && !host
+                .unresolved_quarantined_datasets(&config.mapping)
+                .is_ok_and(|datasets| datasets.is_empty());
         let outcome = if error.is_some() {
             "failed"
-        } else if run.quarantined > 0 {
+        } else if run.quarantined > 0 || has_unresolved_quarantine {
             "partial"
         } else {
             "ok"

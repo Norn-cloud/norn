@@ -758,6 +758,7 @@ impl<E: SqlEngine> CellStore<E> {
             let cursors = reader.source_cursors(source_id)?;
             let conn_cursors = conn.map_or_else(BTreeMap::new, strict_connection_cursors);
             let pending = reader.pending_source_datasets(source_id)?;
+            let quarantined = reader.unresolved_quarantined_datasets(&req.mapping_id)?;
             for dataset in &req.datasets {
                 let Some(cursor_json) = cursors
                     .get(dataset)
@@ -774,6 +775,7 @@ impl<E: SqlEngine> CellStore<E> {
                 let heartbeat_ms = conn_heartbeat_ms;
                 let complete = conn_healthy
                     && !pending.contains(dataset)
+                    && !quarantined.contains(dataset)
                     && report_matches
                     && heartbeat_ms.is_some();
                 if complete && let Some(hb) = heartbeat_ms {
@@ -876,14 +878,12 @@ fn connection_history_proves_cursors_at<E: SqlEngine>(
             params![MAIN_WORLD, CONNECTION_TYPE, conn.id.as_str(), max_ver],
         )?;
     }
-    if rows.len() > MAX_HISTORICAL_CONNECTIONS {
-        return Ok(false);
-    }
+    let truncated = rows.len() > MAX_HISTORICAL_CONNECTIONS;
     let mut active: BTreeMap<&str, &str> = required
         .iter()
         .map(|(ds, cj)| (ds.as_str(), cj.as_str()))
         .collect();
-    for values in rows {
+    for values in rows.into_iter().take(MAX_HISTORICAL_CONNECTIONS) {
         let row = SqlRow(values);
         let (Ok(ver), Ok(seq)) = (
             u64::try_from(row.get::<i64>(0)?),
@@ -913,7 +913,7 @@ fn connection_history_proves_cursors_at<E: SqlEngine>(
             return Ok(false);
         }
     }
-    Ok(true)
+    Ok(!truncated)
 }
 
 fn commit_seq_matches_mapping_binding<E: SqlEngine>(
