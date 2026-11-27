@@ -2104,7 +2104,7 @@ fn retain_evaluation_receipt(
         .map_err(|e| format!("encode invocation: {e}"))?;
     let freshness = dispatched
         .freshness()
-        .map_err(|e| format!("freshness: {e}"))?;
+        .ok_or_else(|| "freshness missing".to_owned())?;
     stress
         .cell
         .commit(CellCommit {
