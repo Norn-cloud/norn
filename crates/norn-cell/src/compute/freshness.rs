@@ -764,7 +764,7 @@ impl<E: SqlEngine> CellStore<E> {
             let conn_cursors = conn.map_or_else(BTreeMap::new, strict_connection_cursors);
             let pending = reader.pending_source_datasets(source_id)?;
             let quarantined =
-                reader.unresolved_quarantined_datasets(&req.mapping_id, Some(source_id))?;
+                reader.unresolved_quarantined_datasets_live(&req.mapping_id, Some(source_id))?;
             let conn_healthy = mapping_matches
                 && (status == Some("ok") || (status == Some("partial") && !quarantined.is_empty()));
             for dataset in &req.datasets {

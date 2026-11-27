@@ -1339,4 +1339,171 @@ mod tests {
         );
         assert_eq!(trace.status, 200, "{}", trace.body);
     }
+
+    fn ingest_nonterminal_party_row(
+        host: &DevHost<NativeEngine>,
+        conn: &str,
+        obs: norn_kernel::Observed<RuntimeValue>,
+        now_ms: u64,
+    ) {
+        let input = norn_cell::mapping_bundle::MappingInput {
+            mapping: "erpnext.rest.mapping".into(),
+            dataset: "Party".into(),
+            connector_instance: "sandbox".into(),
+            partition: "Party".into(),
+            recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-12T12:00:01Z".into()),
+        };
+        let prev = host
+            .source_cursors(conn)
+            .expect("cur")
+            .get("Party")
+            .map(|c| c.cursor_json.clone());
+        let lease = host
+            .acquire_source_lease(
+                conn,
+                &format!("run-nonterm-{conn}-{now_ms}"),
+                now_ms,
+                norn_api::sources::RUN_LEASE_MS,
+            )
+            .expect("lease");
+        let adv = norn_cell::source_cursor::CursorAdvanceSpec {
+            connection_id: conn.into(),
+            dataset: "Party".into(),
+            lease_id: lease.lease_id.clone(),
+            generation: lease.generation,
+            now_ms,
+            expected_previous_cursor: prev,
+            next_cursor: None,
+            renew_ttl_ms: Some(norn_api::sources::RUN_LEASE_MS),
+        };
+        let out = host
+            .ingest_source_page(&[(obs, input)], &adv)
+            .expect("ingest");
+        assert!(matches!(
+            out[0].outcome,
+            norn_cell::MappingOutcome::Landed | norn_cell::MappingOutcome::AlreadyLanded
+        ));
+        host.release_source_lease(conn, &lease.lease_id, lease.generation)
+            .expect("rel");
+    }
+
+    fn assert_pinned_trace_ok(
+        host: &DevHost<NativeEngine>,
+        principals: &FixturePrincipals,
+        runtime: &dyn AdHocQuestions<NativeEngine>,
+        q: &Value,
+        ans: &Value,
+    ) {
+        let bucket = ans["rows"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
+        let trace = call_http(
+            host,
+            principals,
+            runtime,
+            "POST",
+            "/v1/questions:trace",
+            &json!({
+                "question": q, "lineageRef": ans["lineageRef"], "bucket": bucket,
+                "knownAsOf": ans["knownAsOf"], "nowMs": ans["nowMs"],
+            })
+            .to_string(),
+        );
+        assert_eq!(trace.status, 200, "{}", trace.body);
+    }
+
+    #[test]
+    fn nonterminal_sibling_correction_before_answer_matches_pinned_trace() {
+        let (host, principals, scope) = open_hosted(&["erpnext"]);
+        let profile = erpnext_profile();
+        let pages = erpnext_pages(None);
+        sync_named_erpnext(&host, &scope, "erpnext.a", T0, pages.clone(), "ok");
+        sync_named_erpnext(&host, &scope, "erpnext.b", T0, pages.clone(), "ok");
+
+        let party_row = pages["Party"].1["data"][0].clone();
+        let name = party_row["name"].as_str().unwrap().to_owned();
+        let mut bad_payload = party_row.clone();
+        bad_payload["custom_norn_ref"] = Value::Null;
+        let bad = party_obs(
+            &profile,
+            &name,
+            "2026-11-12 20:00:00",
+            bad_payload,
+            T0 + 100,
+        );
+        let q_out = ingest_party_row(
+            &host,
+            "erpnext.a",
+            bad,
+            &name,
+            "2026-11-12 20:00:00",
+            T0 + 100,
+        );
+        assert!(matches!(
+            q_out[0].outcome,
+            norn_cell::MappingOutcome::Quarantined(_)
+        ));
+
+        let corr = party_obs(&profile, &name, "2099-01-01 00:00:00", party_row, T0 + 110);
+        ingest_party_row(
+            &host,
+            "erpnext.b",
+            corr.clone(),
+            &name,
+            "2099-01-01 00:00:00",
+            T0 + 110,
+        );
+        sync_named_erpnext(
+            &host,
+            &scope,
+            "erpnext.a",
+            T0 + 120,
+            BTreeMap::new(),
+            "partial",
+        );
+        sync_named_erpnext(&host, &scope, "erpnext.b", T0 + 120, BTreeMap::new(), "ok");
+
+        // BEFORE answering, `erpnext.a` receives `corr` on a nonterminal page (0 new commits).
+        ingest_nonterminal_party_row(&host, "erpnext.a", corr, T0 + 125);
+
+        let derived = DerivedQuestions::new([7; 32], scope.clone()).with_configured_connections(
+            BTreeMap::from([
+                ("erpnext.a".into(), "erpnext.rest.mapping".into()),
+                ("erpnext.b".into(), "erpnext.rest.mapping".into()),
+            ]),
+        );
+        let runtime = derived.questions(&host).expect("runtime");
+        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+        let q = order_line_question(&metric, 60_000);
+        let ans = eval_question(&host, &principals, &derived, &q);
+        assert_eq!(ans["freshness"], "exact", "{ans}");
+        assert_pinned_trace_ok(&host, &principals, &runtime, &q, &ans);
+
+        // Once `erpnext.a` finishes its sync, it reports `ok` and advances `commit_seq`.
+        let now_ms = ans["nowMs"].as_u64().expect("now");
+        sync_named_erpnext(
+            &host,
+            &scope,
+            "erpnext.a",
+            now_ms + 20,
+            BTreeMap::new(),
+            "ok",
+        );
+        sync_named_erpnext(
+            &host,
+            &scope,
+            "erpnext.b",
+            now_ms + 20,
+            BTreeMap::new(),
+            "ok",
+        );
+        let after = eval_question(&host, &principals, &derived, &q);
+        assert_eq!(after["freshness"], "exact", "{after}");
+        assert_pinned_trace_ok(&host, &principals, &runtime, &q, &after);
+        assert_pinned_trace_ok(&host, &principals, &runtime, &q, &ans);
+    }
 }

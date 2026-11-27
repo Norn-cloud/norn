@@ -528,7 +528,28 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         mapping_id: &str,
         connection_id: Option<&str>,
     ) -> Result<BTreeSet<String>, CellError> {
-        self.unresolved_quarantined_datasets_at(mapping_id, connection_id, None)
+        self.unresolved_quarantined_datasets_with(mapping_id, connection_id, None, None)
+    }
+
+    /// Live-question variant of [`Self::unresolved_quarantined_datasets`]:
+    /// sees every live unconsumed quarantine immediately, while crediting
+    /// superseding corrections only once captured before the current committed
+    /// head (`knownAsOf`) so a nonterminal redelivery without a commit never
+    /// creates an exact live answer that pinned `:trace` cannot reproduce.
+    pub(crate) fn unresolved_quarantined_datasets_live(
+        &self,
+        mapping_id: &str,
+        connection_id: Option<&str>,
+    ) -> Result<BTreeSet<String>, CellError> {
+        let head: i64 = self
+            .conn
+            .query_optional(
+                "SELECT \"commit_seq\" FROM \"_norn_clock\" WHERE \"id\" = 1",
+                params![],
+                |row| row.get(0),
+            )?
+            .unwrap_or(0);
+        self.unresolved_quarantined_datasets_with(mapping_id, connection_id, None, Some(head))
     }
 
     /// Like [`Self::unresolved_quarantined_datasets`], evaluated either at live
@@ -544,6 +565,19 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         mapping_id: &str,
         connection_id: Option<&str>,
         at: Option<(u64, u64)>,
+    ) -> Result<BTreeSet<String>, CellError> {
+        let frontier_i64 = at
+            .map(|(f, _)| i64::try_from(f).map_err(|_| CellError::OutOfRange("frontier")))
+            .transpose()?;
+        self.unresolved_quarantined_datasets_with(mapping_id, connection_id, at, frontier_i64)
+    }
+
+    fn unresolved_quarantined_datasets_with(
+        &self,
+        mapping_id: &str,
+        connection_id: Option<&str>,
+        at: Option<(u64, u64)>,
+        supersede_frontier: Option<i64>,
     ) -> Result<BTreeSet<String>, CellError> {
         let mut datasets = BTreeSet::new();
         let frontier_i64 = at
@@ -603,7 +637,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 mapping_id,
                 connection_id,
                 &bundle,
-                frontier_i64,
+                supersede_frontier,
             )? {
                 datasets.insert(bundle.input.dataset);
             }

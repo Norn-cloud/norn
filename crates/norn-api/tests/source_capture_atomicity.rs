@@ -2093,22 +2093,35 @@ mod tests {
 
     /// Regression 20a: v3 replay distinguishes non-NFC vs NFC identity bytes,
     /// while legacy v2 replay admits an unchanged non-NFC `mapping-identity:`
-    /// retry and rejects a different NFC spelling.
+    /// retry (even with decomposed Unicode in non-identity payload fields) and
+    /// rejects a different NFC identity spelling.
     #[test]
     fn unicode_identity_bytes_fenced_in_v3_and_preserved_in_v2_replay() {
         let artifacts = rest_artifacts(&[]);
         let db = TempDb::new("unicode-identity-replay");
         let dataset = "Party".to_owned();
         let (base_rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
-        let mut nfd_rows = vec![base_rows[0].clone()];
-        nfd_rows[0].1.partition = "Party-e\u{0301}".into();
-        let mut nfc_rows = nfd_rows.clone();
-        nfc_rows[0].1.partition = "Party-\u{00e9}".into();
-        let delivered: Vec<_> = nfd_rows.iter().map(|(raw, _)| raw.clone()).collect();
+        let mut decomposed_rows = vec![base_rows[0].clone()];
+        decomposed_rows[0].1.partition = "Party-e\u{0301}".into();
+        if let RuntimeValue::Object(obj) = &mut decomposed_rows[0].0.input {
+            if let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload") {
+                payload.insert(
+                    "customer_name".into(),
+                    RuntimeValue::String("Cafe\u{0301} Corp".into()),
+                );
+            }
+            let digest = norn_ir::canonical::HashProfile::Norn1
+                .hash_json(serde_json::to_string(&obj["payload"]).expect("json"))
+                .expect("digest");
+            obj.insert("payload_digest".into(), RuntimeValue::String(digest));
+        }
+        let mut composed_rows = decomposed_rows.clone();
+        composed_rows[0].1.partition = "Party-\u{00e9}".into();
+        let delivered: Vec<_> = decomposed_rows.iter().map(|(raw, _)| raw.clone()).collect();
         let (advance, orig_records, v2_digest) = {
             let host = reopen_native_host(&artifacts, db.path());
             let lease = host
-                .acquire_source_lease("erpnext.rest", "run-nfd", T0, RUN_LEASE_MS)
+                .acquire_source_lease("erpnext.rest", "run-decomposed", T0, RUN_LEASE_MS)
                 .expect("lease");
             let advance = CursorAdvanceSpec {
                 connection_id: "erpnext.rest".into(),
@@ -2123,7 +2136,7 @@ mod tests {
             let v2_digest =
                 norn_cell::source_cursor::page_digest_v2(&advance, &delivered).expect("v2");
             let norn_api::host::SourceCapturePlan::Captured(pending) = host
-                .capture_source_page_planned(&nfd_rows, &advance, 10)
+                .capture_source_page_planned(&decomposed_rows, &advance, 10)
                 .expect("capture non-NFC identity")
             else {
                 panic!("expected capture");
@@ -2133,7 +2146,7 @@ mod tests {
                 .expect("complete");
             // V3 must reject NFC spelling against captured NFD spelling.
             assert!(matches!(
-                host.capture_source_page_planned(&nfc_rows, &advance, 10),
+                host.capture_source_page_planned(&composed_rows, &advance, 10),
                 Err(SourceCaptureError::CursorConflict(_))
             ));
             (advance, pending.records, v2_digest)
@@ -2153,18 +2166,18 @@ mod tests {
                 .expect("rewrite v2");
         }
         let reopened = reopen_native_host(&artifacts, db.path());
-        // Legacy v2 exact retry with unchanged NFD spelling must succeed.
+        // Legacy v2 exact retry with unchanged NFD identity + NFD payload must succeed.
         let norn_api::host::SourceCapturePlan::Captured(replayed) = reopened
-            .capture_source_page_planned(&nfd_rows, &advance, 10)
+            .capture_source_page_planned(&decomposed_rows, &advance, 10)
             .expect("v2 exact non-NFC retry must succeed")
         else {
             panic!("expected replay");
         };
         assert_eq!(replayed.page_digest, v2_digest);
         assert_eq!(replayed.records, orig_records);
-        // Legacy v2 retry with NFC spelling must conflict.
+        // Legacy v2 retry with NFC identity spelling must conflict.
         assert!(matches!(
-            reopened.capture_source_page_planned(&nfc_rows, &advance, 10),
+            reopened.capture_source_page_planned(&composed_rows, &advance, 10),
             Err(SourceCaptureError::CursorConflict(_))
         ));
     }

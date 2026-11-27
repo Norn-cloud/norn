@@ -656,6 +656,13 @@ fn raw_input_digest(value: &RuntimeValue) -> RawInputDigest<'_> {
     }
 }
 
+fn value_canonical_eq(retained: &RuntimeValue, delivered: &RuntimeValue) -> bool {
+    match (retained.canonical_json(), delivered.canonical_json()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => retained == delivered,
+    }
+}
+
 fn raw_input_matches(
     retained: &RuntimeValue,
     delivered: &RuntimeValue,
@@ -664,16 +671,25 @@ fn raw_input_matches(
     let ignored = |k: &str| {
         k == "extracted_at" || (skip_id_keys && matches!(k, "source" | "source_id" | "event_id"))
     };
+    let exact_id = |k: &str| matches!(k, "source" | "source_id" | "event_id");
     match (retained, delivered) {
         (RuntimeValue::Object(a), RuntimeValue::Object(b)) => {
             a.iter()
                 .filter(|(k, _)| !ignored(k.as_str()))
-                .all(|(k, v)| b.get(k) == Some(v))
+                .all(|(k, v)| {
+                    b.get(k).is_some_and(|dv| {
+                        if exact_id(k.as_str()) {
+                            v == dv
+                        } else {
+                            value_canonical_eq(v, dv)
+                        }
+                    })
+                })
                 && b.keys()
                     .filter(|k| !ignored(k.as_str()))
                     .all(|k| a.contains_key(k))
         }
-        _ => retained == delivered,
+        _ => value_canonical_eq(retained, delivered),
     }
 }
 
@@ -681,22 +697,6 @@ fn raw_str_bytes(raw: &RuntimeValue, key: &str) -> Option<Vec<u8>> {
     raw.get(key)
         .and_then(RuntimeValue::as_str)
         .map(|s| s.as_bytes().to_vec())
-}
-
-#[derive(serde::Serialize)]
-struct SourceRowDigestV2<'a> {
-    observation_id: &'a str,
-    source: &'a str,
-    source_id: &'a str,
-    mapping_version: &'a str,
-    input_source: Option<&'a RuntimeValue>,
-    input_source_id: Option<&'a RuntimeValue>,
-    event_id: Option<&'a RuntimeValue>,
-    source_version: Option<&'a RuntimeValue>,
-    pipeline_version: Option<&'a RuntimeValue>,
-    kind: Option<&'a RuntimeValue>,
-    payload_digest: Option<&'a RuntimeValue>,
-    payload: Option<&'a RuntimeValue>,
 }
 
 #[derive(serde::Serialize)]
@@ -758,48 +758,6 @@ pub(crate) fn source_page_digest_v3(
     };
     Ok(norn_ir::canonical::domain_hash_hex(
         b"norn.source.page.v3\0",
-        &payload,
-    )?)
-}
-
-pub(crate) fn source_page_digest_v2(
-    advance: &crate::source_cursor::CursorAdvanceSpec,
-    observations: &[Observed<RuntimeValue>],
-) -> Result<String, CellError> {
-    #[derive(serde::Serialize)]
-    struct DigestInputV2<'a> {
-        connection_id: &'a str,
-        dataset: &'a str,
-        rows: Vec<SourceRowDigestV2<'a>>,
-        expected_previous_cursor: Option<&'a str>,
-        next_cursor: Option<&'a str>,
-    }
-    let rows = observations
-        .iter()
-        .map(|raw| SourceRowDigestV2 {
-            observation_id: raw.id.0.as_str(),
-            source: raw.provenance.source.as_str(),
-            source_id: raw.provenance.source_id.as_str(),
-            mapping_version: raw.provenance.mapping_version.as_str(),
-            input_source: raw.input.get("source"),
-            input_source_id: raw.input.get("source_id"),
-            event_id: raw.input.get("event_id"),
-            source_version: raw.input.get("source_version"),
-            pipeline_version: raw.input.get("pipeline_version"),
-            kind: raw.input.get("kind"),
-            payload_digest: raw.input.get("payload_digest"),
-            payload: raw.input.get("payload"),
-        })
-        .collect();
-    let payload = DigestInputV2 {
-        connection_id: &advance.connection_id,
-        dataset: &advance.dataset,
-        rows,
-        expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
-        next_cursor: advance.next_cursor.as_deref(),
-    };
-    Ok(norn_ir::canonical::domain_hash_hex(
-        b"norn.source.page.v2\0",
         &payload,
     )?)
 }

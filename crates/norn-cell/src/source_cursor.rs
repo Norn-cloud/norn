@@ -243,7 +243,57 @@ pub fn page_digest_v2(
     advance: &CursorAdvanceSpec,
     observations: &[Observed<RuntimeValue>],
 ) -> Result<String, CellError> {
-    crate::mapping_process::source_page_digest_v2(advance, observations)
+    #[derive(Serialize)]
+    struct RowV2<'a> {
+        observation_id: &'a str,
+        source: &'a str,
+        source_id: &'a str,
+        mapping_version: &'a str,
+        input_source: Option<&'a RuntimeValue>,
+        input_source_id: Option<&'a RuntimeValue>,
+        event_id: Option<&'a RuntimeValue>,
+        source_version: Option<&'a RuntimeValue>,
+        pipeline_version: Option<&'a RuntimeValue>,
+        kind: Option<&'a RuntimeValue>,
+        payload_digest: Option<&'a RuntimeValue>,
+        payload: Option<&'a RuntimeValue>,
+    }
+    #[derive(Serialize)]
+    struct DigestV2<'a> {
+        connection_id: &'a str,
+        dataset: &'a str,
+        rows: Vec<RowV2<'a>>,
+        expected_previous_cursor: Option<&'a str>,
+        next_cursor: Option<&'a str>,
+    }
+    let rows = observations
+        .iter()
+        .map(|raw| RowV2 {
+            observation_id: raw.id.0.as_str(),
+            source: raw.provenance.source.as_str(),
+            source_id: raw.provenance.source_id.as_str(),
+            mapping_version: raw.provenance.mapping_version.as_str(),
+            input_source: raw.input.get("source"),
+            input_source_id: raw.input.get("source_id"),
+            event_id: raw.input.get("event_id"),
+            source_version: raw.input.get("source_version"),
+            pipeline_version: raw.input.get("pipeline_version"),
+            kind: raw.input.get("kind"),
+            payload_digest: raw.input.get("payload_digest"),
+            payload: raw.input.get("payload"),
+        })
+        .collect();
+    let payload = DigestV2 {
+        connection_id: &advance.connection_id,
+        dataset: &advance.dataset,
+        rows,
+        expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
+        next_cursor: advance.next_cursor.as_deref(),
+    };
+    Ok(norn_ir::canonical::domain_hash_hex(
+        b"norn.source.page.v2\0",
+        &payload,
+    )?)
 }
 
 fn read_lease<E: SqlEngine>(
