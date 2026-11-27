@@ -43,12 +43,22 @@ class Suite(unittest.TestCase):
         from norn_regression.receipt import (
             FORECAST_EVALUATOR_MANIFEST_DIGEST,
             dataset_snapshot_blob,
+            encode_model_artifact,
             evaluate_forecast_receipt,
         )
 
         frame = clean(n=400, seed=19)
-        invocation, receipt, checks, plots = evaluate_forecast_receipt(
+        model_bytes = encode_model_artifact(
+            model_id="supply.demand_forecast",
+            target="y",
+            features=["x1", "x2"],
+            intercept="1.5",
+            coefficients={"x1": "2.0", "x2": "-1.0"},
+            contracts={"minRSquared": "0.7"},
+        )
+        invocation, receipt, checks, diagnostics = evaluate_forecast_receipt(
             frame,
+            model_bytes,
             "y",
             ["x1", "x2"],
             tenant="org_demo/dev",
@@ -58,6 +68,7 @@ class Suite(unittest.TestCase):
             model_id="supply.demand_forecast",
             evaluation_run="run-eval",
             dataset_revision="c10",
+            metric_name="r_squared",
         )
         self.assertEqual(receipt["manifest"], FORECAST_EVALUATOR_MANIFEST_DIGEST)
         self.assertEqual(
@@ -67,12 +78,14 @@ class Suite(unittest.TestCase):
         self.assertGreater(len(checks), 0)
         summary = receipt["outcome"]["success"]["summary"]
         self.assertEqual(summary["metric_name"], "r_squared")
-        self.assertAlmostEqual(float(summary["metric_value"]), plots["r_squared"], places=6)
+        self.assertGreater(float(summary["metric_value"]), 0.7)
         self.assertTrue(summary["contracts_passed"])
+        self.assertEqual(diagnostics["n"], 400)
 
         # Re-running with the dispatched invocation reproduces identical result identity.
         _, replay_receipt, _, _ = evaluate_forecast_receipt(
             frame,
+            model_bytes,
             "y",
             ["x1", "x2"],
             tenant="org_demo/dev",
@@ -82,6 +95,7 @@ class Suite(unittest.TestCase):
             model_id="supply.demand_forecast",
             evaluation_run="run-eval",
             dataset_revision="c10",
+            metric_name="r_squared",
             dispatched_invocation=invocation,
         )
         self.assertEqual(replay_receipt["dispatch"], receipt["dispatch"])

@@ -21,13 +21,15 @@ use norn_cell::function_receipt::{FUNCTION_COMMAND_TYPE, FUNCTION_PAYLOAD_TYPE};
 use norn_cell::{AdmittedDefinitions, CellError, KnowledgeCutoff, Model, SqliteCell, StoreOptions};
 use norn_checker::EntityArtifactSetContext;
 use norn_checker::entity_scopes::ScopedView;
-use norn_checker::function::admit_function_manifest;
+use norn_checker::function::{
+    admit_function_manifest, check_function_invocation, check_function_receipt,
+};
 use norn_checker::metric::compute::QuestionPlan;
 use norn_checker::metric::derive::derive_metric_space;
 use norn_ir::function::{
-    Authority, AuthorityKind, CacheOrigin, Digest, ExecutionProvenance, Fencing, FreshnessMode,
-    FunctionInvocation, FunctionManifest, FunctionOutcome, FunctionReceipt, RelevantStateToken,
-    ResourceUse, RetryCeiling, RunRef, SuccessOutcome, output_manifest_digest,
+    Authority, AuthorityKind, BlobRef, CacheOrigin, Digest, ExecutionProvenance, Fencing,
+    FreshnessMode, FunctionInvocation, FunctionManifest, FunctionOutcome, FunctionReceipt,
+    RelevantStateToken, ResourceUse, RetryCeiling, RunRef, SuccessOutcome, output_manifest_digest,
 };
 use norn_ir::{
     ArtifactEnvelope, Decimal, DecisionOutput, DiagnosticSeverity, FactChange, LawRoot, LinkChange,
@@ -208,7 +210,7 @@ enum Outcome {
 const FORECAST_EVALUATOR_EXECUTOR: &str = "pool.ml-evaluator";
 const FORECAST_EVALUATOR_AUTHORITY: &str = "svc:ml-evaluator";
 const FORECAST_EVALUATOR_MANIFEST_DIGEST: &str =
-    "sha256:d2ef419c28a6b87ddd9c673486fd51e0a39a264c357b8e004f9cc2af4caa174f";
+    "sha256:b1d6697776c56b042e2ce979c17fb20e3d43846100bebf4cf261920e65856234";
 const FORECAST_EVALUATOR_PROFILE_DIGEST: &str =
     "sha256:a780163924782b48cc7ef188073bbc22d903bdd5a55825b7077c9e9eb9c7656e";
 
@@ -1806,7 +1808,7 @@ fn forecast_evaluator_manifest_json() -> Value {
         "cache": "none",
         "capabilities": [],
         "dependencyClosure": {
-            "digest": "sha256:554399217cfbd1e0cc2b328e03985ab195cfce0d617e3212571feb3fadcae671",
+            "digest": "sha256:d33a8c603185691a82c9ac3f66f1d93d4d6e03d5535d10b6485049615d2594f1",
             "entries": [
                 {
                     "digest": "sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535",
@@ -1814,39 +1816,24 @@ fn forecast_evaluator_manifest_json() -> Value {
                     "name": "base-python-3.11-slim"
                 },
                 {
-                    "digest": "sha256:86d7a08c756c1beef1f0ab87640dce99b5421969ba159528fab127ef7185dd91",
+                    "digest": "sha256:d29e9c3a06973857017d85c1908cd6c974f8d01a853ef3f3bf1c57da684d5e76",
                     "kind": "library",
-                    "name": "norn-regression-cell"
+                    "name": "norn-evaluator-cli"
                 },
                 {
-                    "digest": "sha256:48a768534f887b2272aaad42e884f9fb6c3ed20042b96cb1b0c58ff7c0adbbc6",
+                    "digest": "sha256:208ad3e35c4bca5743b54ce9e01cd6e7a9b25eaeedddfd3ea6b8454e7d766ffd",
                     "kind": "asset",
-                    "name": "norn-regression-dockerfile"
+                    "name": "norn-evaluator-dockerfile"
                 },
                 {
                     "digest": "sha256:f0b12ce3d5196e69c5ef12b2fc91961405cd54702cb6f6a0dbfc8b218c68de45",
                     "kind": "library",
-                    "name": "norn-regression-init"
+                    "name": "norn-evaluator-init"
                 },
                 {
-                    "digest": "sha256:599d4b33a3c668ed3f81aa9ce29b478737faa975f8cfb267a85b8664b5d8f9de",
+                    "digest": "sha256:c52e8c874421bb34d11ea6eb02339ab5bab871eb5ebda6cf6c75794fc766262e",
                     "kind": "library",
-                    "name": "norn-regression-receipt"
-                },
-                {
-                    "digest": "sha256:76f8b5d4d5fc10d508b3a372246548a6738fea83a652308da173b41f4f915adf",
-                    "kind": "library",
-                    "name": "norn-regression-requirements"
-                },
-                {
-                    "digest": "sha256:15361cf814d137f03885fdca7d8e118f2dbc3a0fdae6d8911ca6c43269b5a491",
-                    "kind": "library",
-                    "name": "norn-regression-suite"
-                },
-                {
-                    "digest": "sha256:8206c1dd78cfe03473091a63e0e6d32637b2f3388fa62256bb0ab7463fbbe793",
-                    "kind": "library",
-                    "name": "norn-regression-worker"
+                    "name": "norn-evaluator-receipt"
                 }
             ]
         },
@@ -1868,8 +1855,8 @@ fn forecast_evaluator_manifest_json() -> Value {
         },
         "functionId": "ml.forecast.evaluate",
         "implementation": {
-            "digest": "sha256:0cb44d215ad8cd21775078f50010123c3953bfab1fad20099f5d5fe8e567b31c",
-            "entryPoint": "python -m norn_regression.worker --evaluate-receipt",
+            "digest": "sha256:b0a215721c393b8f9632d422e760f9cdb1fcec2fc445e0ef9a976edbe24ece0a",
+            "entryPoint": "python -m norn_regression.evaluator_cli",
             "format": "oci_image",
             "locator": null
         },
@@ -1956,15 +1943,48 @@ fn evaluation_invocation(
                 RuntimeValue::String("run-eval".to_owned()),
             ),
             (
+                "features".to_owned(),
+                RuntimeValue::String("qty".to_owned()),
+            ),
+            (
+                "metric_name".to_owned(),
+                RuntimeValue::String("wape".to_owned()),
+            ),
+            (
                 "model_id".to_owned(),
                 RuntimeValue::String("supply.demand_forecast".to_owned()),
+            ),
+            (
+                "order".to_owned(),
+                RuntimeValue::String("week_start".to_owned()),
+            ),
+            (
+                "target".to_owned(),
+                RuntimeValue::String("predicted_qty".to_owned()),
             ),
             (
                 "version_id".to_owned(),
                 RuntimeValue::String(version_id.to_owned()),
             ),
         ]),
-        blobs: BTreeMap::new(),
+        blobs: BTreeMap::from([
+            (
+                "dataset".to_owned(),
+                BlobRef {
+                    digest: Digest(format!("sha256:{}", "cd".repeat(32))),
+                    version: Some(evaluated_revision.to_owned()),
+                    size_bytes: 512,
+                },
+            ),
+            (
+                "model".to_owned(),
+                BlobRef {
+                    digest: Digest(format!("sha256:{}", "ab".repeat(32))),
+                    version: Some(version_id.to_owned()),
+                    size_bytes: 4096,
+                },
+            ),
+        ]),
         provenance_commit: 1,
         dependency: RelevantStateToken::default(),
         freshness: FreshnessMode::AppendOnly,
@@ -2136,6 +2156,26 @@ fn assert_forecast_evaluator_manifest_parity() -> Result<(), String> {
     assert_eq!(
         admitted.execution_profile.0,
         FORECAST_EVALUATOR_PROFILE_DIGEST
+    );
+    let (dispatched, receipt, _) = build_evaluation_receipt(
+        "cmd-parity-check",
+        "v1",
+        FORECAST_EVALUATOR_MANIFEST_DIGEST,
+        "c1",
+        true,
+        CLOCK,
+    )?;
+    let inv_diags = check_function_invocation(&dispatched.invocation, &admitted);
+    assert_eq!(
+        inv_diags,
+        vec![],
+        "worker-shaped invocation must be admitted by norn-checker"
+    );
+    let rec_diags = check_function_receipt(&receipt, &dispatched.invocation, &admitted);
+    assert_eq!(
+        rec_diags,
+        vec![],
+        "worker-shaped receipt must be admitted by norn-checker"
     );
     Ok(())
 }

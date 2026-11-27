@@ -1,10 +1,7 @@
 {
   "baseImage": "sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535",
-  "cellSource": "sha256:86d7a08c756c1beef1f0ab87640dce99b5421969ba159528fab127ef7185dd91",
-  "dockerfile": "sha256:48a768534f887b2272aaad42e884f9fb6c3ed20042b96cb1b0c58ff7c0adbbc6",
+  "dockerfile": "sha256:208ad3e35c4bca5743b54ce9e01cd6e7a9b25eaeedddfd3ea6b8454e7d766ffd",
+  "evaluatorCliSource": "sha256:d29e9c3a06973857017d85c1908cd6c974f8d01a853ef3f3bf1c57da684d5e76",
   "initSource": "sha256:f0b12ce3d5196e69c5ef12b2fc91961405cd54702cb6f6a0dbfc8b218c68de45",
-  "receiptSource": "sha256:599d4b33a3c668ed3f81aa9ce29b478737faa975f8cfb267a85b8664b5d8f9de",
-  "requirements": "sha256:76f8b5d4d5fc10d508b3a372246548a6738fea83a652308da173b41f4f915adf",
-  "suiteSource": "sha256:15361cf814d137f03885fdca7d8e118f2dbc3a0fdae6d8911ca6c43269b5a491",
-  "workerSource": "sha256:8206c1dd78cfe03473091a63e0e6d32637b2f3388fa62256bb0ab7463fbbe793"
+  "receiptSource": "sha256:c52e8c874421bb34d11ea6eb02339ab5bab871eb5ebda6cf6c75794fc766262e"
 }

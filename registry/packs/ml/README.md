@@ -46,10 +46,14 @@ pack holds what happens to a trained model:
 - **ml.access**: members register, accept authenticated evaluation receipts,
   request promotion and record prediction batches; admins and owners retire.
 
-`sdks/python/models/run-demo.sh` runs registration, the law, the separation
-of duties (the registrant's own promotion is refused; the dev host's reviewer
-principal, `.norn/dev.reviewer.token`, promotes) and applying a
-model (`sdks/python/models/norn_models.apply_model`, which checks every output
-contract on every row before it writes anything) end to end on a dev host. The approval gate needs a hosted cell's roles (a dev host declares
-none); `crates/norn-cell-do/tests/ml_approval.rs` admits the definition against
-the hosted grant table.
+`crates/norn-cell/tests/supply_lab_stress.rs` (Axis 6) exercises the full
+durable SQLite cell lifecycle end to end: closed registration, host receipt
+retention (`SqliteCell::retain_function_receipt`), `ml.modelversion.accept_evaluation`,
+replay/wrong-run/wrong-manifest refusals, separation of duties
+(`ACTOR-INDEPENDENT-1`), `ml.promotion_policy`, and forecast recording.
+`sdks/python/models/run-demo.sh` (`e2e_promotion.py` and `e2e_apply.py`)
+requires host-retained evaluation receipts (`NORN_EVALUATION_RECEIPT_1` and
+`NORN_EVALUATION_RECEIPT_10`; wiring supervisor receipt intake into
+`norn-dev-host` is tracked in `#1934`). The approval gate needs a hosted
+cell's roles (a dev host declares none); `crates/norn-cell-do/tests/ml_approval.rs`
+admits the definition against the hosted grant table.
