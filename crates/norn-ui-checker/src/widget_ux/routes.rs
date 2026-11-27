@@ -26,8 +26,7 @@ impl UxChecker<'_, '_, '_> {
                     "navigation capability requirement must not be blank",
                 );
             }
-            if item.label.0.is_empty() || item.label.0.values().any(|label| label.trim().is_empty())
-            {
+            if item.label.is_blank() {
                 self.error(
                     &format!("{path}/label"),
                     "navigation label must contain nonblank localized text",

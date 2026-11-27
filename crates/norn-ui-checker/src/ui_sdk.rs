@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 
 use norn_ir::{
     LocaleText, WidgetBehavior, WidgetCatalogEntry, WidgetCatalogEvent, WidgetComponent,
-    WidgetMachineField, WidgetNode, WidgetTrust, WidgetUx, WidgetValueType,
+    WidgetMachineField, WidgetNode, WidgetText, WidgetTrust, WidgetUx, WidgetValueType,
 };
 use serde_json::Value;
 
@@ -228,7 +228,10 @@ pub fn entry(entry_id: &str) -> Option<WidgetCatalogEntry> {
     }
     Some(WidgetCatalogEntry {
         entry_id: entry_id.to_owned(),
-        label: LocaleText(BTreeMap::from([("en".to_owned(), name.to_owned())])),
+        label: WidgetText::Locales(LocaleText(BTreeMap::from([(
+            "en".to_owned(),
+            name.to_owned(),
+        )]))),
         trust: WidgetTrust::Native,
         framework: Some("ui-sdk".to_owned()),
         props,
@@ -355,6 +358,11 @@ pub fn renderer_capabilities(ux: &WidgetUx) -> BTreeSet<String> {
         .iter()
         .map(|capability| (*capability).to_owned())
         .collect();
+    // A read of the object a page's context names (UI-CONTEXT-READ-1): the renderer reads it
+    // through its host, whose type no entity of this contract fixes.
+    if !ux.context_reads.is_empty() {
+        out.insert("read:context".to_owned());
+    }
     for page in &ux.pages {
         let mut stack = vec![&page.root];
         while let Some(node) = stack.pop() {
@@ -456,7 +464,7 @@ mod tests {
     #[test]
     fn every_native_behavior_and_primitive_is_in_the_catalog() {
         let catalog = catalog().expect("catalog");
-        let label = LocaleText(BTreeMap::new());
+        let label = WidgetText::Locales(LocaleText(BTreeMap::new()));
         let components = [
             WidgetComponent::List {
                 data_binding_id: String::new(),

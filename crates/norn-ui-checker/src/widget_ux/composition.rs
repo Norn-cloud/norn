@@ -12,7 +12,7 @@ use norn_checker::entity_scopes::{ScopedView, scope_visible};
 
 use super::{
     ActionSurface, MAX_COMPOSITION_EXPANSIONS, MAX_WIDGET_NODE_DEPTH, Usage, UxChecker,
-    dependency_matches, exceeds_widget_node_depth, is_nonblank_locale_text,
+    dependency_matches, exceeds_widget_node_depth,
 };
 
 impl UxChecker<'_, '_, '_> {
@@ -57,7 +57,7 @@ impl UxChecker<'_, '_, '_> {
             };
             match &override_.value {
                 WidgetOverrideValue::Label { value } => {
-                    if !is_nonblank_locale_text(value) {
+                    if value.is_blank() {
                         self.error(
                             &format!("{path}/value"),
                             "label override must contain nonblank localized text",
