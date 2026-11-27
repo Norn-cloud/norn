@@ -1057,5 +1057,37 @@ mod tests {
             matches!(second, MappingOutcome::Quarantined(_)),
             "same event_id/payload with different feed_mode must conflict and quarantine: {second:?}"
         );
+
+        // Equivalent typed version spellings (`"99"` vs `"099"` under Uint64)
+        // share one canonical event_id so differing payloads trigger FEED-CONFLICT.
+        let mut uint_profile = holding_profile(FeedMode::FullSnapshot, VersionKind::Uint64);
+        uint_profile.feeds[0].version_path = "/seq".into();
+        let row_99 = json!({
+            "name": "WLB-CANON-1", "seq": "99",
+            "modified": "2026-11-12 21:00:00.000000",
+            "custom_norn_ref": "demo/holding/conflict-canon-ver",
+            "resource_code": "GOLD", "quantity": 10.0, "unit": "g", "location": "north",
+            "item_ref": "demo/item/gold", "owner_ref": "demo/party/owner",
+            "custodian_ref": "demo/party/custodian", "stock_cost": 100.0,
+            "cost_currency": "USD", "valuation_method": "moving_average"
+        });
+        assert_eq!(
+            ingest_patch_row(&host, &uint_profile, &row_99, T0.saturating_add(3)),
+            MappingOutcome::Landed
+        );
+        let row_099_diff = json!({
+            "name": "WLB-CANON-1", "seq": "099",
+            "modified": "2026-11-12 21:00:00.000000",
+            "custom_norn_ref": "demo/holding/conflict-canon-ver",
+            "resource_code": "GOLD", "quantity": 99.0, "unit": "g", "location": "north",
+            "item_ref": "demo/item/gold", "owner_ref": "demo/party/owner",
+            "custodian_ref": "demo/party/custodian", "stock_cost": 100.0,
+            "cost_currency": "USD", "valuation_method": "moving_average"
+        });
+        let clash = ingest_patch_row(&host, &uint_profile, &row_099_diff, T0.saturating_add(4));
+        assert!(
+            matches!(clash, MappingOutcome::Quarantined(_)),
+            "equivalent Uint64 spellings 99 vs 099 with differing payloads must conflict: {clash:?}"
+        );
     }
 }

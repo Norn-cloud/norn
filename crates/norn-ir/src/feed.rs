@@ -326,6 +326,22 @@ impl SourceVersion {
         &self.raw
     }
 
+    /// Canonical event-identity string for this typed version so equivalent
+    /// spellings (such as `"99"` vs `"099"` under `Uint64`, or equivalent
+    /// `Rfc3339` UTC instants) map to one source-event identity.
+    #[must_use]
+    pub fn canonical_id(&self) -> String {
+        match &self.parsed {
+            ParsedVersion::Lexicographical(s) | ParsedVersion::Opaque(s) => s.clone(),
+            ParsedVersion::Uint64(n) => n.to_string(),
+            ParsedVersion::Int64(n) => n.to_string(),
+            ParsedVersion::Rfc3339 {
+                epoch_seconds,
+                nanos,
+            } => format!("{epoch_seconds}.{nanos:09}"),
+        }
+    }
+
     /// Compare two parsed versions of the same orderable [`VersionKind`].
     ///
     /// # Errors

@@ -1069,6 +1069,7 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         lease: None,
         watermark_from: "{}".to_owned(),
         committed_watermarks: BTreeMap::new(),
+        committed_cursor_json: BTreeMap::new(),
         read,
         landed,
         quarantined,

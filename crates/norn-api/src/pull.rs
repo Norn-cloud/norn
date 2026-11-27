@@ -816,11 +816,19 @@ pub fn observation(
     let digest = norn_ir::canonical::HashProfile::Norn1
         .hash_json(serde_json::to_string(&row.payload).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
+    let version_kind = profile.version_kind(&row.dataset);
+    let event_id = if version_kind == VersionKind::Lexicographical {
+        row.version.clone()
+    } else {
+        SourceVersion::parse(version_kind, &row.version)
+            .map_err(|e| e.to_string())?
+            .canonical_id()
+    };
     let mut input = norn_ir::runtime_object! {
         "contract" => "norn.raw_observation/v1",
         "source" => profile.source.as_str(),
         "source_id" => row.source_id.as_str(),
-        "event_id" => row.version.as_str(),
+        "event_id" => event_id.as_str(),
         "source_version" => row.version.as_str(),
         "pipeline_version" => profile.pipeline.as_str(),
         "kind" => "upsert",
@@ -835,7 +843,6 @@ pub fn observation(
                 RuntimeValue::String(FeedMode::Patch.as_str().to_owned()),
             );
         }
-        let version_kind = profile.version_kind(&row.dataset);
         if version_kind != VersionKind::Lexicographical {
             map.insert(
                 "version_kind".to_owned(),
@@ -845,8 +852,8 @@ pub fn observation(
     }
     Ok(norn_kernel::Observed {
         id: norn_kernel::ObservationId(format!(
-            "{}/{}/{}@{}",
-            profile.source, row.dataset, row.source_id, row.version
+            "{}/{}/{}@{event_id}",
+            profile.source, row.dataset, row.source_id
         )),
         provenance: norn_kernel::Provenance {
             source: profile.source.clone(),

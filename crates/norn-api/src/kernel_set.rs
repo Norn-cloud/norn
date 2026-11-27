@@ -96,10 +96,10 @@ fn admit_with(
     is_base: impl Fn(&ArtifactEnvelope) -> bool,
 ) -> Result<AdmittedSet, KernelRefusal> {
     let value = |artifact: &ArtifactEnvelope| {
-        serde_json::to_value(artifact)
+        serde_json::to_string(artifact)
             .map_err(|e| invalid("artifact wire")(&e))
             .and_then(|wire| {
-                RuntimeValue::from_json(wire).map_err(|e| invalid("artifact value")(&e))
+                RuntimeValue::from_json_text(&wire).map_err(|e| invalid("artifact value")(&e))
             })
     };
     let (base, candidates): (Vec<_>, Vec<_>) = artifacts.iter().cloned().partition(is_base);
