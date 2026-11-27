@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.invalid_compensation",
+  "message": "compensating action {actionId} is invalid: {detail}",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

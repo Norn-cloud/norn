@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Regressions for missing, renamed and unexpectedly selected drop scenarios."""
 
+import json
+import pathlib
+import tempfile
 import unittest
 
 
@@ -66,6 +69,69 @@ class DropScenarioTests(unittest.TestCase):
     def test_duplicate_required_names_refuse(self):
         with self.assertRaisesRegex(ValueError, "duplicate"):
             required_scenarios({"drop-test": {"engine::laws": ["case", "case"]}}, {"drop-test"})
+
+    def test_main_builds_once_before_listing_profiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / ".config").mkdir()
+            (root / ".config/nextest.toml").write_text(
+                '[profile.ci]\nretries = 0\n[profile.drop-02]\ndefault-filter = "all()"\n'
+                '[profile.drop-01]\ndefault-filter = "all()"\n',
+                encoding="utf-8",
+            )
+            (root / ".config/drop-scenarios.json").write_text(
+                json.dumps({
+                    "drop-01": {"engine::laws": ["valid_commit"]},
+                    "drop-02": {"engine::laws": ["atomic_refusal"]},
+                }),
+                encoding="utf-8",
+            )
+            calls = []
+
+            def fake_build(cmd, *, cwd, check, timeout):
+                calls.append(("build", cmd, cwd, check, timeout))
+
+            def fake_list(cmd, *, cwd, text, timeout):
+                profile = cmd[cmd.index("--profile") + 1]
+                calls.append(("list", profile, cmd, cwd, text, timeout))
+                name = "valid_commit" if profile == "drop-01" else "atomic_refusal"
+                return json.dumps(listing(name))
+
+            _check_demo_scenarios.main(root=root, build_runner=fake_build, list_runner=fake_list)
+
+            self.assertEqual([c[0] for c in calls], ["build", "list", "list"])
+            self.assertEqual(
+                calls[0],
+                (
+                    "build",
+                    ["cargo", "nextest", "run", "--no-run", "--locked", "--workspace", "--all-targets"],
+                    root,
+                    True,
+                    _check_demo_scenarios.BUILD_TIMEOUT_SECONDS,
+                ),
+            )
+            self.assertEqual(calls[1][1], "drop-01")
+            self.assertEqual(calls[1][5], _check_demo_scenarios.LIST_TIMEOUT_SECONDS)
+            self.assertEqual(calls[2][1], "drop-02")
+            self.assertEqual(calls[2][5], _check_demo_scenarios.LIST_TIMEOUT_SECONDS)
+
+    def test_main_fails_before_building_on_invalid_inventory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / ".config").mkdir()
+            (root / ".config/nextest.toml").write_text(
+                '[profile.drop-01]\ndefault-filter = "all()"\n',
+                encoding="utf-8",
+            )
+            (root / ".config/drop-scenarios.json").write_text(json.dumps({}), encoding="utf-8")
+            built = []
+            with self.assertRaisesRegex(ValueError, "every drop"):
+                _check_demo_scenarios.main(
+                    root=root,
+                    build_runner=lambda *a, **kw: built.append((a, kw)),
+                    list_runner=lambda *a, **kw: self.fail("list should not run"),
+                )
+            self.assertEqual(built, [])
 
 
 if __name__ == "__main__":

@@ -1,4 +1,7 @@
 //! HOST-READ-1 / QUERY-ENGINE-1: admitted questions through the shared read authority.
+mod fork;
+pub use fork::get_fork_answer;
+
 use crate::{
     authz::{
         ReadCapability::{self, Population, Sources, Values},
@@ -6,14 +9,14 @@ use crate::{
     },
     host::DevHost,
     privacy::{
-        DisclosedAnswer, DisclosedForkAnswer, DisclosedTrace,
-        disclosure::{project_answer, project_fork_answer, project_trace},
+        DisclosedAnswer, DisclosedTrace,
+        disclosure::{project_answer, project_trace},
     },
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
 };
 use norn_cell::{
-    CellError, CellStore, KnowledgeCutoff, MAIN_WORLD, ObjectRecord,
+    CellError, CellStore, KnowledgeCutoff, ObjectRecord,
     compute::{
         ForkQuestionResult, HistoricalQuestionResult, QueryContext, QueryResult,
         lineage::{LineageDisclosure, keyed_receipt_handle, lineage_handle_matches},
@@ -246,25 +249,6 @@ pub fn get_answer<E: SqlEngine>(
     answer_plan(host, runtime, actor, question, &plan, key)
 }
 
-/// Core 08 (`WORLD-ISOLATE-1`, `FORK-PIN-1`, D53): evaluate an admitted named
-/// question inside a forked host under its durable fork pin, enforcing the same
-/// read authorization, marking checks, and D53 disclosure redaction as
-/// [`get_answer`] while returning a sealed simulated fork envelope.
-/// # Errors
-/// Denied scope/authority, `core.world.simulation_forbidden` on a non-fork host,
-/// `core.world.fork_invalid_world` on a historical cutoff or unrelated world,
-/// marking refusals, or typed compute refusals.
-pub fn get_fork_answer<E: SqlEngine>(
-    host: &DevHost<E>,
-    scope: &ScopeQuery,
-    actor: Option<&str>,
-    question: &str,
-    runtime: &dyn QuestionRuntime<E>,
-) -> Result<DisclosedForkAnswer, Refusal> {
-    let (_epoch, actor, key, plan) = admit_named_question(host, scope, actor, question, runtime)?;
-    fork_answer_plan(host, runtime, actor, question, &plan, key)
-}
-
 /// Evaluate an admitted `plan` for `actor` under the row gates and D53
 /// redaction, after the caller's collection access was decided.
 fn answer_plan<E: SqlEngine>(
@@ -320,51 +304,6 @@ fn answer_plan<E: SqlEngine>(
         &withheld,
         answer,
     )
-}
-
-/// Core 08 (`WORLD-ISOLATE-1`, `FORK-PIN-1`): evaluate an admitted `plan` on a
-/// forked host under the shared read PDP, marking checks (against inherited
-/// `MAIN_WORLD` storage), and D53 fork disclosure redaction.
-fn fork_answer_plan<E: SqlEngine>(
-    host: &DevHost<E>,
-    runtime: &dyn QuestionRuntime<E>,
-    actor: &str,
-    question: &str,
-    plan: &QuestionPlan,
-    key: &[u8],
-) -> Result<DisclosedForkAnswer, Refusal> {
-    let cell = host.cell()?;
-    if cell.store().fork_pin().is_none() {
-        return Err(Refusal::from_compute(CellError::WorldSimulationForbidden));
-    }
-    let snapshot = runtime.snapshot(cell.store(), plan, actor)?;
-    if snapshot.context.scope != host.scope().key() {
-        return Err(read_denied());
-    }
-    if snapshot.cutoff.is_some() {
-        return Err(Refusal::from_compute(CellError::ForkInvalidWorld));
-    }
-    let historical = plan.as_of();
-    let checked_version = check_snapshot(host, cell.store(), plan, MAIN_WORLD, historical)?;
-    let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
-    let mut withheld = BTreeSet::new();
-    let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
-    let outcome = runtime.evaluate_in_fork(cell.store(), plan, snapshot.context, &mut visible);
-    let evaluated_frontier = outcome.as_ref().ok().map(|fork| fork.result.known_as_of);
-    verify_checked_snapshot(
-        host,
-        cell.store(),
-        plan,
-        &CheckedSnapshot {
-            world: MAIN_WORLD,
-            checked_version,
-            evaluated_frontier,
-            historical,
-            live_read: true,
-        },
-    )?;
-    let fork = outcome.map_err(Refusal::from_compute)?;
-    project_fork_answer((host, runtime, cell.store()), (actor, key), &withheld, fork)
 }
 
 /// #1164 (D53): the receipt coordinate `actor` may see for a commit outside
