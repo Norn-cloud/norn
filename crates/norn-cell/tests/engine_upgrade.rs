@@ -358,7 +358,7 @@ fn add_source_cursor_tables(image: &mut Value) {
         "type": "table",
         "name": "_norn_source_pending",
         "table": "_norn_source_pending",
-        "sql": "CREATE TABLE \"_norn_source_pending\" (\n  \"connection_id\" TEXT NOT NULL,\n  \"dataset\" TEXT NOT NULL,\n  \"page_digest\" TEXT NOT NULL,\n  \"pages_json\" TEXT NOT NULL,\n  \"records_json\" TEXT NOT NULL,\n  \"captured_at_ms\" INTEGER NOT NULL,\n  PRIMARY KEY (\"connection_id\", \"dataset\", \"page_digest\")\n)",
+        "sql": "CREATE TABLE \"_norn_source_pending\" (\n  \"connection_id\" TEXT NOT NULL,\n  \"dataset\" TEXT NOT NULL,\n  \"page_digest\" TEXT NOT NULL,\n  \"pages_json\" TEXT NOT NULL,\n  \"records_json\" TEXT NOT NULL,\n  \"captured_at_ms\" INTEGER NOT NULL,\n  \"processed\" INTEGER NOT NULL DEFAULT 0,\n  PRIMARY KEY (\"connection_id\", \"dataset\", \"page_digest\")\n)",
     }));
     let tables = image["tables"].as_object_mut().expect("tables");
     tables.insert(
@@ -402,7 +402,8 @@ fn add_source_cursor_tables(image: &mut Value) {
                 "page_digest",
                 "pages_json",
                 "records_json",
-                "captured_at_ms"
+                "captured_at_ms",
+                "processed"
             ],
             "rows": [],
         }),

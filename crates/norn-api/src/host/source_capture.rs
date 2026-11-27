@@ -171,8 +171,8 @@ impl<E: SqlEngine> DevHost<E> {
             .map_err(Refusal::host)
     }
 
-    /// Remove a pending source capture entry after every captured inbox row has
-    /// been processed cleanly.
+    /// Remove or mark processed a pending source capture entry after every
+    /// captured inbox row has been processed cleanly.
     ///
     /// # Errors
     /// Host or store failure.
@@ -186,15 +186,48 @@ impl<E: SqlEngine> DevHost<E> {
         self.observing(|cell| cell.complete_source_pending(connection_id, dataset, page_digest))
     }
 
+    /// SOURCE-CAPTURE-1: ingest sync report observations (`source.Connection` /
+    /// `source.SyncRun`), checking inside each SQLite capture transaction that
+    /// any existing durable lease for `connection_id` still belongs to
+    /// `(lease_id, generation)` and has not expired at `now_ms`.
+    ///
+    /// # Errors
+    /// [`SourceCaptureError::LeaseFenced`] or store failure.
+    pub fn ingest_source_report_checked(
+        &self,
+        rows: &[(Observed<RuntimeValue>, MappingInput)],
+        lease: Option<(&str, &str, u64, u64)>,
+    ) -> Result<(), SourceCaptureError> {
+        let _epoch = self.definition_read()?;
+        for (raw, input) in rows {
+            let captured = self
+                .observing_raw(|cell| {
+                    cell.capture_source_report_checked(std::slice::from_ref(raw), input, lease)
+                })?
+                .map_err(SourceCaptureError::from_cell)?;
+            let mut outcomes = BTreeMap::new();
+            for (page_id, _) in &captured.pages {
+                let _consumed = self.process_one_mapping_page(page_id, &mut outcomes)?;
+            }
+            for record_id in captured.records {
+                if !outcomes.contains_key(&record_id) {
+                    let _outcome =
+                        self.observing(|cell| cell.process_mapping_outcome(&record_id))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// SOURCE-CAPTURE-1: capture a complete source page (or empty terminal page)
     /// and atomically advance `_norn_source_cursor` + `_norn_source_pending` in
     /// one SQLite transaction under `advance`'s active fencing lease.
     ///
     /// If the page spans a new `OBS-LINK-DISPUTE-1` conflict or identity finding
-    /// after a normal row, falls back to lease-checked one-by-one delivery and
-    /// commits `_norn_source_cursor` only once every row has been durably
-    /// captured (retaining the dispute's quarantine evidence and binding the
-    /// complete page's content digest for future idempotent replay).
+    /// after a normal row, falls back to atomic per-row lease-checked capture
+    /// (persisting each row into `_norn_source_pending` inside its capture tx
+    /// before promotion) and commits `_norn_source_cursor` only once every row
+    /// has been durably captured and promoted.
     ///
     /// # Errors
     /// Lease fencing, cursor conflict, framing refusals, or store failures.
@@ -265,21 +298,17 @@ impl<E: SqlEngine> DevHost<E> {
         let mut all_pages = Vec::new();
         let mut all_records = Vec::with_capacity(delivered.len());
         let mut outcomes = BTreeMap::new();
-        for raw in delivered {
-            self.observing_raw(|cell| {
-                cell.verify_source_lease(
-                    &advance.connection_id,
-                    &advance.lease_id,
-                    advance.generation,
-                    advance.now_ms,
-                )
-            })?
-            .map_err(SourceCaptureError::from_cell)?;
+        for (index, raw) in delivered.iter().enumerate() {
+            let pending_key = format!("{full_digest}:row:{index}");
+            // Atomically verify lease + expected cursor, capture this row, and
+            // record it in `_norn_source_pending` in one SQLite write_tx.
             let captured = self
-                .observing_raw(|cell| cell.inject_mapping_page(std::slice::from_ref(raw), input))?
+                .observing_raw(|cell| {
+                    cell.capture_source_dispute_row(raw, input, advance, &pending_key)
+                })?
                 .map_err(SourceCaptureError::from_cell)?;
             for (page_id, _) in &captured.pages {
-                let _ = self.process_one_mapping_page(page_id, &mut outcomes)?;
+                let _consumed = self.process_one_mapping_page(page_id, &mut outcomes)?;
                 all_pages.push(page_id.clone());
             }
             for record_id in captured.records {
@@ -290,6 +319,7 @@ impl<E: SqlEngine> DevHost<E> {
                 }
                 all_records.push(record_id);
             }
+            self.complete_source_pending(&advance.connection_id, &advance.dataset, &pending_key)?;
         }
         self.observing_raw(|cell| {
             cell.commit_source_page_cursor(advance, &full_digest, &all_pages, &all_records)
@@ -310,7 +340,8 @@ impl<E: SqlEngine> DevHost<E> {
 
     /// Process at most `max_rows` rows of an already-captured
     /// [`PendingSourceCapture`], strictly honoring `SYNC-YIELD-2` pacing even
-    /// when a previously captured `mapping-page:` run is larger than `max_rows`.
+    /// when a previously captured `mapping-page:` run is larger than `max_rows`
+    /// or contains multiple quarantined members.
     ///
     /// Fails closed if any expected captured observation id is absent from this
     /// cell's `_norn_inbox`.
@@ -370,34 +401,41 @@ impl<E: SqlEngine> DevHost<E> {
             if !self.inbox_observation_exists(&page_id)? {
                 return Err(Refusal::host(CellError::MappingBundleMismatch));
             }
-            let members = self.pending_page_member_ids(&page_id)?;
-            match members {
-                None => {
-                    pending.pages.remove(0);
+            let Some(ids) = self.pending_page_member_ids(&page_id)? else {
+                pending.pages.remove(0);
+                allow_consumed_drain = true;
+                if max_rows != usize::MAX {
+                    break;
+                }
+                continue;
+            };
+            // Filter to members still queued in `pending.records` and not yet
+            // processed in `outcomes`, so quarantined members (which remain
+            // pending in `_norn_inbox`) are never re-selected across paced steps.
+            let remaining: Vec<String> = ids
+                .iter()
+                .filter(|id| {
+                    pending.records.iter().any(|rec| rec == *id) && !outcomes.contains_key(*id)
+                })
+                .cloned()
+                .collect();
+            if remaining.is_empty() {
+                let _finished = self.observing(|cell| cell.finish_mapping_page(&page_id))?;
+                pending.pages.remove(0);
+                allow_consumed_drain = true;
+            } else if remaining.len() == ids.len() && ids.len() <= limit {
+                pending.pages.remove(0);
+                if self.process_one_mapping_page(&page_id, outcomes)? {
                     allow_consumed_drain = true;
                 }
-                Some(ids) if ids.len() <= limit => {
-                    pending.pages.remove(0);
-                    if self.process_one_mapping_page(&page_id, outcomes)? {
-                        allow_consumed_drain = true;
-                    }
+            } else {
+                for member in remaining.iter().take(limit) {
+                    let outcome = self.observing(|cell| cell.process_mapping_outcome(member))?;
+                    outcomes.insert(member.clone(), outcome);
                 }
-                Some(ids) => {
-                    // The captured run exceeds the active pace limit: process
-                    // at most `limit` pending members one-by-one and keep the
-                    // page queued until its last member finishes.
-                    for member in ids.iter().take(limit) {
-                        let outcome =
-                            self.observing(|cell| cell.process_mapping_outcome(member))?;
-                        outcomes.insert(member.clone(), outcome);
-                    }
-                    if self
-                        .pending_page_member_ids(&page_id)?
-                        .is_none_or(|left| left.is_empty())
-                    {
-                        let _ = self.observing(|cell| cell.finish_mapping_page(&page_id))?;
-                        pending.pages.remove(0);
-                    }
+                if remaining.len() <= limit {
+                    let _finished = self.observing(|cell| cell.finish_mapping_page(&page_id))?;
+                    pending.pages.remove(0);
                 }
             }
             if max_rows != usize::MAX {
@@ -498,7 +536,7 @@ impl<E: SqlEngine> DevHost<E> {
             let outcome = self.observing(|cell| cell.process_mapping_outcome(member))?;
             outcomes.insert(member.clone(), outcome);
         }
-        let _ = self.observing(|cell| cell.finish_mapping_page(page_id))?;
+        let _finished = self.observing(|cell| cell.finish_mapping_page(page_id))?;
         Ok(false)
     }
 }

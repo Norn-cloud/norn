@@ -119,26 +119,31 @@ pub(super) fn cursor_advance_spec(
     })
 }
 
-/// Check (without releasing the lease yet) whether this run was fenced or
-/// superseded by another run's lease so `finish` writes `source.Connection`
-/// only while still holding ownership, and releases the lease afterward.
+/// Check (without releasing the lease yet) whether this run was fenced,
+/// expired, unreadable, or superseded by another run's lease so `finish`
+/// writes `source.Connection` only while still holding active ownership.
 pub(super) fn is_lease_superseded<E: SqlEngine>(
     host: &DevHost<E>,
     connection_id: &str,
     lease: Option<&SourceLease>,
     error: Option<&(String, String)>,
+    now_ms: u64,
 ) -> bool {
     if error.is_some_and(|(code, _)| code == "source.lease_fenced") {
         return true;
     }
-    lease.is_some_and(|held| {
-        host.source_lease(connection_id)
-            .ok()
-            .flatten()
-            .is_some_and(|current| {
-                current.lease_id != held.lease_id || current.generation > held.generation
-            })
-    })
+    let Some(held) = lease else {
+        return false;
+    };
+    match host.source_lease(connection_id) {
+        Err(_) => true,
+        Ok(Some(current)) => {
+            current.lease_id != held.lease_id
+                || current.generation != held.generation
+                || now_ms >= current.expires_at_ms
+        }
+        Ok(None) => false,
+    }
 }
 
 /// Load any durably captured pages left behind in `_norn_source_pending` by an

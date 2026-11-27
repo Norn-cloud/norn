@@ -111,7 +111,7 @@ mod tests {
                 "norn-b3-{label}-{}-{id}.sqlite",
                 std::process::id()
             ));
-            let _ = std::fs::remove_file(&path);
+            drop(std::fs::remove_file(&path));
             Self(path)
         }
 
@@ -122,9 +122,9 @@ mod tests {
 
     impl Drop for TempDb {
         fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
-            let _ = std::fs::remove_file(format!("{}-wal", self.0.display()));
-            let _ = std::fs::remove_file(format!("{}-shm", self.0.display()));
+            drop(std::fs::remove_file(&self.0));
+            drop(std::fs::remove_file(format!("{}-wal", self.0.display())));
+            drop(std::fs::remove_file(format!("{}-shm", self.0.display())));
         }
     }
 
@@ -640,7 +640,7 @@ mod tests {
         payload["extensions"]["norn.pull/1"] = serde_json::to_value(&profile).expect("json");
         cursor_connector.artifact_id = "erpnext.cursor.connector".into();
         cursor_connector.name = "erpnext.cursor.connector".into();
-        cursor_connector.payload = RuntimeValue::from_json(payload).expect("rv");
+        cursor_connector.payload = serde_json::from_value(payload).expect("payload");
 
         let host = open_native_host(&rest_artifacts(&[cursor_connector]));
         let config = serde_json::json!([{
@@ -871,7 +871,7 @@ mod tests {
         );
         assert_eq!(
             conn_after_a.get("watermark"),
-            wm_after_b,
+            wm_after_b.as_ref(),
             "fenced stale run must not overwrite winning connection watermark"
         );
     }
@@ -1131,5 +1131,137 @@ mod tests {
         assert_eq!(replay[0].observation_id, first[0].observation_id);
         assert_eq!(replay[1].observation_id, first[1].observation_id);
         assert_eq!(replay[2].observation_id, first[2].observation_id);
+    }
+
+    /// Regression 9: replaying a nonterminal cursor page (`next_cursor = None`)
+    /// at a later `extracted_at` timestamp hits `IdempotentReplay` via
+    /// `_norn_source_pending` without creating fresh inbox rows or replacing the
+    /// original pending entry, and processed replay markers are reaped once the
+    /// terminal page commits `_norn_source_cursor`.
+    #[test]
+    fn nonterminal_cursor_page_replay_preserves_original_observation_ids() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let dataset = "Party".to_owned();
+        let (rows_t0, next_wm) = sealed_page_for("erpnext", &dataset, T0);
+        let (rows_later, _) = sealed_page_for("erpnext", &dataset, T0.saturating_add(9_000));
+        let slice_t0 = rows_t0[..3].to_vec();
+        let slice_later = rows_later[..3].to_vec();
+        let lease = host
+            .acquire_source_lease("erpnext.rest", "run-nonterm", T0, RUN_LEASE_MS)
+            .expect("lease");
+        let nonterminal = CursorAdvanceSpec {
+            connection_id: "erpnext.rest".into(),
+            dataset: dataset.clone(),
+            lease_id: lease.lease_id.clone(),
+            generation: lease.generation,
+            now_ms: T0.saturating_add(1),
+            expected_previous_cursor: None,
+            next_cursor: None,
+            renew_ttl_ms: Some(RUN_LEASE_MS),
+        };
+        let first = host
+            .ingest_source_page(&slice_t0, &nonterminal)
+            .expect("first nonterminal page");
+        assert!(first.iter().all(|o| o.outcome == MappingOutcome::Landed));
+        assert!(
+            host.pending_source_captures("erpnext.rest")
+                .expect("pending")
+                .is_empty(),
+            "processed nonterminal page must not reappear as unprocessed recovery work"
+        );
+
+        let replay = host
+            .ingest_source_page(&slice_later, &nonterminal)
+            .expect("nonterminal replay at later extracted_at");
+        assert_eq!(
+            replay
+                .iter()
+                .map(|o| o.observation_id.as_str())
+                .collect::<Vec<_>>(),
+            first
+                .iter()
+                .map(|o| o.observation_id.as_str())
+                .collect::<Vec<_>>(),
+            "nonterminal cursor replay must return exact original observation ids"
+        );
+        assert!(
+            replay
+                .iter()
+                .all(|o| o.outcome == MappingOutcome::AlreadyLanded)
+        );
+
+        let terminal = CursorAdvanceSpec {
+            next_cursor: Some(next_wm.cursor_json().expect("json")),
+            now_ms: T0.saturating_add(2),
+            ..nonterminal
+        };
+        let terminal_out = host
+            .ingest_source_page(&[], &terminal)
+            .expect("empty terminal page commits cursor");
+        assert!(terminal_out.is_empty());
+        assert!(
+            host.source_cursors("erpnext.rest")
+                .expect("cursors")
+                .contains_key(&dataset)
+        );
+    }
+
+    /// Regression 10: lowering `max_rows` to 1 while draining a captured page
+    /// whose members are quarantined terminates cleanly in bounded steps without
+    /// retrying the same quarantined member forever.
+    #[test]
+    fn paced_drain_with_multiple_quarantined_rows_terminates_cleanly() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let dataset = "product.product".to_owned();
+        let (rows, next_wm) = sealed_page_for("odoo", &dataset, T0);
+        assert!(rows.len() >= 2);
+        let mut two_bad = rows[..2].to_vec();
+        for (idx, (raw, _)) in two_bad.iter_mut().enumerate() {
+            if let RuntimeValue::Object(obj) = &mut raw.input {
+                if let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload") {
+                    payload.insert("x_norn_ref".into(), RuntimeValue::Null);
+                }
+                let digest = norn_ir::canonical::HashProfile::Norn1
+                    .hash_json(serde_json::to_string(&obj["payload"]).expect("json"))
+                    .expect("digest");
+                obj.insert("payload_digest".into(), RuntimeValue::String(digest));
+                obj.insert(
+                    "event_id".into(),
+                    RuntimeValue::String(format!("paced-quarantine-{idx}")),
+                );
+            }
+        }
+        let lease = host
+            .acquire_source_lease("odoo.rest", "run-q-pace", T0, RUN_LEASE_MS)
+            .expect("lease");
+        let advance = CursorAdvanceSpec {
+            connection_id: "odoo.rest".into(),
+            dataset: dataset.clone(),
+            lease_id: lease.lease_id.clone(),
+            generation: lease.generation,
+            now_ms: T0.saturating_add(1),
+            expected_previous_cursor: None,
+            next_cursor: Some(next_wm.cursor_json().expect("json")),
+            renew_ttl_ms: Some(RUN_LEASE_MS),
+        };
+        let (mut pending, mut outcomes) = host
+            .capture_source_page_atomic(&two_bad, &advance, 10)
+            .expect("captured");
+        let mut seen = Vec::new();
+        let mut steps = 0_usize;
+        while !pending.pages.is_empty() || !pending.records.is_empty() {
+            steps = steps.saturating_add(1);
+            assert!(steps <= 4, "paced drain must not spin on quarantined rows");
+            let step = host
+                .process_source_page_step(&mut pending, &mut outcomes, 1)
+                .expect("step");
+            assert!(step.len() <= 1, "step must respect max_rows=1");
+            seen.extend(step);
+        }
+        assert_eq!(seen.len(), 2);
+        assert!(
+            seen.iter()
+                .all(|o| matches!(o.outcome, MappingOutcome::Quarantined(_)))
+        );
     }
 }

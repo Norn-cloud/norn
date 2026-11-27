@@ -98,50 +98,56 @@ pub struct CapturedSourcePage {
     pub captured: CapturedPage,
 }
 
-/// Whether `error` is a storage/engine/fencing failure (including one wrapped
-/// inside [`CellError::ObservationCommit`]) that must propagate rather than
-/// being treated as a per-record business refusal or quarantine outcome.
+/// Whether `error` is a storage/engine/fencing/corruption failure (including
+/// one wrapped inside [`CellError::ObservationCommit`]) that must propagate
+/// rather than being treated as a per-record business refusal or quarantine
+/// outcome.
 pub(crate) fn is_store_failure(error: &CellError) -> bool {
-    match error {
-        CellError::Sqlite(_)
-        | CellError::Engine(_)
-        | CellError::Verifying(_)
-        | CellError::Fenced(_) => true,
-        CellError::ObservationCommit(commit_error) => matches!(
+    if let CellError::ObservationCommit(commit_error) = error {
+        return matches!(
             commit_error.as_ref(),
             norn_kernel::CommitError::Host(inner) if is_store_failure(inner)
-        ),
-        _ => false,
+        );
     }
+    matches!(
+        error,
+        CellError::Sqlite(_)
+            | CellError::Engine(_)
+            | CellError::Verifying(_)
+            | CellError::Fenced(_)
+            | CellError::LedgerCorrupt { .. }
+    )
 }
 
 impl<E: SqlEngine> CellStore<E> {
     fn validate_page_framing(
         raws: &[Observed<RuntimeValue>],
         input: &MappingInput,
-        allow_repeated_identity: bool,
+        allow_source_page: bool,
     ) -> Result<(), CellError> {
         if raws.len() > MAX_PAGE_RECORDS {
             return Err(CellError::OutOfRange("mapping page records"));
         }
-        let mut bytes = 0_usize;
+        let mut total_bytes = 0_usize;
         let mut identities = BTreeSet::new();
         for raw in raws {
             let payload = raw
                 .input
                 .get("payload")
                 .ok_or(CellError::MappingBundleMismatch)?;
-            bytes = bytes.saturating_add(serde_json::to_string(payload)?.len());
+            let row_bytes = serde_json::to_string(payload)?.len();
+            if allow_source_page && row_bytes > MAX_PAGE_BYTES {
+                return Err(CellError::OutOfRange("mapping page bytes"));
+            }
+            total_bytes = total_bytes.saturating_add(row_bytes);
             let [connector, partition, source, source_id, _event] =
                 crate::mapping_identity::keys(&raw.input, input)?;
-            if !allow_repeated_identity
-                && !identities.insert((connector, partition, source, source_id))
-            {
+            if !allow_source_page && !identities.insert((connector, partition, source, source_id)) {
                 // The host splits a batch before a repeated identity (OBS-PAGE-1).
                 return Err(CellError::MappingBundleMismatch);
             }
         }
-        if bytes > MAX_PAGE_BYTES {
+        if !allow_source_page && total_bytes > MAX_PAGE_BYTES {
             return Err(CellError::OutOfRange("mapping page bytes"));
         }
         Ok(())
@@ -163,6 +169,7 @@ impl<E: SqlEngine> CellStore<E> {
             Vec<String>,
             BTreeSet<FactKey>,
             BTreeSet<[String; 4]>,
+            usize,
             &Observed<RuntimeValue>,
         )> = Vec::new();
         let mut records = Vec::with_capacity(raws.len());
@@ -170,6 +177,12 @@ impl<E: SqlEngine> CellStore<E> {
         // Whether a record this page commits was captured yet.
         let mut member = false;
         for raw in raws {
+            let row_bytes = raw
+                .input
+                .get("payload")
+                .map(serde_json::to_string)
+                .transpose()?
+                .map_or(0, |text| text.len());
             let [connector, partition, source, source_id, _event] =
                 crate::mapping_identity::keys(&raw.input, input)?;
             let identity = [connector, partition, source, source_id];
@@ -203,40 +216,50 @@ impl<E: SqlEngine> CellStore<E> {
                 .collect();
             member = true;
             match runs.last_mut() {
-                Some((ids, written, seen_ids, _))
+                Some((ids, written, seen_ids, run_bytes, _))
                     if !split
                         && ids.len() < run_cap
+                        && run_bytes.saturating_add(row_bytes) <= MAX_PAGE_BYTES
                         && written.is_disjoint(&keys)
                         && !seen_ids.contains(&identity) =>
                 {
                     ids.push(id);
                     written.extend(keys);
                     seen_ids.insert(identity);
+                    *run_bytes = run_bytes.saturating_add(row_bytes);
                 }
-                _ => runs.push((vec![id], keys, BTreeSet::from([identity]), raw)),
+                _ => runs.push((vec![id], keys, BTreeSet::from([identity]), row_bytes, raw)),
             }
             split = false;
         }
         let mut pages = Vec::with_capacity(runs.len());
-        for (ids, _, _, first) in runs {
-            let digest = norn_ir::canonical::domain_hash_hex(b"norn.mapping.page.v1\0", &ids)?;
-            let id = format!("{PAGE_PREFIX}{digest}");
-            let observed = Observed {
-                id: ObservationId(id.clone()),
-                provenance: first.provenance.clone(),
-                input: norn_ir::runtime_object! {
-                    "contract" => PAGE_CONTRACT,
-                    "members" => RuntimeValue::Array(ids.into_iter().map(RuntimeValue::from).collect()),
-                },
-            };
-            let inserted = crate::store::inject_observation(
-                &self.conn,
-                &id,
-                &norn_ir::runtime::encode(&observed).map_err(CellError::Encoding)?,
-            )?;
-            pages.push((id, inserted));
+        for (ids, _, _, _, first) in runs {
+            pages.push(self.inject_mapping_page_run(ids, first)?);
         }
         Ok(CapturedPage { pages, records })
+    }
+
+    fn inject_mapping_page_run(
+        &self,
+        ids: Vec<String>,
+        first: &Observed<RuntimeValue>,
+    ) -> Result<(String, bool), CellError> {
+        let digest = norn_ir::canonical::domain_hash_hex(b"norn.mapping.page.v1\0", &ids)?;
+        let id = format!("{PAGE_PREFIX}{digest}");
+        let observed = Observed {
+            id: ObservationId(id.clone()),
+            provenance: first.provenance.clone(),
+            input: norn_ir::runtime_object! {
+                "contract" => PAGE_CONTRACT,
+                "members" => RuntimeValue::Array(ids.into_iter().map(RuntimeValue::from).collect()),
+            },
+        };
+        let inserted = crate::store::inject_observation(
+            &self.conn,
+            &id,
+            &norn_ir::runtime::encode(&observed).map_err(CellError::Encoding)?,
+        )?;
+        Ok((id, inserted))
     }
 
     /// Capture a page of raw source records read from one dataset. Framing
@@ -264,10 +287,10 @@ impl<E: SqlEngine> CellStore<E> {
 
     /// SOURCE-CAPTURE-1: validate the active fencing lease and expected
     /// previous cursor, capture every row of the complete page (split into
-    /// `mapping-page:` runs of at most `max_run_rows` inside this single
-    /// transaction, or an empty terminal page when `raws` is empty), record
-    /// pending processing state in `_norn_source_pending`, and advance
-    /// `_norn_source_cursor` atomically in one SQLite transaction.
+    /// `mapping-page:` runs of at most `max_run_rows` and `MAX_PAGE_BYTES`
+    /// inside this single transaction, or an empty terminal page when `raws`
+    /// is empty), record pending processing state in `_norn_source_pending`,
+    /// and advance `_norn_source_cursor` atomically in one SQLite transaction.
     ///
     /// # Errors
     /// [`CellError::SourceLeaseFenced`], [`CellError::SourceCursorConflict`],
@@ -315,19 +338,104 @@ impl<E: SqlEngine> CellStore<E> {
                 },
             };
             let page_ids: Vec<String> = captured.pages.iter().map(|(id, _)| id.clone()).collect();
+            let payload = crate::source_cursor::CaptureCommitPayload {
+                digest: &digest,
+                pages: &page_ids,
+                records: &captured.records,
+                record_pending: true,
+            };
             crate::source_cursor::commit_cursor_in_tx(
                 &self.conn,
                 advance,
-                &digest,
                 &precondition,
-                &page_ids,
-                &captured.records,
-                true,
+                &payload,
             )?;
             Ok(CapturedSourcePage {
                 page_digest: digest,
                 captured,
             })
+        })
+    }
+
+    /// SOURCE-CAPTURE-1: atomically verify the active fencing lease and
+    /// expected previous cursor, capture one row during `OBS-LINK-DISPUTE-1`
+    /// fallback, and record it in `_norn_source_pending` inside one SQLite
+    /// transaction so a crash before promotion never strands the row and a
+    /// lease takeover cannot interleave with capture.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`], [`CellError::SourceCursorConflict`],
+    /// framing refusals, or store errors.
+    pub fn capture_source_dispute_row(
+        &mut self,
+        raw: &Observed<RuntimeValue>,
+        input: &MappingInput,
+        advance: &crate::source_cursor::CursorAdvanceSpec,
+        pending_key: &str,
+    ) -> Result<CapturedPage, CellError> {
+        let single = std::slice::from_ref(raw);
+        Self::validate_page_framing(single, input, true)?;
+        let model = self.model().clone();
+        let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
+        let canonical = CommitModel::new(&catalog);
+        self.write_tx(|| {
+            let precondition =
+                crate::source_cursor::check_capture_precondition(&self.conn, advance, pending_key)?;
+            if let crate::source_cursor::Precondition::IdempotentReplay { pages, records } =
+                precondition
+            {
+                return Ok(CapturedPage {
+                    pages: pages.into_iter().map(|id| (id, false)).collect(),
+                    records,
+                });
+            }
+            let captured = self.capture_mapping_page_rows_in_tx(single, input, &canonical, 1)?;
+            let page_ids: Vec<String> = captured.pages.iter().map(|(id, _)| id.clone()).collect();
+            crate::source_cursor::insert_pending_in_tx(
+                &self.conn,
+                &advance.connection_id,
+                &advance.dataset,
+                pending_key,
+                &page_ids,
+                &captured.records,
+                advance.now_ms,
+            )?;
+            Ok(captured)
+        })
+    }
+
+    /// SOURCE-CAPTURE-1: capture a sync report page while verifying inside the
+    /// same SQLite transaction that any existing lease row for `connection_id`
+    /// still belongs to `(lease_id, generation)` and has not expired at `now_ms`.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`], framing refusals, or store errors.
+    pub fn capture_source_report_checked(
+        &mut self,
+        raws: &[Observed<RuntimeValue>],
+        input: &MappingInput,
+        lease: Option<(&str, &str, u64, u64)>,
+    ) -> Result<CapturedPage, CellError> {
+        if raws.is_empty() {
+            return Err(CellError::OutOfRange("mapping page records"));
+        }
+        Self::validate_page_framing(raws, input, false)?;
+        let model = self.model().clone();
+        let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
+        let canonical = CommitModel::new(&catalog);
+        self.write_tx(|| {
+            if let Some((connection_id, lease_id, generation, now_ms)) = lease
+                && self.read().source_lease(connection_id)?.is_some()
+            {
+                crate::source_cursor::verify_active_lease(
+                    &self.conn,
+                    connection_id,
+                    lease_id,
+                    generation,
+                    now_ms,
+                )?;
+            }
+            self.capture_mapping_page_rows_in_tx(raws, input, &canonical, MAX_PAGE_RECORDS)
         })
     }
 }

@@ -601,8 +601,13 @@ impl Sources {
                 "no sync is running",
             ));
         };
-        let superseded =
-            capture::is_lease_superseded(host, &config.id, run.lease.as_ref(), error.as_ref());
+        let superseded = capture::is_lease_superseded(
+            host,
+            &config.id,
+            run.lease.as_ref(),
+            error.as_ref(),
+            now_ms,
+        );
         let outcome = if error.is_some() {
             "failed"
         } else if run.quarantined > 0 {
@@ -1157,7 +1162,17 @@ fn report<E: SqlEngine>(
         })
         .collect();
     // A cell without the report definitions refuses these; the run still ends.
-    let _reported = host.ingest(&batch);
+    // When a durable lease is held, check ownership inside the capture tx so a
+    // concurrent takeover cannot be overwritten by a stale report.
+    let lease_check = run.lease.as_ref().map(|lease| {
+        (
+            config.id.as_str(),
+            lease.lease_id.as_str(),
+            lease.generation,
+            now,
+        )
+    });
+    let _reported = host.ingest_source_report_checked(&batch, lease_check);
 }
 
 fn connect_profile() -> PullProfile {
