@@ -42,11 +42,162 @@ const STORAGE_V6: &str = include_str!("fixtures/engine-storage-v6.json");
 const STORAGE_V7: &str = include_str!("fixtures/engine-storage-v7.json");
 const STORAGE_V8: &str = include_str!("fixtures/engine-storage-v8.json");
 
-/// What storage versions 8 through 10 change in an older cell's image.
+/// What storage versions 8 through 11 change in an older cell's image.
 fn apply_v10_upgrade(image: &mut Value) {
     apply_v8_sparse_markings_upgrade(image);
     add_export_context_table(image);
     add_outbox_queue(image);
+    add_outbox_ledger(image);
+}
+
+/// Storage version 11 (D1) adds `_norn_outbox_record`, backfilled with one
+/// validated epoch per stored `_norn_outbox` row.
+fn add_outbox_ledger(image: &mut Value) {
+    image["schema"]
+        .as_array_mut()
+        .expect("schema")
+        .push(serde_json::json!({
+            "type": "table",
+            "name": "_norn_outbox_record",
+            "table": "_norn_outbox_record",
+            "sql": "CREATE TABLE \"_norn_outbox_record\" (\n  \"command_id\" TEXT NOT NULL,\n  \"epoch\" INTEGER NOT NULL,\n  \"seq\" INTEGER NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"record\" TEXT NOT NULL,\n  PRIMARY KEY (\"command_id\", \"epoch\", \"seq\")\n)",
+        }));
+    let cell_id = image["tables"]["_norn_meta"]["rows"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row[1] == "binding:cell_id")
+                .and_then(|row| row[2].as_str())
+        })
+        .map(|text| norn_cell::cell_identity::CellId::try_from(text.to_owned()).expect("cell id"));
+    let outbox = &image["tables"]["_norn_outbox"];
+    let columns: Vec<&str> = outbox["columns"]
+        .as_array()
+        .expect("outbox columns")
+        .iter()
+        .map(|c| c.as_str().expect("column name"))
+        .collect();
+    let claims = image["tables"]["_norn_perform_claim"]["rows"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut record_rows = Vec::new();
+    let mut rowid = 1_i64;
+    for row in outbox["rows"].as_array().expect("outbox rows") {
+        backfill_image_outbox_row(
+            cell_id.as_ref(),
+            &columns,
+            row,
+            &claims,
+            &mut rowid,
+            &mut record_rows,
+        );
+    }
+    image["tables"].as_object_mut().expect("tables").insert(
+        "_norn_outbox_record".to_owned(),
+        serde_json::json!({
+            "columns": ["rowid", "command_id", "epoch", "seq", "generation", "record"],
+            "rows": record_rows,
+        }),
+    );
+}
+
+fn backfill_image_outbox_row(
+    cell_id: Option<&norn_cell::cell_identity::CellId>,
+    columns: &[&str],
+    row: &Value,
+    claims: &[Value],
+    rowid: &mut i64,
+    record_rows: &mut Vec<Value>,
+) {
+    use norn_kernel::world::outbox::Queue;
+    use norn_kernel::world::outbox_ledger::{
+        DispatchProof, OutboxRecord, OutboxRecordKind, OutcomeEvidence,
+    };
+
+    let col = |name: &str| {
+        columns
+            .iter()
+            .position(|column| *column == name)
+            .unwrap_or_else(|| panic!("outbox missing column {name}"))
+    };
+    let command_id = row[col("command_id")].as_str().expect("command_id");
+    let generation = row[col("generation")].as_u64().expect("generation");
+    let commit_seq = row[col("commit_seq")].as_u64().expect("commit_seq");
+    let command_rv: norn_ir::RuntimeValue =
+        serde_json::from_str(row[col("command")].as_str().expect("command")).expect("command rv");
+    let queue = Queue::parse(row[col("queue")].as_str().expect("queue")).expect("queue");
+    let op = norn_cell::outbox_ledger::operation_key_for_cell(cell_id, command_id).expect("op key");
+    let mut records = vec![OutboxRecord {
+        operation: op,
+        generation,
+        kind: OutboxRecordKind::Requested {
+            queue,
+            payload_digest: norn_cell::outbox_ledger::payload_digest(&command_rv)
+                .expect("payload digest"),
+            dedup_contract: norn_cell::outbox_ledger::dedup_contract(&command_rv)
+                .expect("dedup contract"),
+            commit_seq,
+        },
+    }];
+    let dispatch = claims
+        .iter()
+        .find(|claim| claim[1] == command_id && claim[2] == generation)
+        .map(|claim| {
+            let claim_commit_seq = claim[3].as_u64().expect("claim commit_seq");
+            records.push(OutboxRecord {
+                operation: op,
+                generation,
+                kind: OutboxRecordKind::Dispatched { claim_commit_seq },
+            });
+            DispatchProof {
+                operation: op,
+                generation,
+                claim_commit_seq,
+            }
+        });
+    if let Some(result_text) = row[col("result")].as_str() {
+        let outcome: norn_ir::RuntimeValue = serde_json::from_str(result_text).expect("result rv");
+        let (evidence, outcome_seq) = if let Some(proof) = dispatch {
+            (
+                OutcomeEvidence::DispatchProof { proof },
+                proof.claim_commit_seq,
+            )
+        } else {
+            (OutcomeEvidence::Resolved, commit_seq)
+        };
+        records.push(OutboxRecord {
+            operation: op,
+            generation,
+            kind: OutboxRecordKind::Outcome {
+                evidence,
+                ok: norn_cell::outbox_ledger::outcome_is_ok(&outcome),
+                outcome_digest: norn_cell::outbox_ledger::outcome_digest(&outcome)
+                    .expect("outcome digest"),
+                commit_seq: outcome_seq,
+            },
+        });
+    }
+    if let Some(consumed_commit_seq) = row[col("consumed_commit_seq")].as_u64() {
+        records.push(OutboxRecord {
+            operation: op,
+            generation,
+            kind: OutboxRecordKind::Consumed {
+                commit_seq: consumed_commit_seq,
+            },
+        });
+    }
+    for (idx, record) in records.iter().enumerate() {
+        let seq = i64::try_from(idx + 1).expect("seq");
+        let json = String::from_utf8(
+            norn_ir::canonical::canonical_json_of(record).expect("canonical record"),
+        )
+        .expect("utf8");
+        record_rows.push(serde_json::json!([
+            *rowid, command_id, 0_i64, seq, generation, json
+        ]));
+        *rowid += 1;
+    }
 }
 
 /// Storage version 10 (D03, #1699) adds `_norn_outbox.queue`, backfilled
@@ -2288,6 +2439,7 @@ fn upgraded_v8_image(mut expected: Value) -> Result<Value, Box<dyn std::error::E
     expected["storage"] = STORAGE_VERSION.into();
     add_export_context_table(&mut expected);
     add_outbox_queue(&mut expected);
+    add_outbox_ledger(&mut expected);
     add_source_cursor_tables(&mut expected);
     by_name(&mut expected);
     Ok(expected)

@@ -1401,18 +1401,36 @@ where
         command: &Command<C>,
         input: I,
     ) -> Result<Option<Performed<I>>, CellError> {
-        if !self.store.record_performed(
-            &command.id.0,
-            command.generation.0,
-            &to_runtime(&input)?,
-        )? {
-            return Ok(None);
+        let runtime = to_runtime(&input)?;
+        if self
+            .store
+            .record_performed(&command.id.0, command.generation.0, &runtime)?
+        {
+            return Ok(Some(Performed {
+                command: command.id.clone(),
+                generation: command.generation,
+                input,
+            }));
         }
-        Ok(Some(Performed {
-            command: command.id.clone(),
-            generation: command.generation,
-            input,
-        }))
+        // D1: if `command` is a superseded prior generation that was durably
+        // claimed and has no attached outcome yet, journal its late evidence
+        // durably via `RecordLateOutcome` so it survives export and restore
+        // even before consumption or after compensation.
+        if let Some(proof) = self
+            .store
+            .pending_late_dispatch_proof(&command.id.0, command.generation.0)?
+        {
+            let ok = crate::outbox_ledger::outcome_is_ok(&runtime);
+            self.store.record_late_outcome(
+                &self.scope,
+                self.now.as_millis(),
+                &command.id.0,
+                proof,
+                ok,
+                &runtime,
+            )?;
+        }
+        Ok(None)
     }
 }
 

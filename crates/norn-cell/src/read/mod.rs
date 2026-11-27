@@ -42,7 +42,6 @@ pub use pagination::{
     BindingRootCandidate, BindingSortValue, BindingSortedCandidate, BindingSortedPosition,
 };
 pub(crate) use pagination::{binding_sort_sql_value, decode_binding_sort_value};
-pub(crate) use queue::reissue_replaces;
 pub use queue::{
     ParkedPage, PendingCommand, PendingObservation, PendingTimer, RunRecord, classify,
 };
