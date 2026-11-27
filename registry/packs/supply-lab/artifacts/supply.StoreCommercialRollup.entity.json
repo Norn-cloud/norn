@@ -186,6 +186,16 @@
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "book_epoch",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
           "id": "period_start",
           "type": {
             "kind": "timestamp",

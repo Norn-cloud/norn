@@ -574,6 +574,7 @@ const StoreCommercialRollupProps = Schema.Struct({
   count_ref: Schema.NullOr(Schema.String),
   count_as_of: Schema.NullOr(Norn.timestamp("utc")),
   costed_ref: Schema.NullOr(Schema.String),
+  book_epoch: Schema.NullOr(Norn.timestamp("utc")),
   period_start: Norn.timestamp("utc"),
   period_end: Norn.timestamp("utc"),
   sales_weeks: Schema.Int,
@@ -647,8 +648,10 @@ export const StoreCommercialRollupPeriodWeekMatchesEnd = Norn.law("store_commerc
     && Norn.floor(Norn.daysBetween("2024-01-01", self.period_week) / 7) * 7
       === Norn.daysBetween("2024-01-01", self.period_week)
     && Norn.secondsBetween(self.period_week + "T00:00:00Z", self.period_end) >= 0
-    && Norn.secondsBetween(self.period_week + "T00:00:00Z", self.period_end) < 604800,
-  because: "Store commercial KPI rollup period_week must equal the canonical UTC ISO-week Monday YYYY-MM-DD containing period_end with a valid positive sales_weeks window so store_week_grain uniqueness matches the weekly question bucket.",
+    && Norn.secondsBetween(self.period_week + "T00:00:00Z", self.period_end) < 604800
+    && Norn.secondsBetween(self.period_start, self.period_week + "T00:00:00Z")
+      === (self.sales_weeks - 1) * 604800,
+  because: "Store commercial KPI rollup period_week must equal the canonical UTC ISO-week Monday YYYY-MM-DD containing period_end, and sales_weeks must equal the exact ISO-week span from period_start through period_week.",
 })
 
 export const StoreCommercialRollupRequiresEvidenceLinks = Norn.law("store_commercial_rollup_requires_evidence_links", {

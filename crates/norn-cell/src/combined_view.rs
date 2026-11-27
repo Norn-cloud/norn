@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_checker::metric::compute::QuestionPlan;
 use norn_checker::transform::TransformPlan;
-use norn_expr::Value as RuntimeValue;
+use norn_ir::RuntimeValue;
 use norn_ir::cell_id::CellId;
 use norn_ir::data_quality::DataQualityFindingStatus;
 use norn_kernel::FactKey;
@@ -22,12 +22,16 @@ use norn_kernel::read_envelope::{
 use norn_kernel::world::pin::SnapshotPin;
 use serde::{Deserialize, Serialize};
 
-use crate::compute::{Freshness, Frontier, QueryContext, QueryResult, RowAccess, Watermark};
+use crate::compute::transform::RowAccess;
+use crate::compute::{Freshness, Frontier, QueryContext, QueryResult, Watermark};
 use crate::engine::SqlEngine;
 use crate::error::CellError;
-use crate::read::LedgerHead;
+use crate::read::{LedgerHead, ObjectRecord};
 use crate::snapshot::Main;
 use crate::store::CellStore;
+
+/// Per-row authorization callback for transform evaluation (`VIEW-READ-1` / `VIEW-ROWS-1`).
+pub type RowAccessDecider<'a> = &'a dyn Fn(&ObjectRecord) -> Result<RowAccess, CellError>;
 
 /// Declared transform whose boolean coverage column must equal `true` on every
 /// evaluated row for the cell cut to be marked complete.
@@ -38,6 +42,8 @@ pub struct CoverageTransformGate<'a> {
     pub plan: &'a TransformPlan,
     /// Boolean output column name that must evaluate to `true` on every row.
     pub required_true_column: &'a str,
+    /// Host row-access authorization callback (`VIEW-READ-1` / `VIEW-ROWS-1`).
+    pub row_access: RowAccessDecider<'a>,
 }
 
 /// Optional domain-specific coverage probe evaluated inside the pinned read cut.
@@ -276,7 +282,7 @@ fn evaluate_coverage_gates<E: SqlEngine>(
             gate.plan,
             &input.context.world,
             &input.context.scope,
-            |_| Ok(RowAccess::Read),
+            |row| (gate.row_access)(row),
         )?;
         if tf.revision != *head_before || tf.definition_pin != definition_pin {
             return Err(stale());
@@ -302,7 +308,7 @@ fn evaluate_coverage_gates<E: SqlEngine>(
 /// Returns `CellError::Encoding` if `authority` does not match `anchor_key`,
 /// `CellError::SnapshotWorldMismatch` on a fork store,
 /// `CellError::ComputeRefused("core.compute.duplicate_question")` if two
-/// requested questions share the same name,
+/// requested questions share the same name (validated before any evaluator call),
 /// `CellError::ComputeRefused("core.compute.stale_input")` if the anchor
 /// object is absent or the ledger head, definition pin, query context, or
 /// pending-observation identity set shifts during evaluation, or propagates
@@ -311,6 +317,12 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
     evaluate: &mut impl FnMut(&str, &QuestionPlan, QueryContext) -> Result<QueryResult, CellError>,
 ) -> Result<CellCutSnapshot, CellError> {
+    let mut seen_questions = BTreeSet::new();
+    for (name, _) in input.questions {
+        if !seen_questions.insert(*name) {
+            return Err(CellError::ComputeRefused("core.compute.duplicate_question"));
+        }
+    }
     let stale = || CellError::ComputeRefused("core.compute.stale_input");
     let (pin, head_before) = capture_cut_anchor(input)?;
     let cell_id = pin.cell.clone();
@@ -324,9 +336,6 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
 
     let mut answers = BTreeMap::new();
     for (name, plan) in input.questions {
-        if answers.contains_key(*name) {
-            return Err(CellError::ComputeRefused("core.compute.duplicate_question"));
-        }
         let (expected_query_pin, expected_def_pin) = input.store.question_pins(plan, None)?;
         if expected_def_pin != definition_pin {
             return Err(stale());

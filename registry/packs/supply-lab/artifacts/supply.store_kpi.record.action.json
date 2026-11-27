@@ -19,6 +19,7 @@
           "property": "sold_qty"
         },
         "filter": {
+          "sku_id": "sku_id",
           "store_id": "store_id",
           "unit": "unit"
         },
@@ -40,6 +41,7 @@
         },
         "filter": {
           "currency": "currency",
+          "sku_id": "sku_id",
           "store_id": "store_id"
         },
         "maxItems": 100,
@@ -59,6 +61,7 @@
         },
         "filter": {
           "currency": "currency",
+          "sku_id": "sku_id",
           "store_id": "store_id"
         },
         "maxItems": 100,
@@ -79,6 +82,7 @@
         "filter": {
           "cost_status": "cost_status",
           "currency": "currency",
+          "sku_id": "sku_id",
           "store_id": "store_id"
         },
         "maxItems": 100,
@@ -99,6 +103,7 @@
         },
         "filter": {
           "currency": "currency",
+          "sku_id": "sku_id",
           "store_id": "store_id"
         },
         "maxItems": 100,
@@ -108,7 +113,7 @@
           "end": "period_end",
           "endInclusive": true,
           "property": "received_at",
-          "start": "period_start",
+          "start": "book_epoch",
           "startInclusive": true
         }
       },
@@ -119,6 +124,7 @@
         },
         "filter": {
           "currency": "currency",
+          "sku_id": "sku_id",
           "store_id": "store_id"
         },
         "maxItems": 100,
@@ -131,6 +137,7 @@
         },
         "filter": {
           "currency": "currency",
+          "sku_id": "sku_id",
           "store_id": "store_id"
         },
         "maxItems": 100,
@@ -142,8 +149,29 @@
           "kind": "count"
         },
         "filter": {
+          "currency": "currency",
+          "sku_id": "sku_id",
+          "store_id": "store_id"
+        },
+        "maxItems": 100,
+        "name": "lots_as_of_by_period_end",
+        "objectType": "supply.StockLot",
+        "window": {
+          "end": "period_end",
+          "endInclusive": true,
+          "property": "as_of",
+          "start": "book_epoch",
+          "startInclusive": true
+        }
+      },
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
           "cost_status": "cost_status",
           "currency": "currency",
+          "sku_id": "sku_id",
           "store_id": "store_id"
         },
         "maxItems": 100,
@@ -218,6 +246,9 @@
             "scale": 6
           },
           "type": "number"
+        },
+        "book_epoch": {
+          "type": "string"
         },
         "closing_stock_value": {
           "nornType": {
@@ -338,6 +369,7 @@
         "count_ref",
         "count_as_of",
         "costed_ref",
+        "book_epoch",
         "period_start",
         "period_end",
         "sales_weeks",
@@ -366,7 +398,7 @@
       "type": "object"
     },
     "preconditions": [
-      "(((((((((((((((((((((slice.store.status == 'active') and (input.count_status == 'verified')) and (input.cost_status == 'costed')) and (input.sales_weeks >= 1)) and (input.sales_weeks <= (floor(seconds_between(timestamp(input.period_start), timestamp(input.period_end)) / 604800) + 1))) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.store_id == slice.on_hand_count.store_id)) and (input.sku_id == slice.on_hand_count.sku_id)) and (input.unit == slice.on_hand_count.unit)) and (slice.on_hand_count.quantity_basis == 'on_hand')) and (timestamp(input.count_as_of) == timestamp(slice.on_hand_count.as_of))) and (input.count_ref == slice.on_hand_count.count_ref)) and (input.on_hand_qty == slice.on_hand_count.on_hand_qty)) and (input.currency == slice.cost.currency)) and (input.costed_ref == slice.cost.cost_ref)) and ((input.avg_weekly_sales_qty * input.sales_weeks) == aggregates.total_sold_qty)) and (input.period_gross_margin == aggregates.total_gross_margin)) and (aggregates.costed_sales_count == aggregates.all_sales_count)) and (input.opening_stock_value == aggregates.total_opening_stock_value)) and (input.closing_stock_value == aggregates.total_closing_stock_value)) and (aggregates.costed_lots_count == aggregates.all_lots_count)"
+      "(((((((((((((((((((((((slice.store.status == 'active') and (input.book_epoch == '1970-01-01T00:00:00Z')) and (input.count_status == 'verified')) and (input.cost_status == 'costed')) and (input.sales_weeks >= 1)) and (seconds_between(timestamp(input.period_start), timestamp(input.period_week + 'T00:00:00Z')) == ((input.sales_weeks - 1) * 604800))) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.store_id == slice.on_hand_count.store_id)) and (input.sku_id == slice.on_hand_count.sku_id)) and (input.unit == slice.on_hand_count.unit)) and (slice.on_hand_count.quantity_basis == 'on_hand')) and (timestamp(input.count_as_of) == timestamp(slice.on_hand_count.as_of))) and (input.count_ref == slice.on_hand_count.count_ref)) and (input.on_hand_qty == slice.on_hand_count.on_hand_qty)) and (input.currency == slice.cost.currency)) and (input.costed_ref == slice.cost.cost_ref)) and ((input.avg_weekly_sales_qty * input.sales_weeks) == aggregates.total_sold_qty)) and (input.period_gross_margin == aggregates.total_gross_margin)) and (aggregates.costed_sales_count == aggregates.all_sales_count)) and (input.opening_stock_value == aggregates.total_opening_stock_value)) and (input.closing_stock_value == aggregates.total_closing_stock_value)) and (aggregates.lots_as_of_by_period_end == aggregates.all_lots_count)) and (aggregates.costed_lots_count == aggregates.all_lots_count)"
     ],
     "scopeRequired": [
       "orgId",

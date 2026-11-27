@@ -2096,7 +2096,8 @@ fn verify_store_kpi_rollup_temporal_refusals(
             "cost_status": "costed", "count_status": "verified",
             "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102",
             "count_as_of": "2026-09-05T10:00:00Z", "costed_ref": "COST-DRESS-1",
-            "period_start": "2026-07-06T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
+            "book_epoch": "1970-01-01T00:00:00Z",
+            "period_start": "2026-08-11T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
             "sales_weeks": 4,
             "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
             "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
@@ -2116,7 +2117,8 @@ fn verify_store_kpi_rollup_temporal_refusals(
             "cost_status": "costed", "count_status": "verified",
             "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102",
             "count_as_of": "2026-09-05T10:00:00Z", "costed_ref": "COST-DRESS-1",
-            "period_start": "2026-07-06T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
+            "book_epoch": "1970-01-01T00:00:00Z",
+            "period_start": "2026-08-03T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
             "sales_weeks": 4,
             "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
             "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
@@ -2132,41 +2134,115 @@ fn verify_store_kpi_rollup_temporal_refusals(
         "planner:omar",
         json!({
             "rollup_id": "KPI-ST-SOLE-CFC-1-BACKDATE", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "period_week": "2026-08-24", "unit": "each", "currency": "EGP",
+            "period_week": "2026-09-07", "unit": "each", "currency": "EGP",
             "cost_status": "costed", "count_status": "verified",
             "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102",
-            "count_as_of": "2026-08-30T10:00:00Z", "costed_ref": "COST-DRESS-1",
-            "period_start": "2026-07-06T00:00:00Z", "period_end": "2026-08-30T18:00:00Z",
-            "sales_weeks": 3,
-            "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
-            "weeks_of_supply": "0", "period_gross_margin": "3000",
+            "count_as_of": "2026-09-04T10:00:00Z", "costed_ref": "COST-DRESS-1",
+            "book_epoch": "1970-01-01T00:00:00Z",
+            "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-12T18:00:00Z",
+            "sales_weeks": 5,
+            "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "8",
+            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
             "opening_stock_value": s1_opening_val.canonical(),
             "closing_stock_value": s1_closing_val.canonical(),
             "average_inventory_value": "0", "gmroi": "0"
         }),
     )?;
     assert_eq!(code, "core.action.precondition", "{msg}");
+    verify_store_kpi_rollup_future_count_refusal(
+        sole,
+        (s1_on_hand, s1_margin, s1_opening_val, s1_closing_val),
+    )
+}
+
+fn verify_store_kpi_rollup_future_count_refusal(
+    sole: &mut EntityBook,
+    (s1_on_hand, s1_margin, s1_opening_val, s1_closing_val): (Decimal, Decimal, Decimal, Decimal),
+) -> Result<(), String> {
     // 4. Future `count_as_of > period_end` refuses via `StoreCommercialRollupCountNotFuture`.
+    sole.ok(
+        "supply.store_count.recount",
+        "clerk:hana",
+        json!({
+            "store_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "store_id": "ST-SOLE-CFC-1",
+            "sku_id": "SKU-DRESS", "on_hand_qty": "60", "unit": "each",
+            "quantity_basis": "on_hand", "as_of": "2026-09-13T10:00:00Z",
+            "count_source": "pos_cycle_count", "count_ref": "CC-102-FUT"
+        }),
+    )?;
     let (code, msg) = sole.refused(
         "supply.store_kpi.record",
         "planner:omar",
         json!({
             "rollup_id": "KPI-ST-SOLE-CFC-1-FUTURE-CNT", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "period_week": "2026-08-24", "unit": "each", "currency": "EGP",
+            "period_week": "2026-09-07", "unit": "each", "currency": "EGP",
             "cost_status": "costed", "count_status": "verified",
-            "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102",
-            "count_as_of": "2026-09-05T10:00:00Z", "costed_ref": "COST-DRESS-1",
-            "period_start": "2026-07-06T00:00:00Z", "period_end": "2026-08-30T18:00:00Z",
-            "sales_weeks": 3,
-            "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
-            "weeks_of_supply": "0", "period_gross_margin": "3000",
+            "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102-FUT",
+            "count_as_of": "2026-09-13T10:00:00Z", "costed_ref": "COST-DRESS-1",
+            "book_epoch": "1970-01-01T00:00:00Z",
+            "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-12T18:00:00Z",
+            "sales_weeks": 5,
+            "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "8",
+            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
             "opening_stock_value": s1_opening_val.canonical(),
             "closing_stock_value": s1_closing_val.canonical(),
             "average_inventory_value": "0", "gmroi": "0"
         }),
     )?;
     assert_eq!(code, "core.laws.violated", "{msg}");
-    Ok(())
+    sole.ok(
+        "supply.store_count.recount",
+        "clerk:hana",
+        json!({
+            "store_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "store_id": "ST-SOLE-CFC-1",
+            "sku_id": "SKU-DRESS", "on_hand_qty": "60", "unit": "each",
+            "quantity_basis": "on_hand", "as_of": "2026-09-05T10:00:00Z",
+            "count_source": "pos_cycle_count", "count_ref": "CC-102"
+        }),
+    )
+}
+
+fn verify_store_kpi_rollup_cutoff_refusal(
+    sole: &mut EntityBook,
+    (s1_on_hand, s1_margin, s1_opening_val): (Decimal, Decimal, Decimal),
+) -> Result<(), String> {
+    // Post-cutoff lot balance update (`as_of > period_end`) must refuse GMROI closing valuation.
+    sole.ok(
+        "supply.stock_lot.update_balance",
+        "clerk:hana",
+        json!({
+            "lot_id": "LOT-S1-W1", "remaining_qty": "24", "depleted_qty": "26",
+            "as_of": "2026-09-13T09:00:00Z", "unit_cost": "100", "stock_value": "0"
+        }),
+    )?;
+    let (code, msg) = sole.refused(
+        "supply.store_kpi.record",
+        "planner:omar",
+        json!({
+            "rollup_id": "KPI-ST-SOLE-CFC-1-POST-CUTOFF-LOT", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "period_week": "2026-09-07", "unit": "each", "currency": "EGP",
+            "cost_status": "costed", "count_status": "verified",
+            "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102",
+            "count_as_of": "2026-09-05T10:00:00Z", "costed_ref": "COST-DRESS-1",
+            "book_epoch": "1970-01-01T00:00:00Z",
+            "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-12T18:00:00Z",
+            "sales_weeks": 5,
+            "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "8",
+            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
+            "opening_stock_value": s1_opening_val.canonical(),
+            "closing_stock_value": "5900",
+            "average_inventory_value": "0", "gmroi": "0"
+        }),
+    )?;
+    assert_eq!(code, "core.action.precondition", "{msg}");
+    sole.ok(
+        "supply.stock_lot.update_balance",
+        "clerk:hana",
+        json!({
+            "lot_id": "LOT-S1-W1", "remaining_qty": "25", "depleted_qty": "25",
+            "as_of": "2026-09-04T18:00:00Z", "unit_cost": "100", "stock_value": "0"
+        }),
+    )
 }
 
 fn verify_store_kpi_rollup_operand_refusals(
@@ -2176,34 +2252,46 @@ fn verify_store_kpi_rollup_operand_refusals(
     let cases = [
         (
             "KPI-ST-SOLE-CFC-1-FORGED-AVG",
+            5_i64,
             "9",
             s1_margin.canonical(),
             s1_opening_val.canonical(),
             s1_closing_val.canonical(),
         ),
         (
-            "KPI-ST-SOLE-CFC-1-FORGED-GM",
+            "KPI-ST-SOLE-CFC-1-WRONG-WKS",
+            4_i64,
             "10",
+            s1_margin.canonical(),
+            s1_opening_val.canonical(),
+            s1_closing_val.canonical(),
+        ),
+        (
+            "KPI-ST-SOLE-CFC-1-FORGED-GM",
+            5_i64,
+            "8",
             "9999".to_owned(),
             s1_opening_val.canonical(),
             s1_closing_val.canonical(),
         ),
         (
-            "KPI-ST-SOLE-CFC-1-FORGED-OPEN",
-            "10",
+            "KPI-ST-SOLE-CFC-1-OMIT-CARRIED-IN",
+            5_i64,
+            "8",
             s1_margin.canonical(),
-            "12000".to_owned(),
+            "0".to_owned(),
             s1_closing_val.canonical(),
         ),
         (
             "KPI-ST-SOLE-CFC-1-FORGED-CLOSE",
-            "10",
+            5_i64,
+            "8",
             s1_margin.canonical(),
             s1_opening_val.canonical(),
             "8000".to_owned(),
         ),
     ];
-    for (rollup_id, avg_sales, margin, open_val, close_val) in cases {
+    for (rollup_id, sales_weeks, avg_sales, margin, open_val, close_val) in cases {
         let (code, msg) = sole.refused(
             "supply.store_kpi.record",
             "planner:omar",
@@ -2213,8 +2301,9 @@ fn verify_store_kpi_rollup_operand_refusals(
                 "cost_status": "costed", "count_status": "verified",
                 "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102",
                 "count_as_of": "2026-09-05T10:00:00Z", "costed_ref": "COST-DRESS-1",
-                "period_start": "2026-07-06T00:00:00Z", "period_end": "2026-09-12T18:00:00Z",
-                "sales_weeks": 4,
+                "book_epoch": "1970-01-01T00:00:00Z",
+                "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-12T18:00:00Z",
+                "sales_weeks": sales_weeks,
                 "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": avg_sales,
                 "weeks_of_supply": "0", "period_gross_margin": margin,
                 "opening_stock_value": open_val, "closing_stock_value": close_val,
@@ -2240,9 +2329,10 @@ fn verify_store_kpi_rollup_refusals(
             "cost_status": "costed", "count_status": "verified",
             "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102",
             "count_as_of": "2026-09-05T10:00:00Z", "costed_ref": "COST-DRESS-1",
-            "period_start": "2026-07-06T00:00:00Z", "period_end": "2026-09-12T18:00:00Z",
-            "sales_weeks": 4,
-            "on_hand_qty": "99", "avg_weekly_sales_qty": "10",
+            "book_epoch": "1970-01-01T00:00:00Z",
+            "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-12T18:00:00Z",
+            "sales_weeks": 5,
+            "on_hand_qty": "99", "avg_weekly_sales_qty": "8",
             "weeks_of_supply": "0", "period_gross_margin": "5000",
             "opening_stock_value": "10000", "closing_stock_value": "6000",
             "average_inventory_value": "0", "gmroi": "0"
@@ -2263,7 +2353,8 @@ fn verify_store_kpi_rollup_refusals(
             "cost_status": "costed", "count_status": "verified",
             "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102",
             "count_as_of": "2026-09-05T10:00:00Z", "costed_ref": "COST-DRESS-1",
-            "period_start": "2026-07-06T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
+            "book_epoch": "1970-01-01T00:00:00Z",
+            "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
             "sales_weeks": 4,
             "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
             "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
@@ -2276,6 +2367,7 @@ fn verify_store_kpi_rollup_refusals(
         sole,
         (s1_on_hand, s1_margin, s1_opening_val, s1_closing_val),
     )?;
+    verify_store_kpi_rollup_cutoff_refusal(sole, (s1_on_hand, s1_margin, s1_opening_val))?;
     // 3. Subsequent `RecountStore` after recording a historical rollup must succeed (not freeze recounts).
     sole.ok(
         "supply.store_count.recount",
@@ -2323,7 +2415,8 @@ fn seed_partner_commercial_rollup(partner: &mut EntityBook) -> Result<(), String
             "cost_status": "costed", "count_status": "verified",
             "on_hand_count_id": "ST-PART-CFC-1/SKU-RING-18K/on_hand", "count_ref": "AUD-P2",
             "count_as_of": "2026-09-06T10:00:00Z", "costed_ref": "COST-RING-1",
-            "period_start": "2026-07-06T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
+            "book_epoch": "1970-01-01T00:00:00Z",
+            "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
             "sales_weeks": 1,
             "on_hand_qty": "12", "avg_weekly_sales_qty": "8", "weeks_of_supply": "0",
             "period_gross_margin": "1200",
@@ -2383,7 +2476,8 @@ fn seed_store_commercial_rollups(
             "cost_status": "costed", "count_status": "verified",
             "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102",
             "count_as_of": "2026-09-05T10:00:00Z", "costed_ref": "COST-DRESS-1",
-            "period_start": "2026-07-06T00:00:00Z", "period_end": "2026-09-05T18:00:00Z",
+            "book_epoch": "1970-01-01T00:00:00Z",
+            "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-05T18:00:00Z",
             "sales_weeks": 4,
             "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
             "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
@@ -2406,7 +2500,7 @@ fn seed_store_commercial_rollups(
             "rollup_id": "KPI-ST-SOLE-CFC-2-W9", "store_id": "ST-SOLE-CFC-2", "sku_id": "SKU-DRESS",
             "period_week": "2026-08-31", "unit": "each", "currency": "EGP",
             "cost_status": "missing_cost", "count_status": "unverified",
-            "period_start": "2026-07-06T00:00:00Z", "period_end": "2026-09-05T18:00:00Z",
+            "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-05T18:00:00Z",
             "sales_weeks": 1,
             "on_hand_qty": "0", "avg_weekly_sales_qty": "0", "weeks_of_supply": "0",
             "period_gross_margin": "0", "opening_stock_value": "0",
@@ -3459,16 +3553,19 @@ fn evaluate_two_cell_report(
         .pack
         .transform_plan("supply.retail.entity_management_summary")?;
     let lot_tf_plan = sole.pack.transform_plan("supply.retail.store_lot_aging")?;
+    let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
     let gates = [
         CoverageTransformGate {
             name: "supply.retail.entity_management_summary",
             plan: &entity_tf_plan,
             required_true_column: "cost_complete",
+            row_access: &allow_all,
         },
         CoverageTransformGate {
             name: "supply.retail.store_lot_aging",
             plan: &lot_tf_plan,
             required_true_column: "cost_complete",
+            row_access: &allow_all,
         },
     ];
     let (sole_key, sole_auth) = legal_entity_read_authority(sole, sole_entity_id);
@@ -3572,7 +3669,54 @@ fn verify_library_combined_view_report(
         dup.is_err(),
         "duplicate cell_id in combined view must refuse"
     );
+    verify_library_cut_row_access_gate(partner)?;
     Ok(report)
+}
+
+fn verify_library_cut_row_access_gate(partner: &EntityBook) -> Result<(), String> {
+    // VIEW-ROWS-1 / VIEW-READ-1: withholding a row in a coverage transform on an otherwise
+    // complete cell (`partner`) must fail closed and withhold answers.
+    let rev_plan = partner
+        .pack
+        .retail_question("supply.retail.store_revenue_weekly")?;
+    let entity_tf_plan = partner
+        .pack
+        .transform_plan("supply.retail.entity_management_summary")?;
+    let count_only = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Count);
+    let (partner_key, partner_auth) = legal_entity_read_authority(partner, "LE-PARTNER");
+    let restricted_input = CellViewInput {
+        store: partner.cell()?.store(),
+        anchor_key: &partner_key,
+        authority: &partner_auth,
+        context: partner.query_context(),
+        required_feeds: &REQUIRED_FEEDS,
+        min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
+        evidence_types: &EVIDENCE_TYPES,
+        coverage_transforms: &[CoverageTransformGate {
+            name: "supply.retail.entity_management_summary",
+            plan: &entity_tf_plan,
+            required_true_column: "cost_complete",
+            row_access: &count_only,
+        }],
+        coverage_probe: None,
+        questions: &[("supply.retail.store_revenue_weekly", &rev_plan)],
+    };
+    let restricted_snap = evaluate_cell_cut(&restricted_input, &mut |_, plan, ctx| {
+        partner
+            .cell()
+            .map_err(CellError::Engine)?
+            .store()
+            .evaluate_question(plan, ctx, |_| Ok(true))
+    })
+    .map_err(|e| format!("restricted evaluate_cell_cut: {e}"))?;
+    assert!(!restricted_snap.complete);
+    assert!(
+        restricted_snap
+            .failed_coverage_gates
+            .contains("supply.retail.entity_management_summary")
+    );
+    assert!(restricted_snap.answers.is_none());
+    Ok(())
 }
 
 #[cfg(all(feature = "duckdb", feature = "native"))]
@@ -3993,7 +4137,7 @@ fn verify_library_cut_tampering_refusals(sole: &EntityBook) -> Result<(), String
         ),
         "substituted question answer must refuse: {swapped:?}"
     );
-    // 2. Duplicate question names must refuse before evaluation can overwrite completeness.
+    // 2. Duplicate question names must refuse up front with zero evaluator invocations.
     let dup_q_input = CellViewInput {
         store: sole.cell()?.store(),
         anchor_key: &anchor_key,
@@ -4009,7 +4153,9 @@ fn verify_library_cut_tampering_refusals(sole: &EntityBook) -> Result<(), String
             ("supply.retail.store_revenue_weekly", &rev_plan),
         ],
     };
+    let mut dup_eval_calls = 0_usize;
     let dup_q = evaluate_cell_cut(&dup_q_input, &mut |_, plan, ctx| {
+        dup_eval_calls = dup_eval_calls.saturating_add(1);
         sole.cell()
             .map_err(CellError::Engine)?
             .store()
@@ -4022,11 +4168,23 @@ fn verify_library_cut_tampering_refusals(sole: &EntityBook) -> Result<(), String
         ),
         "duplicate question name must refuse: {dup_q:?}"
     );
+    assert_eq!(
+        dup_eval_calls, 0,
+        "duplicate question refusal must run before any evaluator call"
+    );
+    verify_library_cut_bad_authority_refusal(sole, &rev_plan, &anchor_key)
+}
+
+fn verify_library_cut_bad_authority_refusal(
+    sole: &EntityBook,
+    rev_plan: &QuestionPlan,
+    anchor_key: &FactKey,
+) -> Result<(), String> {
     // 3. Authority binding resource mismatch must refuse fail-closed (`READ-LOCAL-1`).
     let (_, wrong_authority) = legal_entity_read_authority(sole, "LE-PARTNER");
     let bad_auth_input = CellViewInput {
         store: sole.cell()?.store(),
-        anchor_key: &anchor_key,
+        anchor_key,
         authority: &wrong_authority,
         context: sole.query_context(),
         required_feeds: &REQUIRED_FEEDS,
@@ -4034,7 +4192,7 @@ fn verify_library_cut_tampering_refusals(sole: &EntityBook) -> Result<(), String
         evidence_types: &EVIDENCE_TYPES,
         coverage_transforms: &[],
         coverage_probe: None,
-        questions: &[("supply.retail.store_revenue_weekly", &rev_plan)],
+        questions: &[("supply.retail.store_revenue_weekly", rev_plan)],
     };
     let bad_auth = evaluate_cell_cut(&bad_auth_input, &mut |_, plan, ctx| {
         sole.cell()
@@ -4071,13 +4229,14 @@ fn verify_library_cut_degraded_and_tampered(sole: &mut EntityBook) -> Result<(),
         wm.observed = obs;
     }
     // 5. Observed watermark on partition B with no consumed cursor must withhold answers.
+    let hb_ms = sole.now().as_millis();
     if let Some(parts) = sole.watermarks.get_mut("supply.pos_sales") {
         parts.insert(
             "partition-b".to_owned(),
             Watermark {
                 observed: "cursor:p-b:1".to_owned(),
                 complete: true,
-                heartbeat_ms: Some(sole.now().as_millis()),
+                heartbeat_ms: Some(hb_ms),
             },
         );
     }

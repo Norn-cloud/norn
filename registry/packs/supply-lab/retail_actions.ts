@@ -603,6 +603,7 @@ const StoreCommercialRollupInput = Schema.Struct({
   count_ref: Schema.String,
   count_as_of: Norn.timestamp("utc"),
   costed_ref: Schema.String,
+  book_epoch: Norn.timestamp("utc"),
   period_start: Norn.timestamp("utc"),
   period_end: Norn.timestamp("utc"),
   sales_weeks: Schema.Int,
@@ -640,10 +641,11 @@ const StoreCommercialRollupRef = Schema.Struct({ rollup_id: Schema.String })
 
 /**
  * Record a verified and costed store-week commercial KPI rollup bound at
- * snapshot time to governed `on_hand` `StoreCount`, `UnitCost`, and windowed
- * `PosSale` + `StockLot` kernel aggregates (exact sales, gross margin, opening
- * and closing stock valuations, and zero missing-cost rows), unique at
- * `(store_id, period_week)` grain, deriving `average_inventory_value = (opening + closing) * 0.5`.
+ * snapshot time to governed `(store_id, sku_id)` `on_hand` `StoreCount`,
+ * `UnitCost`, and windowed `PosSale` + `StockLot` kernel aggregates (including
+ * carried-in opening lots received at or before `period_end`, refusing any
+ * post-cutoff lot balance updates `as_of > period_end`, deriving `sales_weeks`
+ * strictly from `[period_start, period_week]`, and refusing missing-cost rows).
  */
 export const RecordStoreCommercialRollup = Norn.action({
   id: "supply.store_kpi.record", title: "Record verified store commercial KPI rollup", version: "0.1.0",
@@ -659,47 +661,53 @@ export const RecordStoreCommercialRollup = Norn.action({
   aggregates: [
     {
       name: "total_sold_qty", type: PosSale,
-      filter: { store_id: "store_id", unit: "unit" },
+      filter: { store_id: "store_id", sku_id: "sku_id", unit: "unit" },
       window: { property: "sold_at", start: "period_start", end: "period_end", startInclusive: true, endInclusive: true },
       aggregate: { kind: "sum", property: "sold_qty" }, maxItems: 100,
     },
     {
       name: "total_gross_margin", type: PosSale,
-      filter: { store_id: "store_id", currency: "currency" },
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
       window: { property: "sold_at", start: "period_start", end: "period_end", startInclusive: true, endInclusive: true },
       aggregate: { kind: "sum", property: "gross_margin" }, maxItems: 100,
     },
     {
       name: "all_sales_count", type: PosSale,
-      filter: { store_id: "store_id", currency: "currency" },
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
       window: { property: "sold_at", start: "period_start", end: "period_end", startInclusive: true, endInclusive: true },
       aggregate: { kind: "count" }, maxItems: 100,
     },
     {
       name: "costed_sales_count", type: PosSale,
-      filter: { store_id: "store_id", currency: "currency", cost_status: "cost_status" },
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency", cost_status: "cost_status" },
       window: { property: "sold_at", start: "period_start", end: "period_end", startInclusive: true, endInclusive: true },
       aggregate: { kind: "count" }, maxItems: 100,
     },
     {
       name: "total_opening_stock_value", type: StockLot,
-      filter: { store_id: "store_id", currency: "currency" },
-      window: { property: "received_at", start: "period_start", end: "period_end", startInclusive: true, endInclusive: true },
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
+      window: { property: "received_at", start: "book_epoch", end: "period_end", startInclusive: true, endInclusive: true },
       aggregate: { kind: "sum", property: "opening_stock_value" }, maxItems: 100,
     },
     {
       name: "total_closing_stock_value", type: StockLot,
-      filter: { store_id: "store_id", currency: "currency" },
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
       aggregate: { kind: "sum", property: "stock_value" }, maxItems: 100,
     },
     {
       name: "all_lots_count", type: StockLot,
-      filter: { store_id: "store_id", currency: "currency" },
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
+    {
+      name: "lots_as_of_by_period_end", type: StockLot,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
+      window: { property: "as_of", start: "book_epoch", end: "period_end", startInclusive: true, endInclusive: true },
       aggregate: { kind: "count" }, maxItems: 100,
     },
     {
       name: "costed_lots_count", type: StockLot,
-      filter: { store_id: "store_id", currency: "currency", cost_status: "cost_status" },
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency", cost_status: "cost_status" },
       aggregate: { kind: "count" }, maxItems: 100,
     },
   ],
@@ -733,14 +741,17 @@ export const RecordStoreCommercialRollup = Norn.action({
         total_opening_stock_value: Norn.decimal(6),
         total_closing_stock_value: Norn.decimal(6),
         all_lots_count: Schema.Int,
+        lots_as_of_by_period_end: Schema.Int,
         costed_lots_count: Schema.Int,
       }),
     }),
     (ctx) => ctx.slice.store.status === "active"
+      && ctx.input.book_epoch === "1970-01-01T00:00:00Z"
       && ctx.input.count_status === "verified"
       && ctx.input.cost_status === "costed"
       && ctx.input.sales_weeks >= 1
-      && ctx.input.sales_weeks <= Norn.floor(Norn.secondsBetween(ctx.input.period_start, ctx.input.period_end) / 604800) + 1
+      && Norn.secondsBetween(ctx.input.period_start, ctx.input.period_week + "T00:00:00Z")
+        === (ctx.input.sales_weeks - 1) * 604800
       && ctx.input.unit === ctx.slice.sku.unit_of_measure
       && ctx.input.currency === ctx.slice.store.currency
       && ctx.input.store_id === ctx.slice.on_hand_count.store_id
@@ -757,6 +768,7 @@ export const RecordStoreCommercialRollup = Norn.action({
       && ctx.aggregates.costed_sales_count === ctx.aggregates.all_sales_count
       && ctx.input.opening_stock_value === ctx.aggregates.total_opening_stock_value
       && ctx.input.closing_stock_value === ctx.aggregates.total_closing_stock_value
+      && ctx.aggregates.lots_as_of_by_period_end === ctx.aggregates.all_lots_count
       && ctx.aggregates.costed_lots_count === ctx.aggregates.all_lots_count,
     { root: "context" },
   )],
