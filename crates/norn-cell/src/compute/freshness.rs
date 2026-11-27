@@ -744,7 +744,7 @@ impl<E: SqlEngine> CellStore<E> {
             };
             let conn_matches = conn
                 .map(|c| {
-                    super::as_of::conn_matches_mapping_binding(
+                    conn_matches_mapping_binding(
                         &reader,
                         world,
                         c,
@@ -853,4 +853,112 @@ impl<E: SqlEngine> crate::StoreReader<'_, E> {
             self, world, &conn, binding, required, false,
         )
     }
+}
+
+fn definition_version_matches_mapping<E: SqlEngine>(
+    reader: &crate::StoreReader<'_, E>,
+    def_ver: u64,
+    mapping_id: &str,
+    expected_binding: &str,
+) -> Result<bool, CellError> {
+    let Some(installed) = reader.installed_definitions(Some(def_ver))? else {
+        return Ok(false);
+    };
+    let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&installed.canonical_set)?;
+    for artifact in &artifacts {
+        if artifact.kind() == ArtifactKind::Mapping && artifact.artifact_id == mapping_id {
+            return Ok(mapping_binding_key(artifact)? == expected_binding);
+        }
+    }
+    Ok(false)
+}
+
+fn commit_seq_matches_mapping_binding<E: SqlEngine>(
+    reader: &crate::StoreReader<'_, E>,
+    commit_seq: u64,
+    mapping_id: &str,
+    expected_binding: &str,
+) -> Result<bool, CellError> {
+    let Some(def_ver) = reader.definitions_version_at(commit_seq)? else {
+        return Ok(false);
+    };
+    definition_version_matches_mapping(reader, def_ver, mapping_id, expected_binding)
+}
+
+/// Earliest `commit_seq` of the contiguous tail of `_norn_definition_version`
+/// rows up to `conn_seq` where `mapping_id` had `expected_binding`.
+pub(super) fn mapping_binding_valid_since<E: SqlEngine>(
+    reader: &crate::StoreReader<'_, E>,
+    conn_seq: u64,
+    mapping_id: &str,
+    expected_binding: &str,
+) -> Result<Option<u64>, CellError> {
+    use crate::engine::{SqlRow, params};
+    let max_seq = i64::try_from(conn_seq).map_err(|_| CellError::OutOfRange("commit_seq"))?;
+    let defs = reader.conn.query(
+        "SELECT version, commit_seq FROM _norn_definition_version \
+         WHERE commit_seq <= ?1 ORDER BY commit_seq DESC",
+        params![max_seq],
+    )?;
+    let mut valid_since: Option<u64> = None;
+    for values in defs {
+        let row = SqlRow(values);
+        let (Ok(def_ver), Ok(seq)) = (
+            u64::try_from(row.get::<i64>(0)?),
+            u64::try_from(row.get::<i64>(1)?),
+        ) else {
+            break;
+        };
+        if definition_version_matches_mapping(reader, def_ver, mapping_id, expected_binding)? {
+            valid_since = Some(seq);
+        } else {
+            break;
+        }
+    }
+    Ok(valid_since)
+}
+
+pub(super) fn connection_world_and_commit_seq<E: SqlEngine>(
+    reader: &crate::StoreReader<'_, E>,
+    world: &str,
+    conn: &ObjectRecord,
+) -> Result<Option<(String, u64)>, CellError> {
+    use crate::engine::params;
+    let ver =
+        i64::try_from(conn.version).map_err(|_| CellError::OutOfRange("connection version"))?;
+    let mut chosen = world;
+    let mut seq: Option<i64> = reader.conn.query_optional(
+        "SELECT commit_seq FROM _norn_fact_values \
+         WHERE world=?1 AND root_type=?2 AND id=?3 AND version=?4",
+        params![world, CONNECTION_TYPE, conn.id.as_str(), ver],
+        |row| row.get(0),
+    )?;
+    if seq.is_none() && world != MAIN_WORLD {
+        chosen = MAIN_WORLD;
+        seq = reader.conn.query_optional(
+            "SELECT commit_seq FROM _norn_fact_values \
+             WHERE world=?1 AND root_type=?2 AND id=?3 AND version=?4",
+            params![MAIN_WORLD, CONNECTION_TYPE, conn.id.as_str(), ver],
+            |row| row.get(0),
+        )?;
+    }
+    Ok(seq
+        .and_then(|s| u64::try_from(s).ok())
+        .map(|s| (chosen.to_owned(), s)))
+}
+
+fn conn_matches_mapping_binding<E: SqlEngine>(
+    reader: &crate::StoreReader<'_, E>,
+    world: &str,
+    conn: &ObjectRecord,
+    mapping_id: &str,
+    expected_binding: &str,
+) -> Result<bool, CellError> {
+    if conn.values.get("mapping_id").and_then(RuntimeValue::as_str) != Some(mapping_id) {
+        return Ok(false);
+    }
+    let Some((_, commit_seq)) = connection_world_and_commit_seq(reader, world, conn)? else {
+        return Ok(false);
+    };
+    commit_seq_matches_mapping_binding(reader, commit_seq, mapping_id, expected_binding)
 }
