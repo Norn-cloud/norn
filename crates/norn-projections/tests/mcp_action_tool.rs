@@ -501,3 +501,39 @@ fn server_filled_fields_leave_the_caller_schema() {
         "corrected_by"
     );
 }
+
+#[test]
+fn decimal_wire_schema_rewrites_nested_arrays_and_server_filled_ignores_string_and_member_input() {
+    let mut action = fixture_action();
+    action.input_schema = serde_json::from_value(json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "amount": {
+                "anyOf": [
+                    {"type": "number", "nornType": {"kind": "decimal"}},
+                    {"type": "null"}
+                ]
+            },
+            "note": {"type": "string"},
+            "actor_input": {"type": "string"},
+            "already_nullable": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+        },
+        "required": ["amount", "note", "actor_input", "already_nullable"]
+    }))
+    .expect("schema decodes");
+    action.derive = serde_json::from_value(json!([
+        {"field": "note", "expression": "'user input'", "inputRequired": false},
+        {"field": "actor_input", "expression": "actor.input", "inputRequired": false},
+        {"field": "already_nullable", "expression": "input.already_nullable ?? 'x'", "inputRequired": false}
+    ]))
+    .expect("derivations decode");
+    let tool = serde_json::to_value(action_tool(&action).expect("projects")).expect("encodes");
+    let props = &tool["inputSchema"]["properties"];
+    assert_eq!(props["amount"]["anyOf"][0]["type"], "string");
+    assert!(props.get("note").is_none());
+    assert!(props.get("actor_input").is_none());
+    // Already-nullable property is not wrapped in nested anyOf.
+    assert_eq!(props["already_nullable"]["anyOf"][0]["type"], "string");
+    assert_eq!(props["already_nullable"]["anyOf"][1]["type"], "null");
+}

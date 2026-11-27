@@ -31,6 +31,33 @@ fn rule_root(artifact: &ArtifactEnvelope) -> Result<RuleRoot, String> {
     .map_err(|failure| error(failure.to_string()))
 }
 
+/// Index rule artifacts by `artifact_id`, refusing duplicate `(artifact_id, version)` pairs.
+fn index_rules<'a>(
+    artifacts: &'a [ArtifactEnvelope],
+    artifact_id: &str,
+) -> Result<BTreeMap<&'a str, Vec<&'a ArtifactEnvelope>>, String> {
+    let mut rules_by_id: BTreeMap<&'a str, Vec<&'a ArtifactEnvelope>> = BTreeMap::new();
+    for artifact in artifacts {
+        if !matches!(artifact.payload, ArtifactPayload::Rule(_)) {
+            continue;
+        }
+        let versions = rules_by_id
+            .entry(artifact.artifact_id.as_str())
+            .or_default();
+        if versions
+            .iter()
+            .any(|existing| existing.version == artifact.version)
+        {
+            return Err(format!(
+                "{artifact_id}: duplicate rule artifact {}@{}",
+                artifact.artifact_id, artifact.version
+            ));
+        }
+        versions.push(artifact);
+    }
+    Ok(rules_by_id)
+}
+
 impl OfflineDecision {
     /// Prepare an untriggered `decide` rule, and every sub-decision it
     /// reaches, from an admitted definition set.
@@ -63,15 +90,24 @@ impl OfflineDecision {
                     .to_owned(),
             ));
         }
-        let find = |id: &str, version: Option<&str>| {
-            artifacts
-                .iter()
-                .find(|artifact| {
-                    artifact.artifact_id == id
-                        && version.is_none_or(|version| artifact.version == version)
-                        && matches!(artifact.payload, ArtifactPayload::Rule(_))
-                })
-                .ok_or_else(|| error(format!("{id} is absent from the admitted set")))
+        let rules_by_id = index_rules(artifacts, artifact_id)?;
+        let find = |id: &str, version: Option<&str>| -> Result<&ArtifactEnvelope, String> {
+            let candidates = rules_by_id
+                .get(id)
+                .ok_or_else(|| error(format!("{id} is absent from the admitted set")))?;
+            if let Some(version) = version {
+                candidates
+                    .iter()
+                    .copied()
+                    .find(|artifact| artifact.version == version)
+                    .ok_or_else(|| error(format!("{id}@{version} is absent from the admitted set")))
+            } else if let [single] = candidates.as_slice() {
+                Ok(*single)
+            } else {
+                Err(error(format!(
+                    "{id} has multiple rule versions in the admitted set"
+                )))
+            }
         };
         let root = rule_root(find(artifact_id, None)?)?;
         let sub_decisions = closure

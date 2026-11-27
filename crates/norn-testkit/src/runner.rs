@@ -57,7 +57,8 @@ impl Settings {
         }
     }
 
-    /// Case count when `PROPTEST_CASES` is unset.
+    /// Case count when `PROPTEST_CASES` is unset. Clamped to at least 1 from
+    /// either source so a zero count cannot vacuously pass a law check.
     #[must_use]
     pub const fn cases(mut self, cases: u32) -> Self {
         self.cases = cases;
@@ -109,6 +110,7 @@ impl Settings {
         if std::env::var_os("PROPTEST_CASES").is_none() {
             config.cases = self.cases;
         }
+        config.cases = config.cases.max(1);
         if std::env::var_os("PROPTEST_RNG_SEED").is_none() {
             config.rng_seed = RngSeed::Fixed(self.seed);
         }

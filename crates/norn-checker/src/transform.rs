@@ -361,7 +361,7 @@ pub struct TransformPlan {
     pub output: String,
     /// `(alias, link)` edges the engine must read for link joins.
     pub links: BTreeSet<(String, String)>,
-    /// Fuel for one expression evaluation (its static cost fits it).
+    /// Cumulative expression fuel across all evaluations of this plan.
     pub fuel_units: u64,
     /// VIEW-MAT-1: how a materialized transform is kept; `None` recomputes
     /// on every read.
@@ -1115,31 +1115,36 @@ impl Builder<'_, '_> {
     }
 
     fn read_columns(&mut self, schema: &NodeSchema, source: &str, at: &str) -> Vec<Column> {
-        match norn_expr::expression_read_paths(source, ROW_ROOT) {
-            Ok(paths) => paths
-                .iter()
-                .filter_map(|path| path.first())
-                .filter_map(|name| schema.column(name).cloned())
-                .collect(),
+        match crate::model_privacy::expression_columns(schema, source) {
+            Ok(columns) => columns.into_iter().cloned().collect(),
             Err(error) => {
                 self.fail(
                     codes::TYPE_MISMATCH,
                     format!("expression reads are unbounded: {error}"),
                     at,
                 );
-                Vec::new()
+                schema.columns.clone()
             }
         }
     }
 
     fn filter(&mut self, input: &str, predicate: &str, at: &str) -> Option<AdmittedNode> {
         let schema = self.schema(input)?.clone();
-        let (predicate, _) =
-            self.typed(&schema, predicate, &Type::Bool, &format!("{at}/predicate"))?;
+        let predicate_at = format!("{at}/predicate");
+        let (predicate_expr, _) = self.typed(&schema, predicate, &Type::Bool, &predicate_at)?;
+        let read = self.read_columns(&schema, predicate, &predicate_at);
+        if read.iter().any(|column| !column.markings.is_empty()) {
+            self.fail(
+                metric_codes::MARKED_FIELD,
+                "a filter cannot read a marked column",
+                predicate_at,
+            );
+            return None;
+        }
         Some(AdmittedNode {
             step: Step::Filter {
                 input: input.to_owned(),
-                predicate,
+                predicate: predicate_expr,
             },
             schema,
         })
@@ -1795,6 +1800,14 @@ impl Builder<'_, '_> {
                 );
                 return None;
             };
+            if !column.markings.is_empty() {
+                self.fail(
+                    metric_codes::MARKED_FIELD,
+                    format!("cannot order by marked column {:?}", key.column),
+                    format!("{at}/orderBy/{index}"),
+                );
+                return None;
+            }
             if !orderable(&column.ty) {
                 self.fail(
                     codes::TYPE_MISMATCH,
@@ -1829,6 +1842,11 @@ impl Builder<'_, '_> {
         let schema = self.schema(&window.input)?.clone();
         for (index, column) in window.partition_by.iter().enumerate() {
             match schema.column(column) {
+                Some(found) if !found.markings.is_empty() => self.fail(
+                    metric_codes::MARKED_FIELD,
+                    format!("cannot partition by marked column {column:?}"),
+                    format!("{at}/partitionBy/{index}"),
+                ),
                 Some(found) if scalar(&found.ty) => {}
                 Some(_) => self.fail(
                     codes::TYPE_MISMATCH,
@@ -2082,6 +2100,11 @@ impl Builder<'_, '_> {
         }
         for (index, key) in dedupe.key.iter().enumerate() {
             match schema.column(key) {
+                Some(found) if !found.markings.is_empty() => self.fail(
+                    metric_codes::MARKED_FIELD,
+                    format!("cannot dedupe by marked column {key:?}"),
+                    format!("{at}/key/{index}"),
+                ),
                 Some(found) if scalar(&found.ty) => {}
                 Some(_) => self.fail(
                     codes::TYPE_MISMATCH,
@@ -2197,28 +2220,4 @@ fn passthrough(source: &str) -> Option<&str> {
     valid_name(name).then_some(name)
 }
 
-/// The column type of a computed scalar.
-fn column_type(inferred: &InferredType) -> Option<Type> {
-    if let InferredType::Optional(inner) = inferred {
-        return Some(Type::Optional(Box::new(column_type(inner)?)));
-    }
-    if let InferredType::Enum(values) = inferred {
-        return Some(Type::enumeration(values.iter().cloned()));
-    }
-    if matches!(inferred, InferredType::Bool) {
-        Some(Type::Bool)
-    } else if matches!(inferred, InferredType::String | InferredType::Const(_)) {
-        Some(Type::text())
-    } else if matches!(inferred, InferredType::Date) {
-        Some(Type::Date)
-    } else if matches!(inferred, InferredType::Timestamp) {
-        Some(Type::Timestamp {
-            timezone: norn_ir::TimezonePolicy::Utc,
-        })
-    } else if matches!(inferred, InferredType::Number) {
-        Some(Type::Number)
-    } else {
-        // Null, lists and records are not column values.
-        None
-    }
-}
+use crate::model_privacy::transform_column_type as column_type;

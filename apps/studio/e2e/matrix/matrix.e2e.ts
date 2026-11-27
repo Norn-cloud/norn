@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url"
 import { expect, test, type Page } from "@playwright/test"
 import { type Machine, type Msg, type Walk, wasmEvaluate } from "../../../../packages/norn-react/src/machine/index.ts"
 import type { WidgetUx } from "../../../../packages/norn-react/src/index.ts"
+import { text } from "../../../../packages/norn-react/src/ux.ts"
 import { demoDefinitions, MATRIX_WIDGET_ID, matrixArtifact } from "../../../../packages/norn-react/test/fixtures/matrix-page.ts"
 import { answerFor, matrixCell, RECORDS_ELSEWHERE, type NotServed } from "./cell.ts"
 import { matrixOf, nodesById } from "./manifest.ts"
@@ -80,10 +81,10 @@ async function browseWithoutEngine(page: Page) {
 /** The label a control node shows in `variant`'s locale. */
 function labelOf(nodeId: string, variant: Variant): string {
   const component = nodes.get(nodeId)?.component
-  if (component?.kind === "control") return component.label[localeOf(variant)] ?? component.label.en ?? nodeId
+  if (component?.kind === "control") return text(component.label, localeOf(variant)) || nodeId
   if (component?.kind === "action") {
     const placement = ux.actionPlacements.find((candidate) => candidate.placementId === component.placementId)
-    return placement?.label[localeOf(variant)] ?? placement?.label.en ?? nodeId
+    return (placement === undefined ? "" : text(placement.label, localeOf(variant))) || nodeId
   }
   return nodeId === "meter-node" ? "Pick" : nodeId
 }

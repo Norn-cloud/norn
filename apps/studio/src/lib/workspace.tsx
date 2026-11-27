@@ -106,7 +106,7 @@ const RECORDED: RecordedReader = Object.freeze({
   // Loaded with the first widget page that reads: no page off that path pays for it.
   widget: (read: BindingRead) => ({
     queryKey: ["widget", "recorded", read],
-    queryFn: async () => (await import("./raw/widget.ts")).readRecordedWidget(read),
+    queryFn: async ({ signal }: { readonly signal: AbortSignal }) => (await import("./raw/widget.ts")).readRecordedWidget(read, signal),
   }),
 })
 

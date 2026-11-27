@@ -556,22 +556,16 @@ where
     let prop = ctx.lifecycle.property.as_str();
     let immutable_set: BTreeSet<&str> =
         ctx.lifecycle.immutable.iter().map(String::as_str).collect();
-    let all_guards: Vec<_> = ctx
-        .lifecycle
-        .transitions
-        .iter()
-        .flat_map(|tr| tr.guards.iter().cloned())
-        .collect();
-
     for (state, (init_state, prefix)) in paths {
         *seq = seq.saturating_add(1);
         let mut host = make_host(&format!("lc-neg-{ty_name}-{state}-{}", *seq))?;
         let id = format!("neg-{}", *seq);
+        let prefix_guards = collect_prefix_guards(ctx.lifecycle, prefix);
         let mut init_values = synthesize_guard_satisfying(
             ctx.pack,
             ctx.object_type,
             ctx.lifecycle,
-            &all_guards,
+            &prefix_guards,
             &id,
             *seq,
         );
@@ -795,7 +789,7 @@ fn seed_and_walk_inner<H: PackHost>(
     if let Some(created) =
         super::seed::seed_stamped(host, pack, catalog, object_type, id, &values, 1)?
     {
-        match created {
+        match created.result {
             Ok(()) => {}
             Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. })
                 if allow_law_refusal =>

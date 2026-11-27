@@ -187,7 +187,7 @@ pub(crate) fn admit(
 
 /// The validator reports per policy in no promised order; sort so a rejection
 /// is deterministic.
-fn sort_diagnostics(diagnostics: &mut [AuthzDiagnostic]) {
+pub(crate) fn sort_diagnostics(diagnostics: &mut [AuthzDiagnostic]) {
     diagnostics.sort_by(|left, right| {
         (left.policy_id.as_deref(), left.code, left.message.as_str()).cmp(&(
             right.policy_id.as_deref(),

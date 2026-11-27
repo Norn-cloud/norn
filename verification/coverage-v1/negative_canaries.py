@@ -899,6 +899,8 @@ def studio_browser_phase_canaries() -> None:
         tree, bin_dir = Path(directory) / "tree", Path(directory) / "bin"
         (tree / "crates/norn-checker-wasm/scripts").mkdir(parents=True)
         (tree / "apps/studio").mkdir(parents=True)
+        # The browser phase builds norn-dev-host and installs tools/norn-ts for the live pack rows.
+        (tree / "tools/norn-ts").mkdir(parents=True)
         bin_dir.mkdir()
         tools = {
             "cargo": "exit 0",

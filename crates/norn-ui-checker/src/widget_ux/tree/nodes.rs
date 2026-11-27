@@ -145,13 +145,7 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn check_section_component(&mut self, section: &norn_ir::WidgetSection, path: &str) {
-        if section.label.0.is_empty()
-            || section
-                .label
-                .0
-                .values()
-                .any(|value| value.trim().is_empty())
-        {
+        if section.label.is_blank() {
             self.error(
                 &format!("{path}/component/section/label"),
                 "section label must contain nonblank localized text",
@@ -536,7 +530,7 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn include_property(&mut self, property: &norn_ir::PropertyRef, path: &str) {
-        if self.resolve_property(property, path).is_some() {
+        if let Some(resolved) = self.resolve_property(property, path) {
             self.included_fields
                 .insert((property.binding_id.clone(), property.property_id.clone()));
             let presentations: Vec<(String, Option<String>)> = self
@@ -565,9 +559,7 @@ impl UxChecker<'_, '_, '_> {
                     "explicitly included property must have exactly one field presentation",
                 );
             } else if let Some((field_id, option_binding_id)) = presentations.first() {
-                let value_type = self
-                    .resolve_property(property, path)
-                    .and_then(property_type);
+                let value_type = property_type(resolved);
                 let option_type = option_binding_id
                     .as_deref()
                     .and_then(|id| self.option_binding_key_type(id, path));

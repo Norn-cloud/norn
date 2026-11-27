@@ -728,4 +728,78 @@ mod pdp {
                 && policy.rule_id.as_deref() == Some("always_allow")
         }));
     }
+
+    #[test]
+    fn wildcard_grants_requests_blank_roles_and_empty_catalog_org_check_refuse() {
+        let policies = super::compiled(ORDER_ACCESS);
+        let wildcard_cap = CapabilityGrant {
+            subject_id: "alice".to_owned(),
+            actor_kind: ActorKind::User,
+            agent_session_id: None,
+            scope: Some(scope()),
+            capabilities: vec!["*".to_owned()],
+            binding: None,
+        };
+        let grant_err = Pdp::new(policies, &[wildcard_cap]).expect_err("wildcard cap refused");
+        assert!(grant_err.has(crate::AuthzCode::GrantInvalid), "{grant_err}");
+
+        let pdp = pdp();
+        let mut wild_subject = approve(&["approver"], true);
+        wild_subject.principal.subject_id = "*".to_owned();
+        assert_eq!(
+            pdp.decide(&wild_subject),
+            PdpDecision::Deny(DenyReason::InvalidRequest)
+        );
+        let mut wild_cap = approve(&["approver"], true);
+        wild_cap.capability = "*".to_owned();
+        assert_eq!(
+            pdp.decide(&wild_cap),
+            PdpDecision::Deny(DenyReason::InvalidRequest)
+        );
+        let mut wild_action = approve(&["approver"], true);
+        wild_action.action_id = "*".to_owned();
+        assert_eq!(
+            pdp.decide(&wild_action),
+            PdpDecision::Deny(DenyReason::InvalidRequest)
+        );
+
+        let mut blank_role: serde_json::Value =
+            serde_json::from_str(ORDER_ACCESS).expect("fixture JSON parses");
+        blank_role["rules"][1]["allOf"][0]["role"]["anyOf"] = serde_json::json!(["   "]);
+        let blank_role: crate::access::AccessIr =
+            serde_json::from_value(blank_role).expect("AccessIR decodes");
+        let err = crate::compile(&super::schema(), &blank_role).expect_err("blank role refused");
+        assert!(err.has(crate::AuthzCode::AccessIdEmpty), "{err}");
+
+        let generic_no_org: crate::access::AccessIr = serde_json::from_value(serde_json::json!({
+            "accessVersion": "0.1",
+            "policyId": "core.entitlements",
+            "rules": [],
+            "genericRules": [{
+                "ruleId": "entitlement.none",
+                "target": { "kind": "allAdmittedObjectTypes" },
+                "actions": { "kind": "allAdmittedActions" },
+                "scope": { "dimensions": ["tenant"] },
+                "allOf": [{ "entitlement": { "kind": "none" } }]
+            }]
+        }))
+        .expect("generic AccessIR decodes");
+        let base_projection = norn_projections::project_cedar_schema(&[], &[], &[]);
+        let inferred = crate::infer_principal_attributes(
+            std::slice::from_ref(&generic_no_org),
+            &base_projection,
+        )
+        .expect("generic rule principal attributes infer");
+        let projection = norn_projections::project_cedar_schema_with_principal_attributes(
+            &[],
+            &[],
+            &[],
+            &inferred,
+        );
+        let schema =
+            crate::AuthzSchema::from_projected_cedarschema(&projection.schema).expect("schema");
+        let err = crate::compile_all_projected(&schema, &[generic_no_org], &projection)
+            .expect_err("generic rule without org must fail even on empty catalog");
+        assert!(err.has(crate::AuthzCode::AccessScopeOrgRequired), "{err}");
+    }
 }

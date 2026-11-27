@@ -16,6 +16,56 @@ use super::child_grid::child_grid_component;
 use super::types::{property_type, type_fits_schema, types_compatible};
 use super::{ActionSurface, FormInputInitialization, Usage, UxChecker};
 
+#[derive(Default)]
+struct FieldTargetCounts<'a> {
+    property: BTreeMap<(&'a str, &'a str), usize>,
+    parent: BTreeMap<(&'a str, &'a str, &'a str), usize>,
+    child: BTreeMap<(&'a str, &'a str, &'a str), usize>,
+}
+
+fn count_field_targets(fields: &[WidgetFieldPresentation]) -> FieldTargetCounts<'_> {
+    let mut counts = FieldTargetCounts::default();
+    for field in fields {
+        match &field.target {
+            WidgetFieldTarget::Property { property } => {
+                let count = counts
+                    .property
+                    .entry((property.binding_id.as_str(), property.property_id.as_str()))
+                    .or_insert(0);
+                *count = count.saturating_add(1);
+            }
+            WidgetFieldTarget::ParentProperty {
+                form_id,
+                input_name,
+                property_id,
+            } => {
+                let count = counts
+                    .parent
+                    .entry((form_id.as_str(), input_name.as_str(), property_id.as_str()))
+                    .or_insert(0);
+                *count = count.saturating_add(1);
+            }
+            WidgetFieldTarget::ChildRowProperty {
+                form_id,
+                collection_id,
+                property_id,
+            } => {
+                let count = counts
+                    .child
+                    .entry((
+                        form_id.as_str(),
+                        collection_id.as_str(),
+                        property_id.as_str(),
+                    ))
+                    .or_insert(0);
+                *count = count.saturating_add(1);
+            }
+            WidgetFieldTarget::FormInput { .. } => {}
+        }
+    }
+    counts
+}
+
 impl UxChecker<'_, '_, '_> {
     pub(super) fn check_tree_and_fields(&mut self) {
         let ux = self.ux;
@@ -30,18 +80,21 @@ impl UxChecker<'_, '_, '_> {
             );
         }
         self.check_field_inclusion_and_uniqueness(&ux.fields);
-        self.check_form_and_property_coverage(&ux.fields);
+        self.check_form_coverage();
     }
 
     fn check_field_presentation(&mut self, field: &WidgetFieldPresentation, path: &str) {
-        if field.label.0.is_empty() || field.label.0.values().any(|value| value.trim().is_empty()) {
+        if field.label.is_blank() {
             self.error(
                 &format!("{path}/label"),
                 "field label must contain nonblank localized text",
             );
         }
         if let Some(help) = &field.help
-            && help.0.values().any(|value| value.trim().is_empty())
+            && help
+                .entries()
+                .iter()
+                .any(|(_, value)| value.trim().is_empty())
         {
             self.error(
                 &format!("{path}/help"),
@@ -117,9 +170,9 @@ impl UxChecker<'_, '_, '_> {
         property: &PropertyRef,
         path: &str,
     ) {
+        let resolved = self.resolve_property(property, &format!("{path}/target/property"));
         if field.format == Some(WidgetFieldFormat::MetricBuckets)
-            && let Some(resolved) =
-                self.resolve_property(property, &format!("{path}/target/property"))
+            && let Some(resolved) = resolved
             && !matches!(
                 &resolved.kind,
                 EffectiveKind::Base(PropertyType::JsonExt { .. })
@@ -130,8 +183,7 @@ impl UxChecker<'_, '_, '_> {
                 "metric_buckets requires a display presentation bound to a json-ext property",
             );
         }
-        if let Some(resolved_property) =
-            self.resolve_property(property, &format!("{path}/target/property"))
+        if let Some(resolved_property) = resolved
             && let Some(type_) = property_type(resolved_property)
         {
             if !self.value_source_available_at(&property.binding_id, path, None)
@@ -151,8 +203,7 @@ impl UxChecker<'_, '_, '_> {
                 &type_,
                 path,
             );
-        }
-        if let Some(binding_id) = &field.option_query_binding_id
+        } else if let Some(binding_id) = &field.option_query_binding_id
             && !self.is_bounded_list_binding(binding_id)
         {
             self.error(
@@ -230,14 +281,6 @@ impl UxChecker<'_, '_, '_> {
             &input_type,
             path,
         );
-        if let Some(binding_id) = &field.option_query_binding_id
-            && !self.is_bounded_list_binding(binding_id)
-        {
-            self.error(
-                &format!("{path}/optionQueryBindingId"),
-                "option query must be a bounded list or traversal binding",
-            );
-        }
         if let Some(initial) = initial {
             initialization.source_available =
                 self.check_form_input_initial(form, initial, &schema, path);
@@ -487,10 +530,79 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn check_field_inclusion_and_uniqueness(&self, fields: &[WidgetFieldPresentation]) {
+        let counts = count_field_targets(fields);
         for (index, field) in fields.iter().enumerate() {
             let path = format!("/payload/ux/fields/{index}");
             self.check_field_inclusion(field, &path);
-            self.check_field_uniqueness(field, fields, &path);
+            match &field.target {
+                WidgetFieldTarget::Property { property } => {
+                    if counts
+                        .property
+                        .get(&(property.binding_id.as_str(), property.property_id.as_str()))
+                        .copied()
+                        != Some(1)
+                    {
+                        self.error(
+                            &path,
+                            "each included property must have exactly one field presentation",
+                        );
+                    }
+                }
+                WidgetFieldTarget::ParentProperty {
+                    form_id,
+                    input_name,
+                    property_id,
+                } => {
+                    if counts
+                        .parent
+                        .get(&(form_id.as_str(), input_name.as_str(), property_id.as_str()))
+                        .copied()
+                        != Some(1)
+                    {
+                        self.error(
+                            &path,
+                            "each nested parent property must have exactly one field presentation",
+                        );
+                    }
+                }
+                WidgetFieldTarget::ChildRowProperty {
+                    form_id,
+                    collection_id,
+                    property_id,
+                } => {
+                    if counts
+                        .child
+                        .get(&(
+                            form_id.as_str(),
+                            collection_id.as_str(),
+                            property_id.as_str(),
+                        ))
+                        .copied()
+                        != Some(1)
+                    {
+                        self.error(
+                            &path,
+                            "each child-row property must have exactly one field presentation",
+                        );
+                    }
+                }
+                WidgetFieldTarget::FormInput { .. } => {}
+            }
+        }
+        for (binding_id, property_id) in &self.included_fields {
+            if counts
+                .property
+                .get(&(binding_id.as_str(), property_id.as_str()))
+                .copied()
+                != Some(1)
+            {
+                self.error(
+                    "/payload/ux/fields",
+                    format!(
+                        "included property {binding_id}.{property_id} requires exactly one field presentation"
+                    ),
+                );
+            }
         }
     }
 
@@ -548,76 +660,7 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
-    fn check_field_uniqueness(
-        &self,
-        field: &WidgetFieldPresentation,
-        fields: &[WidgetFieldPresentation],
-        path: &str,
-    ) {
-        if let WidgetFieldTarget::Property { property } = &field.target {
-            let presentations = fields
-                .iter()
-                .filter(|candidate| {
-                    matches!(&candidate.target, WidgetFieldTarget::Property { property: other }
-                        if other.binding_id == property.binding_id && other.property_id == property.property_id)
-                })
-                .count();
-            if presentations != 1 {
-                self.error(
-                    path,
-                    "each included property must have exactly one field presentation",
-                );
-            }
-        }
-        if let WidgetFieldTarget::ParentProperty {
-            form_id,
-            input_name,
-            property_id,
-        } = &field.target
-        {
-            let presentations = fields
-                .iter()
-                .filter(|candidate| {
-                    matches!(&candidate.target, WidgetFieldTarget::ParentProperty {
-                        form_id: other_form,
-                        input_name: other_input,
-                        property_id: other_property,
-                    } if other_form == form_id && other_input == input_name && other_property == property_id)
-                })
-                .count();
-            if presentations != 1 {
-                self.error(
-                    path,
-                    "each nested parent property must have exactly one field presentation",
-                );
-            }
-        }
-        if let WidgetFieldTarget::ChildRowProperty {
-            form_id,
-            collection_id,
-            property_id,
-        } = &field.target
-        {
-            let presentations = fields
-                .iter()
-                .filter(|candidate| {
-                    matches!(&candidate.target, WidgetFieldTarget::ChildRowProperty {
-                        form_id: other_form,
-                        collection_id: other_collection,
-                        property_id: other_property,
-                    } if other_form == form_id && other_collection == collection_id && other_property == property_id)
-                })
-                .count();
-            if presentations != 1 {
-                self.error(
-                    path,
-                    "each child-row property must have exactly one field presentation",
-                );
-            }
-        }
-    }
-
-    fn check_form_and_property_coverage(&self, fields: &[WidgetFieldPresentation]) {
+    fn check_form_coverage(&self) {
         for (index, form) in self.ux.forms.iter().enumerate() {
             for (name_index, name) in form.input_names.iter().enumerate() {
                 if !self
@@ -632,23 +675,6 @@ impl UxChecker<'_, '_, '_> {
                         "each included form input needs exactly one field presentation",
                     );
                 }
-            }
-        }
-        for (binding_id, property_id) in self.included_fields.clone() {
-            let presentations = fields
-                .iter()
-                .filter(|field| {
-                    matches!(&field.target, WidgetFieldTarget::Property { property }
-                    if property.binding_id == binding_id && property.property_id == property_id)
-                })
-                .count();
-            if presentations != 1 {
-                self.error(
-                    "/payload/ux/fields",
-                    format!(
-                        "included property {binding_id}.{property_id} requires exactly one field presentation"
-                    ),
-                );
             }
         }
     }

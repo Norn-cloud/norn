@@ -77,11 +77,16 @@ impl TableRow {
     }
 }
 
-/// One admitted table with a per-input memo.
+/// Maximum memoized lookup entries per table to bound memory on unknown inputs.
+const MAX_MEMO_ENTRIES: usize = 1024;
+
+/// One admitted table with a bounded per-input memo.
 pub struct TypeTable {
     pin: TablePin,
     decision: AdmittedDecision,
+    single_text_memo: BTreeMap<String, BTreeMap<String, Result<TableRow, String>>>,
     memo: BTreeMap<Vec<(String, TableInput)>, Result<TableRow, String>>,
+    memo_entries: usize,
 }
 
 impl std::fmt::Debug for TypeTable {
@@ -130,7 +135,9 @@ impl TypeTable {
                 sha256,
             },
             decision,
+            single_text_memo: BTreeMap::new(),
             memo: BTreeMap::new(),
+            memo_entries: 0,
         })
     }
 
@@ -146,6 +153,24 @@ impl TypeTable {
     ///
     /// When evaluation fails or the row record is malformed.
     pub fn lookup(&mut self, event: &[(&str, TableInput)]) -> Result<TableRow, String> {
+        if let [(name, TableInput::Text(text))] = event {
+            if let Some(found) = self
+                .single_text_memo
+                .get(*name)
+                .and_then(|values| values.get(text.as_str()))
+            {
+                return found.clone();
+            }
+            let found = self.evaluate(event);
+            if self.memo_entries < MAX_MEMO_ENTRIES {
+                self.single_text_memo
+                    .entry((*name).to_owned())
+                    .or_default()
+                    .insert(text.clone(), found.clone());
+                self.memo_entries = self.memo_entries.saturating_add(1);
+            }
+            return found;
+        }
         let key: Vec<(String, TableInput)> = event
             .iter()
             .map(|(name, value)| ((*name).to_owned(), value.clone()))
@@ -154,7 +179,10 @@ impl TypeTable {
             return found.clone();
         }
         let found = self.evaluate(event);
-        self.memo.insert(key, found.clone());
+        if self.memo_entries < MAX_MEMO_ENTRIES {
+            self.memo.insert(key, found.clone());
+            self.memo_entries = self.memo_entries.saturating_add(1);
+        }
         found
     }
 

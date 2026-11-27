@@ -286,12 +286,13 @@ impl UxChecker<'_, '_, '_> {
         if spec.max_depth.0 == 0 || spec.max_rows.0 == 0 || spec.page.max_size > spec.max_rows {
             self.error(&format!("{path}/query"), "link traversal requires positive depth and row bounds, with page.maxSize no greater than maxRows");
         }
-        let source_index = self
-            .ux
+        let ux = self.ux;
+        let Some((source_index, source_binding)) = ux
             .data_bindings
             .iter()
-            .position(|candidate| candidate.binding_id == spec.source_binding_id);
-        let Some(source_index) = source_index else {
+            .enumerate()
+            .find(|(_, candidate)| candidate.binding_id == spec.source_binding_id)
+        else {
             self.error(
                 &format!("{path}/query/sourceBindingId"),
                 "link traversal source binding does not exist",
@@ -304,13 +305,6 @@ impl UxChecker<'_, '_, '_> {
                 "link traversal source must be declared before its target binding",
             );
         }
-        let Some(source_binding) = self.ux.data_bindings.get(source_index).cloned() else {
-            self.error(
-                &format!("{path}/query/sourceBindingId"),
-                "link traversal source binding does not exist",
-            );
-            return;
-        };
         if !self.record_source_available(spec.source_binding_id, path) {
             self.error(
                 &format!("{path}/query/sourceBindingId"),
@@ -471,8 +465,6 @@ impl UxChecker<'_, '_, '_> {
                 "filter property storage cannot be resolved for a binding index",
             ),
         }
-        // The type's existing filter semantics are checked above. Physical
-        // column validation does not change how the value is compared.
     }
 
     fn check_sort(
@@ -621,22 +613,25 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn object_type_definition(&self, name: &str) -> Option<norn_ir::ObjectTypeDef> {
-        self.all.iter().find_map(|artifact| {
-            if !norn_checker::entity_scopes::scope_visible(&self.owner.scope, &artifact.scope) {
-                return None;
+        let mut cache = self.object_type_defs.borrow_mut();
+        let defs = cache.get_or_insert_with(|| {
+            let mut map = BTreeMap::new();
+            for artifact in self.all.iter().rev() {
+                if !norn_checker::entity_scopes::scope_visible(&self.owner.scope, &artifact.scope) {
+                    continue;
+                }
+                let ArtifactPayload::Entity(payload) = &artifact.payload else {
+                    continue;
+                };
+                let Ok(Some(entity)) = entity_object_type(payload) else {
+                    continue;
+                };
+                map.entry(entity.root.object_type.name.as_str().to_owned())
+                    .or_insert(entity.root.object_type);
             }
-            let ArtifactPayload::Entity(payload) = &artifact.payload else {
-                return None;
-            };
-            let Ok(Some(entity)) = entity_object_type(payload) else {
-                return None;
-            };
-            if entity.root.object_type.name.as_str() == name {
-                Some(entity.root.object_type)
-            } else {
-                None
-            }
-        })
+            map
+        });
+        defs.get(name).cloned()
     }
 
     fn check_filter_value(
