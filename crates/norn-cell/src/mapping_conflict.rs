@@ -1713,10 +1713,11 @@ mod tests {
         );
         // An unattributed pending bundle with no referencing conflict is still rejected.
         let unreferenced = open_installed_store(&artifacts);
+        let orphan_observed = norn_ir::runtime::encode(&legacy_obs).expect("legacy val");
         let orphan = crate::PendingObservation {
             position: 1,
             observation_id: legacy_obs.id.0,
-            observed: norn_ir::runtime::encode(&legacy_obs).expect("legacy val"),
+            observed: orphan_observed,
         };
         assert!(
             crate::export_journal::restore_late_source_evidence(

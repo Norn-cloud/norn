@@ -6,7 +6,7 @@ use std::sync::Arc;
 use norn_ir::RuntimeValue as Value;
 use serde::{Deserialize, Serialize};
 
-use crate::codec::{canonical_json, hash_json};
+use crate::codec::hash_json;
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::export::ExportRecord;
