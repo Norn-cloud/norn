@@ -1,0 +1,152 @@
+{
+  "artifactId": "norn.link.supply-lab.canon",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "Supply Lab to the Norn canon",
+  "namespace": "norn.ontology",
+  "payload": {
+    "correspondences": [
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.supply.sku",
+        "evidenceRefs": [
+          "source.supply-lab"
+        ],
+        "fromTermId": "norn.supply.sku",
+        "justification": "A SKU is a catalog good kind; canon resource types also cover services.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "toTermIds": [
+          "norn.core.resource.type"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.supply.guard.movement.nonpositive",
+        "evidenceRefs": [
+          "source.supply-lab"
+        ],
+        "fromTermId": "norn.supply.guard.movement.nonpositive",
+        "justification": "Non-adjustment stock movements must carry a strictly positive quantity.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.guard.amount.nonpositive"
+        ]
+      }
+    ],
+    "fromPack": {
+      "packId": "norn.ontology-pack.supply-lab",
+      "version": "0.1.0"
+    },
+    "packId": "norn.link.supply-lab.canon",
+    "packKind": "link",
+    "packVersion": "0.1",
+    "residuals": [
+      {
+        "note": "The canon ontology pack has no physical warehouse or storage-site class yet.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.warehouse"
+      },
+      {
+        "note": "The canon ontology pack has no semi-additive stock-position snapshot term yet (executable `canon.Holding` lives in `canon/records.ts`).",
+        "reason": "canon_gap",
+        "termId": "norn.supply.inventory.snapshot"
+      },
+      {
+        "note": "The canon ontology pack has no `on_hand` / `available` / `reserved` quantity-basis partition term yet.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.inventory.snapshot.quantity.basis"
+      },
+      {
+        "note": "Supply Lab `StockMovement` admits signed and zero-quantity `adjustment` rows that need not change who holds a resource, so it is not strictly subsumed by canon `norn.core.event`.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.stock.movement"
+      },
+      {
+        "note": "Signed movement/adjustment quantity on `StockMovement`; not strictly subsumed by `norn.core.resource.quantity` because zero-quantity adjustments are admitted.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.stock.movement.qty"
+      },
+      {
+        "note": "Supply Lab `PurchaseOrder` covers unsubmitted `draft` orders (which may be cancelled before any promise is made) and headers submitted with zero lines, so it is not strictly subsumed by canon `norn.core.commitment` / `core.Commitment`.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.purchase.order"
+      },
+      {
+        "note": "Canon `norn.commerce.order.party` models sales customers; purchase-commitment counterparty is not yet in the canon pack.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.purchase.order.supplier"
+      },
+      {
+        "note": "Supply Lab `OrderLine` is created on `draft` purchase orders prior to submission, so it covers proposed lines before a promise is established and is not strictly subsumed by canon `norn.core.commitment`.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.order.line"
+      },
+      {
+        "note": "Supply Lab `ReceiptEvidence` permits zero-quantity receipts (`received_qty >= 0 && damaged_qty >= 0`), whereas canon `core.EconomicEvent` / `norn.core.event.transfer` requires strictly positive `quantity > 0`.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.shipment.receipt"
+      },
+      {
+        "note": "Non-negative received quantity on `ShipmentReceipt`; not strictly subsumed by `norn.core.resource.quantity` because zero-quantity receipts are admitted.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.shipment.receipt.received.qty"
+      },
+      {
+        "note": "Optional order-line reference on `ShipmentReceipt`; not strictly subsumed by `norn.core.event.fulfils` because `ShipmentReceipt` admits zero-quantity receipt records.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.shipment.receipt.order.line"
+      },
+      {
+        "note": "The canon ontology pack has no quality-inspection evidence class yet.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.inspection"
+      },
+      {
+        "note": "The canon ontology pack has no weekly demand-observation analytical input class.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.demand.observation"
+      },
+      {
+        "note": "The canon ontology pack has no contract-checked ML demand-forecast prediction class.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.demand.forecast"
+      },
+      {
+        "note": "Checks order-line-to-purchase-order currency equality before any arithmetic combination, whereas canon `norn.finance.guard.currency.mismatch` is scoped to combining amounts in different currencies.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.guard.currency.mismatch"
+      },
+      {
+        "note": "The canon ontology pack has a currency-mismatch guard but no unit-of-measure mismatch guard term yet.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.guard.unit.mismatch"
+      },
+      {
+        "note": "Raw WMS scan feed evidence staging record kept separate from governed stock positions.",
+        "reason": "system_specific",
+        "termId": "norn.supply.wms.count"
+      },
+      {
+        "note": "Raw ERP supplier-feed line evidence kept separate from governed shipment receipts.",
+        "reason": "system_specific",
+        "termId": "norn.supply.supplier.receipt.line"
+      }
+    ],
+    "toPack": {
+      "packId": "norn.ontology-pack.canon",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/norn.link.supply-lab.canon.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
