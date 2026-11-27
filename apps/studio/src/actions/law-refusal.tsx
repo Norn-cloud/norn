@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Hand, ShieldCheck, ShieldX, type LucideIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { Chip, FactChip } from "@/components/system/chip"
+import { PropRow, Props } from "@/components/system/props"
 import { liveAccess } from "@/lib/live"
 import { Button } from "@/components/ui/button"
 import { transport, type Artifact } from "@/lib/transport"
@@ -62,9 +63,9 @@ function Step({ icon: Icon, label, children, last = false }: { readonly icon: Lu
 /** A two-column list of labelled values: the request, or who · when · why. */
 function Rows({ rows, label }: { readonly rows: readonly (readonly [string, ReactNode])[]; readonly label: string }) {
   return (
-    <dl aria-label={label} className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-body">
-      {rows.map(([key, value]) => <div key={key} className="contents"><dt className="text-muted-foreground">{key}</dt><dd className="min-w-0 [overflow-wrap:anywhere]">{value}</dd></div>)}
-    </dl>
+    <Props aria-label={label}>
+      {rows.map(([key, value]) => <PropRow key={key} label={key}>{value}</PropRow>)}
+    </Props>
   )
 }
 
