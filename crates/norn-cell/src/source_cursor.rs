@@ -33,9 +33,8 @@ pub(crate) const SOURCE_BINDING: &str = "_norn_source_binding";
 /// Durable per-connection evidence attribution and capture frontier table.
 pub(crate) const SOURCE_EVIDENCE: &str = "_norn_source_evidence";
 
-/// Additive DDL for source-sync leases, cursors, recovery, mapping bindings,
-/// capture-position evidence attribution, and historical connection indexes.
-pub(crate) const DDL: [&str; 11] = [
+/// Additive DDL for source-sync leases, cursors, recovery, bindings, evidence, and indexes.
+pub(crate) const DDL: [&str; 12] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_source_lease" (
   "connection_id" TEXT NOT NULL PRIMARY KEY,
   "lease_id" TEXT NOT NULL,
@@ -77,6 +76,7 @@ pub(crate) const DDL: [&str; 11] = [
   PRIMARY KEY ("observation_id", "connection_id")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_source_evidence/captured" ON "_norn_source_evidence" ("captured_commit_seq", "observation_id", "connection_id")"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_inbox/conflict_accepted" ON "_norn_inbox" (json_extract("observed", '$.input.acceptedBundleId'), "observation_id") WHERE substr("observation_id", 1, 17) = 'mapping-conflict:'"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/root_first_version" ON "_norn_fact_values" ("world", "root_type", "commit_seq", "id") WHERE "version" = 1"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/connection_commit" ON "_norn_fact_values" ("world", "id", "commit_seq", "version") WHERE "root_type" = 'source.Connection'"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/connection_mapping" ON "_norn_fact_values" ("world", "id", COALESCE(json_extract("snapshot", '$.values.mapping_id'), ''), "version") WHERE "root_type" = 'source.Connection'"#,

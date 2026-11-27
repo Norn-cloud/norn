@@ -165,7 +165,7 @@ fn already_exported_pending<E: SqlEngine>(
         &format!(
             "SELECT 1 FROM \"{inbox}\" c \
              JOIN \"{table}\" e ON e.\"observation_id\" = c.\"observation_id\" \
-             WHERE c.\"observation_id\" LIKE 'mapping-conflict:%' \
+             WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
                AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?1 \
                AND e.\"captured_commit_seq\" >= 0 AND e.\"captured_commit_seq\" < ?2 \
              LIMIT 1"
