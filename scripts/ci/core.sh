@@ -339,6 +339,7 @@ run_phase() {
       python3 scripts/metrics/test_unit_economics.py
       python3 scripts/release/test_install.py
       python3 apps/norn-cell-do/conformance/test_conformance.py
+      python3 sdks/python/regression/test_receipt.py
       PYTHONPATH="$PWD/tools/norn-py" python3 -m unittest discover -s tools/norn-py/tests -t tools/norn-py/tests
       bash scripts/ci/ascent-no-clock-dependency-tree.sh --self-test
       python3 scripts/ci/check_test_wiring.py
