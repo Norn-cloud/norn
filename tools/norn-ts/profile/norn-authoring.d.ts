@@ -690,6 +690,8 @@ declare module "@norn/authoring" {
        * and scoped attributes a decision may declare as typed principal inputs.
        */
       readonly principalCatalog?: ReadonlyArray<import("../src/builder/access.ts").PrincipalCatalogEntry>
+      /** SCOPE-KEY-1: auto-inject `{ resource: { name: property, op: "in", value: { principalAttribute: attribute } } }` on rules whose roles all belong to a scoped group; fails closed on mixed scoped/unscoped rules without an explicit scope predicate. */
+      readonly scopedRoles?: ReadonlyArray<{ readonly role: string; readonly attribute: string; readonly property: string }>
     }): AccessDefinition
 
     /** One type's labels in a standalone catalog. */

@@ -24,8 +24,12 @@ Retained definition receipts are verified against their recorded checker/profile
 The existing inheritance-cycle diagnostic is derived by Ascent from
 `norn_datalog::overlap::registered_inheritance_step_v1()`. `build.rs` first
 runs the shared AST admission gate, checks the fixed nonrecursive schema, and
-projects its variable-only rules with `quote`. This is one fixed program;
-there is no runtime Datalog compiler or executor in `norn-datalog`.
+projects its variable-only rules with `quote`. This admission check runs as one
+fixed generated Ascent program (no runtime Datalog compiler). Separately, the
+opt-in advisory `RED-TEAM-1` analyzer (`red_team::analyze_red_team`) runs small,
+fixed, stratified function-free programs through `norn_datalog::evaluate` under
+bounded `Budget`/`ExecBudget` limits and surfaces any evaluation refusal via
+`RedTeamReport::evaluation_errors` / `is_complete()`.
 
 The adapter uses the complete selected registration map (base names win;
 local duplicates do not replace registered definitions). Raw declared,

@@ -25,11 +25,48 @@ export type Translate = (id: string, locale: string) => string | undefined
 export interface ArtifactRef { readonly id: string; readonly version: string }
 export interface PropertyRef { readonly bindingId: string; readonly propertyId: string }
 
+export type DismissalMethod = "visible_close" | "scrim" | "swipe" | "escape"
+
+export type FieldControl =
+  | "text"
+  | "text_area"
+  | "number"
+  | "date"
+  | "date_time"
+  | "checkbox"
+  | "select"
+  | "link"
+  | "display"
+
+export type FieldFormat =
+  | "text"
+  | "integer"
+  | "decimal"
+  | "currency"
+  | "percent"
+  | "date"
+  | "date_time"
+  | "boolean"
+  | "metric_buckets"
+
+export interface ExpressionInputs {
+  readonly recordBindingId?: string
+  readonly draftFormId?: string
+  readonly selectionBindingId?: string
+  readonly contextPageId?: string
+  readonly rowGridId?: string
+}
+
+export interface ZenCondition {
+  readonly expression: string
+  readonly inputs: ExpressionInputs
+}
+
 export type Component =
   | { readonly kind: "section"; readonly section: { readonly sectionId: string; readonly kind: "section" | "tab"; readonly label: Text; readonly fields: readonly PropertyRef[]; readonly order: number } }
   | { readonly kind: "list"; readonly dataBindingId: string; readonly fields: readonly PropertyRef[]; readonly selection: "none" | "single" | "multiple" }
   | { readonly kind: "detail"; readonly dataBindingId: string }
-  | { readonly kind: "dialog"; readonly bindingId?: string; readonly blocking: boolean; readonly dismissalMethods?: readonly string[] }
+  | { readonly kind: "dialog"; readonly bindingId?: string; readonly blocking: boolean; readonly dismissalMethods?: readonly DismissalMethod[] }
   | { readonly kind: "form"; readonly formId: string }
   | { readonly kind: "child_grid"; readonly formId: string }
   | { readonly kind: "field"; readonly fieldId: string }
@@ -81,17 +118,62 @@ export interface ActionBinding {
 
 export type Severity = "safe" | "confirm" | "destructive" | "irreversible"
 
+export interface ActionConfirmation {
+  readonly severity: Severity
+  readonly strength: "none" | "click" | "typed"
+  readonly message?: Text
+  readonly phrase?: Text
+}
+
 export interface ActionPlacement {
   readonly placementId: string
   readonly bindingId: string
   readonly label: Text
-  readonly confirmation: { readonly severity: Severity; readonly strength: "none" | "click" | "typed"; readonly message?: Text }
+  readonly confirmation: ActionConfirmation
 }
+
+export type FieldTarget =
+  | { readonly kind: "property"; readonly property: PropertyRef }
+  | { readonly kind: "form_input"; readonly formId: string; readonly inputName: string; readonly initial?: PropertyRef }
+  | { readonly kind: "parent_property"; readonly formId: string; readonly inputName: string; readonly propertyId: string }
+  | { readonly kind: "child_row_property"; readonly formId: string; readonly collectionId: string; readonly propertyId: string }
+  | { readonly kind: string; readonly property?: PropertyRef }
 
 export interface FieldPresentation {
   readonly fieldId: string
-  readonly target: { readonly kind: string; readonly property?: PropertyRef }
+  readonly target: FieldTarget
   readonly label: Text
+  readonly help?: Text
+  readonly control?: FieldControl
+  readonly format?: FieldFormat
+  readonly optionQueryBindingId?: string
+  readonly visibleWhen?: ZenCondition
+  readonly requiredWhen?: ZenCondition
+  readonly readOnlyWhen?: ZenCondition
+}
+
+export type FormMode = "create" | "edit" | "action_input"
+
+export interface VersionConflictBinding {
+  readonly property: PropertyRef
+  readonly inputName: string
+  readonly onConflict: "reject_and_retain_draft"
+}
+
+export interface FormSubmit {
+  readonly label: Text
+  readonly confirmation: ActionConfirmation
+  readonly handlers?: readonly unknown[]
+}
+
+export interface WidgetForm {
+  readonly formId: string
+  readonly mode: FormMode
+  readonly inputNames: readonly string[]
+  readonly dataBindingId?: string
+  readonly submitBindingId: string
+  readonly submit: FormSubmit
+  readonly versionConflictBinding?: VersionConflictBinding
 }
 
 export interface NavigationItem { readonly itemId: string; readonly label: Text }
@@ -115,7 +197,7 @@ export interface WidgetUx {
   readonly dataBindings: readonly DataBinding[]
   readonly actionBindings: readonly ActionBinding[]
   readonly fields: readonly FieldPresentation[]
-  readonly forms: readonly unknown[]
+  readonly forms: readonly WidgetForm[]
   readonly actionPlacements: readonly ActionPlacement[]
   readonly navigationItems: readonly NavigationItem[]
   readonly overrides: readonly unknown[]
