@@ -1,0 +1,50 @@
+{
+  "artifactId": "analytics.Publication.publication_requires_diagnostics.law",
+  "dependencies": [
+    {
+      "artifactId": "analytics.Publication.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "DATA-PUBLISH-GUARD: an analytical publication decision may be published only when diagnostics passed.",
+  "namespace": "analytics",
+  "payload": {
+    "id": "analytics.Publication.publication_requires_diagnostics",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "analytics",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/analytics/analytics.ts"
+    },
+    "rationale": "DATA-PUBLISH-GUARD: an analytical publication decision may be published only when diagnostics passed.",
+    "response": {
+      "expression": "(self.decision != 'published') or (self.diagnostics_passed == true)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "analytics.Publication"
+      ],
+      "root": {
+        "id": "analytics.Publication",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "analytics.Publication"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/analytics.Publication.publication_requires_diagnostics.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

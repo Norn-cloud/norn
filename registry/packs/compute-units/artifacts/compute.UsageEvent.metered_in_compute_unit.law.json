@@ -1,0 +1,50 @@
+{
+  "artifactId": "compute.UsageEvent.metered_in_compute_unit.law",
+  "dependencies": [
+    {
+      "artifactId": "compute.UsageEvent.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Compute usage events meter an admitted compute or storage UCUM unit rather than a currency.",
+  "namespace": "compute",
+  "payload": {
+    "id": "compute.UsageEvent.metered_in_compute_unit",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "compute",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/compute-units/units.ts"
+    },
+    "rationale": "Compute usage events meter an admitted compute or storage UCUM unit rather than a currency.",
+    "response": {
+      "expression": "(self.currency == null) and (self.unit in ['{token}', '{input_token}', '{output_token}', '{request}', '{vCPU}.s', '{vCPU}.h', '{GPU}.s', '{GPU}.h', 'GiBy'])",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "compute.UsageEvent"
+      ],
+      "root": {
+        "id": "compute.UsageEvent",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "compute.UsageEvent"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/compute.UsageEvent.metered_in_compute_unit.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

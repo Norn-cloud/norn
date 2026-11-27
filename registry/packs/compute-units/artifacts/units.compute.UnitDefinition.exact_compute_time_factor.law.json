@@ -1,0 +1,51 @@
+{
+  "artifactId": "units.compute.UnitDefinition.exact_compute_time_factor.law",
+  "dependencies": [
+    {
+      "artifactId": "units.compute.UnitDefinition.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "UNITS-SCALE-1: compound compute-time units carry exact rational factors (3600/1 from hours to seconds).",
+  "namespace": "units",
+  "payload": {
+    "condition": "self.dimension == 'compute_time'",
+    "id": "units.compute.UnitDefinition.exact_compute_time_factor",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "units.compute",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/compute-units/units.ts"
+    },
+    "rationale": "UNITS-SCALE-1: compound compute-time units carry exact rational factors (3600/1 from hours to seconds).",
+    "response": {
+      "expression": "(self.denominator == 1) and ((((((self.code == '{vCPU}.s') and (self.base_code == '{vCPU}.s')) and (self.numerator == 1)) or (((self.code == '{vCPU}.h') and (self.base_code == '{vCPU}.s')) and (self.numerator == 3600))) or (((self.code == '{GPU}.s') and (self.base_code == '{GPU}.s')) and (self.numerator == 1))) or (((self.code == '{GPU}.h') and (self.base_code == '{GPU}.s')) and (self.numerator == 3600)))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "units.compute.UnitDefinition"
+      ],
+      "root": {
+        "id": "units.compute.UnitDefinition",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "units.compute.UnitDefinition"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/units.compute.UnitDefinition.exact_compute_time_factor.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

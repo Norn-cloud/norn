@@ -1,0 +1,64 @@
+{
+  "artifactId": "analytics.study.withhold.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Withhold a study from publication",
+  "namespace": "analytics",
+  "payload": {
+    "actionId": "analytics.study.withhold",
+    "effectProgram": {
+      "entityArtifactId": "analytics.Study.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "publication_status",
+      "objectIdField": "id",
+      "objectKind": "analytics.Study",
+      "transition": "withhold"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Withhold a study from publication",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "analytics.Study"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/analytics.study.withhold.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

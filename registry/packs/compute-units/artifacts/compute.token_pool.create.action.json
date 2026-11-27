@@ -1,0 +1,121 @@
+{
+  "artifactId": "compute.token_pool.create.action",
+  "dependencies": [
+    {
+      "artifactId": "units.compute.UnitDefinition.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Create a compute token pool",
+  "namespace": "compute",
+  "payload": {
+    "actionId": "compute.token_pool.create",
+    "effectProgram": {
+      "entityArtifactId": "compute.TokenPool.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "compute.TokenPool",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "nornType": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
+            "kind": "decimal",
+            "scale": 0,
+            "unit": {
+              "code": "{token}",
+              "system": "ucum"
+            }
+          },
+          "type": "number"
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "quantity": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "resource_code": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "valuation_method": {
+          "enum": [
+            "fifo",
+            "moving_average"
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "resource_code",
+        "quantity",
+        "unit",
+        "currency",
+        "valuation_method",
+        "available"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Create a compute token pool",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "compute.TokenPool"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/compute.token_pool.create.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
