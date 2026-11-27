@@ -437,30 +437,45 @@ PY
       RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
       RUSTDOCFLAGS="-D warnings" cargo doc --locked "${guard[@]}" --no-deps
       ;;
-    cache-warm)
+    cache-warm-test)
       # Warm the shared Boat R2 sccache bucket from one VM on merge-queue pushes to main
-      # (#1951): every test already passed in merge_group on the same tree.
+      # (#1951): every test already passed in merge_group on the same tree. Each cache-warm-*
+      # task runs with BuildGroup::None so bundle.rs prunes target/ between build boundaries.
       ensure_nextest
       "${nextest[@]}" run --locked --no-run --workspace --all-targets
+      "${nextest[@]}" run --locked --no-run "${guard[@]}" --all-targets
+      ;;
+    cache-warm-clippy)
       cargo clippy --locked --workspace --all-targets -- -D warnings
+      cargo clippy --locked "${guard[@]}" --all-targets -- -D warnings
+      ;;
+    cache-warm-doc)
       RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps
+      RUSTDOCFLAGS="-D warnings" cargo doc --locked "${guard[@]}" --no-deps
+      ;;
+    cache-warm-wasm)
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-ui-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
       cargo check --locked -p norn-cell --no-default-features --target wasm32-unknown-unknown
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
       cargo clippy --locked -p norn-cell-do --target wasm32-unknown-unknown -- -D warnings
       ensure_checker_wasm_pkg
       ensure_checker_wasm_engine
+      ;;
+    cache-warm-duckdb)
+      ensure_nextest
       "${nextest[@]}" run --locked --no-run -p norn-cell --features duckdb --lib --test suites
+      ;;
+    cache-warm-rivet)
       (
         cd crates/norn-cell-rivet
         export CARGO_TARGET_DIR="$CARGO_TARGET_DIR/rivet"
         cargo clippy --locked --all-targets -- -D warnings
         cargo clippy --locked --all-targets --features conformance -- -D warnings
+        RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
+        RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --features conformance
         cargo test --locked --no-run
         cargo test --locked --no-run --features conformance
       )
-      "${nextest[@]}" run --locked --no-run "${guard[@]}" --all-targets
-      cargo clippy --locked "${guard[@]}" --all-targets -- -D warnings
       ;;
     rivet)
       # crates/norn-cell-rivet is its own Cargo workspace (D131): Rivet's SQLite and the native
@@ -803,7 +818,7 @@ case "${1:-all}" in
       '') [[ $# -le 1 ]] || run_phase usage; changed='' ;;
       --cache-warm)
         [[ $# -eq 2 ]] || run_phase usage
-        printf '%s\n' '{"mode": "cache-warm", "shard": [], "phase": ["cache-warm"], "packages": "", "rest_shards": 1, "reason": "main push cache warm", "bundle": [{"id": "b0", "tasks": ["phase/cache-warm"]}]}'
+        printf '%s\n' '{"mode": "cache-warm", "shard": [], "phase": ["cache-warm-test", "cache-warm-clippy", "cache-warm-doc", "cache-warm-wasm", "cache-warm-duckdb", "cache-warm-rivet"], "packages": "", "rest_shards": 1, "reason": "main push cache warm", "bundle": [{"id": "b0", "tasks": ["phase/cache-warm-test", "phase/cache-warm-clippy", "phase/cache-warm-doc", "phase/cache-warm-wasm", "phase/cache-warm-duckdb", "phase/cache-warm-rivet"]}]}'
         exit 0
         ;;
       --affected) [[ $# -ge 3 && $# -le 4 && $3 =~ ^[0-9a-f]{40}$ && ${4:-HEAD} =~ ^([0-9a-f]{40}|HEAD)$ ]] || run_phase usage; changed=$(git diff --name-only --no-renames "$3" "${4:-HEAD}" --) || exit 2 ;;

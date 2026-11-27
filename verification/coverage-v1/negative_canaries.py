@@ -649,6 +649,10 @@ def workflow_verdict_canaries(source: str) -> None:
     bad_warm["shard"] = ["rest-1"]
     bad_warm["bundle"][0]["tasks"].append("test/rest-1")
     cases.append(("push", bad_warm, {**passed, "CACHE_WARM": "true"}, False))
+    partial_warm = copy.deepcopy(cache_warm)
+    partial_warm["phase"].pop()
+    partial_warm["bundle"][0]["tasks"].pop()
+    cases.append(("push", partial_warm, {**passed, "CACHE_WARM": "true"}, False))
     cases.append(("pull_request", affected, passed, True))
     cases.extend((event, affected, passed, False)
                  for event in ("push", "merge_group", "workflow_dispatch"))

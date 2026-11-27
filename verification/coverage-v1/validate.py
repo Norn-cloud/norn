@@ -802,7 +802,7 @@ jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
     (.tasks | type == "array" and length > 0 and all(.[]; type == "string"))) and
     (map(.id) | length) == (map(.id) | unique | length)) and
   ([.bundle[].tasks[]] | sort) == ([(.shard[] | "test/" + .), (.phase[] | "phase/" + .)] | sort) and
-  (.mode != "cache-warm" or (.shard == [] and .phase == ["cache-warm"] and .bundle == [{"id": "b0", "tasks": ["phase/cache-warm"]}]))
+  (.mode != "cache-warm" or (.shard == [] and .phase == ["cache-warm-test", "cache-warm-clippy", "cache-warm-doc", "cache-warm-wasm", "cache-warm-duckdb", "cache-warm-rivet"] and .bundle == [{"id": "b0", "tasks": ["phase/cache-warm-test", "phase/cache-warm-clippy", "phase/cache-warm-doc", "phase/cache-warm-wasm", "phase/cache-warm-duckdb", "phase/cache-warm-rivet"]}]))
 ' <<<"$PLAN" >/dev/null || { echo "Malformed or unbound gate plan"; exit 1; }
 [ "$CORE" = success ] || { echo "core $CORE"; exit 1; }
 mode=$(jq -er .mode <<<"$PLAN")

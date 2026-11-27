@@ -112,8 +112,24 @@ impl Model {
     }
 }
 
-/// Post-merge single-bundle R2 cache warming task (`core.sh plan --cache-warm`, #1951).
-const CACHE_WARM_TASK: &str = "phase/cache-warm";
+/// Post-merge single-bundle R2 cache warming phases (`core.sh plan --cache-warm`, #1951).
+/// Each runs with `BuildGroup::None`, so `execute` prunes `target/` between every boundary.
+const CACHE_WARM_PHASES: [&str; 6] = [
+    "cache-warm-test",
+    "cache-warm-clippy",
+    "cache-warm-doc",
+    "cache-warm-wasm",
+    "cache-warm-duckdb",
+    "cache-warm-rivet",
+];
+const CACHE_WARM_TASKS: [&str; 6] = [
+    "phase/cache-warm-test",
+    "phase/cache-warm-clippy",
+    "phase/cache-warm-doc",
+    "phase/cache-warm-wasm",
+    "phase/cache-warm-duckdb",
+    "phase/cache-warm-rivet",
+];
 
 #[derive(Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -214,14 +230,14 @@ impl Bin {
 fn pack(plan: &Plan) -> Result<Vec<Bundle>, String> {
     if plan.mode == Mode::CacheWarm {
         if !plan.shard.is_empty()
-            || plan.phase != ["cache-warm"]
+            || plan.phase != CACHE_WARM_PHASES
             || !plan.packages.as_deref().is_none_or(str::is_empty)
         {
-            return Err("cache-warm plan must contain only phase/cache-warm".into());
+            return Err("cache-warm plan must contain only the cache-warm phases".into());
         }
         return Ok(vec![Bundle {
             id: "b0".into(),
-            tasks: vec![CACHE_WARM_TASK.into()],
+            tasks: CACHE_WARM_TASKS.into_iter().map(str::to_owned).collect(),
         }]);
     }
     let model = Model::load()?;
@@ -533,9 +549,9 @@ fn execute(
     let model = Model::load()?;
     let mut tasks = Vec::new();
     for name in &bundle.tasks {
-        let task = if name == CACHE_WARM_TASK {
+        let task = if let Some(&warm) = CACHE_WARM_TASKS.iter().find(|&&task| task == name) {
             Task {
-                name: CACHE_WARM_TASK,
+                name: warm,
                 weight: 0,
             }
         } else {
@@ -704,7 +720,7 @@ mod tests {
             "\n"
         ),
         concat!(
-            r#"{"mode": "cache-warm", "shard": [], "phase": ["cache-warm"], "packages": "", "rest_shards": 1, "reason": "main push cache warm", "bundle": [{"id": "b0", "tasks": ["phase/cache-warm"]}]}"#,
+            r#"{"mode": "cache-warm", "shard": [], "phase": ["cache-warm-test", "cache-warm-clippy", "cache-warm-doc", "cache-warm-wasm", "cache-warm-duckdb", "cache-warm-rivet"], "packages": "", "rest_shards": 1, "reason": "main push cache warm", "bundle": [{"id": "b0", "tasks": ["phase/cache-warm-test", "phase/cache-warm-clippy", "phase/cache-warm-doc", "phase/cache-warm-wasm", "phase/cache-warm-duckdb", "phase/cache-warm-rivet"]}]}"#,
             "\n"
         ),
     ];
@@ -877,11 +893,12 @@ mod tests {
             r#"{"mode":"affected","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":[]}]}"#,
             r#"{"mode":"affected","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":["phase/doc","phase/doc"]}]}"#,
             r#"{"mode":"affected","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":["phase/doc"]},{"id":"b0","tasks":["phase/doc"]}]}"#,
-            r#"{"mode":"cache-warm","shard":["rest-1"],"phase":["cache-warm"],"bundle":[{"id":"b0","tasks":["phase/cache-warm"]}]}"#,
+            r#"{"mode":"cache-warm","shard":["rest-1"],"phase":["cache-warm-test","cache-warm-clippy","cache-warm-doc","cache-warm-wasm","cache-warm-duckdb","cache-warm-rivet"],"bundle":[{"id":"b0","tasks":["phase/cache-warm-test","phase/cache-warm-clippy","phase/cache-warm-doc","phase/cache-warm-wasm","phase/cache-warm-duckdb","phase/cache-warm-rivet"]}]}"#,
+            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm-test"],"bundle":[{"id":"b0","tasks":["phase/cache-warm-test"]}]}"#,
             r#"{"mode":"cache-warm","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":["phase/doc"]}]}"#,
-            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm"],"packages":"norn-cell","bundle":[{"id":"b0","tasks":["phase/cache-warm"]}]}"#,
-            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm"],"bundle":[{"id":"b1","tasks":["phase/cache-warm"]}]}"#,
-            r#"{"mode":"affected","shard":[],"phase":["cache-warm"],"bundle":[{"id":"b0","tasks":["phase/cache-warm"]}]}"#,
+            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm-test","cache-warm-clippy","cache-warm-doc","cache-warm-wasm","cache-warm-duckdb","cache-warm-rivet"],"packages":"norn-cell","bundle":[{"id":"b0","tasks":["phase/cache-warm-test","phase/cache-warm-clippy","phase/cache-warm-doc","phase/cache-warm-wasm","phase/cache-warm-duckdb","phase/cache-warm-rivet"]}]}"#,
+            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm-test","cache-warm-clippy","cache-warm-doc","cache-warm-wasm","cache-warm-duckdb","cache-warm-rivet"],"bundle":[{"id":"b1","tasks":["phase/cache-warm-test","phase/cache-warm-clippy","phase/cache-warm-doc","phase/cache-warm-wasm","phase/cache-warm-duckdb","phase/cache-warm-rivet"]}]}"#,
+            r#"{"mode":"affected","shard":[],"phase":["cache-warm-test"],"bundle":[{"id":"b0","tasks":["phase/cache-warm-test"]}]}"#,
         ] {
             assert!(checked(raw).is_err(), "{raw}");
         }
@@ -957,6 +974,28 @@ mod tests {
         .expect_err("failed phase aborts");
         assert_eq!(failure.message, "phase failed");
         assert_eq!(calls, ["test/rest-2"]);
+
+        let warm_bundle = Bundle {
+            id: "b0".into(),
+            tasks: CACHE_WARM_TASKS.into_iter().map(str::to_owned).collect(),
+        };
+        let mut warm_calls = Vec::new();
+        execute(&warm_bundle, true, |task, prune| {
+            warm_calls.push((task.name, prune));
+            Ok(())
+        })
+        .expect("execute cache-warm");
+        assert_eq!(
+            warm_calls,
+            [
+                ("phase/cache-warm-test", false),
+                ("phase/cache-warm-clippy", true),
+                ("phase/cache-warm-doc", true),
+                ("phase/cache-warm-wasm", true),
+                ("phase/cache-warm-duckdb", true),
+                ("phase/cache-warm-rivet", true),
+            ]
+        );
     }
 
     #[cfg(unix)]
