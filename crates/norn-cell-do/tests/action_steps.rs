@@ -272,32 +272,7 @@ fn a_parked_step_refuses_when_its_action_definition_changes() {
 
     // Revise the action definition from DERIVES_LOSS to OMITS_LOSS while the
     // run is parked on `ask_review`, keeping all installed flow artifacts intact.
-    let version = cell.host.active_definitions_version().unwrap();
-    let active_set = cell
-        .host
-        .cell()
-        .unwrap()
-        .store()
-        .read()
-        .installed_definitions(version)
-        .unwrap()
-        .unwrap();
-    let active_docs: Vec<Value> = serde_json::from_str(&active_set.canonical_set).unwrap();
-    let (model, input) = step_cell::action_cell::melt_install_edited(
-        step_cell::action_cell::OMITS_LOSS,
-        |docs| {
-            for doc in active_docs {
-                if !docs.iter().any(|d| d["artifactId"] == doc["artifactId"]) {
-                    docs.push(doc);
-                }
-            }
-        },
-        norn_api::action_admission::prepare_action_model,
-        step_cell::NOW * 1000 + 1,
-    );
-    cell.host
-        .install_definitions(model, input, version)
-        .expect("mutated action installs with existing flow retained");
+    revise_action_to_omits_loss(&cell);
 
     let pending = format!("{SCOPE}&state=pending");
     let (_, page) = call_with(&cell, "GET", "/v1/decisions", &pending, APPROVER, "");
@@ -409,15 +384,7 @@ fn a_parked_step_enforces_explicit_pin_match_and_mismatch() {
 
 fn revise_action_to_omits_loss(cell: &Cell) {
     let version = cell.host.active_definitions_version().unwrap();
-    let active_set = cell
-        .host
-        .cell()
-        .unwrap()
-        .store()
-        .read()
-        .installed_definitions(version)
-        .unwrap()
-        .unwrap();
+    let active_set = cell.host.active_definitions().unwrap().unwrap();
     let active_docs: Vec<Value> = serde_json::from_str(&active_set.canonical_set).unwrap();
     let (model, input) = step_cell::action_cell::melt_install_edited(
         step_cell::action_cell::OMITS_LOSS,
@@ -429,7 +396,7 @@ fn revise_action_to_omits_loss(cell: &Cell) {
             }
         },
         norn_api::action_admission::prepare_action_model,
-        step_cell::NOW * 1000 + 1,
+        step_cell::NOW.saturating_mul(1000).saturating_add(1),
     );
     cell.host
         .install_definitions(model, input, version)

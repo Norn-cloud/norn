@@ -19,11 +19,10 @@ use http::StatusCode;
 use norn_cell::{MAIN_WORLD, Receipt, compute::lineage::keyed_receipt_handle, engine::SqlEngine};
 use norn_ir::RuntimeValue;
 use norn_kernel::{
-    ACTION_CALL_TYPE, ActionCallRecord, ActionOutcome, DecisionTurn, LogicalTime, Prepared,
-    Refusable, TypeCatalog,
+    ACTION_CALL_TYPE, ActionCallRecord, ActionOutcome, LogicalTime, Prepared, Refusable,
+    TypeCatalog,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use utoipa::{IntoParams, ToSchema};
 
 /// Longest accepted request body, in bytes: the kernel's 256 KiB caller-input
@@ -460,12 +459,14 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     if query.version.is_some_and(|pin| pin != installed_version) {
         return Err(stale_pin(&mut cell, approved, principal, attempt)?);
     }
+    let model = cell.store().model().clone();
     // APPROVAL-REVISION-1 & STEP-PIN-1: derive the catalog, bind the action
     // digest, and verify any parked flow step pin inside this definitions + cell hold.
     let (catalog, action_digest) = crate::step_pin::prepare_verified_catalog(
         host,
         &cell,
         installed_version,
+        &model,
         &admitted,
         artifact,
         action,
@@ -513,12 +514,12 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     caller_receipt(store, action_id, request, outcome, raw_hash, key).map(ActionAnswer::Receipt)
 }
 
-fn authorize_action_call<E: SqlEngine>(
-    host: &DevHost<E>,
+fn authorize_action_call<'a, E: SqlEngine>(
+    host: &'a DevHost<E>,
     query: &ActionQuery,
     actor: &str,
     action_id: &str,
-) -> Result<std::sync::RwLockReadGuard<'_, ()>, Refusal> {
+) -> Result<std::sync::RwLockReadGuard<'a, ()>, Refusal> {
     let epoch = host.definition_read();
     let authorized = host.authorizer.authorize(&AccessRequest {
         scope: host.scope(),

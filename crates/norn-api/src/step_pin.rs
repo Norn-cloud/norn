@@ -178,16 +178,20 @@ fn check_missing_active_action<E: SqlEngine>(
 /// verify that `(artifact, effective_digest, installed_version)` satisfies
 /// both any explicit `pin` and the implicit run-start action contract pinned
 /// at `run_definitions_version`.
-pub(crate) fn prepare_verified_catalog<E: SqlEngine>(
+#[allow(
+    clippy::too_many_arguments,
+    reason = "derives catalog, computes effective digest, and verifies step pin inside the single call_action_bound hold"
+)]
+pub(crate) fn prepare_verified_catalog<'a, E: SqlEngine>(
     host: &DevHost<E>,
     cell: &ActionCell<E>,
     installed_version: u64,
-    admitted: &RetainedActions,
+    model: &'a norn_cell::Model,
+    admitted: &'a RetainedActions,
     active_artifact: &ArtifactEnvelope,
     active_action: &ActionRoot,
     step_pin: Option<&StepActionPin>,
-) -> Result<(norn_kernel::TypeCatalog, String), Refusal> {
-    let model = cell.store().model().clone();
+) -> Result<(norn_kernel::TypeCatalog<'a>, String), Refusal> {
     // ADMIT-CACHE-1: the model's definition work is derived once per model.
     let catalog = model
         .type_catalog()
@@ -195,7 +199,7 @@ pub(crate) fn prepare_verified_catalog<E: SqlEngine>(
         .with_action_rules(&admitted.rules)
         .with_transition_guards(&admitted.guards);
     let active_digest =
-        crate::action_admission::effective_digest(admitted, active_action, &model, &catalog)?;
+        crate::action_admission::effective_digest(admitted, active_action, model, &catalog)?;
     if let Some(pin) = step_pin {
         verify_step_pin(
             host,
@@ -249,7 +253,7 @@ pub(crate) fn verify_step_pin<E: SqlEngine>(
         &start_model,
         &start_catalog,
     )
-    .map_err(|_| pin_unavailable())?;
+    .map_err(|_error| pin_unavailable())?;
     if start_artifact.artifact_id != active_artifact.artifact_id
         || start_artifact.version != active_artifact.version
         || start_digest != active_digest
@@ -297,9 +301,9 @@ fn load_retained_version<E: SqlEngine>(
         .installed_definitions(Some(version))
         .map_err(Refusal::host)?
         .ok_or_else(pin_unavailable)?;
-    let actions = RetainedActions::load(&set, host.scope()).map_err(|_| pin_unavailable())?;
+    let actions = RetainedActions::load(&set, host.scope()).map_err(|_error| pin_unavailable())?;
     let RuntimeValue::Array(sources) =
-        RuntimeValue::from_json_text(&set.canonical_set).map_err(|_| pin_unavailable())?
+        RuntimeValue::from_json_text(&set.canonical_set).map_err(|_error| pin_unavailable())?
     else {
         return Err(pin_unavailable());
     };
@@ -307,9 +311,9 @@ fn load_retained_version<E: SqlEngine>(
         .iter()
         .map(norn_ir::runtime::decode)
         .collect::<Result<Vec<ArtifactEnvelope>, _>>()
-        .map_err(|_| pin_unavailable())?;
+        .map_err(|_error| pin_unavailable())?;
     let model = crate::kernel_set::serving_model_installed(&artifacts, &set.model_hash)
-        .map_err(|_| pin_unavailable())?;
+        .map_err(|_error| pin_unavailable())?;
     Ok((actions, model))
 }
 
