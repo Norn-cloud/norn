@@ -1,0 +1,33 @@
+{
+  "artifactId": "supply.OrderLifecycle.interface.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Order commitment lifecycle labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "دورة حياة الطلب",
+          "en": "Order lifecycle"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.OrderLifecycle"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.OrderLifecycle.interface.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

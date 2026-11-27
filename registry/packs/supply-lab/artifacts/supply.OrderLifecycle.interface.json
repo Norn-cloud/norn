@@ -1,0 +1,107 @@
+{
+  "artifactId": "supply.OrderLifecycle.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Order commitment lifecycle",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "disjointWith": [
+        "supply.CountEvidence"
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "completed",
+              "state": "fulfilled"
+            },
+            {
+              "outcome": "cancelled",
+              "state": "cancelled"
+            }
+          ],
+          "immutable": [
+            "fulfilled",
+            "cancelled"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "fulfilled",
+            "cancelled"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "submit",
+              "to": "submitted"
+            },
+            {
+              "from": [
+                "submitted"
+              ],
+              "id": "receive_partial",
+              "to": "partially_received"
+            },
+            {
+              "from": [
+                "submitted",
+                "partially_received"
+              ],
+              "id": "fulfil",
+              "to": "fulfilled"
+            },
+            {
+              "from": [
+                "draft",
+                "submitted"
+              ],
+              "id": "cancel",
+              "to": "cancelled"
+            }
+          ]
+        }
+      ],
+      "name": "supply.OrderLifecycle",
+      "properties": [
+        {
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "submitted"
+              },
+              {
+                "value": "partially_received"
+              },
+              {
+                "value": "fulfilled"
+              },
+              {
+                "value": "cancelled"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.OrderLifecycle.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
