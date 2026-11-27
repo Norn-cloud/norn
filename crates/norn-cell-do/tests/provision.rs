@@ -1226,79 +1226,136 @@ fn fault_sweep(first: &[u32], later: &[u32]) -> Swept {
 
 /// [`fault_sweep`] for the fault `kinds` only (a shard of an exhaustive run).
 fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Swept {
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+
+    struct Plan<'a> {
+        kind: EngineFaultKind,
+        transaction: u32,
+        statements: &'a [u32],
+        next: AtomicUsize,
+        first_miss: AtomicU32,
+        saw_miss: AtomicBool,
+    }
+
     let directory = tempfile::tempdir().unwrap();
     let scope = scope("org_a", "prod");
     let owner = user("org_a", "owner");
     let body = submission(&[]);
-    let mut plans: Vec<(EngineFaultKind, u32, &[u32])> = Vec::new();
+    let commit_point = [u32::MAX];
+    let make_plan = |kind, transaction, statements| Plan {
+        kind,
+        transaction,
+        statements,
+        next: AtomicUsize::new(0),
+        first_miss: AtomicU32::new(u32::MAX),
+        saw_miss: AtomicBool::new(false),
+    };
+    let mut plans: Vec<Plan<'_>> = Vec::new();
     for kind in [EngineFaultKind::Crash, EngineFaultKind::Io] {
         if kinds.contains(&kind) {
-            plans.push((kind, 0, first));
-            plans.push((kind, 1, later));
+            plans.push(make_plan(kind, 0, first));
+            plans.push(make_plan(kind, 1, later));
         }
     }
-    let commit_point = [u32::MAX];
     if kinds.contains(&EngineFaultKind::Commit) {
         for transaction in 0..2 {
-            plans.push((EngineFaultKind::Commit, transaction, &commit_point));
+            plans.push(make_plan(
+                EngineFaultKind::Commit,
+                transaction,
+                &commit_point,
+            ));
         }
     }
+    let next_case_id = AtomicU32::new(0);
+    let workers = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(4);
     let mut swept = Swept {
         vacant: 0,
         whole: 0,
         cases: 0,
         unexhausted: Vec::new(),
     };
-    for (kind, transaction, statements) in plans {
-        let mut past = false;
-        for &at_statement in statements {
-            if past && at_statement != u32::MAX {
-                continue;
-            }
-            swept.cases += 1;
-            let at = format!("{kind:?} at transaction {transaction}, statement {at_statement}");
-            let path = file(&directory, &format!("fault-{}", swept.cases));
-            let faults = FaultSwitch::default();
-            let mut cell = open_faulted(&path, &scope, &faults).unwrap();
-            faults.arm(EngineFault {
-                kind,
-                transaction,
-                at_statement,
-            });
-            let response = provision(&mut cell, Some(&owner), &body);
-            let hit = faults.disarm();
-            drop(cell);
-            // The platform restarts the object; no fault is armed.
-            let mut cell = open_faulted(&path, &scope, &faults)
-                .unwrap_or_else(|error| panic!("{at}: recovery refused: {error}"));
-            if hit {
-                assert!(response.status >= 400, "{at}: {}", response.body);
-                assert!(json_of(&response)["code"].is_string(), "{at}");
-                let whole = cell.tenant.is_provisioned();
-                let retry = provision(&mut cell, Some(&owner), &body);
-                assert_eq!(retry.status, 200, "{at}: {}", retry.body);
-                let expected = if whole { "replayed" } else { "provisioned" };
-                assert_eq!(json_of(&retry)["outcome"], expected, "{at}");
-                if whole {
-                    swept.whole += 1;
-                } else {
-                    swept.vacant += 1;
+    std::thread::scope(|thread_scope| {
+        let mut handles = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            handles.push(thread_scope.spawn(|| {
+                let (mut vacant, mut whole, mut cases) = (0_u32, 0_u32, 0_u32);
+                for plan in &plans {
+                    loop {
+                        let idx = plan.next.fetch_add(1, Ordering::Relaxed);
+                        let Some(&at_statement) = plan.statements.get(idx) else {
+                            break;
+                        };
+                        if at_statement != u32::MAX
+                            && at_statement >= plan.first_miss.load(Ordering::Acquire)
+                        {
+                            continue;
+                        }
+                        cases += 1;
+                        let case_id = next_case_id.fetch_add(1, Ordering::Relaxed) + 1;
+                        let at = format!(
+                            "{:?} at transaction {}, statement {at_statement}",
+                            plan.kind, plan.transaction
+                        );
+                        let path = file(&directory, &format!("fault-{case_id}"));
+                        let faults = FaultSwitch::default();
+                        let mut cell = open_faulted(&path, &scope, &faults).unwrap();
+                        faults.arm(EngineFault {
+                            kind: plan.kind,
+                            transaction: plan.transaction,
+                            at_statement,
+                        });
+                        let response = provision(&mut cell, Some(&owner), &body);
+                        let hit = faults.disarm();
+                        drop(cell);
+                        // The platform restarts the object; no fault is armed.
+                        let mut cell = open_faulted(&path, &scope, &faults)
+                            .unwrap_or_else(|error| panic!("{at}: recovery refused: {error}"));
+                        if hit {
+                            assert!(response.status >= 400, "{at}: {}", response.body);
+                            assert!(json_of(&response)["code"].is_string(), "{at}");
+                            let is_whole = cell.tenant.is_provisioned();
+                            let retry = provision(&mut cell, Some(&owner), &body);
+                            assert_eq!(retry.status, 200, "{at}: {}", retry.body);
+                            let expected = if is_whole { "replayed" } else { "provisioned" };
+                            assert_eq!(json_of(&retry)["outcome"], expected, "{at}");
+                            if is_whole {
+                                whole += 1;
+                            } else {
+                                vacant += 1;
+                            }
+                        } else {
+                            assert_eq!(response.status, 200, "{at}: {}", response.body);
+                            assert!(cell.tenant.is_provisioned(), "{at}");
+                            plan.saw_miss.store(true, Ordering::Release);
+                            if at_statement != u32::MAX {
+                                plan.first_miss.fetch_min(at_statement, Ordering::Release);
+                            }
+                        }
+                        assert_eq!(definitions(&mut cell, Some(&owner)).status, 200, "{at}");
+                        drop(cell);
+                        // An exhaustive sweep runs tens of thousands of cases: each
+                        // case's store goes once it is checked, or the disk fills.
+                        remove_store(&path);
+                    }
                 }
-            } else {
-                assert_eq!(response.status, 200, "{at}: {}", response.body);
-                assert!(cell.tenant.is_provisioned(), "{at}");
-            }
-            assert_eq!(definitions(&mut cell, Some(&owner)).status, 200, "{at}");
-            drop(cell);
-            // An exhaustive sweep runs tens of thousands of cases: each
-            // case's store goes once it is checked, or the disk fills.
-            remove_store(&path);
-            past = !hit;
+                (vacant, whole, cases)
+            }));
         }
-        if !past && statements.len() > 1 {
-            swept
-                .unexhausted
-                .push(format!("{kind:?} at transaction {transaction}"));
+        for handle in handles {
+            let (vacant, whole, cases) = handle.join().unwrap();
+            swept.vacant += vacant;
+            swept.whole += whole;
+            swept.cases += cases;
+        }
+    });
+    for plan in &plans {
+        if !plan.saw_miss.load(Ordering::Acquire) && plan.statements.len() > 1 {
+            swept.unexhausted.push(format!(
+                "{:?} at transaction {}",
+                plan.kind, plan.transaction
+            ));
         }
     }
     swept
