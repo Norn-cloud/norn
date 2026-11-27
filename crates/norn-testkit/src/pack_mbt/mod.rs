@@ -655,19 +655,63 @@ fn is_op_boundary(s: &str, lhs: bool) -> bool {
         })
 }
 
+fn find_matching_open(inner: &str) -> Option<usize> {
+    let mut stack = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in inner.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '(' => stack.push(idx),
+            ')' => {
+                stack.pop()?;
+            }
+            _ => {}
+        }
+    }
+    quote.is_none().then(|| stack.pop()).flatten()
+}
+
+fn find_matching_close(inner: &str) -> Option<usize> {
+    let mut depth: usize = 1;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in inner.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '(' => depth = depth.saturating_add(1),
+            ')' if depth == 1 => return Some(idx),
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn extract_lhs_self_prop(lhs_part: &str) -> Option<String> {
     let trimmed = lhs_part.trim_end();
     if let Some(inner) = trimmed.strip_suffix(')') {
-        let open = inner
-            .char_indices()
-            .rev()
-            .try_fold(1usize, |d, (i, c)| match c {
-                ')' => Ok(d.saturating_add(1)),
-                '(' if d == 1 => Err(i),
-                '(' => Ok(d.saturating_sub(1)),
-                _ => Ok(d),
-            })
-            .err()?;
+        let open = find_matching_open(inner)?;
         return is_op_boundary(inner.get(..open).unwrap_or_default(), true)
             .then(|| unwrap_self_group(inner.get(open.saturating_add(1)..).unwrap_or_default()))
             .flatten();
@@ -685,15 +729,7 @@ fn extract_lhs_self_prop(lhs_part: &str) -> Option<String> {
 fn extract_rhs_self_prop(rhs_part: &str) -> Option<String> {
     let trimmed = rhs_part.trim_start();
     if let Some(inner) = trimmed.strip_prefix('(') {
-        let close = inner
-            .char_indices()
-            .try_fold(1usize, |d, (i, c)| match c {
-                '(' => Ok(d.saturating_add(1)),
-                ')' if d == 1 => Err(i),
-                ')' => Ok(d.saturating_sub(1)),
-                _ => Ok(d),
-            })
-            .err()?;
+        let close = find_matching_close(inner)?;
         let after = inner.get(close.saturating_add(1)..).unwrap_or_default();
         return is_op_boundary(after, false)
             .then(|| unwrap_self_group(inner.get(..close).unwrap_or_default()))
@@ -826,6 +862,21 @@ mod tests {
             extract_self_equality_pairs("(self.a ?? '') == self.b"),
             vec![("a".to_owned(), "b".to_owned())]
         );
+        assert_eq!(
+            extract_self_equality_pairs("self.a == (self.b ?? ')')"),
+            vec![("a".to_owned(), "b".to_owned())]
+        );
+        assert_eq!(
+            extract_self_equality_pairs("(self.a ?? '(') == self.b"),
+            vec![("a".to_owned(), "b".to_owned())]
+        );
+        assert_eq!(
+            extract_self_equality_pairs(
+                r#"self.x !== ')' && (self.a ?? '\')') == (self.b ?? "(\"")"#
+            ),
+            vec![("a".to_owned(), "b".to_owned())]
+        );
+        assert!(extract_self_equality_pairs("self.a == (self.b ?? ')') + 1").is_empty());
         assert!(extract_self_equality_pairs("self.a == (self.b + 1)").is_empty());
         assert!(extract_self_equality_pairs("self.a == (self.b ?? 0) + 1").is_empty());
         assert!(extract_self_equality_pairs("self.a == self.b + 1").is_empty());
