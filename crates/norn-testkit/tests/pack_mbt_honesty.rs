@@ -56,7 +56,7 @@ struct MemoryPackHost {
 impl MemoryPackHost {
     fn open() -> Self {
         Self {
-            cell: MemoryCell::new(|cmd| cmd.payload.clone()),
+            cell: MemoryCell::new(|cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone()),
             now: LogicalTime::from_millis(1_000),
         }
     }
