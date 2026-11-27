@@ -11,9 +11,9 @@
       {
         "confidenceBasisPoints": 10000,
         "evidenceRefs": [
-          "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts"
+          "registry/packs/supply-lab/supply.ts"
         ],
-        "externalIri": "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts",
+        "externalIri": "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.Sku",
         "justification": "Declares the `supply.Sku` entity in `registry/packs/supply-lab/supply.ts`.",
         "mappingId": "map.norn.supply.sku",
         "relation": "close_match",
@@ -25,9 +25,9 @@
       {
         "confidenceBasisPoints": 10000,
         "evidenceRefs": [
-          "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts"
+          "registry/packs/supply-lab/supply.ts"
         ],
-        "externalIri": "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts",
+        "externalIri": "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.Warehouse",
         "justification": "Declares the `supply.Warehouse` entity in `registry/packs/supply-lab/supply.ts`.",
         "mappingId": "map.norn.supply.warehouse",
         "relation": "close_match",
@@ -39,9 +39,9 @@
       {
         "confidenceBasisPoints": 10000,
         "evidenceRefs": [
-          "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts"
+          "registry/packs/supply-lab/supply.ts"
         ],
-        "externalIri": "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts",
+        "externalIri": "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.InventorySnapshot",
         "justification": "Declares the `supply.InventorySnapshot` entity in `registry/packs/supply-lab/supply.ts`.",
         "mappingId": "map.norn.supply.inventory.snapshot",
         "relation": "close_match",
@@ -53,9 +53,23 @@
       {
         "confidenceBasisPoints": 10000,
         "evidenceRefs": [
-          "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts"
+          "registry/packs/supply-lab/supply.ts"
         ],
-        "externalIri": "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts",
+        "externalIri": "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.WmsCount",
+        "justification": "Declares the `supply.WmsCount` entity in `registry/packs/supply-lab/supply.ts`.",
+        "mappingId": "map.norn.supply.wms.count",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "sourceId": "source.supply-lab",
+        "termId": "norn.supply.wms.count"
+      },
+      {
+        "confidenceBasisPoints": 10000,
+        "evidenceRefs": [
+          "registry/packs/supply-lab/supply.ts"
+        ],
+        "externalIri": "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.StockMovement",
         "justification": "Declares the `supply.StockMovement` entity in `registry/packs/supply-lab/supply.ts`.",
         "mappingId": "map.norn.supply.stock.movement",
         "relation": "close_match",
@@ -67,9 +81,9 @@
       {
         "confidenceBasisPoints": 10000,
         "evidenceRefs": [
-          "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts"
+          "registry/packs/supply-lab/supply.ts"
         ],
-        "externalIri": "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts",
+        "externalIri": "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.PurchaseOrder",
         "justification": "Declares the `supply.PurchaseOrder` entity in `registry/packs/supply-lab/supply.ts`.",
         "mappingId": "map.norn.supply.purchase.order",
         "relation": "close_match",
@@ -81,9 +95,9 @@
       {
         "confidenceBasisPoints": 10000,
         "evidenceRefs": [
-          "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts"
+          "registry/packs/supply-lab/supply.ts"
         ],
-        "externalIri": "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts",
+        "externalIri": "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.OrderLine",
         "justification": "Declares the `supply.OrderLine` entity in `registry/packs/supply-lab/supply.ts`.",
         "mappingId": "map.norn.supply.order.line",
         "relation": "close_match",
@@ -95,9 +109,9 @@
       {
         "confidenceBasisPoints": 10000,
         "evidenceRefs": [
-          "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts"
+          "registry/packs/supply-lab/supply.ts"
         ],
-        "externalIri": "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts",
+        "externalIri": "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.ShipmentReceipt",
         "justification": "Declares the `supply.ShipmentReceipt` entity in `registry/packs/supply-lab/supply.ts`.",
         "mappingId": "map.norn.supply.shipment.receipt",
         "relation": "close_match",
@@ -109,9 +123,23 @@
       {
         "confidenceBasisPoints": 10000,
         "evidenceRefs": [
-          "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts"
+          "registry/packs/supply-lab/supply.ts"
         ],
-        "externalIri": "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts",
+        "externalIri": "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.SupplierReceiptLine",
+        "justification": "Declares the `supply.SupplierReceiptLine` entity in `registry/packs/supply-lab/supply.ts`.",
+        "mappingId": "map.norn.supply.supplier.receipt.line",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "sourceId": "source.supply-lab",
+        "termId": "norn.supply.supplier.receipt.line"
+      },
+      {
+        "confidenceBasisPoints": 10000,
+        "evidenceRefs": [
+          "registry/packs/supply-lab/supply.ts"
+        ],
+        "externalIri": "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.Inspection",
         "justification": "Declares the `supply.Inspection` entity in `registry/packs/supply-lab/supply.ts`.",
         "mappingId": "map.norn.supply.inspection",
         "relation": "close_match",
@@ -123,9 +151,9 @@
       {
         "confidenceBasisPoints": 10000,
         "evidenceRefs": [
-          "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts"
+          "registry/packs/supply-lab/supply.ts"
         ],
-        "externalIri": "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts",
+        "externalIri": "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.DemandObservation",
         "justification": "Declares the `supply.DemandObservation` entity in `registry/packs/supply-lab/supply.ts`.",
         "mappingId": "map.norn.supply.demand.observation",
         "relation": "close_match",
@@ -137,9 +165,9 @@
       {
         "confidenceBasisPoints": 10000,
         "evidenceRefs": [
-          "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts"
+          "registry/packs/supply-lab/supply.ts"
         ],
-        "externalIri": "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts",
+        "externalIri": "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.DemandForecast",
         "justification": "Declares the `supply.DemandForecast` entity in `registry/packs/supply-lab/supply.ts`.",
         "mappingId": "map.norn.supply.demand.forecast",
         "relation": "close_match",
@@ -197,6 +225,31 @@
         ],
         "shapeId": "shape.norn.supply.inventory.snapshot",
         "termId": "norn.supply.inventory.snapshot"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "scan_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          },
+          {
+            "fieldId": "on_hand_qty",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          },
+          {
+            "fieldId": "as_of",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "date_time"
+          }
+        ],
+        "shapeId": "shape.norn.supply.wms.count",
+        "termId": "norn.supply.wms.count"
       },
       {
         "closed": true,
@@ -272,6 +325,31 @@
         "closed": true,
         "fields": [
           {
+            "fieldId": "receipt_line_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          },
+          {
+            "fieldId": "received_qty",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          },
+          {
+            "fieldId": "received_at",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "date_time"
+          }
+        ],
+        "shapeId": "shape.norn.supply.supplier.receipt.line",
+        "termId": "norn.supply.supplier.receipt.line"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
             "fieldId": "inspected_qty",
             "maxCount": 1,
             "minCount": 1,
@@ -322,21 +400,21 @@
     ],
     "sources": [
       {
-        "canonicalUrl": "https://github.com/Norn-cloud/norn/tree/main/registry/packs/supply-lab",
+        "canonicalUrl": "https://norn.cloud/registry/packs/supply-lab/0.1.0",
         "files": [
           {
-            "path": "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts",
+            "path": "registry/packs/supply-lab/supply.ts",
             "sha256": "560599ae29843296e062b27147c8d34c06aae7ea9c04205dad890db8dc6e3c4f"
           },
           {
-            "path": "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/actions.ts",
+            "path": "registry/packs/supply-lab/actions.ts",
             "sha256": "4279b4572b3a3170dad6ac00e0f893db8c828ef17b7e232e1441d9fddfff2465"
           }
         ],
         "importMode": "map_only",
         "license": "Apache-2.0",
-        "redistribution": "reference_only",
-        "releaseId": "0.1.0@560599ae2984",
+        "redistribution": "vendored",
+        "releaseId": "0.1.0@560599ae29843296e062b27147c8d34c06aae7ea9c04205dad890db8dc6e3c4f",
         "releasedAt": "2026-11-27",
         "retrievedAt": "2026-11-27",
         "sourceId": "source.supply-lab"

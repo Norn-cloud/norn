@@ -1,6 +1,7 @@
 import { Norn } from "@norn/authoring"
 
-const SUPPLY_SOURCE_URL = "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/supply.ts"
+const SUPPLY_SOURCE_FILE = "registry/packs/supply-lab/supply.ts"
+const ACTIONS_SOURCE_FILE = "registry/packs/supply-lab/actions.ts"
 const REVIEWED_AT = "2026-11-27T00:00:00Z"
 
 export const Pack = Norn.ontologyPack({
@@ -10,20 +11,20 @@ export const Pack = Norn.ontologyPack({
   sources: [
     {
       sourceId: "source.supply-lab",
-      releaseId: "0.1.0@560599ae2984",
+      releaseId: "0.1.0@560599ae29843296e062b27147c8d34c06aae7ea9c04205dad890db8dc6e3c4f",
       releasedAt: "2026-11-27",
       retrievedAt: "2026-11-27",
-      canonicalUrl: "https://github.com/Norn-cloud/norn/tree/main/registry/packs/supply-lab",
+      canonicalUrl: "https://norn.cloud/registry/packs/supply-lab/0.1.0",
       license: "Apache-2.0",
-      redistribution: "reference_only",
+      redistribution: "vendored",
       importMode: "map_only",
       files: [
         {
-          path: SUPPLY_SOURCE_URL,
+          path: SUPPLY_SOURCE_FILE,
           sha256: "560599ae29843296e062b27147c8d34c06aae7ea9c04205dad890db8dc6e3c4f",
         },
         {
-          path: "https://github.com/Norn-cloud/norn/blob/main/registry/packs/supply-lab/actions.ts",
+          path: ACTIONS_SOURCE_FILE,
           sha256: "4279b4572b3a3170dad6ac00e0f893db8c828ef17b7e232e1441d9fddfff2465",
         },
       ],
@@ -52,25 +53,29 @@ export const Pack = Norn.ontologyPack({
     { termId: "norn.supply.guard.unit.mismatch", label: "Unit-of-measure mismatch guard", definition: "A stock position, movement, order line, receipt, or inspection uses a unit different from its SKU or linked parent.", termKind: "predicate", status: "active", semanticAuthority: "semantic_only" },
   ],
   mappings: [
-    { mappingId: "map.norn.supply.sku", termId: "norn.supply.sku", sourceId: "source.supply-lab", externalIri: SUPPLY_SOURCE_URL, relation: "close_match", justification: "Declares the `supply.Sku` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_URL], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
-    { mappingId: "map.norn.supply.warehouse", termId: "norn.supply.warehouse", sourceId: "source.supply-lab", externalIri: SUPPLY_SOURCE_URL, relation: "close_match", justification: "Declares the `supply.Warehouse` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_URL], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
-    { mappingId: "map.norn.supply.inventory.snapshot", termId: "norn.supply.inventory.snapshot", sourceId: "source.supply-lab", externalIri: SUPPLY_SOURCE_URL, relation: "close_match", justification: "Declares the `supply.InventorySnapshot` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_URL], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
-    { mappingId: "map.norn.supply.stock.movement", termId: "norn.supply.stock.movement", sourceId: "source.supply-lab", externalIri: SUPPLY_SOURCE_URL, relation: "close_match", justification: "Declares the `supply.StockMovement` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_URL], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
-    { mappingId: "map.norn.supply.purchase.order", termId: "norn.supply.purchase.order", sourceId: "source.supply-lab", externalIri: SUPPLY_SOURCE_URL, relation: "close_match", justification: "Declares the `supply.PurchaseOrder` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_URL], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
-    { mappingId: "map.norn.supply.order.line", termId: "norn.supply.order.line", sourceId: "source.supply-lab", externalIri: SUPPLY_SOURCE_URL, relation: "close_match", justification: "Declares the `supply.OrderLine` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_URL], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
-    { mappingId: "map.norn.supply.shipment.receipt", termId: "norn.supply.shipment.receipt", sourceId: "source.supply-lab", externalIri: SUPPLY_SOURCE_URL, relation: "close_match", justification: "Declares the `supply.ShipmentReceipt` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_URL], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
-    { mappingId: "map.norn.supply.inspection", termId: "norn.supply.inspection", sourceId: "source.supply-lab", externalIri: SUPPLY_SOURCE_URL, relation: "close_match", justification: "Declares the `supply.Inspection` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_URL], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
-    { mappingId: "map.norn.supply.demand.observation", termId: "norn.supply.demand.observation", sourceId: "source.supply-lab", externalIri: SUPPLY_SOURCE_URL, relation: "close_match", justification: "Declares the `supply.DemandObservation` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_URL], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
-    { mappingId: "map.norn.supply.demand.forecast", termId: "norn.supply.demand.forecast", sourceId: "source.supply-lab", externalIri: SUPPLY_SOURCE_URL, relation: "close_match", justification: "Declares the `supply.DemandForecast` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_URL], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
+    { mappingId: "map.norn.supply.sku", termId: "norn.supply.sku", sourceId: "source.supply-lab", externalIri: "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.Sku", relation: "close_match", justification: "Declares the `supply.Sku` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
+    { mappingId: "map.norn.supply.warehouse", termId: "norn.supply.warehouse", sourceId: "source.supply-lab", externalIri: "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.Warehouse", relation: "close_match", justification: "Declares the `supply.Warehouse` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
+    { mappingId: "map.norn.supply.inventory.snapshot", termId: "norn.supply.inventory.snapshot", sourceId: "source.supply-lab", externalIri: "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.InventorySnapshot", relation: "close_match", justification: "Declares the `supply.InventorySnapshot` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
+    { mappingId: "map.norn.supply.wms.count", termId: "norn.supply.wms.count", sourceId: "source.supply-lab", externalIri: "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.WmsCount", relation: "close_match", justification: "Declares the `supply.WmsCount` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
+    { mappingId: "map.norn.supply.stock.movement", termId: "norn.supply.stock.movement", sourceId: "source.supply-lab", externalIri: "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.StockMovement", relation: "close_match", justification: "Declares the `supply.StockMovement` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
+    { mappingId: "map.norn.supply.purchase.order", termId: "norn.supply.purchase.order", sourceId: "source.supply-lab", externalIri: "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.PurchaseOrder", relation: "close_match", justification: "Declares the `supply.PurchaseOrder` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
+    { mappingId: "map.norn.supply.order.line", termId: "norn.supply.order.line", sourceId: "source.supply-lab", externalIri: "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.OrderLine", relation: "close_match", justification: "Declares the `supply.OrderLine` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
+    { mappingId: "map.norn.supply.shipment.receipt", termId: "norn.supply.shipment.receipt", sourceId: "source.supply-lab", externalIri: "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.ShipmentReceipt", relation: "close_match", justification: "Declares the `supply.ShipmentReceipt` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
+    { mappingId: "map.norn.supply.supplier.receipt.line", termId: "norn.supply.supplier.receipt.line", sourceId: "source.supply-lab", externalIri: "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.SupplierReceiptLine", relation: "close_match", justification: "Declares the `supply.SupplierReceiptLine` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
+    { mappingId: "map.norn.supply.inspection", termId: "norn.supply.inspection", sourceId: "source.supply-lab", externalIri: "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.Inspection", relation: "close_match", justification: "Declares the `supply.Inspection` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
+    { mappingId: "map.norn.supply.demand.observation", termId: "norn.supply.demand.observation", sourceId: "source.supply-lab", externalIri: "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.DemandObservation", relation: "close_match", justification: "Declares the `supply.DemandObservation` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
+    { mappingId: "map.norn.supply.demand.forecast", termId: "norn.supply.demand.forecast", sourceId: "source.supply-lab", externalIri: "https://norn.cloud/registry/packs/supply-lab/0.1.0#supply.DemandForecast", relation: "close_match", justification: "Declares the `supply.DemandForecast` entity in `registry/packs/supply-lab/supply.ts`.", evidenceRefs: [SUPPLY_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a5 (agent, proposed)", reviewedAt: REVIEWED_AT },
   ],
   shapes: [
     { shapeId: "shape.norn.supply.sku", termId: "norn.supply.sku", closed: true, fields: [{ fieldId: "sku_id", valueType: "string", minCount: 1, maxCount: 1 }] },
     { shapeId: "shape.norn.supply.warehouse", termId: "norn.supply.warehouse", closed: true, fields: [{ fieldId: "warehouse_id", valueType: "string", minCount: 1, maxCount: 1 }] },
     { shapeId: "shape.norn.supply.inventory.snapshot", termId: "norn.supply.inventory.snapshot", closed: true, fields: [{ fieldId: "on_hand_qty", valueType: "decimal", minCount: 1, maxCount: 1 }, { fieldId: "as_of", valueType: "date_time", minCount: 1, maxCount: 1 }] },
+    { shapeId: "shape.norn.supply.wms.count", termId: "norn.supply.wms.count", closed: true, fields: [{ fieldId: "scan_id", valueType: "string", minCount: 1, maxCount: 1 }, { fieldId: "on_hand_qty", valueType: "decimal", minCount: 1, maxCount: 1 }, { fieldId: "as_of", valueType: "date_time", minCount: 1, maxCount: 1 }] },
     { shapeId: "shape.norn.supply.stock.movement", termId: "norn.supply.stock.movement", closed: true, fields: [{ fieldId: "qty", valueType: "decimal", minCount: 1, maxCount: 1 }, { fieldId: "occurred_at", valueType: "date_time", minCount: 1, maxCount: 1 }] },
     { shapeId: "shape.norn.supply.purchase.order", termId: "norn.supply.purchase.order", closed: true, fields: [{ fieldId: "po_id", valueType: "string", minCount: 1, maxCount: 1 }, { fieldId: "promised_at", valueType: "date_time", minCount: 1, maxCount: 1 }] },
     { shapeId: "shape.norn.supply.order.line", termId: "norn.supply.order.line", closed: true, fields: [{ fieldId: "ordered_qty", valueType: "decimal", minCount: 1, maxCount: 1 }] },
     { shapeId: "shape.norn.supply.shipment.receipt", termId: "norn.supply.shipment.receipt", closed: true, fields: [{ fieldId: "received_qty", valueType: "decimal", minCount: 1, maxCount: 1 }, { fieldId: "received_at", valueType: "date_time", minCount: 1, maxCount: 1 }] },
+    { shapeId: "shape.norn.supply.supplier.receipt.line", termId: "norn.supply.supplier.receipt.line", closed: true, fields: [{ fieldId: "receipt_line_id", valueType: "string", minCount: 1, maxCount: 1 }, { fieldId: "received_qty", valueType: "decimal", minCount: 1, maxCount: 1 }, { fieldId: "received_at", valueType: "date_time", minCount: 1, maxCount: 1 }] },
     { shapeId: "shape.norn.supply.inspection", termId: "norn.supply.inspection", closed: true, fields: [{ fieldId: "inspected_qty", valueType: "decimal", minCount: 1, maxCount: 1 }] },
     { shapeId: "shape.norn.supply.demand.observation", termId: "norn.supply.demand.observation", closed: true, fields: [{ fieldId: "issued_qty", valueType: "decimal", minCount: 1, maxCount: 1 }, { fieldId: "week_start", valueType: "date_time", minCount: 1, maxCount: 1 }] },
     { shapeId: "shape.norn.supply.demand.forecast", termId: "norn.supply.demand.forecast", closed: true, fields: [{ fieldId: "predicted_qty", valueType: "decimal", minCount: 1, maxCount: 1 }, { fieldId: "week_start", valueType: "date_time", minCount: 1, maxCount: 1 }] },

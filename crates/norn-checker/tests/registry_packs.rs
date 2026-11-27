@@ -225,9 +225,9 @@ fn odoo_moves_give_rise_to_transactions_and_draft_reset_is_non_conforming() {
 fn supply_lab_link_accounts_for_every_term() {
     let coverage = coverage("norn.link.supply-lab.canon");
     assert_eq!(coverage.active_terms, 20);
-    assert_eq!(coverage.mapped.len(), 10);
+    assert_eq!(coverage.mapped.len(), 7);
     assert_eq!(coverage.residual.len(), 2);
-    assert_eq!(coverage.canon_gaps.len(), 8);
+    assert_eq!(coverage.canon_gaps.len(), 11);
     assert!(coverage.non_conforming.is_empty());
     let targets = |term: &str| -> Vec<String> {
         coverage.mapped[term]
@@ -248,6 +248,12 @@ fn supply_lab_link_accounts_for_every_term() {
         coverage
             .canon_gaps
             .contains("norn.supply.inventory.snapshot")
+    );
+    assert!(coverage.canon_gaps.contains("norn.supply.stock.movement"));
+    assert!(
+        coverage
+            .canon_gaps
+            .contains("norn.supply.guard.currency.mismatch")
     );
 }
 
@@ -286,12 +292,13 @@ fn supply_lab_interfaces_enforce_disjointness_and_order_lifecycle() {
         "valid supply-lab interfaces must admit: {errors:#?}"
     );
 
-    // INTERFACE-DISJOINT-1: a type implementing mutually disjoint Supply Lab
-    // interfaces (`OrderLifecycle` + `CountEvidence`, or `OrderLifecycle` +
-    // `ReceiptEvidence`) must refuse with `interface.validation.disjoint_violation`.
+    // INTERFACE-DISJOINT-1: every pair in the three-way Supply Lab disjointness
+    // triangle (`OrderLifecycle` ⊥ `CountEvidence` ⊥ `ReceiptEvidence`) must
+    // refuse with `interface.validation.disjoint_violation`.
     for pair in [
         ["supply.OrderLifecycle", "supply.CountEvidence"],
         ["supply.OrderLifecycle", "supply.ReceiptEvidence"],
+        ["supply.CountEvidence", "supply.ReceiptEvidence"],
     ] {
         let mut mixed_po = serde_json::to_value(&po).expect("po json");
         mixed_po["payload"]["objectType"]["implements"] = serde_json::json!(pair);
