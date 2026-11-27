@@ -58,9 +58,6 @@
               "change": "created"
             }
           ],
-          "compensation": {
-            "actionId": "retail.sku.cancel_reorder"
-          },
           "access": {
             "artifactId": "retail.procurement.policy",
             "version": "0.1.0"
