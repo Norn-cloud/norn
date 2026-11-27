@@ -128,22 +128,23 @@ impl<E: SqlEngine> CellStore<E> {
         self.prepare_at(plan, context, tenant, Some(cutoff), true)
     }
 
-    /// ASOF-KNOWLEDGE-1 on the engine with an explicit population gate: when
-    /// `include_findings` is `false` (the caller is not admitted to the grain),
-    /// historical records and foreign-model deletions are still checked while
-    /// finding evaluation is skipped on rows outside the authorized population.
+    /// ASOF-KNOWLEDGE-1 answer for a caller denied by the population gate:
+    /// checks scope, cutoff, plan, foreign-model deletions, and historical
+    /// records without evaluating findings on rows outside the caller's
+    /// authorized population, and returns the empty historical answer directly
+    /// so no exclusion-less `Prepared` request can reach an analytics engine.
     ///
     /// # Errors
     /// As [`Self::analytics_prepare_known_at`].
-    pub fn analytics_prepare_known_at_gated(
+    pub fn analytics_empty_known_at(
         &self,
         plan: &QuestionPlan,
         context: QueryContext,
         tenant: &TenantId,
         cutoff: crate::KnowledgeCutoff,
-        include_findings: bool,
-    ) -> Result<Prepared, CellError> {
-        self.prepare_at(plan, context, tenant, Some(cutoff), include_findings)
+    ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
+        let prepared = self.prepare_at(plan, context, tenant, Some(cutoff), false)?;
+        self.analytics_empty_authorized_answer_known_at(prepared)
     }
 
     #[allow(

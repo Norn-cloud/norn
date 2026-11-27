@@ -450,17 +450,9 @@ fn scoped_finding_laws(
     finding: &DataQualityFinding,
 ) -> Vec<norn_ir::ArtifactEnvelope> {
     match &finding.rule_ref {
-        norn_ir::DataQualityRuleRef::Law {
-            artifact_id,
-            law_id,
-            ..
-        } => laws
+        norn_ir::DataQualityRuleRef::Law { artifact_id, .. } => laws
             .iter()
-            .filter(|law| {
-                law.artifact_id == *artifact_id
-                    || law.payload.get("id").and_then(serde_json::Value::as_str)
-                        == Some(law_id.as_str())
-            })
+            .filter(|law| law.artifact_id == *artifact_id)
             .cloned()
             .collect(),
         norn_ir::DataQualityRuleRef::Invariant { .. }

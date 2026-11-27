@@ -238,7 +238,7 @@ pub(crate) fn materialize_historical_values(
         .map_err(|_invalid| unproven_event())
 }
 
-impl<'a, E: SqlEngine> StoreReader<'a, E> {
+impl<'c, E: SqlEngine> StoreReader<'c, E> {
     /// OBS-EVIDENCE-1: resolve governing laws from the exact retained definition version.
     /// Never falls back to current definitions or accepts caller-provided laws.
     ///
@@ -639,10 +639,10 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         }
         history.known_at(world, object_type, key, known_as_of, budget)
     }
-    pub(crate) fn history_read(&self) -> HistoryRead<'_, 'a, E> {
+    pub(crate) fn history_read(&self) -> HistoryRead<'_, 'c, E> {
         self.history_read_seeded(None)
     }
-    pub(crate) fn history_read_seeded(&self, receipt: Option<Receipt>) -> HistoryRead<'_, 'a, E> {
+    pub(crate) fn history_read_seeded(&self, receipt: Option<Receipt>) -> HistoryRead<'_, 'c, E> {
         HistoryRead {
             reader: self,
             receipts: receipt

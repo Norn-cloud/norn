@@ -24,14 +24,14 @@ mod asof_reader {
     use norn_cell::compute::QueryContext;
     use norn_cell::mapping_bundle::MappingInput;
     use norn_cell::{
-        CellError, CellStore, KnowledgeCutoff, MAIN_WORLD, MappingOutcome, Model, SqliteCell,
-        StoreOptions,
+        CellError, CellStore, KnowledgeCutoff, MAIN_WORLD, Model, SqliteCell, StoreOptions,
     };
     use norn_checker::entity_scopes::ScopedView;
     use norn_checker::metric::compute::QuestionPlan;
     use norn_checker::metric::derive::derive_metric_space;
     use norn_ir::{
-        ArtifactEnvelope, LawRoot, ObjectTypeDef, QuestionIR, RuntimeObject, RuntimeValue as V,
+        ArtifactEnvelope, InterfaceDef, LawRoot, ObjectTypeDef, QuestionIR, RuntimeObject,
+        RuntimeValue as V,
     };
     use norn_kernel::{
         CellCommit, CellHost as _, FactKey, FactMutation, FactVersion, FactWrite, LinkKey,
@@ -58,25 +58,21 @@ mod asof_reader {
     }
 
     fn build_model(artifacts: &[ArtifactEnvelope]) -> Model {
-        let mut objects = Vec::new();
-        let mut interfaces = Vec::new();
-        let mut laws = Vec::new();
+        let mut objects: Vec<ObjectTypeDef> = Vec::new();
+        let mut interfaces: Vec<InterfaceDef> = Vec::new();
         for artifact in artifacts {
-            match artifact.kind.as_str() {
-                "entity" => {
-                    if let Some(ot) = artifact.payload.get("objectType") {
-                        objects.push(serde_json::from_value(ot.clone()).expect("objectType"));
-                    }
-                    if let Some(iface) = artifact.payload.get("interface") {
-                        interfaces.push(serde_json::from_value(iface.clone()).expect("interface"));
-                    }
-                }
-                "law" => laws.push(artifact.clone()),
-                _ => {}
+            let payload = serde_json::to_value(artifact).expect("artifact")["payload"].clone();
+            if let Some(ot) = payload.get("objectType") {
+                objects.push(serde_json::from_value(ot.clone()).expect("objectType"));
+            }
+            if let Some(iface) = payload.get("interface") {
+                interfaces.push(serde_json::from_value(iface.clone()).expect("interface"));
             }
         }
-        Model::from_definitions_with_interfaces_and_laws(&objects, &[], &interfaces, &laws)
+        Model::from_definitions_with_interfaces(&objects, &[], &interfaces)
             .expect("model")
+            .with_governing_laws(artifacts)
+            .expect("laws")
     }
 
     fn open_cell(artifacts: &[ArtifactEnvelope], tag: &str) -> (ObsCell, tempfile::TempDir) {
@@ -84,20 +80,28 @@ mod asof_reader {
         let path = dir.path().join(format!("{tag}.sqlite"));
         let model = build_model(artifacts);
         let mut store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("db");
+        store.bind("scope", SCOPE).expect("bind scope");
         store
             .install_definitions(
                 model,
                 norn_cell::InstalledDefinitionInput {
-                    canonical_set: serde_json::to_string(artifacts).expect("canonical set"),
+                    canonical_set: String::from_utf8(
+                        norn_ir::canonical::canonical_json_of(artifacts).expect("canonical set"),
+                    )
+                    .expect("utf8"),
                     registry: Vec::new(),
-                    receipt_sha256: format!("asof-reader-{tag}-v1"),
+                    receipt_sha256: norn_ir::canonical::domain_hash_hex(
+                        b"norn.test.receipt\0",
+                        &tag,
+                    )
+                    .expect("receipt digest"),
                     admission_receipt: None,
                     readmission: None,
                     diff: json!({}),
                     installed_at: CLOCK,
                     layout: None,
                 },
-                Some(0),
+                None,
                 SCOPE,
             )
             .expect("install definitions");
@@ -113,7 +117,7 @@ mod asof_reader {
         event_id: &str,
         source_version: &str,
         record: &Value,
-    ) -> MappingOutcome {
+    ) -> bool {
         let payload = V::from_json(record.clone()).expect("payload");
         let digest = norn_ir::canonical::HashProfile::Norn1
             .hash_json(serde_json::to_string(&payload).expect("json"))
@@ -373,30 +377,24 @@ mod asof_reader {
         k1: KnowledgeCutoff,
     ) {
         // K3 edge replacement: re-pointing I1 to R2 must not alter K1's refusal.
-        assert_eq!(
-            ingest(
-                cell,
-                "demo.linked.mapping",
-                "Receipt",
-                "R2",
-                "ev-r2-1",
-                "1",
-                &json!({"id": "R2", "received_qty": "25.00"}),
-            ),
-            MappingOutcome::Landed
-        );
-        assert_eq!(
-            ingest(
-                cell,
-                "demo.linked.mapping",
-                "Inspection",
-                "I1",
-                "ev-i1-2",
-                "2",
-                &json!({"id": "I1", "receipt_id": "R2", "inspected_qty": "15.00", "occurred_at": "2026-07-07T10:00:00Z"}),
-            ),
-            MappingOutcome::Landed
-        );
+        assert!(ingest(
+            cell,
+            "demo.linked.mapping",
+            "Receipt",
+            "R2",
+            "ev-r2-1",
+            "1",
+            &json!({"id": "R2", "received_qty": "25.00"}),
+        ));
+        assert!(ingest(
+            cell,
+            "demo.linked.mapping",
+            "Inspection",
+            "I1",
+            "ev-i1-2",
+            "2",
+            &json!({"id": "I1", "receipt_id": "R2", "inspected_qty": "15.00", "occurred_at": "2026-07-07T10:00:00Z"}),
+        ));
         assert_cutoff_refused_unsupported(cell, plan, k1);
 
         // K4 link deletion, then K5 subject deletion + K6 recreation.
@@ -443,18 +441,15 @@ mod asof_reader {
             ..CellCommit::empty()
         })
         .expect("delete I1");
-        assert_eq!(
-            ingest(
-                cell,
-                "demo.linked.mapping",
-                "Inspection",
-                "I1",
-                "ev-i1-3",
-                "3",
-                &json!({"id": "I1", "receipt_id": "R2", "inspected_qty": "5.00", "occurred_at": "2026-07-07T10:00:00Z"}),
-            ),
-            MappingOutcome::Landed
-        );
+        assert!(ingest(
+            cell,
+            "demo.linked.mapping",
+            "Inspection",
+            "I1",
+            "ev-i1-3",
+            "3",
+            &json!({"id": "I1", "receipt_id": "R2", "inspected_qty": "5.00", "occurred_at": "2026-07-07T10:00:00Z"}),
+        ));
         assert_cutoff_refused_unsupported(cell, plan, k1);
     }
 
@@ -469,30 +464,24 @@ mod asof_reader {
         );
         let (mut cell, _dir) = open_cell(&artifacts, "linked_asof");
 
-        assert_eq!(
-            ingest(
-                &mut cell,
-                "demo.linked.mapping",
-                "Receipt",
-                "R1",
-                "ev-r1-1",
-                "1",
-                &json!({"id": "R1", "received_qty": "10.00"}),
-            ),
-            MappingOutcome::Landed
-        );
-        assert_eq!(
-            ingest(
-                &mut cell,
-                "demo.linked.mapping",
-                "Inspection",
-                "I1",
-                "ev-i1-1",
-                "1",
-                &json!({"id": "I1", "receipt_id": "R1", "inspected_qty": "15.00", "occurred_at": "2026-07-07T10:00:00Z"}),
-            ),
-            MappingOutcome::Landed
-        );
+        assert!(ingest(
+            &mut cell,
+            "demo.linked.mapping",
+            "Receipt",
+            "R1",
+            "ev-r1-1",
+            "1",
+            &json!({"id": "R1", "received_qty": "10.00"}),
+        ));
+        assert!(ingest(
+            &mut cell,
+            "demo.linked.mapping",
+            "Inspection",
+            "I1",
+            "ev-i1-1",
+            "1",
+            &json!({"id": "I1", "receipt_id": "R1", "inspected_qty": "15.00", "occurred_at": "2026-07-07T10:00:00Z"}),
+        ));
         let k1 = last_cutoff(&cell);
         let live_k1 = cell
             .store()
@@ -506,18 +495,15 @@ mod asof_reader {
         assert_cutoff_refused_unsupported(&cell, &plan, k1);
 
         // K2 target-only change: raising R1.received_qty resolves live I1, never K1.
-        assert_eq!(
-            ingest(
-                &mut cell,
-                "demo.linked.mapping",
-                "Receipt",
-                "R1",
-                "ev-r1-2",
-                "2",
-                &json!({"id": "R1", "received_qty": "20.00"}),
-            ),
-            MappingOutcome::Landed
-        );
+        assert!(ingest(
+            &mut cell,
+            "demo.linked.mapping",
+            "Receipt",
+            "R1",
+            "ev-r1-2",
+            "2",
+            &json!({"id": "R1", "received_qty": "20.00"}),
+        ));
         let live_k2 = cell
             .store()
             .evaluate_question(&plan, query_context(CLOCK + 50_000), |_| Ok(true))
@@ -628,30 +614,24 @@ mod asof_reader {
         let plan = admit_weekly_sum(&artifacts, "demo.Invoice", "amount", "demo.invoice_week");
         let (mut cell, _dir) = open_cell(&artifacts, "pure_prop_asof");
 
-        assert_eq!(
-            ingest(
-                &mut cell,
-                "demo.inv.mapping",
-                "Invoice",
-                "INV-BAD",
-                "ev-bad-1",
-                "1",
-                &json!({"id": "INV-BAD", "amount": "-50.00", "occurred_at": "2026-07-07T10:00:00Z"}),
-            ),
-            MappingOutcome::Landed
-        );
-        assert_eq!(
-            ingest(
-                &mut cell,
-                "demo.inv.mapping",
-                "Invoice",
-                "INV-GOOD",
-                "ev-good-1",
-                "1",
-                &json!({"id": "INV-GOOD", "amount": "100.00", "occurred_at": "2026-07-07T10:00:00Z"}),
-            ),
-            MappingOutcome::Landed
-        );
+        assert!(ingest(
+            &mut cell,
+            "demo.inv.mapping",
+            "Invoice",
+            "INV-BAD",
+            "ev-bad-1",
+            "1",
+            &json!({"id": "INV-BAD", "amount": "-50.00", "occurred_at": "2026-07-07T10:00:00Z"}),
+        ));
+        assert!(ingest(
+            &mut cell,
+            "demo.inv.mapping",
+            "Invoice",
+            "INV-GOOD",
+            "ev-good-1",
+            "1",
+            &json!({"id": "INV-GOOD", "amount": "100.00", "occurred_at": "2026-07-07T10:00:00Z"}),
+        ));
         let k1 = last_cutoff(&cell);
         let before = cell
             .store()
@@ -684,18 +664,15 @@ mod asof_reader {
             ..CellCommit::empty()
         })
         .expect("delete INV-BAD");
-        assert_eq!(
-            ingest(
-                &mut cell,
-                "demo.inv.mapping",
-                "Invoice",
-                "INV-BAD",
-                "ev-bad-2",
-                "2",
-                &json!({"id": "INV-BAD", "amount": "40.00", "occurred_at": "2026-07-07T10:00:00Z"}),
-            ),
-            MappingOutcome::Landed
-        );
+        assert!(ingest(
+            &mut cell,
+            "demo.inv.mapping",
+            "Invoice",
+            "INV-BAD",
+            "ev-bad-2",
+            "2",
+            &json!({"id": "INV-BAD", "amount": "40.00", "occurred_at": "2026-07-07T10:00:00Z"}),
+        ));
         let live_after = cell
             .store()
             .evaluate_question(&plan, query_context(CLOCK + 90_000), |_| Ok(true))
@@ -752,43 +729,34 @@ mod asof_reader {
         let r1 = json!({"id": "R1", "received_qty": "10.00"});
         let bad = json!({"id": "I-NEG", "receipt_id": "R1", "inspected_qty": "-5.00", "occurred_at": "2026-07-07T10:00:00Z"});
         let ok = json!({"id": "I-OK", "receipt_id": "R1", "inspected_qty": "8.00", "occurred_at": "2026-07-07T10:00:00Z"});
-        assert_eq!(
-            ingest(
-                &mut cell,
-                "demo.linked.mapping",
-                "Receipt",
-                "R1",
-                "ev-r1-1",
-                "1",
-                &r1
-            ),
-            MappingOutcome::Landed
-        );
+        assert!(ingest(
+            &mut cell,
+            "demo.linked.mapping",
+            "Receipt",
+            "R1",
+            "ev-r1-1",
+            "1",
+            &r1
+        ));
         // Violates ONLY `non_negative` (`-5.00 < 0`), while satisfying `within_receipt` (`-5 <= 10`).
-        assert_eq!(
-            ingest(
-                &mut cell,
-                "demo.linked.mapping",
-                "Inspection",
-                "I-NEG",
-                "ev-ineg-1",
-                "1",
-                &bad
-            ),
-            MappingOutcome::Landed
-        );
-        assert_eq!(
-            ingest(
-                &mut cell,
-                "demo.linked.mapping",
-                "Inspection",
-                "I-OK",
-                "ev-iok-1",
-                "1",
-                &ok
-            ),
-            MappingOutcome::Landed
-        );
+        assert!(ingest(
+            &mut cell,
+            "demo.linked.mapping",
+            "Inspection",
+            "I-NEG",
+            "ev-ineg-1",
+            "1",
+            &bad
+        ));
+        assert!(ingest(
+            &mut cell,
+            "demo.linked.mapping",
+            "Inspection",
+            "I-OK",
+            "ev-iok-1",
+            "1",
+            &ok
+        ));
         let k1 = last_cutoff(&cell);
         let before = cell
             .store()
@@ -806,18 +774,15 @@ mod asof_reader {
         );
         // K2 fix I-NEG -> live includes I-NEG (total 11), while K1 still reproduces 8.
         let fixed = json!({"id": "I-NEG", "receipt_id": "R1", "inspected_qty": "3.00", "occurred_at": "2026-07-07T10:00:00Z"});
-        assert_eq!(
-            ingest(
-                &mut cell,
-                "demo.linked.mapping",
-                "Inspection",
-                "I-NEG",
-                "ev-ineg-2",
-                "2",
-                &fixed
-            ),
-            MappingOutcome::Landed
-        );
+        assert!(ingest(
+            &mut cell,
+            "demo.linked.mapping",
+            "Inspection",
+            "I-NEG",
+            "ev-ineg-2",
+            "2",
+            &fixed
+        ));
         let after = cell
             .store()
             .evaluate_question_known_at(
