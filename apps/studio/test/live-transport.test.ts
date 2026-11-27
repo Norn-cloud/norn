@@ -1429,3 +1429,41 @@ test("retryWorkspace resolves false promptly when going offline mid-probe and wh
     fetch.mockRestore()
   }
 })
+
+test("going offline during a scope-discovered unobserved mode probe cancels it without leaving it paused", async () => {
+  const client = new QueryClient()
+  const scopeA = { orgId: ME.organization.id, environmentId: ME.environmentId }
+  let scopeReads = 0
+  let modeFailedOnce!: () => void
+  const firstFailure = new Promise<void>((resolve) => { modeFailedOnce = resolve })
+  const fetchProbe = async (...[input]: Parameters<typeof globalThis.fetch>) => {
+    const url = String(input)
+    if (url === "/api/me") {
+      scopeReads += 1
+      if (scopeReads === 1) return new Response("down", { status: 503 })
+      return Response.json(ME)
+    }
+    modeFailedOnce()
+    return new Response("down", { status: 503 })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }))
+  const scopeObs = new QueryObserver(client, { ...studioScopeQuery(), retry: false })
+  const offScope = scopeObs.subscribe(() => {})
+  try {
+    await until(scopeObs, settled)
+    // No mode observer is mounted yet; retryMode discovers scopeA and invokes direct fetchQuery(modeQuery(scopeA)).
+    const retry = retryMode(client)
+    await firstFailure
+    onlineManager.setOnline(false)
+    expect(await retry).toBe(false)
+    // Give cancelQueries microtasks a tick to flush; the unobserved mode query must NOT remain paused.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const unobserved = client.getQueryState(modeQuery(scopeA).queryKey)
+    expect(unobserved?.fetchStatus).not.toBe("paused")
+  } finally {
+    onlineManager.setOnline(true)
+    offScope()
+    client.clear()
+    fetch.mockRestore()
+  }
+})

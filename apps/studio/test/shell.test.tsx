@@ -10,9 +10,10 @@ import {
   type Applet, type MenuEntry, type Section,
 } from "../src/lib/nav-model.ts"
 import {
-  MAX_RECENT, accountScopeIdentity, appendRecent, clearRecent, getOwn, initialRecentTracker, readMenuState, readRecent,
-  recentForPath, recentScopeFingerprint, recordRecent, stepRecentTracker, updateChosenBranches,
-  updateRecentLabelIfPresent, writeMenuState, writeRecent,
+  MAX_RECENT, accountScopeIdentity, appendRecent, clearRecent, commitRecentTracker, createTabRecentGuard,
+  enrichRecentItems, getOwn, initialRecentTracker, markRecentSignOut, readMenuState, readRecent,
+  recentForPath, recentScopeFingerprint, recordRecent, resumeRecentTracker, stepRecentTracker,
+  updateChosenBranches, writeMenuState, writeRecent,
 } from "../src/lib/nav-storage.ts"
 import type { Account } from "../src/lib/session.ts"
 import { Shell, commandNavigation } from "../src/shell.tsx"
@@ -481,6 +482,22 @@ test("Recent fails closed across workspace switches, unconfirmed scopes, and rol
   const preSettleRoleChanged = stepRecentTracker(preSettleTracker, "/sources/canon.Holding/secret-pre", fpViewerA, accountScopeIdentity(viewerA))
   expect(preSettleRoleChanged.shouldRecord).toBe(false)
 
+  // Signing out and remounting the shell as account B on the same carried-over URL (even before A's mode settled)
+  // must stay locked out across remounts until B navigates to a new URL.
+  const tabGuard = createTabRecentGuard()
+  const mountedA = resumeRecentTracker("/sources/canon.Holding/secret-signout", null, accountScopeIdentity(adminA), tabGuard)
+  const stepA = stepRecentTracker(mountedA, "/sources/canon.Holding/secret-signout", null, accountScopeIdentity(adminA))
+  commitRecentTracker(stepA.next, accountScopeIdentity(adminA), tabGuard)
+  markRecentSignOut(tabGuard)
+  const remountedB = resumeRecentTracker("/sources/canon.Holding/secret-signout", null, accountScopeIdentity(adminB), tabGuard)
+  const settledRemountB = stepRecentTracker(remountedB, "/sources/canon.Holding/secret-signout", fpAdminB, accountScopeIdentity(adminB))
+  expect(settledRemountB.shouldRecord).toBe(false)
+  commitRecentTracker(settledRemountB.next, accountScopeIdentity(adminB), tabGuard)
+  // Even a second remount on the same URL stays locked out; navigating to a new route records normally.
+  const remountedBAgain = resumeRecentTracker("/sources/canon.Holding/secret-signout", fpAdminB, accountScopeIdentity(adminB), tabGuard)
+  expect(stepRecentTracker(remountedBAgain, "/sources/canon.Holding/secret-signout", fpAdminB, accountScopeIdentity(adminB)).shouldRecord).toBe(false)
+  expect(stepRecentTracker(remountedBAgain, "/runs/run-b-fresh", fpAdminB, accountScopeIdentity(adminB)).shouldRecord).toBe(true)
+
   // Fresh page load on a detail route records once the initial scope settles for the same account.
   let tracker = initialRecentTracker("/sources/canon.Holding/secret-1", null, accountScopeIdentity(adminA))
   let step = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", null, accountScopeIdentity(adminA))
@@ -510,29 +527,41 @@ test("Recent fails closed across workspace switches, unconfirmed scopes, and rol
   expect(navigatedB.shouldRecord).toBe(true)
 })
 
-test("appendRecent and updateRecentLabelIfPresent never resurrect a cross-tab Clear", () => {
+test("appendRecent and enrichRecentItems never resurrect a cross-tab Clear on label updates", () => {
   const storage = memoryStorage()
   const fp = JSON.stringify(["live", "u1", "o1", "e1", "viewer"])
-  appendRecent(fp, { href: "/views/open-items", label: "open-items", kind: "view", visitedAt: 1 }, storage)
-  expect(readRecent(fp, storage).map((item) => item.label)).toEqual(["open-items"])
+  let writes = 0
+  const countedStorage = {
+    getItem: (key: string) => storage.getItem(key),
+    setItem: (key: string, value: string) => {
+      writes += 1
+      storage.setItem(key, value)
+    },
+    removeItem: (key: string) => storage.removeItem(key),
+  }
+  const initialMenus = new Map<string, readonly MenuEntry[]>()
+  const loadedMenus = new Map<string, readonly MenuEntry[]>([
+    ["/views", [{ href: "/views/open-items", label: "Open items" }]],
+  ])
+  appendRecent(fp, recentForPath("/views/open-items", initialMenus, 1)!, countedStorage)
+  expect(readRecent(fp, countedStorage).map((item) => item.label)).toEqual(["open-items"])
 
-  // Label update while entry is still present refreshes it in place.
-  const renamed = updateRecentLabelIfPresent(fp, { href: "/views/open-items", label: "Open items" }, storage)
-  expect(renamed.map((item) => item.label)).toEqual(["Open items"])
+  // Enriching display labels when menus load happens purely in memory (zero storage writes).
+  const writesBefore = writes
+  const enriched = enrichRecentItems(readRecent(fp, countedStorage), loadedMenus)
+  expect(enriched.map((item) => item.label)).toEqual(["Open items"])
+  expect(writes).toBe(writesBefore)
 
-  // Tab A clears Recent.
-  clearRecent(fp, storage)
-  expect(readRecent(fp, storage)).toEqual([])
-
-  // Late label update on the already-open view must NOT re-insert the cleared item without navigation.
-  const afterClearLabel = updateRecentLabelIfPresent(fp, { href: "/views/open-items", label: "Open items v2" }, storage)
-  expect(afterClearLabel).toEqual([])
-  expect(readRecent(fp, storage)).toEqual([])
+  // Tab A clears Recent: enriching an empty list stays empty and performs zero storage writes.
+  clearRecent(fp, countedStorage)
+  expect(readRecent(fp, countedStorage)).toEqual([])
+  expect(enrichRecentItems(readRecent(fp, countedStorage), loadedMenus)).toEqual([])
+  expect(writes).toBe(writesBefore)
 
   // Navigating to r3 in Tab B records only r3 without resurrecting cleared items.
-  const merged = appendRecent(fp, { href: "/runs/r3", label: "r3", kind: "run", visitedAt: 3 }, storage)
+  const merged = appendRecent(fp, { href: "/runs/r3", label: "r3", kind: "run", visitedAt: 3 }, countedStorage)
   expect(merged.map((item) => item.href)).toEqual(["/runs/r3"])
-  expect(readRecent(fp, storage).map((item) => item.href)).toEqual(["/runs/r3"])
+  expect(readRecent(fp, countedStorage).map((item) => item.href)).toEqual(["/runs/r3"])
 })
 
 test("readMenuState and updateChosenBranches reject prototype-pollution keys and use null-prototype maps", () => {

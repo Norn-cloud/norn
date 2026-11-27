@@ -18,9 +18,10 @@ import { TopBarExtras } from "@/top-bar-extras"
 import { DENSITY } from "@/lib/perspective"
 import { appletHome, appletMenu, appletOf, appletOfSection, appletsOf, claim, decoded, destinationIn, initials, placeOf, shown, target, type Applet, type AppletMenu, type MenuEntry, type Menus, type Section } from "@/lib/nav-model"
 import {
-  accountScopeIdentity, appendRecent, clearRecent, getOwn, initialRecentTracker, isSafeRecordKey, readMenuState, readRecent,
-  recentForPath, recentScopeFingerprint, recentStorageKey, stepRecentTracker, updateChosenBranches,
-  updateRecentLabelIfPresent, writeMenuState, type RecentItem, type RecentTracker,
+  accountScopeIdentity, appendRecent, clearRecent, commitRecentTracker, enrichRecentItems, getOwn,
+  initialRecentTracker, isSafeRecordKey, markRecentSignOut, readMenuState, readRecent,
+  recentForPath, recentScopeFingerprint, recentStorageKey, resumeRecentTracker, stepRecentTracker,
+  updateChosenBranches, writeMenuState, type RecentItem, type RecentTracker,
 } from "@/lib/nav-storage"
 import { AppletRail, AssistantButton, SheetApplets, SubmenuPanel, appletBadge, type MenuState, type RailApplet } from "@/shell-nav"
 import { usePageShowsWorkspaceUnavailable } from "@/lib/workspace"
@@ -921,46 +922,42 @@ function useRecentItems(accountKey: string, fingerprint: string | null, pathname
     return () => window.removeEventListener("storage", onStorage)
   }, [fingerprint])
 
-  const trackerRef = useRef<RecentTracker>(initialRecentTracker(pathname, fingerprint, accountKey))
-  const recordedVisitRef = useRef<{ readonly fingerprint: string; readonly pathname: string; readonly href: string } | null>(null)
-  const candidate = recentForPath(pathname, menus)
-  const candidateHref = candidate?.href
-  const candidateLabel = candidate?.label
-  const candidateKind = candidate?.kind
-  const candidateDetail = candidate?.detail
+  const menusRef = useRef<Menus>(menus)
+  menusRef.current = menus
+  const trackerRef = useRef<RecentTracker | null>(null)
+  if (trackerRef.current === null) {
+    trackerRef.current = typeof window !== "undefined"
+      ? resumeRecentTracker(pathname, fingerprint, accountKey)
+      : initialRecentTracker(pathname, fingerprint, accountKey)
+  }
+  const recordedVisitRef = useRef<{ readonly fingerprint: string; readonly pathname: string } | null>(null)
 
   useEffect(() => {
-    const { next, shouldRecord } = stepRecentTracker(trackerRef.current, pathname, fingerprint, accountKey)
+    const { next, shouldRecord } = stepRecentTracker(trackerRef.current!, pathname, fingerprint, accountKey)
     trackerRef.current = next
-    if (!shouldRecord || fingerprint === null || candidateHref === undefined || candidateLabel === undefined || candidateKind === undefined) return
-    const lastRecorded = recordedVisitRef.current
-    const alreadyRecordedThisVisit =
-      lastRecorded !== null
-      && lastRecorded.fingerprint === fingerprint
-      && lastRecorded.pathname === pathname
-      && lastRecorded.href === candidateHref
-    if (alreadyRecordedThisVisit) {
-      // Only a label/detail update on the same visit: refresh in place if still present, never resurrect after Clear.
-      setItems(updateRecentLabelIfPresent(fingerprint, {
-        href: candidateHref,
-        label: candidateLabel,
-        ...(candidateDetail !== undefined ? { detail: candidateDetail } : {}),
-      }))
+    commitRecentTracker(next, accountKey)
+    if (
+      recordedVisitRef.current !== null
+      && (recordedVisitRef.current.pathname !== pathname || recordedVisitRef.current.fingerprint !== fingerprint)
+    ) {
+      recordedVisitRef.current = null
+    }
+    if (!shouldRecord || fingerprint === null) return
+    const candidate = recentForPath(pathname, menusRef.current)
+    if (candidate === null) return
+    if (
+      recordedVisitRef.current !== null
+      && recordedVisitRef.current.fingerprint === fingerprint
+      && recordedVisitRef.current.pathname === pathname
+    ) {
       return
     }
-    recordedVisitRef.current = { fingerprint, pathname, href: candidateHref }
-    const merged = appendRecent(fingerprint, {
-      href: candidateHref,
-      label: candidateLabel,
-      kind: candidateKind,
-      ...(candidateDetail !== undefined ? { detail: candidateDetail } : {}),
-      visitedAt: Date.now(),
-    })
-    setItems(merged)
-  }, [accountKey, fingerprint, pathname, candidateHref, candidateLabel, candidateKind, candidateDetail])
+    recordedVisitRef.current = { fingerprint, pathname }
+    setItems(appendRecent(fingerprint, candidate))
+  }, [accountKey, fingerprint, pathname])
 
   return {
-    items: fingerprint === null ? [] : items,
+    items: fingerprint === null ? [] : enrichRecentItems(items, menus),
     onClear: () => {
       if (fingerprint !== null) clearRecent(fingerprint)
       setItems([])
@@ -979,6 +976,10 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, recent
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuState = useMenuStates()
   const recent = useRecentItems(accountScopeIdentity(account), recentFingerprint, pathname, navigation.menus)
+  const handleSignOut = () => {
+    markRecentSignOut()
+    onSignOut()
+  }
   const rail: readonly RailApplet[] = appletsOf(sections).map((each) => ({
     applet: each,
     home: appletHome(each, sections, navigation.menus),
@@ -1020,7 +1021,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, recent
   const resolvedPathname = useRouterState({ select: (state) => state.resolvedLocation?.pathname ?? state.location.pathname })
   const principal = <>
     {assistant && <AssistantButton title={assistant.title} />}
-    <AccountMenu account={account} onSignOut={onSignOut} inToolbar={false} variant="rail" />
+    <AccountMenu account={account} onSignOut={handleSignOut} inToolbar={false} variant="rail" />
   </>
 
   return (
@@ -1063,7 +1064,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, recent
                   {tools}
                   <TopBarExtras tickBar="hidden @5xl:flex" language="hidden @3xl:flex" scheme="hidden @md:flex" />
                   <Notifications />
-                  <AccountMenu account={account} onSignOut={onSignOut} inToolbar={false} variant="topbar" />
+                  <AccountMenu account={account} onSignOut={handleSignOut} inToolbar={false} variant="topbar" />
                 </div>
               </header>
             )

@@ -46,6 +46,82 @@ export interface RecentTracker {
   readonly hadSettled: boolean
 }
 
+export interface TabRecentGuardEntry {
+  readonly pathname: string
+  readonly accountKey: string
+  readonly tracker: RecentTracker
+  readonly signedOut: boolean
+}
+
+export interface TabRecentGuard {
+  current: TabRecentGuardEntry | null
+}
+
+/** Create an isolated tab-level guard for carried-over URLs across shell unmount/remount or sign-out. */
+export const createTabRecentGuard = (): TabRecentGuard => ({ current: null })
+
+const defaultTabRecentGuard: TabRecentGuard = createTabRecentGuard()
+
+/** Reset the tab-level Recent guard (intended for tests). */
+export function resetRecentVisitGuard(guard: TabRecentGuard = defaultTabRecentGuard): void {
+  guard.current = null
+}
+
+/** Mark that the current tab signed out so a carried-over URL cannot be recorded under the next session. */
+export function markRecentSignOut(guard: TabRecentGuard = defaultTabRecentGuard): void {
+  if (guard.current !== null) {
+    guard.current = { ...guard.current, signedOut: true }
+  }
+}
+
+/**
+ * Resume or initialize a {@link RecentTracker} when the shell mounts. If the tab previously
+ * opened this exact `pathname` under another account/role or signed out before remounting,
+ * return a locked-out tracker so the carried-over URL is never recorded under the next session.
+ */
+export function resumeRecentTracker(
+  pathname: string,
+  fingerprint: string | null,
+  accountKey: string,
+  guard: TabRecentGuard = defaultTabRecentGuard,
+): RecentTracker {
+  const prev = guard.current
+  if (prev !== null && prev.pathname === pathname) {
+    if (prev.signedOut || prev.accountKey !== accountKey) {
+      return {
+        pathname,
+        enteredAccountKey: prev.accountKey,
+        enteredFingerprint: null,
+        hadSettled: true,
+      }
+    }
+    return prev.tracker
+  }
+  return initialRecentTracker(pathname, fingerprint, accountKey)
+}
+
+/** Persist the latest tracker state in the tab guard without relaxing a carried-over lockout. */
+export function commitRecentTracker(
+  tracker: RecentTracker,
+  accountKey: string,
+  guard: TabRecentGuard = defaultTabRecentGuard,
+): void {
+  const prev = guard.current
+  if (
+    prev !== null
+    && prev.pathname === tracker.pathname
+    && (prev.signedOut || prev.accountKey !== accountKey)
+  ) {
+    return
+  }
+  guard.current = {
+    pathname: tracker.pathname,
+    accountKey: tracker.enteredAccountKey,
+    tracker,
+    signedOut: false,
+  }
+}
+
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">
 
 function defaultStorage(): StorageLike | undefined {
@@ -319,29 +395,28 @@ export function appendRecent(
 }
 
 /**
- * Refresh the label/detail of an already-recorded visit in place, ONLY if that `href` is still
- * present in fresh storage. If another tab (or this tab) cleared Recent meanwhile, this is a
- * no-op so late-arriving menu labels never resurrect a cleared list without navigation.
+ * Enrich already-stored Recent items with the freshest display labels/details from live `menus`
+ * purely in memory (zero `localStorage` writes, so late-arriving menu labels can never race
+ * with or undo a concurrent Clear in another tab).
  */
-export function updateRecentLabelIfPresent(
-  scopeKey: string,
-  next: Pick<RecentItem, "href" | "label" | "detail">,
-  storage: StorageLike | undefined = defaultStorage(),
-): readonly RecentItem[] {
-  const current = readRecent(scopeKey, storage)
-  const index = current.findIndex((item) => item.href === next.href)
-  if (index === -1) return current
-  const existing = current[index]!
-  if (existing.label === next.label && existing.detail === next.detail) return current
-  const updated: RecentItem = {
-    ...existing,
-    label: next.label,
-    ...(next.detail !== undefined ? { detail: next.detail } : {}),
-  }
-  if (next.detail === undefined) delete (updated as { detail?: string }).detail
-  const merged = current.map((item, i) => (i === index ? updated : item))
-  writeRecent(scopeKey, merged, storage)
-  return merged
+export function enrichRecentItems(items: readonly RecentItem[], menus: Menus): readonly RecentItem[] {
+  if (items.length === 0) return items
+  let changed = false
+  const next = items.map((item) => {
+    const resolved = recentForPath(item.href, menus, item.visitedAt)
+    if (resolved === null) return item
+    if (resolved.label === item.label && resolved.detail === item.detail) return item
+    changed = true
+    const updated: RecentItem = {
+      href: item.href,
+      label: resolved.label,
+      kind: item.kind,
+      ...(resolved.detail !== undefined ? { detail: resolved.detail } : {}),
+      visitedAt: item.visitedAt,
+    }
+    return updated
+  })
+  return changed ? next : items
 }
 
 /**

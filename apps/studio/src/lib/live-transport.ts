@@ -683,13 +683,17 @@ export function modeQuery(scope: StudioScope | null | undefined, enabled = true,
 async function retryModeWithMeta(client: QueryClient): Promise<{ readonly ok: boolean; readonly serial: number; readonly generation: number }> {
   const scopeFilter = { queryKey: ["studio-scope"], type: "active" } as const
   const modeFilter = { queryKey: ["studio-mode"], type: "active" } as const
+  // Cancel both active AND unobserved (`fetchQuery`) mode/scope probes so going offline or
+  // superseding Retry never leaves an inactive mode probe paused past its retry delay.
+  const scopeCancelFilter = { queryKey: ["studio-scope"] } as const
+  const modeCancelFilter = { queryKey: ["studio-mode"] } as const
   const scopeState = client.getQueryState(["studio-scope"])
   const retryScope =
     scopeState !== undefined
     && (scopeState.fetchStatus === "fetching" || scopeState.status === "error" || scopeState.status === "pending")
   const cancellations = [
-    client.cancelQueries(modeFilter),
-    ...(retryScope ? [client.cancelQueries(scopeFilter)] : []),
+    client.cancelQueries(modeCancelFilter),
+    ...(retryScope ? [client.cancelQueries(scopeCancelFilter)] : []),
   ]
   for (const controller of pendingModeControllers) controller.abort()
   retrySerial += 1
@@ -699,8 +703,8 @@ async function retryModeWithMeta(client: QueryClient): Promise<{ readonly ok: bo
   const generation = modeGeneration
   const abortProbes = () => {
     for (const controller of pendingModeControllers) controller.abort()
-    void client.cancelQueries(modeFilter)
-    if (retryScope) void client.cancelQueries(scopeFilter)
+    void client.cancelQueries(modeCancelFilter)
+    if (retryScope) void client.cancelQueries(scopeCancelFilter)
   }
   await Promise.all(cancellations)
   if (retrySerial !== myRetry || !onlineManager.isOnline()) return { ok: false, serial: myRetry, generation }
