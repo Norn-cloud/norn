@@ -873,8 +873,7 @@ fn promote_refuses_empty_or_non_action_fork_history() -> Result<(), String> {
 }
 
 #[test]
-fn discarded_and_expired_forks_refuse_read_commit_fork_simulate_and_scenario_open()
--> Result<(), String> {
+fn discarded_fork_refuses_read_commit_fork_and_scenario_open() -> Result<(), String> {
     let definitions = load_supply_definitions()?;
     let mut main = open_seeded_main(&definitions)?;
 
@@ -949,7 +948,13 @@ fn discarded_and_expired_forks_refuse_read_commit_fork_simulate_and_scenario_ope
         Err(CellError::ForkClosed { ref world, ref state })
             if world == "D_DISCARD" && state == "discarded"
     ));
+    Ok(())
+}
 
+#[test]
+fn expired_fork_refuses_read_and_simulate() -> Result<(), String> {
+    let definitions = load_supply_definitions()?;
+    let main = open_seeded_main(&definitions)?;
     let mut expired = fork_cell(&main, "D_EXPIRE")?;
     expired
         .expire_fork()

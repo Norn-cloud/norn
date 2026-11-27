@@ -1886,49 +1886,7 @@ fn axis7_port_strike_fork_never_interferes_with_main() -> Result<(), String> {
         json!({"po_id": "PO-STRIKE", "supplier_id": "SUP-NILE",
         "promised_at": "2026-07-29T00:00:00Z", "currency": "EGP"}),
     )?;
-    assert!(
-        matches!(
-            stress.cell.store().evaluate_question(
-                &volume,
-                context(CLOCK.saturating_add(10_000_000)),
-                |_| Ok(true),
-            ),
-            Err(CellError::ForkInvalidWorld)
-        ),
-        "WORLD-ISOLATE-1: forked store refuses unwrapped main evaluate_question"
-    );
-    let fork_answer = stress
-        .cell
-        .store()
-        .evaluate_question_in_fork(&volume, context(CLOCK.saturating_add(10_000_000)), |_| {
-            Ok(true)
-        })
-        .map_err(|e| format!("fork evaluate: {e}"))?;
-    assert!(
-        fork_answer.simulated,
-        "FORK-PIN-1: fork answer is labeled simulated"
-    );
-    assert_eq!(
-        total(&fork_answer.result, &[WEEKS[0], "each"]).as_deref(),
-        Some("156"),
-        "120 + 30% in the fork"
-    );
-    assert!(
-        matches!(stress.cell.perform(), Ok(None)),
-        "an empty fork outbox has nothing to perform (the pack enqueues no commands)"
-    );
-    assert!(
-        matches!(
-            stress.cell.store().transparency_checkpoint(),
-            Err(CellError::ForkEvidenceForbidden)
-        ),
-        "FORK-EVIDENCE-1"
-    );
-    let minted = stress.head()?.commits;
-    assert!(matches!(
-        stress.cell.store().export_record(minted),
-        Err(CellError::ForkEvidenceForbidden)
-    ));
+    assert_axis7_fork_isolation(&mut stress, &volume)?;
     stress.cell = main_cell;
     assert_eq!(
         stress
@@ -1955,6 +1913,51 @@ fn axis7_port_strike_fork_never_interferes_with_main() -> Result<(), String> {
         .read()
         .verify_ledger()
         .map_err(|e| format!("verify_ledger: {e}"))?;
+    Ok(())
+}
+
+fn assert_axis7_fork_isolation(stress: &mut Stress, volume: &QuestionPlan) -> Result<(), String> {
+    let query_ctx = context(CLOCK.saturating_add(10_000_000));
+    assert!(
+        matches!(
+            stress
+                .cell
+                .store()
+                .evaluate_question(volume, query_ctx.clone(), |_| Ok(true)),
+            Err(CellError::ForkInvalidWorld)
+        ),
+        "WORLD-ISOLATE-1: forked store refuses unwrapped main evaluate_question"
+    );
+    let fork_answer = stress
+        .cell
+        .store()
+        .evaluate_question_in_fork(volume, query_ctx, |_| Ok(true))
+        .map_err(|e| format!("fork evaluate: {e}"))?;
+    assert!(
+        fork_answer.simulated,
+        "FORK-PIN-1: fork answer is labeled simulated"
+    );
+    assert_eq!(
+        total(&fork_answer.result, &[WEEKS[0], "each"]).as_deref(),
+        Some("156"),
+        "120 + 30% in the fork"
+    );
+    assert!(
+        matches!(stress.cell.perform(), Ok(None)),
+        "an empty fork outbox has nothing to perform (the pack enqueues no commands)"
+    );
+    assert!(
+        matches!(
+            stress.cell.store().transparency_checkpoint(),
+            Err(CellError::ForkEvidenceForbidden)
+        ),
+        "FORK-EVIDENCE-1"
+    );
+    let minted = stress.head()?.commits;
+    assert!(matches!(
+        stress.cell.store().export_record(minted),
+        Err(CellError::ForkEvidenceForbidden)
+    ));
     Ok(())
 }
 
