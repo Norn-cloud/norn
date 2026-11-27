@@ -564,6 +564,7 @@ fn prepare_action_fixture<H: PackHost>(
         ActionEffectProgram::FireTransition {
             lifecycle: lc_prop,
             transition: tr_id,
+            accept_receipt,
             ..
         } => {
             seed_transition_fixture(
@@ -578,6 +579,19 @@ fn prepare_action_fixture<H: PackHost>(
                 },
                 host,
             )?;
+            if let Some(binding) = accept_receipt {
+                let mut summary = JsonObject::new();
+                for (prop, member) in &binding.result_bindings {
+                    if let Some(val) = values.get(prop.as_str()).cloned() {
+                        summary.insert(member.as_str().to_owned(), val);
+                    }
+                }
+                if let Some(digest) =
+                    host.seed_accepted_receipt(obj_id, binding.manifest_digest.as_str(), summary)?
+                {
+                    values.insert(binding.reference_field.clone(), JsonValue::String(digest));
+                }
+            }
         }
         ActionEffectProgram::UpsertInputObject { .. }
         | ActionEffectProgram::MutateParentWithRows { .. } => {

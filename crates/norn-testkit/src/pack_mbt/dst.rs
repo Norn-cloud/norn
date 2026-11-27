@@ -428,11 +428,10 @@ impl<H: PackHost> DstCaseState<'_, H> {
         };
         if let Some(outcome) = seed_stamped(self.host, pack, catalog, ty, &id, &values, nonce)? {
             return self.finish_create_step(
-                CreateStepOutcome {
-                    before: outcome.before_commit,
-                    ..meta
-                },
+                meta,
                 outcome.result,
+                outcome.before_commit,
+                outcome.commits,
             );
         } else if graph.direct_links.is_empty() {
             let res = self.commit_single_fact(
@@ -444,7 +443,7 @@ impl<H: PackHost> DstCaseState<'_, H> {
                     values,
                 },
             )?;
-            return self.finish_create_step(meta, res);
+            return self.finish_create_step(meta, res, before, 1);
         }
 
         self.step_create_linked(meta, graph)
@@ -590,6 +589,8 @@ impl<H: PackHost> DstCaseState<'_, H> {
         &mut self,
         meta: CreateStepOutcome<'_>,
         res: Result<(), DecisionRefusal<H::Error>>,
+        before: usize,
+        commits: usize,
     ) -> Result<(), String> {
         let CreateStepOutcome {
             id_pair,
@@ -599,12 +600,12 @@ impl<H: PackHost> DstCaseState<'_, H> {
             values,
             required_links,
             already_exists,
-            before,
+            ..
         } = meta;
         match (already_exists, res) {
             (false, Ok(())) => {
-                if self.host.ledger_len() != before.saturating_add(1) {
-                    return Err("create did not append 1 ledger entry".to_owned());
+                if self.host.ledger_len() != before.saturating_add(commits) {
+                    return Err(format!("create did not append {commits} ledger entry(s)"));
                 }
                 let expected_values = self
                     .catalog
@@ -615,7 +616,7 @@ impl<H: PackHost> DstCaseState<'_, H> {
                     RefEntity {
                         state: init_state.to_owned(),
                         values: expected_values,
-                        version: FactVersion(1),
+                        version: FactVersion(u64::try_from(commits).unwrap_or(1)),
                         required_links,
                     },
                 );
