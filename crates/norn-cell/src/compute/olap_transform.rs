@@ -247,6 +247,7 @@ fn sql(tree: &RowExpr, schema: &NodeSchema) -> Result<String, CellError> {
             sql(then, schema)?,
             sql(otherwise, schema)?
         ),
+        RowExpr::CalendarDate(_) | RowExpr::Timestamp(_) => return unsupported(),
     })
 }
 

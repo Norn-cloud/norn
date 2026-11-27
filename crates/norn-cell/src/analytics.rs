@@ -679,20 +679,26 @@ pub enum RowPredicate {
     Equal(Box<RowPredicate>, Box<RowPredicate>),
     /// `x != y`.
     NotEqual(Box<RowPredicate>, Box<RowPredicate>),
-    /// `x < y`, on numbers.
+    /// `x < y`, on numbers, civil dates, or timestamps.
     Less(Box<RowPredicate>, Box<RowPredicate>),
-    /// `x <= y`, on numbers.
+    /// `x <= y`, on numbers, civil dates, or timestamps.
     LessOrEqual(Box<RowPredicate>, Box<RowPredicate>),
-    /// `x > y`, on numbers.
+    /// `x > y`, on numbers, civil dates, or timestamps.
     Greater(Box<RowPredicate>, Box<RowPredicate>),
-    /// `x >= y`, on numbers.
+    /// `x >= y`, on numbers, civil dates, or timestamps.
     GreaterOrEqual(Box<RowPredicate>, Box<RowPredicate>),
     /// `x and y`.
     And(Box<RowPredicate>, Box<RowPredicate>),
     /// `x or y`.
     Or(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x ?? y`.
+    Coalesce(Box<RowPredicate>, Box<RowPredicate>),
     /// `c ? x : y`.
     Conditional(Box<RowPredicate>, Box<RowPredicate>, Box<RowPredicate>),
+    /// `date(x)`: civil calendar date (`YYYY-MM-DD`, years 0001..=9999).
+    Date(Box<RowPredicate>),
+    /// `timestamp(x)`: UTC instant (RFC 3339, local and UTC years 0001..=9999).
+    Timestamp(Box<RowPredicate>),
 }
 
 /// The kind of a [`RowPredicate`] node over a table.
@@ -706,6 +712,14 @@ pub enum PredicateKind {
     Text,
     /// An exact decimal with this many fractional digits.
     Number(u32),
+    /// A raw wire `YYYY-MM-DD` date column (compares as string; pass to `date(...)` to order).
+    DateText,
+    /// A raw wire RFC 3339 timestamp column (compares as string; pass to `timestamp(...)` to order).
+    TimestampText,
+    /// A parsed civil calendar date (`date(...)`).
+    Date,
+    /// A parsed UTC instant (`timestamp(...)`).
+    Timestamp,
 }
 
 /// The largest scale a lowered number may reach: past it the per-row

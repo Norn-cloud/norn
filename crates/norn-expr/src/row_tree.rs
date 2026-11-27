@@ -9,6 +9,7 @@
 //! members) projects to `None`, and the engine refuses rather than guess.
 //! The projection is syntax only: admission still owns types and bounds.
 
+use zen_expression::functions::{FunctionKind, InternalFunction};
 use zen_expression::lexer::{ArithmeticOperator, ComparisonOperator, LogicalOperator, Operator};
 use zen_expression::parser::Node;
 
@@ -71,6 +72,10 @@ pub enum RowExpr {
     Coalesce(Box<RowExpr>, Box<RowExpr>),
     /// `c ? x : y`.
     Conditional(Box<RowExpr>, Box<RowExpr>, Box<RowExpr>),
+    /// `date(x)`: civil calendar date.
+    CalendarDate(Box<RowExpr>),
+    /// `timestamp(x)`: UTC instant.
+    Timestamp(Box<RowExpr>),
 }
 
 /// Project `source` onto [`RowExpr`] with row reads rooted at `root`;
@@ -133,6 +138,22 @@ fn project(node: &Node<'_>, root: &str) -> Option<RowExpr> {
             boxed(on_true, root)?,
             boxed(on_false, root)?,
         ),
+        Node::FunctionCall { kind, arguments } => {
+            let [argument] = arguments else {
+                return None;
+            };
+            match kind {
+                FunctionKind::Internal(InternalFunction::CalendarDate) => {
+                    RowExpr::CalendarDate(boxed(argument, root)?)
+                }
+                FunctionKind::Internal(InternalFunction::Timestamp) => {
+                    RowExpr::Timestamp(boxed(argument, root)?)
+                }
+                FunctionKind::Internal(_)
+                | FunctionKind::Closure(_)
+                | FunctionKind::Deprecated(_) => return None,
+            }
+        }
         Node::TemplateString(_)
         | Node::Pointer
         | Node::Array(_)
@@ -143,7 +164,6 @@ fn project(node: &Node<'_>, root: &str) -> Option<RowExpr> {
         | Node::Root
         | Node::Slice { .. }
         | Node::Interval { .. }
-        | Node::FunctionCall { .. }
         | Node::MethodCall { .. }
         | Node::Error { .. } => return None,
     })

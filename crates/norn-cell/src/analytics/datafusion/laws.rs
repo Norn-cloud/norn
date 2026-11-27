@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use unicode_normalization::UnicodeNormalization as _;
 
+use super::super::predicate::{FIRST_ZEN_SECOND, LAST_ZEN_SECOND, zen_date_key, zen_timestamp_key};
 use super::super::{ColumnKind, PredicateKind, RowPredicate, RuleCheck, TableSchema, row_fuel};
 use super::values::{Cell, Dec};
 use super::{Outcome, refusal};
@@ -54,6 +55,8 @@ enum Val {
     Bool(bool),
     Text(String),
     Num(Dec),
+    Date(i64),
+    Timestamp(i64, i32),
 }
 
 /// A predicate typed against the landing's own schema.
@@ -68,9 +71,62 @@ impl Typed<'_> {
     }
 
     fn scale_of(&self, node: &RowPredicate) -> Option<u32> {
-        match node.kind(self.table) {
+        match node.kind_nullable(self.table) {
             Some(PredicateKind::Number(scale)) => Some(scale),
-            Some(PredicateKind::Null | PredicateKind::Bool | PredicateKind::Text) | None => None,
+            Some(
+                PredicateKind::Null
+                | PredicateKind::Bool
+                | PredicateKind::Text
+                | PredicateKind::DateText
+                | PredicateKind::TimestampText
+                | PredicateKind::Date
+                | PredicateKind::Timestamp,
+            )
+            | None => None,
+        }
+    }
+
+    /// Evaluate a `date(...)` or `timestamp(...)` argument into its exact ZEN
+    /// temporal value, matching `Temporal::date` / `Temporal::timestamp`
+    /// (`0001..=9999` local and UTC range).
+    fn eval_temporal(&self, node: &RowPredicate, cells: &[Cell], is_date: bool) -> Option<Val> {
+        use RowPredicate as P;
+        match node {
+            P::Null => Some(Val::Null),
+            P::Text(lit) => {
+                if is_date {
+                    zen_date_key(lit).map(Val::Date)
+                } else {
+                    let (secs, nanos) = zen_timestamp_key(lit)?;
+                    Some(Val::Timestamp(secs, i32::try_from(nanos).ok()?))
+                }
+            }
+            P::Column(id) => match cells.get(self.index(id)?)? {
+                Cell::Null => Some(Val::Null),
+                Cell::Instant { text, t, n } => {
+                    if !text.get(..4).is_some_and(|year| year >= "0001")
+                        || !(FIRST_ZEN_SECOND..=LAST_ZEN_SECOND).contains(t)
+                    {
+                        return None;
+                    }
+                    if is_date {
+                        Some(Val::Date(*t))
+                    } else {
+                        Some(Val::Timestamp(*t, *n))
+                    }
+                }
+                Cell::Text(_) | Cell::Bool(_) | Cell::Dec(_) => None,
+            },
+            P::Coalesce(a, b) => match self.eval_temporal(a, cells, is_date)? {
+                Val::Null => self.eval_temporal(b, cells, is_date),
+                value => Some(value),
+            },
+            P::Conditional(c, a, b) => match self.eval(c, cells)? {
+                Val::Bool(true) => self.eval_temporal(a, cells, is_date),
+                Val::Bool(false) => self.eval_temporal(b, cells, is_date),
+                Val::Null | Val::Text(_) | Val::Num(_) | Val::Date(_) | Val::Timestamp(_) => None,
+            },
+            _ => None,
         }
     }
 
@@ -90,14 +146,18 @@ impl Typed<'_> {
             },
             P::Not(inner) => match self.eval(inner, cells)? {
                 Val::Bool(flag) => Val::Bool(!flag),
-                Val::Null | Val::Text(_) | Val::Num(_) => return None,
+                Val::Null | Val::Text(_) | Val::Num(_) | Val::Date(_) | Val::Timestamp(_) => {
+                    return None;
+                }
             },
             P::Negate(inner) => match self.eval(inner, cells)? {
                 Val::Num(value) => Val::Num(Dec {
                     m: value.m.checked_neg()?,
                     s: value.s,
                 }),
-                Val::Null | Val::Bool(_) | Val::Text(_) => return None,
+                Val::Null | Val::Bool(_) | Val::Text(_) | Val::Date(_) | Val::Timestamp(_) => {
+                    return None;
+                }
             },
             P::Add(a, b) => {
                 let (left, right) = self.numbers(a, b, cells)?;
@@ -122,6 +182,8 @@ impl Typed<'_> {
                     (Val::Num(left), Val::Num(right)) => left.compare(right).is_eq(),
                     (Val::Text(left), Val::Text(right)) => left == right,
                     (Val::Bool(left), Val::Bool(right)) => left == right,
+                    (Val::Date(left), Val::Date(right)) => left == right,
+                    (Val::Timestamp(lt, ln), Val::Timestamp(rt, rn)) => (lt, ln) == (rt, rn),
                     _ => return None,
                 };
                 Val::Bool(same == equal)
@@ -142,10 +204,24 @@ impl Typed<'_> {
                     left || right
                 })
             }
+            P::Coalesce(a, b) => match self.eval(a, cells)? {
+                Val::Null => self.widen(self.eval(b, cells)?, node)?,
+                value => self.widen(value, node)?,
+            },
             P::Conditional(c, a, b) => match self.eval(c, cells)? {
                 Val::Bool(true) => self.widen(self.eval(a, cells)?, node)?,
-                Val::Bool(false) | Val::Null => self.widen(self.eval(b, cells)?, node)?,
-                Val::Text(_) | Val::Num(_) => return None,
+                Val::Bool(false) => self.widen(self.eval(b, cells)?, node)?,
+                Val::Null | Val::Text(_) | Val::Num(_) | Val::Date(_) | Val::Timestamp(_) => {
+                    return None;
+                }
+            },
+            P::Date(inner) => match self.eval_temporal(inner, cells, true)? {
+                value @ Val::Date(_) => value,
+                _ => return None,
+            },
+            P::Timestamp(inner) => match self.eval_temporal(inner, cells, false)? {
+                value @ Val::Timestamp(_, _) => value,
+                _ => return None,
             },
         })
     }
@@ -158,18 +234,22 @@ impl Typed<'_> {
         }
     }
 
-    /// The exact order of two numeric operands.
+    /// The exact order of two numeric, civil-date, or UTC-instant operands.
     fn order(
         &self,
         a: &RowPredicate,
         b: &RowPredicate,
         cells: &[Cell],
     ) -> Option<std::cmp::Ordering> {
-        self.numbers(a, b, cells)
-            .map(|(left, right)| left.compare(right))
+        match (self.eval(a, cells)?, self.eval(b, cells)?) {
+            (Val::Num(left), Val::Num(right)) => Some(left.compare(right)),
+            (Val::Date(left), Val::Date(right)) => Some(left.cmp(&right)),
+            (Val::Timestamp(lt, ln), Val::Timestamp(rt, rn)) => Some((lt, ln).cmp(&(rt, rn))),
+            _ => None,
+        }
     }
 
-    /// A conditional's branch at the conditional's own scale.
+    /// A conditional or coalesce branch at the node's own scale.
     fn widen(&self, value: Val, node: &RowPredicate) -> Option<Val> {
         match (value, self.scale_of(node)) {
             (Val::Num(value), Some(scale)) => Some(Val::Num(value.rescale(scale)?)),
@@ -177,8 +257,44 @@ impl Typed<'_> {
         }
     }
 
+    /// Guards for a `date(...)` / `timestamp(...)` argument tree (matching
+    /// DuckDB's `lower_temporal` guards on every branch so residue sets agree).
+    fn temporal_guards(&self, node: &RowPredicate, cells: &[Cell], is_date: bool) -> bool {
+        use RowPredicate as P;
+        match node {
+            P::Null => true,
+            P::Text(lit) => {
+                if is_date {
+                    zen_date_key(lit).is_some()
+                } else {
+                    zen_timestamp_key(lit).is_some()
+                }
+            }
+            P::Column(id) => self
+                .index(id)
+                .and_then(|idx| cells.get(idx))
+                .is_some_and(|cell| match cell {
+                    Cell::Instant { text, t, .. } => {
+                        text.get(..4).is_some_and(|year| year >= "0001")
+                            && (FIRST_ZEN_SECOND..=LAST_ZEN_SECOND).contains(t)
+                    }
+                    Cell::Null | Cell::Text(_) | Cell::Bool(_) | Cell::Dec(_) => false,
+                }),
+            P::Coalesce(a, b) => {
+                self.temporal_guards(a, cells, is_date) && self.temporal_guards(b, cells, is_date)
+            }
+            P::Conditional(c, a, b) => {
+                self.guards(c, cells)
+                    && self.temporal_guards(a, cells, is_date)
+                    && self.temporal_guards(b, cells, is_date)
+            }
+            _ => false,
+        }
+    }
+
     /// Every guard of the tree holds over `cells`: each number in the
-    /// per-row range at its scale, each text NFC.
+    /// per-row range at its scale, each text NFC, each parsed temporal in
+    /// years `0001..=9999`.
     fn guards(&self, node: &RowPredicate, cells: &[Cell]) -> bool {
         use RowPredicate as P;
         let in_range = |n: &RowPredicate| match (self.eval(n, cells), self.scale_of(n)) {
@@ -197,8 +313,18 @@ impl Typed<'_> {
             P::Column(_) => match node.kind(self.table) {
                 Some(PredicateKind::Number(_)) => in_range(node),
                 Some(PredicateKind::Text) => nfc(node),
-                Some(PredicateKind::Null | PredicateKind::Bool) | None => true,
+                Some(
+                    PredicateKind::Null
+                    | PredicateKind::Bool
+                    | PredicateKind::DateText
+                    | PredicateKind::TimestampText
+                    | PredicateKind::Date
+                    | PredicateKind::Timestamp,
+                )
+                | None => true,
             },
+            P::Date(inner) => return self.temporal_guards(inner, cells, true),
+            P::Timestamp(inner) => return self.temporal_guards(inner, cells, false),
             P::Null
             | P::Bool(_)
             | P::Not(_)
@@ -211,6 +337,7 @@ impl Typed<'_> {
             | P::GreaterOrEqual(..)
             | P::And(..)
             | P::Or(..)
+            | P::Coalesce(..)
             | P::Conditional(..) => true,
         };
         own && children(node).iter().all(|child| self.guards(child, cells))
@@ -221,7 +348,7 @@ fn children(node: &RowPredicate) -> Vec<&RowPredicate> {
     use RowPredicate as P;
     match node {
         P::Null | P::Bool(_) | P::Number(_) | P::Text(_) | P::Column(_) => Vec::new(),
-        P::Not(inner) | P::Negate(inner) => vec![inner],
+        P::Not(inner) | P::Negate(inner) | P::Date(inner) | P::Timestamp(inner) => vec![inner],
         P::Add(a, b)
         | P::Subtract(a, b)
         | P::Multiply(a, b)
@@ -232,7 +359,8 @@ fn children(node: &RowPredicate) -> Vec<&RowPredicate> {
         | P::Greater(a, b)
         | P::GreaterOrEqual(a, b)
         | P::And(a, b)
-        | P::Or(a, b) => vec![a, b],
+        | P::Or(a, b)
+        | P::Coalesce(a, b) => vec![a, b],
         P::Conditional(c, a, b) => vec![c, a, b],
     }
 }
@@ -242,20 +370,31 @@ fn value_size(node: &RowPredicate, table: &TableSchema, cells: &[Cell]) -> u128 
     use RowPredicate as P;
     match node {
         P::Text(text) => u128::try_from(text.len().max(1)).unwrap_or(u128::MAX),
-        P::Column(id) if node.kind(table) == Some(PredicateKind::Text) => table
-            .columns
-            .iter()
-            .position(|c| c.id == *id)
-            .and_then(|i| cells.get(i))
-            .and_then(Cell::as_str)
-            .map_or(0, |text| u128::try_from(text.len()).unwrap_or(u128::MAX)),
-        P::Conditional(_, a, b) => value_size(a, table, cells).max(value_size(b, table, cells)),
+        P::Column(id)
+            if matches!(
+                node.kind(table),
+                Some(PredicateKind::Text | PredicateKind::DateText | PredicateKind::TimestampText)
+            ) =>
+        {
+            table
+                .columns
+                .iter()
+                .position(|c| c.id == *id)
+                .and_then(|i| cells.get(i))
+                .and_then(Cell::as_str)
+                .map_or(0, |text| u128::try_from(text.len()).unwrap_or(u128::MAX))
+        }
+        P::Coalesce(a, b) | P::Conditional(_, a, b) => {
+            value_size(a, table, cells).max(value_size(b, table, cells))
+        }
         P::Null
         | P::Bool(_)
         | P::Number(_)
         | P::Column(_)
         | P::Not(_)
         | P::Negate(_)
+        | P::Date(_)
+        | P::Timestamp(_)
         | P::Add(..)
         | P::Subtract(..)
         | P::Multiply(..)
@@ -276,6 +415,10 @@ fn data_fuel(node: &RowPredicate, table: &TableSchema, cells: &[Cell]) -> u128 {
     match node {
         P::Null | P::Bool(_) | P::Number(_) | P::Text(_) | P::Column(_) => 0,
         P::Not(inner) | P::Negate(inner) => data_fuel(inner, table, cells),
+        P::Date(inner) | P::Timestamp(inner) => {
+            data_fuel(inner, table, cells).saturating_add(value_size(inner, table, cells))
+        }
+        P::Coalesce(a, b) => data_fuel(a, table, cells).saturating_add(data_fuel(b, table, cells)),
         P::Conditional(c, a, b) => data_fuel(c, table, cells)
             .saturating_add(data_fuel(a, table, cells))
             .saturating_add(data_fuel(b, table, cells)),
@@ -316,9 +459,15 @@ fn type_check<'c>(check: &'c RuleCheck, table: &TableSchema) -> Outcome<Check<'c
     let boolean = |node: &RowPredicate, what: &str| match node.kind(table) {
         None => Err(refusal(LAW, "a rule the engine does not type")),
         Some(PredicateKind::Bool) => Ok(()),
-        Some(PredicateKind::Null | PredicateKind::Text | PredicateKind::Number(_)) => {
-            Err(refusal(LAW, format!("a rule whose {what} is not Boolean")))
-        }
+        Some(
+            PredicateKind::Null
+            | PredicateKind::Text
+            | PredicateKind::Number(_)
+            | PredicateKind::DateText
+            | PredicateKind::TimestampText
+            | PredicateKind::Date
+            | PredicateKind::Timestamp,
+        ) => Err(refusal(LAW, format!("a rule whose {what} is not Boolean"))),
     };
     boolean(predicate, "predicate")?;
     if let Some(condition) = &check.condition {

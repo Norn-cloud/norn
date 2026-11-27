@@ -67,7 +67,8 @@ fn lower_and_count(source: &str, table: &TableSchema) -> (Option<RowPredicate>, 
         return (None, 0);
     };
     let nodes = tree_nodes(&tree);
-    let predicate = lower(&tree).filter(|lowered| lowered.kind(table).is_some());
+    let predicate = lower(&tree)
+        .filter(|lowered| lowered.kind(table) == Some(crate::analytics::PredicateKind::Bool));
     (predicate, nodes)
 }
 
@@ -78,7 +79,10 @@ fn tree_nodes(tree: &RowExpr) -> u64 {
         | RowExpr::Number(_)
         | RowExpr::Text(_)
         | RowExpr::Column(_) => 0,
-        RowExpr::Not(inner) | RowExpr::Negate(inner) => tree_nodes(inner),
+        RowExpr::Not(inner)
+        | RowExpr::Negate(inner)
+        | RowExpr::CalendarDate(inner)
+        | RowExpr::Timestamp(inner) => tree_nodes(inner),
         RowExpr::Arithmetic(_, a, b)
         | RowExpr::Compare(_, a, b)
         | RowExpr::And(a, b)
@@ -129,20 +133,17 @@ fn lower(tree: &RowExpr) -> Option<RowPredicate> {
             let (a, b) = pair(a, b)?;
             P::Or(a, b)
         }
-        // `x ?? y` reads `y` only where `x` is null, and a row with a null
-        // read is residue, so over every row the engine decides it is `x`.
         RowExpr::Coalesce(a, b) => {
-            if matches!(a.as_ref(), RowExpr::Null) {
-                lower(b)?
-            } else {
-                lower(a)?
-            }
+            let (a, b) = pair(a, b)?;
+            P::Coalesce(a, b)
         }
         RowExpr::Conditional(c, a, b) => P::Conditional(
             Box::new(lower(c)?),
             Box::new(lower(a)?),
             Box::new(lower(b)?),
         ),
+        RowExpr::CalendarDate(inner) => P::Date(Box::new(lower(inner)?)),
+        RowExpr::Timestamp(inner) => P::Timestamp(Box::new(lower(inner)?)),
     })
 }
 
@@ -153,19 +154,111 @@ const fn severity_of(law: LawSeverity) -> DataQualitySeverity {
     }
 }
 
-/// Lower one governing law's response (and optional `when` condition) into the
-/// engine's typed row predicates plus its static fuel bound. Predicate laws
-/// with `exceptions` return `(None, None)` so every row settles via the
-/// per-row evaluator's `law_exceptions::fold`, charging `RULE_FUEL` per
-/// exception condition for its eager per-row `TurnFuel` evaluation.
-fn lower_law_response(
+/// Unified set-based evaluation plan for one governing law or invariant over a
+/// dataset table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowPlan {
+    /// Optional activation condition, folding any row-tree `when` condition
+    /// and `unless` exception tree into `when AND NOT lifted(exceptions)`.
+    pub condition: Option<RowPredicate>,
+    /// Lowered Boolean response predicate, or `None` when any required piece
+    /// falls outside the exact SQL row subset (all rows settle per-row).
+    pub predicate: Option<RowPredicate>,
+    /// MANIFEST-LAWS-1 (S2): static fuel upper bound covering the rule, its
+    /// nodes, and eager exception-condition evaluation.
+    pub fuel: u64,
+}
+
+/// Fold an admitted, acyclic exception tree rooted at `law_id` into a single
+/// Boolean [`RowPredicate`] computing `lifted(law_id)` (exact match with
+/// `norn_checker::law_exceptions::fold`).
+fn fold_exception_tree(
+    law_id: &str,
+    exceptions: &[norn_ir::LawException],
+    conditions: &[RowPredicate],
+) -> Option<RowPredicate> {
+    if exceptions.is_empty() || exceptions.len() != conditions.len() {
+        return None;
+    }
+    let mut children: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (index, exception) in exceptions.iter().enumerate() {
+        children
+            .entry(exception.overrides.as_str())
+            .or_default()
+            .push(index);
+    }
+
+    fn disjoin(mut items: Vec<RowPredicate>) -> Option<RowPredicate> {
+        let mut iter = items.drain(..);
+        let first = iter.next()?;
+        Some(iter.fold(first, |acc, item| {
+            RowPredicate::Or(Box::new(acc), Box::new(item))
+        }))
+    }
+
+    fn lifted_under(
+        parent: &str,
+        exceptions: &[norn_ir::LawException],
+        conditions: &[RowPredicate],
+        children: &BTreeMap<&str, Vec<usize>>,
+        depth: usize,
+    ) -> Option<RowPredicate> {
+        if depth > exceptions.len() {
+            return None;
+        }
+        let mut branches = Vec::new();
+        for &index in children.get(parent).into_iter().flatten() {
+            let exception = exceptions.get(index)?;
+            let cond = conditions.get(index)?.clone();
+            let branch = match lifted_under(
+                exception.id.as_str(),
+                exceptions,
+                conditions,
+                children,
+                depth.saturating_add(1),
+            ) {
+                Some(overridden) => RowPredicate::And(
+                    Box::new(cond),
+                    Box::new(RowPredicate::Not(Box::new(overridden))),
+                ),
+                None => cond,
+            };
+            branches.push(branch);
+        }
+        disjoin(branches)
+    }
+
+    lifted_under(law_id, exceptions, conditions, &children, 0)
+}
+
+/// Plan one object/interface invariant over `table`.
+#[must_use]
+pub fn plan_invariant(source: &str, table: &TableSchema) -> RowPlan {
+    let (predicate, nodes) = lower_and_count(source, table);
+    RowPlan {
+        condition: None,
+        predicate,
+        fuel: rule_fuel(nodes),
+    }
+}
+
+/// Plan one governing law's response, optional `when` condition, and optional
+/// `unless` exception tree into a unified [`RowPlan`].
+///
+/// When `law.condition`, every `exception.condition`, and the response
+/// expression all lower into the typed Boolean [`RowPredicate`] subset (within
+/// predicate depth), the exception tree is folded into
+/// `effective_condition = when AND NOT lifted(exceptions)` so the engine
+/// decides rows set-based with zero residue. Otherwise the plan falls back to
+/// `(None, None)` while retaining its full static fuel bound.
+fn plan_law(
     law: &norn_ir::LawIR,
     invariants: &[(norn_ir::InvariantOwner, &norn_ir::Invariant)],
     table: &TableSchema,
-) -> Result<(Option<RowPredicate>, Option<RowPredicate>, u64), CellError> {
+) -> Result<RowPlan, CellError> {
     let (condition, predicate, nodes, extra_fuel) = match &law.response {
         LawResponse::Predicate { expression } => {
-            let (condition, cond_nodes) = match &law.condition {
+            let (when_cond, cond_nodes) = match &law.condition {
                 Some(condition) => {
                     let (lowered, nodes) = lower_and_count(condition.as_str(), table);
                     (lowered.map(Some), nodes)
@@ -175,14 +268,20 @@ fn lower_law_response(
             let (expr_pred, expr_nodes) = lower_and_count(expression.as_str(), table);
             let mut nodes = expr_nodes.saturating_add(cond_nodes);
             if law.exceptions.is_empty() {
-                match condition {
+                match when_cond {
                     Some(condition) => (condition, expr_pred, nodes, 0),
                     None => (None, None, nodes, 0),
                 }
             } else {
+                let mut ex_preds = Vec::with_capacity(law.exceptions.len());
+                let mut all_exceptions_lowered = true;
                 for exception in &law.exceptions {
-                    let (_, ex_nodes) = lower_and_count(exception.condition.as_str(), table);
+                    let (lowered, ex_nodes) = lower_and_count(exception.condition.as_str(), table);
                     nodes = nodes.saturating_add(ex_nodes);
+                    match lowered {
+                        Some(pred) => ex_preds.push(pred),
+                        None => all_exceptions_lowered = false,
+                    }
                 }
                 // `governing_laws::exception_lifts` evaluates each exception's
                 // condition eagerly under `TurnFuel`, adding one rule entry
@@ -190,7 +289,24 @@ fn lower_law_response(
                 let extra = u64::try_from(law.exceptions.len())
                     .unwrap_or(u64::MAX)
                     .saturating_mul(RULE_FUEL);
-                (None, None, nodes, extra)
+                let folded = if all_exceptions_lowered {
+                    when_cond.zip(expr_pred).and_then(|(when, predicate)| {
+                        let lifted = fold_exception_tree(&law.id, &law.exceptions, &ex_preds)?;
+                        let not_lifted = RowPredicate::Not(Box::new(lifted));
+                        let effective = match when {
+                            Some(when) => RowPredicate::And(Box::new(when), Box::new(not_lifted)),
+                            None => not_lifted,
+                        };
+                        (effective.kind(table) == Some(crate::analytics::PredicateKind::Bool))
+                            .then_some((Some(effective), Some(predicate)))
+                    })
+                } else {
+                    None
+                };
+                match folded {
+                    Some((condition, predicate)) => (condition, predicate, nodes, extra),
+                    None => (None, None, nodes, extra),
+                }
             }
         }
         LawResponse::Invariant { invariant_id, .. } => {
@@ -208,11 +324,11 @@ fn lower_law_response(
             return Err(refused(format!("{}: unsupported law semantics", law.id)));
         }
     };
-    Ok((
+    Ok(RowPlan {
         condition,
         predicate,
-        rule_fuel(nodes).saturating_add(extra_fuel),
-    ))
+        fuel: rule_fuel(nodes).saturating_add(extra_fuel),
+    })
 }
 
 impl<E: SqlEngine> CellStore<E> {
@@ -255,15 +371,15 @@ impl<E: SqlEngine> CellStore<E> {
                 norn_ir::ConstraintClass::Integrity => DataQualitySeverity::Error,
                 norn_ir::ConstraintClass::Quality => DataQualitySeverity::Warning,
             };
-            let (predicate, nodes) = lower_and_count(invariant.expression.as_str(), table);
+            let plan = plan_invariant(invariant.expression.as_str(), table);
             checks.push(RuleCheck {
                 rule: rule_key(&rule_ref)?,
                 label: format!("invariant:{}", invariant.id.as_str()),
                 holds: quarantines(&rule_ref, severity)?,
-                condition: None,
-                predicate,
+                condition: plan.condition,
+                predicate: plan.predicate,
                 expect: true,
-                fuel: rule_fuel(nodes),
+                fuel: plan.fuel,
             });
         }
         let laws = catalog
@@ -272,16 +388,16 @@ impl<E: SqlEngine> CellStore<E> {
         for artifact in laws {
             let (law, rule_ref) = norn_kernel::governing_laws::law_rule(&catalog, &name, artifact)
                 .map_err(|error| refused(error.to_string()))?;
-            let (condition, predicate, fuel) = lower_law_response(&law, &invariants, table)?;
+            let plan = plan_law(&law, &invariants, table)?;
             let severity = severity_of(law.severity);
             checks.push(RuleCheck {
                 rule: rule_key(&rule_ref)?,
                 label: format!("law:{}", law.id),
                 holds: quarantines(&rule_ref, severity)?,
-                condition,
-                predicate,
+                condition: plan.condition,
+                predicate: plan.predicate,
                 expect: matches!(law.modality, LawModality::Always {}),
-                fuel,
+                fuel: plan.fuel,
             });
         }
         // S2: the per-row evaluator charges a row one unit per typed

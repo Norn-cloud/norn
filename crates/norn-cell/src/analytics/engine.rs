@@ -21,6 +21,9 @@ use transparency_sha2::{Digest as _, Sha256};
 
 pub use super::backend::StoreBody;
 use super::backend::{AnalyticalEngineId, ReadSnapshot, SnapshotProvenance};
+use super::predicate::{
+    FIRST_ZEN_SECOND, LAST_ZEN_SECOND, instant_nanos, zen_date_key, zen_timestamp_key,
+};
 use super::store_body::{legacy_land_response, legacy_store_request};
 use super::{
     BucketTotals, Column, ColumnKind, ColumnProfile, EngineRefusal, EvaluateRequest,
@@ -3396,12 +3399,16 @@ fn predicate_sql(predicate: &RowPredicate, table: &TableSchema) -> Outcome<Lower
     lower_node(predicate, table)
 }
 
-/// A literal or column read: its SQL and the guard a number needs.
+/// A literal or column read: its SQL and the guard a number or text needs.
 fn lower_leaf(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> {
     use PredicateKind as K;
     use RowPredicate as P;
     Ok(match node {
-        P::Null => return Err(refusal(LAW, "null outside an equality")),
+        P::Null => LoweredRule {
+            sql: Frag::raw("NULL"),
+            kind: K::Null,
+            guards: Vec::new(),
+        },
         P::Bool(flag) => LoweredRule {
             sql: Frag::raw(if *flag { "TRUE" } else { "FALSE" }),
             kind: K::Bool,
@@ -3439,7 +3446,9 @@ fn lower_leaf(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> 
             let guards = match kind {
                 K::Number(scale) => vec![in_range(&sql, scale)?],
                 K::Text => vec![nfc_guard(&sql)],
-                K::Null | K::Bool => Vec::new(),
+                K::Null | K::Bool | K::DateText | K::TimestampText | K::Date | K::Timestamp => {
+                    Vec::new()
+                }
             };
             LoweredRule { sql, kind, guards }
         }
@@ -3456,11 +3465,153 @@ fn lower_leaf(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> 
         | P::GreaterOrEqual(..)
         | P::And(..)
         | P::Or(..)
-        | P::Conditional(..) => return Err(refusal(LAW, "not a literal or a column")),
+        | P::Coalesce(..)
+        | P::Conditional(..)
+        | P::Date(_)
+        | P::Timestamp(_) => return Err(refusal(LAW, "not a literal or a column")),
     })
 }
 
-/// `a == b` or `a != b`; against `null` it is a null test.
+fn merge_kinds_sql(left: PredicateKind, right: PredicateKind) -> Option<PredicateKind> {
+    use PredicateKind as K;
+    match (left, right) {
+        (K::Null, other) | (other, K::Null) => Some(other),
+        (K::Number(a), K::Number(b)) => Some(K::Number(a.max(b))),
+        (K::DateText, K::Text)
+        | (K::Text, K::DateText)
+        | (K::TimestampText, K::Text)
+        | (K::Text, K::TimestampText) => Some(K::Text),
+        (a, b) if a == b => Some(a),
+        _ => None,
+    }
+}
+
+fn lower_temporal_leaf(
+    node: &RowPredicate,
+    table: &TableSchema,
+    is_date: bool,
+) -> Outcome<LoweredRule> {
+    use PredicateKind as K;
+    use RowPredicate as P;
+    let target = if is_date { K::Date } else { K::Timestamp };
+    Ok(match node {
+        P::Null => LoweredRule {
+            sql: Frag::raw("NULL"),
+            kind: K::Null,
+            guards: Vec::new(),
+        },
+        P::Text(lit) => {
+            let sql = if is_date {
+                let secs = zen_date_key(lit)
+                    .ok_or_else(|| refusal(LAW, "an invalid calendar date literal"))?;
+                Frag::bind("CAST(? AS BIGINT)", Sql::BigInt(secs))
+            } else {
+                let (secs, nanos) = zen_timestamp_key(lit)
+                    .ok_or_else(|| refusal(LAW, "an invalid timestamp literal"))?;
+                Frag::bind(
+                    "CAST(? AS HUGEINT)",
+                    Sql::Text(instant_nanos(secs, nanos).to_string()),
+                )
+            };
+            LoweredRule {
+                sql,
+                kind: target,
+                guards: Vec::new(),
+            }
+        }
+        P::Column(id) => {
+            let expected = if is_date {
+                ColumnKind::Date
+            } else {
+                ColumnKind::Timestamp
+            };
+            let matched = table
+                .columns
+                .iter()
+                .find(|c| c.id == *id)
+                .is_some_and(|c| c.kind == expected);
+            if !matched {
+                return Err(refusal(
+                    LAW,
+                    format!("column {id} is not a temporal column"),
+                ));
+            }
+            let col = ident(id);
+            let t = derived(id, "t");
+            let n = derived(id, "n");
+            let guard = Frag::raw(format!(
+                "({col} >= '0001' AND {t} >= {FIRST_ZEN_SECOND} AND {t} <= {LAST_ZEN_SECOND})"
+            ));
+            let sql = if is_date {
+                Frag::raw(t)
+            } else {
+                Frag::raw(format!(
+                    "(CAST({t} AS HUGEINT) * 1000000000 + CAST({n} AS HUGEINT))"
+                ))
+            };
+            LoweredRule {
+                sql,
+                kind: target,
+                guards: vec![guard],
+            }
+        }
+        _ => return Err(refusal(LAW, "unsupported temporal argument")),
+    })
+}
+
+/// Lower the argument tree of `date(...)` (`is_date = true`, `BIGINT` UTC
+/// midnight seconds) or `timestamp(...)` (`is_date = false`, `HUGEINT`
+/// order-isomorphic UTC nanoseconds) with exact ZEN `0001..=9999` guards.
+fn lower_temporal(node: &RowPredicate, table: &TableSchema, is_date: bool) -> Outcome<LoweredRule> {
+    use PredicateKind as K;
+    use RowPredicate as P;
+    Ok(match node {
+        P::Null | P::Text(_) | P::Column(_) => lower_temporal_leaf(node, table, is_date)?,
+        P::Coalesce(a, b) => {
+            let (a, b) = (
+                lower_temporal(a, table, is_date)?,
+                lower_temporal(b, table, is_date)?,
+            );
+            let kind = merge_kinds_sql(a.kind, b.kind)
+                .ok_or_else(|| refusal(LAW, "a temporal coalesce the engine does not type"))?;
+            let mut guards = a.guards;
+            guards.extend(b.guards);
+            let sql = if a.kind == K::Null && b.kind == K::Null {
+                Frag::raw("NULL")
+            } else {
+                Frag::fmt("COALESCE({}, {})", &[&a.sql, &b.sql])
+            };
+            LoweredRule { sql, kind, guards }
+        }
+        P::Conditional(c, a, b) => {
+            let c = lower_node(c, table)?;
+            if c.kind != K::Bool {
+                return Err(refusal(LAW, "a temporal conditional with non-Boolean test"));
+            }
+            let (a, b) = (
+                lower_temporal(a, table, is_date)?,
+                lower_temporal(b, table, is_date)?,
+            );
+            let kind = merge_kinds_sql(a.kind, b.kind)
+                .ok_or_else(|| refusal(LAW, "a temporal conditional the engine does not type"))?;
+            let mut guards = c.guards;
+            guards.extend(a.guards);
+            guards.extend(b.guards);
+            LoweredRule {
+                sql: Frag::fmt(
+                    "(CASE WHEN {} THEN {} ELSE {} END)",
+                    &[&c.sql, &a.sql, &b.sql],
+                ),
+                kind,
+                guards,
+            }
+        }
+        _ => return Err(refusal(LAW, "unsupported temporal argument")),
+    })
+}
+
+/// `a == b` or `a != b`; uses SQL null-safe equality (`IS [NOT] DISTINCT FROM`)
+/// so dynamically nullable branches match ZEN's `null == null` / `null == x`.
 fn lower_equality(
     equal: bool,
     a: &RowPredicate,
@@ -3468,33 +3619,76 @@ fn lower_equality(
     table: &TableSchema,
 ) -> Outcome<LoweredRule> {
     use PredicateKind as K;
-    use RowPredicate as P;
-    Ok(match (a, b) {
-        (P::Null, P::Null) => LoweredRule {
-            sql: Frag::raw(if equal { "TRUE" } else { "FALSE" }),
-            kind: K::Bool,
-            guards: Vec::new(),
-        },
-        (P::Null, value) | (value, P::Null) => {
-            let value = lower_node(value, table)?;
+    let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
+    let mut guards = a.guards;
+    guards.extend(b.guards);
+    let sql = match (a.kind, b.kind) {
+        (K::Null, K::Null) => Frag::raw(if equal { "TRUE" } else { "FALSE" }),
+        (K::Null, _) => {
             let test = if equal { "IS NULL" } else { "IS NOT NULL" };
-            LoweredRule {
-                sql: Frag::fmt(&format!("({{}} {test})"), &[&value.sql]),
-                kind: K::Bool,
-                guards: value.guards,
-            }
+            Frag::fmt(&format!("({{}} {test})"), &[&b.sql])
         }
-        (a, b) => {
-            let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
-            let mut guards = a.guards;
-            guards.extend(b.guards);
-            let op = if equal { "=" } else { "<>" };
-            LoweredRule {
-                sql: Frag::fmt(&format!("({{}} {op} {{}})"), &[&a.sql, &b.sql]),
-                kind: K::Bool,
-                guards,
-            }
+        (_, K::Null) => {
+            let test = if equal { "IS NULL" } else { "IS NOT NULL" };
+            Frag::fmt(&format!("({{}} {test})"), &[&a.sql])
         }
+        _ => {
+            let op = if equal {
+                "IS NOT DISTINCT FROM"
+            } else {
+                "IS DISTINCT FROM"
+            };
+            Frag::fmt(&format!("({{}} {op} {{}})"), &[&a.sql, &b.sql])
+        }
+    };
+    Ok(LoweredRule {
+        sql,
+        kind: K::Bool,
+        guards,
+    })
+}
+
+fn lower_coalesce(a: &RowPredicate, b: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> {
+    let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
+    let kind = merge_kinds_sql(a.kind, b.kind)
+        .ok_or_else(|| refusal(LAW, "a coalesce the engine does not type"))?;
+    let mut guards = a.guards;
+    guards.extend(b.guards);
+    let sql = if a.kind == PredicateKind::Null && b.kind == PredicateKind::Null {
+        Frag::raw("NULL")
+    } else {
+        Frag::fmt("COALESCE({}, {})", &[&a.sql, &b.sql])
+    };
+    Ok(LoweredRule { sql, kind, guards })
+}
+
+fn lower_conditional(
+    c: &RowPredicate,
+    a: &RowPredicate,
+    b: &RowPredicate,
+    table: &TableSchema,
+) -> Outcome<LoweredRule> {
+    let (c, a, b) = (
+        lower_node(c, table)?,
+        lower_node(a, table)?,
+        lower_node(b, table)?,
+    );
+    let kind = if c.kind == PredicateKind::Bool {
+        merge_kinds_sql(a.kind, b.kind)
+    } else {
+        None
+    }
+    .ok_or_else(|| refusal(LAW, "a conditional the engine does not type"))?;
+    let mut guards = c.guards;
+    guards.extend(a.guards);
+    guards.extend(b.guards);
+    Ok(LoweredRule {
+        sql: Frag::fmt(
+            "(CASE WHEN {} THEN {} ELSE {} END)",
+            &[&c.sql, &a.sql, &b.sql],
+        ),
+        kind,
+        guards,
     })
 }
 
@@ -3566,34 +3760,10 @@ fn lower_node(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> 
         P::GreaterOrEqual(a, b) => binary(">=", a, b, K::Bool)?,
         P::And(a, b) => binary("AND", a, b, K::Bool)?,
         P::Or(a, b) => binary("OR", a, b, K::Bool)?,
-        P::Conditional(c, a, b) => {
-            let (c, a, b) = (
-                lower_node(c, table)?,
-                lower_node(a, table)?,
-                lower_node(b, table)?,
-            );
-            let kind = if c.kind == K::Bool {
-                match (a.kind, b.kind) {
-                    (K::Number(left), K::Number(right)) => Some(K::Number(left.max(right))),
-                    (left, right) if left == right => Some(left),
-                    _ => None,
-                }
-            } else {
-                None
-            }
-            .ok_or_else(|| refusal(LAW, "a conditional the engine does not type"))?;
-            let mut guards = c.guards;
-            guards.extend(a.guards);
-            guards.extend(b.guards);
-            LoweredRule {
-                sql: Frag::fmt(
-                    "(CASE WHEN {} THEN {} ELSE {} END)",
-                    &[&c.sql, &a.sql, &b.sql],
-                ),
-                kind,
-                guards,
-            }
-        }
+        P::Coalesce(a, b) => lower_coalesce(a, b, table)?,
+        P::Conditional(c, a, b) => lower_conditional(c, a, b, table)?,
+        P::Date(inner) => lower_temporal(inner, table, true)?,
+        P::Timestamp(inner) => lower_temporal(inner, table, false)?,
     })
 }
 
@@ -3636,7 +3806,11 @@ fn check_sql(check: &RuleCheck, table: &TableSchema) -> Outcome<(Frag, Frag)> {
         guards.extend(condition.guards.clone());
         residue.push(Frag::fmt("TRY({}) IS NULL", &[&condition.sql]));
     }
-    residue.extend(guards.iter().map(|guard| Frag::fmt("NOT {}", &[guard])));
+    residue.extend(
+        guards
+            .iter()
+            .map(|guard| Frag::fmt("TRY({}) IS NOT TRUE", &[guard])),
+    );
     residue.push(Frag::fmt("TRY({}) IS NULL", &[&predicate.sql]));
     let residue = Frag::fmt("({})", &[&Frag::join(&residue, " OR ")]);
     let expect = if check.expect { "TRUE" } else { "FALSE" };
@@ -3654,8 +3828,9 @@ fn check_sql(check: &RuleCheck, table: &TableSchema) -> Outcome<(Frag, Frag)> {
 /// per-row evaluator charges for `check`: its static part
 /// ([`RuleCheck::fuel`]) and the data its operations read, as ZEN's meter
 /// charges it (an equality, `in` or text `+` its operands' sizes; every
-/// operator is charged so here). A value's size is a text's bytes and 1 for
-/// anything else. `None` for a rule outside the lowered subset.
+/// operator is charged so here). A value's size is a text's UTF-8 bytes
+/// (`octet_length`) and 1 for anything else. `None` for a rule outside the
+/// lowered subset.
 fn fuel_sql(check: &RuleCheck, table: &TableSchema) -> Option<String> {
     let mut parts = vec![format!("CAST({} AS HUGEINT)", check.fuel)];
     parts.push(format!(
@@ -3674,6 +3849,10 @@ fn data_fuel(node: &RowPredicate, table: &TableSchema) -> String {
     match node {
         P::Null | P::Bool(_) | P::Number(_) | P::Text(_) | P::Column(_) => "0".to_owned(),
         P::Not(inner) | P::Negate(inner) => data_fuel(inner, table),
+        P::Date(inner) | P::Timestamp(inner) => {
+            format!("{} + {}", data_fuel(inner, table), value_size(inner, table))
+        }
+        P::Coalesce(a, b) => format!("{} + {}", data_fuel(a, table), data_fuel(b, table)),
         P::Add(a, b)
         | P::Subtract(a, b)
         | P::Multiply(a, b)
@@ -3700,15 +3879,21 @@ fn data_fuel(node: &RowPredicate, table: &TableSchema) -> String {
     }
 }
 
-/// ZEN's shallow size of `node`'s value, in SQL: a text's bytes, else 1.
+/// ZEN's shallow size of `node`'s value, in SQL: a text's UTF-8 bytes
+/// (`octet_length`), else 1.
 fn value_size(node: &RowPredicate, table: &TableSchema) -> String {
     use RowPredicate as P;
     match node {
         P::Text(text) => text.len().max(1).to_string(),
-        P::Column(id) if node.kind(table) == Some(PredicateKind::Text) => {
-            format!("coalesce(strlen({}), 0)", ident(id))
+        P::Column(id)
+            if matches!(
+                node.kind(table),
+                Some(PredicateKind::Text | PredicateKind::DateText | PredicateKind::TimestampText)
+            ) =>
+        {
+            format!("coalesce(octet_length({}), 0)", ident(id))
         }
-        P::Conditional(_, a, b) => format!(
+        P::Coalesce(a, b) | P::Conditional(_, a, b) => format!(
             "greatest({}, {})",
             value_size(a, table),
             value_size(b, table)
@@ -3719,6 +3904,8 @@ fn value_size(node: &RowPredicate, table: &TableSchema) -> String {
         | P::Column(_)
         | P::Not(_)
         | P::Negate(_)
+        | P::Date(_)
+        | P::Timestamp(_)
         | P::Add(..)
         | P::Subtract(..)
         | P::Multiply(..)
@@ -4035,7 +4222,7 @@ fn residue_candidates_sql(table: &TableSchema) -> String {
             ColumnKind::Text | ColumnKind::Opaque | ColumnKind::Timestamp | ColumnKind::Date
         ) {
             value_bytes.push(format!(
-                "coalesce(strlen(CAST(d.{} AS VARCHAR)), 0)",
+                "coalesce(octet_length(CAST(d.{} AS VARCHAR)), 0)",
                 ident(&column.id)
             ));
         }
