@@ -699,3 +699,316 @@ fn evidence_never_consumes_a_delivery_other_than_its_own_command_and_generation(
         Some(JsonValue::String("decided".to_owned()))
     );
 }
+
+#[test]
+fn analytics_study_accept_receipt_evaluates_and_enables_publication() {
+    use norn_ir::{InterfaceDef, PropertyTypeDef};
+    use norn_kernel::cell_host::{ArtifactEnvelope, LinkMutation, LinkWrite};
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read_json = |rel: &str| -> serde_json::Value {
+        let path = root.join(rel);
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap()
+    };
+
+    let manifest_json = read_json("registry/packs/analytics/diagnostics.function-manifest.json");
+    let diag_manifest: norn_ir::function::FunctionManifest =
+        serde_json::from_value(manifest_json).unwrap();
+    let diag_digest = diag_manifest.content_digest().unwrap();
+    let exec_profile_digest = diag_manifest.execution_profile_digest().unwrap();
+
+    let interfaces: Vec<InterfaceDef> = vec![
+        serde_json::from_value(
+            read_json("registry/core/artifacts/core.Agent.interface.json")["payload"]["interface"]
+                .clone(),
+        )
+        .unwrap(),
+    ];
+    let mut property_types: Vec<PropertyTypeDef> = serde_json::from_value(
+        read_json("registry/core/artifacts/core.value_types.entity.json")["payload"]
+            ["propertyTypes"]
+            .clone(),
+    )
+    .unwrap();
+    let std_props: Vec<PropertyTypeDef> = serde_json::from_value(
+        read_json("registry/core/artifacts/std.value_types.entity.json")["payload"]
+            ["propertyTypes"]
+            .clone(),
+    )
+    .unwrap();
+    property_types.extend(std_props);
+
+    let types: Vec<ObjectTypeDef> = [
+        "registry/packs/analytics/artifacts/analytics.Analyst.entity.json",
+        "registry/packs/analytics/artifacts/bi.CertifiedMetric.entity.json",
+        "registry/packs/analytics/artifacts/analytics.Study.entity.json",
+    ]
+    .into_iter()
+    .map(|rel| serde_json::from_value(read_json(rel)["payload"]["objectType"].clone()).unwrap())
+    .collect();
+    let laws: Vec<ArtifactEnvelope> = [
+        "registry/packs/analytics/artifacts/analytics.Study.temporal_split_ordered.law.json",
+        "registry/packs/analytics/artifacts/analytics.Study.publish_requires_diagnostics.law.json",
+    ]
+    .into_iter()
+    .map(|rel| serde_json::from_value(read_json(rel)).unwrap())
+    .collect();
+
+    let eval_action: ActionRoot = serde_json::from_value(
+        read_json("registry/packs/analytics/artifacts/analytics.study.evaluate.action.json")
+            ["payload"]
+            .clone(),
+    )
+    .unwrap();
+    let publish_action: ActionRoot = serde_json::from_value(
+        read_json("registry/packs/analytics/artifacts/analytics.study.publish.action.json")
+            ["payload"]
+            .clone(),
+    )
+    .unwrap();
+
+    let catalog = TypeCatalog::new(&types)
+        .with_interfaces(&interfaces)
+        .with_property_types(&property_types);
+    let mut cell = ReceiptCell {
+        cell: Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+            .with_types(types.clone())
+            .with_interfaces(interfaces.clone())
+            .with_property_types(property_types.clone())
+            .with_governing_laws(laws),
+        issued: BTreeMap::new(),
+    };
+    let analyst_id = "analyst-1";
+    let study_id = "study-001";
+    let cmd_id = format!("{study_id}/diagnostics");
+    cell.cell
+        .commit(CellCommit {
+            writes: vec![
+                FactWrite {
+                    key: FactKey::new("analytics.Analyst", analyst_id),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put {
+                        values: JsonObject::from([
+                            ("id".to_owned(), JsonValue::String(analyst_id.to_owned())),
+                            (
+                                "display_name".to_owned(),
+                                JsonValue::String("Ada Lovelace".to_owned()),
+                            ),
+                            ("kind".to_owned(), JsonValue::String("person".to_owned())),
+                        ]),
+                    },
+                },
+                FactWrite {
+                    key: FactKey::new("analytics.Study", study_id),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put {
+                        values: JsonObject::from([
+                            ("id".to_owned(), JsonValue::String(study_id.to_owned())),
+                            (
+                                "study_code".to_owned(),
+                                JsonValue::String("SCRAP-OLS-K1".to_owned()),
+                            ),
+                            (
+                                "population_digest".to_owned(),
+                                JsonValue::String("22cee202".to_owned()),
+                            ),
+                            (
+                                "method_digest".to_owned(),
+                                JsonValue::String("ols-v1".to_owned()),
+                            ),
+                            (
+                                "receipt_digest".to_owned(),
+                                JsonValue::String("pending".to_owned()),
+                            ),
+                            (
+                                "train_cutoff_at".to_owned(),
+                                JsonValue::String("2026-09-28T00:00:00Z".to_owned()),
+                            ),
+                            (
+                                "holdout_start_at".to_owned(),
+                                JsonValue::String("2026-09-28T00:00:00Z".to_owned()),
+                            ),
+                            ("diagnostics_passed".to_owned(), JsonValue::Bool(false)),
+                            (
+                                "publication_status".to_owned(),
+                                JsonValue::String("preregistered".to_owned()),
+                            ),
+                        ]),
+                    },
+                },
+            ],
+            links: vec![LinkWrite {
+                key: LinkKey::new(
+                    FactKey::new("analytics.Study", study_id),
+                    "owner",
+                    FactKey::new("analytics.Analyst", analyst_id),
+                ),
+                expected: FactVersion::ABSENT,
+                mutation: LinkMutation::Add {
+                    values: JsonObject::new(),
+                },
+            }],
+            effects: vec![Effect::Perform(Command {
+                id: CommandId(cmd_id.clone()),
+                generation: Generation(1),
+                idempotency_key: IdempotencyKey(format!("{cmd_id}/1")),
+                freshness: FreshnessPolicy::AppendOnly,
+                deadline: None,
+                payload: JsonObject::new(),
+            })],
+            ..CellCommit::empty()
+        })
+        .unwrap();
+    assert!(cell.cell.perform().unwrap().is_some());
+
+    let summary = BTreeMap::from([("diagnostics_passed".to_owned(), RuntimeValue::Bool(true))]);
+    let receipt = FunctionReceipt {
+        command_id: cmd_id.clone(),
+        run: RunRef {
+            id: study_id.to_owned(),
+            generation: 1,
+        },
+        attempt: 1,
+        dispatch: Digest(format!("sha256:{}", "1".repeat(64))),
+        manifest: diag_digest,
+        execution_profile: exec_profile_digest,
+        input_identity: Digest(format!("sha256:{}", "3".repeat(64))),
+        dependency_token: Digest(format!("sha256:{}", "4".repeat(64))),
+        outcome: FunctionOutcome::Success(SuccessOutcome {
+            output_manifest: norn_ir::function::output_manifest_digest(&[], &summary).unwrap(),
+            outputs: Vec::new(),
+            summary,
+        }),
+        provenance: ExecutionProvenance {
+            executor: "cell".to_owned(),
+            placement: "cell".to_owned(),
+            runtime: diag_manifest.runtime.digest,
+        },
+        resources: ResourceUse {
+            cpu_millis: 10,
+            wall_millis: 20,
+            peak_memory_bytes: 1024,
+            output_bytes: 64,
+            fuel: Some(1_000),
+        },
+        cache: CacheOrigin::Miss {},
+    };
+    let receipt_digest = receipt.content_digest().unwrap();
+    let result_identity = receipt.result_identity().unwrap();
+    let acceptance = Acceptance {
+        consumed: Consumed::Result {
+            command: CommandId(cmd_id.clone()),
+            generation: Generation(1),
+        },
+        reads: Vec::new(),
+        destination: None,
+        requires_cell_lane: false,
+        record: ResultRecord {
+            command: CommandId(cmd_id),
+            generation: Generation(1),
+            attempt: 1,
+            receipt: receipt_digest.clone(),
+            result_identity: result_identity.clone(),
+            classification: None,
+            reason: None,
+        },
+        state: CommandState {
+            generation: Generation(1),
+            cancelled: false,
+            accepted: Some(AcceptedResult {
+                generation: Generation(1),
+                result_identity,
+                receipt: receipt_digest.clone(),
+            }),
+            reschedules: 0,
+        },
+    };
+    cell.issued.insert(
+        receipt_digest.0.clone(),
+        Issued {
+            receipt,
+            acceptance,
+        },
+    );
+
+    let eval_call = ActionCall {
+        action: &eval_action,
+        action_artifact_id: "analytics.study.evaluate.action",
+        action_version: "0.1.0",
+        scope: scope(),
+        actor: "user:ada".to_owned(),
+        approved_intent: None,
+        input: JsonObject::from([
+            ("id".to_owned(), JsonValue::String(study_id.to_owned())),
+            (
+                "receipt".to_owned(),
+                JsonValue::String(receipt_digest.0.clone()),
+            ),
+        ]),
+        idempotency_key: "k-eval-study-1".to_owned(),
+        object_type: None,
+        turn: DecisionTurn {
+            id: "turn-eval-1".to_owned(),
+            now: LogicalTime::from_millis(1_000),
+            world: World::Main,
+            consumes: None,
+        },
+        trace: None,
+    };
+    assert!(matches!(
+        commit_action(&mut cell, &catalog, &eval_call, &Allow).unwrap(),
+        ActionOutcome::Committed { .. }
+    ));
+
+    let evaluated = cell
+        .cell
+        .load(&FactKey::new("analytics.Study", study_id))
+        .unwrap()
+        .values
+        .unwrap();
+    assert_eq!(
+        evaluated.get("publication_status"),
+        Some(&JsonValue::String("evaluated".to_owned()))
+    );
+    assert_eq!(
+        evaluated.get("diagnostics_passed"),
+        Some(&JsonValue::Bool(true))
+    );
+    assert_eq!(
+        evaluated.get("receipt_digest"),
+        Some(&JsonValue::String(receipt_digest.0))
+    );
+
+    let publish_call = ActionCall {
+        action: &publish_action,
+        action_artifact_id: "analytics.study.publish.action",
+        action_version: "0.1.0",
+        scope: scope(),
+        actor: "user:ada".to_owned(),
+        approved_intent: None,
+        input: JsonObject::from([("id".to_owned(), JsonValue::String(study_id.to_owned()))]),
+        idempotency_key: "k-publish-study-1".to_owned(),
+        object_type: None,
+        turn: DecisionTurn {
+            id: "turn-publish-1".to_owned(),
+            now: LogicalTime::from_millis(1_100),
+            world: World::Main,
+            consumes: None,
+        },
+        trace: None,
+    };
+    assert!(matches!(
+        commit_action(&mut cell, &catalog, &publish_call, &Allow).unwrap(),
+        ActionOutcome::Committed { .. }
+    ));
+    let published = cell
+        .cell
+        .load(&FactKey::new("analytics.Study", study_id))
+        .unwrap()
+        .values
+        .unwrap();
+    assert_eq!(
+        published.get("publication_status"),
+        Some(&JsonValue::String("published".to_owned()))
+    );
+}

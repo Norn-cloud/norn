@@ -1,0 +1,4 @@
+{
+  "order": 8,
+  "value": "lean -DwarningAsError=true verification/bi-additivity-v1/BiAdditivity.lean"
+}

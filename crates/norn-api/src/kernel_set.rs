@@ -91,18 +91,97 @@ pub fn admit_kernel_set_with_base(
     admit_with(artifacts, |artifact| base.contains(&artifact.artifact_id))
 }
 
+/// Refuse any JSON number in `raw_json` that loses precision when stored in
+/// Norn IR (`JsonValue::Number(f64)`), so >53-bit decimals are never silently
+/// rounded at admission or split between `canonical_set` and the checker
+/// receipt. Exact >53-bit decimals in definitions must be encoded as strings
+/// (such as `initial.idDecimal` in `norn.pull/1`).
+///
+/// # Errors
+/// A JSON number inside `raw_json` that does not round-trip losslessly through
+/// IEEE-754 binary64.
+pub fn reject_lossy_ir_numbers(raw_json: &str) -> Result<(), String> {
+    fn check(value: &RuntimeValue) -> Result<(), String> {
+        match value {
+            RuntimeValue::Number(decimal) if !crate::pull_feed::is_binary64_exact(*decimal) => {
+                Err(format!(
+                    "artifact JSON number {decimal} exceeds IEEE-754 binary64 IR precision; encode exact decimals as strings (e.g. initial.idDecimal)"
+                ))
+            }
+            RuntimeValue::Array(items) => {
+                for item in items {
+                    check(item)?;
+                }
+                Ok(())
+            }
+            RuntimeValue::Object(entries) => {
+                for item in entries.values() {
+                    check(item)?;
+                }
+                Ok(())
+            }
+            RuntimeValue::Null
+            | RuntimeValue::Bool(_)
+            | RuntimeValue::Number(_)
+            | RuntimeValue::String(_) => Ok(()),
+        }
+    }
+    if let Ok(value) = RuntimeValue::from_json_text(raw_json) {
+        check(&value)?;
+    }
+    Ok(())
+}
+
+/// Admit the full set `artifacts` from raw JSON text, refusing any JSON number
+/// that would lose precision when decoded into Norn IR [`ArtifactEnvelope`].
+///
+/// # Errors
+/// Invalid JSON, a lossy >53-bit JSON number, the checker's findings, or a set
+/// that cannot be encoded or projected.
+pub fn admit_kernel_set_json(artifacts_json: &str) -> Result<AdmittedSet, KernelRefusal> {
+    reject_lossy_ir_numbers(artifacts_json).map_err(KernelRefusal::Invalid)?;
+    let RuntimeValue::Array(values) = RuntimeValue::from_json_text(artifacts_json)
+        .map_err(|e| invalid("artifact set json")(&e))?
+    else {
+        return Err(KernelRefusal::Invalid(
+            "artifact set json must be an array".to_owned(),
+        ));
+    };
+    let artifacts: Vec<ArtifactEnvelope> = values
+        .iter()
+        .map(|rv| norn_ir::runtime::decode(rv).map_err(KernelRefusal::Invalid))
+        .collect::<Result<_, _>>()?;
+    admit_kernel_set(&artifacts)
+}
+
+fn encode_artifact_value(artifact: &ArtifactEnvelope) -> Result<RuntimeValue, KernelRefusal> {
+    serde_json::to_string(artifact)
+        .map_err(|e| invalid("artifact wire")(&e))
+        .and_then(|wire| {
+            RuntimeValue::from_json_text(&wire).map_err(|e| invalid("artifact value")(&e))
+        })
+}
+
 fn admit_with(
     artifacts: &[ArtifactEnvelope],
     is_base: impl Fn(&ArtifactEnvelope) -> bool,
 ) -> Result<AdmittedSet, KernelRefusal> {
-    let value = |artifact: &ArtifactEnvelope| {
-        serde_json::to_value(artifact)
-            .map_err(|e| invalid("artifact wire")(&e))
-            .and_then(|wire| {
-                RuntimeValue::from_json(wire).map_err(|e| invalid("artifact value")(&e))
-            })
-    };
-    let (base, candidates): (Vec<_>, Vec<_>) = artifacts.iter().cloned().partition(is_base);
+    let mut base = Vec::new();
+    let mut candidates = Vec::new();
+    let mut base_values = Vec::new();
+    let mut candidate_values = Vec::new();
+    let mut all_values = Vec::with_capacity(artifacts.len());
+    for artifact in artifacts {
+        let rv = encode_artifact_value(artifact)?;
+        if is_base(artifact) {
+            base.push(artifact.clone());
+            base_values.push(rv.clone());
+        } else {
+            candidates.push(artifact.clone());
+            candidate_values.push(rv.clone());
+        }
+        all_values.push(rv);
+    }
     let registry = BTreeSet::new();
     let context = EntityArtifactSetContext {
         registry: &registry,
@@ -116,11 +195,6 @@ fn admit_with(
     if preflight.iter().any(norn_checker::Diagnostic::is_error) {
         return Err(KernelRefusal::Refused(preflight));
     }
-    let candidate_values = candidates
-        .iter()
-        .map(value)
-        .collect::<Result<Vec<_>, _>>()?;
-    let base_values = base.iter().map(value).collect::<Result<Vec<_>, _>>()?;
     let checked = check_artifact_set_with_receipt(
         &ReceiptSources::new(&candidate_values, &base_values)
             .map_err(|e| invalid("receipt sources")(&e))?,
@@ -137,8 +211,7 @@ fn admit_with(
         .receipt
         .canonical_json()
         .map_err(|e| invalid("receipt")(&e))?;
-    let sources = artifacts.iter().map(value).collect::<Result<Vec<_>, _>>()?;
-    let canonical_set = RuntimeValue::Array(sources)
+    let canonical_set = RuntimeValue::Array(all_values)
         .canonical_json()
         .map_err(|e| invalid("canonical set")(&e))?;
     Ok(AdmittedSet {
@@ -327,7 +400,7 @@ pub fn admit_over(
     let mut artifacts: Vec<ArtifactEnvelope> = retained_artifacts(canonical_set)
         .map_err(KernelRefusal::Invalid)?
         .into_iter()
-        .filter(|a| !replaced.contains(a.artifact_id.as_str()))
+        .filter(|artifact| !replaced.contains(artifact.artifact_id.as_str()))
         .collect();
     artifacts.extend(added.iter().cloned());
     admit_kernel_set_with_base(&artifacts, &base)

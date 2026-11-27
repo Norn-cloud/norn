@@ -1,6 +1,7 @@
 test/action-access.test.ts
 test/action-input-labels.test.ts
 test/action-nullable.test.ts
+test/analytics-and-units.test.ts
 test/apply.test.ts
 test/authoring-sdk.test.ts
 test/authoring-shell.test.ts

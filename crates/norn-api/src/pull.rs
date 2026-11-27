@@ -42,9 +42,14 @@
 
 use std::collections::BTreeMap;
 
-use norn_ir::RuntimeValue;
+use norn_ir::{FeedMode, RuntimeValue, SourceVersion, VersionKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::pull_feed::{
+    Tokens, check_keyset_order, extract_version, form_urlencoded_pairs, project_patch, scalar_text,
+    update_greatest_version,
+};
 
 /// The connector extension key of a pull profile.
 pub const PULL_EXTENSION_KEY: &str = "norn.pull/1";
@@ -96,8 +101,37 @@ pub struct Feed {
     pub version_path: String,
     /// Dataset field name to its pointer inside an item.
     pub fields: BTreeMap<String, String>,
-    /// The position before the first sync.
+    /// The position before the first sync (`id`, or `idDecimal` for exact
+    /// >53-bit decimal initial IDs).
+    #[serde(
+        deserialize_with = "crate::pull_feed::deserialize_initial_watermark",
+        serialize_with = "crate::pull_feed::serialize_initial_watermark"
+    )]
     pub initial: Watermark,
+    /// Snapshot vs partial-patch delivery semantics (`None` adopts the mapping's
+    /// `norn.feed/1` mode or defaults to `full_snapshot`; `Some` refuses
+    /// contradictory mapping declarations).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<FeedMode>,
+    /// Typed source-version parser and comparator (`None` adopts the mapping's
+    /// `norn.feed/1` `versionKind` or defaults to `lexicographical`; `Some`
+    /// refuses contradictory mapping declarations).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_kind: Option<VersionKind>,
+}
+
+impl Feed {
+    /// Effective delivery [`FeedMode`], defaulting to [`FeedMode::FullSnapshot`].
+    #[must_use]
+    pub fn effective_mode(&self) -> FeedMode {
+        self.mode.unwrap_or_default()
+    }
+
+    /// Effective [`VersionKind`], defaulting to [`VersionKind::Lexicographical`].
+    #[must_use]
+    pub fn effective_version_kind(&self) -> VersionKind {
+        self.version_kind.unwrap_or_default()
+    }
 }
 
 /// An HTTP request with templated parts.
@@ -201,8 +235,9 @@ impl Paging {
 pub struct Watermark {
     /// The version (for example a last-modified timestamp), as the source writes it.
     pub version: String,
-    /// The tie-breaking id, typed as the source types it (text or number).
-    pub id: Value,
+    /// The tie-breaking id, kept as an exact [`RuntimeValue`] (preserving
+    /// decimal precision without binary64 rounding).
+    pub id: RuntimeValue,
 }
 
 impl Watermark {
@@ -349,6 +384,10 @@ impl std::error::Error for PullError {}
 impl PullProfile {
     /// The profile in a connector payload's `extensions`, if it declares one.
     ///
+    /// Callers with >53-bit decimal `initial.id` values should prefer
+    /// [`Self::from_connector_json`] so numbers never pass through binary64
+    /// `serde_json::Value`.
+    ///
     /// # Errors
     /// A present extension that is not a valid profile.
     pub fn from_connector(payload: &Value) -> Result<Option<Self>, PullError> {
@@ -358,7 +397,35 @@ impl PullProfile {
         else {
             return Ok(None);
         };
-        let profile: Self = serde_json::from_value(value.clone())
+        let encoded =
+            serde_json::to_string(value).map_err(|error| PullError::Profile(error.to_string()))?;
+        let profile: Self = serde_json::from_str(&encoded)
+            .map_err(|error| PullError::Profile(error.to_string()))?;
+        profile.validate()?;
+        Ok(Some(profile))
+    }
+
+    /// The profile in a connector payload's raw JSON text, preserving exact
+    /// decimal tokens (such as >53-bit `initial.id` values) without passing
+    /// through binary64 `serde_json::Value`.
+    ///
+    /// # Errors
+    /// Invalid JSON or a present extension that is not a valid profile.
+    pub fn from_connector_json(payload_json: &str) -> Result<Option<Self>, PullError> {
+        #[derive(Deserialize)]
+        struct RawPayload<'a> {
+            #[serde(borrow, default)]
+            extensions: Option<BTreeMap<String, &'a serde_json::value::RawValue>>,
+        }
+        let parsed: RawPayload<'_> = serde_json::from_str(payload_json)
+            .map_err(|error| PullError::Profile(error.to_string()))?;
+        let Some(raw_ext) = parsed
+            .extensions
+            .and_then(|mut exts| exts.remove(PULL_EXTENSION_KEY))
+        else {
+            return Ok(None);
+        };
+        let profile: Self = serde_json::from_str(raw_ext.get())
             .map_err(|error| PullError::Profile(error.to_string()))?;
         profile.validate()?;
         Ok(Some(profile))
@@ -411,8 +478,55 @@ impl PullProfile {
             }) {
                 return bad(format!("{}: {pointer} is not a JSON pointer", feed.dataset));
             }
+            let version_kind = feed.effective_version_kind();
+            if !version_kind.is_orderable() {
+                return bad(format!(
+                    "{}: versionKind {:?} cannot order keyset or cursor watermarks",
+                    feed.dataset,
+                    version_kind.as_str()
+                ));
+            }
+            if version_kind != VersionKind::Lexicographical
+                && let Err(error) = SourceVersion::parse(version_kind, &feed.initial.version)
+            {
+                return bad(format!(
+                    "{}: invalid initial version: {error}",
+                    feed.dataset
+                ));
+            }
         }
         Ok(())
+    }
+
+    /// Declared [`FeedMode`] for `dataset`, defaulting to [`FeedMode::FullSnapshot`].
+    #[must_use]
+    pub fn feed_mode(&self, dataset: &str) -> FeedMode {
+        self.feeds
+            .iter()
+            .find(|feed| feed.dataset == dataset)
+            .map_or(FeedMode::FullSnapshot, Feed::effective_mode)
+    }
+
+    /// Declared [`VersionKind`] for `dataset`, defaulting to [`VersionKind::Lexicographical`].
+    #[must_use]
+    pub fn version_kind(&self, dataset: &str) -> VersionKind {
+        self.feeds
+            .iter()
+            .find(|feed| feed.dataset == dataset)
+            .map_or(VersionKind::Lexicographical, Feed::effective_version_kind)
+    }
+
+    /// Bind a mapping's `norn.feed/1` declaration onto this profile before
+    /// projection and pagination, failing closed on explicit contradictions.
+    ///
+    /// # Errors
+    /// A feed whose explicit `mode` or `versionKind` contradicts `declaration`,
+    /// or whose resulting initial watermark / orderability is invalid.
+    pub fn bind_feed_declaration(
+        &mut self,
+        declaration: &norn_ir::feed::FeedDeclaration,
+    ) -> Result<(), PullError> {
+        crate::pull_feed::bind_feed_declaration(self, declaration)
     }
 }
 
@@ -447,7 +561,7 @@ impl Pull {
             page: 0,
             position: Watermark {
                 version: String::new(),
-                id: Value::Null,
+                id: RuntimeValue::Null,
             },
             cursor: Value::Null,
             greatest: None,
@@ -467,7 +581,8 @@ impl Pull {
                 .unwrap_or_else(|| feed.initial.clone());
             self.page = 0;
             self.cursor = Value::Null;
-            self.greatest = None;
+            self.greatest =
+                (!self.position.version.is_empty()).then(|| self.position.version.clone());
         }
     }
 
@@ -517,7 +632,7 @@ impl Pull {
             .request
             .body
             .as_ref()
-            .map(|body| tokens.fill(body).to_string());
+            .map(|body| tokens.fill_json(body));
         self.waiting = true;
         Some(Request {
             dataset: feed.dataset.clone(),
@@ -570,14 +685,15 @@ impl Pull {
                 reason: format!("a page held more than {} items", self.limits.max_items),
             });
         }
-        let (rows, last) = project_page(feed, items)?;
-        if let Some(greatest) = rows.iter().map(|row| &row.version).max()
-            && self.greatest.as_ref().is_none_or(|g| greatest > g)
-        {
-            self.greatest = Some(greatest.clone());
-        }
+        let (rows, ids) = project_page(feed, items)?;
+        update_greatest_version(
+            &mut self.greatest,
+            feed.effective_version_kind(),
+            &rows,
+            &shape,
+        )?;
         self.page = self.page.saturating_add(1);
-        let done = self.advance_paging(&response, last, items.len())?;
+        let done = self.advance_paging(&response, &rows, &ids, items.len())?;
         let expected_previous = self.watermarks.get(&dataset_name).cloned();
         let next = self.next_watermark(done, &dataset_name)?;
         Ok(AcceptedPage {
@@ -595,23 +711,30 @@ impl Pull {
     fn advance_paging(
         &mut self,
         response: &RuntimeValue,
-        last: Option<(String, Value)>,
+        rows: &[Row],
+        ids: &[RuntimeValue],
         items_len: usize,
     ) -> Result<bool, PullError> {
         let Some(feed) = self.profile.feeds.get(self.feed) else {
             return Err(PullError::NotWaiting);
         };
         let dataset_name = feed.dataset.clone();
+        let dataset = || dataset_name.clone();
+        let version_kind = feed.effective_version_kind();
         match &feed.paging {
             Paging::Keyset { size } => {
-                if let Some((version, id)) = last {
-                    let next = Watermark { version, id };
+                if let Some((row, id)) = rows.last().zip(ids.last()) {
+                    let next = Watermark {
+                        version: row.version.clone(),
+                        id: id.clone(),
+                    };
                     if next == self.position {
                         return Err(PullError::Bound {
                             dataset: dataset_name,
                             reason: "the keyset position did not advance".into(),
                         });
                     }
+                    check_keyset_order(version_kind, &self.position, rows, ids, &dataset)?;
                     self.position = next;
                 }
                 Ok(items_len < usize::try_from(*size).unwrap_or(usize::MAX))
@@ -698,10 +821,44 @@ pub fn observation(
     let digest = norn_ir::canonical::HashProfile::Norn1
         .hash_json(serde_json::to_string(&row.payload).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
+    let version_kind = profile.version_kind(&row.dataset);
+    let event_id = if version_kind == VersionKind::Lexicographical {
+        row.version.clone()
+    } else {
+        SourceVersion::parse(version_kind, &row.version)
+            .map_err(|e| e.to_string())?
+            .canonical_id()
+    };
+    let mut input = norn_ir::runtime_object! {
+        "contract" => "norn.raw_observation/v1",
+        "source" => profile.source.as_str(),
+        "source_id" => row.source_id.as_str(),
+        "event_id" => event_id.as_str(),
+        "source_version" => row.version.as_str(),
+        "pipeline_version" => profile.pipeline.as_str(),
+        "kind" => "upsert",
+        "extracted_at" => extracted_at_ms,
+        "payload" => row.payload.clone(),
+        "payload_digest" => digest,
+    };
+    if let RuntimeValue::Object(map) = &mut input {
+        if profile.feed_mode(&row.dataset) == FeedMode::Patch {
+            map.insert(
+                "feed_mode".to_owned(),
+                RuntimeValue::String(FeedMode::Patch.as_str().to_owned()),
+            );
+        }
+        if version_kind != VersionKind::Lexicographical {
+            map.insert(
+                "version_kind".to_owned(),
+                RuntimeValue::String(version_kind.as_str().to_owned()),
+            );
+        }
+    }
     Ok(norn_kernel::Observed {
         id: norn_kernel::ObservationId(format!(
-            "{}/{}/{}@{}",
-            profile.source, row.dataset, row.source_id, row.version
+            "{}/{}/{}@{event_id}",
+            profile.source, row.dataset, row.source_id
         )),
         provenance: norn_kernel::Provenance {
             source: profile.source.clone(),
@@ -709,32 +866,22 @@ pub fn observation(
             mapping_version: profile.pipeline.clone(),
             observed_at: norn_kernel::LogicalTime::from_millis(extracted_at_ms),
         },
-        input: norn_ir::runtime_object! {
-            "contract" => "norn.raw_observation/v1",
-            "source" => profile.source.as_str(),
-            "source_id" => row.source_id.as_str(),
-            "event_id" => row.version.as_str(),
-            "source_version" => row.version.as_str(),
-            "pipeline_version" => profile.pipeline.as_str(),
-            "kind" => "upsert",
-            "extracted_at" => extracted_at_ms,
-            "payload" => row.payload.clone(),
-            "payload_digest" => digest,
-        },
+        input,
     })
 }
 
-/// A page's rows and its last item's keyset position (version, id).
-type Page = (Vec<Row>, Option<(String, Value)>);
+/// A page's rows and their exact keyset ids.
+type Page = (Vec<Row>, Vec<RuntimeValue>);
 
-/// A page's items as rows, and the last item's keyset position.
 fn project_page(feed: &Feed, items: &[RuntimeValue]) -> Result<Page, PullError> {
     let shape = |reason: String| PullError::Shape {
         dataset: feed.dataset.clone(),
         reason,
     };
+    let mode = feed.effective_mode();
+    let version_kind = feed.effective_version_kind();
     let mut rows = Vec::with_capacity(items.len());
-    let mut last = None;
+    let mut ids = Vec::with_capacity(items.len());
     for item in items {
         let id = item
             .pointer(&feed.id_path)
@@ -745,22 +892,21 @@ fn project_page(feed: &Feed, items: &[RuntimeValue]) -> Result<Page, PullError> 
                 feed.id_path
             ))
         })?;
-        let version = item
-            .pointer(&feed.version_path)
-            .and_then(RuntimeValue::as_str)
-            .ok_or_else(|| {
-                shape(format!(
-                    "an item has no version text at {}",
-                    feed.version_path
-                ))
-            })?
-            .to_owned();
-        let payload = feed
-            .fields
-            .iter()
-            .map(|(field, pointer)| (field.clone(), project(item, pointer)))
-            .collect();
-        last = Some((version.clone(), json_of(id)));
+        let version = extract_version(item, &feed.version_path, version_kind, &shape)?;
+        let mut payload = BTreeMap::new();
+        for (field, pointer) in &feed.fields {
+            match mode {
+                FeedMode::FullSnapshot => {
+                    payload.insert(field.clone(), project(item, pointer));
+                }
+                FeedMode::Patch => {
+                    if let Some(value) = project_patch(item, field, pointer, &shape)? {
+                        payload.insert(field.clone(), value);
+                    }
+                }
+            }
+        }
+        ids.push(exact_keyset_id(id));
         rows.push(Row {
             dataset: feed.dataset.clone(),
             source_id,
@@ -768,7 +914,7 @@ fn project_page(feed: &Feed, items: &[RuntimeValue]) -> Result<Page, PullError> 
             payload: RuntimeValue::Object(payload),
         });
     }
-    Ok((rows, last))
+    Ok((rows, ids))
 }
 
 /// One field of an item: the value at its pointer (`null` when absent), or,
@@ -784,125 +930,16 @@ fn project(item: &RuntimeValue, pointer: &str) -> RuntimeValue {
     }
 }
 
-/// A scalar's text: a string as is, a number as its exact decimal.
-fn scalar_text(value: &RuntimeValue) -> Option<String> {
+/// Exact keyset id preserved as [`RuntimeValue`] (exact decimal or string).
+fn exact_keyset_id(value: &RuntimeValue) -> RuntimeValue {
     match value {
-        RuntimeValue::String(text) => (!text.is_empty()).then(|| text.clone()),
-        RuntimeValue::Number(number) => Some(number.to_string()),
+        RuntimeValue::Number(number) => RuntimeValue::Number(*number),
+        RuntimeValue::String(text) => RuntimeValue::String(text.clone()),
         RuntimeValue::Null
         | RuntimeValue::Bool(_)
         | RuntimeValue::Array(_)
-        | RuntimeValue::Object(_) => None,
+        | RuntimeValue::Object(_) => RuntimeValue::Null,
     }
-}
-
-/// The JSON of a keyset id, kept as the source typed it.
-fn json_of(value: &RuntimeValue) -> Value {
-    match value {
-        RuntimeValue::Number(number) => number
-            .to_string()
-            .parse::<serde_json::Number>()
-            .map_or(Value::Null, Value::Number),
-        RuntimeValue::String(text) => Value::String(text.clone()),
-        RuntimeValue::Null
-        | RuntimeValue::Bool(_)
-        | RuntimeValue::Array(_)
-        | RuntimeValue::Object(_) => Value::Null,
-    }
-}
-
-struct Tokens<'t> {
-    version: &'t str,
-    id: &'t Value,
-    cursor: &'t Value,
-    size: u32,
-}
-
-impl Tokens<'_> {
-    fn value(&self, name: &str) -> Option<Value> {
-        match name {
-            "version" => Some(Value::String(self.version.to_owned())),
-            "id" => Some(self.id.clone()),
-            "cursor" => Some(self.cursor.clone()),
-            "size" => Some(Value::from(self.size)),
-            _ => None,
-        }
-    }
-
-    fn text(&self, name: &str) -> Option<String> {
-        if let Some(inner) = name.strip_prefix("json:") {
-            return self.value(inner).map(|value| value.to_string());
-        }
-        self.value(name).map(|value| match value {
-            Value::String(text) => text,
-            Value::Null => String::new(),
-            Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => {
-                value.to_string()
-            }
-        })
-    }
-
-    /// A template string: a lone token keeps its JSON type; otherwise each
-    /// token is spliced in as text. Unknown tokens stay as written.
-    fn fill_str(&self, template: &str) -> Value {
-        if let Some(name) = template
-            .strip_prefix("{{")
-            .and_then(|rest| rest.strip_suffix("}}"))
-            .filter(|name| !name.contains("{{") && !name.starts_with("json:"))
-            && let Some(value) = self.value(name)
-        {
-            return value;
-        }
-        Value::String(self.splice(template))
-    }
-
-    fn splice(&self, template: &str) -> String {
-        let mut out = String::with_capacity(template.len());
-        let mut rest = template;
-        while let Some((before, after)) = rest.split_once("{{") {
-            out.push_str(before);
-            if let Some((text, tail)) = after
-                .split_once("}}")
-                .and_then(|(name, tail)| Some((self.text(name)?, tail)))
-            {
-                out.push_str(&text);
-                rest = tail;
-            } else {
-                out.push_str("{{");
-                rest = after;
-            }
-        }
-        out.push_str(rest);
-        out
-    }
-
-    fn fill(&self, template: &Value) -> Value {
-        match template {
-            Value::String(text) => self.fill_str(text),
-            Value::Array(items) => Value::Array(items.iter().map(|v| self.fill(v)).collect()),
-            Value::Object(entries) => Value::Object(
-                entries
-                    .iter()
-                    .map(|(key, value)| (key.clone(), self.fill(value)))
-                    .collect(),
-            ),
-            Value::Null | Value::Bool(_) | Value::Number(_) => template.clone(),
-        }
-    }
-}
-
-/// `application/x-www-form-urlencoded` query text, in declared key order.
-fn form_urlencoded_pairs(query: &BTreeMap<String, String>, tokens: &Tokens<'_>) -> String {
-    let mut out = String::new();
-    for (key, template) in query {
-        if !out.is_empty() {
-            out.push('&');
-        }
-        out.push_str(&crate::uploads::encode(key, false));
-        out.push('=');
-        out.push_str(&crate::uploads::encode(&tokens.splice(template), false));
-    }
-    out
 }
 
 /// Accumulate one mapping outcome into landed / quarantined / reason counts.
@@ -938,17 +975,20 @@ mod tests {
     use proptest::prelude::*;
 
     fn keyset_profile(size: u32) -> PullProfile {
-        serde_json::from_value(serde_json::json!({
-            "source": "test", "pipeline": "test/1",
-            "feeds": [{
-                "dataset": "Item",
-                "request": {"method": "POST", "path": "/items", "body": {"after": ["{{version}}", "{{id}}"], "limit": "{{size}}", "q": "v>={{version}}", "j": "{{json:version}}"}},
-                "itemsPath": "/data", "paging": {"kind": "keyset", "size": size},
-                "idPath": "/id", "versionPath": "/v",
-                "fields": {"code": "/code", "missing": "/nope"},
-                "initial": {"version": "", "id": 0}
-            }]
-        }))
+        serde_json::from_str(
+            &serde_json::json!({
+                "source": "test", "pipeline": "test/1",
+                "feeds": [{
+                    "dataset": "Item",
+                    "request": {"method": "POST", "path": "/items", "body": {"after": ["{{version}}", "{{id}}"], "limit": "{{size}}", "q": "v>={{version}}", "j": "{{json:version}}"}},
+                    "itemsPath": "/data", "paging": {"kind": "keyset", "size": size},
+                    "idPath": "/id", "versionPath": "/v",
+                    "fields": {"code": "/code", "missing": "/nope"},
+                    "initial": {"version": "", "id": 0}
+                }]
+            })
+            .to_string(),
+        )
         .expect("profile")
     }
 
@@ -986,16 +1026,19 @@ mod tests {
 
     #[test]
     fn query_values_are_form_encoded_and_json_tokens_quoted() {
-        let profile: PullProfile = serde_json::from_value(serde_json::json!({
-            "source": "test", "pipeline": "test/1",
-            "feeds": [{
-                "dataset": "Item",
-                "request": {"method": "GET", "path": "/api/resource/Item", "query": {"filters": "[[\"modified\",\">=\",{{json:version}}]]"}},
-                "itemsPath": "/data", "paging": {"kind": "keyset", "size": 1},
-                "idPath": "/name", "versionPath": "/modified", "fields": {"name": "/name"},
-                "initial": {"version": "a\"b", "id": ""}
-            }]
-        }))
+        let profile: PullProfile = serde_json::from_str(
+            &serde_json::json!({
+                "source": "test", "pipeline": "test/1",
+                "feeds": [{
+                    "dataset": "Item",
+                    "request": {"method": "GET", "path": "/api/resource/Item", "query": {"filters": "[[\"modified\",\">=\",{{json:version}}]]"}},
+                    "itemsPath": "/data", "paging": {"kind": "keyset", "size": 1},
+                    "idPath": "/name", "versionPath": "/modified", "fields": {"name": "/name"},
+                    "initial": {"version": "a\"b", "id": ""}
+                }]
+            })
+            .to_string(),
+        )
         .expect("profile");
         let mut pull = Pull::new(profile, BTreeMap::new(), Limits::default());
         let request = pull.next_request().expect("request");
@@ -1012,7 +1055,7 @@ mod tests {
             "Item".to_owned(),
             Watermark {
                 version: "5".into(),
-                id: Value::from(3),
+                id: RuntimeValue::from(3),
             },
         )]);
         let mut pull = Pull::new(profile, stored.clone(), Limits::default());
@@ -1055,23 +1098,26 @@ mod tests {
             pull.watermarks()["Item"],
             Watermark {
                 version: "1".into(),
-                id: Value::from(7)
+                id: RuntimeValue::from(7)
             }
         );
     }
 
     #[test]
     fn a_cursor_feed_reads_every_page_and_keeps_the_greatest_version() {
-        let profile: PullProfile = serde_json::from_value(serde_json::json!({
-            "source": "test", "pipeline": "test/1",
-            "feeds": [{
-                "dataset": "Variant",
-                "request": {"method": "POST", "path": "/graphql", "body": {"variables": {"after": "{{cursor}}", "q": "updated_at:>='{{version}}'", "n": "{{size}}"}}},
-                "itemsPath": "/data/v/nodes", "paging": {"kind": "cursor", "size": 2, "nextCursorPath": "/data/v/pageInfo/endCursor", "hasNextPath": "/data/v/pageInfo/hasNextPage"},
-                "idPath": "/id", "versionPath": "/updatedAt", "fields": {"id": "/id"},
-                "initial": {"version": "1970-01-01T00:00:00Z", "id": ""}
-            }]
-        }))
+        let profile: PullProfile = serde_json::from_str(
+            &serde_json::json!({
+                "source": "test", "pipeline": "test/1",
+                "feeds": [{
+                    "dataset": "Variant",
+                    "request": {"method": "POST", "path": "/graphql", "body": {"variables": {"after": "{{cursor}}", "q": "updated_at:>='{{version}}'", "n": "{{size}}"}}},
+                    "itemsPath": "/data/v/nodes", "paging": {"kind": "cursor", "size": 2, "nextCursorPath": "/data/v/pageInfo/endCursor", "hasNextPath": "/data/v/pageInfo/hasNextPage"},
+                    "idPath": "/id", "versionPath": "/updatedAt", "fields": {"id": "/id"},
+                    "initial": {"version": "1970-01-01T00:00:00Z", "id": ""}
+                }]
+            })
+            .to_string(),
+        )
         .expect("profile");
         let mut pull = Pull::new(profile, BTreeMap::new(), Limits::default());
         let first = pull.next_request().expect("first");

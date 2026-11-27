@@ -1,0 +1,64 @@
+{
+  "artifactId": "bi.certified_metric.certify.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Certify a metric contract",
+  "namespace": "bi",
+  "payload": {
+    "actionId": "bi.certified_metric.certify",
+    "effectProgram": {
+      "entityArtifactId": "bi.CertifiedMetric.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "bi.CertifiedMetric",
+      "transition": "certify"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Certify a metric contract",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "bi.CertifiedMetric"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/bi.certified_metric.certify.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

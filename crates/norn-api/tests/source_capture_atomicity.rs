@@ -629,7 +629,7 @@ mod tests {
             next_cursor: Some(
                 Watermark {
                     version: "2099-01-01 00:00:00".into(),
-                    id: Value::from("CONFLICT"),
+                    id: norn_ir::RuntimeValue::from("CONFLICT"),
                 }
                 .cursor_json()
                 .expect("json"),
@@ -916,7 +916,7 @@ mod tests {
             "Party".to_owned(),
             Watermark {
                 version: "2026-01-01 00:00:00".into(),
-                id: Value::String("CUST-LEGACY".into()),
+                id: norn_ir::RuntimeValue::String("CUST-LEGACY".into()),
             },
         )]);
         let legacy_json = serde_json::to_string(&legacy_wm).expect("json");

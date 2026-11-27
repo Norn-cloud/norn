@@ -1,0 +1,64 @@
+{
+  "artifactId": "bi.certified_metric.deprecate.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Deprecate a metric contract",
+  "namespace": "bi",
+  "payload": {
+    "actionId": "bi.certified_metric.deprecate",
+    "effectProgram": {
+      "entityArtifactId": "bi.CertifiedMetric.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "bi.CertifiedMetric",
+      "transition": "deprecate"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Deprecate a metric contract",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "bi.CertifiedMetric"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/bi.certified_metric.deprecate.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

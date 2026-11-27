@@ -1,0 +1,76 @@
+{
+  "artifactId": "analytics.study.evaluate.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Evaluate a preregistered study from a verified diagnostic receipt",
+  "namespace": "analytics",
+  "payload": {
+    "actionId": "analytics.study.evaluate",
+    "effectProgram": {
+      "acceptReceipt": {
+        "digestProperty": "receipt_digest",
+        "manifestDigest": "sha256:6b688d7ccd5b5e58cf8fef4a682cc87ec4033f0d445d42214f648dbfc406bee4",
+        "referenceField": "receipt",
+        "resultBindings": {
+          "diagnostics_passed": "diagnostics_passed"
+        }
+      },
+      "entityArtifactId": "analytics.Study.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "publication_status",
+      "objectIdField": "id",
+      "objectKind": "analytics.Study",
+      "transition": "evaluate"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "receipt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "receipt"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Evaluate a preregistered study from a verified diagnostic receipt",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "analytics.Study"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/analytics.study.evaluate.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
