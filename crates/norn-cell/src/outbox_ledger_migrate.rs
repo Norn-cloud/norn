@@ -20,8 +20,6 @@ struct PriorBackfillContext<'a> {
     op: OperationKey,
     queue: Queue,
     head_generation: u64,
-    fallback_digest: OutboxDigest,
-    fallback_dedup: ProviderDedupContract,
     head_commit_seq: u64,
 }
 
@@ -93,8 +91,6 @@ fn backfill_v11_outbox_row<E: SqlEngine>(engine: &E, row: SqlRow) -> Result<(), 
         op,
         queue,
         head_generation: generation,
-        fallback_digest: head_digest,
-        fallback_dedup: head_dedup,
         head_commit_seq: commit_seq,
     };
     let PriorBackfill {
@@ -286,14 +282,8 @@ fn backfill_v11_one_prior_claim<E: SqlEngine>(
         .map(|seq| to_u64(seq, "origin commit_seq"))
         .transpose()?
         .unwrap_or(claim_seq);
-    let (digest, dedup) = backfill_v11_prior_command_meta(
-        engine,
-        ctx.command_id,
-        prior_gen,
-        enqueue_seq,
-        ctx.fallback_digest,
-        ctx.fallback_dedup,
-    )?;
+    let (digest, dedup) =
+        backfill_v11_prior_command_meta(engine, ctx.command_id, prior_gen, enqueue_seq, claim_seq)?;
     state.records.push(OutboxRecord {
         operation: ctx.op,
         generation: prior_gen,
@@ -316,7 +306,7 @@ fn backfill_v11_one_prior_claim<E: SqlEngine>(
             state.records.push(prior_outcome_record(
                 ctx.op, prior_gen, claim_seq, &outcome,
             )?);
-            state.records.extend(state.deferred_outcomes.drain(..));
+            state.records.append(&mut state.deferred_outcomes);
             state.records.push(OutboxRecord {
                 operation: ctx.op,
                 generation: prior_gen,
@@ -392,11 +382,50 @@ fn backfill_v11_prior_command_meta<E: SqlEngine>(
     command_id: &str,
     generation: u64,
     enqueue_seq: u64,
-    fallback_digest: OutboxDigest,
-    fallback_dedup: ProviderDedupContract,
+    claim_seq: u64,
 ) -> Result<(OutboxDigest, ProviderDedupContract), CellError> {
-    let Ok(Some(record)) = crate::export_journal::read_record(engine, enqueue_seq) else {
-        return Ok((fallback_digest, fallback_dedup));
+    if let Some(meta) = find_enqueued_meta_at(engine, command_id, generation, enqueue_seq)? {
+        return Ok(meta);
+    }
+    let has_journal = engine
+        .query_optional(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
+            params![],
+            |row| row.get::<i64>(0),
+        )?
+        .is_some();
+    if has_journal {
+        let seqs = engine.query(
+            "SELECT \"commit_seq\" FROM \"_norn_export_journal\" WHERE \"commit_seq\" <= ?1 ORDER BY \"commit_seq\" DESC",
+            params![to_i64(claim_seq, "claim commit_seq")?],
+        )?;
+        for values in seqs {
+            let seq = to_u64(SqlRow(values).get::<i64>(0)?, "commit_seq")?;
+            if seq == enqueue_seq {
+                continue;
+            }
+            if let Some(meta) = find_enqueued_meta_at(engine, command_id, generation, seq)? {
+                return Ok(meta);
+            }
+        }
+    }
+    // No provable prior payload exists in the legacy store: bind a
+    // domain-separated sentinel digest and fail-closed `ProviderDedupContract::None`
+    // rather than fabricating the head generation's payload identity.
+    Ok((
+        crate::outbox_ledger::legacy_unknown_payload_digest(command_id, generation)?,
+        ProviderDedupContract::None,
+    ))
+}
+
+fn find_enqueued_meta_at<E: SqlEngine>(
+    engine: &E,
+    command_id: &str,
+    generation: u64,
+    commit_seq: u64,
+) -> Result<Option<(OutboxDigest, ProviderDedupContract)>, CellError> {
+    let Ok(Some(record)) = crate::export_journal::read_record(engine, commit_seq) else {
+        return Ok(None);
     };
     let found = record.batch.effects.iter().find_map(|effect| match effect {
         crate::store::EffectRow::Enqueue { command }
@@ -413,10 +442,10 @@ fn backfill_v11_prior_command_meta<E: SqlEngine>(
         | crate::store::EffectRow::CancelTimer { .. } => None,
     });
     match found {
-        Some(command) => Ok((
+        Some(command) => Ok(Some((
             crate::outbox_ledger::payload_digest(command)?,
             crate::outbox_ledger::dedup_contract(command)?,
-        )),
-        None => Ok((fallback_digest, fallback_dedup)),
+        ))),
+        None => Ok(None),
     }
 }

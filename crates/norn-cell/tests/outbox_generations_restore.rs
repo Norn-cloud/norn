@@ -301,62 +301,68 @@ async fn second_restore_replays_confirmed_outcome_and_compensation() -> TestResu
 }
 
 #[tokio::test]
-async fn export_restore_preserves_late_outcomes_across_both_paths() -> TestResult {
+async fn export_restore_preserves_mixed_and_unconsumed_late_outcomes() -> TestResult {
     let dir = tempfile::tempdir()?;
     let mut cell = open_cell(&dir.path().join("late-src.sqlite"))?;
-    let a0 = make_command("late-a", 0, 10, None)?;
-    let a1 = make_command("late-a", 1, 10, None)?;
-    let b0 = make_command("late-b", 0, 20, None)?;
-    let b1 = make_command("late-b", 1, 20, None)?;
-    enqueue_cmd(&mut cell, a0.clone())?;
-    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(a0.clone()));
-    let proof_a0 = cell
+    // 1. Single 3-generation operation mixing both attachment paths in one epoch:
+    // gen 0 via `complete_perform`, gen 1 via `record_late_outcome`, gen 2 consumed.
+    let m0 = make_command("mixed-3", 0, 10, None)?;
+    let m1 = make_command("mixed-3", 1, 10, None)?;
+    let m2 = make_command("mixed-3", 2, 10, None)?;
+    enqueue_cmd(&mut cell, m0.clone())?;
+    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(m0.clone()));
+    cell.reconcile_outbox(
+        &m0.id,
+        Generation(0),
+        ReconciliationDecision::AuthorizeReissue { next_generation: 1 },
+        None,
+    )?;
+    enqueue_cmd(&mut cell, m1.clone())?;
+    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(m1.clone()));
+    let proof_m1 = cell
         .store()
         .read()
-        .dispatch_proof("late-a", 0)?
-        .ok_or("proof_a0")?;
+        .dispatch_proof("mixed-3", 1)?
+        .ok_or("proof_m1")?;
     cell.reconcile_outbox(
-        &a0.id,
-        Generation(0),
-        ReconciliationDecision::AuthorizeReissue { next_generation: 1 },
+        &m1.id,
+        Generation(1),
+        ReconciliationDecision::AuthorizeReissue { next_generation: 2 },
         None,
     )?;
-    enqueue_cmd(&mut cell, a1.clone())?;
-    // Path 1: durable `record_late_outcome` before gen 1 is even consumed.
-    cell.record_late_outcome(&a0.id, proof_a0, true, &rv(json!({ "ok": true, "a": 0 }))?)?;
-    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(a1.clone()));
+    enqueue_cmd(&mut cell, m2.clone())?;
     assert!(
-        cell.complete_perform(&a1, rv(json!({ "ok": true }))?)?
-            .is_some()
-    );
-    cell.commit(CellCommit::empty().consuming(Consumed::Result {
-        command: a1.id.clone(),
-        generation: Generation(1),
-    }))?;
-
-    // Path 2: local `complete_perform` on superseded gen 0 before gen 1 is consumed.
-    enqueue_cmd(&mut cell, b0.clone())?;
-    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(b0.clone()));
-    cell.reconcile_outbox(
-        &b0.id,
-        Generation(0),
-        ReconciliationDecision::AuthorizeReissue { next_generation: 1 },
-        None,
-    )?;
-    enqueue_cmd(&mut cell, b1.clone())?;
-    assert!(
-        cell.complete_perform(&b0, rv(json!({ "ok": true, "b": 0 }))?)?
+        cell.complete_perform(&m0, rv(json!({ "ok": true, "g": 0 }))?)?
             .is_none()
     );
-    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(b1.clone()));
+    cell.record_late_outcome(&m1.id, proof_m1, true, &rv(json!({ "ok": true, "g": 1 }))?)?;
+    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(m2.clone()));
     assert!(
-        cell.complete_perform(&b1, rv(json!({ "ok": true }))?)?
+        cell.complete_perform(&m2, rv(json!({ "ok": true, "g": 2 }))?)?
             .is_some()
     );
     cell.commit(CellCommit::empty().consuming(Consumed::Result {
-        command: b1.id.clone(),
-        generation: Generation(1),
+        command: m2.id.clone(),
+        generation: Generation(2),
     }))?;
+
+    // 2. Local `complete_perform` late outcome exported while replacement gen 1 is
+    // still pending (never consumed) must still survive export and restore.
+    let p0 = make_command("pending-late", 0, 20, None)?;
+    let p1 = make_command("pending-late", 1, 20, None)?;
+    enqueue_cmd(&mut cell, p0.clone())?;
+    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(p0.clone()));
+    cell.reconcile_outbox(
+        &p0.id,
+        Generation(0),
+        ReconciliationDecision::AuthorizeReissue { next_generation: 1 },
+        None,
+    )?;
+    enqueue_cmd(&mut cell, p1)?;
+    assert!(
+        cell.complete_perform(&p0, rv(json!({ "ok": true, "p": 0 }))?)?
+            .is_none()
+    );
 
     let (mut exp, bindings) = export_cell(&cell, &dir.path().join("late-exp")).await?;
     let restored_path = dir.path().join("late-restored.sqlite");
@@ -374,17 +380,17 @@ async fn export_restore_preserves_late_outcomes_across_both_paths() -> TestResul
         restored
             .store()
             .read()
-            .outbox_ledger("late-a")?
-            .ok_or("late-a")?
+            .outbox_ledger("mixed-3")?
+            .ok_or("mixed-3")?
             .prior_confirmed_successes(),
-        vec![0]
+        vec![0, 1]
     );
     assert_eq!(
         restored
             .store()
             .read()
-            .outbox_ledger("late-b")?
-            .ok_or("late-b")?
+            .outbox_ledger("pending-late")?
+            .ok_or("pending-late")?
             .prior_confirmed_successes(),
         vec![0]
     );

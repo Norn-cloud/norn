@@ -1419,6 +1419,10 @@ pub struct CellModel {
     enqueued_payloads: BTreeMap<(CommandId, Generation), LawCommand>,
     /// Generations durably claimed in each command's current outbox epoch.
     dispatched_in_epoch: BTreeMap<CommandId, BTreeSet<u64>>,
+    /// Every generation durably claimed across all epochs (for durable late attachment).
+    all_dispatched: BTreeMap<CommandId, BTreeSet<u64>>,
+    /// Every generation that already has a recorded outcome across all epochs.
+    settled_generations: BTreeMap<CommandId, BTreeSet<u64>>,
     /// Superseded prior generations in the current epoch with attached late
     /// outcomes (D1 refinement observable).
     prior_outcomes: BTreeMap<CommandId, BTreeSet<u64>>,
@@ -1455,6 +1459,8 @@ impl Default for CellModel {
             generations: BTreeMap::new(),
             enqueued_payloads: BTreeMap::new(),
             dispatched_in_epoch: BTreeMap::new(),
+            all_dispatched: BTreeMap::new(),
+            settled_generations: BTreeMap::new(),
             prior_outcomes: BTreeMap::new(),
             consumed_in_epoch: BTreeSet::new(),
             timers: BTreeMap::new(),
@@ -1993,6 +1999,10 @@ impl CellModel {
             if self.commits_perform_claims {
                 self.claim();
             }
+            self.settled_generations
+                .entry(head.id.clone())
+                .or_default()
+                .insert(head.generation.0);
             self.executions = self.executions.saturating_add(1);
             self.head_performed = true;
         }
@@ -2050,6 +2060,10 @@ impl CellModel {
             self.claim();
         }
         self.dispatched_in_epoch
+            .entry(head.id.clone())
+            .or_default()
+            .insert(head.generation.0);
+        self.all_dispatched
             .entry(head.id.clone())
             .or_default()
             .insert(head.generation.0);
@@ -2203,6 +2217,10 @@ impl CellModel {
         if current && !self.head_performed {
             self.head_performed = true;
             self.head_unknown = false;
+            self.settled_generations
+                .entry(delivery.command.id.clone())
+                .or_default()
+                .insert(delivery.command.generation.0);
             self.executions = self.executions.saturating_add(1);
             return Expect::Deliver {
                 recorded: true,
@@ -2216,14 +2234,28 @@ impl CellModel {
             .is_some_and(|known| *known > delivery.command.generation);
         if stale
             && self
+                .all_dispatched
+                .get(&delivery.command.id)
+                .is_some_and(|gens| gens.contains(&delivery.command.generation.0))
+            && self
+                .settled_generations
+                .entry(delivery.command.id.clone())
+                .or_default()
+                .insert(delivery.command.generation.0)
+        {
+            if self.tracks_late_outcomes && self.commits_perform_claims {
+                self.claim();
+            }
+            if self
                 .dispatched_in_epoch
                 .get(&delivery.command.id)
                 .is_some_and(|gens| gens.contains(&delivery.command.generation.0))
-        {
-            self.prior_outcomes
-                .entry(delivery.command.id.clone())
-                .or_default()
-                .insert(delivery.command.generation.0);
+            {
+                self.prior_outcomes
+                    .entry(delivery.command.id.clone())
+                    .or_default()
+                    .insert(delivery.command.generation.0);
+            }
         }
         Expect::Deliver {
             recorded: false,
@@ -2352,6 +2384,10 @@ impl CellModel {
                     self.claim();
                     if let Some(head) = self.outbox.first() {
                         self.dispatched_in_epoch
+                            .entry(head.id.clone())
+                            .or_default()
+                            .insert(head.generation.0);
+                        self.all_dispatched
                             .entry(head.id.clone())
                             .or_default()
                             .insert(head.generation.0);

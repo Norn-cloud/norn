@@ -2332,7 +2332,6 @@ pub(crate) fn restore_input<E: SqlEngine>(
             command,
             result,
             runs,
-            late_outcomes,
         } => {
             restore_consumed_result(
                 store,
@@ -2342,7 +2341,6 @@ pub(crate) fn restore_input<E: SqlEngine>(
                 &command,
                 result.as_ref(),
                 &runs,
-                &late_outcomes,
                 &mismatch,
             )?;
         }
@@ -2370,7 +2368,6 @@ fn restore_consumed_result<E: SqlEngine>(
     command: &crate::store::OutboxCommand,
     result: Option<&Value>,
     runs: &[crate::RunRecord],
-    late_outcomes: &[norn_kernel::world::outbox_ledger::OutboxRecord],
     mismatch: &dyn Fn() -> CellError,
 ) -> Result<(), CellError> {
     let head = replayed_result(store, position)?.ok_or_else(mismatch)?;
@@ -2433,7 +2430,6 @@ fn restore_consumed_result<E: SqlEngine>(
         runs,
         !already_settled,
     )?;
-    crate::outbox_ledger::restore_late_outcomes(&store.conn, &command.command_id, late_outcomes)?;
     Ok(())
 }
 
@@ -2520,17 +2516,12 @@ fn decode_input(input: &norn_ir::RuntimeValue) -> Result<ConsumedInput, String> 
         Some("result") => {
             let row: crate::PendingCommand = norn_ir::runtime::decode(input)?;
             let runs = norn_ir::runtime::decode(input.get("runs").ok_or("missing runs")?)?;
-            let late_outcomes = match input.get("lateOutcomes") {
-                Some(late) => norn_ir::runtime::decode(late)?,
-                None => Vec::new(),
-            };
             Ok(ConsumedInput::Result {
                 position: row.position,
                 commit_seq: row.commit_seq,
                 command: row.command,
                 result: row.result,
                 runs,
-                late_outcomes,
             })
         }
         _ => Err("unknown consumed input kind".to_owned()),

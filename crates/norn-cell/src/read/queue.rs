@@ -337,17 +337,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         crate::outbox_ledger::load_dispatch_proof(self.conn, command_id, generation)
     }
 
-    /// Prior-generation immutable outcome records attached in the active epoch
-    /// before `active_generation`, for export preimage capture (`D1`).
-    pub(crate) fn outbox_late_outcomes(
-        &self,
-        command_id: &str,
-        active_generation: u64,
-    ) -> Result<Vec<OutboxRecord>, CellError> {
-        self.check_live()?;
-        crate::outbox_ledger::prior_outcome_records(self.conn, command_id, active_generation)
-    }
-
     /// The outbox entry `command_id`, consumed or not, with the commit that
     /// enqueued it: a parked call's decision read back after it resolved
     /// (APPROVAL-RECOVERY-1).

@@ -3775,9 +3775,18 @@ impl<E: SqlEngine> CellStore<E> {
         self.apply_system(&place, write)
     }
 
-    /// Record `outcome` as the head command's result when it has none; if
-    /// `(command_id, generation)` is a prior dispatched generation, attach its
-    /// late evidence immutably without modifying the active head.
+    /// Return the [`norn_kernel::world::outbox_ledger::DispatchProof`] of a
+    /// superseded prior generation that was durably claimed and has no
+    /// attached outcome yet (`D1`).
+    pub(crate) fn pending_late_dispatch_proof(
+        &self,
+        command_id: &str,
+        generation: u64,
+    ) -> Result<Option<norn_kernel::world::outbox_ledger::DispatchProof>, CellError> {
+        crate::outbox_ledger::pending_late_dispatch_proof(&self.conn, command_id, generation)
+    }
+
+    /// Record `outcome` as the head command's result when it has none.
     pub(crate) fn record_head_result(
         &self,
         command_id: &str,
@@ -3794,11 +3803,6 @@ impl<E: SqlEngine> CellStore<E> {
                     && head.result.is_none()
             });
             if !is_head {
-                if self.fork.is_none() {
-                    let _attached = crate::outbox_ledger::try_attach_late_outcome(
-                        &self.conn, command_id, generation, outcome,
-                    )?;
-                }
                 return Ok(false);
             }
             let head = head.ok_or_else(|| {

@@ -477,7 +477,8 @@ fn v10_upgrade_preserves_prior_dispatch_proofs_and_masks_fenced_result() -> Test
     let path = dir.path().join("upgrade-prior.sqlite");
     let mut cell = open_cell(&path)?;
     let g0 = make_command("multi-1", 0, 40, None)?;
-    let g1 = make_command("multi-1", 1, 40, None)?;
+    let g1 = make_command("multi-1", 1, 99, Some("operationKeyIdempotent"))?;
+    let expected_g0_digest = payload_digest(&norn_ir::runtime::encode(&g0)?)?;
     enqueue_cmd(&mut cell, g0.clone())?;
     assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(g0.clone()));
     cell.reconcile_outbox(
@@ -511,6 +512,17 @@ fn v10_upgrade_preserves_prior_dispatch_proofs_and_masks_fenced_result() -> Test
     drop(raw);
 
     let mut upgraded = open_cell(&path)?;
+    // Migration recovers gen-0's provable original payload digest & dedup contract,
+    // never substituting gen-1's head metadata.
+    let ledger = upgraded
+        .store()
+        .read()
+        .outbox_ledger("multi-1")?
+        .ok_or("missing upgraded multi-1")?;
+    let gen0 = ledger.generation(0).ok_or("missing upgraded gen 0")?;
+    assert_eq!(gen0.payload_digest, expected_g0_digest);
+    assert_eq!(gen0.dedup_contract, ProviderDedupContract::None);
+    assert_ne!(gen0.payload_digest, ledger.active().payload_digest);
     // Restored fence masks `pending_result` even though SQL still holds the saved result.
     assert!(
         upgraded

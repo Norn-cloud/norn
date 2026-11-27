@@ -96,14 +96,12 @@ pub(crate) fn consumed_input<E: SqlEngine>(
                 .pending_result(command_id, *generation)?
                 .ok_or_else(not_pending)?;
             let runs = reader.runs(command_id)?;
-            let late_outcomes = reader.outbox_late_outcomes(command_id, *generation)?;
             preimage(&ConsumedInput::Result {
                 position: pending.position,
                 commit_seq: pending.commit_seq,
                 command: pending.command,
                 result: pending.result,
                 runs,
-                late_outcomes,
             })
         }
         Consumption::Timer {
@@ -145,10 +143,6 @@ pub(crate) enum ConsumedInput {
         command: crate::store::OutboxCommand,
         result: Option<Value>,
         runs: Vec<crate::read::RunRecord>,
-        /// D1: prior-generation immutable dispatch-proof outcomes recorded on
-        /// superseded generations before this consumption; omitted when empty.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        late_outcomes: Vec<norn_kernel::world::outbox_ledger::OutboxRecord>,
     },
     Timer {
         commit_seq: u64,

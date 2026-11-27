@@ -174,6 +174,22 @@ fn digest_canonical_str(canonical: &str) -> Result<OutboxDigest, CellError> {
         .ok_or_else(|| CellError::Encoding(format!("invalid outbox digest hex: {hex}")))
 }
 
+/// Domain-separated digest representing an unprovable pre-v11 prior-generation
+/// payload whose original enqueue record is absent from the store. Matches no
+/// real [`payload_digest`] so any future same-generation replay fails closed.
+pub(crate) fn legacy_unknown_payload_digest(
+    command_id: &str,
+    generation: u64,
+) -> Result<OutboxDigest, CellError> {
+    let hex = norn_ir::canonical::domain_hash_hex(
+        b"norn.outbox.legacy_unknown_payload.v1\0",
+        &(command_id, generation),
+    )
+    .map_err(CellError::Encoding)?;
+    OutboxDigest::from_hex(&hex)
+        .ok_or_else(|| CellError::Encoding(format!("invalid legacy digest hex: {hex}")))
+}
+
 pub(crate) fn operation_key<E: SqlEngine>(
     conn: &E,
     command_id: &str,
@@ -884,67 +900,31 @@ pub(crate) fn record_compensation<E: SqlEngine>(
     Ok((status, compensated))
 }
 
-/// Prior-generation dispatch-proof outcome records in the active epoch of
-/// `command_id` (generations `< active_generation`), captured into the
-/// consuming export preimage so local late completions survive restore.
-pub(crate) fn prior_outcome_records<E: SqlEngine>(
+/// Return the [`DispatchProof`] of a superseded prior generation that was
+/// durably claimed and does not yet have an attached outcome (`D1`), so
+/// `complete_perform` can journal late evidence durably via `RecordLateOutcome`
+/// without creating redundant commits on duplicate deliveries.
+pub(crate) fn pending_late_dispatch_proof<E: SqlEngine>(
     conn: &E,
     command_id: &str,
-    active_generation: u64,
-) -> Result<Vec<OutboxRecord>, CellError> {
+    generation: u64,
+) -> Result<Option<DispatchProof>, CellError> {
     let epochs = load_epochs(conn, command_id)?;
-    let Some((_, records)) = epochs.last() else {
-        return Ok(Vec::new());
+    let Some((last_epoch, _)) = epochs.last() else {
+        return Ok(None);
     };
-    Ok(records
-        .iter()
-        .copied()
-        .filter(|record| {
-            record.generation < active_generation
-                && matches!(
-                    record.kind,
-                    OutboxRecordKind::Outcome {
-                        evidence: OutcomeEvidence::DispatchProof { .. },
-                        ..
-                    }
-                )
-        })
-        .collect())
-}
-
-/// Replay exported prior-generation late outcome records into `_norn_outbox_record`
-/// during restore (`history::restore_input`), verifying each `DispatchProof`
-/// through [`OperationLedger`] and ignoring idempotent duplicates.
-pub(crate) fn restore_late_outcomes<E: SqlEngine>(
-    conn: &E,
-    command_id: &str,
-    records: &[OutboxRecord],
-) -> Result<(), CellError> {
-    if records.is_empty() {
-        return Ok(());
-    }
-    let epochs = load_epochs(conn, command_id)?;
-    let Some((last_epoch, last_records)) = epochs.last() else {
-        return Err(CellError::OutboxLedgerRefused {
-            command_id: command_id.to_owned(),
-            generation: 0,
-            refusal: OutboxLedgerRefusal::NotInitialized,
-        });
-    };
-    let mut ledger = replay_records(last_records)?;
-    for record in records {
-        let status = ledger
-            .apply(record)
-            .map_err(|refusal| CellError::OutboxLedgerRefused {
-                command_id: command_id.to_owned(),
-                generation: record.generation,
-                refusal,
-            })?;
-        if status == ApplyStatus::Applied {
-            append_record(conn, command_id, *last_epoch, record)?;
+    for (epoch, records) in epochs.iter().rev() {
+        let ledger = replay_records(records)?;
+        let Some(gen_rec) = ledger.generation(generation) else {
+            continue;
+        };
+        let is_prior = *epoch < *last_epoch || generation < ledger.active_generation();
+        if !is_prior || gen_rec.outcome.is_some() {
+            return Ok(None);
         }
+        return Ok(gen_rec.dispatch);
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Replay consumed run history into `_norn_outbox_record` during export restore

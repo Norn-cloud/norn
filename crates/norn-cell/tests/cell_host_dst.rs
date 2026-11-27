@@ -1194,6 +1194,7 @@ impl NativeDstHarness {
                 &stale,
                 &None,
             )?;
+            self.model.head = head_of(&self.cell, self.seed, step)?;
             self.cov.outbox_generation_supersession =
                 self.cov.outbox_generation_supersession.saturating_add(1);
             return Ok(());
