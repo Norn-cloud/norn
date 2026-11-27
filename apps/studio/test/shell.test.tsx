@@ -509,7 +509,12 @@ test("Recent fails closed across workspace switches, unconfirmed scopes, and rol
     expect(expired).toBeNull()
     const remountedSame = resumeRecentTracker("/sources/canon.Holding/secret-401", null, accountScopeIdentity(adminA))
     expect(stepRecentTracker(remountedSame, "/sources/canon.Holding/secret-401", fpAdminA, accountScopeIdentity(adminA)).shouldRecord).toBe(false)
-    expect(stepRecentTracker(remountedSame, "/runs/run-after-401", fpAdminA, accountScopeIdentity(adminA)).shouldRecord).toBe(true)
+    // Navigating to a brand-new run BEFORE mode settles (fingerprint still null) must record once mode settles for that same account.
+    const navWhilePending = stepRecentTracker(remountedSame, "/runs/run-after-401", null, accountScopeIdentity(adminA))
+    expect(navWhilePending.shouldRecord).toBe(false)
+    expect(stepRecentTracker(navWhilePending.next, "/runs/run-after-401", fpAdminA, accountScopeIdentity(adminA)).shouldRecord).toBe(true)
+    // Still fails closed if the account switches again before that pending navigation settles.
+    expect(stepRecentTracker(navWhilePending.next, "/runs/run-after-401", fpAdminB, accountScopeIdentity(adminB)).shouldRecord).toBe(false)
   } finally {
     resetRecentVisitGuard()
   }

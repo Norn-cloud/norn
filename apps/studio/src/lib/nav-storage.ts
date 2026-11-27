@@ -296,7 +296,7 @@ export function stepRecentTracker(
       pathname,
       enteredAccountKey: accountKey,
       enteredFingerprint: fingerprint,
-      hadSettled: tracker.hadSettled || fingerprint !== null,
+      hadSettled: fingerprint !== null,
     }
     return { next, shouldRecord: fingerprint !== null }
   }
