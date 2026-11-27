@@ -5,6 +5,10 @@ use crate::{
         ReadRequest, read_denied,
     },
     host::DevHost,
+    privacy::{
+        DisclosedAnswer, DisclosedTrace,
+        disclosure::{project_answer, project_trace},
+    },
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
 };
@@ -12,13 +16,9 @@ use norn_cell::{
     CellError, CellStore, KnowledgeCutoff, ObjectRecord,
     compute::{
         HistoricalQuestionResult, QueryContext, QueryResult,
-        lineage::{
-            LineageDisclosure, NumericTrace, keyed_finding_handle, keyed_lineage_handle,
-            keyed_receipt_handle, keyed_revision_handle, lineage_handle_matches,
-        },
+        lineage::{LineageDisclosure, keyed_receipt_handle, lineage_handle_matches},
     },
     engine::SqlEngine,
-    system::GENESIS_HASH,
 };
 use norn_checker::EffectiveCatalog;
 use norn_checker::metric::compute::{QuestionPlan, admit};
@@ -228,7 +228,7 @@ pub fn get_answer<E: SqlEngine>(
     actor: Option<&str>,
     question: &str,
     runtime: &dyn QuestionRuntime<E>,
-) -> Result<QuestionAnswer, Refusal> {
+) -> Result<DisclosedAnswer, Refusal> {
     let (_epoch, actor, key, plan) = admit_named_question(host, scope, actor, question, runtime)?;
     answer_plan(host, runtime, actor, question, &plan, key)
 }
@@ -242,7 +242,7 @@ fn answer_plan<E: SqlEngine>(
     question: &str,
     plan: &QuestionPlan,
     key: &[u8],
-) -> Result<QuestionAnswer, Refusal> {
+) -> Result<DisclosedAnswer, Refusal> {
     let cell = host.cell()?;
     let snapshot = runtime.snapshot(cell.store(), plan, actor)?;
     if snapshot.context.scope != host.scope().key() {
@@ -278,20 +278,13 @@ fn answer_plan<E: SqlEngine>(
             live_read: snapshot.cutoff.is_none(),
         },
     )?;
-    let mut answer = outcome.map_err(Refusal::from_compute)?;
-    let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
-    let result = match &mut answer {
-        QuestionAnswer::Live(result) => result,
-        QuestionAnswer::Historical(historical) => {
-            withhold_cutoff_receipt(historical, key, world)?;
-            &mut historical.result
-        }
-    };
-    withhold_ledger_head(result, key, world);
-    withhold_exclusions(result, key, world);
-    withhold_values(result, &withheld, runtime.min_disclosed_bucket());
-    result.lineage_ref = keyed_lineage_handle(key, &result.lineage_ref);
-    Ok(answer)
+    let answer = outcome.map_err(Refusal::from_compute)?;
+    project_answer(
+        (host, runtime, cell.store()),
+        (actor, key),
+        &withheld,
+        answer,
+    )
 }
 
 /// #1164 (D53): the receipt coordinate `actor` may see for a commit outside
@@ -332,8 +325,12 @@ pub(crate) fn world_values<E: SqlEngine>(
     store: &CellStore<E>,
     actor: &str,
 ) -> bool {
+    let unmarked = host
+        .marking_catalog(&store.read())
+        .is_ok_and(|c| c.is_empty());
     let mut types = store.model().object_types().peekable();
-    types.peek().is_some()
+    unmarked
+        && types.peek().is_some()
         && types.all(|object_type| {
             let name = object_type.name.as_str();
             runtime
@@ -350,52 +347,6 @@ pub(crate) fn world_values<E: SqlEngine>(
         })
 }
 
-/// #1175 (DATA-VALUES-1, D53): `revision.hash` is the unkeyed ledger chain
-/// hash, and the chained events carry record values: a reader who saw the
-/// previous revision could confirm a guessed value of one new event offline.
-/// A reader without whole-world Values sees the keyed revision handle; the
-/// genesis head chains nothing and stays. Internal pins keep the raw head.
-fn withhold_ledger_head(result: &mut QueryResult, key: &[u8], world: bool) {
-    let genesis = result.revision.seq == 0 && result.revision.hash == GENESIS_HASH;
-    if !(world || genesis) {
-        result.revision.hash = keyed_revision_handle(key, &result.revision.hash);
-    }
-}
-
-/// #1175 (DATA-VALUES-1, D53): an exclusion maps a quarantined record to its
-/// finding ID, and the finding identity hashes that record's canonical values
-/// without a key: Population alone shows the exclusion, so a reader without
-/// Values could confirm a guessed value offline. A reader without whole-world
-/// Values sees the keyed finding handle; the record IDs stay (Population).
-fn withhold_exclusions(result: &mut QueryResult, key: &[u8], world: bool) {
-    if !world {
-        for finding in result.exclusions.values_mut() {
-            *finding = keyed_finding_handle(key, finding);
-        }
-    }
-}
-
-/// #1175 (DATA-VALUES-1, D53): the historical world names its cutoff commit by
-/// receipt hash, which commits to that commit's values and to the ledger head.
-/// A reader without whole-world Values sees the keyed receipt handle instead,
-/// so the coordinate never confirms a guess offline.
-fn withhold_cutoff_receipt(
-    historical: &mut HistoricalQuestionResult,
-    key: &[u8],
-    world: bool,
-) -> Result<(), Refusal> {
-    let norn_kernel::World::Historical { commit } = &mut historical.world else {
-        return Err(Refusal::from_compute(CellError::ComputeRefused(
-            "core.compute.unsupported_engine",
-        )));
-    };
-    // Genesis has no receipt: its coordinate commits to nothing.
-    if !world && historical.result.known_as_of != 0 {
-        commit.0 = keyed_receipt_handle(key, &commit.0);
-    }
-    Ok(())
-}
-
 /// Population decides membership; a member without Values is recorded so its
 /// bucket's amounts are withheld (DATA-VALUES-1).
 fn visible_recording(
@@ -410,15 +361,6 @@ fn visible_recording(
     Ok(member)
 }
 
-/// DATA-VALUES-1 (D52/D53): per-member amounts are row values. A bucket with
-/// any member the reader may not see the values of withholds every amount, and
-/// discloses its aggregate only at `min_disclosed` members or more.
-fn withhold_values(result: &mut QueryResult, withheld: &BTreeSet<String>, min_disclosed: usize) {
-    for row in result.rows.values_mut() {
-        row.withhold(|id| withheld.contains(id), min_disclosed.max(1));
-    }
-}
-
 /// LINEAGE-SUM-1: revalidate one exact result with separate value/source grants.
 /// # Errors
 /// Nonexact/stale results, historical tracing, changed pins or unavailable evidence refuse.
@@ -429,7 +371,7 @@ pub fn get_numeric_trace<E: SqlEngine>(
     actor: Option<&str>,
     question: &str,
     runtime: &dyn QuestionRuntime<E>,
-) -> Result<NumericTrace, Refusal> {
+) -> Result<DisclosedTrace, Refusal> {
     let scope = ScopeQuery {
         org_id: query.org_id.clone(),
         environment_id: query.environment_id.clone(),
@@ -562,7 +504,7 @@ fn trace_plan<E: SqlEngine>(
     lineage: &str,
     bucket: &str,
     answered: Option<(u64, u64)>,
-) -> Result<NumericTrace, Refusal> {
+) -> Result<DisclosedTrace, Refusal> {
     let cell = host.cell()?;
     let mut snapshot = runtime.snapshot(cell.store(), plan, actor)?;
     if snapshot.context.scope != host.scope().key() {
@@ -618,22 +560,14 @@ fn trace_plan<E: SqlEngine>(
             live_read: answered.is_none(),
         },
     )?;
-    let mut trace = outcome.map_err(Refusal::from_compute)?;
-    let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
-    withhold_ledger_head(&mut trace.result, key, world);
-    withhold_exclusions(&mut trace.result, key, world);
-    if !world {
-        for receipt in trace
-            .contributions
-            .iter_mut()
-            .filter_map(|c| c.receipt_hash.as_mut())
-        {
-            *receipt = keyed_receipt_handle(key, receipt);
-        }
-    }
-    withhold_values(&mut trace.result, &withheld, runtime.min_disclosed_bucket());
-    lineage.clone_into(&mut trace.result.lineage_ref);
-    Ok(trace)
+    let trace = outcome.map_err(Refusal::from_compute)?;
+    project_trace(
+        (host, runtime, cell.store()),
+        (actor, &world_name),
+        (key, lineage),
+        &withheld,
+        trace,
+    )
 }
 
 fn mapped<E: SqlEngine>(
@@ -950,12 +884,12 @@ pub fn evaluate_question<E: SqlEngine>(
     actor: Option<&str>,
     request: &EvaluateRequest,
     runtime: &dyn AdHocQuestions<E>,
-) -> Result<QuestionAnswer, Refusal> {
+) -> Result<DisclosedAnswer, Refusal> {
     let actor = actor.ok_or_else(read_denied)?;
     let (plan, key) = admit_ad_hoc(host, scope, actor, &request.question, runtime)?;
     let _epoch = collection_epoch(host, scope, runtime, actor, &request.question)?;
     let answer = answer_plan(host, runtime, actor, &request.question.name, &plan, key)?;
-    let buckets = match &answer {
+    let buckets = match answer.as_answer() {
         QuestionAnswer::Live(result) => result.rows.len(),
         QuestionAnswer::Historical(historical) => historical.result.rows.len(),
     };
@@ -976,7 +910,7 @@ pub fn trace_ad_hoc<E: SqlEngine>(
     actor: Option<&str>,
     request: &AdHocTraceRequest,
     runtime: &dyn AdHocQuestions<E>,
-) -> Result<NumericTrace, Refusal> {
+) -> Result<DisclosedTrace, Refusal> {
     let actor = actor.ok_or_else(read_denied)?;
     let (plan, key) = admit_ad_hoc(host, scope, actor, &request.question, runtime)?;
     let _epoch = collection_epoch(host, scope, runtime, actor, &request.question)?;

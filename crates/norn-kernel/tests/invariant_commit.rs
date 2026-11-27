@@ -4292,9 +4292,10 @@ fn law_with_exceptions_fails_closed_on_malformed_tree_broken_expr_invariant_and_
     // Invariant response with exceptions still refuses as unsupported semantics.
     let mut inv = serde_json::to_value(invariant_amount_law()).unwrap();
     inv["payload"]["exceptions"] = json!([law_exception("small", "amount_bounded", "true")]);
+    let inv_artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(inv).unwrap();
     let mut inv_cell = cell()
         .with_types(types.clone())
-        .with_governing_laws(vec![serde_json::from_value(inv).unwrap()]);
+        .with_governing_laws(vec![inv_artifact.clone()]);
     let inv_err = inv_cell
         .commit(CellCommit {
             writes: vec![FactWrite {
@@ -4309,7 +4310,9 @@ fn law_with_exceptions_fails_closed_on_malformed_tree_broken_expr_invariant_and_
         .expect_err("invariant law with exceptions is unsupported");
     assert_eq!(inv_err.code(), "core.laws.unsupported_semantics");
 
-    // Bulk/dataset `law_rule` remains fail-closed for laws with exceptions, and zero fuel refuses.
+    // Bulk/dataset `law_rule` accepts valid non-link predicate laws with exceptions,
+    // refuses cyclic trees (`core.laws.unresolved_scope`), link-reading exceptions and
+    // `Invariant` laws with exceptions (`core.laws.unsupported_semantics`), and zero fuel refuses.
     let mut valid = serde_json::to_value(direct_amount_law()).unwrap();
     valid["payload"]["exceptions"] = json!([law_exception(
         "vip",
@@ -4319,13 +4322,54 @@ fn law_with_exceptions_fails_closed_on_malformed_tree_broken_expr_invariant_and_
     let valid_artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(valid).unwrap();
     let valid_catalog =
         TypeCatalog::new(&types).with_governing_laws(std::slice::from_ref(&valid_artifact));
-    let dataset_err = norn_kernel::governing_laws::law_rule(
+    let (dataset_law, _) = norn_kernel::governing_laws::law_rule(
         &valid_catalog,
         &ObjectTypeName(ITEM.into()),
         &valid_artifact,
     )
-    .expect_err("dataset law_rule must refuse laws with exceptions");
-    assert_eq!(dataset_err.code(), "core.laws.unsupported_semantics");
+    .expect("dataset law_rule accepts valid non-link predicate laws with exceptions");
+    assert_eq!(dataset_law.exceptions.len(), 1);
+
+    let cyclic_rule_err = norn_kernel::governing_laws::law_rule(
+        &cyclic_catalog,
+        &ObjectTypeName(ITEM.into()),
+        &cyclic_artifact,
+    )
+    .expect_err("dataset law_rule must refuse cyclic exception trees");
+    assert_eq!(cyclic_rule_err.code(), "core.laws.unresolved_scope");
+
+    let inv_catalog =
+        TypeCatalog::new(&types).with_governing_laws(std::slice::from_ref(&inv_artifact));
+    let inv_rule_err = norn_kernel::governing_laws::law_rule(
+        &inv_catalog,
+        &ObjectTypeName(ITEM.into()),
+        &inv_artifact,
+    )
+    .expect_err("dataset law_rule must refuse invariant laws with exceptions");
+    assert_eq!(inv_rule_err.code(), "core.laws.unsupported_semantics");
+
+    let doc_types = document_types().expect("document types");
+    let mut linked_exc = serde_json::to_value(
+        link_law("line_cap_dataset", SPECIAL_LINE, "self.amount > 100").expect("link law"),
+    )
+    .unwrap();
+    linked_exc["payload"]["exceptions"] = json!([law_exception(
+        "doc_ex",
+        "line_cap_dataset",
+        "self.doc.limit >= 1000"
+    )]);
+    let linked_exc_artifact: norn_ir::ArtifactEnvelope =
+        serde_json::from_value(linked_exc).unwrap();
+    let linked_catalog = TypeCatalog::new(&doc_types)
+        .with_governing_laws(std::slice::from_ref(&linked_exc_artifact));
+    let linked_rule_err = norn_kernel::governing_laws::law_rule(
+        &linked_catalog,
+        &ObjectTypeName(SPECIAL_LINE.into()),
+        &linked_exc_artifact,
+    )
+    .expect_err("dataset law_rule must refuse link-reading exception laws");
+    assert_eq!(linked_rule_err.code(), "core.laws.unsupported_semantics");
+
     let fuel_err = norn_kernel::governing_laws::evaluate(
         &valid_catalog,
         &FactKey::new(ITEM, "fuel"),

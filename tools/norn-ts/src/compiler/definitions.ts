@@ -1797,28 +1797,101 @@ class DefinitionCompiler {
   }
 
   private access(call: ts.CallExpression): P.AccessDef {
-    const members = this.meta(call, ["id", "title", "version", "rules", "principalCatalog"])
+    const members = this.meta(call, ["id", "title", "version", "rules", "principalCatalog", "scopedRoles"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const principalCatalog = members.get("principalCatalog")
-    return P.access({
-      // The closed grammar (types, sources) is the Rust checker's.
-      ...(principalCatalog ? { principalCatalog: this.list(principalCatalog).map((entry) => this.json(entry) as unknown as P.PrincipalCatalogEntry) } : {}),
-      id: this.string(need("id")),
-      title: this.string(need("title")),
-      version: this.string(need("version")),
-      rules: this.list(need("rules")).map((r) => {
+    const scopedRolesNode = members.get("scopedRoles")
+    // SCOPE-KEY-1: declare a role's scope attribute + resource property once;
+    // the compiler injects `{ resource: { name: property, op: "in", value: { principalAttribute: attribute } } }`
+    // onto every rule naming that role (unless already present).
+    const scopedRoles = scopedRolesNode
+      ? this.list(scopedRolesNode).map((entry) => {
+          const s = this.closedRecord(entry, ["role", "attribute", "property"], ["role", "attribute", "property"])
+          return {
+            role: this.string(s.get("role")!),
+            attribute: this.string(s.get("attribute")!),
+            property: this.string(s.get("property")!),
+          }
+        })
+      : []
+    const usedScopedRoles = new Set<string>()
+    const rules = this.list(need("rules")).map((r) => {
         const m = this.closedRecord(r, ["ruleId", "actions", "resourceType", "scope", "allOf"], ["ruleId", "actions", "resourceType", "scope"])
         const scope = this.closedRecord(m.get("scope")!, ["dimensions"], ["dimensions"])
-        const allOf = m.get("allOf")
+        const allOfNode = m.get("allOf")
+        const allOf: P.AccessCondition[] = allOfNode
+          ? this.list(allOfNode).map((c) => this.json(c) as unknown as P.AccessCondition)
+          : []
+        if (scopedRoles.length > 0) {
+          const ruleRoles = new Set<string>()
+          for (const cond of allOf) {
+            const roleAnyOf = (cond as { role?: { anyOf?: ReadonlyArray<string> } }).role?.anyOf
+            if (Array.isArray(roleAnyOf)) {
+              for (const role of roleAnyOf) ruleRoles.add(role)
+            }
+          }
+          if (ruleRoles.size > 0) {
+            const groups = new Map<string, { attribute: string; property: string; roles: Set<string> }>()
+            for (const sr of scopedRoles) {
+              if (ruleRoles.has(sr.role)) usedScopedRoles.add(sr.role)
+              const key = `${sr.attribute}\0${sr.property}`
+              const entry = groups.get(key) ?? { attribute: sr.attribute, property: sr.property, roles: new Set<string>() }
+              entry.roles.add(sr.role)
+              groups.set(key, entry)
+            }
+            const SELF_SCOPE_ATTRS = new Set([
+              "id", "subject_id", "subjectid", "actor_id", "actorid", "user_id", "userid",
+              "principal_id", "principalid", "employee_id", "employeeid", "person_id", "personid",
+              "member_id", "memberid",
+            ])
+            const hasExplicitSelfScope = allOf.some((cond) => {
+              const res = (cond as { resource?: { op?: string; value?: { principalAttribute?: string } } }).resource
+              return (
+                res?.op === "eq" &&
+                typeof res?.value?.principalAttribute === "string" &&
+                SELF_SCOPE_ATTRS.has(res.value.principalAttribute.toLowerCase())
+              )
+            })
+            for (const group of groups.values()) {
+              const matched = [...ruleRoles].filter((role) => group.roles.has(role))
+              if (matched.length === 0) continue
+              const alreadyScoped = allOf.some((cond) => {
+                const res = (cond as { resource?: { name?: string; op?: string; value?: { principalAttribute?: string } } }).resource
+                return res?.name === group.property && res?.op === "in" && res?.value?.principalAttribute === group.attribute
+              })
+              if (alreadyScoped || hasExplicitSelfScope) continue
+              if (matched.length < ruleRoles.size) {
+                throw new CompileError(
+                  "NORN-FLOW-VALUE",
+                  `rule mixes scoped role(s) [${matched.join(", ")}] with unscoped roles; split the rule or declare an explicit resource scope predicate`,
+                  r,
+                )
+              }
+              allOf.push({ resource: { name: group.property, op: "in", value: { principalAttribute: group.attribute } } } as unknown as P.AccessCondition)
+            }
+          }
+        }
         return {
           ruleId: this.string(m.get("ruleId")!),
           actions: this.list(m.get("actions")!).map((a) => this.actionId(a)),
           resourceType: this.typeName(m.get("resourceType")!, OBJECT_TYPES),
           // The closed grammar (dimension names, condition nodes) is the Rust checker's.
           scope: { dimensions: this.strings(scope.get("dimensions")!) as P.ScopeDimension[] },
-          ...(allOf ? { allOf: this.list(allOf).map((c) => this.json(c) as unknown as P.AccessCondition) } : {}),
+          ...(allOf.length > 0 ? { allOf } : {}),
         }
-      }),
+      })
+    for (const sr of scopedRoles) {
+      if (!usedScopedRoles.has(sr.role)) {
+        throw new CompileError("NORN-FLOW-VALUE", `scopedRoles declares role ${JSON.stringify(sr.role)} which does not appear in any rule`, scopedRolesNode!)
+      }
+    }
+    return P.access({
+      // The closed grammar (types, sources) is the Rust checker's.
+      ...(principalCatalog ? { principalCatalog: this.list(principalCatalog).map((entry) => this.json(entry) as unknown as P.PrincipalCatalogEntry) } : {}),
+      id: this.string(need("id")),
+      title: this.string(need("title")),
+      version: this.string(need("version")),
+      rules,
       at: this.at(call),
     })
   }

@@ -1,5 +1,5 @@
 //! Native entrypoint for the same checker ABI used by typed TypeScript authoring.
-use std::io::{BufRead as _, Write as _};
+use std::io::{BufRead as _, Read as _, Write as _};
 mod cell;
 #[cfg(test)]
 mod cli_contract;
@@ -9,8 +9,15 @@ mod mcp;
 mod remote;
 mod source;
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+const MAX_CHECK_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_EVAL_DEFS_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_EVAL_LINE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_TREE_DEPTH: usize = 64;
+const MAX_TREE_FILES: usize = 10_000;
+const MAX_TREE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Parser)]
 #[command(name = "norn", version, about = "Norn core checker")]
@@ -83,10 +90,111 @@ enum Command {
     },
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "one dispatch maps every CLI subcommand to its handler"
-)]
+pub(crate) fn run_check(artifacts: &Path, context: &Path) -> Result<(String, bool), String> {
+    let artifacts =
+        cell::read_regular_file_bounded(artifacts, MAX_CHECK_BYTES, "16 MiB check input limit")?;
+    let context =
+        cell::read_regular_file_bounded(context, MAX_CHECK_BYTES, "16 MiB check input limit")?;
+    let report = norn_checker_wasm::check_artifact_set_json(&artifacts, &context)
+        .map_err(|error| error.to_string())?;
+    let value: serde_json::Value =
+        serde_json::from_str(&report).map_err(|error| error.to_string())?;
+    Ok((
+        report,
+        value.get("admitted").and_then(serde_json::Value::as_bool) == Some(true),
+    ))
+}
+
+fn run_eval(
+    defs: &Path,
+    org: &str,
+    env: &str,
+    rule: &str,
+    units: u64,
+) -> Result<(String, bool), String> {
+    let documents =
+        cell::read_json_dir_bounded(defs, MAX_EVAL_DEFS_BYTES, "16 MiB eval definitions limit")?;
+    let mut artifacts = Vec::with_capacity(documents.len());
+    let mut exact_payloads = std::collections::BTreeMap::new();
+    for text in &documents {
+        let artifact: norn_ir::ArtifactEnvelope =
+            serde_json::from_str(text).map_err(|error| error.to_string())?;
+        if artifact.scope.org_id.as_deref() != Some(org)
+            || artifact.scope.environment_id.as_deref() != Some(env)
+        {
+            return Err("definition scope does not match --org and --env".to_owned());
+        }
+        let exact =
+            norn_ir::RuntimeValue::from_json_text(text).map_err(|error| error.to_string())?;
+        if let Some(payload) = exact.as_object().and_then(|object| object.get("payload")) {
+            exact_payloads.insert(artifact.artifact_id.clone(), payload.clone());
+        }
+        artifacts.push(artifact);
+    }
+    let input = format!("[{}]", documents.join(","));
+    let report = norn_checker_wasm::check_artifact_set_json(&input, "{}")
+        .map_err(|error| error.to_string())?;
+    let report: serde_json::Value =
+        serde_json::from_str(&report).map_err(|error| error.to_string())?;
+    if report.get("admitted").and_then(serde_json::Value::as_bool) != Some(true) {
+        return Err(report.to_string());
+    }
+    let receipt = report.get("receipt").ok_or("missing checker receipt")?;
+    let digest = report
+        .get("receiptSha256")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("missing checker digest")?;
+    let decision =
+        eval::OfflineDecision::prepare(&artifacts, &input, &exact_payloads, receipt, digest, rule)?;
+    let closure_digest = decision.closure_digest();
+    let closure_digest_json =
+        serde_json::to_string(closure_digest).map_err(|error| error.to_string())?;
+    let mut accepted = 0_u64;
+    let mut refused = 0_u64;
+    let mut stdin = std::io::stdin().lock();
+    let mut stdout = std::io::stdout().lock();
+    let mut line_buf = Vec::new();
+    let max_line_read = u64::try_from(MAX_EVAL_LINE_BYTES)
+        .map_err(|error| error.to_string())?
+        .saturating_add(1);
+    loop {
+        line_buf.clear();
+        let read = stdin
+            .by_ref()
+            .take(max_line_read)
+            .read_until(b'\n', &mut line_buf)
+            .map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        if read > MAX_EVAL_LINE_BYTES {
+            return Err("eval input line exceeds 4 MiB limit".to_owned());
+        }
+        let line = std::str::from_utf8(&line_buf).map_err(|error| error.to_string())?;
+        let line = line.trim_end_matches(['\r', '\n']);
+        let response = match decision.run(line, units) {
+            Ok(output) => {
+                accepted = accepted.checked_add(1).ok_or("eval counter overflow")?;
+                format!(
+                    "{{\"ok\":true,\"closureDigest\":{closure_digest_json},\"output\":{output}}}"
+                )
+            }
+            Err(error) => {
+                refused = refused.checked_add(1).ok_or("eval counter overflow")?;
+                serde_json::json!({"ok":false,"closureDigest":closure_digest,"error":error})
+                    .to_string()
+            }
+        };
+        writeln!(stdout, "{response}").map_err(|error| error.to_string())?;
+    }
+    writeln!(
+        std::io::stderr().lock(),
+        "norn eval: {accepted} accepted, {refused} refused"
+    )
+    .map_err(|error| error.to_string())?;
+    Ok((String::new(), refused == 0))
+}
+
 fn run(command: Command) -> Result<(String, bool), String> {
     match command {
         Command::Explain(args) => explain::execute(&args),
@@ -104,152 +212,233 @@ fn run(command: Command) -> Result<(String, bool), String> {
             env,
             rule,
             units,
-        } => {
-            let mut paths = std::fs::read_dir(defs)
-                .map_err(|error| error.to_string())?
-                .map(|entry| entry.map(|entry| entry.path()))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| error.to_string())?;
-            paths.sort();
-            let mut artifacts = Vec::new();
-            let mut documents = Vec::new();
-            let mut exact_payloads = std::collections::BTreeMap::new();
-            for path in paths.into_iter().filter(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension == "json")
-            }) {
-                let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-                let artifact: norn_ir::ArtifactEnvelope =
-                    serde_json::from_str(&text).map_err(|error| error.to_string())?;
-                if artifact.scope.org_id.as_deref() != Some(org.as_str())
-                    || artifact.scope.environment_id.as_deref() != Some(env.as_str())
-                {
-                    return Err("definition scope does not match --org and --env".to_owned());
-                }
-                let exact = norn_ir::RuntimeValue::from_json_text(&text)
-                    .map_err(|error| error.to_string())?;
-                if let Some(payload) = exact.as_object().and_then(|object| object.get("payload")) {
-                    exact_payloads.insert(artifact.artifact_id.clone(), payload.clone());
-                }
-                artifacts.push(artifact);
-                documents.push(text);
-            }
-            let input = format!("[{}]", documents.join(","));
-            let report = norn_checker_wasm::check_artifact_set_json(&input, "{}")
-                .map_err(|error| error.to_string())?;
-            let report: serde_json::Value =
-                serde_json::from_str(&report).map_err(|error| error.to_string())?;
-            if report.get("admitted").and_then(serde_json::Value::as_bool) != Some(true) {
-                return Err(report.to_string());
-            }
-            let receipt = report.get("receipt").ok_or("missing checker receipt")?;
-            let digest = report
-                .get("receiptSha256")
-                .and_then(serde_json::Value::as_str)
-                .ok_or("missing checker digest")?;
-            let decision = eval::OfflineDecision::prepare(
-                &artifacts,
-                &input,
-                &exact_payloads,
-                receipt,
-                digest,
-                &rule,
-            )?;
-            let mut accepted = 0_u64;
-            let mut refused = 0_u64;
-            for line in std::io::stdin().lock().lines() {
-                let line = line.map_err(|error| error.to_string())?;
-                let digest = decision.closure_digest();
-                let response = match decision.run(&line, units) {
-                    Ok(output) => {
-                        accepted = accepted.checked_add(1).ok_or("eval counter overflow")?;
-                        format!(
-                            "{{\"ok\":true,\"closureDigest\":\"{digest}\",\"output\":{output}}}"
-                        )
-                    }
-                    Err(error) => {
-                        refused = refused.checked_add(1).ok_or("eval counter overflow")?;
-                        serde_json::json!({"ok":false,"closureDigest":digest,"error":error})
-                            .to_string()
-                    }
-                };
-                writeln!(std::io::stdout().lock(), "{response}")
-                    .map_err(|error| error.to_string())?;
-            }
-            writeln!(
-                std::io::stderr().lock(),
-                "norn eval: {accepted} accepted, {refused} refused"
-            )
-            .map_err(|error| error.to_string())?;
-            Ok((String::new(), refused == 0))
-        }
+        } => run_eval(&defs, &org, &env, &rule, units),
         Command::SourceDigest { dir } => source_digest(&dir).map(|document| (document, true)),
-        Command::Check { artifacts, context } => {
-            let artifacts =
-                std::fs::read_to_string(artifacts).map_err(|error| error.to_string())?;
-            let context = std::fs::read_to_string(context).map_err(|error| error.to_string())?;
-            let report = norn_checker_wasm::check_artifact_set_json(&artifacts, &context)
-                .map_err(|error| error.to_string())?;
-            let value: serde_json::Value =
-                serde_json::from_str(&report).map_err(|error| error.to_string())?;
-            Ok((
-                report,
-                value.get("admitted").and_then(serde_json::Value::as_bool) == Some(true),
-            ))
-        }
+        Command::Check { artifacts, context } => run_check(&artifacts, &context),
     }
 }
 
-/// HOST-TREE-1: read every counted file below `root` and digest the tree.
-fn source_digest(root: &std::path::Path) -> Result<String, String> {
-    fn walk(
-        root: &std::path::Path,
-        dir: &std::path::Path,
-        files: &mut Vec<(String, Vec<u8>)>,
-    ) -> Result<(), String> {
-        let mut entries = std::fs::read_dir(dir)
-            .map_err(|error| format!("{}: {error}", dir.display()))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())?;
-        entries.sort_by_key(std::fs::DirEntry::file_name);
-        for entry in entries {
-            let name = entry.file_name();
-            let name = name
-                .to_str()
-                .ok_or_else(|| format!("non-UTF-8 name under {}", dir.display()))?;
-            let kind = entry.file_type().map_err(|error| error.to_string())?;
-            if name.starts_with('.') || (kind.is_dir() && name == "target") {
+#[cfg(unix)]
+fn open_tree_entry<P: rustix::path::Arg>(
+    dir: impl std::os::fd::AsFd,
+    name: P,
+    display_path: &Path,
+) -> Result<std::fs::File, String> {
+    use rustix::fs::{Mode, OFlags};
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    rustix::fs::openat(dir, name, flags, Mode::empty())
+        .map(std::fs::File::from)
+        .map_err(|error| {
+            if error == rustix::io::Errno::LOOP {
+                format!("{}: symlinks are refused", display_path.display())
+            } else if error == rustix::io::Errno::NXIO || error == rustix::io::Errno::OPNOTSUPP {
+                format!("{}: not a regular file", display_path.display())
+            } else {
+                format!("{}: {error}", display_path.display())
+            }
+        })
+}
+
+#[cfg(unix)]
+fn walk_source_tree(
+    dir_fd: &std::fs::File,
+    dir_display: &Path,
+    prefix: &str,
+    depth: usize,
+    budget: &mut u64,
+    files: &mut Vec<(String, Vec<u8>)>,
+) -> Result<(), String> {
+    if depth > MAX_TREE_DEPTH {
+        return Err(format!(
+            "{}: directory nesting exceeds {MAX_TREE_DEPTH}",
+            dir_display.display()
+        ));
+    }
+    let mut entries = Vec::new();
+    for entry in rustix::fs::Dir::read_from(dir_fd)
+        .map_err(|error| format!("{}: {error}", dir_display.display()))?
+    {
+        let name = entry
+            .map_err(|error| format!("{}: {error}", dir_display.display()))?
+            .file_name()
+            .to_owned();
+        if name.as_bytes() == b"." || name.as_bytes() == b".." {
+            continue;
+        }
+        entries.push(name);
+    }
+    entries.sort();
+    for entry in entries {
+        let name = entry
+            .to_str()
+            .map_err(|_error| format!("non-UTF-8 name under {}", dir_display.display()))?;
+        if name.starts_with('.') {
+            continue;
+        }
+        let child_display = dir_display.join(name);
+        let opened = open_tree_entry(dir_fd, entry.as_c_str(), &child_display)?;
+        let kind = opened
+            .metadata()
+            .map_err(|error| format!("{}: {error}", child_display.display()))?
+            .file_type();
+        if kind.is_dir() {
+            if name == "target" {
                 continue;
             }
-            let path = entry.path();
-            if kind.is_symlink() {
-                return Err(format!("{}: symlinks are refused", path.display()));
-            }
-            if kind.is_dir() {
-                walk(root, &path, files)?;
-            } else if kind.is_file() {
-                let relative = path
-                    .strip_prefix(root)
-                    .map_err(|error| error.to_string())?
-                    .components()
-                    .map(|part| {
-                        part.as_os_str()
-                            .to_str()
-                            .ok_or_else(|| format!("{}: non-UTF-8 name", path.display()))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-                    .join("/");
-                let bytes =
-                    std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-                files.push((relative, bytes));
+            let next_prefix = if prefix.is_empty() {
+                name.to_owned()
             } else {
-                return Err(format!("{}: not a regular file", path.display()));
+                format!("{prefix}/{name}")
+            };
+            walk_source_tree(
+                &opened,
+                &child_display,
+                &next_prefix,
+                depth.saturating_add(1),
+                budget,
+                files,
+            )?;
+        } else if kind.is_file() {
+            if files.len() >= MAX_TREE_FILES {
+                return Err(format!(
+                    "{}: source tree exceeds {MAX_TREE_FILES} files",
+                    child_display.display()
+                ));
             }
+            let relative = if prefix.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let mut bytes = Vec::new();
+            opened
+                .take(budget.saturating_add(1))
+                .read_to_end(&mut bytes)
+                .map_err(|error| format!("{}: {error}", child_display.display()))?;
+            let used = u64::try_from(bytes.len())
+                .map_err(|error| format!("{}: {error}", child_display.display()))?;
+            *budget = budget.checked_sub(used).ok_or_else(|| {
+                format!(
+                    "{}: source tree exceeds 64 MiB limit",
+                    child_display.display()
+                )
+            })?;
+            files.push((relative, bytes));
+        } else {
+            return Err(format!("{}: not a regular file", child_display.display()));
         }
-        Ok(())
     }
+    Ok(())
+}
+
+/// HOST-TREE-1: read every counted file below `root` and digest the tree.
+#[cfg(unix)]
+fn source_digest(root: &Path) -> Result<String, String> {
+    let target: PathBuf = root.components().collect();
+    let root_fd = open_tree_entry(rustix::fs::CWD, &target, root)?;
+    if !root_fd
+        .metadata()
+        .map_err(|error| format!("{}: {error}", root.display()))?
+        .is_dir()
+    {
+        return Err(format!("{}: not a directory", root.display()));
+    }
+    let mut budget = MAX_TREE_BYTES;
     let mut files = Vec::new();
-    walk(root, root, &mut files)?;
+    walk_source_tree(&root_fd, root, "", 0, &mut budget, &mut files)?;
+    let digest = norn_ir::source_tree::source_tree_digest(
+        files
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(serde_json::json!({ "digest": digest.0, "files": files.len() }).to_string())
+}
+
+#[cfg(not(unix))]
+fn walk_source_tree(
+    root: &Path,
+    dir: &Path,
+    depth: usize,
+    budget: &mut u64,
+    files: &mut Vec<(String, Vec<u8>)>,
+) -> Result<(), String> {
+    if depth > MAX_TREE_DEPTH {
+        return Err(format!(
+            "{}: directory nesting exceeds {MAX_TREE_DEPTH}",
+            dir.display()
+        ));
+    }
+    let mut entries = std::fs::read_dir(dir)
+        .map_err(|error| format!("{}: {error}", dir.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .ok_or_else(|| format!("non-UTF-8 name under {}", dir.display()))?;
+        let kind = entry.file_type().map_err(|error| error.to_string())?;
+        if name.starts_with('.') || (kind.is_dir() && name == "target") {
+            continue;
+        }
+        let path = entry.path();
+        if kind.is_symlink() {
+            return Err(format!("{}: symlinks are refused", path.display()));
+        }
+        if kind.is_dir() {
+            walk_source_tree(root, &path, depth.saturating_add(1), budget, files)?;
+        } else if kind.is_file() {
+            if files.len() >= MAX_TREE_FILES {
+                return Err(format!(
+                    "{}: source tree exceeds {MAX_TREE_FILES} files",
+                    path.display()
+                ));
+            }
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|error| error.to_string())?
+                .components()
+                .map(|part| {
+                    part.as_os_str()
+                        .to_str()
+                        .ok_or_else(|| format!("{}: non-UTF-8 name", path.display()))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+                .join("/");
+            let file = std::fs::File::open(&path)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            let mut bytes = Vec::new();
+            file.take(budget.saturating_add(1))
+                .read_to_end(&mut bytes)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            let used = u64::try_from(bytes.len())
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            *budget = budget
+                .checked_sub(used)
+                .ok_or_else(|| format!("{}: source tree exceeds 64 MiB limit", path.display()))?;
+            files.push((relative, bytes));
+        } else {
+            return Err(format!("{}: not a regular file", path.display()));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn source_digest(root: &Path) -> Result<String, String> {
+    let meta =
+        std::fs::symlink_metadata(root).map_err(|error| format!("{}: {error}", root.display()))?;
+    if meta.file_type().is_symlink() {
+        return Err(format!("{}: symlinks are refused", root.display()));
+    }
+    if !meta.is_dir() {
+        return Err(format!("{}: not a directory", root.display()));
+    }
+    let mut budget = MAX_TREE_BYTES;
+    let mut files = Vec::new();
+    walk_source_tree(root, root, 0, &mut budget, &mut files)?;
     let digest = norn_ir::source_tree::source_tree_digest(
         files
             .iter()
@@ -407,5 +596,18 @@ mod tests {
             return; // the filesystem refuses non-UTF-8 names itself
         }
         assert!(tree.digest().unwrap_err().contains("non-UTF-8"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_root_is_refused_not_followed() {
+        use std::os::unix::fs::symlink;
+        let tree = Tree::new("symlink-root-target");
+        let link = std::env::temp_dir().join(format!("norn-host-tree-link-{}", std::process::id()));
+        let _stale = std::fs::remove_file(&link);
+        symlink(tree.path(), &link).unwrap();
+        let refused = super::source_digest(&link).unwrap_err();
+        let _cleaned = std::fs::remove_file(&link);
+        assert!(refused.contains("symlinks are refused"), "{refused}");
     }
 }

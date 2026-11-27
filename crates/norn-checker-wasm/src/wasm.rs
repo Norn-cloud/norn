@@ -44,6 +44,28 @@ pub fn lifecycle_diagrams(artifacts_json: &str) -> Result<String, JsError> {
 }
 
 #[cfg(feature = "checker")]
+/// `lawHonesty(artifactsJson)`: see [`crate::law_honesty_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = lawHonesty)]
+pub fn law_honesty(artifacts_json: &str) -> Result<String, JsError> {
+    crate::law_honesty_json(artifacts_json).map_err(JsError::from)
+}
+
+#[cfg(feature = "checker")]
+/// `analyzeRedTeam(artifactsJson)`: see [`crate::analyze_red_team_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = analyzeRedTeam)]
+pub fn analyze_red_team(artifacts_json: &str) -> Result<String, JsError> {
+    crate::analyze_red_team_json(artifacts_json).map_err(JsError::from)
+}
+
+#[cfg(feature = "checker")]
 /// `rendererCapabilities(uxJson)`: see [`crate::renderer_capabilities_json`].
 ///
 /// # Errors

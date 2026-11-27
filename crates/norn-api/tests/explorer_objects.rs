@@ -1,21 +1,21 @@
-//! Studio's Data Explorer object documents are the cell's exact reads of the
-//! synthetic three-systems world (Drop 9), projected by `norn_api::objects`,
-//! retained as bytes and checked against the generated contract.
-//! `NORN_BLESS=1` rewrites them; review the diff.
+//! Studio's Data Explorer documents are the cell's exact output for the
+//! synthetic three-systems world (Drop 9): the installed definition set, and the
+//! object reads projected by `norn_api::objects`, retained as bytes and checked
+//! against the generated contract. `NORN_BLESS=1` rewrites them; review the diff.
 #![allow(
     clippy::expect_used,
     clippy::panic,
     reason = "retained engine explorer documents"
 )]
 use norn_api::objects::{NornLinkPage, NornObjectPage, NornObjectRecord};
+use norn_cell::catalog::CatalogSnapshot;
 use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
 use norn_cell::read::LinkDirection;
 use norn_cell::{CellStore, InstalledDefinitionInput, MAIN_WORLD, Model};
-use norn_checker::{
-    EntityArtifactSetContext,
-    receipt::{ReceiptSources, check_artifact_set_with_receipt},
-};
+// Both rings, as a cell admits the set: it carries a widget (#1762 C2).
+use norn_checker::{EntityArtifactSetContext, receipt::ReceiptSources};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
+use norn_ui_checker::check_artifact_set_with_receipt;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -48,15 +48,61 @@ fn retained(name: &str, document: &impl serde::Serialize) -> Value {
     serde_json::from_str(&text).expect("document JSON")
 }
 
-/// Install the retained three-systems catalog, admitting the packs over the core layer.
+const CATALOG: &str = "fixtures/demo/explorer/three-systems.definitions.json";
+
+/// The admitted three-systems set, as `crates/norn-checker/tests/three_systems.rs` selects it,
+/// without the Odoo pack, which the demo leaves out for now.
+fn registry_artifacts() -> Vec<ArtifactEnvelope> {
+    let excluded = [
+        "commerce.SalesOrder.entity",
+        "core.Order.interface",
+        "core.Entitlement.entity",
+        "identity.BusinessUnit.entity",
+        "identity.Directory.interface",
+        "location.Region.entity",
+        "location.Space.entity",
+        "party.Brand.entity",
+        "party.Organization.entity",
+    ];
+    // packs/locale-ar labels the model in Arabic; it changes no model or object document. studio is
+    // Studio's server-held pages (#1762 C2): the demo workspace serves its record page.
+    let mut paths: Vec<PathBuf> = [
+        "core",
+        "packs/canon",
+        "packs/erpnext",
+        "packs/shopify",
+        "packs/locale-ar",
+        "studio",
+    ]
+    .into_iter()
+    .flat_map(|dir| {
+        std::fs::read_dir(root().join(format!("registry/{dir}/artifacts")))
+            .expect("artifact directory")
+            .map(|entry| entry.expect("entry").path())
+    })
+    .collect();
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            serde_json::from_str(&std::fs::read_to_string(path).expect("artifact"))
+                .expect("envelope")
+        })
+        .filter(|a: &ArtifactEnvelope| !excluded.contains(&a.artifact_id.as_str()))
+        .collect()
+}
+
+/// Install the retained three-systems catalog.
 fn install() -> CellStore {
     let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(
-        &std::fs::read_to_string(
-            root().join("fixtures/demo/explorer/three-systems.definitions.json"),
-        )
-        .expect("retained catalog"),
+        &std::fs::read_to_string(root().join(CATALOG)).expect("retained catalog"),
     )
     .expect("artifacts");
+    install_set(&artifacts)
+}
+
+/// Admit the packs over the core layer through both rings, then install the whole set.
+fn install_set(artifacts: &[ArtifactEnvelope]) -> CellStore {
     let (base, candidate): (Vec<_>, Vec<_>) = artifacts
         .iter()
         .cloned()
@@ -103,11 +149,11 @@ fn install() -> CellStore {
     }
     let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
         .expect("model")
-        .with_governing_laws(&artifacts)
+        .with_governing_laws(artifacts)
         .expect("governing laws");
     let input = InstalledDefinitionInput {
         canonical_set: String::from_utf8(
-            RuntimeValue::from_json(serde_json::to_value(&artifacts).expect("set"))
+            RuntimeValue::from_json(serde_json::to_value(artifacts).expect("set"))
                 .expect("value")
                 .canonical_json()
                 .expect("canonical"),
@@ -128,6 +174,26 @@ fn install() -> CellStore {
         .install_definitions(model, input, Some(0), "org_demo/dev")
         .expect("installed");
     store
+}
+
+#[test]
+fn three_systems_catalog_is_the_cells_installed_definition_set() {
+    let store = install_set(&registry_artifacts());
+    CatalogSnapshot::read_active(&store, &BTreeSet::new()).expect("catalog reads project it");
+    let installed = store
+        .read()
+        .installed_definitions(None)
+        .expect("definitions")
+        .expect("active");
+    let path = root().join(CATALOG);
+    if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
+        std::fs::write(&path, &installed.canonical_set).expect("bless retained catalog");
+    }
+    let retained = std::fs::read_to_string(&path).expect("retained catalog");
+    assert!(
+        retained == installed.canonical_set,
+        "three-systems.definitions.json differs from the cell's output; review it and rerun with NORN_BLESS=1"
+    );
 }
 
 /// One synthetic source row as the sealed raw envelope a connector delivers.

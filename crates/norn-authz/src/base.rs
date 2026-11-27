@@ -142,7 +142,7 @@ impl AuthzSchema {
     }
 
     fn compose_all(projected: Vec<SchemaFragment>) -> Result<Self, AuthzError> {
-        let base = parse_cedarschema("Norn base schema", NORN_BASE_SCHEMA)?;
+        let base = base_schema_fragment()?;
         let schema = Schema::from_schema_fragments(std::iter::once(base).chain(projected))
             .map_err(|error| {
                 AuthzError::one(AuthzCode::SchemaInvalid, format!("schema: {error}"))
@@ -153,6 +153,27 @@ impl AuthzSchema {
     pub(crate) fn cedar(&self) -> &Schema {
         &self.schema
     }
+}
+
+fn base_schema_fragment() -> Result<SchemaFragment, AuthzError> {
+    static PARSED: std::sync::OnceLock<Result<SchemaFragment, (AuthzCode, String)>> =
+        std::sync::OnceLock::new();
+    PARSED
+        .get_or_init(|| {
+            let (fragment, warnings) = SchemaFragment::from_cedarschema_str(NORN_BASE_SCHEMA)
+                .map_err(|error| (AuthzCode::SchemaParse, format!("Norn base schema: {error}")))?;
+            let warnings: Vec<String> = warnings.map(|warning| warning.to_string()).collect();
+            if warnings.is_empty() {
+                Ok(fragment)
+            } else {
+                Err((
+                    AuthzCode::SchemaInvalid,
+                    format!("Norn base schema: warnings: {}", warnings.join("; ")),
+                ))
+            }
+        })
+        .clone()
+        .map_err(|(code, message)| AuthzError::one(code, message))
 }
 
 fn parse_cedarschema(what: &str, src: &str) -> Result<SchemaFragment, AuthzError> {

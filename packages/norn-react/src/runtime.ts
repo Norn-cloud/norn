@@ -19,15 +19,104 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createDriver, DEFAULT_CLOCK, type Clock, type Driver, type Transport } from "./machine/driver.ts"
-import { type EngineLoader, lazyEngine, type LazyEngine } from "./machine/evaluate.ts"
+import { type EngineLoader, lazyEngine, literal, type LazyEngine } from "./machine/evaluate.ts"
 import { init, type Machine, type Msg, type Snapshot } from "./machine/machine.ts"
-import { bindingRead, callStateOf, followed, readStateOf, type BindingCallState, type BindingReadState, type WidgetCalls, type WidgetLive, type WidgetReader } from "./reads.ts"
-import type { WidgetUx } from "./ux.ts"
+import { bindingRead, callStateOf, contextRead, followed, readStateOf, type BindingCallState, type BindingReadState, type WidgetCalls, type WidgetLive, type WidgetReader } from "./reads.ts"
+import { nodesOf, type WidgetUx } from "./ux.ts"
 
 export type EngineState = "idle" | "loading" | "ready" | "failed"
 
 /** How long a message in a state with no deadline of its own waits for the engine before the page says it is unavailable. */
 export const ENGINE_WAIT_MS = 15_000
+
+/** Default deadline for direct form submits when no pending machine state declares a `deadlineMs` for the binding. */
+export const DEFAULT_SUBMIT_DEADLINE_MS = 10_000
+
+/** Baseline record snapshot pinned while a form has dirty edits so optimistic version checks submit the edited revision. */
+export interface PinnedRecord {
+  readonly bindingId: string
+  readonly document: unknown
+}
+
+/**
+ * Synchronous L6 masking/withholding snapshot captured in `runtime.ts` on every `ok` read, before
+ * React batching can collapse an `ok -> pending` transition and hide new withholding from a dirty form.
+ */
+export interface ReadSecurity {
+  readonly withheld: boolean
+  readonly masked: Readonly<Record<string, unknown>>
+  readonly withheldProperties: readonly string[]
+}
+
+/**
+ * Compaction-free per-binding L6 security watermark ledger keyed by monotonic `ok`-read sequence
+ * numbers. Stores only the latest `seq` per security attribute (O(#properties), never grows with
+ * snapshot count and never compacts away clean baselines). Querying `securitySince(log, afterSeq)`
+ * returns exact monotonic security (`refuse > redacted`) for every `ok` read strictly newer than
+ * `afterSeq`, while never resurrecting withholding cleared before `afterSeq`.
+ */
+export interface ReadSecurityLog {
+  readonly latestSeq: number
+  readonly recordWithheldSeq: number
+  readonly withheldPropertySeq: Readonly<Record<string, number>>
+  readonly refuseMaskSeq: Readonly<Record<string, { readonly seq: number; readonly mask: unknown }>>
+  readonly latestMaskSeq: Readonly<Record<string, { readonly seq: number; readonly mask: unknown }>>
+}
+
+const isRefuseMask = (entry: unknown): boolean =>
+  typeof entry === "object" && entry !== null && !Array.isArray(entry) && (entry as { readonly mode?: unknown }).mode === "refuse"
+
+/** Merge two `ReadSecurity` snapshots monotonically: never downgrade `withheld` or `mode: "refuse"`. */
+export function mergeReadSecurity(previous: ReadSecurity | undefined, incoming: ReadSecurity): ReadSecurity {
+  if (previous === undefined) return incoming
+  const masked: Record<string, unknown> = { ...previous.masked }
+  for (const key of Object.keys(incoming.masked)) {
+    if (!Object.hasOwn(incoming.masked, key)) continue
+    if (isRefuseMask(previous.masked[key]) && !isRefuseMask(incoming.masked[key])) continue
+    masked[key] = incoming.masked[key]
+  }
+  const withheldSet = new Set([...previous.withheldProperties, ...incoming.withheldProperties])
+  for (const key of Object.keys(masked)) {
+    if (Object.hasOwn(masked, key) && isRefuseMask(masked[key])) withheldSet.add(key)
+  }
+  return {
+    withheld: previous.withheld || incoming.withheld,
+    masked,
+    withheldProperties: [...withheldSet],
+  }
+}
+
+/** Exact monotonic `ReadSecurity` for all `ok` reads strictly newer than `afterSeq`. */
+export function securitySince(log: ReadSecurityLog | undefined, afterSeq: number): ReadSecurity | undefined {
+  if (log === undefined || log.latestSeq <= afterSeq) return undefined
+  const withheld = log.recordWithheldSeq > afterSeq
+  const withheldSet = new Set<string>()
+  for (const key of Object.keys(log.withheldPropertySeq)) {
+    if (Object.hasOwn(log.withheldPropertySeq, key) && log.withheldPropertySeq[key]! > afterSeq) {
+      withheldSet.add(key)
+    }
+  }
+  const masked: Record<string, unknown> = {}
+  for (const key of Object.keys(log.latestMaskSeq)) {
+    if (!Object.hasOwn(log.latestMaskSeq, key)) continue
+    const entry = log.latestMaskSeq[key]!
+    if (entry.seq > afterSeq) masked[key] = entry.mask
+  }
+  for (const key of Object.keys(log.refuseMaskSeq)) {
+    if (!Object.hasOwn(log.refuseMaskSeq, key)) continue
+    const entry = log.refuseMaskSeq[key]!
+    if (entry.seq > afterSeq) {
+      masked[key] = entry.mask
+      withheldSet.add(key)
+    }
+  }
+  if (!withheld && withheldSet.size === 0 && Object.keys(masked).length === 0) return undefined
+  return {
+    withheld,
+    masked,
+    withheldProperties: [...withheldSet],
+  }
+}
 
 /** What the page draws from its runtime: all of it from the machine and the server's answers. */
 export interface RuntimeView {
@@ -35,6 +124,10 @@ export interface RuntimeView {
   readonly engine: EngineState
   readonly reads: ReadonlyMap<string, BindingReadState>
   readonly calls: ReadonlyMap<string, BindingCallState>
+  /** Monotonic per-binding L6 masking/withholding seen (survives synchronous `ok -> pending` batching). */
+  readonly readSecurity?: ReadonlyMap<string, ReadSecurity>
+  /** Watermarked per-binding `ok`-read security log so clean restores reset prior withholding cleanly. */
+  readonly readSecurityLog?: ReadonlyMap<string, ReadSecurityLog>
   /** Messages waiting for the engine. */
   readonly waiting: number
   /** The last step the engine refused (it fired nothing; the page stayed where it was), until a person's next step. */
@@ -46,6 +139,12 @@ export interface MachineRuntime extends RuntimeView {
   readonly send: (msg: Msg) => void
   /** A person's Retry: load the engine again; the waiting messages replay once it is here. */
   readonly retryEngine: () => void
+  /** Record a form's current local draft (and optional pinned baseline record) so `ActionBinding` maps from it. */
+  readonly setDraft?: (formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
+  /** Record a selectable list's selected records paired with their canonical envelope row ids so `ActionBinding` (`input.selection`) maps from it. */
+  readonly setSelection?: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[], ids: readonly string[]) => void
+  /** Submit a form's declared action binding directly when no machine event owns the form node. */
+  readonly submitForm?: (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
 }
 
 export interface MachineOptions {
@@ -77,6 +176,9 @@ export interface PageRuntime {
   readonly view: () => RuntimeView
   readonly send: (msg: Msg) => void
   readonly retryEngine: () => void
+  readonly setDraft: (formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
+  readonly setSelection: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[], ids: readonly string[]) => void
+  readonly submitForm: (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
   /** Start the engine loading, as the page does after its first paint. */
   readonly preload: () => void
   readonly dispose: () => void
@@ -104,7 +206,16 @@ const errorOf = (error: unknown): Error => (error instanceof Error ? error : new
 /** The view of a page that has not started: its initial state, nothing read, nothing called. */
 export function initialView(machine: Machine, engine: LazyEngine): RuntimeView {
   const state = engine.state()
-  return { snapshot: init(machine).snapshot, engine: state, reads: new Map(), calls: new Map(), waiting: 0, fault: null }
+  return {
+    snapshot: init(machine).snapshot,
+    engine: state,
+    reads: new Map(),
+    calls: new Map(),
+    readSecurity: new Map(),
+    readSecurityLog: new Map(),
+    waiting: 0,
+    fault: null,
+  }
 }
 
 /**
@@ -117,14 +228,186 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
   let live = true
   let view = initialView(machine, engine)
   const feeds = new Map<string, { readonly key: string; readonly stop: () => void }>()
+  const drafts = new Map<string, Readonly<Record<string, unknown>>>()
+  const draftRecords = new Map<string, PinnedRecord>()
+  const selections = new Map<string, readonly { readonly id: string; readonly record: Readonly<Record<string, unknown>> }[]>()
+  const formKeys = new Map<string, string>()
+  const formInflight = new Set<{ readonly controller: AbortController; readonly deadline: unknown }>()
   let wait: unknown = null
+
+  const DEFINITIVE_OUTCOMES = new Set(["accepted", "refused", "pending_approval", "answer_moved"])
+
+  /**
+   * Build the exact `WidgetIR` evaluation input slots accepted by `norn-checker-wasm`
+   * (`evaluate.rs:parse_expression_inputs`): only `context`, `record`, `recordKey` (paired with
+   * `record` and nonempty), `draft`, and `selection` — never unknown top-level slots.
+   */
+  const actionSources = (binding: WidgetUx["actionBindings"][number], context: Readonly<Record<string, unknown>>): Record<string, unknown> => {
+    const pinned = binding.inputs.draftFormId === undefined ? undefined : draftRecords.get(binding.inputs.draftFormId)
+    const pinnedDoc = pinned !== undefined && pinned.bindingId === binding.inputs.recordBindingId ? pinned.document : undefined
+    const record = binding.inputs.recordBindingId === undefined ? undefined : view.reads.get(binding.inputs.recordBindingId)
+    const activeDocument = pinnedDoc !== undefined ? pinnedDoc : (record?.kind === "ok" ? record.document : undefined)
+    const recordDoc = typeof activeDocument === "object" && activeDocument !== null && !Array.isArray(activeDocument)
+      ? (activeDocument as Readonly<Record<string, unknown>>)
+      : undefined
+    // Only the slots that hold a record: the engine refuses a present slot that is not one.
+    const recordValues = activeDocument !== undefined ? valuesOf(activeDocument) : undefined
+    const hasRecord = typeof recordValues === "object" && recordValues !== null && !Array.isArray(recordValues)
+    const recordKey = hasRecord && typeof recordDoc?.id === "string" && recordDoc.id !== "" ? recordDoc.id : undefined
+    const draft = binding.inputs.draftFormId === undefined ? undefined : drafts.get(binding.inputs.draftFormId)
+    const selectionEntries = binding.inputs.selectionBindingId === undefined ? undefined : selections.get(binding.inputs.selectionBindingId)
+    const selection = selectionEntries === undefined ? undefined : selectionEntries.map((entry) => entry.record)
+    return {
+      context,
+      ...(hasRecord ? { record: recordValues } : {}),
+      ...(recordKey !== undefined ? { recordKey } : {}),
+      ...(draft !== undefined ? { draft } : {}),
+      ...(selection !== undefined ? { selection } : {}),
+    }
+  }
 
   const change = (next: Partial<RuntimeView>) => {
     if (!live) return
     view = { ...view, ...next }
     onChange(view)
   }
-  const setRead = (bindingId: string, state: BindingReadState) => change({ reads: new Map(view.reads).set(bindingId, state) })
+
+  /**
+   * Synchronously prune/refresh a collection binding's stored selection BEFORE any machine
+   * subscription or read-outcome event is dispatched, so event-triggered actions never consume a
+   * removed or withheld row from an earlier snapshot.
+   */
+  const reconcileRuntimeSelection = (bindingId: string, state: BindingReadState) => {
+    const current = selections.get(bindingId)
+    if (current === undefined || current.length === 0) return
+    if (state.kind !== "ok") {
+      selections.set(bindingId, [])
+      return
+    }
+    const page = typeof state.document === "object" && state.document !== null && !Array.isArray(state.document)
+      ? (state.document as Readonly<Record<string, unknown>>)
+      : null
+    const rawRows = Array.isArray(page?.records) ? page.records : Array.isArray(page?.items) ? page.items : null
+    if (rawRows === null) return
+    const available = new Map<string, Record<string, unknown>>()
+    for (let index = 0; index < rawRows.length; index += 1) {
+      const item = rawRows[index]
+      if (typeof item !== "object" || item === null || Array.isArray(item)) continue
+      const row = item as Readonly<Record<string, unknown>>
+      if (row.withheld === true) continue
+      const rowId =
+        typeof row.id === "string" && row.id !== ""
+          ? row.id
+          : typeof row.key === "string" && row.key !== ""
+            ? row.key
+            : null
+      // Never infer identity from `values.id` or row index when the envelope ID is absent.
+      if (rowId === null) continue
+      const rowValues = typeof row.values === "object" && row.values !== null && !Array.isArray(row.values)
+        ? (row.values as Readonly<Record<string, unknown>>)
+        : null
+      const flattened: Record<string, unknown> = {}
+      if (rowValues !== null) {
+        Object.assign(flattened, rowValues)
+      } else {
+        for (const [key, value] of Object.entries(row)) {
+          if (key === "values" || key === "masked" || key === "withheld" || key === "withheldProperties") continue
+          flattened[key] = value
+        }
+      }
+      if (typeof row.id === "string" && row.id !== "" && !Object.hasOwn(flattened, "id")) flattened.id = row.id
+      available.set(rowId, flattened)
+    }
+    const pruned: { readonly id: string; readonly record: Readonly<Record<string, unknown>> }[] = []
+    for (const entry of current) {
+      const fresh = available.get(entry.id)
+      if (fresh !== undefined) pruned.push({ id: entry.id, record: fresh })
+    }
+    selections.set(bindingId, pruned)
+  }
+
+  let readSeq = 0
+
+  const extractReadSecurity = (document: unknown): ReadSecurity | null => {
+    if (typeof document !== "object" || document === null || Array.isArray(document)) return null
+    const doc = document as Readonly<Record<string, unknown>>
+    const rawMasked = typeof doc.masked === "object" && doc.masked !== null && !Array.isArray(doc.masked)
+      ? (doc.masked as Readonly<Record<string, unknown>>)
+      : {}
+    const masked: Record<string, unknown> = {}
+    const withheldSet = new Set<string>(
+      Array.isArray(doc.withheldProperties)
+        ? doc.withheldProperties.filter((entry): entry is string => typeof entry === "string")
+        : [],
+    )
+    for (const key of Object.keys(rawMasked)) {
+      if (!Object.hasOwn(rawMasked, key)) continue
+      const mask = rawMasked[key]
+      masked[key] = mask
+      if (isRefuseMask(mask)) withheldSet.add(key)
+    }
+    return {
+      withheld: doc.withheld === true,
+      masked,
+      withheldProperties: [...withheldSet],
+    }
+  }
+
+  const appendReadSecurityLog = (previous: ReadSecurityLog | undefined, seq: number, security: ReadSecurity): ReadSecurityLog => {
+    const withheldPropertySeq: Record<string, number> = Object.assign(
+      Object.create(null) as Record<string, number>,
+      previous?.withheldPropertySeq,
+    )
+    for (const prop of security.withheldProperties) {
+      withheldPropertySeq[prop] = seq
+    }
+    const refuseMaskSeq: Record<string, { readonly seq: number; readonly mask: unknown }> = Object.assign(
+      Object.create(null) as Record<string, { readonly seq: number; readonly mask: unknown }>,
+      previous?.refuseMaskSeq,
+    )
+    const latestMaskSeq: Record<string, { readonly seq: number; readonly mask: unknown }> = Object.assign(
+      Object.create(null) as Record<string, { readonly seq: number; readonly mask: unknown }>,
+      previous?.latestMaskSeq,
+    )
+    for (const key of Object.keys(security.masked)) {
+      if (!Object.hasOwn(security.masked, key)) continue
+      const mask = security.masked[key]
+      latestMaskSeq[key] = { seq, mask }
+      if (isRefuseMask(mask)) {
+        refuseMaskSeq[key] = { seq, mask }
+        withheldPropertySeq[key] = seq
+      }
+    }
+    return {
+      latestSeq: seq,
+      recordWithheldSeq: security.withheld ? seq : (previous?.recordWithheldSeq ?? 0),
+      withheldPropertySeq,
+      refuseMaskSeq,
+      latestMaskSeq,
+    }
+  }
+
+  const setRead = (bindingId: string, state: BindingReadState) => {
+    reconcileRuntimeSelection(bindingId, state)
+    const nextReads = new Map(view.reads).set(bindingId, state)
+    let nextSecurity = view.readSecurity
+    let nextSecurityLog = view.readSecurityLog
+    if (state.kind === "ok") {
+      const incoming = extractReadSecurity(state.document)
+      if (incoming !== null) {
+        readSeq += 1
+        const merged = mergeReadSecurity(view.readSecurity?.get(bindingId), incoming)
+        nextSecurity = new Map(view.readSecurity).set(bindingId, merged)
+        const updatedLog = appendReadSecurityLog(view.readSecurityLog?.get(bindingId), readSeq, incoming)
+        nextSecurityLog = new Map(view.readSecurityLog).set(bindingId, updatedLog)
+      }
+    }
+    change({
+      reads: nextReads,
+      ...(nextSecurity === undefined ? {} : { readSecurity: nextSecurity }),
+      ...(nextSecurityLog === undefined ? {} : { readSecurityLog: nextSecurityLog }),
+    })
+  }
   const setCall = (bindingId: string, state: BindingCallState) => change({ calls: new Map(view.calls).set(bindingId, state) })
   const stopWaiting = () => {
     if (wait !== null) clock.clearTimeout(wait)
@@ -249,10 +532,11 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       const { context, objectTypeOf, actionIdOf } = options.host()
       if (call.kind === "read") {
         const binding = ux.dataBindings.find((candidate) => candidate.bindingId === call.bindingId)
-        const read = binding === undefined ? null : bindingRead(binding, context, objectTypeOf)
+        const named = ux.contextReads?.find((candidate) => candidate.bindingId === call.bindingId)
+        const read = binding !== undefined ? bindingRead(binding, context, objectTypeOf) : named !== undefined ? contextRead(named, context) : null
         if (read === null) return { outcome: "not_served", payload: {} }
         const answer = await reader.widget(read).queryFn({ signal: callOptions.signal })
-        if (live && answer.outcome === "accepted" && followed(machine.events, call.bindingId)) follow(call.bindingId, read)
+        if (live && !callOptions.signal.aborted && answer.outcome === "accepted" && followed(machine.events, call.bindingId)) follow(call.bindingId, read)
         return answer
       }
       const binding = call.kind === "action" ? ux.actionBindings.find((candidate) => candidate.bindingId === call.bindingId) : undefined
@@ -260,10 +544,7 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       if (binding === undefined || actionId === undefined) return { outcome: "not_served", payload: {} }
       // The binding maps its own inputs (`inputMapping`), each a ZEN expression over its declared sources.
       // The record is this runtime's own read, in this workspace: never one another workspace answered.
-      const record = binding.inputs.recordBindingId === undefined ? undefined : view.reads.get(binding.inputs.recordBindingId)
-      // Only the slots that hold a record: the engine refuses a present slot that is not one.
-      const recordValues = record?.kind === "ok" ? valuesOf(record.document) : undefined
-      const sources = { context, ...(typeof recordValues === "object" && recordValues !== null && !Array.isArray(recordValues) ? { record: recordValues } : {}) }
+      const sources = actionSources(binding, context)
       const mapped: Record<string, unknown> = {}
       for (const [member, expression] of Object.entries(binding.inputMapping)) mapped[member] = await abortable(engine.evaluateWith(expression, sources), callOptions.signal)
       // A deadline or Cancel that passed while the engine mapped the inputs sends nothing.
@@ -297,6 +578,86 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
   change({ snapshot: driver.snapshot() })
   driver.dispatch({ kind: "page_opened" })
 
+  const setDraft = (formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => {
+    drafts.set(formId, draft)
+    if (pinnedRecord !== undefined) draftRecords.set(formId, pinnedRecord)
+  }
+
+  const deadlineForBinding = (bindingId: string): number => {
+    const pending = machine.states.find(
+      (state) => state.role === "pending" && state.awaits?.kind === "action" && state.awaits.bindingId === bindingId && (state.deadlineMs ?? 0) > 0,
+    )
+    return pending?.deadlineMs ?? DEFAULT_SUBMIT_DEADLINE_MS
+  }
+
+  const submitForm = (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => {
+    setDraft(formId, draft, pinnedRecord)
+    if (!live || view.calls.get(bindingId)?.kind === "sending") return
+    const { context, actionIdOf } = options.host()
+    const binding = ux.actionBindings.find((candidate) => candidate.bindingId === bindingId)
+    const actionId = binding === undefined ? undefined : actionIdOf(binding.action.id)
+    if (binding === undefined || actionId === undefined) {
+      setCall(bindingId, { kind: "not_served" })
+      return
+    }
+    const keyOf = JSON.stringify([bindingId, draft])
+    const key = formKeys.get(keyOf) ?? crypto.randomUUID()
+    formKeys.set(keyOf, key)
+    const sent = { input: JSON.stringify(draft), key }
+    setCall(bindingId, { kind: "sending", sent })
+    const controller = new AbortController()
+    let timedOut = false
+    const deadline = clock.setTimeout(() => {
+      timedOut = true
+      controller.abort(new Error("Submit deadline exceeded."))
+    }, deadlineForBinding(bindingId))
+    const flight = { controller, deadline }
+    formInflight.add(flight)
+    const settleFlight = () => {
+      clock.clearTimeout(deadline)
+      formInflight.delete(flight)
+    }
+    void (async () => {
+      let payload: Record<string, unknown>
+      try {
+        const entries = Object.entries(binding.inputMapping)
+        if (entries.length === 0) {
+          payload = { ...draft }
+        } else {
+          const sources = actionSources(binding, context)
+          payload = {}
+          for (const [member, expression] of entries) {
+            payload[member] = await abortable(engine.evaluateWith(expression, sources), controller.signal)
+          }
+        }
+        controller.signal.throwIfAborted()
+      } catch (error) {
+        settleFlight()
+        if (!live) return
+        if (timedOut) {
+          setCall(bindingId, callStateOf({ outcome: "timeout", payload: {} }, sent))
+          return
+        }
+        change({ fault: errorOf(error) })
+        setCall(bindingId, { kind: "unavailable", sent })
+        return
+      }
+      try {
+        const answer = await abortable(calls.call(actionId, payload, { signal: controller.signal, idempotencyKey: key }), controller.signal)
+        settleFlight()
+        if (!live) return
+        const finalAnswer = timedOut ? ({ outcome: "timeout", payload: {} } as const) : answer
+        if (DEFINITIVE_OUTCOMES.has(finalAnswer.outcome)) formKeys.delete(keyOf)
+        setCall(bindingId, callStateOf(finalAnswer, { input: JSON.stringify(payload), key }))
+      } catch {
+        settleFlight()
+        if (!live) return
+        const outcome = timedOut ? "timeout" : "network_failure"
+        setCall(bindingId, callStateOf({ outcome, payload: {} }, { input: JSON.stringify(payload), key }))
+      }
+    })()
+  }
+
   return {
     view: () => view,
     // A person's next step clears the last refusal; a step the engine refuses sets it again.
@@ -306,6 +667,17 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       if (driver.deferred() !== view.waiting) change({ waiting: driver.deferred() })
     },
     retryEngine: () => loadEngine(true),
+    setDraft,
+    setSelection: (bindingId, records, ids) => {
+      const entries: { readonly id: string; readonly record: Readonly<Record<string, unknown>> }[] = []
+      for (let index = 0; index < records.length; index += 1) {
+        const explicit = ids[index]
+        if (typeof explicit !== "string" || explicit === "") continue
+        entries.push({ id: explicit, record: records[index]! })
+      }
+      selections.set(bindingId, entries)
+    },
+    submitForm,
     preload: () => {
       const state = engine.state()
       if (state === "idle") loadEngine(false)
@@ -316,9 +688,60 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       stopWaiting()
       for (const feed of feeds.values()) feed.stop()
       feeds.clear()
+      for (const flight of formInflight) {
+        clock.clearTimeout(flight.deadline)
+        flight.controller.abort()
+      }
+      formInflight.clear()
       driver.dispose()
     },
   }
+}
+
+const needsEval = (expression: string | undefined): boolean =>
+  expression !== undefined && literal(expression) === null
+
+/**
+ * Whether a page's machine evaluates any expression: a guard, an assignment or a call's input, an
+ * action binding's input mapping it starts, a non-literal field condition (`visibleWhen`,
+ * `requiredWhen`, `readOnlyWhen`), or a catalog prop on the page it runs. A page with none never
+ * loads the engine.
+ */
+export function needsEngine(ux: WidgetUx, machine: Machine): boolean {
+  const started = new Set<string>()
+  for (const transition of machine.transitions) {
+    if (transition.guard !== undefined || Object.keys(transition.assign ?? {}).length > 0) return true
+    for (const effect of transition.effects ?? []) {
+      if (effect.kind !== "start") continue
+      if (Object.keys(effect.input ?? {}).length > 0) return true
+      if (effect.call.kind === "action") started.add(effect.call.bindingId)
+    }
+  }
+  const page = ux.pages.find((candidate) => candidate.machine === machine)
+  const formIds = new Set<string>()
+  const fieldIds = new Set<string>()
+  if (page !== undefined) {
+    for (const node of nodesOf(page.root)) {
+      const component = node.component
+      if (component.kind === "form") {
+        formIds.add(component.formId)
+        const form = ux.forms.find((candidate) => candidate.formId === component.formId)
+        if (form !== undefined) started.add(form.submitBindingId)
+      } else if (component.kind === "field") {
+        fieldIds.add(component.fieldId)
+      }
+    }
+  }
+  if (ux.actionBindings.some((binding) => started.has(binding.bindingId) && Object.keys(binding.inputMapping).length > 0)) return true
+  if (
+    ux.fields.some((field) => {
+      const used = fieldIds.has(field.fieldId) || ("formId" in field.target && formIds.has(field.target.formId))
+      return used && (needsEval(field.visibleWhen?.expression) || needsEval(field.requiredWhen?.expression) || needsEval(field.readOnlyWhen?.expression))
+    })
+  ) {
+    return true
+  }
+  return page === undefined || nodesOf(page.root).some((node) => node.component.kind === "catalog" && Object.keys(node.component.props ?? {}).length > 0)
 }
 
 /** Runs one page machine for as long as the component is mounted. */
@@ -337,10 +760,11 @@ export function useWidgetMachine(options: MachineOptions): MachineRuntime {
     runtimeRef.current = runtime
     // A rebuilt runtime starts from nothing read and nothing called.
     setView(runtime.view())
-    // After the first paint: the engine compiles while the person reads, never before the page draws.
-    const idle = globalThis.setTimeout(runtime.preload, 0)
+    // After the first paint: the engine compiles while the person reads, never before the page draws;
+    // and only for a page that has an expression to evaluate. A message that needs it loads it anyway.
+    const idle = needsEngine(ux, machine) ? globalThis.setTimeout(runtime.preload, 0) : undefined
     return () => {
-      globalThis.clearTimeout(idle)
+      if (idle !== undefined) globalThis.clearTimeout(idle)
       runtime.dispose()
       runtimeRef.current = null
     }
@@ -348,11 +772,17 @@ export function useWidgetMachine(options: MachineOptions): MachineRuntime {
 
   const send = useCallback((msg: Msg) => runtimeRef.current?.send(msg), [])
   const retryEngine = useCallback(() => runtimeRef.current?.retryEngine(), [])
+  const setDraft = useCallback((formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => runtimeRef.current?.setDraft(formId, draft, pinnedRecord), [])
+  const setSelection = useCallback((bindingId: string, records: readonly Readonly<Record<string, unknown>>[], ids: readonly string[]) => runtimeRef.current?.setSelection(bindingId, records, ids), [])
+  const submitForm = useCallback((formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => runtimeRef.current?.submitForm(formId, bindingId, draft, pinnedRecord), [])
 
   return {
     ...view,
     evaluate: engine.evaluate,
     send,
     retryEngine,
+    setDraft,
+    setSelection,
+    submitForm,
   }
 }

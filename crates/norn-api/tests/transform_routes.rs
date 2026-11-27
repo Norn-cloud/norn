@@ -278,13 +278,13 @@ fn rows_page_with_lineage_under_the_installed_plan() {
         NOW,
     )
     .expect("first page");
-    let cursor = first.next_after.expect("more rows");
+    let cursor = first.next_after.as_deref().expect("more rows");
     let second = get_transform_rows(
         &host,
         &scope(),
         Some("full"),
         TRANSFORM,
-        &params(Some("2"), Some(&cursor)),
+        &params(Some("2"), Some(cursor)),
         &Mapping,
         NOW,
     )
@@ -492,4 +492,416 @@ fn refresh_needs_every_input_row_and_labels_the_rows() {
     let not = refresh_transform(&host, &scope(), Some("full"), TRANSFORM, &Mapping, NOW)
         .expect_err("not materialized");
     assert_eq!((not.status, not.code.as_str()), (400, "request.invalid"));
+}
+
+fn dynamic_marking_definitions(filtered_id: &str) -> Vec<Value> {
+    let mut defs = definitions();
+    defs.push(artifact(
+        "shop.markings",
+        "entity",
+        json!([]),
+        json!({
+            "entityVersion": "2.0",
+            "markings": [{
+                "id": "pii.region", "label": "Region", "severity": "high",
+                "category": "pii.contact", "mask": {"kind": "redacted"}
+            }]
+        }),
+    ));
+    defs.push(artifact(
+        filtered_id,
+        "derived",
+        json!([{"artifactId": "shop.Customer", "kind": "entity", "version": "0.1.0", "required": true}]),
+        json!({
+            "viewVersion": "0.1", "viewId": filtered_id,
+            "inputs": [{"artifactId": "shop.Customer", "kind": "entity", "version": "0.1.0", "alias": "customer"}],
+            "calc": {
+                "kind": "relational",
+                "nodes": {
+                    "c": {"op": "scan", "input": "customer"},
+                    "f": {"op": "filter", "input": "c", "predicate": "input.region == 'north'"}
+                },
+                "output": "f"
+            },
+            "outputSchema": {}, "maintenance": "recompute_on_read"
+        }),
+    ));
+    defs
+}
+
+fn host_with_dynamic_region_marking(
+    filtered_id: &str,
+    secret: &[u8],
+) -> (DevHost<NativeEngine>, tempfile::TempDir) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let objects: Vec<ObjectTypeDef> = types()
+        .into_iter()
+        .map(|value| serde_json::from_value(value).unwrap())
+        .collect();
+    let model = norn_cell::Model::from_definitions(&objects, &[]).unwrap();
+    let key = physical().key();
+    let defs = dynamic_marking_definitions(filtered_id);
+    {
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
+        store
+            .install_definitions(
+                model.clone(),
+                norn_cell::InstalledDefinitionInput {
+                    canonical_set: serde_json::to_string(&defs).unwrap(),
+                    registry: vec![],
+                    receipt_sha256: "dynamic-transform-markings-v1".into(),
+                    admission_receipt: None,
+                    readmission: None,
+                    diff: json!({}),
+                    installed_at: CLOCK,
+                    layout: None,
+                },
+                Some(0),
+                &key,
+            )
+            .unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: key,
+                logical_time: CLOCK,
+                writes: vec![
+                    put("shop.Customer", "c-north", &[("region", V::from("north"))]),
+                    put(
+                        "shop.Order",
+                        "o1",
+                        &[("amount", V::from(Decimal::parse("10.00").unwrap()))],
+                    ),
+                ],
+                links: vec![link("o1", "c-north")],
+                events: vec![
+                    V::from_json(json!({
+                        "type": "observation.recorded",
+                        "mapped": [{
+                            "objectType": "shop.Customer",
+                            "key": "c-north",
+                            "propertyProvenance": {"region": {"markings": ["pii.region"]}}
+                        }]
+                    }))
+                    .unwrap(),
+                ],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
+    let host = DevHost::from_store(store, physical(), |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy)
+        .with_pseudonym_secret(Some(secret));
+    (host, directory)
+}
+
+#[test]
+fn dynamic_row_markings_are_projected_in_transform_rows_and_refuse_filters() {
+    const FILTERED: &str = "shop.filtered_by_region";
+    let secret = [9_u8; 32];
+    let (host, _directory) = host_with_dynamic_region_marking(FILTERED, &secret);
+
+    let page = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        TRANSFORM,
+        &params(None, None),
+        &Mapping,
+        NOW,
+    )
+    .expect("projected rows");
+    assert_eq!(
+        page.rows[0].values["region"],
+        V::from(norn_api::privacy::REDACTED_TEXT)
+    );
+    assert!(
+        page.columns
+            .iter()
+            .any(|c| c.name == "region" && c.markings.contains(&"pii.region".to_owned()))
+    );
+    let lineage = get_transform_row_lineage(
+        &host,
+        &scope(),
+        Some("full"),
+        TRANSFORM,
+        &page.rows[0].row_id,
+        &Mapping,
+        NOW,
+    )
+    .expect("lineage");
+    assert_eq!(
+        lineage.values["region"],
+        V::from(norn_api::privacy::REDACTED_TEXT)
+    );
+
+    let refused = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        FILTERED,
+        &params(None, None),
+        &Mapping,
+        NOW,
+    )
+    .expect_err("dynamic filter on marked column must refuse");
+    assert_eq!(
+        (refused.status, refused.code.as_str()),
+        (422, "privacy.marked_column")
+    );
+    assert!(
+        refused
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "question.validation.marked_field"),
+        "{refused:?}"
+    );
+}
+
+fn remove_north_customer(writer: &mut CellStore<NativeEngine>) {
+    // Unlink first in a writes-free commit so live link IFC does not see the
+    // marked customer's write lineage, then delete the unreferenced customer.
+    writer
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: physical().key(),
+            logical_time: CLOCK + 900,
+            links: vec![LinkChange::Remove {
+                object_type: "shop.Order".into(),
+                link: "customer".into(),
+                source: "o1".into(),
+                target: "c-north".into(),
+                target_type: Some("shop.Customer".into()),
+            }],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+    writer
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: physical().key(),
+            logical_time: CLOCK + 1_000,
+            writes: vec![FactWriteRow::Delete {
+                object_type: "shop.Customer".into(),
+                key: "c-north".into(),
+            }],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+}
+
+fn stale_materialization_fixture() -> (
+    DevHost<NativeEngine>,
+    CellStore<NativeEngine>,
+    tempfile::TempDir,
+) {
+    const FILTERED: &str = "shop.filtered_by_region";
+    let secret = [9_u8; 32];
+    let (host, directory) = host_with_dynamic_region_marking(FILTERED, &secret);
+    let objects: Vec<ObjectTypeDef> = types()
+        .into_iter()
+        .map(|value| serde_json::from_value(value).unwrap())
+        .collect();
+    let model = norn_cell::Model::from_definitions(&objects, &[]).unwrap();
+    let mut writer = CellStore::open(
+        &directory.path().join("cell.sqlite"),
+        model,
+        norn_cell::StoreOptions::default(),
+    )
+    .unwrap();
+    // Add a second unmarked region so the materialized transform paginates and
+    // mints a real route cursor.
+    writer
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: physical().key(),
+            logical_time: CLOCK + 500,
+            writes: vec![
+                put("shop.Customer", "c-south", &[("region", V::from("south"))]),
+                put(
+                    "shop.Order",
+                    "o2",
+                    &[("amount", V::from(Decimal::parse("20.00").unwrap()))],
+                ),
+            ],
+            links: vec![link("o2", "c-south")],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+    let state =
+        refresh_transform(&host, &scope(), Some("full"), STORED, &Mapping, NOW).expect("refresh");
+    assert!(!state.stale);
+    // Delete c-north so live `property_marking_summary` is empty while the
+    // cached `STORED` materialization is stale and still holds the old value.
+    remove_north_customer(&mut writer);
+    (host, writer, directory)
+}
+
+#[test]
+fn stale_materialization_withholds_deleted_marked_column() {
+    let (host, mut writer, _directory) = stale_materialization_fixture();
+    let stale_page = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        STORED,
+        &params(Some("1"), None),
+        &Mapping,
+        NOW,
+    )
+    .expect("stale materialized read");
+    assert!(stale_page.materialization.as_ref().is_some_and(|m| m.stale));
+    assert!(
+        !stale_page.rows[0].values.contains_key("region"),
+        "stale cached marked column must fail closed and be withheld: {:?}",
+        stale_page.rows[0].values
+    );
+    let stale_cursor = stale_page
+        .next_after
+        .as_deref()
+        .expect("route-issued stale cursor");
+    let stale_second = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        STORED,
+        &params(Some("1"), Some(stale_cursor)),
+        &Mapping,
+        NOW,
+    )
+    .expect("second stale page before refresh");
+    assert!(!stale_second.rows[0].values.contains_key("region"));
+    // Refresh replaces the stored result without advancing head commits; the
+    // route-issued stale cursor must be rejected with 409.
+    let _ = refresh_transform(&host, &scope(), Some("full"), STORED, &Mapping, NOW)
+        .expect("refresh after delete");
+    let moved = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        STORED,
+        &params(Some("1"), Some(stale_cursor)),
+        &Mapping,
+        NOW,
+    )
+    .expect_err("stale cursor must move after manual refresh");
+    assert_eq!(
+        (moved.status, moved.code.as_str()),
+        (409, "transform.snapshot_moved")
+    );
+    // An unrelated commit advances the head while the refreshed cache stays
+    // exact (same input digest); it must not trigger historical withholding.
+    writer
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: physical().key(),
+            logical_time: CLOCK + 2_000,
+            events: vec![V::from_json(json!({"type": "note.recorded"})).unwrap()],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+    let exact_page = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        STORED,
+        &params(None, None),
+        &Mapping,
+        NOW,
+    )
+    .expect("exact materialized read after unrelated commit");
+    assert!(
+        exact_page
+            .materialization
+            .as_ref()
+            .is_some_and(|m| !m.stale)
+    );
+    assert!(
+        exact_page
+            .rows
+            .iter()
+            .all(|row| row.values.contains_key("region")),
+        "exact cache after unrelated commit must not withhold unmarked rows: {:?}",
+        exact_page.rows
+    );
+}
+
+#[test]
+fn stale_materialization_reauthorizes_deleted_row_after_multi_event_commit() {
+    const FILTERED: &str = "shop.filtered_by_region";
+    let secret = [9_u8; 32];
+    let (host, directory) = host_with_dynamic_region_marking(FILTERED, &secret);
+    let objects: Vec<ObjectTypeDef> = types()
+        .into_iter()
+        .map(|value| serde_json::from_value(value).unwrap())
+        .collect();
+    let model = norn_cell::Model::from_definitions(&objects, &[]).unwrap();
+    let mut writer = CellStore::open(
+        &directory.path().join("cell.sqlite"),
+        model,
+        norn_cell::StoreOptions::default(),
+    )
+    .unwrap();
+    // Commit multiple events so `revision.seq > revision.commits` before refresh.
+    writer
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: physical().key(),
+            logical_time: CLOCK + 500,
+            writes: vec![
+                put("shop.Customer", "c-south", &[("region", V::from("south"))]),
+                put(
+                    "shop.Order",
+                    "o2",
+                    &[("amount", V::from(Decimal::parse("20.00").unwrap()))],
+                ),
+            ],
+            links: vec![link("o2", "c-south")],
+            events: vec![
+                V::from_json(json!({"type": "note.one"})).unwrap(),
+                V::from_json(json!({"type": "note.two"})).unwrap(),
+                V::from_json(json!({"type": "note.three"})).unwrap(),
+                V::from_json(json!({"type": "note.four"})).unwrap(),
+            ],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+    let refreshed =
+        refresh_transform(&host, &scope(), Some("full"), STORED, &Mapping, NOW).expect("refresh");
+    assert!(!refreshed.stale);
+    // Unlink and delete `c-north` at commits 4 and 5 (both `<= revision.seq`
+    // of commit 3). `pop` is denied Values on `c-north`, so `pop` must not
+    // reuse the stale cache containing `c-north` and must fall back to live
+    // evaluation instead.
+    remove_north_customer(&mut writer);
+    let pop_page = get_transform_rows(
+        &host,
+        &scope(),
+        Some("pop"),
+        STORED,
+        &params(None, None),
+        &Mapping,
+        NOW,
+    )
+    .expect("pop falls back to live evaluation");
+    assert!(
+        pop_page.materialization.is_none(),
+        "stale cache containing denied historical row must not be served: {:?}",
+        pop_page.materialization
+    );
+    let full_page = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        STORED,
+        &params(None, None),
+        &Mapping,
+        NOW,
+    )
+    .expect("full reader still receives stale cache");
+    assert!(full_page.materialization.as_ref().is_some_and(|m| m.stale));
 }

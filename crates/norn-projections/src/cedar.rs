@@ -23,7 +23,9 @@ use norn_ir::{
 
 mod writer;
 
-use writer::writer_resource_kinds;
+use writer::{
+    cedar_entity_name, is_cedar_identifier, is_reserved_host_type, writer_resource_kinds,
+};
 
 /// Host-maintained attributes every projected object type carries (#2950):
 /// `acted_by`, the actors whose action calls committed on the object. Optional:
@@ -37,6 +39,11 @@ pub fn project_host_access_schema(object_types: &[ObjectTypeDef]) -> String {
     let mut resources: BTreeSet<String> = object_types
         .iter()
         .filter_map(|object_type| cedar_entity_name(object_type.name.as_str()))
+        .filter(|cedar_name| {
+            cedar_name
+                .rsplit_once("::")
+                .is_some_and(|(namespace, _)| !is_reserved_host_type(namespace, cedar_name))
+        })
         .collect();
     resources.insert("norn::Ledger".to_owned());
     resources.insert("norn::Definitions".to_owned());
@@ -233,8 +240,18 @@ fn project_resource_actions(
     types: &CedarObjectTypes<'_>,
     actions: &[ActionRoot],
 ) -> BTreeMap<ObjectTypeName, Vec<String>> {
-    let mut pairs: BTreeMap<ObjectTypeName, BTreeSet<String>> = BTreeMap::new();
+    let mut grouped: BTreeMap<&str, Vec<&ActionRoot>> = BTreeMap::new();
     for action in actions {
+        grouped
+            .entry(action.action_id.as_str())
+            .or_default()
+            .push(action);
+    }
+    let mut pairs: BTreeMap<ObjectTypeName, BTreeSet<String>> = BTreeMap::new();
+    for (action_id, definitions) in grouped {
+        let [action] = definitions.as_slice() else {
+            continue;
+        };
         let Some(program) = &action.effect_program else {
             continue;
         };
@@ -243,7 +260,7 @@ fn project_resource_actions(
             pairs
                 .entry(ObjectTypeName(object_type.to_owned()))
                 .or_default()
-                .insert(action.action_id.clone());
+                .insert(action_id.to_owned());
         }
     }
     pairs
@@ -321,6 +338,14 @@ fn object_type_index<'a>(
             );
             continue;
         };
+        if is_reserved_host_type(namespace, &cedar_name) {
+            add_loss(
+                losses,
+                (*name).to_owned(),
+                "object type collides with a reserved Norn host namespace or entity",
+            );
+            continue;
+        }
         namespaces
             .entry(namespace.to_owned())
             .or_default()
@@ -406,6 +431,17 @@ fn project_inverse_attributes(
         .iter()
         .map(|definition| (definition.name.as_str(), definition))
         .collect();
+    let contract_owners: BTreeMap<&str, BTreeSet<&str>> = interfaces_by_name
+        .iter()
+        .map(|(&name, definition)| {
+            let owners = definition
+                .contract_owners(|parent| interfaces_by_name.get(parent.as_str()).copied())
+                .into_iter()
+                .map(|parent| parent.name.as_str())
+                .collect();
+            (name, owners)
+        })
+        .collect();
     for (source_name, source_type) in &types.by_name {
         if !types.cedar_names.contains_key(source_name) {
             continue;
@@ -432,16 +468,9 @@ fn project_inverse_attributes(
                         lineage.iter().any(|ancestor| {
                             ancestor.implements.iter().any(|interface| {
                                 interface.as_str() == target_name
-                                    || interfaces_by_name.get(interface.as_str()).is_some_and(
-                                        |definition| {
-                                            definition
-                                                .contract_owners(|name| {
-                                                    interfaces_by_name.get(name.as_str()).copied()
-                                                })
-                                                .iter()
-                                                .any(|parent| parent.name.as_str() == target_name)
-                                        },
-                                    )
+                                    || contract_owners
+                                        .get(interface.as_str())
+                                        .is_some_and(|owners| owners.contains(target_name))
                             })
                         })
                     })
@@ -833,10 +862,6 @@ fn project_property(
                         format!("{subject} -> {name}"),
                         "property type reference chain is cyclic",
                     ),
-                    ResolveTypeError::TooDeep => (
-                        subject.to_owned(),
-                        "property type reference chain exceeds the catalog size",
-                    ),
                 };
                 add_loss(losses, loss_subject, reason);
                 report_property_metadata(subject, property, &[], losses);
@@ -1063,7 +1088,6 @@ enum ResolveTypeError {
     Missing(String),
     Duplicate(String),
     Cycle(String),
-    TooDeep,
 }
 
 fn resolve_property_type(
@@ -1074,7 +1098,7 @@ fn resolve_property_type(
     let mut current = property_type;
     let mut constraints = Vec::new();
     let mut visited = BTreeSet::new();
-    for _ in 0..=catalog.len() {
+    loop {
         let PropertyType::Ref { name, .. } = current else {
             return Ok((current.clone(), constraints));
         };
@@ -1091,7 +1115,6 @@ fn resolve_property_type(
         constraints.push(definition.constraints.clone());
         current = &definition.property_type;
     }
-    Err(ResolveTypeError::TooDeep)
 }
 
 struct LineageIssue {
@@ -1130,23 +1153,6 @@ fn object_lineage<'a>(
     }
     lineage.reverse();
     (lineage, issue)
-}
-
-fn cedar_entity_name(name: &str) -> Option<String> {
-    let (domain, local) = name.rsplit_once('.')?;
-    if !is_cedar_identifier(local) || !domain.split('.').all(is_cedar_identifier) {
-        return None;
-    }
-    Some(format!("{}::{local}", domain.replace('.', "::")))
-}
-
-fn is_cedar_identifier(value: &str) -> bool {
-    let mut bytes = value.bytes();
-    let Some(first) = bytes.next() else {
-        return false;
-    };
-    (first.is_ascii_alphabetic() || first == b'_')
-        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
 fn add_loss(losses: &mut BTreeSet<CedarLoss>, subject: String, reason: &'static str) {
