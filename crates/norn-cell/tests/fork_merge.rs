@@ -19,8 +19,7 @@ use norn_kernel::cell_host::{FactKey, JsonObject};
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
     ActionReadAuthzRequest, ActionReadTypeAuthzRequest, CellCommit, CellHost as _, DecisionTurn,
-    Entropy, FactEvent, FactMutation, FactVersion, FactWrite, LogicalTime, ScenarioClock,
-    commit_action,
+    Entropy, FactEvent, LogicalTime, ScenarioClock, commit_action,
 };
 use serde_json::{Value, json};
 
@@ -833,23 +832,11 @@ fn promote_refuses_empty_or_non_action_fork_history() -> Result<(), String> {
     raw_fork.advance_to(LogicalTime::from_millis(
         BASE_CLOCK_MS.saturating_add(10_000),
     ));
-    let raw_values = json_obj(json!({
-        "po_id": "PO-RAW-1",
-        "supplier_id": "SUP-NILE",
-        "promised_at": "2026-11-20T00:00:00Z",
-        "currency": "EGP",
-        "created_by": "planner:amal",
-        "status": "draft"
-    }))?;
     raw_fork
         .commit(CellCommit {
             consumes: None,
             reads: Vec::new(),
-            writes: vec![FactWrite {
-                key: FactKey::new("supply.PurchaseOrder", "PO-RAW-1"),
-                expected: FactVersion(0),
-                mutation: FactMutation::Put { values: raw_values },
-            }],
+            writes: Vec::new(),
             events: Vec::new(),
             effects: Vec::new(),
             links: Vec::new(),

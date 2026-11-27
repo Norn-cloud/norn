@@ -114,13 +114,13 @@ fn authenticate_one_commit<'a>(
             },
         ));
     };
-    if *record_key != command.idempotency_key {
+    let expected_record_key = format!("{}/{}", command.action_id, command.idempotency_key);
+    if *record_key != expected_record_key {
         return Err(merge_refused(
             ForkMergeRefusalReason::UnauthenticatedForkHistory {
                 commit_seq: seq,
                 detail: format!(
-                    "expected idempotency key `{record_key}`, caller supplied `{}`",
-                    command.idempotency_key
+                    "expected action call key `{record_key}`, caller supplied `{expected_record_key}`"
                 ),
             },
         ));
