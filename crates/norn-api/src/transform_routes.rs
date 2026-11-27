@@ -27,7 +27,13 @@ use crate::authz::{
 };
 use crate::host::DevHost;
 use crate::object_routes::{ObjectAccess, collection, mapped};
-use crate::privacy::MarkingCatalog;
+use crate::privacy::{
+    DisclosedTransformLineage, DisclosedTransformPage, MarkingCatalog,
+    disclosure::{
+        TransformLineageInput, TransformPageInput, project_transform_lineage,
+        project_transform_page, transform_row_id_key,
+    },
+};
 use crate::refusal::Refusal;
 use crate::scope::ScopeQuery;
 
@@ -536,17 +542,13 @@ pub fn get_transform_rows<E: SqlEngine>(
     params: &TransformRowsParams,
     access: &dyn ObjectAccess,
     now: LogicalTime,
-) -> Result<NornTransformPage, Refusal> {
+) -> Result<DisclosedTransformPage, Refusal> {
     let limit = parse_limit(params.limit.as_deref())?;
     let evaluated = evaluate(host, (scope, actor), transform, access, now)?;
     let result = &evaluated.served.result;
     let commits = result.revision.commits;
     let head_commits = evaluated.head_commits;
-    let key = crate::privacy::row_ids(
-        host,
-        &evaluated.catalog,
-        crate::privacy::grain_marked(&evaluated.marked, &result.grain),
-    )?;
+    let key = transform_row_id_key(host, &evaluated.catalog, &evaluated.marked, &result.grain)?;
     let start = match params.after.as_deref() {
         None => 0,
         Some(cursor) => {
@@ -564,7 +566,7 @@ pub fn get_transform_rows<E: SqlEngine>(
         }
     };
     let total = result.rows.len();
-    let mut page: Vec<NornTransformRow> = result
+    let page: Vec<NornTransformRow> = result
         .rows
         .iter()
         .skip(start)
@@ -575,16 +577,6 @@ pub fn get_transform_rows<E: SqlEngine>(
             member_count: u64::try_from(row.members.len()).unwrap_or(u64::MAX),
         })
         .collect();
-    // PRIVACY-1: a marked column leaves projected, as its source property does.
-    crate::privacy::project_columns(
-        host,
-        &evaluated.catalog,
-        &evaluated.marked,
-        &mut page
-            .iter_mut()
-            .map(|row| &mut row.values)
-            .collect::<Vec<_>>(),
-    );
     let end = start.saturating_add(page.len());
     let next_after = (end < total)
         .then(|| {
@@ -596,26 +588,30 @@ pub fn get_transform_rows<E: SqlEngine>(
     for (col, (_, eff)) in page_columns.iter_mut().zip(&evaluated.marked) {
         col.markings.clone_from(eff);
     }
-    Ok(NornTransformPage {
-        transform: result.transform.clone(),
-        version: result.version.clone(),
-        engine: "cell".to_owned(),
-        commits,
-        materialization: evaluated
-            .served
-            .materialization
-            .as_ref()
-            .map(materialization),
-        columns: page_columns,
-        grain: result.grain.clone(),
-        rows: page,
-        total_rows: u64::try_from(total).unwrap_or(u64::MAX),
-        withheld: result.withheld.clone(),
-        excluded: u64::try_from(result.exclusions.len()).unwrap_or(u64::MAX),
-        complete: result.complete,
-        node_rows: result.node_rows.clone(),
-        next_after,
-    })
+    Ok(project_transform_page(
+        host,
+        &evaluated.catalog,
+        &evaluated.marked,
+        TransformPageInput {
+            transform: result.transform.clone(),
+            version: result.version.clone(),
+            commits,
+            materialization: evaluated
+                .served
+                .materialization
+                .as_ref()
+                .map(materialization),
+            columns: page_columns,
+            grain: result.grain.clone(),
+            rows: page,
+            total_rows: u64::try_from(total).unwrap_or(u64::MAX),
+            withheld: result.withheld.clone(),
+            excluded: u64::try_from(result.exclusions.len()).unwrap_or(u64::MAX),
+            complete: result.complete,
+            node_rows: result.node_rows.clone(),
+            next_after,
+        },
+    ))
 }
 
 /// One row's lineage: the input rows it derives from (VIEW-LINEAGE-1).
@@ -632,47 +628,41 @@ pub fn get_transform_row_lineage<E: SqlEngine>(
     row: &str,
     access: &dyn ObjectAccess,
     now: LogicalTime,
-) -> Result<NornTransformLineage, Refusal> {
+) -> Result<DisclosedTransformLineage, Refusal> {
     let evaluated = evaluate(host, (scope, actor), transform, access, now)?;
     let result = &evaluated.served.result;
-    let key = crate::privacy::row_ids(
-        host,
-        &evaluated.catalog,
-        crate::privacy::grain_marked(&evaluated.marked, &result.grain),
-    )?;
+    let key = transform_row_id_key(host, &evaluated.catalog, &evaluated.marked, &result.grain)?;
     let found = result
         .rows
         .iter()
         .find(|candidate| public_row_id(key.as_ref(), &candidate.id) == row)
         .ok_or_else(row_not_found)?;
-    let mut values = found.values.clone();
-    crate::privacy::project_columns(
+    Ok(project_transform_lineage(
         host,
         &evaluated.catalog,
         &evaluated.marked,
-        &mut [&mut values],
-    );
-    Ok(NornTransformLineage {
-        transform: result.transform.clone(),
-        row_id: public_row_id(key.as_ref(), &found.id),
-        commits: result.revision.commits,
-        materialization: evaluated
-            .served
-            .materialization
-            .as_ref()
-            .map(materialization),
-        values,
-        members: found
-            .members
-            .iter()
-            .map(|member| NornTransformMember {
-                input: member.alias.clone(),
-                object_type: member.object_type.clone(),
-                id: member.id.clone(),
-                version: member.version,
-            })
-            .collect(),
-    })
+        TransformLineageInput {
+            transform: result.transform.clone(),
+            row_id: public_row_id(key.as_ref(), &found.id),
+            commits: result.revision.commits,
+            materialization: evaluated
+                .served
+                .materialization
+                .as_ref()
+                .map(materialization),
+            values: found.values.clone(),
+            members: found
+                .members
+                .iter()
+                .map(|member| NornTransformMember {
+                    input: member.alias.clone(),
+                    object_type: member.object_type.clone(),
+                    id: member.id.clone(),
+                    version: member.version,
+                })
+                .collect(),
+        },
+    ))
 }
 
 fn op(step: &Step) -> (&'static str, Vec<String>) {

@@ -387,11 +387,8 @@ fn unauthorized_answers_and_traces_have_identical_403s_before_resolution() {
 #[test]
 fn live_answers_and_traces_apply_current_independent_population_and_disclosure_grants() {
     let (host, runtime) = configured(Mode::Live);
-    let QuestionAnswer::Live(answer) =
-        get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime).expect("live")
-    else {
-        panic!("live variant")
-    };
+    let answer = get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime).expect("live");
+    let answer = answer.live().expect("live");
     assert_eq!(answer.freshness, Freshness::Exact);
     assert_eq!(answer.rows[WEEK].value.expect("ratio").canonical(), "0.98");
     assert!(
@@ -410,11 +407,9 @@ fn live_answers_and_traces_apply_current_independent_population_and_disclosure_g
             c.source,
             norn_cell::compute::lineage::ContributionSource::Restricted
         )));
-    let QuestionAnswer::Live(audited) =
-        get_answer(&host, &scope(), Some("auditor"), QUESTION, &runtime).expect("audited")
-    else {
-        panic!("live")
-    };
+    let audited =
+        get_answer(&host, &scope(), Some("auditor"), QUESTION, &runtime).expect("audited");
+    let audited = audited.live().expect("live");
     let trace = get_numeric_trace(
         &host,
         &trace_query(&audited.lineage_ref),
@@ -430,12 +425,9 @@ fn live_answers_and_traces_apply_current_independent_population_and_disclosure_g
             c.source,
             norn_cell::compute::lineage::ContributionSource::Unavailable
         )));
-    let QuestionAnswer::Live(partial) =
-        get_answer(&host, &scope(), Some("partial"), QUESTION, &runtime)
-            .expect("visible population")
-    else {
-        panic!("live")
-    };
+    let partial = get_answer(&host, &scope(), Some("partial"), QUESTION, &runtime)
+        .expect("visible population");
+    let partial = partial.live().expect("live");
     assert_eq!(partial.rows[WEEK].members.len(), 3);
     assert!(
         get_numeric_trace(&host, &query, Some("partial"), QUESTION, &runtime).is_err(),
@@ -460,12 +452,9 @@ fn fresh_stale_and_incomplete_answers_keep_labels_but_nonexact_traces_refuse() {
         (Mode::Incomplete, Freshness::Incomplete),
     ] {
         let (host, runtime) = configured(mode);
-        let QuestionAnswer::Live(answer) =
-            get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime)
-                .expect("analytical answer")
-        else {
-            panic!("live")
-        };
+        let answer = get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime)
+            .expect("analytical answer");
+        let answer = answer.live().expect("live");
         assert_eq!(answer.freshness, freshness);
         let denied = get_numeric_trace(
             &host,
@@ -489,11 +478,9 @@ fn fresh_stale_and_incomplete_answers_keep_labels_but_nonexact_traces_refuse() {
 #[test]
 fn asof_uses_authenticated_cutoff_and_preserves_the_old_answer_after_correction() {
     let (host, runtime) = configured(Mode::Historical);
-    let QuestionAnswer::Historical(answer) =
-        get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime).expect("historical")
-    else {
-        panic!("historical")
-    };
+    let answer =
+        get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime).expect("historical");
+    let answer = answer.historical().expect("historical");
     assert_eq!(answer.knowledge_time_ms, CLOCK);
     assert_eq!(answer.result.known_as_of, 1);
     assert_eq!(
@@ -608,11 +595,8 @@ fn live_route_documents_conform_to_the_generated_sdk() {
         ("unavailable_trace", "auditor"),
     ] {
         let (host, runtime) = configured(Mode::Live);
-        let QuestionAnswer::Live(answer) =
-            get_answer(&host, &scope(), Some(actor), QUESTION, &runtime).expect("answer")
-        else {
-            panic!("live")
-        };
+        let answer = get_answer(&host, &scope(), Some(actor), QUESTION, &runtime).expect("answer");
+        let answer = answer.live().expect("live");
         let trace = get_numeric_trace(
             &host,
             &trace_query(&answer.lineage_ref),
@@ -629,11 +613,9 @@ fn live_route_documents_conform_to_the_generated_sdk() {
     }
     documents.push(resolved_trace_document());
     let (host, runtime) = configured(Mode::Stale);
-    let QuestionAnswer::Live(answer) =
-        get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime).expect("stale answer")
-    else {
-        panic!("live")
-    };
+    let answer =
+        get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime).expect("stale answer");
+    let answer = answer.live().expect("live");
     let refused = get_numeric_trace(
         &host,
         &trace_query(&answer.lineage_ref),
@@ -695,11 +677,9 @@ fn resolved_trace_document() -> SdkDocument {
         resolved: Arc::new(AtomicUsize::new(0)),
         min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
     };
-    let QuestionAnswer::Live(answer) =
-        get_answer(&host, &scope(), Some("auditor"), QUESTION, &runtime).expect("mapped answer")
-    else {
-        panic!("live")
-    };
+    let answer =
+        get_answer(&host, &scope(), Some("auditor"), QUESTION, &runtime).expect("mapped answer");
+    let answer = answer.live().expect("live");
     let trace = get_numeric_trace(
         &host,
         &trace_query(&answer.lineage_ref),
@@ -786,11 +766,12 @@ fn amounts_on_the_wire(document: &impl serde::Serialize) -> Vec<serde_json::Valu
 #[test]
 fn member_amounts_are_values_and_follow_the_values_grant() {
     let (host, runtime) = configured(Mode::Live);
-    let live = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
-        .expect("answer")
-    {
-        QuestionAnswer::Live(answer) => answer,
-        QuestionAnswer::Historical(_) => panic!("live"),
+    let live = |actor| {
+        get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+            .expect("answer")
+            .live()
+            .expect("live")
+            .clone()
     };
     let trace = |actor, answer: &norn_cell::compute::QueryResult| {
         get_numeric_trace(
@@ -871,11 +852,8 @@ fn member_amounts_are_values_and_follow_the_values_grant() {
 #[test]
 fn one_restricted_member_withholds_its_whole_bucket() {
     let (host, runtime) = configured(Mode::Live);
-    let QuestionAnswer::Live(mixed) =
-        get_answer(&host, &scope(), Some("mixed"), QUESTION, &runtime).expect("answer")
-    else {
-        panic!("live")
-    };
+    let mixed = get_answer(&host, &scope(), Some("mixed"), QUESTION, &runtime).expect("answer");
+    let mixed = mixed.live().expect("live");
     let (hidden, open): (Vec<_>, Vec<_>) = mixed
         .rows
         .values()
@@ -944,11 +922,12 @@ fn carries(wire: &str, token: &str) -> bool {
 #[test]
 fn a_mixed_bucket_discloses_no_member_value_from_which_the_hidden_one_follows() {
     let (host, runtime) = configured(Mode::Live);
-    let live = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
-        .expect("answer")
-    {
-        QuestionAnswer::Live(answer) => answer,
-        QuestionAnswer::Historical(_) => panic!("live"),
+    let live = |actor| {
+        get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+            .expect("answer")
+            .live()
+            .expect("live")
+            .clone()
     };
     let (mixed, auditor) = (live("mixed"), live("auditor"));
     let trace = get_numeric_trace(
@@ -1015,11 +994,9 @@ fn a_historical_cutoff_on_a_restricted_single_write_withholds_its_receipt_hash()
     let (host, runtime) = configured(Mode::SingleWriteCutoff);
     let raw = runtime.cutoff_receipt.clone().expect("K2 receipt");
     let commit = |actor| {
-        let QuestionAnswer::Historical(answer) =
-            get_answer(&host, &scope(), Some(actor), QUESTION, &runtime).expect("historical")
-        else {
-            panic!("historical")
-        };
+        let answer =
+            get_answer(&host, &scope(), Some(actor), QUESTION, &runtime).expect("historical");
+        let answer = answer.historical().expect("historical");
         assert_eq!(answer.result.known_as_of, 2);
         let norn_kernel::World::Historical { commit } = &answer.world else {
             panic!("historical world")
@@ -1174,11 +1151,12 @@ fn a_live_answer_and_its_trace_withhold_the_ledger_head_from_a_reader_without_va
     ) = with_value_events(false);
     let handle = keyed_revision_handle(&HANDLE_KEY, &head.hash);
     assert_ne!(handle, head.hash);
-    let live = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
-        .expect("answer")
-    {
-        QuestionAnswer::Live(answer) => answer,
-        QuestionAnswer::Historical(_) => panic!("live"),
+    let live = |actor| {
+        get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+            .expect("answer")
+            .live()
+            .expect("live")
+            .clone()
     };
     let trace = |actor, lineage: &str| {
         get_numeric_trace(
@@ -1228,11 +1206,12 @@ fn a_historical_answer_withholds_its_cutoff_ledger_head_from_a_reader_without_va
         },
     ) = with_value_events(true);
     let receipt = runtime.cutoff_receipt.clone().expect("K2 receipt");
-    let historical = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
-        .expect("answer")
-    {
-        QuestionAnswer::Historical(answer) => answer,
-        QuestionAnswer::Live(_) => panic!("historical"),
+    let historical = |actor| {
+        get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+            .expect("answer")
+            .historical()
+            .expect("historical")
+            .clone()
     };
     for actor in ["reader", "mixed", "slice"] {
         let answer = historical(actor);
@@ -1265,11 +1244,12 @@ fn a_historical_answer_withholds_its_cutoff_ledger_head_from_a_reader_without_va
 #[test]
 fn a_shared_commit_withholds_its_receipt_hash_from_every_bucket_it_wrote() {
     let (host, runtime) = configured(Mode::Live);
-    let answer = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
-        .expect("answer")
-    {
-        QuestionAnswer::Live(answer) => answer,
-        QuestionAnswer::Historical(_) => panic!("live"),
+    let answer = |actor| {
+        get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+            .expect("answer")
+            .live()
+            .expect("live")
+            .clone()
     };
     let other = answer("auditor")
         .rows
@@ -1327,11 +1307,12 @@ fn a_shared_commit_withholds_its_receipt_hash_from_every_bucket_it_wrote() {
 #[test]
 fn a_bucket_below_the_minimum_is_suppressed_for_a_reader_missing_values() {
     let (host, runtime) = configured(Mode::Singleton);
-    let live = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
-        .expect("answer")
-    {
-        QuestionAnswer::Live(answer) => answer,
-        QuestionAnswer::Historical(_) => panic!("live"),
+    let live = |actor| {
+        get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+            .expect("answer")
+            .live()
+            .expect("live")
+            .clone()
     };
     let auditor = live("auditor");
     assert_eq!(auditor.rows[WEEK].members.len(), 1);
@@ -1377,11 +1358,8 @@ fn a_bucket_below_the_minimum_is_suppressed_for_a_reader_missing_values() {
 #[test]
 fn the_public_lineage_handle_is_keyed_and_not_a_guessing_oracle() {
     let (host, runtime) = configured(Mode::Live);
-    let QuestionAnswer::Live(answer) =
-        get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime).expect("answer")
-    else {
-        panic!("live")
-    };
+    let answer = get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime).expect("answer");
+    let answer = answer.live().expect("live");
     // The internal pin, recomputed from the same rows restored unredacted: an
     // identically seeded store, the reader's context, every row visible.
     let (mut store, plan, _) = fixture();
@@ -1602,11 +1580,12 @@ fn a_live_answer_withholds_its_quarantine_finding_ids_from_a_reader_without_valu
     let (host, runtime, finding, _directory) = with_quarantine(false);
     let handle = keyed_finding_handle(&HANDLE_KEY, &finding);
     assert_ne!(handle, finding);
-    let live = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
-        .expect("answer")
-    {
-        QuestionAnswer::Live(answer) => answer,
-        QuestionAnswer::Historical(_) => panic!("live"),
+    let live = |actor| {
+        get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+            .expect("answer")
+            .live()
+            .expect("live")
+            .clone()
     };
     for actor in ["reader", "mixed", "slice"] {
         let answer = live(actor);
@@ -1631,11 +1610,12 @@ fn a_live_answer_withholds_its_quarantine_finding_ids_from_a_reader_without_valu
 fn a_historical_answer_withholds_its_quarantine_finding_ids_from_a_reader_without_values() {
     let (host, runtime, finding, _directory) = with_quarantine(true);
     let handle = keyed_finding_handle(&HANDLE_KEY, &finding);
-    let historical = |actor| match get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
-        .expect("answer")
-    {
-        QuestionAnswer::Historical(answer) => answer,
-        QuestionAnswer::Live(_) => panic!("historical"),
+    let historical = |actor| {
+        get_answer(&host, &scope(), Some(actor), QUESTION, &runtime)
+            .expect("answer")
+            .historical()
+            .expect("historical")
+            .clone()
     };
     for actor in ["reader", "mixed", "slice"] {
         let answer = historical(actor);
@@ -2413,9 +2393,9 @@ fn run_marking_race(secret_metal: &str, kind: MarkingRaceKind) -> Refusal {
     };
     let baseline = get_answer(&host, &scope(), Some(actor), QUESTION, &clean)
         .expect("clean cell answers before the race");
-    let lineage = match baseline {
-        QuestionAnswer::Live(result) => result.lineage_ref,
-        QuestionAnswer::Historical(hist) => hist.result.lineage_ref,
+    let lineage = match baseline.as_answer() {
+        QuestionAnswer::Live(result) => result.lineage_ref.clone(),
+        QuestionAnswer::Historical(hist) => hist.result.lineage_ref.clone(),
     };
 
     match kind {
@@ -2557,12 +2537,9 @@ fn a_question_trace_projects_marked_values_and_withholds_digest_and_source() {
         min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
     };
     // `auditor` holds whole-world Population, Values, and Sources grants.
-    let QuestionAnswer::Live(answer) =
-        get_answer(&host, &scope(), Some("auditor"), QUESTION, &runtime)
-            .expect("question over unmarked fields answers cleanly")
-    else {
-        panic!("expected live answer");
-    };
+    let answer = get_answer(&host, &scope(), Some("auditor"), QUESTION, &runtime)
+        .expect("question over unmarked fields answers cleanly");
+    let answer = answer.live().expect("live");
     assert_eq!(
         answer.revision.hash,
         keyed_revision_handle(&HANDLE_KEY, &raw_head),

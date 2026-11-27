@@ -168,7 +168,7 @@ fn all_pages(
     host: &DevHost<NativeEngine>,
     actor: &str,
     limit: usize,
-) -> Vec<norn_api::objects::NornObjectPage> {
+) -> Vec<norn_api::privacy::DisclosedObjectPage> {
     let mut pages = Vec::new();
     let mut after: Option<String> = None;
     loop {
