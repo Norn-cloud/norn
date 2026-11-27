@@ -1397,6 +1397,26 @@ struct Snapshot {
     prior_outcomes: Vec<(CommandId, Vec<u64>)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LateOutcomeTracking {
+    Disabled,
+    Enabled,
+}
+
+impl LateOutcomeTracking {
+    const fn from_flag(enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+
+    const fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
 /// The independent reference model of a cell. Model facts (canonical
 /// identity, `is_a`, link declarations) come from the law types through
 /// [`CommitModel`]; the commit semantics are re-implemented here.
@@ -1405,7 +1425,7 @@ pub struct CellModel {
     now: u64,
     seq: u64,
     commits_perform_claims: bool,
-    tracks_late_outcomes: bool,
+    late_outcomes: LateOutcomeTracking,
     types: Vec<ObjectTypeDef>,
     facts: BTreeMap<FactKey, FactState>,
     concrete: BTreeMap<FactKey, ObjectTypeName>,
@@ -1450,7 +1470,7 @@ impl Default for CellModel {
             now: 0,
             seq: 0,
             commits_perform_claims: false,
-            tracks_late_outcomes: false,
+            late_outcomes: LateOutcomeTracking::Disabled,
             types: law_object_types(),
             facts: BTreeMap::new(),
             concrete: BTreeMap::new(),
@@ -1951,10 +1971,8 @@ impl CellModel {
                     }
                     self.generations
                         .insert(command.id.clone(), command.generation);
-                    self.enqueued_payloads.insert(
-                        (command.id.clone(), command.generation),
-                        command.payload.clone(),
-                    );
+                    self.enqueued_payloads
+                        .insert((command.id.clone(), command.generation), command.payload);
                     let position = self.outbox.iter().position(|slot| slot.id == command.id);
                     if position == Some(0) {
                         self.head_performed = false;
@@ -2138,9 +2156,9 @@ impl CellModel {
                     }
                     let key = (command.id.clone(), command.generation);
                     if let Some(existing) = known.get(&key) {
-                        command.payload = existing.clone();
+                        command.payload = *existing;
                     } else {
-                        known.insert(key, command.payload.clone());
+                        known.insert(key, command.payload);
                     }
                     Effect::Perform(command)
                 }
@@ -2245,7 +2263,7 @@ impl CellModel {
                 .or_default()
                 .insert(delivery.command.generation.0)
         {
-            if self.tracks_late_outcomes && self.commits_perform_claims {
+            if self.late_outcomes.is_enabled() && self.commits_perform_claims {
                 self.claim();
             }
             if self
@@ -2577,7 +2595,7 @@ impl CellModel {
                 .collect();
             (facts, links)
         });
-        let prior_outcomes = if self.tracks_late_outcomes {
+        let prior_outcomes = if self.late_outcomes.is_enabled() {
             self.prior_outcomes
                 .iter()
                 .filter(|(_, gens)| !gens.is_empty())
@@ -3173,7 +3191,7 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
     fn init_state() -> BoxedStrategy<CellReference> {
         let model = CellModel {
             commits_perform_claims: H::COMMITS_PERFORM_CLAIMS,
-            tracks_late_outcomes: H::TRACKS_LATE_OUTCOMES,
+            late_outcomes: LateOutcomeTracking::from_flag(H::TRACKS_LATE_OUTCOMES),
             ..CellModel::default()
         };
         if H::FAULT_KINDS.is_empty() && !H::NETWORK {
@@ -3307,7 +3325,7 @@ impl<H: SimulatedCell> CellHostMachine<H> {
         CellReference {
             model: CellModel {
                 commits_perform_claims: H::COMMITS_PERFORM_CLAIMS,
-                tracks_late_outcomes: H::TRACKS_LATE_OUTCOMES,
+                late_outcomes: LateOutcomeTracking::from_flag(H::TRACKS_LATE_OUTCOMES),
                 ..CellModel::default()
             },
             ..CellReference::default()

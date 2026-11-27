@@ -3,7 +3,7 @@
 
 use std::convert::Infallible;
 
-use norn_kernel::{CellHost, CommitError, Consumed, LogicalTime};
+use norn_kernel::{CommitError, Consumed, LogicalTime};
 use proptest_state_machine::StateMachineTest;
 
 use super::{
