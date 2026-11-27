@@ -903,8 +903,7 @@ pub struct MappedDelete {
     pub object_type: ObjectTypeName,
     /// The object's key.
     pub key: String,
-    /// The `onDelete` state of each lifecycle that declares one. Omitted
-    /// when empty.
+    /// The `onDelete` state of each lifecycle that declares one (omitted when empty).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lifecycle_snapshots: Vec<ObservedLifecycleSnapshot>,
     /// Where the delete came from.
@@ -923,17 +922,18 @@ pub struct MappedRecord {
     pub key: String,
     /// The observe upsert.
     pub invocations: Vec<ActionInvocation>,
-    /// Observed target states of lifecycle properties. The kernel reconciles
-    /// them against the current state by declared transitions. Omitted when
-    /// empty.
+    /// Observed target states of lifecycle properties (omitted when empty).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lifecycle_snapshots: Vec<ObservedLifecycleSnapshot>,
-    /// Links to other mapped objects. Omitted when empty.
+    /// Links to other mapped objects (omitted when empty).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<LinkPatch>,
     /// Nullable to-one link rules that explicitly observed no target.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cleared_links: Vec<LinkId>,
+    /// Tri-state property patches emitted in `FeedMode::Patch`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub field_patches: BTreeMap<PropertyId, crate::feed::FieldPatch<crate::RuntimeValue>>,
     /// The provenance of each produced property or observed lifecycle rule.
     pub property_provenance: BTreeMap<PropertyId, InstanceProvenance>,
     /// Where the record came from and its subject rule.
