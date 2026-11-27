@@ -683,6 +683,61 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
 }
 
 #[test]
+fn assignment_fails_closed_while_comparison_operators_stay_caller_required() {
+    let mut action = fixture_action();
+    action.input_schema = serde_json::from_value(json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "assigned_field": {"type": "string"},
+            "eq_field": {"type": "string"},
+            "ne_field": {"type": "string"},
+            "le_field": {"type": "string"},
+            "ge_field": {"type": "string"}
+        },
+        "required": [
+            "assigned_field",
+            "eq_field",
+            "ne_field",
+            "le_field",
+            "ge_field"
+        ]
+    }))
+    .expect("schema decodes");
+    action.derive = serde_json::from_value(json!([
+        {"field": "assigned_field", "expression": "out.value = 'ok'; out.value", "inputRequired": false},
+        {"field": "assigned_field", "expression": "trim(input.assigned_field)", "inputRequired": true},
+        {"field": "eq_field", "expression": "input.eq_field == 'a' ? 'a' : 'b'", "inputRequired": false},
+        {"field": "eq_field", "expression": "trim(input.eq_field)", "inputRequired": true},
+        {"field": "ne_field", "expression": "input.ne_field != 'a' ? 'a' : 'b'", "inputRequired": false},
+        {"field": "ne_field", "expression": "trim(input.ne_field)", "inputRequired": true},
+        {"field": "le_field", "expression": "len(input.le_field ?? '') <= 3 ? 's' : 'l'", "inputRequired": false},
+        {"field": "le_field", "expression": "trim(input.le_field)", "inputRequired": true},
+        {"field": "ge_field", "expression": "len(input.ge_field ?? '') >= 3 ? 'l' : 's'", "inputRequired": false},
+        {"field": "ge_field", "expression": "trim(input.ge_field)", "inputRequired": true}
+    ]))
+    .expect("derivations decode");
+
+    let tool = serde_json::to_value(action_tool(&action).expect("projects")).expect("encodes");
+    let schema = &tool["inputSchema"];
+    assert!(
+        schema["properties"].get("assigned_field").is_none(),
+        "property assignment fails closed as server-filled, matching kernel actor_derived_fields"
+    );
+    assert_eq!(
+        schema["required"],
+        json!(["eq_field", "ne_field", "le_field", "ge_field"])
+    );
+    for field in ["eq_field", "ne_field", "le_field", "ge_field"] {
+        assert_eq!(
+            schema["properties"][field],
+            json!({"type": "string"}),
+            "comparison operator in `{field}` must not be misclassified as assignment"
+        );
+    }
+}
+
+#[test]
 fn destructive_hint_covers_deleted_writes_and_writes_alongside_create_only_effect() {
     let mut parent_delete = fixture_action();
     parent_delete.writes.clear();

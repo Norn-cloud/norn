@@ -718,3 +718,108 @@ fn closure_and_dollar_derivations_match_kernel_actor_classification() {
         "kernel must refuse caller-supplied closure-derived field `a`: {refused:?}"
     );
 }
+
+#[test]
+fn closure_only_derivation_omits_field_and_produces_expected_output() {
+    let mut closure_only = build_action([false, false, false, false], &[], DecimalShape::Scalar);
+    closure_only.derive = vec![ActionInputDerivation {
+        field: "c".to_owned(),
+        expression: ZenExpression("len(map([1], #)) > 0 ? 'yes' : 'no'".to_owned()),
+        input_required: false,
+    }];
+    let closure_actor_fields = actor_derived_fields(&closure_only);
+    assert_eq!(closure_actor_fields, BTreeSet::from(["c".to_owned()]));
+    let standalone = action_tool(&closure_only);
+    let kernel_backed = action_tool_with_server_filled(&closure_only, &closure_actor_fields);
+    assert!(standalone.is_ok(), "{standalone:?}");
+    assert!(kernel_backed.is_ok(), "{kernel_backed:?}");
+    if let (Ok(standalone), Ok(kernel_backed)) = (standalone, kernel_backed) {
+        assert_eq!(standalone.input_schema, kernel_backed.input_schema);
+        let (props, required) = schema_keys(&standalone.input_schema);
+        assert!(!props.contains("c"));
+        assert!(!required.contains("c"));
+    }
+    let empty = RuntimeObject::new();
+    let prepared = prepare_action_input_for_call::<()>(
+        &closure_only,
+        &empty,
+        "test.action",
+        "0.1.0",
+        "user:alice",
+    );
+    assert!(
+        prepared.is_ok(),
+        "closure-only derivation must succeed when omitted: {prepared:?}"
+    );
+    if let Ok(prepared) = prepared {
+        assert_eq!(
+            prepared.effective_input().get("c"),
+            Some(&RuntimeValue::String("yes".to_owned()))
+        );
+    }
+}
+
+#[test]
+fn assignment_and_comparison_derivations_match_kernel_actor_classification() {
+    let mut assign_vs_cmp = build_action([false, false, false, false], &[], DecimalShape::Scalar);
+    assign_vs_cmp.derive = vec![
+        ActionInputDerivation {
+            field: "a".to_owned(),
+            expression: ZenExpression("out.value = 'ok'; out.value".to_owned()),
+            input_required: false,
+        },
+        ActionInputDerivation {
+            field: "a".to_owned(),
+            expression: ZenExpression("trim(input.a)".to_owned()),
+            input_required: true,
+        },
+        ActionInputDerivation {
+            field: "b".to_owned(),
+            expression: ZenExpression("input.b == 'x' ? 'x' : 'y'".to_owned()),
+            input_required: false,
+        },
+        ActionInputDerivation {
+            field: "b".to_owned(),
+            expression: ZenExpression("trim(input.b)".to_owned()),
+            input_required: true,
+        },
+        ActionInputDerivation {
+            field: "c".to_owned(),
+            expression: ZenExpression("input.c != 'x' ? 'y' : 'x'".to_owned()),
+            input_required: false,
+        },
+        ActionInputDerivation {
+            field: "c".to_owned(),
+            expression: ZenExpression("trim(input.c)".to_owned()),
+            input_required: true,
+        },
+        ActionInputDerivation {
+            field: "d".to_owned(),
+            expression: ZenExpression(
+                "len(input.d ?? '') <= 3 and len(input.d ?? '') >= 1 ? 'ok' : 'no'".to_owned(),
+            ),
+            input_required: false,
+        },
+        ActionInputDerivation {
+            field: "d".to_owned(),
+            expression: ZenExpression("trim(input.d)".to_owned()),
+            input_required: true,
+        },
+    ];
+    let assign_actor_fields = actor_derived_fields(&assign_vs_cmp);
+    assert_eq!(assign_actor_fields, BTreeSet::from(["a".to_owned()]));
+    let assign_standalone = action_tool(&assign_vs_cmp);
+    let assign_kernel = action_tool_with_server_filled(&assign_vs_cmp, &assign_actor_fields);
+    assert!(assign_standalone.is_ok(), "{assign_standalone:?}");
+    assert!(assign_kernel.is_ok(), "{assign_kernel:?}");
+    if let (Ok(standalone), Ok(kernel_backed)) = (assign_standalone, assign_kernel) {
+        assert_eq!(standalone.input_schema, kernel_backed.input_schema);
+        let (props, required) = schema_keys(&standalone.input_schema);
+        assert!(!props.contains("a"));
+        assert!(!required.contains("a"));
+        assert_eq!(
+            required,
+            BTreeSet::from(["b".to_owned(), "c".to_owned(), "d".to_owned()])
+        );
+    }
+}
