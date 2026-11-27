@@ -128,6 +128,91 @@ pub(crate) fn members_valid<E: SqlEngine>(
     }
 }
 
+fn conflict_accepted_bundle_id(observed: &Value) -> Option<&str> {
+    observed
+        .get("input")
+        .and_then(|input| input.get("acceptedBundleId"))
+        .and_then(Value::as_str)
+        .filter(|id| id.starts_with("mapping-bundle:"))
+}
+
+fn already_exported_pending<E: SqlEngine>(
+    conn: &E,
+    obs_id: &str,
+    prev_seq: i64,
+) -> Result<bool, CellError> {
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    let inbox = crate::system::INBOX;
+    // Only non-negative capture seqs represent an earlier export;
+    // legacy sentinel `-1` is synthesized on first named promotion.
+    let direct = conn.query_optional(
+        &format!(
+            "SELECT 1 FROM \"{table}\" \
+             WHERE \"observation_id\" = ?1 \
+               AND \"captured_commit_seq\" >= 0 AND \"captured_commit_seq\" < ?2 \
+             LIMIT 1"
+        ),
+        params![obs_id, prev_seq],
+        |_row| Ok(()),
+    )?;
+    if direct.is_some() {
+        return Ok(true);
+    }
+    if !obs_id.starts_with("mapping-bundle:") {
+        return Ok(false);
+    }
+    let via_conflict = conn.query_optional(
+        &format!(
+            "SELECT 1 FROM \"{inbox}\" c \
+             JOIN \"{table}\" e ON e.\"observation_id\" = c.\"observation_id\" \
+             WHERE c.\"observation_id\" LIKE 'mapping-conflict:%' \
+               AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?1 \
+               AND e.\"captured_commit_seq\" >= 0 AND e.\"captured_commit_seq\" < ?2 \
+             LIMIT 1"
+        ),
+        params![obs_id, prev_seq],
+        |_row| Ok(()),
+    )?;
+    Ok(via_conflict.is_some())
+}
+
+fn append_conflict_dependencies<E: SqlEngine>(
+    conn: &E,
+    prev_seq: i64,
+    pending: &mut Vec<crate::PendingObservation>,
+    seen_pending: &mut BTreeSet<String>,
+) -> Result<(), CellError> {
+    let inbox = crate::system::INBOX;
+    let dep_ids: Vec<String> = pending
+        .iter()
+        .filter(|row| row.observation_id.starts_with("mapping-conflict:"))
+        .filter_map(|row| conflict_accepted_bundle_id(&row.observed).map(str::to_owned))
+        .collect();
+    for dep_id in dep_ids {
+        if !seen_pending.insert(dep_id.clone())
+            || already_exported_pending(conn, &dep_id, prev_seq)?
+        {
+            continue;
+        }
+        let dep_row: Option<(i64, String)> = conn.query_optional(
+            &format!(
+                "SELECT \"position\", \"observed\" FROM \"{inbox}\" \
+                 WHERE \"observation_id\" = ?1 AND \"consumed_commit_seq\" IS NULL"
+            ),
+            params![dep_id.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if let Some((pos, observed_json)) = dep_row {
+            pending.push(crate::PendingObservation {
+                position: to_u64(pos, "position")?,
+                observation_id: dep_id,
+                observed: serde_json::from_str(&observed_json)?,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Read pending mapping-evidence inbox rows first attributed between
 /// `commit_seq - 1` and `commit_seq` together with late or pending
 /// `_norn_source_evidence` attribution rows captured in that window.
@@ -174,28 +259,18 @@ pub(crate) fn read_late_source_evidence<E: SqlEngine>(
             connection_id: conn_id,
             captured_commit_seq: cap_seq,
         });
-        if consumed.is_none() && seen_pending.insert(obs_id.clone()) {
-            // Only non-negative capture seqs represent an earlier export;
-            // legacy sentinel `-1` is synthesized on first named promotion.
-            let earlier = conn.query_optional(
-                &format!(
-                    "SELECT 1 FROM \"{table}\" \
-                     WHERE \"observation_id\" = ?1 \
-                       AND \"captured_commit_seq\" >= 0 AND \"captured_commit_seq\" < ?2 \
-                     LIMIT 1"
-                ),
-                params![obs_id.as_str(), prev_seq],
-                |_row| Ok(()),
-            )?;
-            if earlier.is_none() {
-                pending.push(crate::PendingObservation {
-                    position: to_u64(pos, "position")?,
-                    observation_id: obs_id,
-                    observed: serde_json::from_str(&observed_json)?,
-                });
-            }
+        if consumed.is_none()
+            && seen_pending.insert(obs_id.clone())
+            && !already_exported_pending(conn, &obs_id, prev_seq)?
+        {
+            pending.push(crate::PendingObservation {
+                position: to_u64(pos, "position")?,
+                observation_id: obs_id,
+                observed: serde_json::from_str(&observed_json)?,
+            });
         }
     }
+    append_conflict_dependencies(conn, prev_seq, &mut pending, &mut seen_pending)?;
     pending.sort_by(|a, b| {
         a.position
             .cmp(&b.position)
@@ -274,16 +349,38 @@ fn restore_pending_observations<'a, E: SqlEngine>(
     mismatch: &impl Fn() -> CellError,
 ) -> Result<BTreeSet<&'a str>, CellError> {
     let inbox = crate::system::INBOX;
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
     let mut prev_pos = 0_u64;
     let mut restored_ids = BTreeSet::new();
     for row in pending {
+        let has_prev_evidence = entries.iter().any(|entry| {
+            entry.observation_id == row.observation_id && entry.captured_commit_seq == prev_seq
+        });
+        let is_legacy_conflict_dep = !has_prev_evidence
+            && row.observation_id.starts_with("mapping-bundle:")
+            && pending.iter().any(|other| {
+                other.observation_id.starts_with("mapping-conflict:")
+                    && other.position > row.position
+                    && conflict_accepted_bundle_id(&other.observed)
+                        == Some(row.observation_id.as_str())
+                    && entries.iter().any(|entry| {
+                        entry.observation_id == other.observation_id
+                            && entry.captured_commit_seq == prev_seq
+                    })
+            })
+            && reader
+                .conn
+                .query_optional(
+                    &format!("SELECT 1 FROM \"{table}\" WHERE \"observation_id\" = ?1 LIMIT 1"),
+                    params![row.observation_id.as_str()],
+                    |_row| Ok(()),
+                )?
+                .is_none();
         if row.position == 0
             || row.position <= prev_pos
             || !restored_ids.insert(row.observation_id.as_str())
+            || (!has_prev_evidence && !is_legacy_conflict_dep)
             || !valid_evidence_observation(reader, &row.observation_id, &row.observed)
-            || !entries.iter().any(|entry| {
-                entry.observation_id == row.observation_id && entry.captured_commit_seq == prev_seq
-            })
         {
             return Err(mismatch());
         }

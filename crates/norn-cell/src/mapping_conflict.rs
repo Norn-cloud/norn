@@ -1649,4 +1649,83 @@ mod tests {
             .is_err()
         );
     }
+
+    #[test]
+    fn legacy_pending_bundle_conflict_dependency_survives_empty_replay() {
+        let artifacts = pack_artifacts();
+        let store = open_installed_store(&artifacts);
+        // Legacy pending bundle has no _norn_source_evidence row at all.
+        let legacy_obs = derive_holding_obs(
+            &store,
+            "2026-01-01",
+            "ev-dep",
+            "2026-01-01T00:00:00Z",
+            serde_json::json!(200),
+            Derivation::CURRENT,
+            None,
+        );
+        let legacy_json = serde_json::to_string(&legacy_obs).expect("legacy json");
+        insert_inbox_row(&store.conn, 1, &legacy_obs.id.0, &legacy_json, None);
+        // Conflicting event with the same event_id but changed source_version creates mapping-conflict:.
+        let incoming_obs = derive_holding_obs(
+            &store,
+            "2026-01-02",
+            "ev-dep",
+            "2026-01-01T00:00:00Z",
+            serde_json::json!(250),
+            Derivation::CURRENT,
+            None,
+        );
+        let incoming_bundle: MappingBundle =
+            norn_ir::runtime::decode(&incoming_obs.input).expect("decode incoming");
+        let (conflict_id, inserted) =
+            capture(&store, &incoming_obs, &incoming_bundle).expect("capture conflict");
+        assert!(inserted && conflict_id.starts_with("mapping-conflict:"));
+        crate::source_cursor::record_source_evidence_in_tx(
+            &store.conn,
+            &conflict_id,
+            "conn.b",
+            true,
+        )
+        .expect("record conflict evidence");
+        let (p2, ev2) =
+            crate::export_journal::read_late_source_evidence(&store.conn, 2).expect("late c2");
+        assert_eq!(p2.len(), 2);
+        assert_eq!(ev2.len(), 1);
+        let replayed = open_installed_store(&artifacts);
+        crate::export_journal::restore_late_source_evidence(&replayed.read(), 2, &p2, &ev2)
+            .expect("empty replay restores legacy dependency before conflict recheck");
+        assert_eq!(
+            crate::export_journal::read_late_source_evidence(&replayed.conn, 2).expect("rt c2"),
+            (p2, ev2)
+        );
+        // Later named promotion of legacy_obs at clock=2 does not duplicate legacy_obs in pending_observations.
+        insert_evidence_row(&store.conn, &legacy_obs.id.0, "", -1);
+        insert_evidence_row(&store.conn, &legacy_obs.id.0, "conn.b", 2);
+        let (p3, ev3) =
+            crate::export_journal::read_late_source_evidence(&store.conn, 3).expect("late c3");
+        assert!(p3.is_empty() && ev3.len() == 2);
+        crate::export_journal::restore_late_source_evidence(&replayed.read(), 3, &p3, &ev3)
+            .expect("c3 promotes already-restored legacy dependency");
+        assert_eq!(
+            crate::export_journal::read_late_source_evidence(&replayed.conn, 3).expect("rt c3"),
+            (p3, ev3)
+        );
+        // An unattributed pending bundle with no referencing conflict is still rejected.
+        let unreferenced = open_installed_store(&artifacts);
+        let orphan = crate::PendingObservation {
+            position: 1,
+            observation_id: legacy_obs.id.0,
+            observed: norn_ir::runtime::encode(&legacy_obs).expect("legacy val"),
+        };
+        assert!(
+            crate::export_journal::restore_late_source_evidence(
+                &unreferenced.read(),
+                2,
+                &[orphan],
+                &[]
+            )
+            .is_err()
+        );
+    }
 }
