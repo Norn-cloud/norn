@@ -646,7 +646,8 @@ def workflow_verdict_canaries(source: str) -> None:
     pr_core_only = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": [], "phase": [],
                     "packages": "", "rest_shards": 1, "reason": "pull_request runs hosted core; merge_group runs full",
                     "bundle": []}
-    cases.append(("pull_request", pr_core_only, {**passed, "TEST": "skipped"}, True))
+    cases.append(("pull_request", pr_core_only, {**passed, "TEST": "skipped"}, False))
+    cases.append(("pull_request", pr_core_only, passed, False))
     cases.append(("pull_request", pr_core_only, {**passed, "TEST": "skipped", "CORE": "failure"}, False))
     cases.append(("pull_request", pr_core_only, {**passed, "TEST": "skipped", "DRAFT": "true"}, False))
     cases.extend((event, pr_core_only, {**passed, "TEST": "skipped"}, False)
@@ -1951,7 +1952,8 @@ def workflow_canaries() -> None:
         ("wrong affected base", "github.event_name == 'pull_request' && github.event.pull_request.base.sha", "github.event_name == 'pull_request' && github.sha"),
         ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
         ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
-        ("more bundles than the start budget", "length <= 6 and all(.[];", "length <= 8 and all(.[];"),
+        ("more bundles than the start budget", "length >= 1 and length <= 6 and all(.[];", "length >= 1 and length <= 8 and all(.[];"),
+        ("empty bundle plan accepted", "length >= 1 and length <= 6 and all(.[];", "length <= 6 and all(.[];"),
         ("missing full-plan branch", 'else plan=$(bash scripts/ci/core.sh plan); fi', 'else plan="{}"; fi'),
         ("skipped PR affected plan", 'if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA");', 'if [ -n "$BASE" ]; then plan=$(jq -cn \'{mode: "affected", shard: [], phase: [], packages: "", rest_shards: 1, bundle: []}\');'),
         ("unconditional fail-fast", "fail-fast: ${{ github.event_name == 'merge_group' }}", "fail-fast: true"),
@@ -1960,7 +1962,7 @@ def workflow_canaries() -> None:
         ("forged planner verdict", "PLANNER: ${{ needs.plan.result }}", "PLANNER: success"),
         ("missing planner verdict", '[ "$PLANNER" = success ]', 'true'),
         ("missing full-plan assertion", '[ "$mode" = full ]', 'true'),
-        ("planned skipped job accepted", '[ "$2" -eq 0 ]', 'true'),
+        ("skipped bundle job accepted", '[ "$TEST" = success ]', '[ "$TEST" = success ] || [ "$TEST" = skipped ]'),
         ("cancelled main verdict skipped", "!(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)", "!cancelled()"),
         ("floating action", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4"),
         ("floating Rust toolchain", "toolchain: 1.100.0", "toolchain: stable"),

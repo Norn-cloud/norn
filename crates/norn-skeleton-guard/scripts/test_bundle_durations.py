@@ -109,6 +109,16 @@ class WasmPackageReuse(unittest.TestCase):
         self.assertEqual(result["test_build_seconds"], 100)
         self.assertEqual(result["task_seconds"]["phase/guards"], 240)
 
+    def test_guards_after_pruned_test_shard_is_netted_as_cold(self):
+        pruned_log = (
+            bundle(("test/rest-1", 210, {TEST_BUILT: 110}))
+            + f"{stamp(START + 211)} ##[notice]pruned target before phase/guards; 40000000 KiB free\n"
+            + bundle(("phase/guards", 340, {}))
+        )
+        result = table(pruned_log, bundle(("phase/integration-wasm", 380, {WASM_BUILT: 300})))
+        self.assertEqual(result["test_build_seconds"], 100)
+        self.assertEqual(result["task_seconds"]["phase/guards"], 240)
+
 
 class UtcStamps(unittest.TestCase):
     def setUp(self):

@@ -396,18 +396,16 @@ jobs:
             .base_sha == $base and .head_sha == $head and
             (.shard | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
             (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
-            (.bundle | type == "array" and length <= 6 and all(.[];
+            (.bundle | type == "array" and length >= 1 and length <= 6 and all(.[];
               type == "object" and (.id | type == "string" and length > 0) and
               (.tasks | type == "array" and length > 0 and all(.[]; type == "string"))) and
               (map(.id) | length) == (map(.id) | unique | length)) and
             ([.bundle[].tasks[]] | sort) == ([(.shard[] | "test/" + .), (.phase[] | "phase/" + .)] | sort)
           ' <<<"$PLAN" >/dev/null || { echo "Malformed or unbound gate plan"; exit 1; }
-          # A job may be skipped only when the plan gave it nothing to run.
-          ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
           [ "$CORE" = success ] || { echo "core $CORE"; exit 1; }
           mode=$(jq -er .mode <<<"$PLAN")
           # Only pull-request feedback is narrowed; the merge queue, main and manual runs run every shard
           # and phase, so nothing reaches main without the full suite (#1348).
           [ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
-          ran "$TEST" "$(jq -er '.bundle | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
+          [ "$TEST" = success ] || { echo "test ended $TEST"; exit 1; }
           echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"

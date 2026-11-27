@@ -46,6 +46,7 @@ TASK = r"((?:test|phase)/[a-z0-9-]+)"
 STAMP = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?Z (.*)$")
 GROUP = re.compile(rf"^(?:##\[group\]|::group::){TASK}$")
 NOTICE = re.compile(rf"^(?:##\[notice\]|::notice::)task={TASK} result=success seconds=(\d+)$")
+PRUNED = re.compile(rf"^(?:##\[notice\]|::notice::)pruned target before {TASK};")
 TEST_BUILT = re.compile(r"^\s*Finished `test` profile ")
 WASM_BUILT = re.compile(r"^@norn/checker-wasm \S+ size report ")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -72,9 +73,9 @@ def bundle_logs(run: int) -> list[str]:
     return [gh("api", "--allow-escape-sequences", f"repos/{REPO}/actions/jobs/{job}/logs") for job in ids]
 
 
-def parse(log: str) -> list[tuple[str, int, list[tuple[float, str]]]]:
-    """The tasks of one bundle log: (task, seconds, timestamped lines from its start)."""
-    tasks, current = [], None
+def parse_bundle(log: str) -> list[tuple[str, int, list[tuple[float, str]], bool]]:
+    """The tasks of one bundle log: (task, seconds, timestamped lines, pruned_before)."""
+    tasks, current, pruned_before = [], None, None
     for raw in log.splitlines():
         match = STAMP.match(ANSI.sub("", raw))
         if not match:
@@ -82,16 +83,24 @@ def parse(log: str) -> list[tuple[str, int, list[tuple[float, str]]]]:
         # The runner stamps every line in UTC (`Z`), whatever the reader's local zone.
         seconds = datetime.fromisoformat(f"{match[1]}+00:00").timestamp() + float(f"0.{match[2] or 0}")
         line = match[3]
-        if group := GROUP.match(line):
-            current = (group[1], [(seconds, line)])
+        if pruned := PRUNED.match(line):
+            pruned_before = pruned[1]
+        elif group := GROUP.match(line):
+            current = (group[1], [(seconds, line)], pruned_before == group[1])
+            pruned_before = None
         elif notice := NOTICE.match(line):
             if current is None or current[0] != notice[1]:
                 sys.exit(f"task {notice[1]} ended without starting")
-            tasks.append((notice[1], int(notice[2]), current[1]))
+            tasks.append((notice[1], int(notice[2]), current[1], current[2]))
             current = None
         elif current is not None:
             current[1].append((seconds, line))
     return tasks
+
+
+def parse(log: str) -> list[tuple[str, int, list[tuple[float, str]]]]:
+    """The tasks of one bundle log: (task, seconds, timestamped lines from its start)."""
+    return [(task, seconds, lines) for task, seconds, lines, _ in parse_bundle(log)]
 
 
 def elapsed(lines: list[tuple[float, str]], pattern: re.Pattern[str]) -> float | None:
@@ -108,7 +117,10 @@ def table(runs: list[int]) -> dict[str, object]:
             # pruning, so only the first of each group builds its shared artifacts; the rest reuse
             # them.
             previous, wasm_built = None, False
-            for task, seconds, lines in parse(log):
+            for task, seconds, lines, pruned in parse_bundle(log):
+                if pruned:
+                    previous = None
+                    wasm_built = False
                 own = float(seconds)
                 tests = task.startswith("test/") or task in {"phase/test-shards", "phase/guards"}
                 first, previous = tests and not previous, tests
