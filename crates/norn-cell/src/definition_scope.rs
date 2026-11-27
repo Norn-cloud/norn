@@ -252,8 +252,8 @@ pub fn is_reserved_kernel_name(name: &str) -> bool {
 }
 
 /// The kernel's own record types a host adds beside a tenant's definitions:
-/// action-call receipts, owned-row manifests, and Function command state. A
-/// cell model may carry them only exactly as defined here.
+/// action-call receipts and owned-row manifests. A cell model may carry them
+/// only exactly as defined here.
 #[must_use]
 pub fn kernel_record_types() -> Vec<ObjectTypeDef> {
     let action_call = (
@@ -286,42 +286,51 @@ pub fn kernel_record_types() -> Vec<ObjectTypeDef> {
         &["parentType", "parentKey", "collectionId"][..],
         &["rowIds"][..],
     );
-    let function_command = (
-        crate::function_receipt::FUNCTION_COMMAND_TYPE,
-        &[][..],
-        &["state"][..],
-    );
-    [action_call, owned_rows, function_command]
+    [action_call, owned_rows]
         .into_iter()
-        .map(|(name, text, json)| {
-            let typed = text
-                .iter()
-                .map(|id| (*id, PropertyType::Text { format: None }))
-                .chain(
-                    json.iter()
-                        .map(|id| (*id, PropertyType::JsonExt { schema: None })),
-                );
-            ObjectTypeDef {
-                immutable: false,
-                name: ObjectTypeName(name.into()),
-                role: None,
-                description: None,
-                status: ResourceStatus::default(),
-                extends: None,
-                implements: vec![],
-                properties: typed
-                    .map(|(id, property_type)| nullable(id, property_type))
-                    .collect(),
-                links: vec![],
-                owned_collections: vec![],
-                identity: vec![],
-                invariants: vec![],
-                lifecycles: vec![],
-                markings: vec![],
-                accounting_leg: None,
-            }
-        })
+        .map(|(name, text, json)| kernel_record_type(name, text, json))
         .collect()
+}
+
+/// The kernel's exact Function command state record type (`norn.FunctionCommand`),
+/// added beside [`kernel_record_types`] when a cell installs actions that accept
+/// authenticated Function receipts.
+#[must_use]
+pub fn function_command_record_type() -> ObjectTypeDef {
+    kernel_record_type(
+        crate::function_receipt::FUNCTION_COMMAND_TYPE,
+        &[],
+        &["state"],
+    )
+}
+
+fn kernel_record_type(name: &str, text: &[&str], json: &[&str]) -> ObjectTypeDef {
+    let typed = text
+        .iter()
+        .map(|id| (*id, PropertyType::Text { format: None }))
+        .chain(
+            json.iter()
+                .map(|id| (*id, PropertyType::JsonExt { schema: None })),
+        );
+    ObjectTypeDef {
+        immutable: false,
+        name: ObjectTypeName(name.into()),
+        role: None,
+        description: None,
+        status: ResourceStatus::default(),
+        extends: None,
+        implements: vec![],
+        properties: typed
+            .map(|(id, property_type)| nullable(id, property_type))
+            .collect(),
+        links: vec![],
+        owned_collections: vec![],
+        identity: vec![],
+        invariants: vec![],
+        lifecycles: vec![],
+        markings: vec![],
+        accounting_leg: None,
+    }
 }
 
 /// The call record's property that keeps the principal inputs a pinned
@@ -418,9 +427,12 @@ fn bind_model(model: &Model, artifacts: &[ArtifactEnvelope]) -> Result<(), CellE
     }
     let kernel = kernel_record_types();
     let recording = kernel_record_types_recording_principal_inputs();
+    let function_command = function_command_record_type();
     let modelled: BTreeMap<_, _> = model
         .object_types()
-        .filter(|def| !kernel.contains(def) && !recording.contains(def))
+        .filter(|def| {
+            !kernel.contains(def) && !recording.contains(def) && *def != &function_command
+        })
         .map(|def| (def.name.0.clone(), def.clone()))
         .collect();
     let model_interfaces: BTreeMap<_, _> = model

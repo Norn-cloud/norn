@@ -37,6 +37,7 @@ pub(crate) type Seeded<X> = Result<(), DecisionRefusal<X>>;
 /// link target seeding).
 pub(crate) struct StampedSeedOutcome<X> {
     pub(crate) before_commit: usize,
+    pub(crate) commits: usize,
     pub(crate) result: Seeded<X>,
 }
 
@@ -165,17 +166,22 @@ pub(crate) fn seed_stamped<H: PackHost>(
         },
         trace: None,
     };
-    let result = match commit_action(host, catalog, &call, &Seeder) {
+    let (result, commits) = match commit_action(host, catalog, &call, &Seeder) {
         Ok(ActionOutcome::Committed { .. }) => {
-            sync_post_stamp_fields(host, catalog, object_type, &protected, id, values)?
+            let (synced_res, synced) =
+                sync_post_stamp_fields(host, catalog, object_type, &protected, id, values)?;
+            (synced_res, if synced { 2 } else { 1 })
         }
         Ok(ActionOutcome::Replayed { .. }) => {
             return Err(format!("seed {name}/{id}: replayed a fresh call key"));
         }
-        Err(ActionRefusal::Decision(refusal)) => Err(refusal),
-        Err(ActionRefusal::WriteModeFailed { .. }) => Err(DecisionRefusal::ObjectExists {
-            key: FactKey::new(name, id),
-        }),
+        Err(ActionRefusal::Decision(refusal)) => (Err(refusal), 0),
+        Err(ActionRefusal::WriteModeFailed { .. }) => (
+            Err(DecisionRefusal::ObjectExists {
+                key: FactKey::new(name, id),
+            }),
+            0,
+        ),
         Err(other) => {
             return Err(format!(
                 "seed {name}/{id} via {}: {other}",
@@ -185,6 +191,7 @@ pub(crate) fn seed_stamped<H: PackHost>(
     };
     Ok(Some(StampedSeedOutcome {
         before_commit,
+        commits,
         result,
     }))
 }
@@ -200,9 +207,9 @@ fn sync_post_stamp_fields<H: PackHost>(
     protected: &[String],
     id: &str,
     values: &JsonObject,
-) -> Result<Seeded<H::Error>, String> {
+) -> Result<(Seeded<H::Error>, bool), String> {
     if object_type.immutable {
-        return Ok(Ok(()));
+        return Ok((Ok(()), false));
     }
     let name = object_type.name.as_str();
     let fact_key = FactKey::new(name, id);
@@ -210,7 +217,7 @@ fn sync_post_stamp_fields<H: PackHost>(
         .load(&fact_key)
         .map_err(|err| format!("load seeded {name}/{id}: {err}"))?;
     let Some(stored) = state.values.as_ref() else {
-        return Ok(Ok(()));
+        return Ok((Ok(()), false));
     };
     let immutable_state = object_type.lifecycles.iter().any(|lc| {
         stored
@@ -219,7 +226,7 @@ fn sync_post_stamp_fields<H: PackHost>(
             .is_some_and(|cur| lc.immutable.iter().any(|s| s == cur))
     });
     if immutable_state {
-        return Ok(Ok(()));
+        return Ok((Ok(()), false));
     }
     let protected_set: BTreeSet<&str> = protected.iter().map(String::as_str).collect();
     let lifecycle_props: BTreeSet<&str> = object_type
@@ -252,7 +259,7 @@ fn sync_post_stamp_fields<H: PackHost>(
         }
     }
     if changes.is_empty() {
-        return Ok(Ok(()));
+        return Ok((Ok(()), false));
     }
     let slice =
         norn_kernel::load_slice(host, [fact_key]).map_err(|err| format!("load_slice: {err}"))?;
@@ -268,7 +275,10 @@ fn sync_post_stamp_fields<H: PackHost>(
         commands: Vec::new(),
         timers: Vec::new(),
     };
-    Ok(norn_kernel::commit_decision(host, catalog, &slice, &turn, &output).map(|_| ()))
+    Ok((
+        norn_kernel::commit_decision(host, catalog, &slice, &turn, &output).map(|_| ()),
+        true,
+    ))
 }
 
 /// Arguments for [`try_fire_receipt_transition_action`].
