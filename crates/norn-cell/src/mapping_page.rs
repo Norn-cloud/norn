@@ -160,6 +160,7 @@ impl<E: SqlEngine> CellStore<E> {
         input: &MappingInput,
         canonical: CommitModel<'_, '_>,
         max_run_rows: usize,
+        connection_id: Option<&str>,
     ) -> Result<CapturedPage, CellError> {
         // Capture writes only inbox rows: a plan proven once holds for
         // every record of the page (INGEST-DERIVE-ONCE-1).
@@ -188,6 +189,11 @@ impl<E: SqlEngine> CellStore<E> {
                 crate::mapping_identity::keys(&raw.input, input)?;
             let identity = [connector, partition, source, source_id];
             let (id, new) = self.capture_mapping_bundle(raw, input)?;
+            if let Some(cid) = connection_id {
+                crate::mapping_process::record_source_evidence_in_tx(&self.conn, &id, cid)?;
+            } else if new {
+                crate::mapping_process::record_source_evidence_in_tx(&self.conn, &id, "")?;
+            }
             records.push(id.clone());
             if !id.starts_with("mapping-bundle:") {
                 // Conflict and identity findings stay pending, as one by
@@ -282,7 +288,7 @@ impl<E: SqlEngine> CellStore<E> {
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
         self.write_tx(|| {
-            self.capture_mapping_page_rows_in_tx(raws, input, canonical, MAX_PAGE_RECORDS)
+            self.capture_mapping_page_rows_in_tx(raws, input, canonical, MAX_PAGE_RECORDS, None)
         })
     }
 
@@ -312,8 +318,7 @@ impl<E: SqlEngine> CellStore<E> {
             Self::validate_page_framing(raws, input, true)?;
             Some(input)
         };
-        let digest =
-            crate::source_cursor::page_digest(advance, input.map(|i| i.mapping.as_str()), raws)?;
+        let digest = crate::source_cursor::page_digest(advance, input, raws)?;
         let legacy_v2 = crate::source_cursor::page_digest_v2(advance, raws)?;
         let model = self.model().clone();
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
@@ -336,12 +341,7 @@ impl<E: SqlEngine> CellStore<E> {
                 &self.conn,
                 advance,
                 &digest,
-                Some((
-                    legacy_v2.as_str(),
-                    input.map(|i| i.mapping.as_str()),
-                    active_binding.as_deref(),
-                    raws,
-                )),
+                Some((legacy_v2.as_str(), input, active_binding.as_deref(), raws)),
             )?;
             let (page_digest, captured) = match &precondition {
                 crate::source_cursor::Precondition::IdempotentReplay {
@@ -366,6 +366,7 @@ impl<E: SqlEngine> CellStore<E> {
                             input,
                             canonical,
                             max_run_rows,
+                            Some(&advance.connection_id),
                         )?,
                         None => CapturedPage {
                             pages: Vec::new(),
@@ -440,7 +441,13 @@ impl<E: SqlEngine> CellStore<E> {
                     records,
                 });
             }
-            let captured = self.capture_mapping_page_rows_in_tx(single, input, canonical, 1)?;
+            let captured = self.capture_mapping_page_rows_in_tx(
+                single,
+                input,
+                canonical,
+                1,
+                Some(&advance.connection_id),
+            )?;
             let page_ids: Vec<String> = captured.pages.iter().map(|(id, _)| id.clone()).collect();
             crate::source_cursor::insert_pending_in_tx(
                 &self.conn,
@@ -476,7 +483,7 @@ impl<E: SqlEngine> CellStore<E> {
         let canonical = CommitModel::new(&catalog);
         self.write_tx(|| {
             crate::mapping_conflict::verify_source_fence_in_tx(&self.read(), fence)?;
-            self.capture_mapping_page_rows_in_tx(raws, input, canonical, MAX_PAGE_RECORDS)
+            self.capture_mapping_page_rows_in_tx(raws, input, canonical, MAX_PAGE_RECORDS, None)
         })
     }
 }

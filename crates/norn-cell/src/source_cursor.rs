@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
-use crate::host::SqliteCell;
 use crate::read::StoreReader;
 use crate::store::CellStore;
 
@@ -31,10 +30,12 @@ pub(crate) const SOURCE_CURSOR: &str = "_norn_source_cursor";
 pub(crate) const SOURCE_PENDING: &str = "_norn_source_pending";
 /// Durable connection-to-mapping binding table for fail-closed rebind detection.
 pub(crate) const SOURCE_BINDING: &str = "_norn_source_binding";
+/// Durable per-connection evidence attribution and capture frontier table.
+pub(crate) const SOURCE_EVIDENCE: &str = "_norn_source_evidence";
 
-/// Additive DDL for source-sync leases, cursors, recovery, and mapping bindings.
-/// Older engines ignore these tables, so no storage version bump is required.
-pub(crate) const DDL: [&str; 5] = [
+/// Additive DDL for source-sync leases, cursors, recovery, mapping bindings,
+/// and capture-position evidence attribution (older engines ignore these).
+pub(crate) const DDL: [&str; 6] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_source_lease" (
   "connection_id" TEXT NOT NULL PRIMARY KEY,
   "lease_id" TEXT NOT NULL,
@@ -69,6 +70,12 @@ pub(crate) const DDL: [&str; 5] = [
   "generation" INTEGER NOT NULL,
   "updated_at_ms" INTEGER NOT NULL
 )"#,
+    r#"CREATE TABLE IF NOT EXISTS "_norn_source_evidence" (
+  "observation_id" TEXT NOT NULL,
+  "connection_id" TEXT NOT NULL,
+  "captured_commit_seq" INTEGER NOT NULL,
+  PRIMARY KEY ("observation_id", "connection_id")
+)"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/root_first_version" ON "_norn_fact_values" ("world", "root_type", "commit_seq", "id") WHERE "version" = 1"#,
 ];
 
@@ -84,7 +91,7 @@ pub struct SourceLease {
     pub generation: u64,
     /// When the lease was acquired (milliseconds since epoch).
     pub acquired_at_ms: u64,
-    /// Exclusive expiry deadline (milliseconds since epoch); active iff `now_ms < expires_at_ms`.
+    /// Exclusive expiry deadline (milliseconds since epoch).
     pub expires_at_ms: u64,
 }
 
@@ -102,16 +109,15 @@ pub struct SourceCursorRecord {
     pub generation: u64,
     /// Content digest of the complete page that committed this cursor.
     pub page_digest: String,
-    /// Original `mapping-page:` inbox ids captured by this page (returned verbatim on replay).
+    /// Original `mapping-page:` inbox ids captured by this page.
     pub pages: Vec<String>,
-    /// Original per-record inbox ids captured by this page (returned verbatim on replay).
+    /// Original per-record inbox ids captured by this page.
     pub records: Vec<String>,
     /// Timestamp when this cursor was committed (milliseconds since epoch).
     pub updated_at_ms: u64,
 }
 
-/// One durably captured source page whose inbox rows have not yet completed
-/// post-capture canonical processing.
+/// One durably captured source page awaiting post-capture canonical processing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingSourceCapture {
@@ -140,11 +146,11 @@ pub struct CursorAdvanceSpec {
     pub lease_id: String,
     /// Active lease fencing generation.
     pub generation: u64,
-    /// Logical/wall clock at capture time (ms); must satisfy `now_ms < lease.expires_at_ms`.
+    /// Logical/wall clock at capture time (ms).
     pub now_ms: u64,
     /// Expected previously committed cursor JSON (`None` if never committed yet).
     pub expected_previous_cursor: Option<String>,
-    /// Next cursor JSON to persist atomically with this page (`None` leaves cursor unchanged).
+    /// Next cursor JSON to persist atomically with this page.
     pub next_cursor: Option<String>,
     /// Optional lease TTL extension in ms applied inside the same transaction.
     pub renew_ttl_ms: Option<u64>,
@@ -216,24 +222,20 @@ fn decode_pending(row: &SqlRow) -> Result<PendingSourceCapture, CellError> {
     })
 }
 
-/// Content-bound complete-page digest over cursor transition and every row's
-/// immutable observation content (excluding wall-clock `extracted_at` /
-/// `observed_at` so exact duplicate deliveries hash identically while any
-/// payload or metadata mutation conflicts).
+/// Content-bound complete-page digest over cursor transition, mapping selection,
+/// and every row's immutable observation content (excluding wall-clock timestamps).
 ///
 /// # Errors
 /// Canonical encoding error.
 pub fn page_digest(
     advance: &CursorAdvanceSpec,
-    mapping: Option<&str>,
+    input: Option<&crate::mapping_bundle::MappingInput>,
     observations: &[Observed<RuntimeValue>],
 ) -> Result<String, CellError> {
-    crate::mapping_conflict::source_page_digest_v3(advance, mapping, observations)
+    crate::mapping_process::source_page_digest_v3(advance, input, observations)
 }
 
-/// Legacy B3 `norn.source.page.v2` digest (without `mapping`), used only to
-/// preserve exact idempotent replay of retained pages committed before B6
-/// under the same mapping revision.
+/// Legacy B3 `norn.source.page.v2` digest for pre-upgrade idempotent replay.
 ///
 /// # Errors
 /// Canonical encoding error.
@@ -241,7 +243,7 @@ pub fn page_digest_v2(
     advance: &CursorAdvanceSpec,
     observations: &[Observed<RuntimeValue>],
 ) -> Result<String, CellError> {
-    crate::mapping_conflict::source_page_digest_v2(advance, observations)
+    crate::mapping_process::source_page_digest_v2(advance, observations)
 }
 
 fn read_lease<E: SqlEngine>(
@@ -326,17 +328,15 @@ pub(crate) enum Precondition {
     },
 }
 
-/// Optional legacy `norn.source.page.v2` replay context:
-/// `(v2_digest, mapping_id, active_binding, delivered_rows)`.
+/// Legacy `norn.source.page.v2` replay context: `(v2_digest, input, active_binding, rows)`.
 pub(crate) type LegacyReplay<'a> = (
     &'a str,
-    Option<&'a str>,
+    Option<&'a crate::mapping_bundle::MappingInput>,
     Option<&'a str>,
     &'a [Observed<RuntimeValue>],
 );
 
-/// Validate the active fencing lease and cursor precondition inside an open
-/// capture transaction before writing any inbox row.
+/// Validate lease and cursor precondition inside an open capture transaction.
 pub(crate) fn check_capture_precondition<E: SqlEngine>(
     conn: &E,
     advance: &CursorAdvanceSpec,
@@ -359,16 +359,20 @@ pub(crate) fn check_capture_precondition<E: SqlEngine>(
             records: existing_pending.records,
         });
     }
-    if let Some((v2, mapping, active_binding, delivered)) = legacy_v2
+    if let Some((v2, input, active_binding, delivered)) = legacy_v2
         && let Some(existing_pending) =
             read_pending_by_digest(conn, &advance.connection_id, &advance.dataset, v2)?
     {
-        if crate::mapping_conflict::legacy_source_replay_allowed(
+        let check = crate::mapping_process::LegacyReplayCheck {
+            mapping: None,
+            input,
+            active_binding,
+            delivered: Some(delivered),
+        };
+        if crate::mapping_process::legacy_source_replay_allowed(
             conn,
             &existing_pending.records,
-            mapping,
-            active_binding,
-            Some(delivered),
+            check,
         )? {
             return Ok(Precondition::IdempotentReplay {
                 matched_digest: v2.to_owned(),
@@ -398,14 +402,17 @@ pub(crate) fn check_capture_precondition<E: SqlEngine>(
                 records: existing.records.clone(),
             });
         }
-        if let Some((v2, mapping, active_binding, delivered)) = legacy_v2
+        if let Some((v2, input, active_binding, delivered)) = legacy_v2
             && existing.page_digest == v2
-            && crate::mapping_conflict::legacy_source_replay_allowed(
+            && crate::mapping_process::legacy_source_replay_allowed(
                 conn,
                 &existing.records,
-                mapping,
-                active_binding,
-                Some(delivered),
+                crate::mapping_process::LegacyReplayCheck {
+                    mapping: None,
+                    input,
+                    active_binding,
+                    delivered: Some(delivered),
+                },
             )?
         {
             return Ok(Precondition::IdempotentReplay {
@@ -898,101 +905,5 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             |_| Ok(()),
         )?;
         Ok(found.is_some())
-    }
-}
-
-impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
-    /// See [`CellStore::acquire_source_lease`].
-    /// # Errors
-    /// [`CellError::SourceLeaseFenced`] or store errors.
-    pub fn acquire_source_lease(
-        &mut self,
-        connection_id: &str,
-        lease_id: &str,
-        now_ms: u64,
-        ttl_ms: u64,
-    ) -> Result<SourceLease, CellError> {
-        self.store_mut()
-            .acquire_source_lease(connection_id, lease_id, now_ms, ttl_ms)
-    }
-
-    /// See [`CellStore::release_source_lease`].
-    /// # Errors
-    /// Store errors.
-    pub fn release_source_lease(
-        &mut self,
-        connection_id: &str,
-        lease_id: &str,
-        generation: u64,
-    ) -> Result<bool, CellError> {
-        self.store_mut()
-            .release_source_lease(connection_id, lease_id, generation)
-    }
-
-    /// See [`CellStore::seed_source_cursors`].
-    /// # Errors
-    /// Lease fencing or store errors.
-    pub fn seed_source_cursors(
-        &mut self,
-        connection_id: &str,
-        lease: &SourceLease,
-        now_ms: u64,
-        cursors: &BTreeMap<String, String>,
-        expected_binding: Option<(&str, &str)>,
-    ) -> Result<(), CellError> {
-        self.store_mut().seed_source_cursors(
-            connection_id,
-            lease,
-            now_ms,
-            cursors,
-            expected_binding,
-        )
-    }
-
-    /// See [`CellStore::commit_source_page_cursor`].
-    /// # Errors
-    /// Lease fencing, cursor conflict, or store errors.
-    pub fn commit_source_page_cursor(
-        &mut self,
-        advance: &CursorAdvanceSpec,
-        digest: &str,
-        pages: &[String],
-        records: &[String],
-        expected_binding: Option<(&str, &str)>,
-    ) -> Result<(), CellError> {
-        self.store_mut().commit_source_page_cursor(
-            advance,
-            digest,
-            pages,
-            records,
-            expected_binding,
-        )
-    }
-
-    /// See [`CellStore::complete_source_pending`].
-    /// # Errors
-    /// Store errors.
-    pub fn complete_source_pending(
-        &mut self,
-        connection_id: &str,
-        dataset: &str,
-        page_digest: &str,
-    ) -> Result<(), CellError> {
-        self.store_mut()
-            .complete_source_pending(connection_id, dataset, page_digest)
-    }
-
-    /// See [`CellStore::complete_source_pending_checked`].
-    /// # Errors
-    /// [`CellError::SourceLeaseFenced`] or store errors.
-    pub fn complete_source_pending_checked(
-        &mut self,
-        connection_id: &str,
-        dataset: &str,
-        page_digest: &str,
-        lease: Option<(&str, &str, u64, u64)>,
-    ) -> Result<(), CellError> {
-        self.store_mut()
-            .complete_source_pending_checked(connection_id, dataset, page_digest, lease)
     }
 }

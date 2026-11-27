@@ -272,20 +272,22 @@ impl<E: SqlEngine> DevHost<E> {
             .map_err(Refusal::host)
     }
 
-    /// Datasets of `mapping_id` that still hold unresolved quarantined inbox
-    /// rows (preventing an empty sync from marking coverage `Exact`).
+    /// Datasets of `mapping_id` (optionally scoped to `connection_id`) that
+    /// still hold unresolved quarantined inbox rows (preventing an empty sync
+    /// from marking coverage `Exact`).
     ///
     /// # Errors
     /// Host or store failure.
     pub fn unresolved_quarantined_datasets(
         &self,
         mapping_id: &str,
+        connection_id: Option<&str>,
     ) -> Result<std::collections::BTreeSet<String>, Refusal> {
         let _epoch = self.definition_read()?;
         let cell = self.cell()?;
         cell.store()
             .read()
-            .unresolved_quarantined_datasets(mapping_id)
+            .unresolved_quarantined_datasets(mapping_id, connection_id)
             .map_err(Refusal::host)
     }
 
@@ -562,12 +564,9 @@ impl<E: SqlEngine> DevHost<E> {
                 captured_at_ms: advance.now_ms,
             })),
             Err(CellError::MappingPageSpansDispute) if delivered.len() > 1 => {
-                let full_digest = norn_cell::source_cursor::page_digest(
-                    advance,
-                    Some(input.mapping.as_str()),
-                    &delivered,
-                )
-                .map_err(SourceCaptureError::from_cell)?;
+                let full_digest =
+                    norn_cell::source_cursor::page_digest(advance, Some(input), &delivered)
+                        .map_err(SourceCaptureError::from_cell)?;
                 Ok(SourceCapturePlan::DisputeFallback(Box::new(
                     DisputeFallbackState {
                         rows: delivered.into(),

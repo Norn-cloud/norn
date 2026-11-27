@@ -515,35 +515,44 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.with_source_dispute_index(|index| index.events.get(&keys).cloned())
     }
 
-    /// Datasets of `mapping_id` that still hold unresolved quarantined inbox
-    /// rows (`mapping-bundle:` without a strictly newer landed correction under
-    /// the declared [`norn_ir::VersionKind`] ordering, or any unconsumed
-    /// `mapping-conflict:` / `mapping-identity:`).
+    /// Datasets of `mapping_id` (optionally scoped to `connection_id`) that
+    /// still hold unresolved quarantined inbox rows (`mapping-bundle:` without
+    /// a strictly newer landed correction under the declared
+    /// [`norn_ir::VersionKind`] ordering, or any unconsumed `mapping-conflict:`
+    /// / `mapping-identity:`).
     ///
     /// # Errors
     /// Store query errors.
     pub fn unresolved_quarantined_datasets(
         &self,
         mapping_id: &str,
+        connection_id: Option<&str>,
     ) -> Result<BTreeSet<String>, CellError> {
-        self.unresolved_quarantined_datasets_at(mapping_id, None)
+        self.unresolved_quarantined_datasets_at(mapping_id, connection_id, None)
     }
 
     /// Like [`Self::unresolved_quarantined_datasets`], evaluated either at live
     /// state (`at == None`) or as of `(frontier, as_of_ms)` for pinned
-    /// historical traces.
+    /// historical traces, using durable capture-commit attribution in
+    /// `_norn_source_evidence` so same-millisecond post-answer captures cannot
+    /// invalidate an earlier exact answer.
     ///
     /// # Errors
     /// Store query errors.
     pub(crate) fn unresolved_quarantined_datasets_at(
         &self,
         mapping_id: &str,
+        connection_id: Option<&str>,
         at: Option<(u64, u64)>,
     ) -> Result<BTreeSet<String>, CellError> {
         let mut datasets = BTreeSet::new();
         let frontier_i64 = at
             .map(|(f, _)| i64::try_from(f).map_err(|_| CellError::OutOfRange("frontier")))
             .transpose()?;
+        let scope_at = match (frontier_i64, at) {
+            (Some(f), Some((_, ms))) => Some((f, ms, max_consumed_inbox_position(self.conn, f)?)),
+            _ => None,
+        };
         let unconsumed_pred = match frontier_i64 {
             Some(f) => {
                 format!("(\"consumed_commit_seq\" IS NULL OR \"consumed_commit_seq\" > {f})")
@@ -551,41 +560,51 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             None => "\"consumed_commit_seq\" IS NULL".to_owned(),
         };
         let disputes_sql = format!(
-            "SELECT \"observation_id\", \"observed\" FROM \"{INBOX}\" \
+            "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
              WHERE {unconsumed_pred} \
                AND (\"observation_id\" LIKE 'mapping-conflict:%' OR \"observation_id\" LIKE 'mapping-identity:%')"
         );
         for values in self.conn.query(&disputes_sql, params![])? {
             let row = crate::engine::SqlRow(values);
-            let id: String = row.get(0)?;
-            let encoded: String = row.get(1)?;
+            let pos: i64 = row.get(0)?;
+            let id: String = row.get(1)?;
+            let encoded: String = row.get(2)?;
             let Some(bundle) = decode_evidence_bundle(&id, &encoded) else {
                 continue;
             };
             if bundle.input.mapping != mapping_id {
                 continue;
             }
-            if at.is_none_or(|(_, ms)| recorded_at_le(&bundle, ms)) {
+            if evidence_matches_scope(self.conn, &id, pos, &bundle, connection_id, scope_at)? {
                 datasets.insert(bundle.input.dataset);
             }
         }
         let pending_sql = format!(
-            "SELECT \"observed\" FROM \"{INBOX}\" \
+            "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
              WHERE {unconsumed_pred} \
                AND \"observation_id\" LIKE 'mapping-bundle:%' \
                AND json_extract(\"observed\", '$.input.input.mapping') = ?1"
         );
         for values in self.conn.query(&pending_sql, params![mapping_id])? {
-            let encoded: String = crate::engine::SqlRow(values).get(0)?;
-            let Some(bundle) = decode_evidence_bundle("mapping-bundle:", &encoded) else {
+            let row = crate::engine::SqlRow(values);
+            let pos: i64 = row.get(0)?;
+            let id: String = row.get(1)?;
+            let encoded: String = row.get(2)?;
+            let Some(bundle) = decode_evidence_bundle(&id, &encoded) else {
                 continue;
             };
             if datasets.contains(&bundle.input.dataset)
-                || at.is_some_and(|(_, ms)| !recorded_at_le(&bundle, ms))
+                || !evidence_matches_scope(self.conn, &id, pos, &bundle, connection_id, scope_at)?
             {
                 continue;
             }
-            if !bundle_superseded_by_newer(self.conn, mapping_id, &bundle, frontier_i64)? {
+            if !bundle_superseded_by_newer(
+                self.conn,
+                mapping_id,
+                connection_id,
+                &bundle,
+                frontier_i64,
+            )? {
                 datasets.insert(bundle.input.dataset);
             }
         }
@@ -609,12 +628,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if !cursors.is_empty() {
             let mut fallback = BTreeMap::new();
             for (dataset, record) in &cursors {
-                match legacy_source_replay_allowed(
+                let check = crate::mapping_process::LegacyReplayCheck {
+                    mapping: Some(mapping_id),
+                    input: None,
+                    active_binding: Some(expected_binding),
+                    delivered: None,
+                };
+                match crate::mapping_process::legacy_source_replay_allowed(
                     self.conn,
                     &record.records,
-                    Some(mapping_id),
-                    Some(expected_binding),
-                    None,
+                    check,
                 )? {
                     true if !record.records.is_empty() => {}
                     false if !record.records.is_empty() => return Ok(false),
@@ -657,12 +680,88 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 }
 
+fn max_consumed_inbox_position<E: SqlEngine>(
+    conn: &E,
+    frontier: i64,
+) -> Result<Option<i64>, CellError> {
+    let row: Option<Option<i64>> = conn.query_optional(
+        &format!(
+            "SELECT MAX(\"position\") FROM \"{INBOX}\" \
+             WHERE \"consumed_commit_seq\" IS NOT NULL AND \"consumed_commit_seq\" <= ?1"
+        ),
+        params![frontier],
+        |row| row.get(0),
+    )?;
+    Ok(row.flatten())
+}
+
+fn evidence_matches_scope<E: SqlEngine>(
+    conn: &E,
+    observation_id: &str,
+    position: i64,
+    bundle: &MappingBundle,
+    connection_id: Option<&str>,
+    at: Option<(i64, u64, Option<i64>)>,
+) -> Result<bool, CellError> {
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    let rows = conn.query(
+        &format!(
+            "SELECT \"connection_id\", \"captured_commit_seq\" FROM \"{table}\" \
+             WHERE \"observation_id\" = ?1"
+        ),
+        params![observation_id],
+    )?;
+    if rows.is_empty() {
+        return Ok(match at {
+            Some((_, _, Some(max_pos))) => position <= max_pos,
+            Some((_, as_of_ms, None)) => recorded_at_le(bundle, as_of_ms),
+            None => true,
+        });
+    }
+    for values in rows {
+        let row = crate::engine::SqlRow(values);
+        let cid: String = row.get(0)?;
+        let cap_seq: i64 = row.get(1)?;
+        let conn_ok = connection_id.is_none_or(|target| cid == target || cid.is_empty());
+        let frontier_ok = at.is_none_or(|(frontier, _, _)| cap_seq < frontier);
+        if conn_ok && frontier_ok {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn landed_matches_connection<E: SqlEngine>(
+    conn: &E,
+    observation_id: &str,
+    connection_id: Option<&str>,
+) -> Result<bool, CellError> {
+    let Some(target) = connection_id else {
+        return Ok(true);
+    };
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    let rows = conn.query(
+        &format!("SELECT \"connection_id\" FROM \"{table}\" WHERE \"observation_id\" = ?1"),
+        params![observation_id],
+    )?;
+    if rows.is_empty() {
+        return Ok(true);
+    }
+    for values in rows {
+        let cid: String = crate::engine::SqlRow(values).get(0)?;
+        if cid == target || cid.is_empty() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn recorded_at_le(bundle: &MappingBundle, as_of_ms: u64) -> bool {
     crate::compute::freshness::parse_rfc3339_ms(&bundle.input.recorded_at.0)
         .is_none_or(|ts| ts <= as_of_ms)
 }
 
-fn decode_evidence_bundle(id: &str, encoded: &str) -> Option<MappingBundle> {
+pub(crate) fn decode_evidence_bundle(id: &str, encoded: &str) -> Option<MappingBundle> {
     let observed = serde_json::from_str::<Observed<RuntimeValue>>(encoded).ok()?;
     if id.starts_with("mapping-bundle:") {
         norn_ir::runtime::decode::<MappingBundle>(&observed.input).ok()
@@ -682,6 +781,7 @@ fn decode_evidence_bundle(id: &str, encoded: &str) -> Option<MappingBundle> {
 fn bundle_superseded_by_newer<E: SqlEngine>(
     conn: &E,
     mapping_id: &str,
+    connection_id: Option<&str>,
     bundle: &MappingBundle,
     frontier: Option<i64>,
 ) -> Result<bool, CellError> {
@@ -701,7 +801,8 @@ fn bundle_superseded_by_newer<E: SqlEngine>(
         None => "\"consumed_commit_seq\" IS NOT NULL".to_owned(),
     };
     let landed_sql = format!(
-        "SELECT json_extract(\"observed\", '$.input.raw.source_version'), \
+        "SELECT \"observation_id\", \
+                json_extract(\"observed\", '$.input.raw.source_version'), \
                 json_extract(\"observed\", '$.input.raw.version_kind') \
          FROM \"{INBOX}\" \
          WHERE {consumed_pred} \
@@ -724,15 +825,21 @@ fn bundle_superseded_by_newer<E: SqlEngine>(
             source_id,
         ],
     )?;
-    Ok(landed.into_iter().any(|row_vals| {
+    for row_vals in landed {
         let row = crate::engine::SqlRow(row_vals);
-        let Ok(Some(ver)) = row.get::<Option<String>>(0) else {
-            return false;
+        let obs_id: String = row.get(0)?;
+        let Ok(Some(ver)) = row.get::<Option<String>>(1) else {
+            continue;
         };
-        let kind_wire = row.get::<Option<String>>(1).ok().flatten();
-        parse_version_parts(&ver, kind_wire.as_deref())
+        let kind_wire = row.get::<Option<String>>(2).ok().flatten();
+        if parse_version_parts(&ver, kind_wire.as_deref())
             .is_some_and(|lv| lv.try_cmp(&q_ver) == Ok(std::cmp::Ordering::Greater))
-    }))
+            && landed_matches_connection(conn, &obs_id, connection_id)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn parse_version_parts(version: &str, kind_wire: Option<&str>) -> Option<norn_ir::SourceVersion> {
@@ -750,129 +857,6 @@ fn parse_raw_source_version(raw: &RuntimeValue) -> Option<norn_ir::SourceVersion
         None => None,
     };
     parse_version_parts(ver, kind_wire)
-}
-
-#[derive(Serialize)]
-struct SourceRowDigestV2<'a> {
-    observation_id: &'a str,
-    source: &'a str,
-    source_id: &'a str,
-    mapping_version: &'a str,
-    input_source: Option<&'a RuntimeValue>,
-    input_source_id: Option<&'a RuntimeValue>,
-    event_id: Option<&'a RuntimeValue>,
-    source_version: Option<&'a RuntimeValue>,
-    pipeline_version: Option<&'a RuntimeValue>,
-    kind: Option<&'a RuntimeValue>,
-    payload_digest: Option<&'a RuntimeValue>,
-    payload: Option<&'a RuntimeValue>,
-}
-
-#[derive(Serialize)]
-struct SourceRowDigestV3<'a> {
-    observation_id: &'a str,
-    source: &'a str,
-    source_id: &'a str,
-    mapping_version: &'a str,
-    input_source: Option<&'a RuntimeValue>,
-    input_source_id: Option<&'a RuntimeValue>,
-    event_id: Option<&'a RuntimeValue>,
-    source_version: Option<&'a RuntimeValue>,
-    pipeline_version: Option<&'a RuntimeValue>,
-    kind: Option<&'a RuntimeValue>,
-    feed_mode: Option<&'a RuntimeValue>,
-    version_kind: Option<&'a RuntimeValue>,
-    payload_digest: Option<&'a RuntimeValue>,
-    payload: Option<&'a RuntimeValue>,
-}
-
-pub(crate) fn source_page_digest_v3(
-    advance: &crate::source_cursor::CursorAdvanceSpec,
-    mapping: Option<&str>,
-    observations: &[Observed<RuntimeValue>],
-) -> Result<String, CellError> {
-    #[derive(Serialize)]
-    struct DigestInput<'a> {
-        connection_id: &'a str,
-        dataset: &'a str,
-        mapping: Option<&'a str>,
-        rows: Vec<SourceRowDigestV3<'a>>,
-        expected_previous_cursor: Option<&'a str>,
-        next_cursor: Option<&'a str>,
-    }
-    let rows = observations
-        .iter()
-        .map(|raw| SourceRowDigestV3 {
-            observation_id: raw.id.0.as_str(),
-            source: raw.provenance.source.as_str(),
-            source_id: raw.provenance.source_id.as_str(),
-            mapping_version: raw.provenance.mapping_version.as_str(),
-            input_source: raw.input.get("source"),
-            input_source_id: raw.input.get("source_id"),
-            event_id: raw.input.get("event_id"),
-            source_version: raw.input.get("source_version"),
-            pipeline_version: raw.input.get("pipeline_version"),
-            kind: raw.input.get("kind"),
-            feed_mode: raw.input.get("feed_mode"),
-            version_kind: raw.input.get("version_kind"),
-            payload_digest: raw.input.get("payload_digest"),
-            payload: raw.input.get("payload"),
-        })
-        .collect();
-    let input = DigestInput {
-        connection_id: &advance.connection_id,
-        dataset: &advance.dataset,
-        mapping,
-        rows,
-        expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
-        next_cursor: advance.next_cursor.as_deref(),
-    };
-    Ok(norn_ir::canonical::domain_hash_hex(
-        b"norn.source.page.v3\0",
-        &input,
-    )?)
-}
-
-pub(crate) fn source_page_digest_v2(
-    advance: &crate::source_cursor::CursorAdvanceSpec,
-    observations: &[Observed<RuntimeValue>],
-) -> Result<String, CellError> {
-    #[derive(Serialize)]
-    struct DigestInputV2<'a> {
-        connection_id: &'a str,
-        dataset: &'a str,
-        rows: Vec<SourceRowDigestV2<'a>>,
-        expected_previous_cursor: Option<&'a str>,
-        next_cursor: Option<&'a str>,
-    }
-    let rows = observations
-        .iter()
-        .map(|raw| SourceRowDigestV2 {
-            observation_id: raw.id.0.as_str(),
-            source: raw.provenance.source.as_str(),
-            source_id: raw.provenance.source_id.as_str(),
-            mapping_version: raw.provenance.mapping_version.as_str(),
-            input_source: raw.input.get("source"),
-            input_source_id: raw.input.get("source_id"),
-            event_id: raw.input.get("event_id"),
-            source_version: raw.input.get("source_version"),
-            pipeline_version: raw.input.get("pipeline_version"),
-            kind: raw.input.get("kind"),
-            payload_digest: raw.input.get("payload_digest"),
-            payload: raw.input.get("payload"),
-        })
-        .collect();
-    let input = DigestInputV2 {
-        connection_id: &advance.connection_id,
-        dataset: &advance.dataset,
-        rows,
-        expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
-        next_cursor: advance.next_cursor.as_deref(),
-    };
-    Ok(norn_ir::canonical::domain_hash_hex(
-        b"norn.source.page.v2\0",
-        &input,
-    )?)
 }
 
 pub(crate) fn verify_mapping_binding_in_tx<E: SqlEngine>(
@@ -924,52 +908,4 @@ pub(crate) fn verify_source_fence_in_tx<E: SqlEngine>(
         }
     }
     Ok(())
-}
-
-pub(crate) fn legacy_source_replay_allowed<E: SqlEngine>(
-    conn: &E,
-    records: &[String],
-    mapping: Option<&str>,
-    active_binding: Option<&str>,
-    delivered: Option<&[Observed<RuntimeValue>]>,
-) -> Result<bool, CellError> {
-    if mapping.is_some() && active_binding.is_none() {
-        return Ok(false);
-    }
-    if delivered.is_some_and(|rows| rows.len() != records.len()) {
-        return Ok(false);
-    }
-    let mut saw_evidence = false;
-    for (idx, id) in records.iter().enumerate() {
-        let encoded: Option<String> = conn.query_optional(
-            &format!("SELECT \"observed\" FROM \"{INBOX}\" WHERE \"observation_id\" = ?1"),
-            params![id.as_str()],
-            |row| row.get(0),
-        )?;
-        let Some(encoded) = encoded else {
-            return Ok(false);
-        };
-        let Some(bundle) = decode_evidence_bundle(id, &encoded) else {
-            return Ok(false);
-        };
-        saw_evidence = true;
-        if mapping.is_some_and(|m| bundle.input.mapping != m) {
-            return Ok(false);
-        }
-        if let Some(pin) = active_binding
-            && !bundle
-                .artifact_pins
-                .iter()
-                .any(|(art_id, ver, sha)| format!("{art_id}@{ver}#{sha}") == pin)
-        {
-            return Ok(false);
-        }
-        if let Some(raw) = delivered.and_then(|rows| rows.get(idx))
-            && (bundle.raw.get("feed_mode") != raw.input.get("feed_mode")
-                || bundle.raw.get("version_kind") != raw.input.get("version_kind"))
-        {
-            return Ok(false);
-        }
-    }
-    Ok(saw_evidence || (records.is_empty() && mapping.is_none()))
 }

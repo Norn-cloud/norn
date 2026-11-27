@@ -637,6 +637,326 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 }
 
+pub(crate) fn record_source_evidence_in_tx<E: SqlEngine>(
+    conn: &E,
+    observation_id: &str,
+    connection_id: &str,
+) -> Result<(), CellError> {
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    conn.execute(
+        &format!(
+            "INSERT OR IGNORE INTO \"{table}\" \
+             (\"observation_id\", \"connection_id\", \"captured_commit_seq\") \
+             VALUES (?1, ?2, (SELECT \"commit_seq\" FROM \"_norn_clock\" WHERE \"id\" = 1))"
+        ),
+        crate::engine::params![observation_id, connection_id],
+    )
+}
+
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum RawInputDigest<'a> {
+    Object(std::collections::BTreeMap<&'a str, &'a RuntimeValue>),
+    Other(&'a RuntimeValue),
+}
+
+fn raw_input_digest(value: &RuntimeValue) -> RawInputDigest<'_> {
+    match value {
+        RuntimeValue::Object(map) => RawInputDigest::Object(
+            map.iter()
+                .filter(|(k, _)| k.as_str() != "extracted_at")
+                .map(|(k, v)| (k.as_str(), v))
+                .collect(),
+        ),
+        other => RawInputDigest::Other(other),
+    }
+}
+
+fn raw_input_matches(retained: &RuntimeValue, delivered: &RuntimeValue) -> bool {
+    match (retained, delivered) {
+        (RuntimeValue::Object(a), RuntimeValue::Object(b)) => {
+            a.iter()
+                .filter(|(k, _)| k.as_str() != "extracted_at")
+                .all(|(k, v)| b.get(k) == Some(v))
+                && b.keys()
+                    .filter(|k| k.as_str() != "extracted_at")
+                    .all(|k| a.contains_key(k))
+        }
+        _ => retained == delivered,
+    }
+}
+
+#[derive(serde::Serialize)]
+struct SourceRowDigestV2<'a> {
+    observation_id: &'a str,
+    source: &'a str,
+    source_id: &'a str,
+    mapping_version: &'a str,
+    input_source: Option<&'a RuntimeValue>,
+    input_source_id: Option<&'a RuntimeValue>,
+    event_id: Option<&'a RuntimeValue>,
+    source_version: Option<&'a RuntimeValue>,
+    pipeline_version: Option<&'a RuntimeValue>,
+    kind: Option<&'a RuntimeValue>,
+    payload_digest: Option<&'a RuntimeValue>,
+    payload: Option<&'a RuntimeValue>,
+}
+
+#[derive(serde::Serialize)]
+struct SourceRowDigestV3<'a> {
+    observation_id: &'a str,
+    source: &'a str,
+    source_id: &'a str,
+    mapping_version: &'a str,
+    input: RawInputDigest<'a>,
+}
+
+pub(crate) fn source_page_digest_v3(
+    advance: &crate::source_cursor::CursorAdvanceSpec,
+    input: Option<&crate::mapping_bundle::MappingInput>,
+    observations: &[Observed<RuntimeValue>],
+) -> Result<String, CellError> {
+    #[derive(serde::Serialize)]
+    struct DigestInput<'a> {
+        connection_id: &'a str,
+        dataset: &'a str,
+        mapping: Option<&'a str>,
+        input_dataset: Option<&'a str>,
+        connector_instance: Option<&'a str>,
+        partition: Option<&'a str>,
+        rows: Vec<SourceRowDigestV3<'a>>,
+        expected_previous_cursor: Option<&'a str>,
+        next_cursor: Option<&'a str>,
+    }
+    let rows = observations
+        .iter()
+        .map(|raw| SourceRowDigestV3 {
+            observation_id: raw.id.0.as_str(),
+            source: raw.provenance.source.as_str(),
+            source_id: raw.provenance.source_id.as_str(),
+            mapping_version: raw.provenance.mapping_version.as_str(),
+            input: raw_input_digest(&raw.input),
+        })
+        .collect();
+    let payload = DigestInput {
+        connection_id: &advance.connection_id,
+        dataset: &advance.dataset,
+        mapping: input.map(|i| i.mapping.as_str()),
+        input_dataset: input.map(|i| i.dataset.as_str()),
+        connector_instance: input.map(|i| i.connector_instance.as_str()),
+        partition: input.map(|i| i.partition.as_str()),
+        rows,
+        expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
+        next_cursor: advance.next_cursor.as_deref(),
+    };
+    Ok(norn_ir::canonical::domain_hash_hex(
+        b"norn.source.page.v3\0",
+        &payload,
+    )?)
+}
+
+pub(crate) fn source_page_digest_v2(
+    advance: &crate::source_cursor::CursorAdvanceSpec,
+    observations: &[Observed<RuntimeValue>],
+) -> Result<String, CellError> {
+    #[derive(serde::Serialize)]
+    struct DigestInputV2<'a> {
+        connection_id: &'a str,
+        dataset: &'a str,
+        rows: Vec<SourceRowDigestV2<'a>>,
+        expected_previous_cursor: Option<&'a str>,
+        next_cursor: Option<&'a str>,
+    }
+    let rows = observations
+        .iter()
+        .map(|raw| SourceRowDigestV2 {
+            observation_id: raw.id.0.as_str(),
+            source: raw.provenance.source.as_str(),
+            source_id: raw.provenance.source_id.as_str(),
+            mapping_version: raw.provenance.mapping_version.as_str(),
+            input_source: raw.input.get("source"),
+            input_source_id: raw.input.get("source_id"),
+            event_id: raw.input.get("event_id"),
+            source_version: raw.input.get("source_version"),
+            pipeline_version: raw.input.get("pipeline_version"),
+            kind: raw.input.get("kind"),
+            payload_digest: raw.input.get("payload_digest"),
+            payload: raw.input.get("payload"),
+        })
+        .collect();
+    let payload = DigestInputV2 {
+        connection_id: &advance.connection_id,
+        dataset: &advance.dataset,
+        rows,
+        expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
+        next_cursor: advance.next_cursor.as_deref(),
+    };
+    Ok(norn_ir::canonical::domain_hash_hex(
+        b"norn.source.page.v2\0",
+        &payload,
+    )?)
+}
+
+pub(crate) struct LegacyReplayCheck<'a> {
+    pub(crate) mapping: Option<&'a str>,
+    pub(crate) input: Option<&'a crate::mapping_bundle::MappingInput>,
+    pub(crate) active_binding: Option<&'a str>,
+    pub(crate) delivered: Option<&'a [Observed<RuntimeValue>]>,
+}
+
+pub(crate) fn legacy_source_replay_allowed<E: SqlEngine>(
+    conn: &E,
+    records: &[String],
+    check: LegacyReplayCheck<'_>,
+) -> Result<bool, CellError> {
+    let mapping = check.input.map(|i| i.mapping.as_str()).or(check.mapping);
+    if mapping.is_some() && check.active_binding.is_none() {
+        return Ok(false);
+    }
+    if check
+        .delivered
+        .is_some_and(|rows| rows.len() != records.len())
+    {
+        return Ok(false);
+    }
+    let inbox = crate::system::INBOX;
+    let mut saw_evidence = false;
+    for (idx, id) in records.iter().enumerate() {
+        let encoded: Option<String> = conn.query_optional(
+            &format!("SELECT \"observed\" FROM \"{inbox}\" WHERE \"observation_id\" = ?1"),
+            crate::engine::params![id.as_str()],
+            |row| row.get(0),
+        )?;
+        let Some(encoded) = encoded else {
+            return Ok(false);
+        };
+        let Some(bundle) = crate::mapping_conflict::decode_evidence_bundle(id, &encoded) else {
+            return Ok(false);
+        };
+        saw_evidence = true;
+        if mapping.is_some_and(|m| bundle.input.mapping != m) {
+            return Ok(false);
+        }
+        if let Some(inp) = check.input
+            && (bundle.input.dataset != inp.dataset
+                || bundle.input.connector_instance != inp.connector_instance
+                || bundle.input.partition != inp.partition)
+        {
+            return Ok(false);
+        }
+        if let Some(pin) = check.active_binding
+            && !bundle
+                .artifact_pins
+                .iter()
+                .any(|(art_id, ver, sha)| format!("{art_id}@{ver}#{sha}") == pin)
+        {
+            return Ok(false);
+        }
+        if let Some(raw) = check.delivered.and_then(|rows| rows.get(idx))
+            && !raw_input_matches(&bundle.raw, &raw.input)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(saw_evidence || (records.is_empty() && mapping.is_none()))
+}
+
+impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
+    /// See [`crate::CellStore::acquire_source_lease`].
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store errors.
+    pub fn acquire_source_lease(
+        &mut self,
+        connection_id: &str,
+        lease_id: &str,
+        now_ms: u64,
+        ttl_ms: u64,
+    ) -> Result<crate::source_cursor::SourceLease, CellError> {
+        self.store_mut()
+            .acquire_source_lease(connection_id, lease_id, now_ms, ttl_ms)
+    }
+
+    /// See [`crate::CellStore::release_source_lease`].
+    /// # Errors
+    /// Store errors.
+    pub fn release_source_lease(
+        &mut self,
+        connection_id: &str,
+        lease_id: &str,
+        generation: u64,
+    ) -> Result<bool, CellError> {
+        self.store_mut()
+            .release_source_lease(connection_id, lease_id, generation)
+    }
+
+    /// See [`crate::CellStore::seed_source_cursors`].
+    /// # Errors
+    /// Lease fencing or store errors.
+    pub fn seed_source_cursors(
+        &mut self,
+        connection_id: &str,
+        lease: &crate::source_cursor::SourceLease,
+        now_ms: u64,
+        cursors: &std::collections::BTreeMap<String, String>,
+        expected_binding: Option<(&str, &str)>,
+    ) -> Result<(), CellError> {
+        self.store_mut().seed_source_cursors(
+            connection_id,
+            lease,
+            now_ms,
+            cursors,
+            expected_binding,
+        )
+    }
+
+    /// See [`crate::CellStore::commit_source_page_cursor`].
+    /// # Errors
+    /// Lease fencing, cursor conflict, or store errors.
+    pub fn commit_source_page_cursor(
+        &mut self,
+        advance: &crate::source_cursor::CursorAdvanceSpec,
+        digest: &str,
+        pages: &[String],
+        records: &[String],
+        expected_binding: Option<(&str, &str)>,
+    ) -> Result<(), CellError> {
+        self.store_mut().commit_source_page_cursor(
+            advance,
+            digest,
+            pages,
+            records,
+            expected_binding,
+        )
+    }
+
+    /// See [`crate::CellStore::complete_source_pending`].
+    /// # Errors
+    /// Store errors.
+    pub fn complete_source_pending(
+        &mut self,
+        connection_id: &str,
+        dataset: &str,
+        page_digest: &str,
+    ) -> Result<(), CellError> {
+        self.store_mut()
+            .complete_source_pending(connection_id, dataset, page_digest)
+    }
+
+    /// See [`crate::CellStore::complete_source_pending_checked`].
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store errors.
+    pub fn complete_source_pending_checked(
+        &mut self,
+        connection_id: &str,
+        dataset: &str,
+        page_digest: &str,
+        lease: Option<(&str, &str, u64, u64)>,
+    ) -> Result<(), CellError> {
+        self.store_mut()
+            .complete_source_pending_checked(connection_id, dataset, page_digest, lease)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CellError, refusal_code};

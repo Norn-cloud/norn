@@ -367,6 +367,12 @@ fn add_source_cursor_tables(image: &mut Value) {
         "sql": "CREATE TABLE \"_norn_source_binding\" (\n  \"connection_id\" TEXT NOT NULL PRIMARY KEY,\n  \"mapping_id\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"updated_at_ms\" INTEGER NOT NULL\n)",
     }));
     schema.push(serde_json::json!({
+        "type": "table",
+        "name": "_norn_source_evidence",
+        "table": "_norn_source_evidence",
+        "sql": "CREATE TABLE \"_norn_source_evidence\" (\n  \"observation_id\" TEXT NOT NULL,\n  \"connection_id\" TEXT NOT NULL,\n  \"captured_commit_seq\" INTEGER NOT NULL,\n  PRIMARY KEY (\"observation_id\", \"connection_id\")\n)",
+    }));
+    schema.push(serde_json::json!({
         "type": "index",
         "name": "_norn_fact_values/root_first_version",
         "table": "_norn_fact_values",
@@ -429,6 +435,18 @@ fn add_source_cursor_tables(image: &mut Value) {
                 "mapping_id",
                 "generation",
                 "updated_at_ms"
+            ],
+            "rows": [],
+        }),
+    );
+    tables.insert(
+        "_norn_source_evidence".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "observation_id",
+                "connection_id",
+                "captured_commit_seq"
             ],
             "rows": [],
         }),

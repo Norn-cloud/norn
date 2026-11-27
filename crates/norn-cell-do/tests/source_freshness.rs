@@ -950,4 +950,216 @@ mod tests {
             assert_eq!(body["complete"], false);
         }
     }
+
+    fn sync_named_erpnext(
+        host: &DevHost<NativeEngine>,
+        scope: &CellScope,
+        conn_id: &str,
+        now_ms: u64,
+        mut pages: BTreeMap<String, (u16, Value)>,
+        expected_outcome: &str,
+    ) {
+        let connector =
+            load_artifact("fixtures/packs/erpnext-rest/artifacts/erpnext.rest.connector.json");
+        let payload = serde_json::to_value(connector.payload.to_json_value()).expect("payload");
+        let profile = PullProfile::from_connector(&payload)
+            .expect("valid")
+            .expect("profile");
+        let config = json!([{
+            "id": conn_id, "system": "erpnext", "label": conn_id,
+            "connector": "erpnext.rest.connector", "mapping": "erpnext.rest.mapping",
+            "instance": "sandbox", "baseUrl": "http://erpnext-rest:8000",
+            "orgId": "org_demo", "environmentId": "dev",
+            "secretRefs": ["erpnext_rest_token"],
+        }])
+        .to_string();
+        let secrets = BTreeMap::from([(
+            "NORN_SECRET_ERPNEXT_REST_TOKEN".to_owned(),
+            "key:secret".to_owned(),
+        )]);
+        let mut sources =
+            Sources::with_allowed_hosts(scope, &config, &secrets, SANDBOX_HOSTS).expect("src");
+        sources
+            .claim(conn_id, Trigger::Manual, "user:admin@demo", now_ms)
+            .expect("claim");
+        let mut step = sources.step(host, conn_id, None, now_ms);
+        let mut t = now_ms;
+        loop {
+            match step {
+                Step::Request(req) => {
+                    let feed = profile
+                        .feeds
+                        .iter()
+                        .find(|f| req.url.contains(f.request.path.as_str()))
+                        .expect("feed");
+                    let (status, body) = pages
+                        .remove(&feed.dataset)
+                        .unwrap_or_else(|| (200, json!({"data": []})));
+                    t = t.saturating_add(1);
+                    step = sources.step(
+                        host,
+                        conn_id,
+                        Some((status, body.to_string().as_bytes())),
+                        t,
+                    );
+                }
+                Step::Continue => {
+                    t = t.saturating_add(1);
+                    step = sources.step(host, conn_id, None, t);
+                }
+                Step::Done(summary) => {
+                    assert_eq!(summary.outcome, expected_outcome, "{summary:#?}");
+                    break;
+                }
+            }
+        }
+    }
+
+    fn capture_same_ms_order_quarantine(host: &DevHost<NativeEngine>, conn_id: &str, now_ms: u64) {
+        let conn = host
+            .host_object("source.Connection", conn_id)
+            .expect("read")
+            .expect("conn");
+        let report_ts = conn
+            .get("last_sync_ended_at")
+            .and_then(RuntimeValue::as_str)
+            .expect("ended")
+            .to_owned();
+        let connector =
+            load_artifact("fixtures/packs/erpnext-rest/artifacts/erpnext.rest.connector.json");
+        let payload = serde_json::to_value(connector.payload.to_json_value()).expect("payload");
+        let profile = PullProfile::from_connector(&payload)
+            .expect("valid")
+            .expect("profile");
+        let raw = norn_api::pull::observation(
+            &profile,
+            &norn_api::pull::Row {
+                dataset: ORDER_DATASET.into(),
+                source_id: "SOI-BAD-SAME-MS".into(),
+                version: "2026-11-12 23:59:59".into(),
+                payload: norn_ir::runtime_object! {
+                    "name" => "SOI-BAD-SAME-MS", "parent" => RuntimeValue::Null
+                },
+            },
+            now_ms,
+        )
+        .expect("obs");
+        let input = norn_cell::mapping_bundle::MappingInput {
+            mapping: "erpnext.rest.mapping".into(),
+            dataset: ORDER_DATASET.into(),
+            connector_instance: "sandbox".into(),
+            partition: ORDER_DATASET.into(),
+            recorded_at: norn_ir::provenance::UtcTimestamp(report_ts),
+        };
+        let prev_cursor = host
+            .source_cursors(conn_id)
+            .expect("cursors")
+            .get(ORDER_DATASET)
+            .map(|c| c.cursor_json.clone());
+        let lease = host
+            .acquire_source_lease(
+                conn_id,
+                "run-q-same-ms",
+                now_ms,
+                norn_api::sources::RUN_LEASE_MS,
+            )
+            .expect("lease");
+        let adv = norn_cell::source_cursor::CursorAdvanceSpec {
+            connection_id: conn_id.into(),
+            dataset: ORDER_DATASET.into(),
+            lease_id: lease.lease_id.clone(),
+            generation: lease.generation,
+            now_ms,
+            expected_previous_cursor: prev_cursor,
+            next_cursor: Some(r#"{"version":"2026-11-12 23:59:59","id":"SOI-BAD-SAME-MS"}"#.into()),
+            renew_ttl_ms: Some(norn_api::sources::RUN_LEASE_MS),
+        };
+        let ingested = host
+            .ingest_source_page(&[(raw, input)], &adv)
+            .expect("quarantine");
+        assert!(matches!(
+            ingested[0].outcome,
+            norn_cell::MappingOutcome::Quarantined(_)
+        ));
+        host.release_source_lease(conn_id, &lease.lease_id, lease.generation)
+            .expect("release");
+    }
+
+    #[test]
+    fn same_ms_post_answer_quarantine_preserves_pinned_trace_and_sibling_connection() {
+        let (host, principals, scope) = open_hosted(&["erpnext"]);
+        sync_named_erpnext(&host, &scope, "erpnext.a", T0, erpnext_pages(None), "ok");
+        sync_named_erpnext(&host, &scope, "erpnext.b", T0, erpnext_pages(None), "ok");
+        let derived = DerivedQuestions::new([7; 32], scope.clone()).with_configured_connections(
+            BTreeMap::from([
+                ("erpnext.a".into(), "erpnext.rest.mapping".into()),
+                ("erpnext.b".into(), "erpnext.rest.mapping".into()),
+            ]),
+        );
+        let runtime = derived.questions(&host).expect("runtime");
+        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+        let q = order_line_question(&metric, 60_000);
+        let first = eval_question(&host, &principals, &derived, &q);
+        assert_eq!(first["freshness"], "exact", "{first}");
+        assert_eq!(
+            first["watermarks"]["erpnext.a"][ORDER_DATASET]["complete"],
+            true
+        );
+        assert_eq!(
+            first["watermarks"]["erpnext.b"][ORDER_DATASET]["complete"],
+            true
+        );
+        let first_frontier = first["knownAsOf"].as_u64().expect("knownAsOf");
+        let first_now = first["nowMs"].as_u64().expect("nowMs");
+        let bucket = first["rows"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
+
+        capture_same_ms_order_quarantine(&host, "erpnext.a", first_now);
+
+        let trace = call_http(
+            &host,
+            &principals,
+            &runtime,
+            "POST",
+            "/v1/questions:trace",
+            &json!({
+                "question": q, "lineageRef": first["lineageRef"], "bucket": bucket,
+                "knownAsOf": first_frontier, "nowMs": first_now,
+            })
+            .to_string(),
+        );
+        assert_eq!(trace.status, 200, "{}", trace.body);
+
+        let after = eval_question(&host, &principals, &derived, &q);
+        assert_eq!(after["freshness"], "incomplete", "{after}");
+        assert_eq!(
+            after["watermarks"]["erpnext.a"][ORDER_DATASET]["complete"],
+            false
+        );
+        assert_eq!(
+            after["watermarks"]["erpnext.b"][ORDER_DATASET]["complete"],
+            true
+        );
+        sync_named_erpnext(
+            &host,
+            &scope,
+            "erpnext.b",
+            first_now + 10,
+            BTreeMap::new(),
+            "ok",
+        );
+        sync_named_erpnext(
+            &host,
+            &scope,
+            "erpnext.a",
+            first_now + 20,
+            BTreeMap::new(),
+            "partial",
+        );
+    }
 }

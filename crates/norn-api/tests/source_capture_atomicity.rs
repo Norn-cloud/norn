@@ -1835,7 +1835,7 @@ mod tests {
         host.release_source_lease("erpnext.rest", &lease.lease_id, lease.generation)
             .expect("release");
         assert!(
-            host.unresolved_quarantined_datasets("erpnext.rest.mapping")
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.rest"))
                 .expect("unresolved")
                 .contains(&dataset)
         );
@@ -1868,7 +1868,7 @@ mod tests {
         host.ingest(&[with_version("2020-01-01 00:00:00", "older-party-1")])
             .expect("land older version");
         assert!(
-            host.unresolved_quarantined_datasets("erpnext.rest.mapping")
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.rest"))
                 .expect("still unresolved")
                 .contains(&dataset)
         );
@@ -1876,7 +1876,7 @@ mod tests {
         host.ingest(&[with_version("2099-01-01 00:00:00", "corrected-party-1")])
             .expect("land newer version");
         assert!(
-            host.unresolved_quarantined_datasets("erpnext.rest.mapping")
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.rest"))
                 .expect("cleared")
                 .is_empty()
         );
@@ -1890,9 +1890,51 @@ mod tests {
         );
     }
 
-    /// Regression 18: retained pre-upgrade B3 `norn.source.page.v2` digests
-    /// replay idempotently after upgrade under the same mapping revision and
-    /// conflict under a different mapping.
+    /// Regression 18: v3 and legacy B3 v2 replay accept exact retries and reject
+    /// changed `partition`, `redaction`, `feed_mode`, or `mapping`.
+    fn assert_replay_mutations_conflict(
+        host: &DevHost<NativeEngine>,
+        rows: &[(norn_kernel::Observed<RuntimeValue>, MappingInput)],
+        advance: &CursorAdvanceSpec,
+        include_feed_and_mapping: bool,
+    ) {
+        let mut cases = Vec::new();
+        let mut bad_part = rows.to_vec();
+        for (_, inp) in &mut bad_part {
+            inp.partition = "Party-other".into();
+        }
+        cases.push(bad_part);
+        let mut bad_redact = rows.to_vec();
+        if let RuntimeValue::Object(o) = &mut bad_redact[0].0.input {
+            o.insert(
+                "redaction".into(),
+                RuntimeValue::String("pii-masked".into()),
+            );
+        }
+        cases.push(bad_redact);
+        if include_feed_and_mapping {
+            let mut bad_feed = rows.to_vec();
+            if let RuntimeValue::Object(o) = &mut bad_feed[0].0.input {
+                o.insert(
+                    "feed_mode".into(),
+                    RuntimeValue::String("delta_patch".into()),
+                );
+            }
+            cases.push(bad_feed);
+            let mut bad_map = rows.to_vec();
+            for (_, inp) in &mut bad_map {
+                inp.mapping = "odoo.rest.mapping".into();
+            }
+            cases.push(bad_map);
+        }
+        for mutated in cases {
+            assert!(matches!(
+                host.capture_source_page_planned(&mutated, advance, 10),
+                Err(SourceCaptureError::CursorConflict(_))
+            ));
+        }
+    }
+
     #[test]
     fn legacy_v2_page_digest_replays_idempotently_across_upgrade() {
         let artifacts = rest_artifacts(&[]);
@@ -1925,9 +1967,9 @@ mod tests {
             };
             host.complete_source_pending("erpnext.rest", &dataset, &pending.page_digest)
                 .expect("complete");
+            assert_replay_mutations_conflict(&host, &rows, &advance, false);
             (advance, pending.records, v2_digest)
         };
-        // Rewrite stored `_norn_source_cursor.page_digest` to the pre-upgrade B3 v2 digest.
         {
             let engine = NativeEngine::open(db.path(), StoreOptions::default()).expect("sqlite");
             engine
@@ -1951,28 +1993,101 @@ mod tests {
         };
         assert_eq!(replayed.page_digest, v2_digest);
         assert_eq!(replayed.records, orig_records);
+        assert_replay_mutations_conflict(&reopened, &rows, &advance, true);
+    }
 
-        // Same delivery with changed `feed_mode` must conflict, never hit v2 replay.
-        let mut changed_feed = rows.clone();
-        if let RuntimeValue::Object(obj) = &mut changed_feed[0].0.input {
+    /// Regression 19: two connections sharing one mapping isolate quarantine
+    /// attribution per connection so a quarantine on connection A never marks
+    /// connection B `partial`.
+    #[test]
+    fn sibling_connections_sharing_mapping_isolate_quarantine_attribution() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let profile = profile_of("erpnext");
+        let dataset = "Party".to_owned();
+        let (rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
+        let mut bad_row = rows[0].clone();
+        if let RuntimeValue::Object(obj) = &mut bad_row.0.input {
+            if let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload") {
+                payload.insert("custom_norn_ref".into(), RuntimeValue::Null);
+            }
+            let digest = norn_ir::canonical::HashProfile::Norn1
+                .hash_json(serde_json::to_string(&obj["payload"]).expect("json"))
+                .expect("digest");
+            obj.insert("payload_digest".into(), RuntimeValue::String(digest));
             obj.insert(
-                "feed_mode".into(),
-                RuntimeValue::String("delta_patch".into()),
+                "event_id".into(),
+                RuntimeValue::String("quarantine-conn-a-1".into()),
             );
         }
+        let lease_a = host
+            .acquire_source_lease("erpnext.a", "run-conn-a", T0, RUN_LEASE_MS)
+            .expect("lease a");
+        let advance_a = CursorAdvanceSpec {
+            connection_id: "erpnext.a".into(),
+            dataset: dataset.clone(),
+            lease_id: lease_a.lease_id.clone(),
+            generation: lease_a.generation,
+            now_ms: T0,
+            expected_previous_cursor: None,
+            next_cursor: Some(next_wm.cursor_json().expect("json")),
+            renew_ttl_ms: Some(RUN_LEASE_MS),
+        };
+        let outcomes = host
+            .ingest_source_page(&[bad_row], &advance_a)
+            .expect("capture quarantined row on erpnext.a");
         assert!(matches!(
-            reopened.capture_source_page_planned(&changed_feed, &advance, 10),
-            Err(SourceCaptureError::CursorConflict(_))
+            outcomes[0].outcome,
+            MappingOutcome::Quarantined(_)
         ));
+        host.release_source_lease("erpnext.a", &lease_a.lease_id, lease_a.generation)
+            .expect("release a");
+        assert!(
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.a"))
+                .expect("a quarantined")
+                .contains(&dataset)
+        );
+        assert!(
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.b"))
+                .expect("b clean")
+                .is_empty(),
+            "connection B sharing the mapping must not inherit connection A's quarantine"
+        );
 
-        // Same delivery under a different mapping must conflict, never inherit v2 replay.
-        let mut wrong_mapping = rows;
-        for (_, input) in &mut wrong_mapping {
-            input.mapping = "odoo.rest.mapping".into();
-        }
-        assert!(matches!(
-            reopened.capture_source_page_planned(&wrong_mapping, &advance, 10),
-            Err(SourceCaptureError::CursorConflict(_))
-        ));
+        let two_conns = r#"[
+          {"id": "erpnext.a", "system": "erpnext", "label": "ERPNext A",
+           "connector": "erpnext.rest.connector", "mapping": "erpnext.rest.mapping",
+           "instance": "sandbox", "baseUrl": "http://erpnext-rest:8000",
+           "orgId": "org_demo", "environmentId": "dev", "secretRefs": ["erpnext_rest_token"]},
+          {"id": "erpnext.b", "system": "erpnext", "label": "ERPNext B",
+           "connector": "erpnext.rest.connector", "mapping": "erpnext.rest.mapping",
+           "instance": "sandbox", "baseUrl": "http://erpnext-rest:8000",
+           "orgId": "org_demo", "environmentId": "dev", "secretRefs": ["erpnext_rest_token"]}
+        ]"#;
+        let mut sources = rest_sources(two_conns);
+        let run_one = |sources: &mut Sources, id: &str, now_ms: u64| {
+            sources
+                .claim(id, Trigger::Manual, "user:owner@demo", now_ms)
+                .expect("claim");
+            let mut step = sources.step(&host, id, None, now_ms);
+            loop {
+                match step {
+                    Step::Done(summary) => return summary,
+                    Step::Continue => step = sources.step(&host, id, None, now_ms),
+                    Step::Request(req) => {
+                        let feed = profile
+                            .feeds
+                            .iter()
+                            .find(|f| req.url.contains(f.request.path.as_str()))
+                            .expect("feed");
+                        let body = empty_page(&profile, &feed.dataset).to_string();
+                        step = sources.step(&host, id, Some((200, body.as_bytes())), now_ms);
+                    }
+                }
+            }
+        };
+        let sum_a = run_one(&mut sources, "erpnext.a", T0.saturating_add(10));
+        assert_eq!(sum_a.outcome, "partial", "{sum_a:#?}");
+        let sum_b = run_one(&mut sources, "erpnext.b", T0.saturating_add(20));
+        assert_eq!(sum_b.outcome, "ok", "{sum_b:#?}");
     }
 }

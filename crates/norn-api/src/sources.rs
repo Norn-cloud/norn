@@ -613,7 +613,7 @@ impl Sources {
             && run.quarantined == 0
             && !config.mapping.is_empty()
             && !host
-                .unresolved_quarantined_datasets(&config.mapping)
+                .unresolved_quarantined_datasets(&config.mapping, Some(&config.id))
                 .is_ok_and(|datasets| datasets.is_empty());
         let outcome = if error.is_some() {
             "failed"
