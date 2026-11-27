@@ -1,5 +1,5 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test"
-import { QueryClient, QueryObserver, queryOptions } from "@tanstack/react-query"
+import { QueryClient, QueryObserver, onlineManager, queryOptions } from "@tanstack/react-query"
 import { CellUnavailable, studioScopeQuery } from "../src/lib/definitions.ts"
 import { NotServed, ScopeSupersededError, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode, retryWorkspace, scopeAnswered, syncStudioScopeChange } from "../src/lib/live-transport.ts"
 import { EMPTY_QUERY } from "../src/lib/records-query.ts"
@@ -1201,4 +1201,111 @@ test("aborting one observer of a shared ModeProbe never aborts the underlying fe
   await expect(second).resolves.toMatchObject({ kind: "live", scope: scopeA })
   expect(fetchCount).toBe(1)
   refreshMode()
+})
+
+test("overlapping retryWorkspace calls: superseded retry returns false and never refetches pages while the newer retry is in flight", async () => {
+  const client = new QueryClient()
+  const scopeA = { orgId: ME.organization.id, environmentId: ME.environmentId }
+  let probeNumber = 0
+  let releaseSecond!: () => void
+  const secondGate = new Promise<void>((resolve) => { releaseSecond = resolve })
+  let firstStarted!: () => void
+  const firstBegan = new Promise<void>((resolve) => { firstStarted = resolve })
+  let pageReads = 0
+
+  const fetchProbe = async (...[input, init]: Parameters<typeof globalThis.fetch>) => {
+    const url = String(input)
+    if (url === "/api/me") return Response.json(ME)
+    probeNumber += 1
+    if (probeNumber === 1) {
+      // Initial settled failure so the page is in an error state.
+      return new Response('{"code":"cell.unopenable","retryable":false,"message":"down"}', { status: 503, headers: { "content-type": "application/json" } })
+    }
+    if (probeNumber === 2) {
+      // Retry 1 hangs until aborted by Retry 2.
+      firstStarted()
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))
+      })
+    }
+    // Retry 2 waits on secondGate, then succeeds.
+    await secondGate
+    return new Response(DEFINITIONS, { headers: { "content-type": "application/json" } })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }))
+  client.setQueryData(["studio-scope"], scopeA)
+  const mode = new QueryObserver(client, { ...modeQuery(scopeA), retryDelay: 0 })
+  const page = new QueryObserver(client, {
+    queryKey: ["page-read"],
+    retry: false,
+    queryFn: async () => {
+      pageReads += 1
+      if (pageReads === 1) throw new CellUnavailable(503, "down")
+      return "ok"
+    },
+  })
+  const offMode = mode.subscribe(() => {})
+  const offPage = page.subscribe(() => {})
+  try {
+    await until(mode, settled)
+    await until(page, settled)
+    pageReads = 0
+
+    const retry1 = retryWorkspace(client)
+    await firstBegan
+    const retry2 = retryWorkspace(client)
+
+    // Retry 1 must settle false once superseded by Retry 2, without touching page queries.
+    expect(await retry1).toBe(false)
+    expect(pageReads).toBe(0)
+
+    releaseSecond()
+    expect(await retry2).toBe(true)
+    expect(pageReads).toBe(1)
+  } finally {
+    releaseSecond()
+    offPage()
+    offMode()
+    client.clear()
+    fetch.mockRestore()
+  }
+})
+
+test("retryWorkspace returns false while offline/paused even when mode previously succeeded", async () => {
+  const client = new QueryClient()
+  const scopeA = { orgId: ME.organization.id, environmentId: ME.environmentId }
+  let pageReads = 0
+  const fetchProbe = async (...[input]: Parameters<typeof globalThis.fetch>) => {
+    const url = String(input)
+    if (url === "/api/me") return Response.json(ME)
+    return new Response(DEFINITIONS, { headers: { "content-type": "application/json" } })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }))
+  client.setQueryData(["studio-scope"], scopeA)
+  const mode = new QueryObserver(client, { ...modeQuery(scopeA), retryDelay: 0 })
+  const page = new QueryObserver(client, {
+    queryKey: ["page-read-offline"],
+    retry: false,
+    queryFn: async () => {
+      pageReads += 1
+      throw new CellUnavailable(502, "offline")
+    },
+  })
+  const offMode = mode.subscribe(() => {})
+  const offPage = page.subscribe(() => {})
+  try {
+    await until(mode, (result) => result.isSuccess)
+    await until(page, settled)
+    pageReads = 0
+
+    onlineManager.setOnline(false)
+    expect(await retryWorkspace(client)).toBe(false)
+    expect(pageReads).toBe(0)
+  } finally {
+    onlineManager.setOnline(true)
+    offPage()
+    offMode()
+    client.clear()
+    fetch.mockRestore()
+  }
 })

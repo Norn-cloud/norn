@@ -549,6 +549,20 @@ test("islands under reduced transparency and forced colours: the glass skin fall
 })
 
 test("Workspace unavailable shows once: the page's full state, or a one-line status; one Retry and one incident id, and below 640px the server's words and the incident sit behind a 44px Details beside a 44px Retry", async ({ page }) => {
+  await page.addInitScript(() => {
+    const state = window as unknown as { __sawUnavailableBanner?: boolean }
+    state.__sawUnavailableBanner = false
+    const check = () => {
+      if (document.querySelector('[data-connection="unavailable"]') !== null) {
+        state.__sawUnavailableBanner = true
+      }
+    }
+    const observer = new MutationObserver(() => {
+      check()
+      requestAnimationFrame(check)
+    })
+    observer.observe(document, { childList: true, subtree: true })
+  })
   await session(page)
   await page.route("**/api/host/v1/**", (route) => {
     const path = new URL(route.request().url()).pathname
@@ -572,6 +586,11 @@ test("Workspace unavailable shows once: the page's full state, or a one-line sta
       await page.goto(path)
       await expect(full ? state : banner, at).toBeVisible()
       await expect(full ? banner : state, at).toHaveCount(0)
+      if (full) {
+        // Synchronous layout-effect suppression means the shell banner never flashes before a full page state mounts.
+        const flashed = await page.evaluate(() => (window as unknown as { __sawUnavailableBanner?: boolean }).__sawUnavailableBanner)
+        expect(flashed, `${at}: shell banner must not flash when page renders its own unavailable state`).toBe(false)
+      }
       const retries = page.getByRole("button", { name: "Retry", exact: true }).filter({ visible: true })
       await expect(retries, at).toHaveCount(1)
       if (width === 390) expect((await retries.boundingBox())!.height, `${at}: Retry`).toBeGreaterThanOrEqual(44)

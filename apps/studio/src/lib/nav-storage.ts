@@ -1,4 +1,6 @@
 import { decoded, type Menus } from "./nav-model.ts"
+import type { Mode } from "./live-transport.ts"
+import type { Account } from "./session.ts"
 
 /**
  * Browser-local shell view state (DESIGN.md 9.1 & 18):
@@ -13,6 +15,7 @@ export const RECENT_STORAGE_PREFIX = "norn.studio.recent"
 export const MAX_RECENT = 8
 const MAX_STORED_BRANCHES = 200
 const MAX_STORED_WHOLE = 100
+const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"])
 
 export type ChosenBranches = Readonly<Record<string, Readonly<Record<string, boolean>>>>
 
@@ -31,6 +34,17 @@ export interface RecentItem {
   readonly visitedAt: number
 }
 
+export interface RecentScopeMode {
+  readonly status: "pending" | "error" | "success"
+  readonly data: Mode | undefined
+}
+
+export interface RecentTracker {
+  readonly pathname: string
+  readonly enteredFingerprint: string | null
+  readonly hadSettled: boolean
+}
+
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">
 
 function defaultStorage(): StorageLike | undefined {
@@ -44,23 +58,57 @@ function defaultStorage(): StorageLike | undefined {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
+/** Reject keys that can collide with or pollute `Object.prototype`. */
+export const isSafeRecordKey = (key: string): boolean => key !== "" && !FORBIDDEN_KEYS.has(key)
+
+function nullRecord<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>
+}
+
+/** Own-property lookup that ignores inherited `Object.prototype` keys. */
+export function getOwn<T>(record: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
+  if (record === undefined || !isSafeRecordKey(key)) return undefined
+  return Object.hasOwn(record, key) ? record[key] : undefined
+}
+
+/** Immutably update one applet's chosen-branch map using null-prototype dictionaries and safe keys only. */
+export function updateChosenBranches(
+  previous: ChosenBranches,
+  appletId: string,
+  update: (branches: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>,
+): ChosenBranches {
+  if (!isSafeRecordKey(appletId)) return previous
+  const nextChosen = nullRecord<Readonly<Record<string, boolean>>>()
+  for (const [key, value] of Object.entries(previous)) {
+    if (isSafeRecordKey(key)) nextChosen[key] = value
+  }
+  const current = getOwn(previous, appletId) ?? nullRecord<boolean>()
+  const updated = update(current)
+  const clean = nullRecord<boolean>()
+  for (const [branchId, open] of Object.entries(updated)) {
+    if (isSafeRecordKey(branchId) && typeof open === "boolean") clean[branchId] = open
+  }
+  nextChosen[appletId] = clean
+  return nextChosen
+}
+
 /** Read persisted submenu branch open/closed choices and "Show all" keys. */
 export function readMenuState(storage: StorageLike | undefined = defaultStorage()): StoredMenuState {
-  const empty: StoredMenuState = { chosen: {}, whole: new Set() }
+  const empty: StoredMenuState = { chosen: nullRecord(), whole: new Set() }
   try {
     const raw = storage?.getItem(MENU_STORAGE_KEY)
     if (!raw) return empty
     const parsed: unknown = JSON.parse(raw)
     if (!isRecord(parsed)) return empty
 
-    const chosen: Record<string, Record<string, boolean>> = {}
+    const chosen = nullRecord<Record<string, boolean>>()
     let branchCount = 0
     if (isRecord(parsed.chosen)) {
       for (const [appletId, branches] of Object.entries(parsed.chosen)) {
-        if (!isRecord(branches)) continue
-        const clean: Record<string, boolean> = {}
+        if (!isSafeRecordKey(appletId) || !isRecord(branches)) continue
+        const clean = nullRecord<boolean>()
         for (const [branchId, open] of Object.entries(branches)) {
-          if (typeof open !== "boolean") continue
+          if (!isSafeRecordKey(branchId) || typeof open !== "boolean") continue
           if (branchCount >= MAX_STORED_BRANCHES) break
           clean[branchId] = open
           branchCount += 1
@@ -95,7 +143,78 @@ export function writeMenuState(
   }
 }
 
-const recentKey = (scopeKey: string) => `${RECENT_STORAGE_PREFIX}:${scopeKey}`
+/** The `localStorage` key for one scope fingerprint's recent list. */
+export const recentStorageKey = (scopeKey: string): string => `${RECENT_STORAGE_PREFIX}:${scopeKey}`
+
+/**
+ * Collision-free fingerprint binding browser-local Recent items to the confirmed live or recorded
+ * workspace scope and role. Returns `null` while mode is pending/failed or while `account` and
+ * `mode.data.scope` disagree (mid-switch), failing closed so nothing is read or written across scopes.
+ */
+export function recentScopeFingerprint(account: Account, mode: RecentScopeMode): string | null {
+  if (mode.status !== "success" || mode.data === undefined) return null
+  if (mode.data.kind === "live") {
+    if (account.organization === null || account.organization.id !== mode.data.scope.orgId) return null
+    if (
+      account.environmentId !== undefined
+      && account.environmentId !== null
+      && account.environmentId !== mode.data.scope.environmentId
+    ) return null
+    return JSON.stringify([
+      "live",
+      account.user.id,
+      mode.data.scope.orgId,
+      mode.data.scope.environmentId,
+      account.organization.role,
+    ])
+  }
+  return JSON.stringify([
+    "recorded",
+    account.user.id,
+    account.organization?.id ?? "",
+    account.organization?.role ?? "",
+  ])
+}
+
+/** Initial navigation-bound tracker state for {@link stepRecentTracker}. */
+export const initialRecentTracker = (pathname: string, fingerprint: string | null): RecentTracker => ({
+  pathname,
+  enteredFingerprint: fingerprint,
+  hadSettled: fingerprint !== null,
+})
+
+/**
+ * Decide whether the current `(pathname, fingerprint)` may record a Recent item.
+ * A pathname opened before a workspace switch or role change (`enteredFingerprint !== fingerprint`,
+ * even across a transient `null` while the new scope loads) is never recorded under the new scope.
+ */
+export function stepRecentTracker(
+  tracker: RecentTracker,
+  pathname: string,
+  fingerprint: string | null,
+): { readonly next: RecentTracker; readonly shouldRecord: boolean } {
+  if (pathname !== tracker.pathname) {
+    const next: RecentTracker = {
+      pathname,
+      enteredFingerprint: fingerprint,
+      hadSettled: tracker.hadSettled || fingerprint !== null,
+    }
+    return { next, shouldRecord: fingerprint !== null }
+  }
+  if (fingerprint === null) {
+    return { next: tracker, shouldRecord: false }
+  }
+  if (tracker.enteredFingerprint === null && !tracker.hadSettled) {
+    return {
+      next: { pathname, enteredFingerprint: fingerprint, hadSettled: true },
+      shouldRecord: true,
+    }
+  }
+  if (tracker.enteredFingerprint !== fingerprint) {
+    return { next: tracker, shouldRecord: false }
+  }
+  return { next: tracker, shouldRecord: true }
+}
 
 const isRecentKind = (value: unknown): value is RecentKind =>
   value === "record" || value === "run" || value === "view"
@@ -103,7 +222,7 @@ const isRecentKind = (value: unknown): value is RecentKind =>
 /** Read the per-scope list of recently opened records, runs and views. */
 export function readRecent(scopeKey: string, storage: StorageLike | undefined = defaultStorage()): readonly RecentItem[] {
   try {
-    const raw = storage?.getItem(recentKey(scopeKey))
+    const raw = storage?.getItem(recentStorageKey(scopeKey))
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
@@ -134,8 +253,8 @@ export function writeRecent(
   storage: StorageLike | undefined = defaultStorage(),
 ): void {
   try {
-    if (items.length === 0) storage?.removeItem(recentKey(scopeKey))
-    else storage?.setItem(recentKey(scopeKey), JSON.stringify(items.slice(0, MAX_RECENT)))
+    if (items.length === 0) storage?.removeItem(recentStorageKey(scopeKey))
+    else storage?.setItem(recentStorageKey(scopeKey), JSON.stringify(items.slice(0, MAX_RECENT)))
   } catch {
     /* storage blocked or full */
   }
@@ -144,7 +263,7 @@ export function writeRecent(
 /** Clear the per-scope recent list from storage. */
 export function clearRecent(scopeKey: string, storage: StorageLike | undefined = defaultStorage()): void {
   try {
-    storage?.removeItem(recentKey(scopeKey))
+    storage?.removeItem(recentStorageKey(scopeKey))
   } catch {
     /* storage blocked */
   }
@@ -154,6 +273,20 @@ export function clearRecent(scopeKey: string, storage: StorageLike | undefined =
 export function recordRecent(items: readonly RecentItem[], next: RecentItem): readonly RecentItem[] {
   const rest = items.filter((item) => item.href !== next.href)
   return [next, ...rest].slice(0, MAX_RECENT)
+}
+
+/**
+ * Re-read the latest stored list right before merging and persisting `next`, so a tab with stale
+ * in-memory state never resurrects items another tab cleared.
+ */
+export function appendRecent(
+  scopeKey: string,
+  next: RecentItem,
+  storage: StorageLike | undefined = defaultStorage(),
+): readonly RecentItem[] {
+  const merged = recordRecent(readRecent(scopeKey, storage), next)
+  writeRecent(scopeKey, merged, storage)
+  return merged
 }
 
 /**

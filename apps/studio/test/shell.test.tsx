@@ -10,10 +10,12 @@ import {
   type Applet, type MenuEntry, type Section,
 } from "../src/lib/nav-model.ts"
 import {
-  MAX_RECENT, clearRecent, readMenuState, readRecent, recentForPath, recordRecent, writeMenuState, writeRecent,
+  MAX_RECENT, appendRecent, clearRecent, getOwn, initialRecentTracker, readMenuState, readRecent,
+  recentForPath, recentScopeFingerprint, recordRecent, stepRecentTracker, updateChosenBranches,
+  writeMenuState, writeRecent,
 } from "../src/lib/nav-storage.ts"
 import type { Account } from "../src/lib/session.ts"
-import { Shell } from "../src/shell.tsx"
+import { Shell, commandNavigation } from "../src/shell.tsx"
 import { appletBadge } from "../src/shell-nav.tsx"
 import { isEmptyWorkspace } from "../src/home.tsx"
 import { ViewProvider } from "../src/lib/view.tsx"
@@ -393,15 +395,36 @@ test("recent items track opened records, runs and views, deduplicate, cap, scope
 })
 
 test("Home and Inbox submenu islands show the local Recent list with Clear when items exist, and Builder does not", async () => {
+  const scope = { orgId: "o1", environmentId: "env1" }
+  const liveMode: Mode = {
+    kind: "live",
+    scope,
+    catalog: { document: [], numbers: new Map(), origin: "live" },
+    counts: {},
+    publishedQuestions: new Set(),
+    builtins: [],
+  }
+  const fingerprint = recentScopeFingerprint(account, { status: "success", data: liveMode })!
   const storage = memoryStorage()
-  writeRecent("u1:o1:", [
+  writeRecent(fingerprint, [
     { href: "/sources/canon.Holding/rec_1", label: "rec_1", kind: "record", detail: "Holding", visitedAt: 1 },
     { href: "/runs/run_7", label: "run_7", kind: "run", visitedAt: 2 },
   ], storage)
   const saved = Object.getOwnPropertyDescriptor(globalThis, "localStorage")
   Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage })
+  const renderWithLiveMode = async (pathname: string) => {
+    const client = new QueryClient()
+    client.setQueryData(["studio-scope"], scope)
+    client.setQueryData(modeQuery(scope).queryKey, liveMode)
+    const router = createRouter({
+      routeTree: createRootRoute({ component: () => <Shell sections={[home, inbox, sources]} account={account} onSignOut={() => {}} /> }),
+      history: createMemoryHistory({ initialEntries: [pathname] }),
+    })
+    await router.load()
+    return renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
+  }
   try {
-    const homeHtml = await at("/", () => <Shell sections={[home, inbox, sources]} account={account} onSignOut={() => {}} />)
+    const homeHtml = await renderWithLiveMode("/")
     const homeMenu = landmark(homeHtml, "Home menu")
     expect(homeMenu).toContain('data-slot="recent-section"')
     expect(homeMenu).toContain(">Recent<")
@@ -409,12 +432,133 @@ test("Home and Inbox submenu islands show the local Recent list with Clear when 
     expect(homeMenu).toContain('href="/sources/canon.Holding/rec_1"')
     expect(homeMenu).toContain('href="/runs/run_7"')
 
-    const inboxHtml = await at("/decisions", () => <Shell sections={[home, inbox, sources]} account={account} onSignOut={() => {}} />)
+    const inboxHtml = await renderWithLiveMode("/decisions")
     expect(landmark(inboxHtml, "Inbox menu")).toContain('data-slot="recent-section"')
 
-    const builderHtml = await at("/sources", () => <Shell sections={[home, inbox, sources]} account={account} onSignOut={() => {}} />)
+    const builderHtml = await renderWithLiveMode("/sources")
     expect(landmark(builderHtml, "Builder menu")).not.toContain('data-slot="recent-section"')
+
+    // While mode is still pending (unconfirmed scope), Recent fails closed and renders nothing.
+    const pendingHtml = await at("/", () => <Shell sections={[home, inbox, sources]} account={account} onSignOut={() => {}} />)
+    expect(landmark(pendingHtml, "Home menu")).not.toContain('data-slot="recent-section"')
   } finally {
     if (saved) Object.defineProperty(globalThis, "localStorage", saved); else delete (globalThis as { localStorage?: unknown }).localStorage
   }
+})
+
+test("Recent fails closed across workspace switches, unconfirmed scopes, and role downgrades", () => {
+  const scopeA = { orgId: "org_a", environmentId: "env_a" }
+  const scopeB = { orgId: "org_b", environmentId: "env_b" }
+  const modeA: Mode = { kind: "live", scope: scopeA, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set(), builtins: [] }
+  const modeB: Mode = { kind: "live", scope: scopeB, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set(), builtins: [] }
+  const adminA: Account = { user: { id: "u1", name: "Ada", email: "ada@example.com" }, organization: { id: "org_a", name: "Org A", role: "admin" }, environmentId: "env_a" }
+  const viewerA: Account = { ...adminA, organization: { id: "org_a", name: "Org A", role: "viewer" } }
+  const adminB: Account = { user: { id: "u1", name: "Ada", email: "ada@example.com" }, organization: { id: "org_b", name: "Org B", role: "admin" }, environmentId: "env_b" }
+
+  // Pending / error / disagreeing account+mode scopes fail closed to null.
+  expect(recentScopeFingerprint(adminA, { status: "pending", data: undefined })).toBeNull()
+  expect(recentScopeFingerprint(adminA, { status: "error", data: undefined })).toBeNull()
+  expect(recentScopeFingerprint(adminB, { status: "success", data: modeA })).toBeNull()
+  expect(recentScopeFingerprint({ ...adminA, environmentId: "env_b" }, { status: "success", data: modeA })).toBeNull()
+
+  const fpAdminA = recentScopeFingerprint(adminA, { status: "success", data: modeA })!
+  const fpViewerA = recentScopeFingerprint(viewerA, { status: "success", data: modeA })!
+  const fpAdminB = recentScopeFingerprint(adminB, { status: "success", data: modeB })!
+  expect(fpAdminA).not.toBe(fpAdminB)
+  expect(fpAdminA).not.toBe(fpViewerA)
+
+  // Fresh page load on a detail route records once the initial scope settles.
+  let tracker = initialRecentTracker("/sources/canon.Holding/secret-1", null)
+  let step = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", null)
+  expect(step.shouldRecord).toBe(false)
+  step = stepRecentTracker(step.next, "/sources/canon.Holding/secret-1", fpAdminA)
+  tracker = step.next
+  expect(step.shouldRecord).toBe(true)
+
+  // Switching workspace directly (A -> B) or via pending (A -> null -> B) while staying on the same URL never records it under B.
+  step = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", fpAdminB)
+  expect(step.shouldRecord).toBe(false)
+  const pendingStep = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", null)
+  expect(pendingStep.shouldRecord).toBe(false)
+  const settledBStep = stepRecentTracker(pendingStep.next, "/sources/canon.Holding/secret-1", fpAdminB)
+  expect(settledBStep.shouldRecord).toBe(false)
+
+  // Role downgrade (admin -> viewer) on the same URL also refuses to record under the downgraded role, and isolates stored items.
+  const downgradeStep = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", fpViewerA)
+  expect(downgradeStep.shouldRecord).toBe(false)
+  const storage = memoryStorage()
+  writeRecent(fpAdminA, [{ href: "/sources/canon.Holding/secret-1", label: "secret-1", kind: "record", detail: "Holding", visitedAt: 1 }], storage)
+  expect(readRecent(fpViewerA, storage)).toEqual([])
+  expect(readRecent(fpAdminB, storage)).toEqual([])
+
+  // Navigating to a new detail route after switching to B records normally under B.
+  const navigatedB = stepRecentTracker(settledBStep.next, "/runs/run-b-1", fpAdminB)
+  expect(navigatedB.shouldRecord).toBe(true)
+})
+
+test("appendRecent reads fresh storage so another tab clearing Recent is never resurrected", () => {
+  const storage = memoryStorage()
+  const fp = JSON.stringify(["live", "u1", "o1", "e1", "viewer"])
+  appendRecent(fp, { href: "/runs/r1", label: "r1", kind: "run", visitedAt: 1 }, storage)
+  appendRecent(fp, { href: "/runs/r2", label: "r2", kind: "run", visitedAt: 2 }, storage)
+  expect(readRecent(fp, storage).map((item) => item.href)).toEqual(["/runs/r2", "/runs/r1"])
+
+  // Tab A clears Recent.
+  clearRecent(fp, storage)
+  expect(readRecent(fp, storage)).toEqual([])
+
+  // Tab B opens r3 without re-introducing r1 or r2.
+  const merged = appendRecent(fp, { href: "/runs/r3", label: "r3", kind: "run", visitedAt: 3 }, storage)
+  expect(merged.map((item) => item.href)).toEqual(["/runs/r3"])
+  expect(readRecent(fp, storage).map((item) => item.href)).toEqual(["/runs/r3"])
+})
+
+test("readMenuState and updateChosenBranches reject prototype-pollution keys and use null-prototype maps", () => {
+  const storage = memoryStorage()
+  storage.setItem(
+    "norn.studio.menu",
+    '{"chosen":{"__proto__":{"polluted":true},"constructor":{"bad":true},"prototype":{"bad":true},"builder":{"__proto__":true,"constructor":false,"space:Logic":false}},"whole":["ok"]}',
+  )
+  const restored = readMenuState(storage)
+  expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+  expect(Object.getPrototypeOf(restored.chosen)).toBeNull()
+  expect(Object.getPrototypeOf(restored.chosen.builder)).toBeNull()
+  expect(getOwn(restored.chosen, "__proto__")).toBeUndefined()
+  expect(getOwn(restored.chosen, "constructor")).toBeUndefined()
+  expect(getOwn(restored.chosen, "prototype")).toBeUndefined()
+  expect(getOwn(restored.chosen.builder, "__proto__")).toBeUndefined()
+  expect(getOwn(restored.chosen.builder, "constructor")).toBeUndefined()
+  expect(getOwn(restored.chosen.builder, "space:Logic")).toBe(false)
+
+  const updated = updateChosenBranches(restored.chosen, "__proto__", () => ({ hacked: true }))
+  expect(updated).toBe(restored.chosen)
+  const safeUpdated = updateChosenBranches(restored.chosen, "builder", (prev) => ({ ...prev, prototype: true, "dest:/sources": true }))
+  expect(getOwn(safeUpdated.builder, "prototype")).toBeUndefined()
+  expect(getOwn(safeUpdated.builder, "dest:/sources")).toBe(true)
+})
+
+test("commandNavigation pushes a history entry when switching applets on a shared URL and replaces only when both URL and applet match", () => {
+  // Same URL, same applet, no hash -> no-op.
+  expect(commandNavigation(
+    { pathname: "/sources/canon.Holding", searchStr: "", hash: "", applet: "builder" },
+    { to: "/sources/canon.Holding", applet: "builder" },
+  )).toBeNull()
+
+  // Same URL, same applet, with hash -> replace to re-scroll without duplicating history.
+  expect(commandNavigation(
+    { pathname: "/rules", searchStr: "", hash: "law-1", applet: "builder" },
+    { to: "/rules", hash: "law-1", applet: "builder" },
+  )).toEqual({ to: "/rules", hash: "law-1", state: { applet: "builder" }, replace: true })
+
+  // Same URL, DIFFERENT applet -> pushes a new history entry (no replace) so Back restores the prior applet.
+  expect(commandNavigation(
+    { pathname: "/sources/canon.Holding", searchStr: "", hash: "", applet: "data" },
+    { to: "/sources/canon.Holding", applet: "builder" },
+  )).toEqual({ to: "/sources/canon.Holding", state: { applet: "builder" } })
+
+  // Same URL with hash, DIFFERENT applet -> pushes a new history entry under the target applet.
+  expect(commandNavigation(
+    { pathname: "/rules", searchStr: "", hash: "law-1", applet: "data" },
+    { to: "/rules", hash: "law-1", applet: "builder" },
+  )).toEqual({ to: "/rules", hash: "law-1", state: { applet: "builder" } })
 })

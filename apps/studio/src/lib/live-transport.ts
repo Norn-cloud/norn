@@ -3,7 +3,7 @@
  * the recording when no cell is connected) and the live reads themselves. Kept
  * apart from transport.ts, which finds recordings with Vite's import.meta.glob.
  */
-import { queryOptions, type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
+import { onlineManager, queryOptions, type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
 import { CellUnavailable, StudioScopeError, defaultFetch, isReadMethod, parseUnavailableDetail, readStudioScope, recordCellReachable, resolveWriteScope, sameStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
 import { NO_HOST_ERROR } from "../../../../packages/norn-sdk/src/index.ts"
@@ -518,6 +518,7 @@ function maybeInvalidateSession(client: QueryClient, nextScope: StudioScope | nu
  * Studio never falls back to recorded mode during an outage.
  */
 export function syncStudioScopeChange(client: QueryClient, nextScope: StudioScope | null | undefined): void {
+  retrySerial += 1
   if (nextScope === undefined) {
     lastObservedScope.delete(client)
     refreshMode()
@@ -576,12 +577,17 @@ export function scopeAnswered(client: QueryClient, scope: StudioScope | null): v
   }
 }
 
+const completedModeGenerations = new WeakMap<object, number>()
+let retrySerial = 0
+
 export function modeQuery(scope: StudioScope | null | undefined, enabled = true, recoveryClient?: QueryClient) {
   return queryOptions({
     queryKey: ["studio-mode", scope === undefined ? "outage" : studioScopeKey(scope)],
     enabled,
     queryFn: async ({ signal }) => {
+      const generation = modeGeneration
       const mode = await (recoveryClient === undefined ? currentMode(browserFetch, scope, signal) : readMode(browserFetch, undefined, signal))
+      completedModeGenerations.set(mode, generation)
       // A mode read succeeded: forget the failure settled in this read's own generation for the workspace
       // it read, or a settled session outage (the session server answered this read). A success from an
       // older generation (a recovery read that outlived `refreshMode`) never clears a newer settle.
@@ -622,8 +628,8 @@ export function modeQuery(scope: StudioScope | null | undefined, enabled = true,
 
 /**
  * Stop in-flight scope and mode probes (including reads the transport started directly) and start fresh
- * replacements. Resolves `true` once the page's mode is decided again, `false` when it settled in error
- * (the session or the cell still does not answer).
+ * replacements. Resolves `true` once the page's mode is decided again in this retry's generation, `false`
+ * when it settled in error, was superseded by a newer retry/scope switch, or could not run (offline/unmounted).
  *
  * When the scope is read again and answers, that answer is applied here, at once ({@link scopeAnswered}:
  * a different workspace purges the old one's reads), and that workspace's mode is read here too, not
@@ -642,25 +648,50 @@ export async function retryMode(client: QueryClient): Promise<boolean> {
     ...(retryScope ? [client.cancelQueries(scopeFilter)] : []),
   ]
   for (const controller of pendingModeControllers) controller.abort()
+  retrySerial += 1
+  const myRetry = retrySerial
   refreshMode()
+  const generation = modeGeneration
   await Promise.all(cancellations)
+  if (retrySerial !== myRetry || !onlineManager.isOnline()) return false
   if (retryScope) {
     await client.refetchQueries(scopeFilter, { cancelRefetch: false })
+    if (retrySerial !== myRetry || !onlineManager.isOnline()) return false
     const nextScope = client.getQueryState<StudioScope | null>(["studio-scope"])
-    if (nextScope?.status === "success") {
+    if (nextScope?.status === "success" && nextScope.fetchStatus === "idle") {
       const scope = nextScope.data ?? null
       scopeAnswered(client, scope)
+      // `scopeAnswered` may synchronously advance `modeGeneration` when the workspace changed;
+      // bind the mode fetch check to the generation active right before `fetchQuery`.
+      const fetchGeneration = modeGeneration
       // Read always (`staleTime: 0`): Retry decides the mode again even when this workspace's is cached.
       // A mode query of this key that `useMode` mounts meanwhile joins this read.
-      return client.fetchQuery({ ...modeQuery(scope), staleTime: 0 }).then(() => true, () => false)
+      const ok = await client.fetchQuery({ ...modeQuery(scope), staleTime: 0 }).then(
+        (mode) => completedModeGenerations.get(mode) === fetchGeneration,
+        () => false,
+      )
+      return ok && retrySerial === myRetry && modeGeneration === fetchGeneration && onlineManager.isOnline()
     }
-    if (nextScope?.status !== "error") return false
+    if (nextScope?.status !== "error" || nextScope.fetchStatus !== "idle") return false
     const outage = ["studio-mode", "outage"]
     await client.refetchQueries({ queryKey: outage, exact: true, type: "active" }, { cancelRefetch: false })
-    return client.getQueryState(outage)?.status === "success"
+    if (retrySerial !== myRetry || modeGeneration !== generation || !onlineManager.isOnline()) return false
+    const outageState = client.getQueryState<Mode>(outage)
+    return outageState?.status === "success"
+      && outageState.fetchStatus === "idle"
+      && outageState.data !== undefined
+      && completedModeGenerations.get(outageState.data) === generation
   }
   await client.refetchQueries(modeFilter, { cancelRefetch: false })
-  return client.getQueryCache().findAll(modeFilter).every((query) => query.state.status === "success")
+  if (retrySerial !== myRetry || modeGeneration !== generation || !onlineManager.isOnline()) return false
+  const active = client.getQueryCache().findAll(modeFilter)
+  return active.every((query) =>
+    query.state.status === "success"
+    && query.state.fetchStatus === "idle"
+    && typeof query.state.data === "object"
+    && query.state.data !== null
+    && completedModeGenerations.get(query.state.data) === generation,
+  )
 }
 
 /**

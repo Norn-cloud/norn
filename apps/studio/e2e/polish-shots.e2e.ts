@@ -122,12 +122,12 @@ async function setupCell(page: Page) {
 }
 
 const PAGES = [
-  { name: "home", path: "/" },
-  { name: "inbox-decisions", path: "/decisions" },
-  { name: "sources", path: "/sources" },
-  { name: "map", path: "/map" },
-  { name: "dashboards", path: "/dashboards" },
-  { name: "rules-laws", path: "/rules" },
+  { name: "home", path: "/", ready: (page: Page) => page.getByText("Approve stock adjustment for Warehouse B?").first() },
+  { name: "inbox-decisions", path: "/decisions", ready: (page: Page) => page.getByText("Approve stock adjustment for Warehouse B?").first() },
+  { name: "sources", path: "/sources", ready: (page: Page) => page.getByText("Connected systems").first() },
+  { name: "map", path: "/map", ready: (page: Page) => page.getByText("Holding").first() },
+  { name: "dashboards", path: "/dashboards", ready: (page: Page) => page.getByText("Weekly operations overview").first() },
+  { name: "rules-laws", path: "/rules", ready: (page: Page) => page.getByText("Totals match lines").first() },
 ] as const
 
 interface ModeSpec {
@@ -166,11 +166,18 @@ test.describe("Studio polish matrix (Light, Dark, Mobile 390px, RTL)", () => {
       for (const route of PAGES) {
         await page.goto(route.path)
         await expect(page.locator("h1").first(), `${mode.name} ${route.path} heading`).toBeVisible({ timeout: 20_000 })
+        await expect(route.ready(page), `${mode.name} ${route.path} settled content`).toBeVisible({ timeout: 20_000 })
         await expect(page.getByText("Connecting…", { exact: true })).toHaveCount(0)
+        await expect(page.locator('[aria-busy="true"]')).toHaveCount(0)
+        await expect(page.locator('[data-connection="unavailable"]')).toHaveCount(0)
         if (mode.locale === "ar") {
           await expect.poll(() => page.evaluate(() => document.documentElement.dir)).toBe("rtl")
         }
-        await page.waitForTimeout(300)
+        await page.evaluate(() =>
+          document.fonts.ready.then(
+            () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+          ),
+        )
 
         // Assert zero horizontal overflow on the document.
         const overflow = await page.evaluate(() => ({

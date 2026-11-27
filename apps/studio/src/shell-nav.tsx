@@ -12,7 +12,7 @@ import {
   currentIn, diffExpanded, matches, named, shown, target, visibleItems,
   type Applet, type AppletMenu, type MenuDestination, type MenuEntry, type PinnedEntry,
 } from "@/lib/nav-model"
-import type { RecentItem, RecentKind } from "@/lib/nav-storage"
+import { getOwn, type RecentItem, type RecentKind } from "@/lib/nav-storage"
 
 /**
  * The three-island shell's navigation (DESIGN.md 9.1): the applet rail, the submenu island's panel,
@@ -279,8 +279,8 @@ export function SubmenuPanel({ menu, pathname, unread, state, onFollow, close, c
   return (
     <>
       <div className="flex min-h-[52px] shrink-0 items-center gap-[4px] ps-[16px] pe-[8px] pt-[6px] pb-[4px] max-sm:min-h-[56px]">
-        <div className="grid min-w-0 flex-1 leading-tight">
-          <span id={headingId} className="truncate text-body text-foreground">{applet.label}</span>
+        <div className="flex min-w-0 flex-1 flex-col items-start leading-tight">
+          <span id={headingId} className="max-w-full truncate text-body text-foreground">{applet.label}</span>
           {context}
         </div>
         {close}
@@ -336,7 +336,7 @@ function MenuTree({ menu, full, pathname, unread, state, filtering, onFollow, la
     if (pinned.some(({ entry }) => entry.href === current)) holding.add(space)
   }
   const values = [...defaults.keys()]
-  const expanded = values.filter((value) => filtering || holding.has(value) || (state.chosen[value] ?? defaults.get(value)))
+  const expanded = values.filter((value) => filtering || holding.has(value) || (getOwn(state.chosen, value) ?? defaults.get(value)))
   const list = (key: string, items: readonly MenuEntry[]) => filtering ? { shown: items, hidden: 0 } : visibleItems(items, state.whole.has(key), current)
   const more = (key: string, hidden: number, total: number, indent: boolean) => {
     // A filtered list shows every match, so it offers neither.
