@@ -139,7 +139,9 @@ function KeyNumbers() {
   })
   return (
     <section aria-labelledby="key-numbers" className="space-y-3">
-      <h2 id="key-numbers" className="text-heading">Key numbers</h2>
+      <div className="flex flex-wrap items-baseline gap-2">
+        <h2 id="key-numbers" className="text-heading">Key numbers</h2>
+      </div>
       <LoadState
         status={metrics.status}
         data={metrics.data}

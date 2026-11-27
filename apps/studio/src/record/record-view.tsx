@@ -11,6 +11,7 @@ import { Braces, Database, EyeOff, GitBranch, History as HistoryIcon, Link2, Ref
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { PropRow, Props } from "@/components/system/props"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CopyId, DigestId, PathText } from "@/components/copy-id"
 import { FactProvenance, ProvenanceChain } from "@/components/provenance"
@@ -542,7 +543,7 @@ function HiddenTag({ revealable }: { readonly revealable: boolean }) {
 
 /** A labelled id row. */
 const Id = ({ label, value, short }: { readonly label: string; readonly value: string | null | undefined; readonly short?: number }) => (
-  <div className="flex min-w-0 flex-col gap-x-3 sm:flex-row sm:items-baseline"><dt className="shrink-0 text-meta text-muted-foreground sm:w-32">{label}</dt><dd className="min-w-0 flex-1"><DigestId value={value} short={short} /></dd></div>
+  <PropRow label={label}><DigestId value={value} short={short} /></PropRow>
 )
 
 /** Only Norn artefacts: the typed definition and its laws, the mapping, the ids that pin them, and what a recorded snapshot cannot hold. */
@@ -555,22 +556,22 @@ function Technical({ name, lineage }: { readonly name: string; readonly lineage:
   return <>
     {entity && "objectType" in entity.payload && (
       <Panel icon={KINDS.objectType.icon} label="Definition"><Well className="space-y-3 p-3">
-        <dl className="space-y-1">
+        <Props>
           <Id label="Artefact" value={`${entity.artifactId}@${entity.version}`} />
           {laws.map((law) => <Id key={law.artifactId} label="Law" value={`${law.artifactId}@${law.version}`} />)}
-        </dl>
+        </Props>
         <Code code={exactPretty(entity.payload.objectType, read.data?.numbers ?? new Map(), `/${index}/payload/objectType`)} />
       </Well></Panel>
     )}
     {lineage && (
       <Panel icon={KINDS.mapping.icon} label="Mapping and lineage"><Well className="space-y-3 p-3">
-        <dl className="space-y-1">
+        <Props>
           <Id label="Mapping" value={`${lineage.mappingPin.artifactId}@${lineage.mappingPin.version}`} />
           <Id label="Mapping sha256" value={lineage.mappingPin.sha256} short={16} />
           <Id label="Source record" value={lineage.sourceRecordRef.record} />
           <Id label="Bundle" value={lineage.bundleDigest} short={16} />
           <Id label="Document" value={lineage.documentDigest} short={16} />
-        </dl>
+        </Props>
         <DenseTable head={<TableRow><TableHead>Property</TableHead><TableHead>Rule</TableHead><TableHead>Source fields</TableHead></TableRow>}>
           {Object.entries(lineage.fieldProvenance).map(([fact, provenance]) => (
             <TableRow key={fact}><TableCell className="font-mono text-meta">{fact}</TableCell><TableCell className="font-mono text-meta">{provenance.transform}</TableCell><TableCell className="font-mono text-meta">{(provenance.sourceFields ?? []).join(", ")}</TableCell></TableRow>

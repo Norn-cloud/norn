@@ -3,7 +3,7 @@
  * the recording when no cell is connected) and the live reads themselves. Kept
  * apart from transport.ts, which finds recordings with Vite's import.meta.glob.
  */
-import { queryOptions, type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
+import { onlineManager, queryOptions, type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
 import { CellUnavailable, StudioScopeError, defaultFetch, isReadMethod, parseUnavailableDetail, readStudioScope, recordCellReachable, resolveWriteScope, sameStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
 import { NO_HOST_ERROR } from "../../../../packages/norn-sdk/src/index.ts"
@@ -518,6 +518,7 @@ function maybeInvalidateSession(client: QueryClient, nextScope: StudioScope | nu
  * Studio never falls back to recorded mode during an outage.
  */
 export function syncStudioScopeChange(client: QueryClient, nextScope: StudioScope | null | undefined): void {
+  retrySerial += 1
   if (nextScope === undefined) {
     lastObservedScope.delete(client)
     refreshMode()
@@ -576,12 +577,71 @@ export function scopeAnswered(client: QueryClient, scope: StudioScope | null): v
   }
 }
 
+const completedModeGenerationByScope = new Map<string, number>()
+let retrySerial = 0
+const retryWaiters = new Set<() => void>()
+const notifyRetryWaiters = () => {
+  for (const wake of retryWaiters) wake()
+}
+
+async function awaitRetryStep<T>(
+  myRetry: number,
+  run: () => Promise<T>,
+  onAbort: () => void,
+): Promise<{ readonly aborted: true } | { readonly aborted: false; readonly value: T }> {
+  if (retrySerial !== myRetry || !onlineManager.isOnline()) {
+    onAbort()
+    return { aborted: true }
+  }
+  let settled = false
+  let wakeAbort!: () => void
+  const aborted = new Promise<{ readonly aborted: true }>((resolve) => {
+    wakeAbort = () => {
+      if (settled) return
+      settled = true
+      onAbort()
+      resolve({ aborted: true })
+    }
+  })
+  const onRetryBump = () => {
+    if (retrySerial !== myRetry) wakeAbort()
+  }
+  retryWaiters.add(onRetryBump)
+  const unsubscribeOnline = onlineManager.subscribe((online) => {
+    if (!online) wakeAbort()
+  })
+  try {
+    const result = await Promise.race([
+      run().then(
+        (value) => ({ aborted: false as const, value }),
+        (error) => {
+          if (settled) return { aborted: true as const }
+          throw error
+        },
+      ),
+      aborted,
+    ])
+    settled = true
+    return result
+  } finally {
+    settled = true
+    retryWaiters.delete(onRetryBump)
+    unsubscribeOnline()
+  }
+}
+
 export function modeQuery(scope: StudioScope | null | undefined, enabled = true, recoveryClient?: QueryClient) {
+  const modeScopeKey = scope === undefined ? "outage" : studioScopeKey(scope)
   return queryOptions({
-    queryKey: ["studio-mode", scope === undefined ? "outage" : studioScopeKey(scope)],
+    queryKey: ["studio-mode", modeScopeKey],
     enabled,
     queryFn: async ({ signal }) => {
+      const generation = modeGeneration
       const mode = await (recoveryClient === undefined ? currentMode(browserFetch, scope, signal) : readMode(browserFetch, undefined, signal))
+      // Record by scope key (not by `mode` object identity) so TanStack Query structural sharing
+      // keeping a prior object reference never loses the completed generation marker.
+      const prevGen = completedModeGenerationByScope.get(modeScopeKey) ?? 0
+      if (generation >= prevGen) completedModeGenerationByScope.set(modeScopeKey, generation)
       // A mode read succeeded: forget the failure settled in this read's own generation for the workspace
       // it read, or a settled session outage (the session server answered this read). A success from an
       // older generation (a recovery read that outlived `refreshMode`) never clears a newer settle.
@@ -620,10 +680,110 @@ export function modeQuery(scope: StudioScope | null | undefined, enabled = true,
   })
 }
 
+async function retryModeWithMeta(client: QueryClient): Promise<{ readonly ok: boolean; readonly serial: number; readonly generation: number }> {
+  const scopeFilter = { queryKey: ["studio-scope"], type: "active" } as const
+  const modeFilter = { queryKey: ["studio-mode"], type: "active" } as const
+  // Cancel both active AND unobserved (`fetchQuery`) mode/scope probes so going offline or
+  // superseding Retry never leaves an inactive mode probe paused past its retry delay.
+  const scopeCancelFilter = { queryKey: ["studio-scope"] } as const
+  const modeCancelFilter = { queryKey: ["studio-mode"] } as const
+  const scopeState = client.getQueryState(["studio-scope"])
+  const retryScope =
+    scopeState !== undefined
+    && (scopeState.fetchStatus === "fetching" || scopeState.status === "error" || scopeState.status === "pending")
+  const cancellations = [
+    client.cancelQueries(modeCancelFilter),
+    ...(retryScope ? [client.cancelQueries(scopeCancelFilter)] : []),
+  ]
+  for (const controller of pendingModeControllers) controller.abort()
+  retrySerial += 1
+  const myRetry = retrySerial
+  notifyRetryWaiters()
+  refreshMode()
+  const generation = modeGeneration
+  const abortProbes = () => {
+    for (const controller of pendingModeControllers) controller.abort()
+    void client.cancelQueries(modeCancelFilter)
+    if (retryScope) void client.cancelQueries(scopeCancelFilter)
+  }
+  await Promise.all(cancellations)
+  if (retrySerial !== myRetry || !onlineManager.isOnline()) return { ok: false, serial: myRetry, generation }
+  if (retryScope) {
+    const scopeStep = await awaitRetryStep(
+      myRetry,
+      () => client.refetchQueries(scopeFilter, { cancelRefetch: false }),
+      abortProbes,
+    )
+    if (scopeStep.aborted || retrySerial !== myRetry || !onlineManager.isOnline()) {
+      return { ok: false, serial: myRetry, generation }
+    }
+    const nextScope = client.getQueryState<StudioScope | null>(["studio-scope"])
+    if (nextScope?.status === "success" && nextScope.fetchStatus === "idle") {
+      const scope = nextScope.data ?? null
+      scopeAnswered(client, scope)
+      // `scopeAnswered` may synchronously advance `modeGeneration` when the workspace changed;
+      // bind the mode fetch check to the generation active right before `fetchQuery`.
+      const fetchGeneration = modeGeneration
+      const scopeKey = studioScopeKey(scope)
+      // Read always (`staleTime: 0`): Retry decides the mode again even when this workspace's is cached.
+      // A mode query of this key that `useMode` mounts meanwhile joins this read.
+      const fetchStep = await awaitRetryStep(
+        myRetry,
+        () => client.fetchQuery({ ...modeQuery(scope), staleTime: 0 }).then(() => true, () => false),
+        abortProbes,
+      )
+      const ok =
+        !fetchStep.aborted
+        && fetchStep.value
+        && completedModeGenerationByScope.get(scopeKey) === fetchGeneration
+        && retrySerial === myRetry
+        && modeGeneration === fetchGeneration
+        && onlineManager.isOnline()
+      return { ok, serial: myRetry, generation: fetchGeneration }
+    }
+    if (nextScope?.status !== "error" || nextScope.fetchStatus !== "idle") {
+      return { ok: false, serial: myRetry, generation }
+    }
+    const outage = ["studio-mode", "outage"]
+    const outageStep = await awaitRetryStep(
+      myRetry,
+      () => client.refetchQueries({ queryKey: outage, exact: true, type: "active" }, { cancelRefetch: false }),
+      abortProbes,
+    )
+    if (outageStep.aborted || retrySerial !== myRetry || modeGeneration !== generation || !onlineManager.isOnline()) {
+      return { ok: false, serial: myRetry, generation }
+    }
+    const outageState = client.getQueryState<Mode>(outage)
+    const ok =
+      outageState?.status === "success"
+      && outageState.fetchStatus === "idle"
+      && outageState.data !== undefined
+      && completedModeGenerationByScope.get("outage") === generation
+    return { ok, serial: myRetry, generation }
+  }
+  const modeStep = await awaitRetryStep(
+    myRetry,
+    () => client.refetchQueries(modeFilter, { cancelRefetch: false }),
+    abortProbes,
+  )
+  if (modeStep.aborted || retrySerial !== myRetry || modeGeneration !== generation || !onlineManager.isOnline()) {
+    return { ok: false, serial: myRetry, generation }
+  }
+  const active = client.getQueryCache().findAll(modeFilter)
+  const ok = active.every((query) =>
+    query.state.status === "success"
+    && query.state.fetchStatus === "idle"
+    && typeof query.state.data === "object"
+    && query.state.data !== null
+    && completedModeGenerationByScope.get(String(query.queryKey[1])) === generation,
+  )
+  return { ok, serial: myRetry, generation }
+}
+
 /**
  * Stop in-flight scope and mode probes (including reads the transport started directly) and start fresh
- * replacements. Resolves `true` once the page's mode is decided again, `false` when it settled in error
- * (the session or the cell still does not answer).
+ * replacements. Resolves `true` once the page's mode is decided again in this retry's generation, `false`
+ * when it settled in error, was superseded by a newer retry/scope switch, or could not run (offline/unmounted).
  *
  * When the scope is read again and answers, that answer is applied here, at once ({@link scopeAnswered}:
  * a different workspace purges the old one's reads), and that workspace's mode is read here too, not
@@ -631,36 +791,7 @@ export function modeQuery(scope: StudioScope | null | undefined, enabled = true,
  * reads again next would discover the scope a second time or read in the old workspace.
  */
 export async function retryMode(client: QueryClient): Promise<boolean> {
-  const scopeFilter = { queryKey: ["studio-scope"], type: "active" } as const
-  const modeFilter = { queryKey: ["studio-mode"], type: "active" } as const
-  const scopeState = client.getQueryState(["studio-scope"])
-  const retryScope =
-    scopeState !== undefined
-    && (scopeState.fetchStatus === "fetching" || scopeState.status === "error" || scopeState.status === "pending")
-  const cancellations = [
-    client.cancelQueries(modeFilter),
-    ...(retryScope ? [client.cancelQueries(scopeFilter)] : []),
-  ]
-  for (const controller of pendingModeControllers) controller.abort()
-  refreshMode()
-  await Promise.all(cancellations)
-  if (retryScope) {
-    await client.refetchQueries(scopeFilter, { cancelRefetch: false })
-    const nextScope = client.getQueryState<StudioScope | null>(["studio-scope"])
-    if (nextScope?.status === "success") {
-      const scope = nextScope.data ?? null
-      scopeAnswered(client, scope)
-      // Read always (`staleTime: 0`): Retry decides the mode again even when this workspace's is cached.
-      // A mode query of this key that `useMode` mounts meanwhile joins this read.
-      return client.fetchQuery({ ...modeQuery(scope), staleTime: 0 }).then(() => true, () => false)
-    }
-    if (nextScope?.status !== "error") return false
-    const outage = ["studio-mode", "outage"]
-    await client.refetchQueries({ queryKey: outage, exact: true, type: "active" }, { cancelRefetch: false })
-    return client.getQueryState(outage)?.status === "success"
-  }
-  await client.refetchQueries(modeFilter, { cancelRefetch: false })
-  return client.getQueryCache().findAll(modeFilter).every((query) => query.state.status === "success")
+  return (await retryModeWithMeta(client)).ok
 }
 
 /**
@@ -684,15 +815,26 @@ function holdsRefusal(data: unknown): boolean {
  * that did not answer again (each with its own automatic retries, keeping Retry disabled meanwhile).
  * Resolves when both are done, so a Retry button can stay disabled until then.
  */
-export async function retryWorkspace(client: QueryClient): Promise<void> {
-  if (!await retryMode(client)) return
-  await client.invalidateQueries({
-    predicate: (query) => {
-      const head = query.queryKey[0]
-      if (head === "studio-scope" || head === "studio-mode") return false
-      return query.state.status === "error" || holdsRefusal(query.state.data)
-    },
-  }, { cancelRefetch: false })
+export async function retryWorkspace(client: QueryClient): Promise<boolean> {
+  const result = await retryModeWithMeta(client)
+  if (!result.ok || retrySerial !== result.serial || modeGeneration !== result.generation || !onlineManager.isOnline()) {
+    return false
+  }
+  const invalidateStep = await awaitRetryStep(
+    result.serial,
+    () => client.invalidateQueries({
+      predicate: (query) => {
+        const head = query.queryKey[0]
+        if (head === "studio-scope" || head === "studio-mode") return false
+        return query.state.status === "error" || holdsRefusal(query.state.data)
+      },
+    }, { cancelRefetch: false }),
+    () => {},
+  )
+  return !invalidateStep.aborted
+    && retrySerial === result.serial
+    && modeGeneration === result.generation
+    && onlineManager.isOnline()
 }
 
 /** Forget the decided mode, so the next read takes the cell's current catalog (after a load installs a new type or scope changes). */
