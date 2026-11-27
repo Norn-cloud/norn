@@ -2422,10 +2422,13 @@ fn clock_order_documents(with_clock: bool) -> Vec<Value> {
             "writeMode": { "kind": "create_only" }
         }
     });
-    if with_clock {
-        payload["derive"] = json!([
-            { "field": "stamped_at", "expression": "clock.nowIso", "inputRequired": false }
-        ]);
+    if with_clock && let Some(obj) = payload.as_object_mut() {
+        obj.insert(
+            "derive".to_owned(),
+            json!([
+                { "field": "stamped_at", "expression": "clock.nowIso", "inputRequired": false }
+            ]),
+        );
     }
     let create = envelope(
         "test.ClockOrder.create.action",
@@ -2621,13 +2624,22 @@ fn conditional_when_gate_allows_excluded_clock_action_and_refuses_matching() {
 #[test]
 fn approval_admission_refuses_caller_required_clock_derivation() {
     let mut docs = clock_order_documents(false);
-    docs[1]["payload"]["derive"] = json!([
-        {
-            "field": "stamped_at",
-            "expression": "clock.nowIso",
-            "inputRequired": true
-        }
-    ]);
+    if let Some(obj) = docs
+        .get_mut(1)
+        .and_then(|doc| doc.get_mut("payload"))
+        .and_then(Value::as_object_mut)
+    {
+        obj.insert(
+            "derive".to_owned(),
+            json!([
+                {
+                    "field": "stamped_at",
+                    "expression": "clock.nowIso",
+                    "inputRequired": true
+                }
+            ]),
+        );
+    }
     let host = write_call_host(&docs);
     let scope_query = crate::scope::ScopeQuery {
         org_id: Some("org_demo".into()),
