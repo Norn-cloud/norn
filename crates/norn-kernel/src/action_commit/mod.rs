@@ -612,7 +612,16 @@ where
         predicate_reads,
     };
     let reference_reads = (reference_only && !generated_key)
-        .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
+        .then(|| {
+            reference_read_proof(
+                catalog,
+                call.action,
+                authorizer,
+                &commit,
+                &target,
+                &effective_input,
+            )
+        })
         .flatten();
     // ACTOR-STAMP-1: the proof binds this exact transaction; only it admits the stamp.
     let stamp =

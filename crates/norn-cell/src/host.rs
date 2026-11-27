@@ -1899,6 +1899,36 @@ where
         true
     }
 
+    fn supports_projected_read(
+        &self,
+        object_type: &norn_ir::ObjectTypeName,
+        properties: &[&str],
+    ) -> bool {
+        let model = self.store.model();
+        let mut found = false;
+        for def in model.object_types() {
+            if !model.is_a(def.name.as_str(), object_type.as_str()) {
+                continue;
+            }
+            found = true;
+            let Ok(tables) = model.tables(def.name.as_str()) else {
+                return false;
+            };
+            let physical = |property: &str| {
+                tables.iter().any(|table| {
+                    table
+                        .columns
+                        .iter()
+                        .any(|col| col.property.as_str() == property && col.column.is_some())
+                })
+            };
+            if !properties.iter().all(|property| physical(property)) {
+                return false;
+            }
+        }
+        found
+    }
+
     fn load_reference(
         &self,
         key: &FactKey,
@@ -1930,6 +1960,49 @@ where
             concrete_type,
             state: FactState { version, values },
         }))
+    }
+
+    fn load_projected(
+        &self,
+        key: &FactKey,
+        properties: &[&str],
+        max_bytes: u64,
+    ) -> Result<Option<BoundedFact>, CellError> {
+        if properties.is_empty() {
+            return self.load_reference(key, max_bytes);
+        }
+        let reader = self.store.read();
+        let profile = norn_ir::ResourceLimitProfile::norn_limits_v1();
+        let mut limits = ReactiveLimits::from_profile(&profile);
+        limits.max_candidate_bytes_per_commit = max_bytes;
+        limits.max_scan = 1;
+        let mut budget = DecodeBudget::new(&limits);
+        let version = version_of(&reader, key)?;
+        let state = match reader.object_properties_with_budget(
+            MAIN_WORLD,
+            key.object_type.as_str(),
+            &key.key,
+            properties,
+            &mut budget,
+        )? {
+            BudgetedRead::Found(record) => BoundedFact {
+                concrete_type: Some(norn_ir::ObjectTypeName(record.object_type)),
+                state: FactState {
+                    version,
+                    values: Some(record.values),
+                },
+            },
+            BudgetedRead::Missing => BoundedFact {
+                concrete_type: None,
+                state: FactState {
+                    version,
+                    values: None,
+                },
+            },
+            BudgetedRead::Exhausted => return Ok(None),
+        };
+        reader.refuse_disputed_subject(key)?;
+        Ok(Some(state))
     }
 
     fn load_bounded(
@@ -2076,12 +2149,20 @@ where
         if !proof.validates(&commit) {
             return Err(CommitError::ObservationAuthorization);
         }
+        // Drop to whole-object lineage if the kernel's catalog omitted or
+        // differed from the governing-law set this store enforces.
+        let (references, property_reads) =
+            if proof.matches_governing_laws(self.store.model().law_artifacts()) {
+                (proof.reference_reads(), proof.property_reads())
+            } else {
+                (&[][..], &[][..])
+            };
         self.commit_admitted(
             commit,
             CommitOptions {
                 quantity: quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
-                references: proof.reference_reads(),
-                property_reads: proof.property_reads(),
+                references,
+                property_reads,
                 ..Default::default()
             },
         )
