@@ -697,6 +697,7 @@ fn begin<E: SqlEngine>(
             let (code, message) = error.code_and_message();
             fail(code, message)
         })?;
+    run.id = format!("{}/g{}", run.id, lease.generation);
     run.lease = Some(lease.clone());
     let (profile, payload, expected_binding) = capture::load_connector_profile(host, config)?;
     run.mapping_binding = Some(expected_binding.clone());
@@ -1150,17 +1151,13 @@ fn report<E: SqlEngine>(
     );
     let profile = connect_profile();
     let now = ended_ms.unwrap_or(run.started_ms);
-    let version = match &run.lease {
-        Some(lease) => format!("{}/g{}/{phase}", run.id, lease.generation),
-        None => format!("{}/{phase}", run.id),
-    };
     let batch: Vec<_> = rows
         .into_iter()
         .filter_map(|(dataset, source_id, payload)| {
             let row = crate::pull::Row {
                 dataset: dataset.to_owned(),
                 source_id,
-                version: version.clone(),
+                version: format!("{}/{phase}", run.id),
                 payload,
             };
             observation(&profile, &row, now).ok().map(|raw| {

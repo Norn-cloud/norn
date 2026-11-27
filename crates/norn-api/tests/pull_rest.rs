@@ -645,16 +645,53 @@ fn another_cell_never_syncs_with_this_cells_connection_or_secret() -> Result<(),
         manual
             .claim("erpnext.other", Trigger::Manual, "user:admin@other", t0)
             .map_err(|error| format!("their own connection: {error:?}"))?;
+        let Step::Done(manual_summary) = manual.step(&host, "erpnext.other", None, t0) else {
+            panic!("expected failed manual run");
+        };
+        assert_eq!(manual_summary.outcome, "failed", "{manual_summary:#?}");
         assert_eq!(
-            failed_at_once(&host, &mut manual, "erpnext.other"),
-            "source.secret_unbound"
+            manual_summary.error.as_ref().map(|(c, _)| c.as_str()),
+            Some("source.secret_unbound")
         );
-        // Scheduled: only their own connection is ever due, and it fails the same way.
+        // Scheduled: only their own connection is ever due, and it fails the same way
+        // while keeping a distinct durable `source.SyncRun` record at the same timestamp.
         let mut scheduled = sources_in(&other, &config);
         assert_eq!(scheduled.due(t0).as_deref(), Some("erpnext.other"));
+        let Step::Done(sched_summary) = scheduled.step(&host, "erpnext.other", None, t0) else {
+            panic!("expected failed scheduled run");
+        };
+        assert_eq!(sched_summary.outcome, "failed", "{sched_summary:#?}");
         assert_eq!(
-            failed_at_once(&host, &mut scheduled, "erpnext.other"),
-            "source.secret_unbound"
+            sched_summary.error.as_ref().map(|(c, _)| c.as_str()),
+            Some("source.secret_unbound")
+        );
+        assert_ne!(
+            manual_summary.run, sched_summary.run,
+            "same-ms pull runs must record distinct durable run identities"
+        );
+        let manual_run = host
+            .host_object("source.SyncRun", &manual_summary.run)
+            .expect("read manual run")
+            .expect("manual SyncRun preserved");
+        assert_eq!(
+            manual_run.get("trigger").and_then(RuntimeValue::as_str),
+            Some("manual")
+        );
+        assert_eq!(
+            manual_run.get("run_by").and_then(RuntimeValue::as_str),
+            Some("user:admin@other")
+        );
+        let sched_run = host
+            .host_object("source.SyncRun", &sched_summary.run)
+            .expect("read scheduled run")
+            .expect("scheduled SyncRun recorded");
+        assert_eq!(
+            sched_run.get("trigger").and_then(RuntimeValue::as_str),
+            Some("schedule")
+        );
+        assert_eq!(
+            sched_run.get("run_by").and_then(RuntimeValue::as_str),
+            Some("connection:erpnext.other")
         );
         assert_eq!(scheduled.due(t0), None, "nothing else is theirs to sync");
         // The first cell's connection, stepped in their cell, never starts.
@@ -2098,6 +2135,134 @@ fn a_cell_without_connection_records_restores_no_schedule() {
     assert_eq!(sources.next_due(now), Some(now));
 }
 
+struct OneShotLedgerFaultEngine {
+    inner: norn_cell::engine::NativeEngine,
+    fail_next_ledger: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl norn_cell::engine::SqlEngine for OneShotLedgerFaultEngine {
+    fn execute(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<(), norn_cell::CellError> {
+        if sql.contains("_norn_ledger")
+            && self
+                .fail_next_ledger
+                .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            return Err(norn_cell::CellError::Engine(
+                "injected mid-page ledger fault".to_owned(),
+            ));
+        }
+        self.inner.execute(sql, params)
+    }
+
+    fn query(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<Vec<Vec<norn_cell::engine::SqlValue>>, norn_cell::CellError> {
+        self.inner.query(sql, params)
+    }
+
+    fn execute_batch(&self, sql: &str) -> Result<(), norn_cell::CellError> {
+        self.inner.execute_batch(sql)
+    }
+
+    fn transaction<T, X: From<norn_cell::CellError>>(
+        &self,
+        f: impl FnOnce() -> Result<T, X>,
+    ) -> Result<T, X> {
+        self.inner.transaction(f)
+    }
+
+    fn platform_table_globs(&self) -> &'static [&'static str] {
+        self.inner.platform_table_globs()
+    }
+
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
+
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, norn_cell::CellError> {
+        self.inner.read_cache_revision()
+    }
+
+    fn external_data_version(&self) -> Result<Option<u64>, norn_cell::CellError> {
+        self.inner.external_data_version()
+    }
+
+    fn admitted(&self) -> Result<(), norn_cell::CellError> {
+        self.inner.admitted()
+    }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, norn_cell::CellError>,
+    ) -> Result<T, norn_cell::CellError> {
+        self.inner.definition_writes(f)
+    }
+}
+
+fn faultable_owning_host(
+    fail_next_ledger: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> DevHost<OneShotLedgerFaultEngine> {
+    let arts = artifacts();
+    let (base, candidate): (Vec<_>, Vec<_>) = arts
+        .iter()
+        .cloned()
+        .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
+    let values = |set: &[ArtifactEnvelope]| -> Vec<RuntimeValue> {
+        set.iter()
+            .map(|a| {
+                RuntimeValue::from_json(serde_json::to_value(a).expect("wire")).expect("value")
+            })
+            .collect()
+    };
+    let srcs = ReceiptSources::new(&values(&candidate), &values(&base)).expect("sources");
+    let checked = check_artifact_set_with_receipt(
+        &srcs,
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &base,
+            tenant: None,
+        },
+        &ResourceLimitProfile::norn_limits_v1(),
+    )
+    .expect("checked");
+    assert!(checked.receipt.admitted, "{:#?}", checked.diagnostics);
+    let model = norn_api::kernel_set::serving_model(&arts).expect("serving model");
+    let input = InstalledDefinitionInput {
+        canonical_set: String::from_utf8(
+            RuntimeValue::from_json(serde_json::to_value(&arts).expect("set"))
+                .expect("value")
+                .canonical_json()
+                .expect("canonical"),
+        )
+        .expect("UTF-8"),
+        registry: vec![],
+        receipt_sha256: checked.receipt.content_sha256().expect("digest"),
+        admission_receipt: Some(
+            String::from_utf8(checked.receipt.canonical_json().expect("receipt")).expect("UTF-8"),
+        ),
+        readmission: None,
+        diff: json!({}),
+        installed_at: 1,
+        layout: None,
+    };
+    let engine = OneShotLedgerFaultEngine {
+        inner: norn_cell::engine::NativeEngine::open_in_memory().expect("sqlite"),
+        fail_next_ledger,
+    };
+    let mut store = CellStore::from_engine(engine, model.clone()).expect("store");
+    let scope = cell_scope();
+    store
+        .install_definitions(model, input, Some(0), &scope.key())
+        .expect("install");
+    DevHost::from_store(store, scope, |_| BTreeMap::new()).expect("owning host")
+}
+
 /// PULL-WATERMARK-1: a mid-page ingest failure must NOT persist the accepted
 /// page's advanced watermark for rows still waiting in the drain queue.
 #[test]
@@ -2183,4 +2348,121 @@ fn a_mid_page_ingest_failure_does_not_advance_the_durable_watermark() {
         "failed mid-page drain must not advance the durable cursor past uncaptured rows"
     );
     assert_eq!(retry_req.body, first_req.body);
+
+    // Same-cell mid-page drain fault on a single lease-owning host: the failed
+    // end report commits `status = "failed"` and `watermark = "{}"`, leaving
+    // the unfinished page in `_norn_source_pending`, and a restart recovers
+    // from that durable state before advancing `source.Connection.watermark`.
+    let fail_next_ledger = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let owning_host = faultable_owning_host(std::sync::Arc::clone(&fail_next_ledger));
+    let mut owning = self::sources();
+    owning
+        .claim("odoo.rest", Trigger::Manual, "user:a", EXTRACTED_AT_MS)
+        .expect("owning claim");
+    owning.pace("odoo.rest", 1);
+    let Step::Request(own_req) = owning.step(&owning_host, "odoo.rest", None, EXTRACTED_AT_MS)
+    else {
+        panic!("expected owning initial request");
+    };
+    let own_feed = profile
+        .feeds
+        .iter()
+        .find(|f| own_req.url.contains(f.request.path.as_str()))
+        .expect("owning feed");
+    let (own_status, own_body) = recorded("odoo")
+        .remove(&own_feed.dataset)
+        .expect("owning multi-row page");
+    let own_step = owning.step(
+        &owning_host,
+        "odoo.rest",
+        Some((own_status, own_body.to_string().as_bytes())),
+        EXTRACTED_AT_MS,
+    );
+    assert!(matches!(own_step, Step::Continue));
+    fail_next_ledger.store(true, std::sync::atomic::Ordering::Release);
+    let Step::Done(own_failed) = owning.step(&owning_host, "odoo.rest", None, EXTRACTED_AT_MS + 1)
+    else {
+        panic!("same-cell ledger fault must terminate the run");
+    };
+    assert_eq!(own_failed.outcome, "failed");
+    let own_conn = owning_host
+        .host_object("source.Connection", "odoo.rest")
+        .expect("read owning connection")
+        .expect("owning end report recorded");
+    assert_eq!(
+        own_conn.get("status").and_then(RuntimeValue::as_str),
+        Some("failed")
+    );
+    assert_eq!(
+        own_conn.get("watermark"),
+        Some(&RuntimeValue::String("{}".into())),
+        "same-cell failed end report must not advance watermark past uncaptured rows: {own_conn:?}"
+    );
+    assert!(
+        !owning_host
+            .pending_source_captures("odoo.rest")
+            .expect("pending")
+            .is_empty(),
+        "stranded mid-page rows must remain in _norn_source_pending"
+    );
+
+    // Restarting on the same owning cell recovers the stranded pending rows
+    // and advances `source.Connection.watermark` once drained.
+    let mut recover = self::sources();
+    recover
+        .claim("odoo.rest", Trigger::Manual, "user:a", EXTRACTED_AT_MS + 2)
+        .expect("recover claim");
+    let mut step = recover.step(&owning_host, "odoo.rest", None, EXTRACTED_AT_MS + 2);
+    let mut t = EXTRACTED_AT_MS + 2;
+    let recovered = loop {
+        match step {
+            Step::Done(summary) => break summary,
+            Step::Continue => {
+                t += 1;
+                step = recover.step(&owning_host, "odoo.rest", None, t);
+            }
+            Step::Request(req) => {
+                let req_feed = profile
+                    .feeds
+                    .iter()
+                    .find(|f| req.url.contains(f.request.path.as_str()))
+                    .expect("feed");
+                let empty = empty_page(&profile, &req_feed.dataset);
+                t += 1;
+                step = recover.step(
+                    &owning_host,
+                    "odoo.rest",
+                    Some((200, empty.to_string().as_bytes())),
+                    t,
+                );
+            }
+        }
+    };
+    assert_eq!(recovered.outcome, "ok", "{recovered:#?}");
+    assert!(
+        owning_host
+            .pending_source_captures("odoo.rest")
+            .expect("pending after recovery")
+            .is_empty()
+    );
+    let recovered_conn = owning_host
+        .host_object("source.Connection", "odoo.rest")
+        .expect("read recovered connection")
+        .expect("recovered connection");
+    assert_eq!(
+        recovered_conn.get("status").and_then(RuntimeValue::as_str),
+        Some("ok")
+    );
+    let recovered_wm: BTreeMap<String, Value> = serde_json::from_str(
+        recovered_conn
+            .get("watermark")
+            .and_then(RuntimeValue::as_str)
+            .expect("recovered watermark"),
+    )
+    .expect("watermark json");
+    assert!(
+        recovered_wm.contains_key(&own_feed.dataset),
+        "recovered watermark must contain drained feed {}: {recovered_wm:?}",
+        own_feed.dataset
+    );
 }

@@ -1943,7 +1943,7 @@ mod tests {
         let (rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
         let delivered: Vec<_> = rows.iter().map(|(raw, _)| raw.clone()).collect();
         let (advance, orig_records, v2_digest) = {
-            let host = reopen_native_host(&artifacts, db.path());
+            let (host, _, _) = open_faultable_host(&artifacts, Some(db.path()));
             let lease = host
                 .acquire_source_lease("erpnext.rest", "run-v2-upgrade", T0, RUN_LEASE_MS)
                 .expect("lease");
@@ -1983,16 +1983,6 @@ mod tests {
                     ],
                 )
                 .expect("rewrite to v2 digest");
-            engine
-                .execute(
-                    "DELETE FROM \"_norn_source_pending\" \
-                     WHERE \"connection_id\" = ?1 AND \"dataset\" = ?2",
-                    &[
-                        SqlValue::Text("erpnext.rest".into()),
-                        SqlValue::Text(dataset.clone()),
-                    ],
-                )
-                .expect("clear post-complete v3 pending row");
         }
         let reopened = reopen_native_host(&artifacts, db.path());
         let norn_api::host::SourceCapturePlan::Captured(replayed) = reopened
@@ -2129,7 +2119,7 @@ mod tests {
         composed_rows[0].1.partition = "Party-\u{00e9}".into();
         let delivered: Vec<_> = decomposed_rows.iter().map(|(raw, _)| raw.clone()).collect();
         let (advance, orig_records, v2_digest) = {
-            let host = reopen_native_host(&artifacts, db.path());
+            let (host, _, _) = open_faultable_host(&artifacts, Some(db.path()));
             let lease = host
                 .acquire_source_lease("erpnext.rest", "run-decomposed", T0, RUN_LEASE_MS)
                 .expect("lease");
