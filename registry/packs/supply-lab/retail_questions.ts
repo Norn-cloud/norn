@@ -146,11 +146,12 @@ export const PosFeedRevenueWeekly = Norn.question({
 
 /**
  * Declared read-only Retail Combined Management View dashboard (`READ-LOCAL-1`):
- * includes only tiles that are either cost-independent or emit explicit `null`
- * (withheld) on unverified / missing-cost partitions (never rendering misleading
- * zero sums for missing-cost rows or unverified availability). Raw cost-partitioned
- * margin/valuation and availability coverage are enforced through the shipped
- * `RetailCombinedViewCoverage` manifest (`retail.coverage.json`).
+ * includes only live, non-rollup tiles that are cost-independent (never
+ * rendering misleading zero sums for missing-cost rows, unreconciled
+ * availability, or unverified/stale commercial KPI rollups). Cost-partitioned
+ * margin/valuation, reconciled availability, and weekly WOS/GMROI rollups are
+ * served exclusively through the shipped `RetailCombinedViewCoverage` manifest
+ * (`questions/retail.coverage.json`) evaluated by `evaluate_combined_management_view_from_spec`.
  */
 export const RetailCombinedManagementView = Norn.dashboard({
   title: "Retail combined management view (read-only; not consolidated financial statements)",
@@ -160,8 +161,6 @@ export const RetailCombinedManagementView = Norn.dashboard({
     { title: "Store on-hand, weekly", question: StoreOnHandWeekly, view: "line" },
     { title: "Lot receipt aging cohorts, weekly", question: LotReceivedAgingWeekly, view: "bar" },
     { title: "Store sell-through, weekly", question: StoreSellThroughWeekly, view: "line" },
-    { title: "Store weeks of supply, weekly", question: StoreWeeksOfSupplyWeekly, view: "line" },
-    { title: "Store GMROI, weekly", question: StoreGmroiWeekly, view: "line" },
     { title: "POS feed revenue, weekly", question: PosFeedRevenueWeekly, view: "bar" },
   ],
 })

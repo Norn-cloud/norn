@@ -3795,7 +3795,7 @@ fn load_retail_coverage_spec() -> Result<CellCoverageSpec, String> {
     let text =
         fs::read_to_string(repo().join("registry/packs/supply-lab/questions/retail.coverage.json"))
             .map_err(|e| format!("retail.coverage.json: {e}"))?;
-    serde_json::from_str(&text).map_err(|e| format!("decode retail.coverage.json: {e}"))
+    CellCoverageSpec::from_json_str(&text).map_err(|e| format!("decode retail.coverage.json: {e}"))
 }
 
 fn load_spec_plans(
@@ -3848,6 +3848,7 @@ fn evaluate_single_spec_cut(
         context: book.query_context(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values,
+        min_disclosed_bucket: 2,
         read_frontier: &frontier,
         authorize_transform: &allow_tf,
         row_access: &allow_all,
@@ -3886,6 +3887,7 @@ fn evaluate_two_cell_report(
             context: sole.query_context(),
             handle_key: &TEST_HANDLE_KEY,
             whole_world_values: false,
+            min_disclosed_bucket: 2,
             read_frontier: &sole_frontier,
             authorize_transform: &allow_tf,
             row_access: &allow_all,
@@ -3899,6 +3901,7 @@ fn evaluate_two_cell_report(
             context: partner.query_context(),
             handle_key: &TEST_HANDLE_KEY,
             whole_world_values: false,
+            min_disclosed_bucket: 2,
             read_frontier: &partner_frontier,
             authorize_transform: &allow_tf,
             row_access: &allow_all,
@@ -3955,6 +3958,8 @@ fn verify_library_combined_view_report(
         "supply.retail.available_count_reconciliation",
         "supply.retail.rollup_sales_reconciliation",
         "supply.retail.rollup_margin_reconciliation",
+        "supply.retail.rollup_on_hand_reconciliation",
+        "supply.retail.rollup_closing_value_reconciliation",
         "supply.retail.store_weeks_of_supply_coverage",
         "supply.retail.store_gmroi_coverage",
     ] {
@@ -3989,7 +3994,14 @@ fn verify_library_combined_view_report(
     );
     assert_ne!(disclosed_rev.lineage_ref, raw_rev.lineage_ref);
 
-    // Duplicate cell identity must refuse fail-closed.
+    verify_duplicate_cell_refusal(sole)?;
+    verify_library_cut_row_access_gate(partner)?;
+    verify_expected_grain_missing_sku_gate()?;
+    verify_shipped_phantom_week_and_late_sale_gates()?;
+    Ok(report)
+}
+
+fn verify_duplicate_cell_refusal(sole: &EntityBook) -> Result<(), String> {
     let dup = evaluate_two_cell_report(sole, "LE-SOLE", sole, "LE-SOLE", |_, _, plan, ctx| {
         sole.cell()
             .map_err(CellError::Engine)?
@@ -4000,15 +4012,13 @@ fn verify_library_combined_view_report(
         dup.is_err(),
         "duplicate cell_id in combined view must refuse"
     );
-    verify_library_cut_row_access_gate(partner)?;
-    verify_expected_grain_missing_sku_gate()?;
-    verify_shipped_phantom_week_and_late_sale_gates()?;
-    Ok(report)
+    Ok(())
 }
 
 fn verify_shipped_phantom_week_and_late_sale_gates() -> Result<(), String> {
     let spec = load_retail_coverage_spec()?;
-    // 1. Late POS sale invalidates rollup via shipped reconciliation gates; `supply.store_kpi.refresh` restores complete!
+    // 1. Out-of-window POS sale (week `2026-09-07`) must NOT invalidate the `2026-08-31` rollup;
+    //    a late POS sale inside `2026-08-31` MUST invalidate it until `supply.store_kpi.refresh`.
     let mut partner = EntityBook::open(
         PARTNER_CELL_ID,
         "org_family_partnership",
@@ -4026,6 +4036,23 @@ fn verify_shipped_phantom_week_and_late_sale_gates() -> Result<(), String> {
     seed_partner_operations(&mut partner)?;
     seed_partner_commercial_rollup(&mut partner)?;
     ingest_baseline_entity_feeds(&mut sole_dummy, &mut partner)?;
+    partner.ok(
+        "supply.pos_sale.record",
+        "clerk:hana",
+        json!({
+            "sale_id": "SALE-P1-NEXT-WK", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
+            "sold_qty": "1", "unit": "each", "net_revenue": "400", "applied_unit_cost": "250",
+            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
+            "cost_status": "costed", "costed_ref": "COST-RING-1",
+            "currency": "USD", "sold_at": "2026-09-08T10:00:00Z"
+        }),
+    )?;
+    let out_of_window = evaluate_single_spec_cut(&partner, "LE-PARTNER", &spec, false)?;
+    assert!(
+        out_of_window.complete,
+        "out-of-week sale must not invalidate 2026-08-31 rollup: {:?}",
+        out_of_window.failed_coverage_gates
+    );
     partner.ok(
         "supply.pos_sale.record",
         "clerk:hana",
@@ -4070,7 +4097,75 @@ fn verify_shipped_phantom_week_and_late_sale_gates() -> Result<(), String> {
     )?;
     let refreshed = evaluate_single_spec_cut(&partner, "LE-PARTNER", &spec, false)?;
     assert!(refreshed.complete, "{:?}", refreshed.failed_coverage_gates);
+    verify_shipped_rollup_stock_staleness(&mut partner, &spec)?;
     verify_shipped_phantom_and_stale_week_gates(&mut partner, &spec)
+}
+
+fn verify_shipped_rollup_stock_staleness(
+    partner: &mut EntityBook,
+    spec: &CellCoverageSpec,
+) -> Result<(), String> {
+    // 1b. A lot depletion + matching recount effective before `period_end` must invalidate
+    //     the rollup's closing quantity and valuation until `supply.store_kpi.refresh`.
+    partner.ok(
+        "supply.stock_lot.update_balance",
+        "clerk:hana",
+        json!({
+            "lot_id": "LOT-P1-W3", "remaining_qty": "10", "depleted_qty": "10",
+            "as_of": "2026-09-06T09:00:00Z", "unit_cost": "250", "stock_value": "0"
+        }),
+    )?;
+    for basis in ["on_hand", "available"] {
+        partner.ok(
+            "supply.store_count.recount",
+            "clerk:hana",
+            json!({
+                "store_count_id": format!("ST-PART-CFC-1/SKU-RING-18K/{basis}"),
+                "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
+                "on_hand_qty": "10", "unit": "each", "quantity_basis": basis,
+                "as_of": "2026-09-06T12:00:00Z", "count_source": "store_audit", "count_ref": "AUD-P2-REC"
+            }),
+        )?;
+    }
+    let stale_stock = evaluate_single_spec_cut(partner, "LE-PARTNER", spec, false)?;
+    assert!(!stale_stock.complete);
+    assert!(stale_stock.answers.is_none());
+    assert!(
+        !stale_stock
+            .failed_coverage_gates
+            .contains("supply.retail.on_hand_count_reconciliation")
+    );
+    assert!(
+        stale_stock
+            .failed_coverage_gates
+            .contains("supply.retail.rollup_on_hand_reconciliation")
+    );
+    assert!(
+        stale_stock
+            .failed_coverage_gates
+            .contains("supply.retail.rollup_closing_value_reconciliation")
+    );
+    partner.ok(
+        "supply.store_kpi.refresh",
+        "planner:omar",
+        json!({
+            "rollup_id": "KPI-ST-PART-CFC-1-W9", "store_id": "ST-PART-CFC-1",
+            "sku_id": "SKU-RING-18K", "period_week": "2026-08-31",
+            "unit": "each", "currency": "USD", "cost_status": "costed", "count_status": "verified",
+            "on_hand_count_id": "ST-PART-CFC-1/SKU-RING-18K/on_hand",
+            "opening_cut_id": "CUT-P1-2026-08-31", "count_ref": "AUD-P2-REC",
+            "count_as_of": "2026-09-06T12:00:00Z", "costed_ref": "COST-RING-1",
+            "book_epoch": "1970-01-01T00:00:00Z",
+            "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
+            "sales_weeks": 1, "on_hand_qty": "10", "avg_weekly_sales_qty": "10",
+            "weeks_of_supply": "0", "period_gross_margin": "1500",
+            "opening_stock_value": "5000", "closing_stock_value": "2500",
+            "average_inventory_value": "0", "gmroi": "0"
+        }),
+    )?;
+    let restored = evaluate_single_spec_cut(partner, "LE-PARTNER", spec, false)?;
+    assert!(restored.complete, "{:?}", restored.failed_coverage_gates);
+    Ok(())
 }
 
 fn verify_shipped_phantom_and_stale_week_gates(
@@ -4228,6 +4323,8 @@ fn verify_library_cut_row_access_gate(partner: &EntityBook) -> Result<(), String
         context: partner.query_context(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values: false,
+        member_access: &allow_all,
+        min_disclosed_bucket: 2,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &partner_frontier,
         min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4259,7 +4356,70 @@ fn verify_library_cut_row_access_gate(partner: &EntityBook) -> Result<(), String
             .contains("supply.retail.entity_management_summary")
     );
     assert!(count_snap.answers.is_none());
+    verify_library_cut_population_only_disclosure(partner, &rev_plan)?;
     verify_library_cut_hidden_and_denied_gate(partner, &rev_plan, &entity_tf_plan)
+}
+
+fn verify_library_cut_population_only_disclosure(
+    partner: &EntityBook,
+    rev_plan: &QuestionPlan,
+) -> Result<(), String> {
+    // DATA-VALUES-1 (D52/D53): a Population-only (`RowAccess::Count`) reader must never
+    // receive individual `QueryRow.members` amounts, small buckets (< min_disclosed_bucket)
+    // must be suppressed (`value: None`, empty `totals`), and `revision.hash` stays keyed
+    // even when `whole_world_values` was requested.
+    let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
+    let count_only = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Count);
+    let partner_frontier = || Ok((partner.source_cursors.clone(), partner.watermarks.clone()));
+    let (partner_key, partner_auth) = legal_entity_read_authority(partner, "LE-PARTNER");
+    let raw_rev = partner.answer("supply.retail.store_revenue_weekly")?;
+    let pop_input = CellViewInput {
+        store: partner.cell()?.store(),
+        anchor_key: &partner_key,
+        authority: &partner_auth,
+        context: partner.query_context(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: true,
+        member_access: &count_only,
+        min_disclosed_bucket: 2,
+        required_feeds: &REQUIRED_FEEDS,
+        read_frontier: &partner_frontier,
+        min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
+        evidence_types: &EVIDENCE_TYPES,
+        evidence_access: &allow_all,
+        coverage_transforms: &[],
+        reconciliation_gates: &[],
+        expected_grain_gates: &[],
+        questions: &[("supply.retail.store_revenue_weekly", rev_plan)],
+    };
+    let pop_snap = evaluate_cell_cut(&pop_input, &mut |_, plan, ctx| {
+        partner
+            .cell()
+            .map_err(CellError::Engine)?
+            .store()
+            .evaluate_question(plan, ctx, |_| Ok(true))
+    })
+    .map_err(|e| format!("population-only evaluate_cell_cut: {e}"))?;
+    assert!(pop_snap.complete);
+    let answers = pop_snap.answers.as_ref().ok_or("missing pop answers")?;
+    let rev = answers
+        .get("supply.retail.store_revenue_weekly")
+        .ok_or("missing pop revenue")?;
+    assert_eq!(
+        rev.revision.hash,
+        keyed_revision_handle(&TEST_HANDLE_KEY, &raw_rev.revision.hash)
+    );
+    assert!(!rev.rows.is_empty());
+    for row in rev.rows.values() {
+        assert!(row.suppressed, "single-member bucket must suppress");
+        assert!(row.value.is_none());
+        assert!(row.totals.is_empty());
+        for member in row.members.values() {
+            assert!(member.restricted);
+            assert!(member.amounts.is_none());
+        }
+    }
+    Ok(())
 }
 
 fn verify_library_cut_hidden_and_denied_gate(
@@ -4285,6 +4445,8 @@ fn verify_library_cut_hidden_and_denied_gate(
         context: partner.query_context(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values: false,
+        member_access: &hide_all,
+        min_disclosed_bucket: 2,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &partner_frontier,
         min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4321,6 +4483,8 @@ fn verify_library_cut_hidden_and_denied_gate(
         context: partner.query_context(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values: false,
+        member_access: &allow_all,
+        min_disclosed_bucket: 2,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &partner_frontier,
         min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4737,6 +4901,8 @@ fn evaluate_single_library_cut_with_access(
         context: book.query_context(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values: false,
+        member_access: evidence_access,
+        min_disclosed_bucket: 2,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &live_frontier,
         min_fresh_ms: book.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4782,6 +4948,8 @@ fn verify_library_cut_tampering_refusals(sole: &EntityBook) -> Result<(), String
         context: sole.query_context(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values: false,
+        member_access: &allow_all,
+        min_disclosed_bucket: 2,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &live_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4813,6 +4981,8 @@ fn verify_library_cut_tampering_refusals(sole: &EntityBook) -> Result<(), String
         context: sole.query_context(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values: false,
+        member_access: &allow_all,
+        min_disclosed_bucket: 2,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &live_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4864,6 +5034,8 @@ fn verify_library_cut_bad_authority_refusal(
         context: sole.query_context(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values: false,
+        member_access: &allow_all,
+        min_disclosed_bucket: 2,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &live_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4907,6 +5079,8 @@ fn verify_library_cut_bad_authority_refusal(
         context: sole.query_context(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values: false,
+        member_access: &allow_all,
+        min_disclosed_bucket: 2,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &shifting_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4965,6 +5139,8 @@ fn verify_library_cut_durable_cursor_mismatch(
         context: forged_ctx.clone(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values: false,
+        member_access: &allow_all,
+        min_disclosed_bucket: 2,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &forged_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -5001,6 +5177,8 @@ fn verify_library_cut_durable_cursor_mismatch(
         context: forged_ctx.clone(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values: false,
+        member_access: &allow_all,
+        min_disclosed_bucket: 2,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &forged_frontier,
         min_fresh_ms: missing.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),

@@ -23,6 +23,7 @@ export interface RetailCoverageManifest {
     readonly comparison: "eq" | "lte"
     readonly observedTimestampColumn: string | null
     readonly maxAgeMs: number | null
+    readonly expectedFilters: ReadonlyArray<readonly [string, string]>
     readonly observedFilters: ReadonlyArray<readonly [string, string]>
   }>
   readonly expectedGrainGates: ReadonlyArray<{
@@ -41,7 +42,7 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
     "supply.pos_sales",
     "supply.store_counts",
     "supply.retail_receipts",
-    "supply.supplier_costs",
+    "supply.unit_costs",
   ],
   feedMaxAgeMs: 60_000,
   evidenceTypes: [
@@ -87,6 +88,7 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
       comparison: "eq",
       observedTimestampColumn: "as_of",
       maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+      expectedFilters: [],
       observedFilters: [],
     },
     {
@@ -99,11 +101,12 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
       comparison: "lte",
       observedTimestampColumn: "as_of",
       maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+      expectedFilters: [],
       observedFilters: [],
     },
     {
       name: "supply.retail.rollup_sales_reconciliation",
-      expectedTransformId: "supply.retail.store_sales_performance",
+      expectedTransformId: "supply.retail.store_sales_weekly_operands",
       observedTransformId: "supply.retail.store_rollup_sales_operands",
       keyColumns: ["store_id", "sku_id", "unit", "currency"],
       expectedValueColumn: "sold_qty",
@@ -111,11 +114,12 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
       comparison: "eq",
       observedTimestampColumn: null,
       maxAgeMs: null,
+      expectedFilters: [["period_week", "2026-08-31"]],
       observedFilters: [["period_week", "2026-08-31"]],
     },
     {
       name: "supply.retail.rollup_margin_reconciliation",
-      expectedTransformId: "supply.retail.store_sales_performance",
+      expectedTransformId: "supply.retail.store_sales_weekly_operands",
       observedTransformId: "supply.retail.store_rollup_sales_operands",
       keyColumns: ["store_id", "sku_id", "unit", "currency"],
       expectedValueColumn: "effective_gross_margin",
@@ -123,6 +127,33 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
       comparison: "eq",
       observedTimestampColumn: null,
       maxAgeMs: null,
+      expectedFilters: [["period_week", "2026-08-31"]],
+      observedFilters: [["period_week", "2026-08-31"]],
+    },
+    {
+      name: "supply.retail.rollup_on_hand_reconciliation",
+      expectedTransformId: "supply.retail.store_active_positions",
+      observedTransformId: "supply.retail.store_rollup_sales_operands",
+      keyColumns: ["store_id", "sku_id", "unit", "currency"],
+      expectedValueColumn: "derived_on_hand_qty",
+      observedValueColumn: "on_hand_qty",
+      comparison: "eq",
+      observedTimestampColumn: null,
+      maxAgeMs: null,
+      expectedFilters: [],
+      observedFilters: [["period_week", "2026-08-31"]],
+    },
+    {
+      name: "supply.retail.rollup_closing_value_reconciliation",
+      expectedTransformId: "supply.retail.store_active_positions",
+      observedTransformId: "supply.retail.store_rollup_sales_operands",
+      keyColumns: ["store_id", "sku_id", "unit", "currency"],
+      expectedValueColumn: "derived_stock_value",
+      observedValueColumn: "closing_stock_value",
+      comparison: "eq",
+      observedTimestampColumn: null,
+      maxAgeMs: null,
+      expectedFilters: [],
       observedFilters: [["period_week", "2026-08-31"]],
     },
   ],

@@ -141,6 +141,8 @@ const StockLotProps = Schema.Struct({
   unit_cost: Schema.NullOr(Norn.decimal(4, { additivity: { kind: "non_additive" } })),
   // Immutable receipt-time lot valuation (`received_qty * unit_cost`) so GMROI opening inventory never uses current cost.
   opening_stock_value: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
+  // Additive cumulative depleted lot valuation (`depleted_qty * unit_cost`) so closing stock value is exact (`opening - depleted`).
+  depleted_stock_value: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
   stock_value: Norn.decimal(6, { additivity: { kind: "semi_additive" }, unitSource: ["currency"] }),
   currency: Currency,
 })
@@ -187,7 +189,7 @@ export const StockLotValidHolds = Norn.example("a partly sold holding lot holds"
     lot_id: "LOT-1", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 40, remaining_qty: 18, depleted_qty: 22, sell_through_rate: 0, unit: "each",
     received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z",
-    cost_status: "costed", unit_cost: 25, opening_stock_value: 1000, stock_value: 450, currency: "EGP",
+    cost_status: "costed", unit_cost: 25, opening_stock_value: 1000, depleted_stock_value: 550, stock_value: 450, currency: "EGP",
   },
   expect: "holds",
 })
@@ -197,7 +199,7 @@ export const StockLotNegativeRemainingViolated = Norn.example("a negative lot ba
     lot_id: "LOT-2", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 40, remaining_qty: -2, depleted_qty: 42, sell_through_rate: 0, unit: "each",
     received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z",
-    cost_status: "costed", unit_cost: 25, opening_stock_value: 1000, stock_value: 0, currency: "EGP",
+    cost_status: "costed", unit_cost: 25, opening_stock_value: 1000, depleted_stock_value: 1050, stock_value: 0, currency: "EGP",
   },
   expect: "violated",
 })
@@ -207,7 +209,7 @@ export const StockLotOverRemainingViolated = Norn.example("remaining above recei
     lot_id: "LOT-3", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 40, remaining_qty: 45, depleted_qty: 0, sell_through_rate: 0, unit: "each",
     received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z",
-    cost_status: "costed", unit_cost: 25, opening_stock_value: 1000, stock_value: 1125, currency: "EGP",
+    cost_status: "costed", unit_cost: 25, opening_stock_value: 1000, depleted_stock_value: 0, stock_value: 1125, currency: "EGP",
   },
   expect: "violated",
 })
@@ -215,9 +217,18 @@ export const StockLotOverRemainingViolated = Norn.example("remaining above recei
 export const StockLotCostValid = Norn.law("lot_cost_valid", {
   on: StockLot,
   must: (self) =>
-    (self.cost_status === "costed" && self.unit_cost !== null && self.opening_stock_value >= 0 && self.stock_value >= 0)
-    || (self.cost_status === "missing_cost" && self.unit_cost === null && self.opening_stock_value === 0 && self.stock_value === 0),
-  because: "A costed holding lot carries a non-null unit cost and non-negative opening/closing values; an uncosted lot carries null unit cost and zero placeholder values so totals withhold.",
+    (self.cost_status === "costed"
+      && self.unit_cost !== null
+      && self.opening_stock_value >= 0
+      && self.depleted_stock_value >= 0
+      && self.stock_value >= 0
+      && (self.depleted_stock_value + self.stock_value) === self.opening_stock_value)
+    || (self.cost_status === "missing_cost"
+      && self.unit_cost === null
+      && self.opening_stock_value === 0
+      && self.depleted_stock_value === 0
+      && self.stock_value === 0),
+  because: "A costed holding lot carries a non-null unit cost and conserves value (`depleted_stock_value + stock_value == opening_stock_value`); an uncosted lot carries null unit cost and zero placeholder values so totals withhold.",
 })
 export const StockLotMissingCostHolds = Norn.example("an explicitly uncosted lot holds", {
   of: StockLotCostValid,
@@ -225,7 +236,7 @@ export const StockLotMissingCostHolds = Norn.example("an explicitly uncosted lot
     lot_id: "LOT-4", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 20, remaining_qty: 20, depleted_qty: 0, sell_through_rate: 0, unit: "each",
     received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
-    cost_status: "missing_cost", unit_cost: null, opening_stock_value: 0, stock_value: 0, currency: "EGP",
+    cost_status: "missing_cost", unit_cost: null, opening_stock_value: 0, depleted_stock_value: 0, stock_value: 0, currency: "EGP",
   },
   expect: "holds",
 })
@@ -235,7 +246,7 @@ export const StockLotCostedWithoutPriceViolated = Norn.example("a costed lot wit
     lot_id: "LOT-5", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 20, remaining_qty: 20, depleted_qty: 0, sell_through_rate: 0, unit: "each",
     received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
-    cost_status: "costed", unit_cost: null, opening_stock_value: 0, stock_value: 0, currency: "EGP",
+    cost_status: "costed", unit_cost: null, opening_stock_value: 0, depleted_stock_value: 0, stock_value: 0, currency: "EGP",
   },
   expect: "violated",
 })
@@ -257,7 +268,7 @@ export const StockLotPositiveCostHolds = Norn.example("a lot with positive unit 
     lot_id: "LOT-6", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 20, remaining_qty: 20, depleted_qty: 0, sell_through_rate: 0, unit: "each",
     received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
-    cost_status: "costed", unit_cost: 25, opening_stock_value: 500, stock_value: 500, currency: "EGP",
+    cost_status: "costed", unit_cost: 25, opening_stock_value: 500, depleted_stock_value: 0, stock_value: 500, currency: "EGP",
   },
   expect: "holds",
 })
@@ -267,7 +278,7 @@ export const StockLotNegativeCostViolated = Norn.example("a lot with negative un
     lot_id: "LOT-7", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 20, remaining_qty: 20, depleted_qty: 0, sell_through_rate: 0, unit: "each",
     received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
-    cost_status: "costed", unit_cost: -10, opening_stock_value: 0, stock_value: 0, currency: "EGP",
+    cost_status: "costed", unit_cost: -10, opening_stock_value: 0, depleted_stock_value: 0, stock_value: 0, currency: "EGP",
   },
   expect: "violated",
 })

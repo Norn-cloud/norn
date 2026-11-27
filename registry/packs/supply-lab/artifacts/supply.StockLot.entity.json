@@ -193,6 +193,19 @@
           }
         },
         {
+          "id": "depleted_stock_value",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
           "id": "stock_value",
           "type": {
             "additivity": {

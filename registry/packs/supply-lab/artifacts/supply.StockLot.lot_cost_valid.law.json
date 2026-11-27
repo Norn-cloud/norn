@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "A costed holding lot carries a non-null unit cost and non-negative opening/closing values; an uncosted lot carries null unit cost and zero placeholder values so totals withhold.",
+  "name": "A costed holding lot carries a non-null unit cost and conserves value (`depleted_stock_value + stock_value == opening_stock_value`); an uncosted lot carries null unit cost and zero placeholder values so totals withhold.",
   "namespace": "supply",
   "payload": {
     "id": "supply.StockLot.lot_cost_valid",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/supply-lab/retail.ts"
     },
-    "rationale": "A costed holding lot carries a non-null unit cost and non-negative opening/closing values; an uncosted lot carries null unit cost and zero placeholder values so totals withhold.",
+    "rationale": "A costed holding lot carries a non-null unit cost and conserves value (`depleted_stock_value + stock_value == opening_stock_value`); an uncosted lot carries null unit cost and zero placeholder values so totals withhold.",
     "response": {
-      "expression": "((((self.cost_status == 'costed') and (self.unit_cost != null)) and (self.opening_stock_value >= 0)) and (self.stock_value >= 0)) or ((((self.cost_status == 'missing_cost') and (self.unit_cost == null)) and (self.opening_stock_value == 0)) and (self.stock_value == 0))",
+      "expression": "((((((self.cost_status == 'costed') and (self.unit_cost != null)) and (self.opening_stock_value >= 0)) and (self.depleted_stock_value >= 0)) and (self.stock_value >= 0)) and ((self.depleted_stock_value + self.stock_value) == self.opening_stock_value)) or (((((self.cost_status == 'missing_cost') and (self.unit_cost == null)) and (self.opening_stock_value == 0)) and (self.depleted_stock_value == 0)) and (self.stock_value == 0))",
       "kind": "predicate"
     },
     "scope": {

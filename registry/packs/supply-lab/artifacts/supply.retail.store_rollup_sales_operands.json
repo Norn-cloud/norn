@@ -54,6 +54,10 @@
             {
               "expression": "input.on_hand_qty",
               "name": "on_hand_qty"
+            },
+            {
+              "expression": "input.closing_stock_value",
+              "name": "closing_stock_value"
             }
           ],
           "input": "verified_only",
@@ -66,7 +70,7 @@
         "verified_only": {
           "input": "rollup",
           "op": "filter",
-          "predicate": "input.count_status == \"verified\" && input.cost_status == \"costed\""
+          "predicate": "input.count_status == \"verified\" && input.cost_status == \"costed\" && input.sales_weeks == 1"
         }
       },
       "output": "operands"

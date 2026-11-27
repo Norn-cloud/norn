@@ -28,13 +28,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::compute::lineage::{keyed_finding_handle, keyed_lineage_handle, keyed_revision_handle};
 use crate::compute::transform::{RowAccess, TransformResult, TransformRow};
-use crate::compute::{Freshness, Frontier, QueryContext, QueryResult, Watermark};
+use crate::compute::{ALL_MEMBERS, Freshness, Frontier, QueryContext, QueryResult, Watermark};
 use crate::engine::SqlEngine;
 use crate::error::CellError;
 use crate::read::{LedgerHead, ObjectRecord};
 use crate::snapshot::Main;
 use crate::source_cursor::{PendingSourceCapture, SourceCursorRecord};
 use crate::store::CellStore;
+use crate::system::GENESIS_HASH;
 
 /// Per-row authorization callback (`VIEW-READ-1` / `VIEW-ROWS-1` / `HOST-READ-2`).
 pub type RowAccessDecider<'a> = &'a dyn Fn(&ObjectRecord) -> Result<RowAccess, CellError>;
@@ -97,6 +98,8 @@ pub struct ReconciliationGate<'a> {
     pub observed_timestamp_column: Option<&'a str>,
     /// Maximum allowed age (milliseconds) relative to `QueryContext::now_ms` when `observed_timestamp_column` is set.
     pub max_age_ms: Option<u64>,
+    /// Optional exact-match column filters applied to `expected_plan` rows before reconciling.
+    pub expected_filters: &'a [(&'a str, RuntimeValue)],
     /// Optional exact-match column filters applied to `observed_plan` rows before reconciling.
     pub observed_filters: &'a [(&'a str, RuntimeValue)],
     /// Pre-evaluation authorization check for `expected_plan` (`VIEW-READ-1`).
@@ -165,6 +168,9 @@ pub struct ReconciliationSpec {
     pub observed_timestamp_column: Option<String>,
     /// Optional maximum timestamp age in milliseconds.
     pub max_age_ms: Option<u64>,
+    /// Optional exact string column filters on `expected_transform_id`.
+    #[serde(default)]
+    pub expected_filters: Vec<(String, String)>,
     /// Optional exact string column filters on `observed_transform_id`.
     #[serde(default)]
     pub observed_filters: Vec<(String, String)>,
@@ -212,6 +218,16 @@ pub struct CellCoverageSpec {
     pub expected_grain_gates: Vec<ExpectedGrainSpec>,
 }
 
+impl CellCoverageSpec {
+    /// Decode a pack-authored combined-view coverage manifest from JSON.
+    ///
+    /// # Errors
+    /// Returns `CellError::Encoding` if the manifest JSON is malformed or contains unknown fields.
+    pub fn from_json_str(json: &str) -> Result<Self, CellError> {
+        serde_json::from_str(json).map_err(|e| CellError::Encoding(e.to_string()))
+    }
+}
+
 /// Classification of a multi-cell read-only projection (`READ-LOCAL-1`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -236,6 +252,10 @@ pub struct CellViewInput<'a, E: SqlEngine> {
     pub handle_key: &'a [u8],
     /// Whether the caller holds whole-world unmarked Values disclosure (`DATA-VALUES-1`).
     pub whole_world_values: bool,
+    /// Per-member Values access callback applied to every [`QueryResult`] row (`DATA-VALUES-1`).
+    pub member_access: RowAccessDecider<'a>,
+    /// Minimum bucket size disclosed when any contributing member lacks Values (`DATA-VALUES-1`, D53).
+    pub min_disclosed_bucket: usize,
     /// Required feed names whose durable cursors and live watermarks must match and be fresh.
     pub required_feeds: &'a [&'a str],
     /// Required live feed-frontier reader checked before and after evaluation so stale or
@@ -615,6 +635,13 @@ fn check_reconciliation_gate(
     };
     let mut exp_keys = HashSet::with_capacity(expected.rows.len());
     for exp_row in &expected.rows {
+        let matches_expected = gate
+            .expected_filters
+            .iter()
+            .all(|(col, want)| exp_row.values.get(*col) == Some(want));
+        if !matches_expected {
+            continue;
+        }
         let Some(key) = row_key(exp_row, gate.key_columns) else {
             return false;
         };
@@ -789,24 +816,57 @@ fn evaluate_pinned_questions<E: SqlEngine>(
     Ok(answers)
 }
 
-/// Apply `DATA-VALUES-1` (D53) keyed-handle disclosure to every evaluated
-/// [`QueryResult`] after internal pin validation.
-fn project_disclosed_answers(
-    answers: &mut BTreeMap<String, QueryResult>,
-    handle_key: &[u8],
-    whole_world_values: bool,
-) {
-    for result in answers.values_mut() {
-        if !whole_world_values && result.revision.seq != 0 {
-            result.revision.hash = keyed_revision_handle(handle_key, &result.revision.hash);
-        }
-        if !whole_world_values {
-            for finding in result.exclusions.values_mut() {
-                *finding = keyed_finding_handle(handle_key, finding);
+/// Apply `DATA-VALUES-1` (D52/D53) per-member Values withholding, minimum-bucket
+/// suppression, and keyed revision/finding/lineage handles to one [`QueryResult`]
+/// inside the caller's fenced snapshot.
+fn disclose_query_result<E: SqlEngine>(
+    input: &CellViewInput<'_, E>,
+    result: &mut QueryResult,
+) -> Result<(), CellError> {
+    let reader = input.store.read();
+    let min_bucket = input.min_disclosed_bucket.max(1);
+    let mut any_withheld = false;
+    for row in result.rows.values_mut() {
+        let mut withheld = BTreeSet::new();
+        for id in row.members.keys() {
+            let readable = reader
+                .object(&input.context.world, result.grain.as_str(), id)?
+                .map(|obj| (input.member_access)(&obj))
+                .transpose()?
+                == Some(RowAccess::Read);
+            if !readable {
+                withheld.insert(id.clone());
+                any_withheld = true;
             }
         }
-        result.lineage_ref = keyed_lineage_handle(handle_key, &result.lineage_ref);
+        if row.member_count.is_some() && !input.whole_world_values {
+            withheld.insert(ALL_MEMBERS.to_owned());
+            any_withheld = true;
+        }
+        row.withhold(|id| withheld.contains(id), min_bucket);
     }
+    let world = input.whole_world_values && !any_withheld;
+    let genesis = result.revision.seq == 0 && result.revision.hash == GENESIS_HASH;
+    if !(world || genesis) {
+        result.revision.hash = keyed_revision_handle(input.handle_key, &result.revision.hash);
+    }
+    if !world {
+        for finding in result.exclusions.values_mut() {
+            *finding = keyed_finding_handle(input.handle_key, finding);
+        }
+    }
+    result.lineage_ref = keyed_lineage_handle(input.handle_key, &result.lineage_ref);
+    Ok(())
+}
+
+fn disclose_answers<E: SqlEngine>(
+    input: &CellViewInput<'_, E>,
+    answers: &mut BTreeMap<String, QueryResult>,
+) -> Result<(), CellError> {
+    for result in answers.values_mut() {
+        disclose_query_result(input, result)?;
+    }
+    Ok(())
 }
 
 struct CutEvidence {
@@ -823,7 +883,7 @@ struct CutEvidence {
 
 fn assemble_cell_cut_snapshot<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
-    mut ev: CutEvidence,
+    ev: CutEvidence,
 ) -> CellCutSnapshot {
     let mut missing_feeds = check_missing_feeds(
         input.required_feeds,
@@ -855,9 +915,6 @@ fn assemble_cell_cut_snapshot<E: SqlEngine>(
         complete,
         all_fresh && missing_feeds.is_empty(),
     );
-    if complete {
-        project_disclosed_answers(&mut ev.answers, input.handle_key, input.whole_world_values);
-    }
     CellCutSnapshot {
         cell_id,
         scope: input.context.scope.clone(),
@@ -918,7 +975,8 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
         &durable_feeds_before.0,
         &input.context.source_cursors,
     )?;
-    let answers = evaluate_pinned_questions(input, &head_before, &definition_pin, evaluate)?;
+    let mut answers = evaluate_pinned_questions(input, &head_before, &definition_pin, evaluate)?;
+    disclose_answers(input, &mut answers)?;
     let failed_coverage_gates = evaluate_all_gates(input, &head_before, &definition_pin, &answers)?;
     let (open_findings, withheld_evidence) = count_open_findings(
         input.store,
@@ -969,11 +1027,13 @@ pub struct SpecCellBinding<'a, E: SqlEngine> {
     pub handle_key: &'a [u8],
     /// Whether the caller holds whole-world unmarked Values disclosure.
     pub whole_world_values: bool,
+    /// Minimum bucket size disclosed when any contributing member lacks Values (`DATA-VALUES-1`).
+    pub min_disclosed_bucket: usize,
     /// Required live feed-frontier reader.
     pub read_frontier: FrontierReader<'a>,
     /// Pre-evaluation transform authorization callback (`VIEW-READ-1`).
     pub authorize_transform: TransformAuthorizer<'a>,
-    /// Per-row visibility callback (`HOST-READ-2`).
+    /// Per-row visibility callback (`HOST-READ-2` / `DATA-VALUES-1`).
     pub row_access: RowAccessDecider<'a>,
     /// Admitted transforms keyed by artifact id.
     pub transforms: &'a BTreeMap<String, TransformPlan>,
@@ -985,7 +1045,8 @@ fn build_spec_reconciliation_gates<'a, E: SqlEngine>(
     spec: &'a CellCoverageSpec,
     binding: &SpecCellBinding<'a, E>,
     key_refs: &'a [Vec<&'a str>],
-    filters: &'a [Vec<(&'a str, RuntimeValue)>],
+    expected_filters: &'a [Vec<(&'a str, RuntimeValue)>],
+    observed_filters: &'a [Vec<(&'a str, RuntimeValue)>],
 ) -> Result<Vec<ReconciliationGate<'a>>, CellError> {
     let stale = || CellError::ComputeRefused("core.compute.stale_input");
     spec.reconciliation_gates
@@ -1008,7 +1069,8 @@ fn build_spec_reconciliation_gates<'a, E: SqlEngine>(
                 comparison: g.comparison,
                 observed_timestamp_column: g.observed_timestamp_column.as_deref(),
                 max_age_ms: g.max_age_ms,
-                observed_filters: &filters[idx],
+                expected_filters: &expected_filters[idx],
+                observed_filters: &observed_filters[idx],
                 authorize_expected: binding.authorize_transform,
                 authorize_observed: binding.authorize_transform,
                 row_access: binding.row_access,
@@ -1043,6 +1105,12 @@ fn build_spec_grain_gates<'a, E: SqlEngine>(
                 row_access: binding.row_access,
             })
         })
+        .collect()
+}
+
+fn string_filters(raw: &[(String, String)]) -> Vec<(&str, RuntimeValue)> {
+    raw.iter()
+        .map(|(col, val)| (col.as_str(), RuntimeValue::String(val.clone())))
         .collect()
 }
 
@@ -1089,18 +1157,23 @@ pub fn evaluate_cell_cut_from_spec<E: SqlEngine>(
         .iter()
         .map(|g| g.key_columns.iter().map(String::as_str).collect())
         .collect();
-    let recon_filters: Vec<Vec<(&str, RuntimeValue)>> = spec
+    let recon_expected_filters: Vec<Vec<(&str, RuntimeValue)>> = spec
         .reconciliation_gates
         .iter()
-        .map(|g| {
-            g.observed_filters
-                .iter()
-                .map(|(col, val)| (col.as_str(), RuntimeValue::String(val.clone())))
-                .collect()
-        })
+        .map(|g| string_filters(&g.expected_filters))
         .collect();
-    let reconciliation_gates =
-        build_spec_reconciliation_gates(spec, binding, &recon_key_refs, &recon_filters)?;
+    let recon_observed_filters: Vec<Vec<(&str, RuntimeValue)>> = spec
+        .reconciliation_gates
+        .iter()
+        .map(|g| string_filters(&g.observed_filters))
+        .collect();
+    let reconciliation_gates = build_spec_reconciliation_gates(
+        spec,
+        binding,
+        &recon_key_refs,
+        &recon_expected_filters,
+        &recon_observed_filters,
+    )?;
     let grain_col_refs: Vec<Vec<&str>> = spec
         .expected_grain_gates
         .iter()
@@ -1125,6 +1198,8 @@ pub fn evaluate_cell_cut_from_spec<E: SqlEngine>(
         context: binding.context.clone(),
         handle_key: binding.handle_key,
         whole_world_values: binding.whole_world_values,
+        member_access: binding.row_access,
+        min_disclosed_bucket: binding.min_disclosed_bucket,
         required_feeds: &required_feeds,
         read_frontier: binding.read_frontier,
         min_fresh_ms: binding.context.now_ms.saturating_sub(spec.feed_max_age_ms),

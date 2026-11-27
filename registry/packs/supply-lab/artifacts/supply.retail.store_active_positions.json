@@ -45,6 +45,10 @@
               "name": "derived_on_hand_qty"
             },
             {
+              "expression": "input.sum_opening_stock_value - input.sum_depleted_stock_value",
+              "name": "derived_stock_value"
+            },
+            {
               "expression": "input.lot_count",
               "name": "lot_count"
             },
@@ -92,6 +96,18 @@
               "fn": "sum",
               "label": "Total depleted",
               "name": "sum_depleted_qty"
+            },
+            {
+              "column": "opening_stock_value",
+              "fn": "sum",
+              "label": "Total opening value",
+              "name": "sum_opening_stock_value"
+            },
+            {
+              "column": "depleted_stock_value",
+              "fn": "sum",
+              "label": "Total depleted value",
+              "name": "sum_depleted_stock_value"
             },
             {
               "fn": "count",

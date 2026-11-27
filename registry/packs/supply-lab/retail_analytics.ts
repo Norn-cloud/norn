@@ -156,7 +156,8 @@ export const EntityManagementSummary = Norn.transform({
 
 /**
  * Active store-SKU stock positions derived from additive lot receipts minus
- * additive depletions (`remaining_qty == received_qty - depleted_qty > 0`),
+ * additive depletions (`remaining_qty == received_qty - depleted_qty > 0`,
+ * `stock_value == opening_stock_value - depleted_stock_value`),
  * providing the canonical expected-grain population for physical count
  * reconciliation and commercial KPI rollup completeness gates.
  */
@@ -171,6 +172,8 @@ export const StoreActivePositions = Norn.transform({
       measures: [
         { name: "sum_received_qty", fn: "sum", column: "received_qty", label: "Total received" },
         { name: "sum_depleted_qty", fn: "sum", column: "depleted_qty", label: "Total depleted" },
+        { name: "sum_opening_stock_value", fn: "sum", column: "opening_stock_value", label: "Total opening value" },
+        { name: "sum_depleted_stock_value", fn: "sum", column: "depleted_stock_value", label: "Total depleted value" },
         { name: "lot_count", fn: "count" },
         { name: "costed_lots", fn: "count", column: "unit_cost" },
       ],
@@ -182,6 +185,7 @@ export const StoreActivePositions = Norn.transform({
         { name: "unit", expression: "input.unit" },
         { name: "currency", expression: "input.currency" },
         { name: "derived_on_hand_qty", expression: "input.sum_received_qty - input.sum_depleted_qty" },
+        { name: "derived_stock_value", expression: "input.sum_opening_stock_value - input.sum_depleted_stock_value" },
         { name: "lot_count", expression: "input.lot_count" },
         { name: "costed_lots", expression: "input.costed_lots" },
         { name: "cost_complete", expression: "input.costed_lots == input.lot_count" },
@@ -190,6 +194,46 @@ export const StoreActivePositions = Norn.transform({
     active: { op: "filter", input: "derived", predicate: "input.derived_on_hand_qty > 0" },
   },
   output: "active",
+})
+
+/**
+ * Week-bucketed POS sales and gross-margin operands per
+ * `(store_id, sku_id, unit, currency, period_week)` so weekly commercial KPI
+ * rollups reconcile strictly against sales inside their own effective ISO week
+ * rather than all-time POS totals.
+ */
+export const StoreSalesWeeklyOperands = Norn.transform({
+  id: "supply.retail.store_sales_weekly_operands", title: "Weekly store sales operands", version: "0.1.0",
+  inputs: { sale: PosSale },
+  nodes: {
+    sale: { op: "scan", input: "sale" },
+    per_week: {
+      op: "aggregate", input: "sale",
+      groupBy: [
+        { column: "store_id" }, { column: "sku_id" }, { column: "unit" }, { column: "currency" },
+        { column: "sold_at", grain: "week", label: "Sale week" },
+      ],
+      measures: [
+        { name: "sold_qty", fn: "sum", column: "sold_qty", label: "Weekly units sold" },
+        { name: "gross_margin", fn: "sum", column: "gross_margin", label: "Weekly gross margin" },
+        { name: "sale_lines", fn: "count" },
+        { name: "costed_lines", fn: "count", column: "costed_ref" },
+      ],
+    },
+    operands: {
+      op: "project", input: "per_week", columns: [
+        { name: "store_id", expression: "input.store_id" },
+        { name: "sku_id", expression: "input.sku_id" },
+        { name: "unit", expression: "input.unit" },
+        { name: "currency", expression: "input.currency" },
+        { name: "period_week", expression: "input.sold_at" },
+        { name: "sold_qty", expression: "input.sold_qty" },
+        { name: "cost_complete", expression: "input.costed_lines == input.sale_lines" },
+        { name: "effective_gross_margin", expression: "input.costed_lines == input.sale_lines ? input.gross_margin : null" },
+      ],
+    },
+  },
+  output: "operands",
 })
 
 /** Latest governed `on_hand` physical counts per `(store_id, sku_id, unit)`. */
@@ -235,9 +279,10 @@ export const StoreAvailableCountPositions = Norn.transform({
 })
 
 /**
- * Verified and costed commercial KPI rollup sales/margin operands per
- * `(store_id, sku_id, unit, currency, period_week)` so the shipped combined
- * view fails closed whenever late POS facts make a published rollup stale.
+ * Verified and costed 1-week commercial KPI rollup operands (sales, margin,
+ * closing quantity, and closing valuation) per `(store_id, sku_id, unit,
+ * currency, period_week)` so the shipped combined view fails closed whenever
+ * late POS facts, lot corrections, or recounts make a published rollup stale.
  */
 export const StoreRollupSalesOperands = Norn.transform({
   id: "supply.retail.store_rollup_sales_operands", title: "Verified store rollup sales operands", version: "0.1.0",
@@ -246,7 +291,7 @@ export const StoreRollupSalesOperands = Norn.transform({
     rollup: { op: "scan", input: "rollup" },
     verified_only: {
       op: "filter", input: "rollup",
-      predicate: "input.count_status == \"verified\" && input.cost_status == \"costed\"",
+      predicate: "input.count_status == \"verified\" && input.cost_status == \"costed\" && input.sales_weeks == 1",
     },
     operands: {
       op: "project", input: "verified_only", columns: [
@@ -259,6 +304,7 @@ export const StoreRollupSalesOperands = Norn.transform({
         { name: "implied_sold_qty", expression: "input.avg_weekly_sales_qty * input.sales_weeks" },
         { name: "period_gross_margin", expression: "input.period_gross_margin" },
         { name: "on_hand_qty", expression: "input.on_hand_qty" },
+        { name: "closing_stock_value", expression: "input.closing_stock_value" },
       ],
     },
   },

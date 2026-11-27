@@ -3,7 +3,7 @@
     "supply.pos_sales",
     "supply.store_counts",
     "supply.retail_receipts",
-    "supply.supplier_costs"
+    "supply.unit_costs"
   ],
   "feedMaxAgeMs": 60000,
   "evidenceTypes": [
@@ -53,6 +53,7 @@
       "comparison": "eq",
       "observedTimestampColumn": "as_of",
       "maxAgeMs": 604800000,
+      "expectedFilters": [],
       "observedFilters": []
     },
     {
@@ -69,11 +70,12 @@
       "comparison": "lte",
       "observedTimestampColumn": "as_of",
       "maxAgeMs": 604800000,
+      "expectedFilters": [],
       "observedFilters": []
     },
     {
       "name": "supply.retail.rollup_sales_reconciliation",
-      "expectedTransformId": "supply.retail.store_sales_performance",
+      "expectedTransformId": "supply.retail.store_sales_weekly_operands",
       "observedTransformId": "supply.retail.store_rollup_sales_operands",
       "keyColumns": [
         "store_id",
@@ -86,6 +88,12 @@
       "comparison": "eq",
       "observedTimestampColumn": null,
       "maxAgeMs": null,
+      "expectedFilters": [
+        [
+          "period_week",
+          "2026-08-31"
+        ]
+      ],
       "observedFilters": [
         [
           "period_week",
@@ -95,7 +103,7 @@
     },
     {
       "name": "supply.retail.rollup_margin_reconciliation",
-      "expectedTransformId": "supply.retail.store_sales_performance",
+      "expectedTransformId": "supply.retail.store_sales_weekly_operands",
       "observedTransformId": "supply.retail.store_rollup_sales_operands",
       "keyColumns": [
         "store_id",
@@ -108,6 +116,58 @@
       "comparison": "eq",
       "observedTimestampColumn": null,
       "maxAgeMs": null,
+      "expectedFilters": [
+        [
+          "period_week",
+          "2026-08-31"
+        ]
+      ],
+      "observedFilters": [
+        [
+          "period_week",
+          "2026-08-31"
+        ]
+      ]
+    },
+    {
+      "name": "supply.retail.rollup_on_hand_reconciliation",
+      "expectedTransformId": "supply.retail.store_active_positions",
+      "observedTransformId": "supply.retail.store_rollup_sales_operands",
+      "keyColumns": [
+        "store_id",
+        "sku_id",
+        "unit",
+        "currency"
+      ],
+      "expectedValueColumn": "derived_on_hand_qty",
+      "observedValueColumn": "on_hand_qty",
+      "comparison": "eq",
+      "observedTimestampColumn": null,
+      "maxAgeMs": null,
+      "expectedFilters": [],
+      "observedFilters": [
+        [
+          "period_week",
+          "2026-08-31"
+        ]
+      ]
+    },
+    {
+      "name": "supply.retail.rollup_closing_value_reconciliation",
+      "expectedTransformId": "supply.retail.store_active_positions",
+      "observedTransformId": "supply.retail.store_rollup_sales_operands",
+      "keyColumns": [
+        "store_id",
+        "sku_id",
+        "unit",
+        "currency"
+      ],
+      "expectedValueColumn": "derived_stock_value",
+      "observedValueColumn": "closing_stock_value",
+      "comparison": "eq",
+      "observedTimestampColumn": null,
+      "maxAgeMs": null,
+      "expectedFilters": [],
       "observedFilters": [
         [
           "period_week",

@@ -147,6 +147,7 @@ const CostedStockLotInput = Schema.Struct({
   cost_status: CostStatus,
   unit_cost: Norn.decimal(4),
   opening_stock_value: Norn.decimal(6),
+  depleted_stock_value: Norn.decimal(6),
   stock_value: Norn.decimal(6),
   currency: Currency,
 })
@@ -165,6 +166,7 @@ const UncostedStockLotInput = Schema.Struct({
   as_of: Norn.timestamp("utc"),
   cost_status: CostStatus,
   opening_stock_value: Norn.decimal(6),
+  depleted_stock_value: Norn.decimal(6),
   stock_value: Norn.decimal(6),
   currency: Currency,
 })
@@ -173,7 +175,8 @@ const StockLotRef = Schema.Struct({ lot_id: Schema.String })
 /**
  * Open a costed store holding lot with its receipt date and custody.
  * Enforces that the lot's legal owner matches its store's owning legal entity
- * and derives `depleted_qty`, immutable `opening_stock_value`, and `stock_value` in the kernel.
+ * and derives `depleted_qty`, immutable `opening_stock_value`, `depleted_stock_value`,
+ * and `stock_value` in the kernel.
  */
 export const RecordStockLot = Norn.action({
   id: "supply.stock_lot.record", title: "Record a costed store stock lot", version: "0.1.0",
@@ -189,6 +192,7 @@ export const RecordStockLot = Norn.action({
     { field: "depleted_qty", inputRequired: false, expression: Norn.expression(CostedStockLotInput, (x) => x.received_qty - x.remaining_qty) },
     { field: "sell_through_rate", inputRequired: false, expression: Norn.expression(CostedStockLotInput, () => 0) },
     { field: "opening_stock_value", inputRequired: false, expression: Norn.expression(CostedStockLotInput, (x) => x.received_qty * x.unit_cost) },
+    { field: "depleted_stock_value", inputRequired: false, expression: Norn.expression(CostedStockLotInput, (x) => (x.received_qty - x.remaining_qty) * x.unit_cost) },
     { field: "stock_value", inputRequired: false, expression: Norn.expression(CostedStockLotInput, (x) => x.remaining_qty * x.unit_cost) },
   ],
   preconditions: [Norn.expression(
@@ -235,6 +239,7 @@ export const RecordUncostedStockLot = Norn.action({
     { field: "depleted_qty", inputRequired: false, expression: Norn.expression(UncostedStockLotInput, (x) => x.received_qty - x.remaining_qty) },
     { field: "sell_through_rate", inputRequired: false, expression: Norn.expression(UncostedStockLotInput, () => 0) },
     { field: "opening_stock_value", inputRequired: false, expression: Norn.expression(UncostedStockLotInput, () => 0) },
+    { field: "depleted_stock_value", inputRequired: false, expression: Norn.expression(UncostedStockLotInput, () => 0) },
     { field: "stock_value", inputRequired: false, expression: Norn.expression(UncostedStockLotInput, () => 0) },
   ],
   preconditions: [Norn.expression(
@@ -269,6 +274,7 @@ const UpdateStockLotBalanceInput = Schema.Struct({
   depleted_qty: Norn.decimal(6),
   as_of: Norn.timestamp("utc"),
   unit_cost: Norn.decimal(4),
+  depleted_stock_value: Norn.decimal(6),
   stock_value: Norn.decimal(6),
 })
 
@@ -288,6 +294,7 @@ export const UpdateStockLotBalance = Norn.action({
     { name: "store", type: Store, key: { property: { from: "lot", property: "store_id" } } },
   ],
   derive: [
+    { field: "depleted_stock_value", inputRequired: false, expression: Norn.expression(UpdateStockLotBalanceInput, (x) => x.depleted_qty * x.unit_cost) },
     { field: "stock_value", inputRequired: false, expression: Norn.expression(UpdateStockLotBalanceInput, (x) => x.remaining_qty * x.unit_cost) },
   ],
   preconditions: [Norn.expression(
@@ -296,6 +303,7 @@ export const UpdateStockLotBalance = Norn.action({
       slice: Schema.Struct({
         lot: Schema.Struct({
           cost_status: Schema.String,
+          unit_cost: Schema.NullOr(Norn.decimal(4)),
           received_qty: Norn.decimal(6),
           depleted_qty: Norn.decimal(6),
           as_of: Norn.timestamp("utc"),
@@ -305,6 +313,8 @@ export const UpdateStockLotBalance = Norn.action({
     }),
     (ctx) => ctx.slice.store.status === "active"
       && ctx.slice.lot.cost_status === "costed"
+      && ctx.slice.lot.unit_cost !== null
+      && ctx.input.unit_cost === ctx.slice.lot.unit_cost
       && Norn.parseTimestamp(ctx.input.as_of) >= Norn.parseTimestamp(ctx.slice.lot.as_of)
       && ctx.input.depleted_qty >= ctx.slice.lot.depleted_qty
       && (ctx.input.depleted_qty + ctx.input.remaining_qty) === ctx.slice.lot.received_qty,

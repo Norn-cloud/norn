@@ -41,6 +41,11 @@
         "inputRequired": false
       },
       {
+        "expression": "(input.received_qty - input.remaining_qty) * input.unit_cost",
+        "field": "depleted_stock_value",
+        "inputRequired": false
+      },
+      {
         "expression": "input.remaining_qty * input.unit_cost",
         "field": "stock_value",
         "inputRequired": false
@@ -82,6 +87,13 @@
           "type": "string"
         },
         "depleted_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "depleted_stock_value": {
           "nornType": {
             "kind": "decimal",
             "scale": 6
@@ -170,6 +182,7 @@
         "cost_status",
         "unit_cost",
         "opening_stock_value",
+        "depleted_stock_value",
         "stock_value",
         "currency"
       ],
