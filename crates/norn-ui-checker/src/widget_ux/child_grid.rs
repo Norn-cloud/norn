@@ -12,7 +12,7 @@ use norn_ir::{
 use norn_checker::entity_instance::EffectiveKind;
 
 use super::types::property_type;
-use super::{ActionSurface, UxChecker, has_initial_lifecycle_default};
+use super::{ActionSurface, UxChecker, has_initial_lifecycle_default, is_nonblank_locale_text};
 
 pub(super) struct ChildGridSpec<'a> {
     pub(super) form_id: &'a str,
@@ -48,7 +48,7 @@ impl UxChecker<'_, '_, '_> {
             field_ids,
             ..
         } = spec;
-        if label.0.is_empty() || label.0.values().any(|value| value.trim().is_empty()) {
+        if !is_nonblank_locale_text(label) {
             self.error(
                 &format!("{path}/component/label"),
                 "child grid label must contain nonblank localized text",

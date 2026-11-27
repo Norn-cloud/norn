@@ -9,10 +9,7 @@ use norn_ir::jdm::{
     JdmDecisionTableContent, JdmEdge, JdmExecutionMode, JdmExpressionContent, JdmGraph,
     JdmHitPolicy, JdmNode, JdmSchemaContent, JdmSubDecisionContent, JdmSwitchContent,
 };
-use norn_ir::{
-    JsonValue, RULE_IR_V2_VERSION, ResourceLimitProfile, RuleContractV2, RuleRoot, RuntimeObject,
-    RuntimeValue,
-};
+use norn_ir::{RULE_IR_V2_VERSION, ResourceLimitProfile, RuleContractV2, RuleRoot, RuntimeObject};
 use zen_engine::Decision;
 use zen_engine::loader::MemoryLoader;
 use zen_engine::model::{
@@ -22,7 +19,6 @@ use zen_engine::model::{
     SwitchStatement, SwitchStatementHitPolicy, TransformAttributes, TransformExecutionMode,
 };
 
-use crate::convert::{value_from_ir, value_from_runtime};
 use crate::schema::Schema;
 use crate::{AdmissionError, DecisionError, TypedEvent, ValidatedSlice};
 
@@ -167,7 +163,7 @@ impl AdmittedDecision {
         }
         let content = graph_content(&root.rule_id, root_graph)?;
         let loader = Arc::new(loader);
-        let assignment_fuel = contracts.assignment_fuel.clone();
+        let assignment_fuel = std::mem::take(&mut contracts.assignment_fuel);
         let policies = fold_policies(root, sub_decisions, &loader, contracts)?;
         let (slice_schema, event_schema, principal_schema) = decide_input(root)?;
         let principal = crate::principal::PrincipalContract::admit(root, principal_schema)?;
@@ -249,14 +245,27 @@ impl AdmittedDecision {
         self.principal.as_ref()
     }
 
+    /// Whether `event` was validated for this decision's event schema.
+    pub(crate) fn accepts_event(&self, event: &TypedEvent) -> bool {
+        event.rule_id == self.rule_id
+            && (Arc::ptr_eq(&event.schema, &self.event_schema) || event.schema == self.event_schema)
+    }
+
     /// Whether `slice` and `event` were validated for this decision: the same
     /// rule and identical input schemas (an input validated under another
     /// version of the rule is not accepted).
     pub(crate) fn accepts(&self, slice: &ValidatedSlice, event: &TypedEvent) -> bool {
+        let principal_matches = match (&event.principal, &self.principal) {
+            (None, _) => true,
+            (Some((bound, _)), Some(contract)) => {
+                Arc::ptr_eq(bound, contract.schema()) || bound == contract.schema()
+            }
+            (Some(_), None) => false,
+        };
         slice.rule_id == self.rule_id
-            && event.rule_id == self.rule_id
             && (Arc::ptr_eq(&slice.schema, &self.slice_schema) || slice.schema == self.slice_schema)
-            && (Arc::ptr_eq(&event.schema, &self.event_schema) || event.schema == self.event_schema)
+            && self.accepts_event(event)
+            && principal_matches
     }
 
     pub(crate) const fn decision(&self) -> &Decision {
@@ -326,12 +335,23 @@ fn graph_content(rule_id: &str, graph: &JdmGraph) -> Result<GraphContent, Admiss
             rule_id: rule_id.to_owned(),
         });
     }
+    let mut node_ids = BTreeSet::new();
+    for (index, node) in graph.nodes.iter().enumerate() {
+        if !node_ids.insert(node.id()) {
+            return Err(invalid_schema(
+                rule_id,
+                &format!("graph.nodes[{index}].id"),
+                "duplicate node id",
+            ));
+        }
+    }
     validate_graph_expressions(rule_id, graph)?;
     let mut content = GraphContent {
         nodes: graph
             .nodes
             .iter()
-            .map(|node| decision_node(rule_id, node).map(Arc::new))
+            .enumerate()
+            .map(|(index, node)| decision_node(rule_id, index, node).map(Arc::new))
             .collect::<Result<_, _>>()?,
         edges: graph
             .edges
@@ -369,50 +389,7 @@ fn validate_graph_expressions(rule_id: &str, graph: &JdmGraph) -> Result<(), Adm
                 }
             }
             JdmNode::DecisionTableNode { content, .. } => {
-                validate_optional_source(
-                    rule_id,
-                    &format!("{base}.inputField"),
-                    content.input_field.as_deref(),
-                    false,
-                    &limits,
-                )?;
-                let mut unary_columns = BTreeMap::new();
-                for (column_index, column) in content.inputs.iter().enumerate() {
-                    validate_optional_source(
-                        rule_id,
-                        &format!("{base}.inputs[{column_index}].field"),
-                        column.field.as_deref(),
-                        false,
-                        &limits,
-                    )?;
-                    unary_columns.insert(
-                        column.id.as_str(),
-                        column
-                            .field
-                            .as_deref()
-                            .is_some_and(|field| !field.trim().is_empty()),
-                    );
-                }
-                for output in &content.outputs {
-                    unary_columns.insert(output.id.as_str(), false);
-                }
-                for (row_index, row) in content.rules.iter().enumerate() {
-                    for (column, cell) in &row.cells {
-                        if cell.as_str().trim().is_empty() {
-                            continue;
-                        }
-                        let Some(is_unary) = unary_columns.get(column.as_str()) else {
-                            continue;
-                        };
-                        validate_source(
-                            rule_id,
-                            &format!("{base}.rules[{row_index}].{column}"),
-                            cell.as_str(),
-                            *is_unary,
-                            &limits,
-                        )?;
-                    }
-                }
+                validate_table_node(rule_id, &base, content, &limits)?;
             }
             JdmNode::SwitchNode { content, .. } => {
                 for (statement_index, statement) in content.statements.iter().enumerate() {
@@ -435,6 +412,91 @@ fn validate_graph_expressions(rule_id: &str, graph: &JdmGraph) -> Result<(), Adm
             | JdmNode::OutputNode { .. }
             | JdmNode::FunctionNode { .. }
             | JdmNode::CustomNode { .. } => {}
+        }
+    }
+    Ok(())
+}
+
+fn is_reserved_table_column(id: &str) -> bool {
+    matches!(id, "_id" | "_description")
+}
+
+fn validate_table_node(
+    rule_id: &str,
+    base: &str,
+    content: &JdmDecisionTableContent,
+    limits: &ResourceLimitProfile,
+) -> Result<(), AdmissionError> {
+    validate_optional_source(
+        rule_id,
+        &format!("{base}.inputField"),
+        content.input_field.as_deref(),
+        false,
+        limits,
+    )?;
+    let mut unary_columns = BTreeMap::new();
+    for (column_index, column) in content.inputs.iter().enumerate() {
+        let id_path = format!("{base}.inputs[{column_index}].id");
+        if is_reserved_table_column(&column.id) {
+            return Err(invalid_schema(
+                rule_id,
+                &id_path,
+                "reserved table column id",
+            ));
+        }
+        validate_optional_source(
+            rule_id,
+            &format!("{base}.inputs[{column_index}].field"),
+            column.field.as_deref(),
+            false,
+            limits,
+        )?;
+        let is_unary = column
+            .field
+            .as_deref()
+            .is_some_and(|field| !field.trim().is_empty());
+        if unary_columns.insert(column.id.as_str(), is_unary).is_some() {
+            return Err(invalid_schema(
+                rule_id,
+                &id_path,
+                "duplicate table column id",
+            ));
+        }
+    }
+    for (output_index, output) in content.outputs.iter().enumerate() {
+        let id_path = format!("{base}.outputs[{output_index}].id");
+        if is_reserved_table_column(&output.id) {
+            return Err(invalid_schema(
+                rule_id,
+                &id_path,
+                "reserved table column id",
+            ));
+        }
+        if unary_columns.insert(output.id.as_str(), false).is_some() {
+            return Err(invalid_schema(
+                rule_id,
+                &id_path,
+                "duplicate table column id",
+            ));
+        }
+    }
+    for (row_index, row) in content.rules.iter().enumerate() {
+        for (column, cell) in &row.cells {
+            let cell_path = format!("{base}.rules[{row_index}].{column}");
+            if is_reserved_table_column(column.as_str()) {
+                return Err(invalid_schema(
+                    rule_id,
+                    &cell_path,
+                    "reserved table cell key",
+                ));
+            }
+            if cell.as_str().trim().is_empty() {
+                continue;
+            }
+            let Some(is_unary) = unary_columns.get(column.as_str()) else {
+                continue;
+            };
+            validate_source(rule_id, &cell_path, cell.as_str(), *is_unary, limits)?;
         }
     }
     Ok(())
@@ -489,7 +551,11 @@ fn decision_edge(edge: &JdmEdge) -> DecisionEdge {
     }
 }
 
-fn decision_node(rule_id: &str, node: &JdmNode) -> Result<DecisionNode, AdmissionError> {
+fn decision_node(
+    rule_id: &str,
+    index: usize,
+    node: &JdmNode,
+) -> Result<DecisionNode, AdmissionError> {
     let kind = match node {
         JdmNode::InputNode { content, .. } => {
             no_node_schema(rule_id, node.id(), content.as_ref())?;
@@ -510,7 +576,7 @@ fn decision_node(rule_id: &str, node: &JdmNode) -> Result<DecisionNode, Admissio
             content: table_content(content),
         },
         JdmNode::SwitchNode { content, .. } => DecisionNodeKind::SwitchNode {
-            content: switch_content(content),
+            content: switch_content(rule_id, index, content)?,
         },
         JdmNode::DecisionNode { content, .. } => {
             if content.key.starts_with('\0')
@@ -663,15 +729,24 @@ fn table_content(content: &JdmDecisionTableContent) -> DecisionTableContent {
     }
 }
 
-fn switch_content(content: &JdmSwitchContent) -> SwitchNodeContent {
-    SwitchNodeContent {
-        hit_policy: match content.hit_policy {
-            Some(JdmHitPolicy::Collect) => SwitchStatementHitPolicy::Collect,
-            // A switch never admits unique; the screen refuses it before this point.
-            Some(JdmHitPolicy::First | JdmHitPolicy::Unique) | None => {
-                SwitchStatementHitPolicy::First
-            }
-        },
+fn switch_content(
+    rule_id: &str,
+    index: usize,
+    content: &JdmSwitchContent,
+) -> Result<SwitchNodeContent, AdmissionError> {
+    let hit_policy = match content.hit_policy {
+        Some(JdmHitPolicy::Collect) => SwitchStatementHitPolicy::Collect,
+        Some(JdmHitPolicy::First) | None => SwitchStatementHitPolicy::First,
+        Some(JdmHitPolicy::Unique) => {
+            return Err(invalid_schema(
+                rule_id,
+                &format!("graph.nodes[{index}].content.hitPolicy"),
+                "switch nodes do not admit unique hit policy",
+            ));
+        }
+    };
+    Ok(SwitchNodeContent {
+        hit_policy,
         statements: Arc::new(
             content
                 .statements
@@ -682,7 +757,7 @@ fn switch_content(content: &JdmSwitchContent) -> SwitchNodeContent {
                 })
                 .collect(),
         ),
-    }
+    })
 }
 
 fn sub_decision_content(content: &JdmSubDecisionContent) -> DecisionNodeContent {
@@ -697,88 +772,7 @@ fn sub_decision_content(content: &JdmSubDecisionContent) -> DecisionNodeContent 
     }
 }
 
-use crate::contract::{decide_input, decide_output, invalid_schema};
-
-fn defaults(
-    rule: &RuleRoot,
-    output: &Schema,
-    exact: Option<&RuntimeObject>,
-) -> Result<BTreeMap<String, Value>, AdmissionError> {
-    let mut defaults = BTreeMap::new();
-    for (member, value) in rule.defaults.iter().flatten() {
-        let invalid = |reason: String| AdmissionError::InvalidDefault {
-            rule_id: rule.rule_id.clone(),
-            member: member.clone(),
-            reason,
-        };
-        let value = match (
-            value_from_ir(value),
-            exact.and_then(|exact| exact.get(member)),
-        ) {
-            (Ok(value), _) => value,
-            // A numeric default, from its exact source text. The decoded
-            // `f64` must be what that text decodes to, so the source is this
-            // artifact's.
-            (Err(_), Some(source)) => {
-                if !same_up_to_f64(value, source) {
-                    return Err(invalid(
-                        "the exact default does not match the decoded artifact".to_owned(),
-                    ));
-                }
-                value_from_runtime(source).map_err(|error| invalid(error.to_string()))?
-            }
-            (Err(error), None) => return Err(invalid(error.to_string())),
-        };
-        let schema = output
-            .properties()
-            .and_then(|properties| properties.get(member))
-            .ok_or_else(|| invalid("is not a declared output member".to_owned()))?;
-        schema
-            .check(&value, member)
-            .map_err(|violation| invalid(format!("{}: {}", violation.path, violation.reason)))?;
-        defaults.insert(member.clone(), value);
-    }
-    Ok(defaults)
-}
-
-/// Whether the exact `source` decodes to the IR value `decoded`: the same
-/// shape, and every number's `f64` (nearest, as JSON decoding gives) equal.
-fn same_up_to_f64(decoded: &JsonValue, source: &RuntimeValue) -> bool {
-    match (decoded, source) {
-        (JsonValue::Null, RuntimeValue::Null) => true,
-        (JsonValue::Bool(left), RuntimeValue::Bool(right)) => left == right,
-        // IR decoding reads numbers with `serde_json`'s historical parser
-        // (`norn_ir::JsonNumber`); a correctly rounded parse is also
-        // accepted, so no spelling of this artifact's own number is refused.
-        (JsonValue::Number(left), RuntimeValue::Number(right)) => {
-            let text = right.canonical();
-            let historical = norn_ir::JsonNumber::parse_literal(&text)
-                .is_ok_and(|number| number.as_f64().to_bits() == left.to_bits());
-            historical
-                || text
-                    .parse::<f64>()
-                    .is_ok_and(|right| right.to_bits() == left.to_bits())
-        }
-        (JsonValue::String(left), RuntimeValue::String(right)) => left == right,
-        (JsonValue::Array(left), RuntimeValue::Array(right)) => {
-            left.len() == right.len()
-                && left
-                    .iter()
-                    .zip(right)
-                    .all(|(left, right)| same_up_to_f64(left, right))
-        }
-        (JsonValue::Object(left), RuntimeValue::Object(right)) => {
-            left.len() == right.len()
-                && left
-                    .iter()
-                    .zip(right)
-                    .all(|((left_key, left), (right_key, right))| {
-                        left_key == right_key && same_up_to_f64(left, right)
-                    })
-        }
-        _ => false,
-    }
-}
+use crate::contract::{decide_input, decide_output, defaults, invalid_schema};
 
 fn refuse_nested_folds(
     key: &str,
@@ -920,7 +914,13 @@ fn validate_call_sources(
 
 #[cfg(test)]
 mod tests {
-    use norn_ir::ResourceLimitProfile;
+    use std::collections::BTreeMap;
+
+    use norn_ir::jdm::{
+        JdmDecisionTableContent, JdmGraph, JdmHitPolicy, JdmNode, JdmSwitchContent, JdmTableInput,
+        JdmTableOutput, JdmTableRow,
+    };
+    use norn_ir::{Decimal, JsonValue, ResourceLimitProfile, RuntimeValue, ZenExpression};
 
     use crate::AdmissionError;
 
@@ -936,5 +936,131 @@ mod tests {
                 "{source} (unary {unary}): {result:?}"
             );
         }
+    }
+
+    #[test]
+    fn reserved_and_duplicate_table_columns_are_refused() {
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        let reserved_input = JdmDecisionTableContent {
+            hit_policy: JdmHitPolicy::First,
+            inputs: vec![JdmTableInput {
+                id: "_description".to_owned(),
+                name: None,
+                field: None,
+                column_type: None,
+            }],
+            outputs: Vec::new(),
+            rules: vec![JdmTableRow {
+                id: "r1".to_owned(),
+                description: Some("rand(1)".to_owned()),
+                cells: BTreeMap::new(),
+            }],
+            input_field: None,
+            output_path: None,
+            execution_mode: None,
+            pass_through: None,
+        };
+        assert!(matches!(
+            super::validate_table_node(
+                "t.rule",
+                "graph.nodes[0].content",
+                &reserved_input,
+                &limits
+            ),
+            Err(AdmissionError::InvalidSchema { .. })
+        ));
+
+        let duplicate_cols = JdmDecisionTableContent {
+            hit_policy: JdmHitPolicy::First,
+            inputs: vec![JdmTableInput {
+                id: "col".to_owned(),
+                name: None,
+                field: Some("slice.x".to_owned()),
+                column_type: None,
+            }],
+            outputs: vec![JdmTableOutput {
+                id: "col".to_owned(),
+                name: None,
+                field: "out".to_owned(),
+                column_type: None,
+            }],
+            rules: Vec::new(),
+            input_field: None,
+            output_path: None,
+            execution_mode: None,
+            pass_through: None,
+        };
+        assert!(matches!(
+            super::validate_table_node(
+                "t.rule",
+                "graph.nodes[0].content",
+                &duplicate_cols,
+                &limits
+            ),
+            Err(AdmissionError::InvalidSchema { .. })
+        ));
+
+        let reserved_cell = JdmDecisionTableContent {
+            hit_policy: JdmHitPolicy::First,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            rules: vec![JdmTableRow {
+                id: "r1".to_owned(),
+                description: None,
+                cells: BTreeMap::from([("_id".to_owned(), ZenExpression("1".to_owned()))]),
+            }],
+            input_field: None,
+            output_path: None,
+            execution_mode: None,
+            pass_through: None,
+        };
+        assert!(matches!(
+            super::validate_table_node("t.rule", "graph.nodes[0].content", &reserved_cell, &limits),
+            Err(AdmissionError::InvalidSchema { .. })
+        ));
+    }
+
+    #[test]
+    fn duplicate_node_ids_are_refused() {
+        let duplicate_nodes = JdmGraph {
+            content_type: None,
+            imports: Vec::new(),
+            settings: None,
+            nodes: vec![
+                JdmNode::InputNode {
+                    id: "dup".to_owned(),
+                    name: "in".to_owned(),
+                    position: None,
+                    content: None,
+                },
+                JdmNode::OutputNode {
+                    id: "dup".to_owned(),
+                    name: "out".to_owned(),
+                    position: None,
+                    content: None,
+                },
+            ],
+            edges: Vec::new(),
+        };
+        assert!(matches!(
+            super::graph_content("t.rule", &duplicate_nodes),
+            Err(AdmissionError::InvalidSchema { .. })
+        ));
+    }
+
+    #[test]
+    fn switch_unique_hit_policy_is_refused_and_negative_zero_default_matches() {
+        let switch = JdmSwitchContent {
+            hit_policy: Some(JdmHitPolicy::Unique),
+            statements: Vec::new(),
+        };
+        assert!(matches!(
+            super::switch_content("t.rule", 0, &switch),
+            Err(AdmissionError::InvalidSchema { .. })
+        ));
+        assert!(crate::contract::same_up_to_f64(
+            &JsonValue::Number(-0.0),
+            &RuntimeValue::Number(Decimal::ZERO),
+        ));
     }
 }
