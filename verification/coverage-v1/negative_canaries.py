@@ -653,6 +653,8 @@ def workflow_verdict_canaries(source: str) -> None:
     partial_warm["phase"].pop()
     partial_warm["bundle"][0]["tasks"].pop()
     cases.append(("push", partial_warm, {**passed, "CACHE_WARM": "true"}, False))
+    narrowed_warm = {**cache_warm, "packages": "norn-cell"}
+    cases.append(("push", narrowed_warm, {**passed, "CACHE_WARM": "true"}, False))
     cases.append(("pull_request", affected, passed, True))
     cases.extend((event, affected, passed, False)
                  for event in ("push", "merge_group", "workflow_dispatch"))

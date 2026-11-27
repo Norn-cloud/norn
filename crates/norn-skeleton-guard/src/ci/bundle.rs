@@ -114,19 +114,23 @@ impl Model {
 
 /// Post-merge single-bundle R2 cache warming phases (`core.sh plan --cache-warm`, #1951).
 /// Each runs with `BuildGroup::None`, so `execute` prunes `target/` between every boundary.
-const CACHE_WARM_PHASES: [&str; 6] = [
+const CACHE_WARM_PHASES: [&str; 8] = [
     "cache-warm-test",
+    "cache-warm-guard",
     "cache-warm-clippy",
     "cache-warm-doc",
     "cache-warm-wasm",
+    "cache-warm-wasm-pkg",
     "cache-warm-duckdb",
     "cache-warm-rivet",
 ];
-const CACHE_WARM_TASKS: [&str; 6] = [
+const CACHE_WARM_TASKS: [&str; 8] = [
     "phase/cache-warm-test",
+    "phase/cache-warm-guard",
     "phase/cache-warm-clippy",
     "phase/cache-warm-doc",
     "phase/cache-warm-wasm",
+    "phase/cache-warm-wasm-pkg",
     "phase/cache-warm-duckdb",
     "phase/cache-warm-rivet",
 ];
@@ -720,7 +724,7 @@ mod tests {
             "\n"
         ),
         concat!(
-            r#"{"mode": "cache-warm", "shard": [], "phase": ["cache-warm-test", "cache-warm-clippy", "cache-warm-doc", "cache-warm-wasm", "cache-warm-duckdb", "cache-warm-rivet"], "packages": "", "rest_shards": 1, "reason": "main push cache warm", "bundle": [{"id": "b0", "tasks": ["phase/cache-warm-test", "phase/cache-warm-clippy", "phase/cache-warm-doc", "phase/cache-warm-wasm", "phase/cache-warm-duckdb", "phase/cache-warm-rivet"]}]}"#,
+            r#"{"mode": "cache-warm", "shard": [], "phase": ["cache-warm-test", "cache-warm-guard", "cache-warm-clippy", "cache-warm-doc", "cache-warm-wasm", "cache-warm-wasm-pkg", "cache-warm-duckdb", "cache-warm-rivet"], "packages": "", "rest_shards": 1, "reason": "main push cache warm", "bundle": [{"id": "b0", "tasks": ["phase/cache-warm-test", "phase/cache-warm-guard", "phase/cache-warm-clippy", "phase/cache-warm-doc", "phase/cache-warm-wasm", "phase/cache-warm-wasm-pkg", "phase/cache-warm-duckdb", "phase/cache-warm-rivet"]}]}"#,
             "\n"
         ),
     ];
@@ -893,11 +897,11 @@ mod tests {
             r#"{"mode":"affected","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":[]}]}"#,
             r#"{"mode":"affected","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":["phase/doc","phase/doc"]}]}"#,
             r#"{"mode":"affected","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":["phase/doc"]},{"id":"b0","tasks":["phase/doc"]}]}"#,
-            r#"{"mode":"cache-warm","shard":["rest-1"],"phase":["cache-warm-test","cache-warm-clippy","cache-warm-doc","cache-warm-wasm","cache-warm-duckdb","cache-warm-rivet"],"bundle":[{"id":"b0","tasks":["phase/cache-warm-test","phase/cache-warm-clippy","phase/cache-warm-doc","phase/cache-warm-wasm","phase/cache-warm-duckdb","phase/cache-warm-rivet"]}]}"#,
+            r#"{"mode":"cache-warm","shard":["rest-1"],"phase":["cache-warm-test","cache-warm-guard","cache-warm-clippy","cache-warm-doc","cache-warm-wasm","cache-warm-wasm-pkg","cache-warm-duckdb","cache-warm-rivet"],"bundle":[{"id":"b0","tasks":["phase/cache-warm-test","phase/cache-warm-guard","phase/cache-warm-clippy","phase/cache-warm-doc","phase/cache-warm-wasm","phase/cache-warm-wasm-pkg","phase/cache-warm-duckdb","phase/cache-warm-rivet"]}]}"#,
             r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm-test"],"bundle":[{"id":"b0","tasks":["phase/cache-warm-test"]}]}"#,
             r#"{"mode":"cache-warm","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":["phase/doc"]}]}"#,
-            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm-test","cache-warm-clippy","cache-warm-doc","cache-warm-wasm","cache-warm-duckdb","cache-warm-rivet"],"packages":"norn-cell","bundle":[{"id":"b0","tasks":["phase/cache-warm-test","phase/cache-warm-clippy","phase/cache-warm-doc","phase/cache-warm-wasm","phase/cache-warm-duckdb","phase/cache-warm-rivet"]}]}"#,
-            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm-test","cache-warm-clippy","cache-warm-doc","cache-warm-wasm","cache-warm-duckdb","cache-warm-rivet"],"bundle":[{"id":"b1","tasks":["phase/cache-warm-test","phase/cache-warm-clippy","phase/cache-warm-doc","phase/cache-warm-wasm","phase/cache-warm-duckdb","phase/cache-warm-rivet"]}]}"#,
+            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm-test","cache-warm-guard","cache-warm-clippy","cache-warm-doc","cache-warm-wasm","cache-warm-wasm-pkg","cache-warm-duckdb","cache-warm-rivet"],"packages":"norn-cell","bundle":[{"id":"b0","tasks":["phase/cache-warm-test","phase/cache-warm-guard","phase/cache-warm-clippy","phase/cache-warm-doc","phase/cache-warm-wasm","phase/cache-warm-wasm-pkg","phase/cache-warm-duckdb","phase/cache-warm-rivet"]}]}"#,
+            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm-test","cache-warm-guard","cache-warm-clippy","cache-warm-doc","cache-warm-wasm","cache-warm-wasm-pkg","cache-warm-duckdb","cache-warm-rivet"],"bundle":[{"id":"b1","tasks":["phase/cache-warm-test","phase/cache-warm-guard","phase/cache-warm-clippy","phase/cache-warm-doc","phase/cache-warm-wasm","phase/cache-warm-wasm-pkg","phase/cache-warm-duckdb","phase/cache-warm-rivet"]}]}"#,
             r#"{"mode":"affected","shard":[],"phase":["cache-warm-test"],"bundle":[{"id":"b0","tasks":["phase/cache-warm-test"]}]}"#,
         ] {
             assert!(checked(raw).is_err(), "{raw}");
@@ -989,9 +993,11 @@ mod tests {
             warm_calls,
             [
                 ("phase/cache-warm-test", false),
+                ("phase/cache-warm-guard", true),
                 ("phase/cache-warm-clippy", true),
                 ("phase/cache-warm-doc", true),
                 ("phase/cache-warm-wasm", true),
+                ("phase/cache-warm-wasm-pkg", true),
                 ("phase/cache-warm-duckdb", true),
                 ("phase/cache-warm-rivet", true),
             ]

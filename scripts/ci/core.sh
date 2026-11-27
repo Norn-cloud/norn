@@ -440,9 +440,13 @@ PY
     cache-warm-test)
       # Warm the shared Boat R2 sccache bucket from one VM on merge-queue pushes to main
       # (#1951): every test already passed in merge_group on the same tree. Each cache-warm-*
-      # task runs with BuildGroup::None so bundle.rs prunes target/ between build boundaries.
+      # task runs with BuildGroup::None so bundle.rs prunes target/ between build boundaries,
+      # keeping peak disk bounded by each individual CI phase.
       ensure_nextest
       "${nextest[@]}" run --locked --no-run --workspace --all-targets
+      ;;
+    cache-warm-guard)
+      ensure_nextest
       "${nextest[@]}" run --locked --no-run "${guard[@]}" --all-targets
       ;;
     cache-warm-clippy)
@@ -458,6 +462,8 @@ PY
       cargo check --locked -p norn-cell --no-default-features --target wasm32-unknown-unknown
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
       cargo clippy --locked -p norn-cell-do --target wasm32-unknown-unknown -- -D warnings
+      ;;
+    cache-warm-wasm-pkg)
       ensure_checker_wasm_pkg
       ensure_checker_wasm_engine
       ;;
@@ -818,7 +824,7 @@ case "${1:-all}" in
       '') [[ $# -le 1 ]] || run_phase usage; changed='' ;;
       --cache-warm)
         [[ $# -eq 2 ]] || run_phase usage
-        printf '%s\n' '{"mode": "cache-warm", "shard": [], "phase": ["cache-warm-test", "cache-warm-clippy", "cache-warm-doc", "cache-warm-wasm", "cache-warm-duckdb", "cache-warm-rivet"], "packages": "", "rest_shards": 1, "reason": "main push cache warm", "bundle": [{"id": "b0", "tasks": ["phase/cache-warm-test", "phase/cache-warm-clippy", "phase/cache-warm-doc", "phase/cache-warm-wasm", "phase/cache-warm-duckdb", "phase/cache-warm-rivet"]}]}'
+        printf '%s\n' '{"mode": "cache-warm", "shard": [], "phase": ["cache-warm-test", "cache-warm-guard", "cache-warm-clippy", "cache-warm-doc", "cache-warm-wasm", "cache-warm-wasm-pkg", "cache-warm-duckdb", "cache-warm-rivet"], "packages": "", "rest_shards": 1, "reason": "main push cache warm", "bundle": [{"id": "b0", "tasks": ["phase/cache-warm-test", "phase/cache-warm-guard", "phase/cache-warm-clippy", "phase/cache-warm-doc", "phase/cache-warm-wasm", "phase/cache-warm-wasm-pkg", "phase/cache-warm-duckdb", "phase/cache-warm-rivet"]}]}'
         exit 0
         ;;
       --affected) [[ $# -ge 3 && $# -le 4 && $3 =~ ^[0-9a-f]{40}$ && ${4:-HEAD} =~ ^([0-9a-f]{40}|HEAD)$ ]] || run_phase usage; changed=$(git diff --name-only --no-renames "$3" "${4:-HEAD}" --) || exit 2 ;;
