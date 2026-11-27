@@ -37,7 +37,10 @@ pub(super) fn test_model() -> Result<Model, Box<dyn std::error::Error>> {
             ]
         }
     ]))?;
-    Ok(Model::new(defs)?)
+    Ok(Model::new(&norn_projections::SqliteDdlInput {
+        object_types: &defs,
+        property_types: &[],
+    })?)
 }
 
 pub(super) fn open_cell(path: &std::path::Path) -> Result<Cell, Box<dyn std::error::Error>> {

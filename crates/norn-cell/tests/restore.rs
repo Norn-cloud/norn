@@ -702,7 +702,7 @@ async fn unknown_external_outcomes_are_fenced_across_reopen_and_generation_repla
             assert!(
                 matches!(
                     refused,
-                    Err(CellError::OutboxReissueRefused { generation: 1, .. })
+                    Err(norn_cell::CellError::OutboxReissueRefused { generation: 1, .. })
                 ),
                 "{refused:?}"
             );
