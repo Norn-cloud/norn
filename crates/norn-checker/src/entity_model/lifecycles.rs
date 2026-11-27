@@ -26,12 +26,19 @@
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use norn_ir::{JsonValue, Lifecycle, ObjectTypeDef, ObjectTypeName, PropertyType, TransitionMode};
+use norn_ir::{
+    JsonValue, Lifecycle, ObjectTypeDef, ObjectTypeName, PropertyId, PropertyType, Transition,
+    TransitionMode,
+};
 
 use super::{Checker, Table};
-use crate::lifecycles::{Machine, Machines, codes};
+use crate::lifecycles::{Edge, Machine, Machines, codes};
 use crate::object_types::{MEMBER_ID_GRAMMAR, Resolved, check_zen_syntax};
 use crate::property_types::{TypeResolution, error, matches_grammar, span_at};
+
+mod interfaces;
+
+use interfaces::{InheritedObjectMachines, conjoin_machine};
 
 /// The states of a lifecycle property, or why it cannot hold a lifecycle.
 enum States<'a> {
@@ -71,77 +78,45 @@ impl<'a> Checker<'a, '_> {
         };
         let def = entry.def;
         let parent = self.parent(name);
+        let ancestors = self.ancestors(name);
         let table = self.table(name);
-        let machines = Rc::new(self.machines_for(def, parent, &table));
+        let (machines, conflicts) = self.machines_for(def, parent, &ancestors, &table);
+        let machines = Rc::new(machines);
         self.machines.insert(name, Rc::clone(&machines));
+        self.machine_conflicts.insert(name, conflicts);
         machines
     }
 
-    /// A type's machines: the supertype's, restricted to the states this
-    /// type's table keeps, replaced by the type's own declarations.
+    /// A type's machines: the supertype's and implemented interfaces',
+    /// restricted to the states this type's table keeps, replaced by the
+    /// type's own declarations (conjoining inherited constraints).
     fn machines_for(
         &mut self,
         def: &'a ObjectTypeDef,
         parent: Option<&'a ObjectTypeName>,
+        ancestors: &[&'a ObjectTypeName],
         table: &Table<'a>,
-    ) -> Machines<'a> {
-        let inherited = parent.map_or_else(Rc::default, |parent| self.machines(parent));
-        let mut machines = Machines::new();
-        for (property, machine) in inherited.iter() {
-            if let Some(member) = table.get(*property)
-                && let States::Enum(states) = states(member)
-            {
-                machines.insert(*property, machine.restricted(states));
-            }
-        }
+    ) -> (Machines<'a>, BTreeSet<&'a PropertyId>) {
+        let inherited = self.inherited_object_machines(def, parent, ancestors, table);
+        let mut machines = inherited.machines.clone();
         for lifecycle in &def.lifecycles {
+            if inherited.conflicts.contains(&lifecycle.property) {
+                continue;
+            }
             if let Some((property, member)) = table.get_key_value(&lifecycle.property)
+                && !member.property.is_read_only()
                 && let States::Enum(states) = states(member)
             {
                 let mut machine = Machine::declared(lifecycle, states);
                 // Guards conjoin: an inherited guard a (rejected) redeclaration
                 // drops still applies.
-                if let Some(wide) = inherited.get(property) {
-                    machine.immutable.extend(wide.immutable.iter().copied());
-                    for property in &wide.path_properties {
-                        if !machine.path_properties.contains(property) {
-                            machine.path_properties.push(property);
-                        }
-                    }
-                    for (state, outcome) in &wide.endings {
-                        if machine.states.contains(state)
-                            && !machine.endings.iter().any(|(own, _)| own == state)
-                        {
-                            machine.endings.push((state, *outcome));
-                        }
-                    }
-                    for event in &wide.events {
-                        if !machine.events.iter().any(|own| own.id == event.id) {
-                            machine.events.push(event.clone());
-                        }
-                    }
-                    for edge in &mut machine.transitions {
-                        if let Some(parent) = wide.transitions.iter().find(|p| p.id == edge.id) {
-                            edge.trigger = edge.trigger.or(parent.trigger);
-                            edge.mode = edge.mode.or(parent.mode);
-                            edge.compensated_by = edge.compensated_by.or(parent.compensated_by);
-                            if parent.guard_refusal_code.is_some() {
-                                edge.guard_refusal_code = parent.guard_refusal_code;
-                            }
-                            let own = std::mem::take(&mut edge.guards);
-                            edge.guards = parent.guards.clone();
-                            for guard in own {
-                                if !edge.guards.contains(&guard) {
-                                    edge.guards.push(guard);
-                                }
-                            }
-                        }
-                    }
+                if let Some(wide) = inherited.machines.get(property) {
+                    conjoin_machine(&mut machine, wide);
                 }
                 machines.insert(*property, machine);
             }
         }
-        machines
+        (machines, inherited.conflicts)
     }
 
     /// Every guard of every transition is non-blank and parses as a ZEN
@@ -187,16 +162,18 @@ impl<'a> Checker<'a, '_> {
         }
     }
 
-    /// Check a type's own lifecycles and the machines it inherits and
-    /// narrows.
+    /// Check a type's own lifecycles and the machines it inherits (from its
+    /// supertype and implemented interfaces) and narrows.
     pub(super) fn check_lifecycles(
         &mut self,
         base: &[&str],
         def: &'a ObjectTypeDef,
         parent: Option<&'a ObjectTypeName>,
+        ancestors: &[&'a ObjectTypeName],
         table: &Table<'a>,
     ) {
-        let inherited = parent.map_or_else(Rc::default, |parent| self.machines(parent));
+        let inherited = self.inherited_object_machines(def, parent, ancestors, table);
+        self.check_inherited_lifecycle_conflicts(base, table, &inherited);
         let mut declared = BTreeSet::new();
         for (position, lifecycle) in def.lifecycles.iter().enumerate() {
             let position = position.to_string();
@@ -242,39 +219,101 @@ impl<'a> Checker<'a, '_> {
                     self.check_path_properties(&at, machine);
                 }
             }
-            if let Some(wide) = inherited.get(&lifecycle.property) {
+            if !inherited.conflicts.contains(&lifecycle.property)
+                && let Some(wide) = inherited.machines.get(&lifecycle.property)
+            {
                 self.check_narrowing(&at, lifecycle, wide);
             }
         }
-        // Inherited machines this type narrows by overriding the property
-        // without redeclaring the lifecycle.
-        for (position, property) in def.properties.iter().enumerate() {
-            if declared.contains(&property.id) {
+        self.check_inherited_unredeclared(base, def, table, &inherited, &declared);
+    }
+
+    fn check_inherited_lifecycle_conflicts(
+        &mut self,
+        base: &[&str],
+        table: &Table<'a>,
+        inherited: &InheritedObjectMachines<'a>,
+    ) {
+        for (pos, property, reason) in &inherited.new_conflicts {
+            let pos = pos.to_string();
+            self.out.push(error(
+                crate::object_types::codes::INTERFACE_REQUIREMENT_CONFLICT,
+                format!(
+                    "inherited lifecycles for property {:?} conflict: {reason}",
+                    property.as_str()
+                ),
+                span_at(base, &["implements", pos.as_str()]),
+            ));
+        }
+        // An interface lifecycle governs a stored property: reject an
+        // implementing type that satisfies the property with a computed one.
+        let mut reported_computed: BTreeSet<&'a PropertyId> = BTreeSet::new();
+        for &(pos, iface_def) in &inherited.direct_new_interfaces {
+            let (iface_machines, _) = self.interface_machines(&iface_def.name);
+            for &property in iface_machines.keys() {
+                if let Some(member) = table.get(property)
+                    && member.property.is_read_only()
+                    && reported_computed.insert(property)
+                {
+                    let pos = pos.to_string();
+                    self.out.push(error(
+                        codes::PROPERTY_COMPUTED,
+                        format!(
+                            "lifecycle property {:?} inherited from interface {:?} is computed; a lifecycle governs a stored property that rules write",
+                            property.as_str(),
+                            iface_def.name.as_str()
+                        ),
+                        span_at(base, &["implements", pos.as_str()]),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Check inherited machines (from supertype or implemented interfaces)
+    /// that `def` does not redeclare in `def.lifecycles`.
+    fn check_inherited_unredeclared(
+        &mut self,
+        base: &[&str],
+        def: &'a ObjectTypeDef,
+        table: &Table<'a>,
+        inherited: &InheritedObjectMachines<'a>,
+        declared: &BTreeSet<&'a PropertyId>,
+    ) {
+        for (&property, machine) in &inherited.machines {
+            if declared.contains(property) {
                 continue;
             }
-            let (Some(wide), Some(member)) = (inherited.get(&property.id), table.get(&property.id))
-            else {
+            let own_pos = def.properties.iter().position(|p| p.id == *property);
+            let iface_info = inherited.from_iface.get(property);
+            if own_pos.is_none() && iface_info.is_none() {
+                continue;
+            }
+            let Some(member) = table.get(property) else {
                 continue;
             };
-            let States::Enum(states) = states(member) else {
+            let pos_str;
+            let at = if let Some(pos) = own_pos {
+                pos_str = pos.to_string();
+                [base, &["properties", pos_str.as_str()]].concat()
+            } else if let Some((pos, _)) = iface_info {
+                pos_str = pos.to_string();
+                [base, &["implements", pos_str.as_str()]].concat()
+            } else {
                 continue;
             };
-            let position = position.to_string();
-            let at = [base, &["properties", position.as_str()]].concat();
-            let machine = wide.restricted(states);
             if machine.initial.is_empty() {
                 self.out.push(error(
                     codes::EMPTY_INITIAL,
                     format!(
                         "narrowing {:?} removes every initial state of the inherited lifecycle",
-                        property.id.as_str()
+                        property.as_str()
                     ),
                     span_at(&at, &[]),
                 ));
                 continue;
             }
-            let lifecycle_default = default_state(member);
-            if let Some(default) = lifecycle_default
+            if let Some(default) = default_state(member)
                 && machine.states.contains(&default)
                 && !machine.initial.contains(default)
             {
@@ -282,13 +321,23 @@ impl<'a> Checker<'a, '_> {
                     codes::DEFAULT_NOT_INITIAL,
                     format!(
                         "the default {default:?} of {:?} is not an initial state of its inherited lifecycle",
-                        property.id.as_str()
+                        property.as_str()
                     ),
                     span_at(&at, &[]),
                 ));
             }
-            self.check_structure(&at, &machine);
-            self.check_path_properties(&at, &machine);
+            let parent_overridden = own_pos.is_some() && inherited.from_parent.contains(property);
+            let combined = inherited.source_counts.get(property).copied().unwrap_or(0) >= 2;
+            let narrowed_from_iface = iface_info.is_some_and(|(_, wide_states)| {
+                let effective_states: BTreeSet<&str> = machine.states.iter().copied().collect();
+                effective_states != *wide_states
+            });
+            if parent_overridden || combined || narrowed_from_iface {
+                let findings = crate::lifecycle_soundness::check_inherited_compensation(machine);
+                self.soundness(&at, findings);
+                self.check_structure(&at, machine);
+                self.check_path_properties(&at, machine);
+            }
         }
     }
 
@@ -569,85 +618,169 @@ impl<'a> Checker<'a, '_> {
             }
         }
         self.check_narrowed_endings(at, lifecycle, wide);
+        self.check_narrowed_events(at, lifecycle, wide);
         for (position, transition) in lifecycle.transitions.iter().enumerate() {
             let position = position.to_string();
             let at = [at, &["transitions", position.as_str()]].concat();
-            let id = transition.id.as_str();
-            let Some(inherited) = wide.transitions.iter().find(|edge| edge.id.as_str() == id)
-            else {
+            self.check_narrowed_transition(&at, transition, wide);
+        }
+    }
+
+    fn check_narrowed_transition(
+        &mut self,
+        at: &[&str],
+        transition: &Transition,
+        wide: &Machine<'a>,
+    ) {
+        let id = transition.id.as_str();
+        let Some(inherited) = wide.transitions.iter().find(|edge| edge.id.as_str() == id) else {
+            self.out.push(error(
+                codes::WIDENS_TRANSITION,
+                format!(
+                    "transition {id:?} is not a transition of the inherited lifecycle; a subtype may only drop transitions"
+                ),
+                span_at(at, &["id"]),
+            ));
+            return;
+        };
+        let to = inherited.to;
+        if transition.to != to {
+            self.out.push(error(
+                codes::WIDENS_TRANSITION,
+                format!(
+                    "transition {id:?} enters {:?}, but the inherited transition enters {to:?}",
+                    transition.to
+                ),
+                span_at(at, &["to"]),
+            ));
+            return;
+        }
+        for (index, state) in transition.from.iter().enumerate() {
+            if !inherited.from.contains(state.as_str()) {
+                let index = index.to_string();
                 self.out.push(error(
                     codes::WIDENS_TRANSITION,
                     format!(
-                        "transition {id:?} is not a transition of the inherited lifecycle; a subtype may only drop transitions"
+                        "transition {id:?} leaves {state:?}, which the inherited transition does not"
                     ),
-                    span_at(&at, &["id"]),
+                    span_at(at, &["from", index.as_str()]),
                 ));
+            }
+        }
+        self.check_narrowed_transition_contract(at, transition, inherited);
+    }
+
+    fn check_narrowed_transition_contract(
+        &mut self,
+        at: &[&str],
+        transition: &Transition,
+        inherited: &Edge<'a>,
+    ) {
+        let id = transition.id.as_str();
+        // A fact stays a fact and a request stays a request (LIFE-SOUND-5);
+        // a trigger makes the inherited transition a fact.
+        if let Some(mode) = transition.mode {
+            let fact = inherited.trigger.is_some() || inherited.mode == Some(TransitionMode::Fact);
+            if (mode == TransitionMode::Fact) != fact {
+                self.out.push(error(
+                    codes::WIDENS_TRANSITION,
+                    format!(
+                        "transition {id:?} is declared {mode:?}, but the inherited transition is {}; a subtype keeps every inherited transition's mode",
+                        if fact { "a fact" } else { "a request" }
+                    ),
+                    span_at(at, &["mode"]),
+                ));
+            }
+        }
+        if transition
+            .trigger
+            .as_ref()
+            .is_some_and(|trigger| inherited.trigger.is_some_and(|parent| trigger != parent))
+        {
+            self.out.push(error(
+                codes::WIDENS_TRANSITION,
+                format!(
+                    "transition {id:?} replaces an inherited trigger; a subtype keeps every inherited trigger"
+                ),
+                span_at(at, &["trigger"]),
+            ));
+        }
+        if transition.compensated_by.as_ref().is_some_and(|comp| {
+            inherited
+                .compensated_by
+                .is_some_and(|parent| comp != parent)
+        }) {
+            self.out.push(error(
+                codes::WIDENS_TRANSITION,
+                format!(
+                    "transition {id:?} replaces an inherited compensation; a subtype keeps every inherited compensation"
+                ),
+                span_at(at, &["compensatedBy"]),
+            ));
+        }
+        if transition
+            .guard_refusal_code
+            .as_deref()
+            .is_some_and(|code| {
+                inherited
+                    .guard_refusal_code
+                    .is_some_and(|parent| code != parent)
+            })
+        {
+            self.out.push(error(
+                codes::INVALID_GUARD_DIAGNOSTIC,
+                "a subtype cannot replace an inherited guard diagnostic".to_owned(),
+                span_at(at, &["guardRefusalCode"]),
+            ));
+        }
+        for guard in &inherited.guards {
+            if !transition.guards.iter().any(|own| own.as_str() == *guard) {
+                self.out.push(error(
+                    codes::DROPS_GUARD,
+                    format!(
+                        "transition {id:?} drops the inherited guard {guard:?}; a subtype restates every inherited guard and may only append its own"
+                    ),
+                    span_at(at, &["id"]),
+                ));
+            }
+        }
+    }
+
+    fn check_narrowed_events(&mut self, at: &[&str], lifecycle: &Lifecycle, wide: &Machine<'a>) {
+        for (index, event) in lifecycle.events.iter().enumerate() {
+            let Some(inherited) = wide.events.iter().find(|own| own.id == event.id.as_str()) else {
                 continue;
             };
-            let to = inherited.to;
-            if transition.to != to {
-                self.out.push(error(
-                    codes::WIDENS_TRANSITION,
-                    format!(
-                        "transition {id:?} enters {:?}, but the inherited transition enters {to:?}",
-                        transition.to
-                    ),
-                    span_at(&at, &["to"]),
-                ));
-                continue;
-            }
-            for (index, state) in transition.from.iter().enumerate() {
-                if !inherited.from.contains(state.as_str()) {
-                    let index = index.to_string();
-                    self.out.push(error(
-                        codes::WIDENS_TRANSITION,
-                        format!(
-                            "transition {id:?} leaves {state:?}, which the inherited transition does not"
-                        ),
-                        span_at(&at, &["from", index.as_str()]),
-                    ));
-                }
-            }
-            // A fact stays a fact and a request stays a request (LIFE-SOUND-5);
-            // a trigger makes the inherited transition a fact.
-            if let Some(mode) = transition.mode {
-                let fact =
-                    inherited.trigger.is_some() || inherited.mode == Some(TransitionMode::Fact);
-                if (mode == TransitionMode::Fact) != fact {
-                    self.out.push(error(
-                        codes::WIDENS_TRANSITION,
-                        format!(
-                            "transition {id:?} is declared {mode:?}, but the inherited transition is {}; a subtype keeps every inherited transition's mode",
-                            if fact { "a fact" } else { "a request" }
-                        ),
-                        span_at(&at, &["mode"]),
-                    ));
-                }
-            }
-            if transition
-                .guard_refusal_code
-                .as_deref()
-                .is_some_and(|code| {
-                    inherited
-                        .guard_refusal_code
-                        .is_some_and(|parent| code != parent)
-                })
-            {
-                self.out.push(error(
-                    codes::INVALID_GUARD_DIAGNOSTIC,
-                    "a subtype cannot replace an inherited guard diagnostic".to_owned(),
-                    span_at(&at, &["guardRefusalCode"]),
-                ));
-            }
-            for guard in &inherited.guards {
-                if !transition.guards.iter().any(|own| own.as_str() == *guard) {
-                    self.out.push(error(
-                        codes::DROPS_GUARD,
-                        format!(
-                            "transition {id:?} drops the inherited guard {guard:?}; a subtype restates every inherited guard and may only append its own"
-                        ),
-                        span_at(&at, &["id"]),
-                    ));
+            let wide_ignored: BTreeSet<&str> = inherited
+                .ignored_in
+                .iter()
+                .flat_map(|(states, _)| states.iter().copied())
+                .collect();
+            let index = index.to_string();
+            for (ignore_pos, ignore) in event.ignored_in.iter().enumerate() {
+                let ignore_pos = ignore_pos.to_string();
+                for (state_pos, state) in ignore.states.iter().enumerate() {
+                    if !wide_ignored.contains(state.as_str()) {
+                        let state_pos = state_pos.to_string();
+                        self.out.push(error(
+                            codes::WIDENS_TRANSITION,
+                            format!(
+                                "event {:?} ignores state {state:?}, which the inherited lifecycle does not ignore",
+                                event.id
+                            ),
+                            span_at(
+                                at,
+                                &[
+                                    "events",
+                                    index.as_str(),
+                                    "ignoredIn",
+                                    ignore_pos.as_str(),
+                                    "states",
+                                    state_pos.as_str(),
+                                ],
+                            ),
+                        ));
+                    }
                 }
             }
         }
@@ -657,13 +790,13 @@ impl<'a> Checker<'a, '_> {
     /// subtype escape the soundness findings the supertype's outcome owes.
     fn check_narrowed_endings(&mut self, at: &[&str], lifecycle: &Lifecycle, wide: &Machine<'a>) {
         for (index, ending) in lifecycle.endings.iter().enumerate() {
+            let index = index.to_string();
             if let Some((_, outcome)) = wide
                 .endings
                 .iter()
                 .find(|(state, _)| *state == ending.state.as_str())
                 && *outcome != ending.outcome
             {
-                let index = index.to_string();
                 self.out.push(error(
                     codes::WIDENS_TRANSITION,
                     format!(
@@ -671,6 +804,32 @@ impl<'a> Checker<'a, '_> {
                         ending.state, ending.outcome
                     ),
                     span_at(at, &["endings", index.as_str(), "outcome"]),
+                ));
+            } else if !ending.outcome.is_final() && wide.terminal.contains(ending.state.as_str()) {
+                self.out.push(error(
+                    codes::WIDENS_TRANSITION,
+                    format!(
+                        "ending {:?} is {:?}, but the inherited lifecycle declares it terminal; a subtype keeps inherited terminal states final",
+                        ending.state, ending.outcome
+                    ),
+                    span_at(at, &["endings", index.as_str(), "outcome"]),
+                ));
+            }
+        }
+        for (index, state) in lifecycle.terminal.iter().enumerate() {
+            if let Some((_, outcome)) = wide
+                .endings
+                .iter()
+                .find(|(wide_state, _)| *wide_state == state.as_str())
+                && !outcome.is_final()
+            {
+                let index = index.to_string();
+                self.out.push(error(
+                    codes::WIDENS_TRANSITION,
+                    format!(
+                        "terminal state {state:?} is declared {outcome:?} in the inherited lifecycle; a subtype cannot turn an inherited resting ending into a terminal state"
+                    ),
+                    span_at(at, &["terminal", index.as_str()]),
                 ));
             }
         }

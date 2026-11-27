@@ -442,3 +442,197 @@ fn a_law_refusing_a_fact_is_reported() {
         ]
     );
 }
+
+fn core_commitment_base() -> Vec<Value> {
+    let mut base: Vec<Value> = [
+        include_str!("../../../../registry/privacy/artifacts/privacy.markings.entity.json"),
+        include_str!("../../../../registry/core/artifacts/core.value_types.entity.json"),
+        include_str!("../../../../registry/core/artifacts/std.value_types.entity.json"),
+        include_str!("../../../../registry/core/artifacts/core.Agent.interface.json"),
+        include_str!("../../../../registry/core/artifacts/core.Resource.interface.json"),
+        include_str!("../../../../registry/core/artifacts/core.EconomicEvent.interface.json"),
+        include_str!("../../../../registry/core/artifacts/core.Commitment.interface.json"),
+        include_str!("../../../../registry/core/artifacts/core.Hold.interface.json"),
+        include_str!("../../../../registry/core/artifacts/core.LedgerEffect.interface.json"),
+        include_str!("../../../../registry/core/artifacts/core.Claim.interface.json"),
+    ]
+    .into_iter()
+    .map(|raw| serde_json::from_str(raw).expect("core artifact"))
+    .collect();
+    base.push(json!({
+        "irVersion": "0.1", "kind": "entity",
+        "artifactId": "test.CoreMarkings.entity", "version": "0.1.0",
+        "namespace": "test", "name": "CoreMarkings", "lifecycle": "active",
+        "scope": {}, "dependencies": [],
+        "provenance": { "source": "system", "sourcePath": "tests/core_commitment_life" },
+        "payload": {
+            "entityVersion": "2.0",
+            "markings": [
+                { "id": "pii.financial", "label": "Financial PII", "category": "pii.financial", "severity": "high", "mask": { "kind": "refuse" } },
+                { "id": "confidential.finance", "label": "Confidential finance", "category": "confidential.finance", "severity": "high", "mask": { "kind": "refuse" } },
+                { "id": "pii.health", "label": "Health PII", "category": "pii.health", "severity": "critical", "mask": { "kind": "refuse" } }
+            ]
+        }
+    }));
+    base
+}
+
+fn core_commitment_source(base: &[Value], extra_invariants: &Value) -> DefinitionSource {
+    let party = json!({
+        "irVersion": "0.1", "kind": "entity",
+        "artifactId": "test.Party.entity", "version": "0.1.0",
+        "namespace": "test", "name": "Party", "lifecycle": "active",
+        "scope": {}, "dependencies": [],
+        "provenance": { "source": "system", "sourcePath": "tests/core_commitment_life" },
+        "payload": {
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "test.Party",
+                "role": "thing",
+                "implements": ["core.Agent"],
+                "properties": [
+                    { "id": "display_name", "type": { "kind": "ref", "name": "core.display_name" } },
+                    { "id": "kind", "type": { "kind": "enum", "values": [
+                        { "value": "person" }, { "value": "organization" }, { "value": "system" }
+                    ] } }
+                ]
+            }
+        }
+    });
+    let commitment = json!({
+        "irVersion": "0.1", "kind": "entity",
+        "artifactId": "test.OrderCommitment.entity", "version": "0.1.0",
+        "namespace": "test", "name": "OrderCommitment", "lifecycle": "active",
+        "scope": {}, "dependencies": [],
+        "provenance": { "source": "system", "sourcePath": "tests/core_commitment_life" },
+        "payload": {
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "test.OrderCommitment",
+                "role": "happening",
+                "implements": ["core.Commitment"],
+                "properties": [
+                    { "id": "status", "type": { "kind": "enum", "values": [
+                        { "value": "requested" }, { "value": "promised" },
+                        { "value": "fulfilled" }, { "value": "cancelled" }, { "value": "breached" }
+                    ] }, "default": "requested" },
+                    { "id": "due_at", "type": { "kind": "ref", "name": "iso8601.timestamp" } },
+                    { "id": "quantity", "type": { "kind": "ref", "name": "core.quantity" } },
+                    { "id": "unit", "type": { "kind": "ref", "name": "ucum.unit_code" }, "constraints": { "nullable": true } },
+                    { "id": "currency", "type": { "kind": "ref", "name": "core.code" }, "constraints": { "nullable": true } }
+                ],
+                "links": [
+                    { "id": "provider", "target": "test.Party", "cardinality": { "to": "one", "from": "many", "required": true } },
+                    { "id": "receiver", "target": "test.Party", "cardinality": { "to": "one", "from": "many", "required": true } },
+                    { "id": "resource", "target": "core.Resource", "cardinality": { "to": "one", "from": "many" } }
+                ],
+                "invariants": extra_invariants,
+                "lifecycles": [{
+                    "property": "status",
+                    "initial": ["requested"],
+                    "terminal": ["fulfilled", "cancelled", "breached"],
+                    "immutable": ["fulfilled", "cancelled", "breached"],
+                    "endings": [
+                        { "state": "fulfilled", "outcome": "completed" },
+                        { "state": "cancelled", "outcome": "cancelled" },
+                        { "state": "breached", "outcome": "breached_visible" }
+                    ],
+                    "transitions": [
+                        { "id": "promise", "from": ["requested"], "to": "promised" },
+                        { "id": "fulfil", "from": ["promised"], "to": "fulfilled" },
+                        { "id": "cancel", "from": ["requested", "promised"], "to": "cancelled" },
+                        { "id": "breach_due", "from": ["requested", "promised"], "to": "breached",
+                          "trigger": { "kind": "timer", "millis": "86400000" }, "mode": "fact" }
+                    ]
+                }]
+            }
+        }
+    });
+    let artifacts = json!([party, commitment]);
+    DefinitionSource::parse(
+        &String::from_utf8(norn_canonical::canonical_json_exact_of(&artifacts).expect("artifacts"))
+            .expect("UTF8"),
+        &String::from_utf8(norn_canonical::canonical_json_exact_of(&base).expect("base"))
+            .expect("UTF8"),
+    )
+    .expect("core commitment source")
+}
+
+/// PROOF-LIFECYCLE-2/3 + LIFE-SOUND-4 on a real `core.Commitment` implementer
+/// with inherited integrity invariants (`positive_quantity`, `single_measure`)
+/// and nullable `unit`/`currency` fields.
+#[test]
+fn core_commitment_with_invariants_and_nullable_measures_runs_life_sound_4() {
+    let base = core_commitment_base();
+    let make_source = |extra_invariants: &Value| core_commitment_source(&base, extra_invariants);
+
+    let make_bounds = |unit: &str, currency: &str, qty: &str| Bounds {
+        object_type: "test.OrderCommitment".into(),
+        property: "status".into(),
+        seed: 0,
+        frozen: BTreeMap::from([
+            ("due_at".into(), vec!["\"2026-12-01T00:00:00Z\"".into()]),
+            ("quantity".into(), vec![qty.into()]),
+            ("unit".into(), vec![unit.into()]),
+            ("currency".into(), vec![currency.into()]),
+        ]),
+    };
+
+    // 1. Valid measure (unit = "each", currency = null, quantity = 5): sound with zero dead ends.
+    let sound_source = make_source(&json!([]));
+    let graph = super::lifecycle_tests::authority(&sound_source)
+        .lifecycle_graph(
+            &sound_source,
+            &BTreeSet::new(),
+            &make_bounds("\"each\"", "null", "5"),
+        )
+        .expect("challenge")
+        .graph
+        .expect("core.Commitment implementer must lower cleanly");
+    assert_eq!(graph.inputs.invariants.len(), 2);
+    assert_eq!(graph.initial.len(), 1);
+    assert_eq!(graph.soundness().expect("states"), Vec::new());
+
+    // 2. Violating `core.Commitment`'s inherited `single_measure` invariant (both null) refuses initial rows.
+    let bad_measure = super::lifecycle_tests::authority(&sound_source)
+        .lifecycle_graph(
+            &sound_source,
+            &BTreeSet::new(),
+            &make_bounds("null", "null", "5"),
+        )
+        .expect("challenge")
+        .graph
+        .expect("graph builds");
+    assert!(
+        bad_measure.initial.is_empty(),
+        "inherited single_measure invariant must exclude unlawful initial rows"
+    );
+
+    // 3. An integrity invariant that blocks every exit from `promised` is caught as LAW_BLOCKED_EXIT.
+    let blocked_source = make_source(&json!([
+        {
+            "id": "no_terminal_small_qty",
+            "expression": "(self.status != 'fulfilled' and self.status != 'cancelled' and self.status != 'breached') or self.quantity >= 10",
+            "message": "small commitments cannot finish"
+        }
+    ]));
+    let blocked_graph = super::lifecycle_tests::authority(&blocked_source)
+        .lifecycle_graph(
+            &blocked_source,
+            &BTreeSet::new(),
+            &make_bounds("\"each\"", "null", "5"),
+        )
+        .expect("challenge")
+        .graph
+        .expect("blocked graph builds");
+    let findings = blocked_graph.soundness().expect("states");
+    assert!(
+        findings.iter().any(
+            |f| f.code == crate::lifecycle_soundness::codes::LAW_BLOCKED_EXIT
+                && f.blocked.as_ref().is_some_and(|(_, laws)| laws
+                    .iter()
+                    .any(|id| id == "invariant:test.OrderCommitment:no_terminal_small_qty"))
+        ),
+        "expected LAW_BLOCKED_EXIT naming the blocking integrity invariant, got {findings:?}"
+    );
+}

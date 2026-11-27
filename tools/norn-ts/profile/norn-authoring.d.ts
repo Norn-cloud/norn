@@ -463,7 +463,14 @@ declare module "@norn/authoring" {
       const P extends ReadonlyArray<InterfaceDefinition<unknown, any> | string> = readonly [],
       const L extends ReadonlyArray<InterfaceLinkSpec> = readonly [],
     >(
-      meta: InterfaceMeta<S> & InterfaceInvariantMeta & { readonly extends?: P; readonly links?: L },
+      meta: InterfaceMeta<S> & InterfaceInvariantMeta & {
+        readonly extends?: P
+        /** INTERFACE-DISJOINT-1: interfaces mutually exclusive with this one (`A ⊓ B = ∅`). */
+        readonly disjointWith?: ReadonlyArray<InterfaceDefinition<unknown, any> | string>
+        readonly links?: L
+        /** INTERFACE-LIFECYCLE-1: lifecycles every implementing type and child interface inherits with non-weakening narrowing. */
+        readonly lifecycles?: ReadonlyArray<LifecycleSpec<EffectiveProperties<undefined, P, S["Type"]>>>
+      },
     ): InterfaceDefinition<EffectiveProperties<undefined, P, S["Type"]>, L>
 
     /** Opaque action definition; the syntax compiler lowers the call. */

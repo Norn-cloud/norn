@@ -129,6 +129,39 @@ struct Predicate<'a> {
     response: Expression,
     expected: bool,
 }
+struct InvariantPredicate {
+    identity: String,
+    expression: Expression,
+    prepared: norn_expr::PreparedAdmission,
+}
+fn compile_invariants(
+    inputs: &Snapshot,
+    work: &mut u64,
+) -> Result<Vec<InvariantPredicate>, String> {
+    if inputs.invariants.len().saturating_add(inputs.laws.len()) > 128 {
+        return Err("more than 128 governing laws and integrity invariants".into());
+    }
+    if inputs.invariants.is_empty() {
+        return Ok(Vec::new());
+    }
+    let env = inputs
+        .invariant_env
+        .as_ref()
+        .ok_or("missing invariant type environment")?;
+    let mut compiled = Vec::new();
+    for (owner, invariant) in &inputs.invariants {
+        let identity = format!("invariant:{owner}:{}", invariant.id.as_str());
+        let expression = compile(invariant.expression.as_str(), work, &inputs.fields)
+            .map_err(|error| format!("{identity}: {error}"))?;
+        let prepared = expression.prepare_admitted(env, &norn_expr::Type::Bool);
+        compiled.push(InvariantPredicate {
+            identity,
+            expression,
+            prepared,
+        });
+    }
+    Ok(compiled)
+}
 fn compile_laws<'a>(inputs: &'a Snapshot, work: &mut u64) -> Result<Vec<Predicate<'a>>, String> {
     if inputs.laws.len() > 128 {
         return Err("more than 128 governing laws".into());
@@ -168,18 +201,84 @@ fn compile_laws<'a>(inputs: &'a Snapshot, work: &mut u64) -> Result<Vec<Predicat
     }
     Ok(laws)
 }
-#[cfg(test)]
-fn lawful(laws: &[Predicate<'_>], context: &Value, work: &mut u64) -> Result<bool, String> {
-    violated(laws, context, work).map(|failing| failing.is_empty())
+/// Native charges one unit per typed stored property (date, timestamp, decimal,
+/// record) from the invariant budget before dispatching integrity invariants.
+fn typed_property_units(fields: &BTreeMap<String, norn_ir::PropertyType>) -> u64 {
+    let count = fields
+        .values()
+        .filter(|ty| {
+            matches!(
+                ty,
+                norn_ir::PropertyType::Date {}
+                    | norn_ir::PropertyType::Timestamp { .. }
+                    | norn_ir::PropertyType::Decimal { .. }
+                    | norn_ir::PropertyType::Record { .. }
+            )
+        })
+        .count();
+    u64::try_from(count).unwrap_or(u64::MAX)
 }
-/// The identities of the laws a row violates; every law is evaluated, as a native write does.
-fn violated<'a>(
-    laws: &[Predicate<'a>],
+/// Native evaluates each integrity invariant via `evaluate_prepared` under the
+/// subject's `ZenTypeEnv` (`Type::Bool`), charging 1 dispatch unit plus metered
+/// evaluation units; budget exhaustion is Unknown, while exact-arithmetic or
+/// non-Boolean evaluation errors refuse the row (`EvaluationFailed` / `NonBoolean`).
+fn invariant_boolean(
+    invariant: &InvariantPredicate,
+    env: &norn_expr::ZenTypeEnv,
     context: &Value,
     work: &mut u64,
-) -> Result<Vec<&'a str>, String> {
-    let mut native = EvaluationBudget::default().units();
+    native: &mut u64,
+) -> Result<bool, String> {
+    *native = native
+        .checked_sub(1)
+        .ok_or("native invariant budget exhausted")?;
+    *work = work.checked_sub(1).ok_or("graph work budget exhausted")?;
+    let attempt = invariant.expression.evaluate_prepared(
+        &invariant.prepared,
+        context,
+        EvaluationBudget::new((*native).min(*work)),
+        env,
+        &norn_expr::Type::Bool,
+    );
+    *work = work.saturating_sub(attempt.units_used);
+    *native = native.saturating_sub(attempt.units_used);
+    match attempt.result {
+        Err(norn_expr::ExprError::BudgetExhausted { .. }) => {
+            Err("native invariant budget exhausted".into())
+        }
+        Err(_) => Ok(false),
+        Ok(evaluation) => Ok(matches!(evaluation.value(), Value::Bool(true))),
+    }
+}
+#[cfg(test)]
+fn lawful(laws: &[Predicate<'_>], context: &Value, work: &mut u64) -> Result<bool, String> {
+    violated(None, laws, context, work).map(|failing| failing.is_empty())
+}
+/// The identities of the integrity invariants and governing laws a row violates;
+/// every integrity invariant and law is evaluated, as a native write does.
+fn violated(
+    invariants: Option<(&norn_expr::ZenTypeEnv, &[InvariantPredicate], u64)>,
+    laws: &[Predicate<'_>],
+    context: &Value,
+    work: &mut u64,
+) -> Result<Vec<String>, String> {
     let mut failing = Vec::new();
+    if let Some((env, invariants, typed_units)) = invariants
+        && !invariants.is_empty()
+    {
+        let mut native = EvaluationBudget::default()
+            .units()
+            .checked_sub(typed_units)
+            .ok_or("native invariant budget exhausted")?;
+        for invariant in invariants {
+            if !invariant_boolean(invariant, env, context, work, &mut native)
+                .map_err(|error| format!("{}: {error}", invariant.identity))?
+            {
+                failing.push(invariant.identity.clone());
+            }
+        }
+    }
+    let mut native = EvaluationBudget::default().units();
     for law in laws {
         let identity = law.identity;
         let activated = law
@@ -194,14 +293,20 @@ fn violated<'a>(
                 .map_err(|error| format!("law {identity}: {error}"))?
                 != law.expected
         {
-            failing.push(identity);
+            failing.push(identity.to_owned());
         }
     }
     Ok(failing)
 }
 fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
     let mut work = WORK;
+    let invariants = compile_invariants(&inputs, &mut work)?;
     let laws = compile_laws(&inputs, &mut work)?;
+    let typed_units = typed_property_units(&inputs.fields);
+    let invariant_check = inputs
+        .invariant_env
+        .as_ref()
+        .map(|env| (env, invariants.as_slice(), typed_units));
     let chart = &inputs.machine.lifecycle;
     let transitions = chart
         .transitions
@@ -230,7 +335,7 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
     }
     let failing = contexts
         .iter()
-        .map(|context| violated(&laws, context, &mut work))
+        .map(|context| violated(invariant_check, &laws, context, &mut work))
         .collect::<Result<Vec<_>, _>>()?;
     let legal: Vec<bool> = failing.iter().map(Vec::is_empty).collect();
     let mut initial = Vec::new();
@@ -267,12 +372,7 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
                     from,
                     to,
                     transition: transition.id.as_str().into(),
-                    laws: failing
-                        .get(to)
-                        .into_iter()
-                        .flatten()
-                        .map(|law| (*law).to_owned())
-                        .collect(),
+                    laws: failing.get(to).cloned().unwrap_or_default(),
                 });
                 continue;
             }
@@ -308,13 +408,13 @@ impl ApprovedContract {
         let input: serde_json::Value =
             serde_json::from_str(&batch.bounds_json).map_err(|_error| ChallengeError::Closure)?;
         let native = EvaluationBudget::default().units();
-        let profile = serde_json::json!({"profile":"norn.lifecycle.graph/1","inputProfile":input,
-            "maxLaws":128,"maxEdges":EDGES,"workBudget":WORK,
+        let profile = serde_json::json!({"profile":"norn.lifecycle.graph/2","inputProfile":input,
+            "maxLawsAndInvariants":128,"maxEdges":EDGES,"workBudget":WORK,
             "workSemantics":"expression source bytes plus compilation and metered evaluation units",
-            "maxGuardUnits":native,"maxRowLawUnits":native,
-            "evaluationSemantics":"each guard gets the native decide budget; each row's laws share one, with one extra unit per expression; every unit also charges workBudget; exhaustion is Unknown",
-            "initial":"declared initial state and all supported governing laws",
-            "steps":"declared transition guards and all post-state governing laws; frozen context"});
+            "maxGuardUnits":native,"maxIntegrityInvariantUnits":native,"maxRowLawUnits":native,
+            "evaluationSemantics":"each guard gets the native decide budget; each row's integrity invariants share one after typed-property units, and its laws share one, with one extra unit per expression; every unit also charges workBudget; exhaustion is Unknown",
+            "initial":"declared initial state satisfying all integrity invariants and supported governing laws",
+            "steps":"declared transition guards and all post-state integrity invariants and governing laws; frozen context"});
         let bytes = norn_canonical::canonical_json_exact_of(&profile)
             .map_err(|_error| ChallengeError::Closure)?;
         Ok(Batch {
