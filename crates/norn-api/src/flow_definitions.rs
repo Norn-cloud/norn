@@ -596,14 +596,8 @@ pub fn rebuild(
         return Err(crate::definition_routes::refused_with(conflicts));
     }
     // The trusted base is what the retained receipt recorded, never what a
-    // submitted id claims.
-    let base = kernel_set::base_ids(active_receipt).map_err(Refusal::host)?;
-    let mut artifacts: Vec<ArtifactEnvelope> = active
-        .into_iter()
-        .filter(|artifact| !owned.contains(&artifact.artifact_id.as_str()))
-        .collect();
-    artifacts.extend(flow.artifacts.iter().cloned());
-    kernel_set::admit_kernel_set_with_base(&artifacts, &base).map_err(|refusal| {
+    // submitted id claims; admit_over preserves exact retained decimal tokens.
+    kernel_set::admit_over(active_set, active_receipt, &flow.artifacts).map_err(|refusal| {
         let diagnostics = match refusal {
             KernelRefusal::Refused(findings) => findings
                 .iter()

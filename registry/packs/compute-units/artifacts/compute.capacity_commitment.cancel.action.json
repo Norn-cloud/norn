@@ -1,0 +1,64 @@
+{
+  "artifactId": "compute.capacity_commitment.cancel.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Cancel a compute capacity commitment",
+  "namespace": "compute",
+  "payload": {
+    "actionId": "compute.capacity_commitment.cancel",
+    "effectProgram": {
+      "entityArtifactId": "compute.CapacityCommitment.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "compute.CapacityCommitment",
+      "transition": "cancel"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Cancel a compute capacity commitment",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "compute.CapacityCommitment"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/compute.capacity_commitment.cancel.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
