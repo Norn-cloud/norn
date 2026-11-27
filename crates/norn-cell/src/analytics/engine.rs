@@ -766,7 +766,9 @@ impl Engine {
         let landed = self.with(&load_request.tenant, |conn| {
             let landed = (|| {
                 let load = load_locked(conn, &staged_load, &file, bytes, started, Lineage::Skip)?;
-                in_transaction(conn, |conn| check_rules(conn, &staged_table, request))?;
+                without_cse(conn, || {
+                    in_transaction(conn, |conn| check_rules(conn, &staged_table, request))
+                })?;
                 residue_fits(conn, &staged_table, request.residue_page)?;
                 set_meta(
                     conn,
@@ -1416,6 +1418,47 @@ fn in_transaction<T>(
             Err(error)
         }
     }
+}
+
+/// Run `body` with `DuckDB`'s `common_subexpressions` optimizer disabled, then
+/// restore the previous `disabled_optimizers` setting after `body` commits or
+/// rolls back (while still holding the tenant connection lock).
+///
+/// `DuckDB` 2.0.0's `common_subexpressions` optimizer does not treat `TRY(...)`
+/// as an exception boundary and can hoist a shared throwing subexpression (such
+/// as a mixed-scale `DECIMAL(38, s)` cast) above `TRY`, aborting the landing
+/// query instead of recording residue.
+fn without_cse<T>(conn: &Connection, body: impl FnOnce() -> Outcome<T>) -> Outcome<T> {
+    let prior: String = db(conn.query_row(
+        "SELECT current_setting('disabled_optimizers')",
+        [],
+        |row| row.get(0),
+    ))?;
+    let already_disabled = prior
+        .split(',')
+        .any(|entry| entry.trim().eq_ignore_ascii_case("common_subexpressions"));
+    if !already_disabled {
+        let next = if prior.trim().is_empty() {
+            "common_subexpressions".to_owned()
+        } else {
+            format!("{prior},common_subexpressions")
+        };
+        let escaped = next.replace('\'', "''");
+        db(conn.execute_batch(&format!("SET disabled_optimizers = '{escaped}';")))?;
+    }
+    let result = body();
+    if already_disabled {
+        return result;
+    }
+    let restore = if prior.trim().is_empty() {
+        conn.execute_batch("RESET disabled_optimizers;")
+    } else {
+        let escaped = prior.replace('\'', "''");
+        conn.execute_batch(&format!("SET disabled_optimizers = '{escaped}';"))
+    };
+    let value = result?;
+    db(restore)?;
+    Ok(value)
 }
 
 fn reset_mirror(
@@ -3785,18 +3828,18 @@ fn lower_logical(
     let mut terms = Vec::new();
     collect_logical(is_and, a, &mut terms);
     collect_logical(is_and, b, &mut terms);
-    let total = terms.len();
     let mut guards = Vec::new();
-    let mut args = Vec::with_capacity(total);
+    let mut args = Vec::with_capacity(terms.len());
     let prefix_map = if is_and {
         "list_extract([CAST(-1 AS BIGINT), CAST(0 AS BIGINT), CAST(NULL AS BIGINT)], COALESCE(CAST(({}) AS BIGINT), -1) + 2)"
     } else {
         "list_extract([CAST(-1 AS BIGINT), CAST(NULL AS BIGINT), CAST(1 AS BIGINT)], COALESCE(CAST(({}) AS BIGINT), -1) + 2)"
     };
-    for (idx, term) in terms.into_iter().enumerate() {
+    let mut iter = terms.into_iter().peekable();
+    while let Some(term) = iter.next() {
         let lowered = lower_node(term, table)?;
         guards.extend(lowered.guards);
-        let frag = if idx + 1 == total {
+        let frag = if iter.peek().is_none() {
             Frag::fmt("CAST(({}) AS BIGINT)", &[&lowered.sql])
         } else {
             Frag::fmt(prefix_map, &[&lowered.sql])
@@ -4093,16 +4136,7 @@ fn check_rules(conn: &Connection, table: &TableSchema, request: &LandRequest) ->
         &format!("INSERT INTO \":outcome\" SELECT {{}} FROM {dataset}"),
         &[&Frag::join(&select, ", ")],
     );
-    // `DuckDB` 2.0.0's `common_subexpressions` optimizer does not treat
-    // `TRY(...)` as an exception boundary and can hoist a shared throwing
-    // subexpression (such as a mixed-scale `DECIMAL(38, s)` cast) above `TRY`,
-    // aborting the landing query instead of recording residue. Disable CSE for
-    // the outcome projection and always restore it before returning.
-    db(conn.execute_batch("SET disabled_optimizers = 'common_subexpressions';"))?;
-    let executed = conn.execute(&outcome.text, params_from_iter(outcome.params));
-    let reset = conn.execute_batch("RESET disabled_optimizers;");
-    db(executed)?;
-    db(reset)?;
+    db(conn.execute(&outcome.text, params_from_iter(outcome.params)))?;
     let held_into = finding_columns(table);
     let held = finding_values(table, "d.\":row\"");
     for (i, check) in request.checks.iter().enumerate() {
