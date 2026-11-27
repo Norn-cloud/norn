@@ -898,6 +898,95 @@ pub(crate) fn classify_transform_in_tx<E: SqlEngine>(
     Ok(ClassifiedTransform { marked, catalog })
 }
 
+/// DATA-SOURCES-1: unified `Sources` check over the disclosed `source.Connection`
+/// records and evaluated output member versions across ExactCell, IVM, OLAP, and
+/// `:trace`. Fails closed on missing or unproven records.
+fn result_sources_granted<E: SqlEngine>(
+    host: &DevHost<E>,
+    runtime: &dyn crate::question_routes::QuestionRuntime<E>,
+    store: &norn_cell::CellStore<E>,
+    (actor, question, plan): (&str, &str, &norn_checker::metric::compute::QuestionPlan),
+    (result, historical): (&norn_cell::compute::QueryResult, Option<(u64, u64)>),
+) -> Result<bool, Refusal> {
+    let sources: std::collections::BTreeSet<&str> = result
+        .context
+        .source_cursors
+        .iter()
+        .filter(|(_, p)| !p.is_empty())
+        .map(|(s, _)| s.as_str())
+        .chain(
+            result
+                .context
+                .watermarks
+                .iter()
+                .filter(|(_, p)| !p.is_empty())
+                .map(|(s, _)| s.as_str()),
+        )
+        .collect();
+    if sources.is_empty() {
+        return Ok(true);
+    }
+    if !crate::question_routes::plan_sources(host, runtime, store, actor, plan) {
+        return Ok(false);
+    }
+    let check = |rec: &ObjectRecord| {
+        crate::question_routes::allowed(
+            host,
+            runtime,
+            actor,
+            question,
+            rec,
+            crate::authz::ReadCapability::Sources,
+        )
+        .map_err(Refusal::from_compute)
+    };
+    if store.model().has_type("source.Connection") {
+        for source_id in sources {
+            let Ok(Some(conn)) =
+                store.connection_record_at(&result.context.world, source_id, historical)
+            else {
+                return Ok(false);
+            };
+            if !check(&conn)? {
+                return Ok(false);
+            }
+        }
+    }
+    let grain = plan.grain().as_str();
+    let reader = store.read();
+    for row in result.rows.values() {
+        if row.member_count.is_some() && row.members.is_empty() {
+            let all = ObjectRecord {
+                object_type: grain.to_owned(),
+                id: norn_cell::compute::ALL_MEMBERS.to_owned(),
+                scope: result.context.scope.clone(),
+                version: 0,
+                values: BTreeMap::new(),
+            };
+            if !check(&all)? {
+                return Ok(false);
+            }
+        }
+        for (id, member) in &row.members {
+            let rec = match reader.object(&result.context.world, grain, id) {
+                Ok(Some(rec)) if rec.version == member.version => rec,
+                Ok(_) => {
+                    match reader.object_at_version(&result.context.world, grain, id, member.version)
+                    {
+                        Ok(Some(rec)) => rec,
+                        Ok(None) | Err(_) => return Ok(false),
+                    }
+                }
+                Err(_) => return Ok(false),
+            };
+            if !check(&rec)? {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, reason = "pseudonym fixtures")]
 mod tests {

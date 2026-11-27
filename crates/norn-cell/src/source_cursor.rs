@@ -661,6 +661,8 @@ impl<E: SqlEngine> CellStore<E> {
                 return Err(CellError::SourceCursorConflict {
                     connection_id: connection_id.to_owned(),
                     dataset,
+                    expected: None,
+                    actual: Some("pending".to_owned()),
                 });
             }
             self.conn.execute(

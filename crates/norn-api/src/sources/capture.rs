@@ -158,6 +158,34 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     Ok((legacy, encoded))
 }
 
+/// Mapping ID to record on `source.Connection`: preserve the prior stored
+/// `mapping_id` when a connector sync fails before cursor reset/load completes,
+/// so a failed rebind reset cannot stamp the new mapping onto surviving cursors
+/// from the old mapping.
+pub(super) fn reported_mapping_id<E: SqlEngine>(
+    host: &DevHost<E>,
+    config: &ConnectionConfig,
+    run: &super::Run,
+) -> String {
+    if run.pull.is_none()
+        && !config.connector.is_empty()
+        && let Some(existing) = host
+            .host_object(CONNECTION_TYPE, &config.id)
+            .ok()
+            .flatten()
+            .and_then(|object| {
+                object
+                    .get("mapping_id")
+                    .and_then(RuntimeValue::as_str)
+                    .filter(|m| !m.is_empty())
+                    .map(str::to_owned)
+            })
+    {
+        return existing;
+    }
+    config.mapping.clone()
+}
+
 fn legacy_connection_watermarks<E: SqlEngine>(
     host: &DevHost<E>,
     connection_id: &str,

@@ -105,22 +105,31 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
         if cap == 0 || budget.remaining_bytes() < 64 {
             return Ok((Vec::new(), false));
         }
-        let limit = i64::try_from(cap.saturating_add(1))
+        const MAX_DISTINCT_SCAN: usize = 65_536;
+        let scan_cap = cap.saturating_mul(64).min(MAX_DISTINCT_SCAN);
+        let limit = i64::try_from(scan_cap.saturating_add(1))
             .map_err(|_n| refused("core.compute.bound_exceeded"))?;
         let head = i64::try_from(self.cutoff.frontier)
             .map_err(|_n| refused("core.compute.bound_exceeded"))?;
         let rows = self.reader.conn.query(
-            "SELECT DISTINCT id FROM _norn_fact_values \
+            "SELECT id FROM _norn_fact_values INDEXED BY \"_norn_fact_values/root_frontier\" \
              WHERE world=?1 AND root_type=?2 AND commit_seq<=?3 \
-             ORDER BY id LIMIT ?4",
+             ORDER BY commit_seq, id, version LIMIT ?4",
             params![world, root, head, limit],
         )?;
-        if rows.len() > cap {
+        if rows.len() > scan_cap {
             return Ok((Vec::new(), false));
         }
-        let mut ids = Vec::with_capacity(rows.len());
+        let mut seen = BTreeSet::new();
         for row in rows {
             let id: String = SqlRow(row).get(0)?;
+            seen.insert(id);
+            if seen.len() > cap {
+                return Ok((Vec::new(), false));
+            }
+        }
+        let mut ids = Vec::with_capacity(seen.len());
+        for id in seen {
             let bytes = u64::try_from(id.len().saturating_add(64))
                 .map_err(|_n| refused("core.compute.bound_exceeded"))?;
             if !budget.charge_rows(1) || !budget.charge(bytes) {

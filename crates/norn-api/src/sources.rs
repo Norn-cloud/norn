@@ -695,10 +695,10 @@ fn begin<E: SqlEngine>(
             let (code, message) = error.code_and_message();
             fail(code, message)
         })?;
+    run.lease = Some(lease.clone());
     let (watermarks, raw_cursors) =
         capture::load_and_seed_watermarks(host, config, &lease, known, now_ms)?;
     let pending = capture::load_pending_captures(host, &config.id)?;
-    run.lease = Some(lease);
     run.watermark_from = watermark_text(&watermarks);
     run.committed_watermarks = watermarks.clone();
     run.committed_cursor_json = raw_cursors;
@@ -1136,6 +1136,7 @@ fn report<E: SqlEngine>(
     } else {
         "api_key"
     };
+    let mapping_id = capture::reported_mapping_id(host, config, run);
     let connection = norn_ir::runtime_object! {
         "id" => config.id.as_str(), "system" => config.system.as_str(), "label" => config.label.as_str(),
         "target" => config.base_url.as_str(), "auth" => auth, "status" => status,
@@ -1144,8 +1145,8 @@ fn report<E: SqlEngine>(
         "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
         "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
         "last_error_code" => error_code, "last_error_message" => error_message,
-        "connector_id" => config.connector.as_str(), "source_schema_id" => source_schema_id(&config.mapping),
-        "mapping_id" => config.mapping.as_str(),
+        "connector_id" => config.connector.as_str(), "source_schema_id" => source_schema_id(&mapping_id),
+        "mapping_id" => mapping_id.as_str(),
     };
     let phase = if ended.is_some() { "end" } else { "start" };
     let mut rows = vec![("connection", config.id.clone(), connection)];

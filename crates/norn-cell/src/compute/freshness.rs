@@ -267,12 +267,17 @@ impl RequiredBindings {
         self.connected.is_empty() && self.unconnected.is_empty()
     }
 
-    fn unconnected_key(&self, mapping_id: &str) -> String {
-        if self.connected.contains_key(mapping_id) {
-            format!("unconnected:{mapping_id}")
-        } else {
-            mapping_id.to_owned()
+    fn unconnected_keys(&self) -> BTreeMap<&str, String> {
+        let mut used: BTreeSet<String> = self.connected.keys().cloned().collect();
+        let mut out = BTreeMap::new();
+        for mapping_id in self.unconnected.keys() {
+            let mut key = mapping_id.clone();
+            while !used.insert(key.clone()) {
+                key = format!("unconnected:{key}");
+            }
+            out.insert(mapping_id.as_str(), key);
         }
+        out
     }
 }
 
@@ -327,9 +332,10 @@ fn bindings_to_required(bindings: RequiredBindings) -> RequiredSources {
         .iter()
         .map(|(source, (_, datasets))| (source.clone(), datasets.clone()))
         .collect();
-    for (mapping_id, datasets) in &bindings.unconnected {
-        let key = bindings.unconnected_key(mapping_id);
-        out.entry(key).or_default().extend(datasets.iter().cloned());
+    for (mapping_id, key) in bindings.unconnected_keys() {
+        if let Some(datasets) = bindings.unconnected.get(mapping_id) {
+            out.entry(key).or_default().extend(datasets.iter().cloned());
+        }
     }
     RequiredSources(out)
 }
@@ -417,6 +423,56 @@ impl<E: SqlEngine> CellStore<E> {
             objects = read_world(&mut as_of, MAIN_WORLD, &mut budget)?;
         }
         Ok(objects)
+    }
+
+    /// Read one `source.Connection` record at live head (`historical == None`)
+    /// or authenticated cutoff `Some((frontier, now_ms))` for `Sources` cursor
+    /// disclosure authorization. Returns `Ok(None)` when absent or over budget.
+    ///
+    /// # Errors
+    /// Store or historical-proof verification errors.
+    pub fn connection_record_at(
+        &self,
+        world: &str,
+        source_id: &str,
+        historical: Option<(u64, u64)>,
+    ) -> Result<Option<ObjectRecord>, CellError> {
+        if !self.has_connection_type() {
+            return Ok(None);
+        }
+        let reader = self.read();
+        let Some((frontier, now_ms)) = historical else {
+            if let Some(rec) = reader.object(world, CONNECTION_TYPE, source_id)? {
+                return Ok(Some(rec));
+            }
+            return if world != MAIN_WORLD {
+                reader.object(MAIN_WORLD, CONNECTION_TYPE, source_id)
+            } else {
+                Ok(None)
+            };
+        };
+        if frontier == 0 {
+            return Ok(None);
+        }
+        let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        let mut budget = DecodeBudget::new(&limits);
+        let cutoff = KnowledgeCutoff {
+            frontier,
+            recorded_at: LogicalTime::from_millis(now_ms),
+        };
+        let mut as_of = AsOfReader::open(&reader, cutoff, now_ms, &mut budget)?;
+        match as_of.record(world, CONNECTION_TYPE, source_id, &mut budget)? {
+            BudgetedRead::Found(record) => return Ok(Some(record)),
+            BudgetedRead::Exhausted => return Ok(None),
+            BudgetedRead::Missing => {}
+        }
+        if world != MAIN_WORLD
+            && let BudgetedRead::Found(record) =
+                as_of.record(MAIN_WORLD, CONNECTION_TYPE, source_id, &mut budget)?
+        {
+            return Ok(Some(record));
+        }
+        Ok(None)
     }
 
     fn definitions_at(
@@ -558,11 +614,8 @@ impl<E: SqlEngine> CellStore<E> {
             .map(|record| (record.id.clone(), record))
             .collect();
         let mut snapshot = SourceFreshnessSnapshot::default();
-        for mapping_id in bindings.unconnected.keys() {
-            snapshot
-                .source_cursors
-                .entry(bindings.unconnected_key(mapping_id))
-                .or_default();
+        for key in bindings.unconnected_keys().into_values() {
+            snapshot.source_cursors.entry(key).or_default();
         }
         for (source_id, (expected_mapping, datasets)) in &bindings.connected {
             snapshot
@@ -618,11 +671,8 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<SourceFreshnessSnapshot, CellError> {
         let reader = self.read();
         let mut snapshot = SourceFreshnessSnapshot::default();
-        for mapping_id in bindings.unconnected.keys() {
-            snapshot
-                .source_cursors
-                .entry(bindings.unconnected_key(mapping_id))
-                .or_default();
+        for key in bindings.unconnected_keys().into_values() {
+            snapshot.source_cursors.entry(key).or_default();
         }
         for (source_id, (expected_mapping, datasets)) in &bindings.connected {
             snapshot

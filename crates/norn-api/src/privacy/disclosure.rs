@@ -33,7 +33,6 @@ use super::{
     discloses_source, grain_marked, project, project_columns, redact_trace_contributions, row_ids,
     strongest, version_markings, withhold_values,
 };
-use crate::authz::ReadCapability;
 use crate::host::DevHost;
 use crate::object_review::{
     NornEvidenceRef, NornObjectFindings, NornObjectHistory, NornObjectVersion,
@@ -43,9 +42,7 @@ use crate::objects::{
     NornAppliedQuery, NornLinkCounts, NornLinkEdge, NornObjectLinkPage, NornObjectPage,
     NornObjectQueryPage, NornObjectRecord, NornQueriedRecord, NornQueryTotal,
 };
-use crate::question_routes::{
-    QuestionAnswer, QuestionRuntime, allowed, plan_sources, world_values,
-};
+use crate::question_routes::{QuestionAnswer, QuestionRuntime, world_values};
 use crate::refusal::Refusal;
 use crate::transform_routes::{
     NornMaterialization, NornTransformColumn, NornTransformLineage, NornTransformMember,
@@ -515,10 +512,7 @@ fn withhold_cutoff_receipt(
     Ok(())
 }
 
-/// DATA-SOURCES-1: key raw connector cursors (`source_cursors` and
-/// `watermarks.observed`) whenever the caller lacks the independent `Sources`
-/// grant, preventing disclosure of upstream record IDs and versions while
-/// keeping freshness, completeness, heartbeat, and cursor equality intact.
+/// DATA-SOURCES-1: key raw cursors whenever the caller lacks `Sources`.
 fn withhold_source_cursors(result: &mut QueryResult, key: &[u8], sources_granted: bool) {
     if sources_granted {
         return;
@@ -536,69 +530,7 @@ fn withhold_source_cursors(result: &mut QueryResult, key: &[u8], sources_granted
     }
 }
 
-/// DATA-SOURCES-1: unified result-wide `Sources` check evaluated identically
-/// over the output rows of `result` across ExactCell, IVM, OLAP (DuckDB /
-/// DataFusion), and `:trace`, so filtered-out rows never cause answer/trace
-/// divergence.
-fn result_sources_granted<E: SqlEngine>(
-    host: &DevHost<E>,
-    runtime: &dyn QuestionRuntime<E>,
-    store: &CellStore<E>,
-    (actor, question, plan): (&str, &str, &QuestionPlan),
-    result: &QueryResult,
-) -> Result<bool, Refusal> {
-    if !plan_sources(host, runtime, store, actor, plan) {
-        return Ok(false);
-    }
-    let grain = plan.grain().as_str();
-    let scope = result.context.scope.as_str();
-    let gate = |id: &str| ObjectRecord {
-        object_type: grain.to_owned(),
-        id: id.to_owned(),
-        scope: scope.to_owned(),
-        version: 0,
-        values: BTreeMap::new(),
-    };
-    let reader = store.read();
-    for row in result.rows.values() {
-        if row.member_count.is_some()
-            && row.members.is_empty()
-            && !allowed(
-                host,
-                runtime,
-                actor,
-                question,
-                &gate(norn_cell::compute::ALL_MEMBERS),
-                ReadCapability::Sources,
-            )
-            .map_err(Refusal::from_compute)?
-        {
-            return Ok(false);
-        }
-        for id in row.members.keys() {
-            let record = match reader.get(&result.context.world, grain, id) {
-                Ok(Some(rec)) => rec,
-                Ok(None) | Err(_) => gate(id),
-            };
-            if !allowed(
-                host,
-                runtime,
-                actor,
-                question,
-                &record,
-                ReadCapability::Sources,
-            )
-            .map_err(Refusal::from_compute)?
-            {
-                return Ok(false);
-            }
-        }
-    }
-    Ok(true)
-}
-
-/// Project one evaluated [`QuestionAnswer`] under D53 bucket suppression,
-/// keyed handles, cutoff-receipt keying, and `Sources`-gated cursor keying.
+/// Project one [`QuestionAnswer`] under D53 and `Sources`-gated cursor keying.
 pub(crate) fn project_answer<E: SqlEngine>(
     (host, runtime, store): (&DevHost<E>, &dyn QuestionRuntime<E>, &CellStore<E>),
     (actor, question, key, plan): (&str, &str, &[u8], &QuestionPlan),
@@ -606,15 +538,24 @@ pub(crate) fn project_answer<E: SqlEngine>(
     mut answer: QuestionAnswer,
 ) -> Result<DisclosedAnswer, Refusal> {
     let world = withheld.is_empty() && world_values(host, runtime, store, actor);
-    let result = match &mut answer {
-        QuestionAnswer::Live(result) => result,
+    let (result, historical) = match &mut answer {
+        QuestionAnswer::Live(result) => (result, None),
         QuestionAnswer::Historical(historical) => {
             withhold_cutoff_receipt(historical, key, world)?;
-            &mut historical.result
+            let at = (
+                historical.result.known_as_of,
+                historical.result.context.now_ms,
+            );
+            (&mut historical.result, Some(at))
         }
     };
-    let sources_granted =
-        result_sources_granted(host, runtime, store, (actor, question, plan), result)?;
+    let sources_granted = super::result_sources_granted(
+        host,
+        runtime,
+        store,
+        (actor, question, plan),
+        (result, historical),
+    )?;
     withhold_ledger_head(result, key, world);
     withhold_exclusions(result, key, world);
     withhold_source_cursors(result, key, sources_granted);
@@ -623,9 +564,7 @@ pub(crate) fn project_answer<E: SqlEngine>(
     Ok(DisclosedAnswer { inner: answer })
 }
 
-/// Project one evaluated [`NumericTrace`] under PRIVACY-1 contribution
-/// redaction (`fact_digest`, `source`, projected `values`), keyed receipt,
-/// cursor, and ledger handles, and D53 bucket suppression.
+/// Project one [`NumericTrace`] under PRIVACY-1 redaction and cursor keying.
 pub(crate) fn project_trace<E: SqlEngine>(
     (host, runtime, store): (&DevHost<E>, &dyn QuestionRuntime<E>, &CellStore<E>),
     (actor, question, world_name, plan): (&str, &str, &str, &QuestionPlan),
@@ -640,8 +579,16 @@ pub(crate) fn project_trace<E: SqlEngine>(
         &mut trace.contributions,
     )?;
     let world = !any_marked && withheld.is_empty() && world_values(host, runtime, store, actor);
-    let sources_granted =
-        result_sources_granted(host, runtime, store, (actor, question, plan), &trace.result)?;
+    let head = store.read().head_commit_seq().map_err(Refusal::host)?;
+    let historical = (head != trace.result.known_as_of)
+        .then_some((trace.result.known_as_of, trace.result.context.now_ms));
+    let sources_granted = super::result_sources_granted(
+        host,
+        runtime,
+        store,
+        (actor, question, plan),
+        (&trace.result, historical),
+    )?;
     withhold_ledger_head(&mut trace.result, key, world);
     withhold_exclusions(&mut trace.result, key, world);
     withhold_source_cursors(&mut trace.result, key, sources_granted);
