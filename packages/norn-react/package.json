@@ -9,7 +9,7 @@
     "./machine": "./src/machine/index.ts",
     "./state": "./src/state.ts"
   },
-  "scripts": { "test": "bun test", "typecheck": "tsc -p tsconfig.json" },
+  "scripts": { "test": "bun test", "typecheck": "tsrs --fast -p tsconfig.json" },
   "peerDependencies": { "@ui-sdk/core": "0.1.0-beta.17", "@ui-sdk/react": "0.1.0-beta.17", "react": "19.3.1", "react-dom": "19.3.1" },
   "devDependencies": {
     "@types/bun": "1.4.2",
@@ -19,6 +19,6 @@
     "@ui-sdk/react": "0.1.0-beta.17",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "typescript": "6.0.3"
+    "tsrs": "7.1.0-beta.tsrs5"
   }
 }
