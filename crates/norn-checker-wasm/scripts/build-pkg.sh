@@ -89,21 +89,17 @@ run_wasm_opt() {
     local cached="${cache_dir}/wasm-opt-132"
     if [[ ! -x "${cached}" ]] || ! "${cached}" --version 2>/dev/null | grep -qE '^wasm-opt version 132([^0-9]|$)'; then
       mkdir -p "${cache_dir}"
-      local stage
-      stage="$(mktemp -d "${cache_dir}/.wasm-opt-132.XXXXXX")"
-      local archive="${stage}/binaryen-version_132-x86_64-linux.tar.gz"
-      if ! {
+      (
+        stage="$(mktemp -d "${cache_dir}/.wasm-opt-132.XXXXXX")"
+        trap 'rm -rf -- "${stage}"' EXIT INT TERM
+        archive="${stage}/binaryen-version_132-x86_64-linux.tar.gz"
         curl -fsSL --retry 3 -o "${archive}" \
-          "https://github.com/WebAssembly/binaryen/releases/download/version_132/binaryen-version_132-x86_64-linux.tar.gz" &&
-        printf '%s  %s\n' "195ddc94f9bc89f45abdabb0b9eea86023d727ba90eac8b35b80f2544fc30572" "${archive}" | sha256sum -c --quiet - &&
-        tar -xzf "${archive}" -C "${stage}" binaryen-version_132/bin/wasm-opt &&
-        "${stage}/binaryen-version_132/bin/wasm-opt" --version | grep -qE '^wasm-opt version 132([^0-9]|$)' &&
-        mv -f "${stage}/binaryen-version_132/bin/wasm-opt" "${cached}"
-      }; then
-        rm -rf "${stage}"
-        return 1
-      fi
-      rm -rf "${stage}"
+          "https://github.com/WebAssembly/binaryen/releases/download/version_132/binaryen-version_132-x86_64-linux.tar.gz"
+        printf '%s  %s\n' "195ddc94f9bc89f45abdabb0b9eea86023d727ba90eac8b35b80f2544fc30572" "${archive}" | sha256sum -c --quiet -
+        tar -xzf "${archive}" -C "${stage}" binaryen-version_132/bin/wasm-opt
+        "${stage}/binaryen-version_132/bin/wasm-opt" --version | grep -qE '^wasm-opt version 132([^0-9]|$)'
+        mv -fT "${stage}/binaryen-version_132/bin/wasm-opt" "${cached}"
+      )
     fi
     "${cached}" "$@"
   else
