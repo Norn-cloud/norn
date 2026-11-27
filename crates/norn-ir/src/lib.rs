@@ -26,12 +26,11 @@
     clippy::large_futures
 )]
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::marker::PhantomData;
-
 use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
+use std::collections::{BTreeMap, BTreeSet};
+use std::marker::PhantomData;
 
 pub mod access;
 pub mod action;
@@ -60,9 +59,11 @@ pub mod entity;
 pub mod entity_v2;
 pub mod exact_sum;
 pub use exact_sum::{Amount, ExactSum};
+pub use feed::{FeedMode, FieldPatch, SourceVersion, VersionKind};
 pub mod explain;
 pub mod fact_change;
 pub mod facts;
+pub mod feed;
 pub mod flow_source_map;
 pub mod function;
 pub mod i18n;
@@ -2191,21 +2192,13 @@ pub struct GraphLoadPlan {
     pub can_execute: bool,
 }
 
-/// Emit the envelope schema with `kind` and `payload` paired in each branch.
-///
-/// Derived from the envelope wire form: the flattened, adjacently tagged
-/// [`ArtifactPayload`] yields one `oneOf` branch per kind, so a cross-kind envelope
-/// cannot validate. Every declared payload member carries its typed contract (T1-IR-2);
-/// the reserved `extensions` slot is the only generic JSON member.
+/// Emit the envelope schema with `kind` and `payload` paired in each branch (T1-IR-2).
 #[must_use]
 pub fn artifact_envelope_schema() -> Schema {
     schema_for!(ArtifactEnvelope)
 }
 
 /// Emit the JSON Schema for the canonical resource-limit profile reference.
-///
-/// This small schema is also used by check receipts, so consumers can project
-/// it without restating the IR type.
 #[must_use]
 pub fn limit_profile_ref_schema() -> Schema {
     schema_for!(LimitProfileRef)
@@ -2224,9 +2217,6 @@ pub fn diagnostic_remediation_schema() -> Schema {
 }
 
 /// Emit the JSON Schema for the closed payload root selected by an envelope kind.
-///
-/// The wire `kind` is the discriminator ([`ArtifactEnvelope::kind`]), so callers that need
-/// a per-kind contract select the schema with the same kind value.
 #[must_use]
 pub fn artifact_payload_schema(kind: &ArtifactKind) -> Schema {
     match kind {
