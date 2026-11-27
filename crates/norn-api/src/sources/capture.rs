@@ -119,32 +119,26 @@ pub(super) fn cursor_advance_spec(
     })
 }
 
-/// Release the run's durable lease if it still holds it and report whether this
-/// run was fenced or superseded by another run's lease (so `finish` must not
-/// overwrite `source.Connection` or local schedule/watermark state).
-pub(super) fn release_and_check_superseded<E: SqlEngine>(
+/// Check (without releasing the lease yet) whether this run was fenced or
+/// superseded by another run's lease so `finish` writes `source.Connection`
+/// only while still holding ownership, and releases the lease afterward.
+pub(super) fn is_lease_superseded<E: SqlEngine>(
     host: &DevHost<E>,
     connection_id: &str,
     lease: Option<&SourceLease>,
     error: Option<&(String, String)>,
 ) -> bool {
-    let mut superseded = error.is_some_and(|(code, _)| code == "source.lease_fenced");
-    if let Some(lease) = lease
-        && matches!(
-            host.release_source_lease(connection_id, &lease.lease_id, lease.generation),
-            Ok(false)
-        )
-        && host
-            .source_lease(connection_id)
+    if error.is_some_and(|(code, _)| code == "source.lease_fenced") {
+        return true;
+    }
+    lease.is_some_and(|held| {
+        host.source_lease(connection_id)
             .ok()
             .flatten()
             .is_some_and(|current| {
-                current.lease_id != lease.lease_id || current.generation > lease.generation
+                current.lease_id != held.lease_id || current.generation > held.generation
             })
-    {
-        superseded = true;
-    }
-    superseded
+    })
 }
 
 /// Load any durably captured pages left behind in `_norn_source_pending` by an
@@ -201,7 +195,7 @@ pub(super) fn capture_accepted_page<E: SqlEngine>(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| fail("source.seal", e))?;
     let spec = cursor_advance_spec(config, lease, &accepted.advance, now_ms)?;
-    let pending = host
+    let (pending, outcomes) = host
         .capture_source_page_atomic(&batch, &spec, step_rows.clamp(1, crate::host::PAGE_ROWS))
         .map_err(|error| {
             let (code, message) = error.code_and_message();
@@ -214,7 +208,7 @@ pub(super) fn capture_accepted_page<E: SqlEngine>(
     Ok((
         Some(ActiveCapture {
             pending,
-            outcomes: BTreeMap::new(),
+            outcomes,
             advance: Some(accepted.advance),
         }),
         advance,

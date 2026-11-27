@@ -98,6 +98,23 @@ pub struct CapturedSourcePage {
     pub captured: CapturedPage,
 }
 
+/// Whether `error` is a storage/engine/fencing failure (including one wrapped
+/// inside [`CellError::ObservationCommit`]) that must propagate rather than
+/// being treated as a per-record business refusal or quarantine outcome.
+pub(crate) fn is_store_failure(error: &CellError) -> bool {
+    match error {
+        CellError::Sqlite(_)
+        | CellError::Engine(_)
+        | CellError::Verifying(_)
+        | CellError::Fenced(_) => true,
+        CellError::ObservationCommit(commit_error) => matches!(
+            commit_error.as_ref(),
+            norn_kernel::CommitError::Host(inner) if is_store_failure(inner)
+        ),
+        _ => false,
+    }
+}
+
 impl<E: SqlEngine> CellStore<E> {
     fn validate_page_framing(
         raws: &[Observed<RuntimeValue>],
@@ -131,7 +148,7 @@ impl<E: SqlEngine> CellStore<E> {
     }
 
     fn capture_mapping_page_rows_in_tx(
-        &mut self,
+        &self,
         raws: &[Observed<RuntimeValue>],
         input: &MappingInput,
         canonical: &CommitModel<'_, '_>,
@@ -277,13 +294,24 @@ impl<E: SqlEngine> CellStore<E> {
         self.write_tx(|| {
             let precondition =
                 crate::source_cursor::check_capture_precondition(&self.conn, advance, &digest)?;
-            let captured = match input {
-                Some(input) => {
-                    self.capture_mapping_page_rows_in_tx(raws, input, &canonical, max_run_rows)?
+            let captured = match &precondition {
+                crate::source_cursor::Precondition::IdempotentReplay { pages, records } => {
+                    // Exact replay returns the originally captured observation
+                    // ids without creating fresh inbox rows (even if wall-clock
+                    // `extracted_at` changed).
+                    CapturedPage {
+                        pages: pages.iter().cloned().map(|id| (id, false)).collect(),
+                        records: records.clone(),
+                    }
                 }
-                None => CapturedPage {
-                    pages: Vec::new(),
-                    records: Vec::new(),
+                crate::source_cursor::Precondition::Advance => match input {
+                    Some(input) => {
+                        self.capture_mapping_page_rows_in_tx(raws, input, &canonical, max_run_rows)?
+                    }
+                    None => CapturedPage {
+                        pages: Vec::new(),
+                        records: Vec::new(),
+                    },
                 },
             };
             let page_ids: Vec<String> = captured.pages.iter().map(|(id, _)| id.clone()).collect();
@@ -294,6 +322,7 @@ impl<E: SqlEngine> CellStore<E> {
                 &precondition,
                 &page_ids,
                 &captured.records,
+                true,
             )?;
             Ok(CapturedSourcePage {
                 page_digest: digest,
@@ -329,10 +358,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// The ids of a pending page's members that are still pending, in page
     /// order, read without decoding any row; `None` when the page itself is
     /// not pending. The commit guard compares them with the bundles applied.
-    pub(crate) fn pending_page_member_ids(
-        &self,
-        page: &str,
-    ) -> Result<Option<Vec<String>>, CellError> {
+    ///
+    /// # Errors
+    /// Store errors.
+    pub fn pending_page_member_ids(&self, page: &str) -> Result<Option<Vec<String>>, CellError> {
         let inbox = crate::system::INBOX;
         let rows = self.conn.query(
             &format!(
@@ -424,12 +453,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                     .map(|(id, _)| (id, MappingOutcome::Landed))
                     .collect(),
             )),
-            Err(
-                error @ (CellError::Sqlite(_)
-                | CellError::Engine(_)
-                | CellError::Verifying(_)
-                | CellError::Fenced(_)),
-            ) => Err(error),
+            Err(error) if is_store_failure(&error) => Err(error),
             Err(_refused) => Ok(PageAttempt::Refused(
                 members.into_iter().map(|(id, _)| id).collect(),
             )),

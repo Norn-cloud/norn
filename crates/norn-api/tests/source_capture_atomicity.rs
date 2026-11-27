@@ -564,6 +564,17 @@ mod tests {
                 .all(|o| o.outcome == MappingOutcome::AlreadyLanded),
             "{duplicate:#?}"
         );
+        assert_eq!(
+            duplicate
+                .iter()
+                .map(|o| o.observation_id.as_str())
+                .collect::<Vec<_>>(),
+            first
+                .iter()
+                .map(|o| o.observation_id.as_str())
+                .collect::<Vec<_>>(),
+            "replay with later extracted_at must return original observation ids without creating new inbox rows"
+        );
         let stored = host.source_cursors("erpnext.rest").expect("cursors");
         assert_eq!(
             stored[&dataset].cursor_json,
@@ -1049,5 +1060,76 @@ mod tests {
                 .is_some(),
             "stranded inbox row must land in canonical table after reopen"
         );
+    }
+
+    /// Regression 8: a multi-row source page spanning an `OBS-LINK-DISPUTE-1`
+    /// conflict (a valid row followed by a payload-conflicting row for an
+    /// already-captured event) falls back to lease-checked one-by-one delivery,
+    /// retains the conflict's quarantine evidence, advances `_norn_source_cursor`
+    /// with the complete page's content digest, and replays idempotently.
+    #[test]
+    fn page_spanning_dispute_falls_back_retains_quarantine_and_replays_idempotently() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let dataset = "Party".to_owned();
+        let (all_rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
+        assert!(all_rows.len() >= 3);
+
+        // Pre-capture row 1 so a second observation with the same event identity
+        // and different payload triggers a FEED-CONFLICT (`mapping-conflict:`).
+        host.ingest(&[all_rows[1].clone()])
+            .expect("pre-capture baseline row");
+
+        let mut conflicting_row = all_rows[1].clone();
+        if let RuntimeValue::Object(obj) = &mut conflicting_row.0.input {
+            if let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload") {
+                payload.insert(
+                    "customer_name".into(),
+                    RuntimeValue::String("Conflicting Party Name".into()),
+                );
+            }
+            let digest = norn_ir::canonical::HashProfile::Norn1
+                .hash_json(serde_json::to_string(&obj["payload"]).expect("json"))
+                .expect("digest");
+            obj.insert("payload_digest".into(), RuntimeValue::String(digest));
+        }
+
+        let page = vec![all_rows[0].clone(), conflicting_row, all_rows[2].clone()];
+        let lease = host
+            .acquire_source_lease("erpnext.rest", "run-dispute", T0, RUN_LEASE_MS)
+            .expect("lease");
+        let advance = CursorAdvanceSpec {
+            connection_id: "erpnext.rest".into(),
+            dataset: dataset.clone(),
+            lease_id: lease.lease_id.clone(),
+            generation: lease.generation,
+            now_ms: T0.saturating_add(1),
+            expected_previous_cursor: None,
+            next_cursor: Some(next_wm.cursor_json().expect("json")),
+            renew_ttl_ms: Some(RUN_LEASE_MS),
+        };
+        let first = host
+            .ingest_source_page(&page, &advance)
+            .expect("dispute-spanning page must fall back and advance");
+        assert_eq!(first.len(), 3);
+        assert_eq!(first[0].outcome, MappingOutcome::Landed);
+        assert!(matches!(
+            first[1].outcome,
+            MappingOutcome::Quarantined(ref reasons)
+                if reasons.iter().any(|r| r.code == "core.boundary.import_finding")
+        ));
+        assert_eq!(first[2].outcome, MappingOutcome::Landed);
+        assert!(
+            host.source_cursors("erpnext.rest")
+                .expect("cursors")
+                .contains_key(&dataset)
+        );
+
+        let replay = host
+            .ingest_source_page(&page, &advance)
+            .expect("exact replay of dispute-spanning page must succeed idempotently");
+        assert_eq!(replay.len(), 3);
+        assert_eq!(replay[0].observation_id, first[0].observation_id);
+        assert_eq!(replay[1].observation_id, first[1].observation_id);
+        assert_eq!(replay[2].observation_id, first[2].observation_id);
     }
 }

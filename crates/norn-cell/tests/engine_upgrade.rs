@@ -352,7 +352,7 @@ fn add_source_cursor_tables(image: &mut Value) {
         "type": "table",
         "name": "_norn_source_cursor",
         "table": "_norn_source_cursor",
-        "sql": "CREATE TABLE \"_norn_source_cursor\" (\n  \"connection_id\" TEXT NOT NULL,\n  \"dataset\" TEXT NOT NULL,\n  \"cursor_json\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"page_digest\" TEXT NOT NULL,\n  \"updated_at_ms\" INTEGER NOT NULL,\n  PRIMARY KEY (\"connection_id\", \"dataset\")\n)",
+        "sql": "CREATE TABLE \"_norn_source_cursor\" (\n  \"connection_id\" TEXT NOT NULL,\n  \"dataset\" TEXT NOT NULL,\n  \"cursor_json\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"page_digest\" TEXT NOT NULL,\n  \"pages_json\" TEXT NOT NULL,\n  \"records_json\" TEXT NOT NULL,\n  \"updated_at_ms\" INTEGER NOT NULL,\n  PRIMARY KEY (\"connection_id\", \"dataset\")\n)",
     }));
     schema.push(serde_json::json!({
         "type": "table",
@@ -385,6 +385,8 @@ fn add_source_cursor_tables(image: &mut Value) {
                 "cursor_json",
                 "generation",
                 "page_digest",
+                "pages_json",
+                "records_json",
                 "updated_at_ms"
             ],
             "rows": [],
@@ -2205,6 +2207,7 @@ fn upgraded_v8_image(mut expected: Value) -> Result<Value, Box<dyn std::error::E
     expected["storage"] = STORAGE_VERSION.into();
     add_export_context_table(&mut expected);
     add_outbox_queue(&mut expected);
+    add_source_cursor_tables(&mut expected);
     by_name(&mut expected);
     Ok(expected)
 }

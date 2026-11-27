@@ -601,12 +601,8 @@ impl Sources {
                 "no sync is running",
             ));
         };
-        let superseded = capture::release_and_check_superseded(
-            host,
-            &config.id,
-            run.lease.as_ref(),
-            error.as_ref(),
-        );
+        let superseded =
+            capture::is_lease_superseded(host, &config.id, run.lease.as_ref(), error.as_ref());
         let outcome = if error.is_some() {
             "failed"
         } else if run.quarantined > 0 {
@@ -623,21 +619,23 @@ impl Sources {
             quarantine_reasons: run.reasons.clone(),
             error,
         };
-        if superseded {
-            // SOURCE-CAPTURE-1: a fenced or superseded run must not overwrite
-            // `source.Connection` or local schedule/watermark state owned by a
-            // newer lease generation.
-            return Step::Done(summary);
+        if !superseded {
+            state.last_end_ms = Some(now_ms);
+            let watermarks = if run.pull.is_some() {
+                run.committed_watermarks.clone()
+            } else {
+                state.watermarks.clone().unwrap_or_default()
+            };
+            state.watermarks = Some(watermarks.clone());
+            let watermark = watermark_text(&watermarks);
+            // SOURCE-CAPTURE-1: report `source.Connection` while still holding
+            // the durable lease, then release the lease afterward.
+            report(host, config, &run, &summary, &watermark, Some(now_ms));
         }
-        state.last_end_ms = Some(now_ms);
-        let watermarks = if run.pull.is_some() {
-            run.committed_watermarks.clone()
-        } else {
-            state.watermarks.clone().unwrap_or_default()
-        };
-        state.watermarks = Some(watermarks.clone());
-        let watermark = watermark_text(&watermarks);
-        report(host, config, &run, &summary, &watermark, Some(now_ms));
+        if let Some(lease) = &run.lease {
+            let _released =
+                host.release_source_lease(&config.id, &lease.lease_id, lease.generation);
+        }
         Step::Done(summary)
     }
 }
