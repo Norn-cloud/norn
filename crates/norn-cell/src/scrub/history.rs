@@ -294,7 +294,12 @@ impl HistoryCursor {
         if budget.remaining() < LEDGER_ENTRY_MAX_ROWS {
             return Ok(false);
         }
-        let entries = reader.scrub_ledger_page(base, 1, budget)?;
+        let expected_pin = self
+            .anchor
+            .anchor_receipt
+            .as_ref()
+            .and_then(|receipt| receipt.body.fork_pin.as_ref());
+        let entries = reader.scrub_ledger_page(base, 1, expected_pin, budget)?;
         let entry = entries
             .into_iter()
             .next()
