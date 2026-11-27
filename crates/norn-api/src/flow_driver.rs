@@ -669,7 +669,7 @@ pub fn drive_run<E: SqlEngine>(
             }
             continue;
         }
-        let (outcome, denied) = match dispatch_step(
+        let Some((outcome, denied)) = dispatch_step(
             host,
             &step,
             waiting,
@@ -677,9 +677,9 @@ pub fn drive_run<E: SqlEngine>(
             as_requester,
             disclosure,
             now,
-        )? {
-            Some(result) => result,
-            None => return Ok(()),
+        )?
+        else {
+            return Ok(());
         };
         if !settle(host, &step, outcome, denied, now)? {
             return Ok(());

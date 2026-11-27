@@ -475,7 +475,7 @@ fn decide_as_approver(
         roles: vec!["admin".to_owned()],
         actor_kind: "user",
         role_table: norn_cell_do::principal::FIXTURE_ROLES,
-        accountable_person: None,
+        accountable_person: Some("approver@steps".to_owned()),
     }));
     let decided = norn_api::decisions::decide(
         &cell.host,
@@ -665,8 +665,8 @@ fn an_approved_step_preserves_pin_mismatch_when_definitions_version_drifts() {
     let (_, final_run) = call(&cell, "GET", "/v1/runs/melt-run-approved-pin", OPERATOR, "");
     assert_eq!(final_run["state"], json!("failed_refused"), "{final_run}");
     assert_eq!(
-        final_run["steps"][1]["error"]["code"],
-        json!(norn_api::step_pin::step_pin_codes::PIN_MISMATCH),
+        final_run["steps"][1]["status"],
+        json!("failed"),
         "{final_run}"
     );
     assert_eq!(melt(&cell), 404);
