@@ -1,21 +1,26 @@
-//! D03 (#1699): the perform claim over the outbox lifecycle.
+//! D03 (#1699) & D1: perform claims, durable reconciliation, and late-outcome
+//! attachment over the immutable per-generation outbox ledger.
 //!
-//! A claim reads one FIFO row, derives its [`OutboxState`] from what the
-//! store holds (a restore fence, a recorded result, a durable claim), and
-//! applies [`OutboxEvent::Claim`] through the kernel's total [`step`]. Each
-//! answer is its own [`ClaimOutcome`] variant: an empty queue is never
-//! confused with a head a restore fenced, and a reconciled claim names its
-//! target rather than taking whatever is at the head.
+//! A claim reads one FIFO row, replays its
+//! [`norn_kernel::world::outbox_ledger::OperationLedger`] from
+//! `_norn_outbox_record` to derive its
+//! [`norn_kernel::world::outbox_ledger::HeadProjection`], and applies
+//! [`OutboxEvent::Claim`] through the kernel's total [`step`]. Each answer is
+//! its own [`ClaimOutcome`] variant: an empty queue is never confused with a
+//! head a restore fenced, and a reconciled claim names its target rather than
+//! taking whatever is at the head.
 
 use norn_kernel::world::outbox::{OutboxEvent, OutboxRefusal, OutboxState, Queue, step};
+use norn_kernel::world::outbox_ledger::{DispatchProof, ReconciliationDecision};
 use norn_kernel::{Command, CommandId, Generation, Performed};
+use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use super::{SqliteCell, at, from_runtime};
+use super::{SqliteCell, at, from_runtime, to_runtime};
 use crate::engine::SqlEngine;
 use crate::error::CellError;
 use crate::read::PendingCommand;
-use crate::store::{MAIN_WORLD, SystemWrite};
+use crate::store::{CommitOutcome, MAIN_WORLD, SystemWrite};
 
 /// What a perform claim found at a FIFO outbox command.
 #[derive(Debug, Clone, PartialEq)]
@@ -44,20 +49,6 @@ pub enum ClaimOutcome<C, I> {
     OutcomeUnknown(Command<C>),
 }
 
-/// The lifecycle state of a pending row, from what the store holds. A
-/// restore fence takes precedence over a recorded result and a durable claim:
-/// whether the outside world saw the fenced generation is not known.
-fn pending_state(row: &PendingCommand, claimed: bool, fence: Option<u64>) -> OutboxState {
-    match (fence, row.result.is_some(), claimed) {
-        (Some(fenced_at), ..) => OutboxState::ReconciliationRequired { fenced_at },
-        (None, true, _) => OutboxState::Succeeded,
-        (None, false, true) => OutboxState::OutcomeUnknown {
-            generation: row.command.generation,
-        },
-        (None, false, false) => OutboxState::Requested,
-    }
-}
-
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
 where
     C: DeserializeOwned,
@@ -67,7 +58,8 @@ where
     /// dispatch.
     ///
     /// A restored perform fence takes precedence over both a saved result and
-    /// a saved claim. A fresh command is returned only after the claim's
+    /// a saved claim unless durable reconciliation confirmed the fenced
+    /// generation's outcome. A fresh command is returned only after the claim's
     /// zero-event commit and export-journal record are durable.
     ///
     /// # Errors
@@ -84,8 +76,8 @@ where
     /// Claim `target` at exactly `generation`, the later generation the
     /// host's ledgered reconciliation policy authorized past a restore fence.
     /// The fence itself remains intact; a new restore fences this generation
-    /// again. Callers must atomically ledger the authorization and enqueue
-    /// before invoking this method. It never claims another command.
+    /// again. Callers must durably reconcile (`AuthorizeReissue`) and enqueue
+    /// `generation` before invoking this method. It never claims another command.
     ///
     /// # Errors
     /// [`CellError::PerformClaimNotPending`] unless `target` at `generation`
@@ -116,27 +108,39 @@ where
         reconciled: Option<Generation>,
     ) -> Result<ClaimOutcome<C, I>, CellError> {
         let generation = row.command.generation;
+        let ledger = self
+            .store
+            .read()
+            .outbox_ledger(&row.command.command_id)?
+            .ok_or_else(|| CellError::PerformClaimNotPending {
+                command_id: row.command.command_id.clone(),
+                generation,
+            })?;
+        let projection = ledger.head_projection();
         let fence = self
             .store
             .perform_fence_generation(&row.command.command_id)?;
-        let claimed = self
-            .store
-            .read()
-            .perform_claimed(&row.command.command_id, generation)?;
-        let mut state = pending_state(&row, claimed, fence);
-        if let Some(authorized) = reconciled
-            && step(
-                state,
-                generation,
-                OutboxEvent::Reconciled {
-                    generation: authorized.0,
-                },
-            )
-            .is_ok()
+        let mut state = projection.state;
+        // Keep a restore fence active for ordinary `claim_perform()` calls
+        // even after an authorized newer generation is enqueued, unless
+        // durable reconciliation confirmed an outcome or the caller names the
+        // authorized generation via `claim_reconciled_perform`.
+        if let Some(fenced_at) = fence
+            && !ledger.active().has_reconciled_outcome()
         {
-            // Ledgered reconciliation lifts the fence for this generation
-            // alone; what the store holds for it decides the rest.
-            state = pending_state(&row, claimed, None);
+            let lifted = reconciled.is_some_and(|authorized| {
+                step(
+                    OutboxState::ReconciliationRequired { fenced_at },
+                    generation,
+                    OutboxEvent::Reconciled {
+                        generation: authorized.0,
+                    },
+                )
+                .is_ok()
+            });
+            if !lifted {
+                state = OutboxState::ReconciliationRequired { fenced_at };
+            }
         }
         let Err(refusal) = step(state, generation, OutboxEvent::Claim { generation }) else {
             return self.commit_claim(row);
@@ -167,7 +171,7 @@ where
                 };
                 Ok(ClaimOutcome::Recorded { command, performed })
             }
-            (_, OutboxState::OutcomeUnknown { .. }) => {
+            (_, OutboxState::Dispatched { .. } | OutboxState::OutcomeUnknown { .. }) => {
                 // WORLD-ISOLATE-1 (Fable S9): a fork inherits main's claim but
                 // can never learn or settle its real outcome.
                 self.store.refuse_perform_in_fork()?;
@@ -180,7 +184,6 @@ where
                 | OutboxRefusal::NotPending
                 | OutboxRefusal::Terminal,
                 OutboxState::Requested
-                | OutboxState::Dispatched { .. }
                 | OutboxState::ReconciliationRequired { .. }
                 | OutboxState::CompensationPending { .. }
                 | OutboxState::Compensated
@@ -202,5 +205,81 @@ where
         self.store
             .apply_system(&at(&self.scope, MAIN_WORLD, self.now.as_millis()), write)?;
         Ok(ClaimOutcome::Fresh(command))
+    }
+}
+
+impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
+where
+    I: Serialize,
+{
+    /// Durably record an outbox reconciliation decision (`D1`).
+    ///
+    /// # Errors
+    ///
+    /// `core.world.perform_forbidden` in a fork; [`CellError::OutboxLedgerRefused`]
+    /// if the decision does not apply; encoding or SQLite errors.
+    pub fn reconcile_outbox(
+        &mut self,
+        command: &CommandId,
+        generation: Generation,
+        decision: ReconciliationDecision,
+        confirmed_outcome: Option<&I>,
+    ) -> Result<CommitOutcome, CellError> {
+        let outcome = confirmed_outcome.map(to_runtime).transpose()?;
+        self.store.reconcile_outbox(
+            &self.scope,
+            self.now.as_millis(),
+            &command.0,
+            generation.0,
+            decision,
+            outcome.as_ref(),
+        )
+    }
+
+    /// Durably attach a late or active outcome carrying `proof` to its
+    /// original generation (`D1`), surviving export and restore.
+    ///
+    /// # Errors
+    ///
+    /// `core.world.perform_forbidden` in a fork; [`CellError::OutboxLedgerRefused`]
+    /// on invalid proof or conflicting outcome; encoding or SQLite errors.
+    pub fn record_late_outcome(
+        &mut self,
+        command: &CommandId,
+        proof: DispatchProof,
+        ok: bool,
+        input: &I,
+    ) -> Result<CommitOutcome, CellError> {
+        self.store.record_late_outcome(
+            &self.scope,
+            self.now.as_millis(),
+            &command.0,
+            proof,
+            ok,
+            &to_runtime(input)?,
+        )
+    }
+}
+
+impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
+    /// Durably record a compensation attempt outcome for `(command, generation)` (`D1`).
+    ///
+    /// # Errors
+    ///
+    /// `core.world.perform_forbidden` in a fork; [`CellError::OutboxLedgerRefused`]
+    /// if compensation is not pending; SQLite errors.
+    pub fn record_outbox_compensation(
+        &mut self,
+        command: &CommandId,
+        generation: Generation,
+        ok: bool,
+    ) -> Result<CommitOutcome, CellError> {
+        self.store.record_outbox_compensation(
+            &self.scope,
+            self.now.as_millis(),
+            &command.0,
+            generation.0,
+            ok,
+        )
     }
 }

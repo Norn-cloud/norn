@@ -3,6 +3,7 @@
   "base": [],
   "artifacts": [
     "ir/retail-reorder.action.json",
+    "ir/retail-cancel-reorder.action.json",
     "ir/retail-purchase-request.entity.json",
     {
       "fixture": "ir/retail-reorder-routing.rule.json",
