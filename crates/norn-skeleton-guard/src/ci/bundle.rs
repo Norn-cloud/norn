@@ -1070,8 +1070,11 @@ mod tests {
         let standalone = Bin {
             tasks: vec![clients],
         };
-        assert_eq!(standalone.cost(&model), clients.weight);
-        assert_eq!(Bin::default().added_cost(&model, clients), clients.weight);
+        assert_eq!(standalone.cost(&model, true), clients.weight);
+        assert_eq!(
+            Bin::default().added_cost(&model, clients, true),
+            clients.weight
+        );
 
         // Co-located phase/integration-authoring + phase/integration-clients charges
         // the WASM package build once and does not prune between them.
@@ -1079,15 +1082,31 @@ mod tests {
             tasks: vec![authoring, clients],
         };
         assert_eq!(
-            combined.cost(&model),
+            combined.cost(&model, true),
             authoring.weight + clients.weight + model.wasm_pkg
         );
         assert_eq!(
             Bin {
                 tasks: vec![authoring]
             }
-            .cost_with(&model, &[clients]),
+            .cost_with(&model, &[clients], true),
             authoring.weight + clients.weight + model.wasm_pkg
+        );
+
+        // phase/guards shares the workspace test build on full plans (all_packages=true),
+        // and pays its own workspace test build on narrowed affected plans (all_packages=false).
+        let guards = model.tasks["phase/guards"];
+        let shard = model.tasks["test/rest-1"];
+        let guards_with_shard = Bin {
+            tasks: vec![shard, guards],
+        };
+        assert_eq!(
+            guards_with_shard.cost(&model, true),
+            shard.weight + guards.weight + model.test_build
+        );
+        assert_eq!(
+            guards_with_shard.cost(&model, false),
+            shard.weight + guards.weight + model.test_build * 2
         );
 
         let bundle = Bundle {
