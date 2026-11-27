@@ -1,4 +1,7 @@
 {
   "extends": "../norn-sdk/tsconfig.json",
+  "compilerOptions": {
+    "erasableSyntaxOnly": false
+  },
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }
