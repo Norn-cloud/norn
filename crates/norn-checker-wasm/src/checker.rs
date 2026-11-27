@@ -152,7 +152,7 @@ fn decode_envelopes(values: &[Value]) -> Result<Vec<ArtifactEnvelope>, Vec<Diagn
     }
 }
 
-fn parse_array(argument: &'static str, text: &str) -> Result<Vec<Value>, AbiError> {
+pub(crate) fn parse_array(argument: &'static str, text: &str) -> Result<Vec<Value>, AbiError> {
     match parse_json(argument, text)? {
         Value::Array(values) => Ok(values),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => {
@@ -166,7 +166,7 @@ fn parse_array(argument: &'static str, text: &str) -> Result<Vec<Value>, AbiErro
 
 /// `argument` as envelopes; an element that does not decode is invalid
 /// input.
-fn envelopes_or_invalid(
+pub(crate) fn envelopes_or_invalid(
     argument: &'static str,
     values: &[Value],
 ) -> Result<Vec<ArtifactEnvelope>, AbiError> {
