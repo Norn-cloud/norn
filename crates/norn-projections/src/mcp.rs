@@ -337,16 +337,26 @@ fn caller_input_schema(action: &ActionRoot, extra_server_filled: &BTreeSet<Strin
     input_schema
 }
 
-/// Whether a ZEN expression references the root identifier `target` (or the
-/// whole-environment root `$root`) outside string literals and backtick
-/// template text, and not as a member after `.`.
+/// ZEN built-ins whose second argument parses as `Node::Closure`.
+fn is_zen_closure_builtin(ident: &str) -> bool {
+    matches!(
+        ident,
+        "all" | "none" | "some" | "one" | "filter" | "map" | "flatMap" | "count"
+    )
+}
+
+/// Whether a ZEN expression references the root identifier `target` (or any
+/// fail-closed whole-environment construct: `$root`, a closure built-in call,
+/// or an assignment expression) outside string literals and backtick template
+/// text, and not as a member after `.`.
 ///
 /// Mirrors `vendor/zen`'s lexer (`string` and `template_string` have no
 /// backslash escapes, so `'a\' + actor.x` closes the quote and
 /// `` `\${actor.x}` `` opens an interpolation; identifier characters include
 /// `$` and `#`, with `$root` parsing to `Node::Root` while bare `$` is
 /// `Node::Identifier("$")`) and `norn_expr::expression_read_paths` (where
-/// `Node::Root` conservatively counts as reading every root variable).
+/// `Node::Root`, `Node::Closure`, `Node::Pointer`, and `Node::Assignments`
+/// conservatively count as reading every root variable).
 fn expression_reads_root_ident(expression: &str, target: &str) -> bool {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum TemplateState {
@@ -399,10 +409,27 @@ fn expression_reads_root_ident(expression: &str, target: &str) -> bool {
                     break;
                 }
             }
-            if !prev_dot && (ident == target || ident == "$root") {
+            if !prev_dot
+                && (ident == target
+                    || ident == "$root"
+                    || (is_zen_closure_builtin(&ident)
+                        && chars.clone().find(|next| !next.is_whitespace()) == Some('(')))
+            {
                 return true;
             }
             prev_dot = false;
+        } else if matches!(ch, '!' | '<' | '>') {
+            if chars.peek() == Some(&'=') {
+                let _eq = chars.next();
+            }
+            prev_dot = false;
+        } else if ch == '=' {
+            if chars.peek() == Some(&'=') {
+                let _eq = chars.next();
+                prev_dot = false;
+            } else {
+                return true;
+            }
         } else if ch == '.' {
             if chars.peek() == Some(&'.') {
                 let _second_dot = chars.next();

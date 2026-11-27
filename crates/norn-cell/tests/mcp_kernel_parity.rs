@@ -22,6 +22,7 @@ enum ExprKind {
     DefaultInput,
     RootDefaultInput,
     DollarNonRootInput,
+    ClosureConstant,
     ActorSubject,
     RootActorSubject,
     InputOrActor,
@@ -36,6 +37,7 @@ impl ExprKind {
             Self::DefaultInput => format!("input.{field} ?? 'fallback'"),
             Self::RootDefaultInput => format!("$root.input.{field} ?? 'root-fallback'"),
             Self::DollarNonRootInput => format!("$.input.{field} ?? 'dollar-fallback'"),
+            Self::ClosureConstant => "len(map([1], #)) > 0 ? 'yes' : 'no'".to_owned(),
             Self::ActorSubject => "actor.subjectId".to_owned(),
             Self::RootActorSubject => "$root.actor.subjectId".to_owned(),
             Self::InputOrActor => format!("input.{field} ?? actor.subjectId"),
@@ -168,6 +170,7 @@ fn expr_kind_strategy() -> impl Strategy<Value = ExprKind> {
         Just(ExprKind::DefaultInput),
         Just(ExprKind::RootDefaultInput),
         Just(ExprKind::DollarNonRootInput),
+        Just(ExprKind::ClosureConstant),
         Just(ExprKind::ActorSubject),
         Just(ExprKind::RootActorSubject),
         Just(ExprKind::InputOrActor),
@@ -638,5 +641,80 @@ fn checker_refuses_invalid_coalesce_while_kernel_plain_eval_accepts_non_null_str
     assert!(
         matches!(res, Err(ActionRefusal::DerivationFailed { ref field, .. }) if field == "a"),
         "expected DerivationFailed for `trim(null)` at runtime: {res:?}"
+    );
+}
+
+#[test]
+fn closure_and_dollar_derivations_match_kernel_actor_classification() {
+    let mut action = build_action([false, false, false, false], &[], DecimalShape::Scalar);
+    action.derive = vec![
+        ActionInputDerivation {
+            field: "a".to_owned(),
+            expression: ZenExpression("sum(map([1], #))".to_owned()),
+            input_required: false,
+        },
+        ActionInputDerivation {
+            field: "a".to_owned(),
+            expression: ZenExpression("trim(input.a)".to_owned()),
+            input_required: true,
+        },
+        ActionInputDerivation {
+            field: "b".to_owned(),
+            expression: ZenExpression("$.input.b ?? 'dollar-fallback'".to_owned()),
+            input_required: false,
+        },
+        ActionInputDerivation {
+            field: "b".to_owned(),
+            expression: ZenExpression("trim(input.b)".to_owned()),
+            input_required: true,
+        },
+        ActionInputDerivation {
+            field: "c".to_owned(),
+            expression: ZenExpression("len(map([1], #)) > 0 ? 'yes' : 'no'".to_owned()),
+            input_required: false,
+        },
+    ];
+
+    let actor_fields = actor_derived_fields(&action);
+    assert_eq!(
+        actor_fields,
+        BTreeSet::from(["a".to_owned(), "c".to_owned()]),
+        "closure expressions fail closed as actor-derived while bare `$` does not"
+    );
+
+    let standalone = action_tool(&action);
+    let kernel_backed = action_tool_with_server_filled(&action, &actor_fields);
+    assert!(
+        standalone.is_ok(),
+        "standalone projection must succeed: {standalone:?}"
+    );
+    assert!(
+        kernel_backed.is_ok(),
+        "kernel-backed projection must succeed: {kernel_backed:?}"
+    );
+    if let (Ok(standalone), Ok(kernel_backed)) = (standalone, kernel_backed) {
+        assert_eq!(standalone.input_schema, kernel_backed.input_schema);
+
+        let (props, required) = schema_keys(&standalone.input_schema);
+        assert!(!props.contains("a"));
+        assert!(!required.contains("a"));
+        assert!(!props.contains("c"));
+        assert!(!required.contains("c"));
+        assert!(props.contains("b"));
+        assert!(required.contains("b"));
+    }
+
+    let mut spoofed = RuntimeObject::new();
+    spoofed.insert("a".to_owned(), RuntimeValue::String("spoof".to_owned()));
+    let refused = prepare_action_input_for_call::<()>(
+        &action,
+        &spoofed,
+        "test.action",
+        "0.1.0",
+        "user:alice",
+    );
+    assert!(
+        matches!(refused, Err(ActionRefusal::InvalidInput { ref field }) if field == "a"),
+        "kernel must refuse caller-supplied closure-derived field `a`: {refused:?}"
     );
 }

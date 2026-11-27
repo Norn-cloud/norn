@@ -583,6 +583,8 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
             "root_actor": {"type": "string"},
             "root_input": {"type": "string"},
             "dollar_non_root": {"type": "string"},
+            "closure_field": {"type": "string"},
+            "member_map": {"type": "string"},
             "greeting": {"type": "string"},
             "actor_greeting": {"type": "string"},
             "escaped_template_actor": {"type": "string"},
@@ -595,6 +597,8 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
             "root_actor",
             "root_input",
             "dollar_non_root",
+            "closure_field",
+            "member_map",
             "greeting",
             "actor_greeting",
             "escaped_template_actor",
@@ -611,6 +615,10 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
         {"field": "root_input", "expression": "$root.input.root_input ?? 'DEFAULT'", "inputRequired": false},
         {"field": "dollar_non_root", "expression": "$.input.dollar_non_root ?? 'DEFAULT'", "inputRequired": false},
         {"field": "dollar_non_root", "expression": "trim(input.dollar_non_root)", "inputRequired": true},
+        {"field": "closure_field", "expression": "sum(map([1], #))", "inputRequired": false},
+        {"field": "closure_field", "expression": "trim(input.closure_field)", "inputRequired": true},
+        {"field": "member_map", "expression": "input.map ?? 'DEFAULT'", "inputRequired": false},
+        {"field": "member_map", "expression": "trim(input.member_map)", "inputRequired": true},
         {"field": "greeting", "expression": "`Hello actor $root $5 ${input.greeting}`", "inputRequired": false},
         {"field": "actor_greeting", "expression": "`Hello ${actor.subjectId}`", "inputRequired": false},
         {"field": "escaped_template_actor", "expression": "`Hello \\${actor.subjectId}`", "inputRequired": false},
@@ -623,11 +631,22 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
         serde_json::to_value(action_tool_with_server_filled(&action, &extra).expect("projects"))
             .expect("encodes");
     let schema = &tool["inputSchema"];
-    assert_eq!(schema["required"], json!(["code", "dollar_non_root"]));
+    assert_eq!(
+        schema["required"],
+        json!(["code", "dollar_non_root", "member_map"])
+    );
     assert_eq!(schema["properties"]["code"], json!({"type": "string"}));
     assert_eq!(
         schema["properties"]["dollar_non_root"],
         json!({"type": "string"})
+    );
+    assert_eq!(
+        schema["properties"]["member_map"],
+        json!({"type": "string"})
+    );
+    assert!(
+        schema["properties"].get("closure_field").is_none(),
+        "closure expressions fail closed as server-filled, matching kernel actor_derived_fields"
     );
     assert!(
         schema["properties"].get("owner").is_none(),
