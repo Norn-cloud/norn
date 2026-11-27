@@ -1,5 +1,5 @@
 {
-  "sha256": "067d73a230e2bebbd1bdcdacb770634c632d016439917a489243729d106b0bf8",
+  "sha256": "127c0789bc8ca9b356d8ee5c299628ef4a3ffeb26b1f80be0c1ffa226f955293",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -10,7 +10,8 @@
     "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json",
     "registry/packs/frappe-hrms/artifacts/norn.link.frappe-hrms.workforce.json",
     "registry/packs/odoo/artifacts/norn.link.odoo.canon.json",
-    "registry/packs/shopify/artifacts/norn.link.shopify.canon.json"
+    "registry/packs/shopify/artifacts/norn.link.shopify.canon.json",
+    "registry/packs/supply-lab/artifacts/norn.link.supply-lab.canon.json"
   ],
   "rights_evidence": [
     {
