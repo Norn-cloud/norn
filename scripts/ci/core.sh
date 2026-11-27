@@ -612,6 +612,11 @@ PY
       fi
       ensure_checker_wasm_pkg "$PWD/apps/studio/src/checker"
       ensure_checker_wasm_engine "$PWD/apps/studio/src/engine"
+      # The live workspace rows (e2e/pack-workspace.ts) run a registry pack on the real native
+      # dev host; they fail without it here, never skip.
+      cargo build --locked -p norn-cell-do --bin norn-dev-host
+      export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn-dev-host"
+      (cd tools/norn-ts && bun install --frozen-lockfile --ignore-scripts --backend copyfile)
       (
         cd apps/studio
         bun install --frozen-lockfile --ignore-scripts --backend copyfile

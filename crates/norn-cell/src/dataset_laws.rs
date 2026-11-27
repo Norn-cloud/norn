@@ -28,7 +28,8 @@ use norn_ir::{
 use norn_kernel::{FactKey, TypeCatalog};
 
 use crate::analytics::{
-    ColumnKind, ResidueRow, RowFinding, RowPredicate, RuleCheck, TableSchema, Value, rule_fuel,
+    ColumnKind, RULE_FUEL, ResidueRow, RowFinding, RowPredicate, RuleCheck, TableSchema, Value,
+    rule_fuel,
 };
 use crate::engine::SqlEngine;
 use crate::model::Model;
@@ -152,6 +153,68 @@ const fn severity_of(law: LawSeverity) -> DataQualitySeverity {
     }
 }
 
+/// Lower one governing law's response (and optional `when` condition) into the
+/// engine's typed row predicates plus its static fuel bound. Predicate laws
+/// with `exceptions` return `(None, None)` so every row settles via the
+/// per-row evaluator's `law_exceptions::fold`, charging `RULE_FUEL` per
+/// exception condition for its eager per-row `TurnFuel` evaluation.
+fn lower_law_response(
+    law: &norn_ir::LawIR,
+    invariants: &[(norn_ir::InvariantOwner, &norn_ir::Invariant)],
+    table: &TableSchema,
+) -> Result<(Option<RowPredicate>, Option<RowPredicate>, u64), CellError> {
+    let (condition, predicate, nodes, extra_fuel) = match &law.response {
+        LawResponse::Predicate { expression } => {
+            let (condition, cond_nodes) = match &law.condition {
+                Some(condition) => {
+                    let (lowered, nodes) = lower_and_count(condition.as_str(), table);
+                    (lowered.map(Some), nodes)
+                }
+                None => (Some(None), 0),
+            };
+            let (expr_pred, expr_nodes) = lower_and_count(expression.as_str(), table);
+            let mut nodes = expr_nodes.saturating_add(cond_nodes);
+            if law.exceptions.is_empty() {
+                match condition {
+                    Some(condition) => (condition, expr_pred, nodes, 0),
+                    None => (None, None, nodes, 0),
+                }
+            } else {
+                for exception in &law.exceptions {
+                    let (_, ex_nodes) = lower_and_count(exception.condition.as_str(), table);
+                    nodes = nodes.saturating_add(ex_nodes);
+                }
+                // `governing_laws::exception_lifts` evaluates each exception's
+                // condition eagerly under `TurnFuel`, adding one rule entry
+                // overhead (`RULE_FUEL`) per exception on top of its AST nodes.
+                let extra = u64::try_from(law.exceptions.len())
+                    .unwrap_or(u64::MAX)
+                    .saturating_mul(RULE_FUEL);
+                (None, None, nodes, extra)
+            }
+        }
+        LawResponse::Invariant { invariant_id, .. } => {
+            let source = invariants
+                .iter()
+                .find(|(_, invariant)| invariant.id.as_str() == invariant_id)
+                .map(|(_, invariant)| invariant.expression.as_str());
+            let (predicate, nodes) =
+                source.map_or((None, 0), |source| lower_and_count(source, table));
+            (None, predicate, nodes, 0)
+        }
+        LawResponse::Action { .. }
+        | LawResponse::Transition { .. }
+        | LawResponse::TranslationPreserves { .. } => {
+            return Err(refused(format!("{}: unsupported law semantics", law.id)));
+        }
+    };
+    Ok((
+        condition,
+        predicate,
+        rule_fuel(nodes).saturating_add(extra_fuel),
+    ))
+}
+
 impl<E: SqlEngine> CellStore<E> {
     /// MANIFEST-LAWS-1: every invariant and governing law of `object_type`,
     /// as the engine checks it over a dataset of `table`. The first check's
@@ -209,37 +272,7 @@ impl<E: SqlEngine> CellStore<E> {
         for artifact in laws {
             let (law, rule_ref) = norn_kernel::governing_laws::law_rule(&catalog, &name, artifact)
                 .map_err(|error| refused(error.to_string()))?;
-            let (condition, predicate, nodes) = match &law.response {
-                LawResponse::Predicate { expression } => {
-                    let (condition, cond_nodes) = match &law.condition {
-                        Some(condition) => {
-                            let (lowered, nodes) = lower_and_count(condition.as_str(), table);
-                            (lowered.map(Some), nodes)
-                        }
-                        None => (Some(None), 0),
-                    };
-                    let (expr_pred, expr_nodes) = lower_and_count(expression.as_str(), table);
-                    let nodes = expr_nodes.saturating_add(cond_nodes);
-                    match condition {
-                        Some(condition) => (condition, expr_pred, nodes),
-                        None => (None, None, nodes),
-                    }
-                }
-                LawResponse::Invariant { invariant_id, .. } => {
-                    let source = invariants
-                        .iter()
-                        .find(|(_, invariant)| invariant.id.as_str() == invariant_id)
-                        .map(|(_, invariant)| invariant.expression.as_str());
-                    let (predicate, nodes) =
-                        source.map_or((None, 0), |source| lower_and_count(source, table));
-                    (None, predicate, nodes)
-                }
-                LawResponse::Action { .. }
-                | LawResponse::Transition { .. }
-                | LawResponse::TranslationPreserves { .. } => {
-                    return Err(refused(format!("{}: unsupported law semantics", law.id)));
-                }
-            };
+            let (condition, predicate, fuel) = lower_law_response(&law, &invariants, table)?;
             let severity = severity_of(law.severity);
             checks.push(RuleCheck {
                 rule: rule_key(&rule_ref)?,
@@ -248,7 +281,7 @@ impl<E: SqlEngine> CellStore<E> {
                 condition,
                 predicate,
                 expect: matches!(law.modality, LawModality::Always {}),
-                fuel: rule_fuel(nodes),
+                fuel,
             });
         }
         // S2: the per-row evaluator charges a row one unit per typed

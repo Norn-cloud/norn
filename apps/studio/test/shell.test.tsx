@@ -76,8 +76,8 @@ test("two landmarks: the Applets rail with exactly one current applet, and the o
   expect(html).not.toContain("[&amp;&gt;svg]:text-kind")
   // The toggle is named "Sidebar" in both states and controls the submenu island it names.
   expect(html).toMatch(/<button[^>]*aria-label="Sidebar"[^>]*aria-expanded="true"[^>]*aria-controls="studio-sidebar"/)
-  expect(html).toMatch(/id="studio-sidebar"[^>]*data-island="nav"/)
-  expect(html).toMatch(/data-slot="sidebar-inset"[^>]*data-island="main"/)
+  expect(html).toMatch(/id="studio-sidebar"[^>]*data-shell-island="nav"/)
+  expect(html).toMatch(/data-slot="sidebar-inset"[^>]*data-shell-island="main"/)
   // The rail replaced the perspective switch.
   expect(html).not.toContain('aria-label="Perspective"')
 })
@@ -289,6 +289,7 @@ test("#1414: the workspace switcher shows the workspace name and role, never raw
     catalog: { document: [], numbers: new Map(), origin: "live" },
     counts: {},
     publishedQuestions: new Set(),
+    builtins: [],
   }
   client.setQueryData(modeQuery(scope).queryKey, liveMode)
   const doc: WorkspacesDocument = {

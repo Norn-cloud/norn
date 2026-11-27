@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { LIVE_PROTOCOL, LiveHub, LocalCellError, localStudio, readSession, serveLocal, subscribable, type DevSession, type LiveSocket } from "../scripts/local-cell.ts"
@@ -25,6 +25,35 @@ test("--as reviewer is the descriptor's reviewer, with its own token; a descript
   expect(readSession(root, "reviewer")).toEqual({ url: "http://127.0.0.1:4174", token: "reviewer-token", actor: "user:dev+reviewer", as: "reviewer", orgId: "local", environmentId: "dev", project: "shop" })
   expect(() => readSession(project(DESCRIPTOR), "reviewer")).toThrow("names no reviewer")
   expect(() => readSession(project({ ...DESCRIPTOR, reviewer: { actor: "x", tokenFile: "../../t" } }), "reviewer")).toThrow("outside the project")
+})
+
+test("--as <actor> is one of the descriptor's named principals, with its token and declared roles (DEV-PRINCIPALS-1)", () => {
+  const root = project({ ...DESCRIPTOR, principals: [{ actor: "clerk:a", roles: ["clerk"], tokenFile: ".norn/dev.principal.1.token" }] })
+  writeFileSync(join(root, ".norn/dev.principal.1.token"), "clerk-token\n")
+  expect(readSession(root, "clerk:a")).toEqual({ url: "http://127.0.0.1:4174", token: "clerk-token", actor: "clerk:a", as: "principal", roles: ["clerk"], orgId: "local", environmentId: "dev", project: "shop" })
+  expect(() => readSession(root, "planner:b")).toThrow("names no principal planner:b")
+  expect(() => readSession(project({ ...DESCRIPTOR, principals: [{ actor: "x", roles: ["r"], tokenFile: "../../t" }] }), "x")).toThrow("outside the project")
+})
+
+test("a token file is read only when it resolves inside the project, symlinks and all", () => {
+  const outside = mkdtempSync(join(temp, "outside-"))
+  writeFileSync(join(outside, "secret"), "outside-secret\n")
+  // Lexically inside `.norn`, really a link to a file outside the project.
+  const linkedFile = project(DESCRIPTOR)
+  rmSync(join(linkedFile, ".norn/dev.token"))
+  symlinkSync(join(outside, "secret"), join(linkedFile, ".norn/dev.token"))
+  expect(() => readSession(linkedFile)).toThrow("outside the project")
+  // A symlinked directory leading out of the project.
+  const linkedDir = project({ ...DESCRIPTOR, principals: [{ actor: "clerk:a", roles: ["clerk"], tokenFile: "linked/secret" }] })
+  symlinkSync(outside, join(linkedDir, "linked"))
+  expect(() => readSession(linkedDir, "clerk:a")).toThrow("outside the project")
+  // A link inside the project still reads; a missing file says so.
+  const linkedInside = project(DESCRIPTOR)
+  writeFileSync(join(linkedInside, ".norn/real.token"), "inside-token\n")
+  rmSync(join(linkedInside, ".norn/dev.token"))
+  symlinkSync(join(linkedInside, ".norn/real.token"), join(linkedInside, ".norn/dev.token"))
+  expect(readSession(linkedInside).token).toBe("inside-token")
+  expect(() => readSession(project({ ...DESCRIPTOR, tokenFile: ".norn/none.token" }))).toThrow("is missing")
 })
 
 test("the session is the descriptor's: loopback url, project token, scope, actor and project name", () => {
@@ -72,6 +101,14 @@ test("/api/host/* reaches the dev host as the session, with the path, query, met
   expect(seen).toEqual([{ url: "http://127.0.0.1:4174/v1/actions/shop.product.add?orgId=local&environmentId=dev", method: "POST", authorization: "Bearer secret-dev-token", body: '{"input":{"price":19.990}}' }])
 })
 
+test("/api/questions/* is the Worker's own handler, reading the cell as the session", async () => {
+  const { seen, call } = studio()
+  const response = await call("/api/questions/catalog")
+  expect(response.status).toBeGreaterThanOrEqual(400)
+  expect(seen).toEqual([{ url: "http://127.0.0.1:4174/v1/questions:catalog?orgId=local&environmentId=dev", method: "GET", authorization: "Bearer secret-dev-token", body: "" }])
+  expect((await call("/api/questions/nothing")).status).toBe(404)
+})
+
 test("another site's request, or one for another host name, is refused before anything is forwarded", async () => {
   const { seen, call } = studio()
   expect((await call("/api/host/v1/definitions", { method: "POST", headers: { origin: "https://evil.example" } })).status).toBe(403)
@@ -85,6 +122,7 @@ test("another site's request, or one for another host name, is refused before an
 test("other /api routes are not served; the app's files are, and every other path is the app's page", async () => {
   const { seen, call } = studio()
   expect((await call("/api/agent")).status).toBe(404)
+  expect((await call("/api/questions")).status).toBe(404)
   expect(await (await call("/assets/app.js")).text()).toBe("console.log(1)")
   expect(await (await call("/sources/canon.Item/demo/item/gold")).text()).toContain("<div id=root>")
   // A path out of the app's directory is not a file of it.

@@ -38,7 +38,7 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// The admitted three-systems set, as `explorer_documents.rs` selects it.
+/// The admitted three-systems set, as `norn-api/tests/explorer_objects.rs` selects it.
 fn definitions() -> &'static [ArtifactEnvelope] {
     static SET: OnceLock<Vec<ArtifactEnvelope>> = OnceLock::new();
     SET.get_or_init(|| {

@@ -28,7 +28,7 @@ use crate::dev::{Events, Manifest, Session};
 use crate::server::Request;
 
 #[path = "../../tests/support/review_pack.rs"]
-mod review_pack;
+pub(in crate::dev) mod review_pack;
 use review_pack::{APPROVE, admin_role, approval_rule, approve_action, review_base};
 
 const ACTOR: &str = "local:developer";
@@ -173,6 +173,11 @@ fn a_dev_cell_keeps_principal_inputs_through_a_rollback_and_a_restart() {
         loaded: RefCell::new(None),
         root: directory.path(),
         manifest: &manifest,
+        named: Arc::default(),
+        metrics: std::sync::Arc::new(crate::dev::policy::DevMetrics::new(
+            [0; 32],
+            cell_scope.clone(),
+        )),
         scope: &cell_scope,
         url: "http://127.0.0.1:0",
         started_at: 0,
@@ -235,9 +240,15 @@ fn a_dev_cell_keeps_principal_inputs_through_a_rollback_and_a_restart() {
     // revision recorded, with the kept column and its value.
     drop(session);
     drop(serving);
-    let (reopened, _loaded) = crate::dev::reopen(&path, &scope(), ACTOR, &[], &actions)
-        .map_err(|failure| failure.message)
-        .expect("the cell reopens");
+    let (reopened, _loaded) = crate::dev::reopen(
+        &path,
+        &scope(),
+        (ACTOR, &crate::dev::policy::NamedPrincipals::default()),
+        &[],
+        &actions,
+    )
+    .map_err(|failure| failure.message)
+    .expect("the cell reopens");
     let host = reopened.expect("an installed cell");
     assert!(host.serving().expect("serving").principal_inputs);
     assert_eq!(
