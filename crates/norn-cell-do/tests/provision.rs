@@ -1329,13 +1329,12 @@ fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Sw
             } else {
                 let run_case = &run_case;
                 std::thread::scope(|thread_scope| {
-                    let handles: Vec<_> = batch
-                        .iter()
-                        .copied()
-                        .map(|at_statement| {
-                            thread_scope.spawn(move || run_case(kind, transaction, at_statement))
-                        })
-                        .collect();
+                    let mut handles = Vec::with_capacity(batch.len());
+                    for &at_statement in batch {
+                        handles.push(
+                            thread_scope.spawn(move || run_case(kind, transaction, at_statement)),
+                        );
+                    }
                     handles
                         .into_iter()
                         .map(std::thread::ScopedJoinHandle::join)
