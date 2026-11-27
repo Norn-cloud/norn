@@ -534,11 +534,75 @@ where
 }
 
 fn millis_to_utc_timestamp(millis: u64) -> Result<UtcTimestamp, CellError> {
-    let signed =
-        i64::try_from(millis).map_err(|_| CellError::ComputeRefused("core.compute.stale_input"))?;
-    let ts = jiff::Timestamp::from_millisecond(signed)
-        .map_err(|_| CellError::ComputeRefused("core.compute.stale_input"))?;
-    Ok(UtcTimestamp(ts.to_string()))
+    let stale = || CellError::ComputeRefused("core.compute.stale_input");
+    let total_secs = millis.checked_div(1_000).ok_or_else(stale)?;
+    let subsec_millis = millis.checked_rem(1_000).ok_or_else(stale)?;
+    let days = total_secs.checked_div(86_400).ok_or_else(stale)?;
+    let day_secs = total_secs.checked_rem(86_400).ok_or_else(stale)?;
+    let hour = day_secs.checked_div(3_600).ok_or_else(stale)?;
+    let minute = day_secs
+        .checked_rem(3_600)
+        .and_then(|rem| rem.checked_div(60))
+        .ok_or_else(stale)?;
+    let second = day_secs.checked_rem(60).ok_or_else(stale)?;
+
+    // Howard Hinnant's proleptic Gregorian civil-from-days algorithm (days since 1970-01-01).
+    let z = i64::try_from(days)
+        .ok()
+        .and_then(|d| d.checked_add(719_468))
+        .ok_or_else(stale)?;
+    let era = z.checked_div(146_097).ok_or_else(stale)?;
+    let doe = z
+        .checked_sub(era.checked_mul(146_097).ok_or_else(stale)?)
+        .ok_or_else(stale)?;
+    let yoe = doe
+        .checked_sub(doe.checked_div(1_460).ok_or_else(stale)?)
+        .and_then(|v| v.checked_add(doe.checked_div(36_524)?))
+        .and_then(|v| v.checked_sub(doe.checked_div(146_096)?))
+        .and_then(|v| v.checked_div(365))
+        .ok_or_else(stale)?;
+    let y = yoe
+        .checked_add(era.checked_mul(400).ok_or_else(stale)?)
+        .ok_or_else(stale)?;
+    let year_days = yoe
+        .checked_mul(365)
+        .and_then(|v| v.checked_add(yoe.checked_div(4)?))
+        .and_then(|v| v.checked_sub(yoe.checked_div(100)?))
+        .ok_or_else(stale)?;
+    let doy = doe.checked_sub(year_days).ok_or_else(stale)?;
+    let mp = doy
+        .checked_mul(5)
+        .and_then(|v| v.checked_add(2))
+        .and_then(|v| v.checked_div(153))
+        .ok_or_else(stale)?;
+    let month_days = mp
+        .checked_mul(153)
+        .and_then(|v| v.checked_add(2))
+        .and_then(|v| v.checked_div(5))
+        .ok_or_else(stale)?;
+    let day = doy
+        .checked_sub(month_days)
+        .and_then(|v| v.checked_add(1))
+        .ok_or_else(stale)?;
+    let month = if mp < 10 {
+        mp.checked_add(3)
+    } else {
+        mp.checked_sub(9)
+    }
+    .ok_or_else(stale)?;
+    let year = y.checked_add(i64::from(month <= 2)).ok_or_else(stale)?;
+    if !(1970..=9999).contains(&year) {
+        return Err(stale());
+    }
+
+    let formatted = if subsec_millis == 0 {
+        format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+    } else {
+        let frac_buf = format!("{subsec_millis:03}");
+        let frac = frac_buf.trim_end_matches('0');
+        format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{frac}Z")
+    };
+    Ok(UtcTimestamp(formatted))
 }
 
 fn derive_step_entropy(
