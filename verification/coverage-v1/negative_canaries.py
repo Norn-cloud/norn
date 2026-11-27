@@ -635,8 +635,20 @@ def workflow_verdict_canaries(source: str) -> None:
     full_plan.update(base_sha="base", head_sha="head")
     affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": []}
     affected["bundle"] = [{"id": "b0", "tasks": ["test/rest-1"]}]
+    cache_warm = json.loads(subprocess.run(["bash", "scripts/ci/core.sh", "plan", "--cache-warm"],
+                                           cwd=ROOT, capture_output=True, text=True, timeout=10, check=True).stdout)
+    cache_warm.update(base_sha="base", head_sha="head")
     passed = dict.fromkeys(("PLANNER", "CORE", "TEST"), "success")
     cases = [(event, full_plan, passed, True) for event in ("push", "merge_group", "workflow_dispatch")]
+    cases.append(("push", cache_warm, {**passed, "CACHE_WARM": "true"}, True))
+    cases.append(("push", full_plan, {**passed, "CACHE_WARM": "true"}, True))
+    cases.append(("push", cache_warm, {**passed, "CACHE_WARM": "false"}, False))
+    cases.extend((event, cache_warm, {**passed, "CACHE_WARM": "true"}, False)
+                 for event in ("pull_request", "merge_group", "workflow_dispatch"))
+    bad_warm = copy.deepcopy(cache_warm)
+    bad_warm["shard"] = ["rest-1"]
+    bad_warm["bundle"][0]["tasks"].append("test/rest-1")
+    cases.append(("push", bad_warm, {**passed, "CACHE_WARM": "true"}, False))
     cases.append(("pull_request", affected, passed, True))
     cases.extend((event, affected, passed, False)
                  for event in ("push", "merge_group", "workflow_dispatch"))
@@ -691,7 +703,7 @@ def workflow_verdict_canaries(source: str) -> None:
         mutate(broken)
         cases.append(("pull_request", broken, passed, False))
     for index, (event, plan, results, accepted) in enumerate(cases):
-        environment = {**os.environ, "DRAFT": "false", "BASE": "base", "HEAD_SHA": "head", **results, "EVENT": event, "PLAN": json.dumps(plan)}
+        environment = {**os.environ, "DRAFT": "false", "BASE": "base", "CACHE_WARM": "false", "HEAD_SHA": "head", **results, "EVENT": event, "PLAN": json.dumps(plan)}
         result = subprocess.run(["bash", "-c", verdict], cwd=ROOT, env=environment,
                                 capture_output=True, text=True, timeout=10, check=False)
         if (result.returncode == 0) != accepted:

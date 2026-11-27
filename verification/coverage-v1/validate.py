@@ -623,12 +623,15 @@ await github.rest.repos.createCommitStatus({
         "test": 'bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"',
     }
     # The plan job computes the gate plan that the bundles and the verdict read.
-    plan_command = '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
+    plan_command = '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); elif [ "$CACHE_WARM" = true ]; then plan=$(bash scripts/ci/core.sh plan --cache-warm); else plan=$(bash scripts/ci/core.sh plan); fi
 plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
 echo "plan=$plan" >> "$GITHUB_OUTPUT"
 echo "$plan"'''
-    plan_env = {"BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}",
-                "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}"}
+    plan_env = {
+        "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}",
+        "CACHE_WARM": "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' }}",
+        "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}",
+    }
     checkout = {"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
                 "with": {"persist-credentials": False, "fetch-depth": 0}}
     setup = [
@@ -790,7 +793,7 @@ df -h /
 [ "$EVENT" != pull_request ] || [ "$DRAFT" = false ] || { echo "Draft head is not admitted for full qualification"; exit 1; }
 [ "$PLANNER" = success ] || { echo "plan $PLANNER"; exit 1; }
 jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
-  type == "object" and (.mode == "full" or .mode == "affected") and
+  type == "object" and (.mode == "full" or .mode == "affected" or .mode == "cache-warm") and
   .base_sha == $base and .head_sha == $head and
   (.shard | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
   (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
@@ -798,18 +801,27 @@ jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
     type == "object" and (.id | type == "string" and length > 0) and
     (.tasks | type == "array" and length > 0 and all(.[]; type == "string"))) and
     (map(.id) | length) == (map(.id) | unique | length)) and
-  ([.bundle[].tasks[]] | sort) == ([(.shard[] | "test/" + .), (.phase[] | "phase/" + .)] | sort)
+  ([.bundle[].tasks[]] | sort) == ([(.shard[] | "test/" + .), (.phase[] | "phase/" + .)] | sort) and
+  (.mode != "cache-warm" or (.shard == [] and .phase == ["cache-warm"] and .bundle == [{"id": "b0", "tasks": ["phase/cache-warm"]}]))
 ' <<<"$PLAN" >/dev/null || { echo "Malformed or unbound gate plan"; exit 1; }
 [ "$CORE" = success ] || { echo "core $CORE"; exit 1; }
 mode=$(jq -er .mode <<<"$PLAN")
-# Only pull-request feedback is narrowed; the merge queue, main and manual runs run every shard
-# and phase, so nothing reaches main without the full suite (#1348).
-[ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
+# Only pull-request feedback is narrowed, and only merge-queue pushes to main on Boat run the
+# single-bundle cache-warm plan (after merge_group ran the complete suite). Merge groups,
+# human pushes and manual runs always require the full plan (#1348, #1951).
+if [ "$EVENT" = pull_request ]; then
+  [ "$mode" = affected ] || [ "$mode" = full ] || { echo "$EVENT cannot use $mode plan"; exit 1; }
+elif [ "$EVENT" = push ] && [ "$CACHE_WARM" = true ]; then
+  [ "$mode" = cache-warm ] || [ "$mode" = full ] || { echo "$EVENT needs full or cache-warm plan, got $mode"; exit 1; }
+else
+  [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
+fi
 [ "$TEST" = success ] || { echo "test ended $TEST"; exit 1; }
 echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"'''
     verdict_env = {
         "DRAFT": "${{ github.event.pull_request.draft || false }}",
         "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}",
+        "CACHE_WARM": "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' }}",
         "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}",
         "EVENT": "${{ github.event_name }}", "PLAN": "${{ needs.plan.outputs.plan }}",
         "PLANNER": "${{ needs.plan.result }}", "CORE": "${{ needs.core.result }}",

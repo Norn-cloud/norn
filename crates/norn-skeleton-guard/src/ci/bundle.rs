@@ -112,11 +112,15 @@ impl Model {
     }
 }
 
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
+/// Post-merge single-bundle R2 cache warming task (`core.sh plan --cache-warm`, #1951).
+const CACHE_WARM_TASK: &str = "phase/cache-warm";
+
+#[derive(Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 enum Mode {
     Full,
     Affected,
+    CacheWarm,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -208,6 +212,18 @@ impl Bin {
 }
 
 fn pack(plan: &Plan) -> Result<Vec<Bundle>, String> {
+    if plan.mode == Mode::CacheWarm {
+        if !plan.shard.is_empty()
+            || plan.phase != ["cache-warm"]
+            || !plan.packages.as_deref().is_none_or(str::is_empty)
+        {
+            return Err("cache-warm plan must contain only phase/cache-warm".into());
+        }
+        return Ok(vec![Bundle {
+            id: "b0".into(),
+            tasks: vec![CACHE_WARM_TASK.into()],
+        }]);
+    }
     let model = Model::load()?;
     let known = &model.tasks;
     let mut seen = BTreeSet::new();
@@ -517,12 +533,18 @@ fn execute(
     let model = Model::load()?;
     let mut tasks = Vec::new();
     for name in &bundle.tasks {
-        tasks.push(
+        let task = if name == CACHE_WARM_TASK {
+            Task {
+                name: CACHE_WARM_TASK,
+                weight: 0,
+            }
+        } else {
             *model
                 .tasks
                 .get(name.as_str())
-                .ok_or("unknown bundle task")?,
-        );
+                .ok_or("unknown bundle task")?
+        };
+        tasks.push(task);
     }
     tasks.sort_by_key(|task| task.build_group(all_packages));
     let mut previous_group = None;
@@ -679,6 +701,10 @@ mod tests {
         ),
         concat!(
             r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "doc", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["test/rest-2", "phase/doc"]}, {"id": "b1", "tasks": ["test/rest-3", "test/heavy-5"]}, {"id": "b2", "tasks": ["phase/duckdb", "phase/provenance"]}, {"id": "b3", "tasks": ["test/rest-1", "test/heavy-6", "test/heavy-4"]}, {"id": "b4", "tasks": ["phase/guards", "phase/clippy"]}, {"id": "b5", "tasks": ["test/heavy-2", "phase/rivet", "test/heavy-3"]}]}"#,
+            "\n"
+        ),
+        concat!(
+            r#"{"mode": "cache-warm", "shard": [], "phase": ["cache-warm"], "packages": "", "rest_shards": 1, "reason": "main push cache warm", "bundle": [{"id": "b0", "tasks": ["phase/cache-warm"]}]}"#,
             "\n"
         ),
     ];
@@ -851,6 +877,11 @@ mod tests {
             r#"{"mode":"affected","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":[]}]}"#,
             r#"{"mode":"affected","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":["phase/doc","phase/doc"]}]}"#,
             r#"{"mode":"affected","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":["phase/doc"]},{"id":"b0","tasks":["phase/doc"]}]}"#,
+            r#"{"mode":"cache-warm","shard":["rest-1"],"phase":["cache-warm"],"bundle":[{"id":"b0","tasks":["phase/cache-warm"]}]}"#,
+            r#"{"mode":"cache-warm","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":["phase/doc"]}]}"#,
+            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm"],"packages":"norn-cell","bundle":[{"id":"b0","tasks":["phase/cache-warm"]}]}"#,
+            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm"],"bundle":[{"id":"b1","tasks":["phase/cache-warm"]}]}"#,
+            r#"{"mode":"affected","shard":[],"phase":["cache-warm"],"bundle":[{"id":"b0","tasks":["phase/cache-warm"]}]}"#,
         ] {
             assert!(checked(raw).is_err(), "{raw}");
         }
