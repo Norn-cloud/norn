@@ -16,6 +16,8 @@ use crate::entity_instance::{
     EffectiveCatalog, EffectiveKey, EffectiveKind, EffectiveLink, EffectiveProperty,
 };
 
+mod lifecycles;
+
 /// A governed aggregation-contract change, independent of value narrowing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdditivityChange {
@@ -901,6 +903,8 @@ struct ObjectTypeSnapshot {
 struct InterfaceSnapshot {
     artifact_id: String,
     extends: Vec<String>,
+    properties: BTreeMap<String, Value>,
+    lifecycles: BTreeMap<String, Value>,
     invariants: BTreeMap<String, InvariantSnapshot>,
 }
 
@@ -968,6 +972,8 @@ impl EntityModelSnapshot {
                     InterfaceSnapshot {
                         artifact_id: artifact.artifact_id.clone(),
                         extends: strings(interface.get("extends")),
+                        properties: named_array(interface.get("properties"), "id"),
+                        lifecycles: named_array(interface.get("lifecycles"), "property"),
                         invariants: invariant_array(interface.get("invariants")),
                     },
                 );
@@ -1075,51 +1081,6 @@ impl EntityModelSnapshot {
         members.extend(definition.owned_collections.clone());
         seen.remove(name);
         members
-    }
-
-    fn effective_lifecycles(
-        &self,
-        name: &str,
-        seen: &mut BTreeSet<String>,
-    ) -> BTreeMap<String, LifecycleSnapshot> {
-        if !seen.insert(name.to_owned()) {
-            return BTreeMap::new();
-        }
-        let Some(definition) = self.object_types.get(name) else {
-            seen.remove(name);
-            return BTreeMap::new();
-        };
-        let properties = self.effective_properties(name, &mut BTreeSet::new());
-        let states = properties
-            .iter()
-            .map(|(property, value)| (property.clone(), enum_values(value)))
-            .collect::<BTreeMap<_, _>>();
-        let mut machines = definition
-            .extends
-            .as_deref()
-            .map_or_default(|parent| self.effective_lifecycles(parent, seen));
-        machines.retain(|property, _machine| states.contains_key(property));
-        for (property, machine) in &mut machines {
-            if let Some(property_states) = states.get(property) {
-                machine.restrict(property_states);
-            }
-        }
-        for (property, value) in &definition.lifecycles {
-            let property_states = states.get(property).cloned().unwrap_or_default();
-            let mut declared = LifecycleSnapshot::from_value(value, &property_states);
-            if let Some(inherited) = machines.get(property) {
-                for (id, transition) in &mut declared.transitions {
-                    if let Some(parent) = inherited.transitions.get(id) {
-                        transition.guards.extend(parent.guards.iter().cloned());
-                        transition.guards.sort();
-                        transition.guards.dedup();
-                    }
-                }
-            }
-            machines.insert(property.clone(), declared);
-        }
-        seen.remove(name);
-        machines
     }
 
     fn effective_invariants(
@@ -1312,65 +1273,6 @@ fn diff_entity_members(
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct TransitionSnapshot {
-    from: BTreeSet<String>,
-    to: String,
-    guards: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct LifecycleSnapshot {
-    states: BTreeSet<String>,
-    initial: BTreeSet<String>,
-    terminal: BTreeSet<String>,
-    transitions: BTreeMap<String, TransitionSnapshot>,
-}
-
-impl LifecycleSnapshot {
-    fn from_value(value: &Value, states: &BTreeSet<String>) -> Self {
-        let transitions = value
-            .get("transitions")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|transition| {
-                let id = transition.get("id")?.as_str()?.to_owned();
-                Some((
-                    id,
-                    TransitionSnapshot {
-                        from: strings(transition.get("from")).into_iter().collect(),
-                        to: transition
-                            .get("to")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned(),
-                        guards: strings(transition.get("guards")),
-                    },
-                ))
-            })
-            .collect();
-        let mut machine = Self {
-            states: states.clone(),
-            initial: strings(value.get("initial")).into_iter().collect(),
-            terminal: strings(value.get("terminal")).into_iter().collect(),
-            transitions,
-        };
-        machine.restrict(states);
-        machine
-    }
-
-    fn restrict(&mut self, states: &BTreeSet<String>) {
-        self.states.clone_from(states);
-        self.initial.retain(|state| states.contains(state));
-        self.terminal.retain(|state| states.contains(state));
-        self.transitions.retain(|_, transition| {
-            transition.from.retain(|state| states.contains(state));
-            states.contains(&transition.to) && !transition.from.is_empty()
-        });
-    }
-}
-
 #[allow(
     clippy::too_many_lines,
     reason = "one ordered pass compares every effective lifecycle restriction"
@@ -1384,8 +1286,21 @@ fn diff_effective_lifecycles(
         let Some(after_type) = candidate.object_types.get(name) else {
             continue;
         };
-        let before = previous.effective_lifecycles(name, &mut BTreeSet::new());
-        let after = candidate.effective_lifecycles(name, &mut BTreeSet::new());
+        let (before, _) = previous.effective_lifecycles(name, &mut BTreeSet::new());
+        let (after, after_conflicts) = candidate.effective_lifecycles(name, &mut BTreeSet::new());
+        for property in &after_conflicts {
+            if before.contains_key(property) {
+                push_narrowing(
+                    out,
+                    "lifecycle_conflict",
+                    &after_type.artifact_id,
+                    Some(name),
+                    Some(property),
+                    vec![property.clone()],
+                    format!("inherited lifecycles for {name}.{property} conflict and fail closed"),
+                );
+            }
+        }
         for (property, next) in &after {
             let Some(old) = before.get(property) else {
                 if previous
@@ -1435,6 +1350,16 @@ fn diff_effective_lifecycles(
                 property,
                 &old.terminal,
                 &next.terminal,
+            );
+            push_set_addition(
+                out,
+                "lifecycle_immutable_added",
+                "immutable states added",
+                &after_type.artifact_id,
+                name,
+                property,
+                &old.immutable,
+                &next.immutable,
             );
             for (transition, old_transition) in &old.transitions {
                 let Some(new_transition) = next.transitions.get(transition) else {

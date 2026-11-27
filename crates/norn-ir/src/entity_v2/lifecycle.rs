@@ -47,8 +47,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::extension::ObjectTypeExtension;
+use super::interface::{InterfaceDef, InterfaceName};
+use super::lifecycle_meet::{
+    InterfaceLifecycleCache, apply_declared_lifecycles, inline_enum_values,
+    interface_effective_lifecycles, merge_inherited_lifecycles,
+};
 use super::object::{MEMBER_ID_PATTERN, ObjectTypeDef, PropertyId};
-use super::property::PropertyType;
 use crate::ZenExpression;
 use crate::members::present_non_null;
 
@@ -455,13 +459,39 @@ impl Transition {
 /// such a lifecycle (see [`declared_lifecycle_properties`]).
 /// `lookup` resolves an object type by name; a cyclic `extends` chain (also
 /// a checker error) is cut.
+#[must_use]
 pub fn effective_lifecycles<'a>(
     lookup: &dyn Fn(&str) -> Option<&'a ObjectTypeDef>,
     extensions: &[&ObjectTypeExtension],
     name: &str,
 ) -> BTreeMap<PropertyId, Lifecycle> {
+    let no_interfaces = |_name: &str| -> Option<&'a InterfaceDef> { None };
+    effective_lifecycles_with_interfaces(lookup, &no_interfaces, extensions, name)
+}
+
+/// Like [`effective_lifecycles`], also inheriting lifecycles declared on
+/// implemented interfaces (directly, through supertype `implements`, and
+/// transitively through interface `extends`, `INTERFACE-LIFECYCLE-1`).
+///
+/// When multiple inherited interfaces or a supertype and an implemented
+/// interface govern the same property, their machines combine by
+/// non-weakening meet (intersection of initial states and transitions, union
+/// of terminal and immutable states, conjunction of guards and path
+/// properties). Conflicting definitions (different targets, fact/request
+/// modes, triggers, compensations, guard diagnostics, ending outcomes, or
+/// empty initial state intersection) omit the property so enforcers fail
+/// closed via [`declared_lifecycle_properties_with_interfaces`].
+#[must_use]
+pub fn effective_lifecycles_with_interfaces<'a>(
+    lookup: &dyn Fn(&str) -> Option<&'a ObjectTypeDef>,
+    interfaces: &dyn Fn(&str) -> Option<&'a InterfaceDef>,
+    extensions: &[&ObjectTypeExtension],
+    name: &str,
+) -> BTreeMap<PropertyId, Lifecycle> {
     let chain = lineage(lookup, name);
-    let mut machines: BTreeMap<PropertyId, Lifecycle> = BTreeMap::new();
+    let mut machines: BTreeMap<PropertyId, Option<Lifecycle>> = BTreeMap::new();
+    let mut seen_interfaces: BTreeSet<&'a str> = BTreeSet::new();
+    let mut interface_cache: InterfaceLifecycleCache<'a> = BTreeMap::new();
     // Root first; `visible` is the type and its supertypes, nearest first.
     for depth in (0..chain.len()).rev() {
         let visible = chain.get(depth..).unwrap_or(&[]);
@@ -469,104 +499,101 @@ pub fn effective_lifecycles<'a>(
             continue;
         };
         let states = |property: &PropertyId| -> Option<Vec<String>> {
-            visible
-                .iter()
-                .find_map(|def| def.properties.iter().find(|member| member.id == *property))
-                .or_else(|| {
-                    extensions
-                        .iter()
-                        .filter(|extension| visible.iter().any(|def| def.name == extension.target))
-                        .find_map(|extension| {
-                            extension
-                                .properties
-                                .iter()
-                                .find(|member| member.id == *property)
-                        })
-                })
-                .and_then(|member| match &member.property_type {
-                    PropertyType::Enum { values } => {
-                        Some(values.iter().map(|value| value.value.clone()).collect())
-                    }
-                    PropertyType::Text { .. }
-                    | PropertyType::Integer { .. }
-                    | PropertyType::Decimal { .. }
-                    | PropertyType::Boolean { .. }
-                    | PropertyType::Timestamp { .. }
-                    | PropertyType::Date { .. }
-                    | PropertyType::Duration { .. }
-                    | PropertyType::Record { .. }
-                    | PropertyType::JsonExt { .. }
-                    | PropertyType::DecimalBinding { .. }
-                    | PropertyType::Ref { .. } => None,
-                })
+            visible_enum_states(visible, extensions, property)
         };
-        let inherited = std::mem::take(&mut machines);
-        for (property, lifecycle) in &inherited {
-            if let Some(states) = states(property) {
-                machines.insert(property.clone(), lifecycle.restricted(&states));
-            }
-        }
-        for lifecycle in &def.lifecycles {
-            let Some(states) = states(&lifecycle.property) else {
-                continue;
-            };
-            let mut machine = lifecycle.restricted(&states);
-            if let Some(wide) = inherited.get(&lifecycle.property) {
-                machine.immutable = states
-                    .iter()
-                    .filter(|state| {
-                        machine.immutable.contains(state) || wide.immutable.contains(state)
-                    })
-                    .cloned()
-                    .collect();
-                for property in &wide.path_properties {
-                    if !machine.path_properties.contains(property) {
-                        machine.path_properties.push(property.clone());
-                    }
-                }
-                // Endings and events are inherited; the redeclaration's own win.
-                for ending in &wide.endings {
-                    if states.contains(&ending.state)
-                        && !machine.endings.iter().any(|own| own.state == ending.state)
-                    {
-                        machine.endings.push(ending.clone());
-                    }
-                }
-                for event in &wide.events {
-                    if !machine.events.iter().any(|own| own.id == event.id) {
-                        machine.events.push(event.clone());
-                    }
-                }
-                for transition in &mut machine.transitions {
-                    if let Some(parent) = wide.transitions.iter().find(|p| p.id == transition.id) {
-                        if transition.trigger.is_none() {
-                            transition.trigger.clone_from(&parent.trigger);
-                        }
-                        if transition.mode.is_none() {
-                            transition.mode = parent.mode;
-                        }
-                        if transition.compensated_by.is_none() {
-                            transition.compensated_by.clone_from(&parent.compensated_by);
-                        }
-                        if parent.guard_refusal_code.is_some() {
-                            transition
-                                .guard_refusal_code
-                                .clone_from(&parent.guard_refusal_code);
-                        }
-                        let own = std::mem::take(&mut transition.guards);
-                        transition.guards = parent.guards.clone();
-                        for guard in own {
-                            if !transition.guards.contains(&guard) {
-                                transition.guards.push(guard);
-                            }
-                        }
-                    }
-                }
-            }
-            machines.insert(lifecycle.property.clone(), machine);
-        }
+        let previous = std::mem::take(&mut machines);
+        let mut inherited = restrict_inherited(previous, &states);
+        fold_level_interfaces(
+            interfaces,
+            def,
+            &states,
+            &mut seen_interfaces,
+            &mut interface_cache,
+            &mut inherited,
+        );
+        machines.clone_from(&inherited);
+        apply_declared_lifecycles(&def.lifecycles, &states, &inherited, &mut machines);
     }
     machines
+        .into_iter()
+        .filter_map(|(property, lifecycle)| lifecycle.map(|lc| (property, lc)))
+        .collect()
+}
+
+fn visible_enum_states(
+    visible: &[&ObjectTypeDef],
+    extensions: &[&ObjectTypeExtension],
+    property: &PropertyId,
+) -> Option<Vec<String>> {
+    visible
+        .iter()
+        .find_map(|def| def.properties.iter().find(|member| member.id == *property))
+        .or_else(|| {
+            extensions
+                .iter()
+                .filter(|extension| visible.iter().any(|def| def.name == extension.target))
+                .find_map(|extension| {
+                    extension
+                        .properties
+                        .iter()
+                        .find(|member| member.id == *property)
+                })
+        })
+        .filter(|member| !member.is_read_only())
+        .and_then(|member| inline_enum_values(&member.property_type))
+}
+
+fn restrict_inherited(
+    previous: BTreeMap<PropertyId, Option<Lifecycle>>,
+    states: &dyn Fn(&PropertyId) -> Option<Vec<String>>,
+) -> BTreeMap<PropertyId, Option<Lifecycle>> {
+    let mut inherited = BTreeMap::new();
+    for (property, lifecycle) in previous {
+        match lifecycle {
+            None => {
+                inherited.insert(property, None);
+            }
+            Some(lifecycle) => {
+                if let Some(prop_states) = states(&property) {
+                    inherited.insert(property, Some(lifecycle.restricted(&prop_states)));
+                }
+            }
+        }
+    }
+    inherited
+}
+
+fn fold_level_interfaces<'a>(
+    interfaces: &dyn Fn(&str) -> Option<&'a InterfaceDef>,
+    def: &'a ObjectTypeDef,
+    states: &dyn Fn(&PropertyId) -> Option<Vec<String>>,
+    seen_interfaces: &mut BTreeSet<&'a str>,
+    cache: &mut InterfaceLifecycleCache<'a>,
+    inherited: &mut BTreeMap<PropertyId, Option<Lifecycle>>,
+) {
+    let mut level_interfaces: BTreeSet<&'a str> = BTreeSet::new();
+    let mut level_owners: Vec<&'a str> = Vec::new();
+    for iface_name in &def.implements {
+        if seen_interfaces.contains(iface_name.as_str()) {
+            continue;
+        }
+        let Some(iface_def) = interfaces(iface_name.as_str()) else {
+            continue;
+        };
+        if !level_interfaces.insert(iface_def.name.as_str()) {
+            continue;
+        }
+        let owners = iface_def.contract_owners(|n: &InterfaceName| interfaces(n.as_str()));
+        if owners.iter().any(|owner| !owner.lifecycles.is_empty()) {
+            let (iface_machines, iface_conflicts) =
+                interface_effective_lifecycles(interfaces, &owners, iface_def, cache);
+            merge_inherited_lifecycles(iface_machines, iface_conflicts, states, inherited);
+        }
+        for owner in owners {
+            level_owners.push(owner.name.as_str());
+        }
+    }
+    seen_interfaces.extend(level_owners);
 }
 
 /// `name` and then its supertypes, nearest first; a cycle is cut.
@@ -594,16 +621,50 @@ fn lineage<'a>(
 /// treats each as a lifecycle property: never written directly, and a
 /// transition or create over one without an effective machine is refused
 /// (fail closed).
+#[must_use]
 pub fn declared_lifecycle_properties<'a>(
     lookup: &dyn Fn(&str) -> Option<&'a ObjectTypeDef>,
     name: &str,
 ) -> BTreeSet<PropertyId> {
-    lineage(lookup, name)
+    let no_interfaces = |_name: &str| -> Option<&'a InterfaceDef> { None };
+    declared_lifecycle_properties_with_interfaces(lookup, &no_interfaces, name)
+}
+
+/// Like [`declared_lifecycle_properties`], also including lifecycle properties
+/// declared on implemented interfaces (directly, through supertypes, and
+/// transitively through interface `extends`, `INTERFACE-LIFECYCLE-1`).
+#[must_use]
+pub fn declared_lifecycle_properties_with_interfaces<'a>(
+    lookup: &dyn Fn(&str) -> Option<&'a ObjectTypeDef>,
+    interfaces: &dyn Fn(&str) -> Option<&'a InterfaceDef>,
+    name: &str,
+) -> BTreeSet<PropertyId> {
+    let chain = lineage(lookup, name);
+    let mut properties: BTreeSet<PropertyId> = chain
         .iter()
         .flat_map(|def| {
             def.lifecycles
                 .iter()
                 .map(|lifecycle| lifecycle.property.clone())
         })
-        .collect()
+        .collect();
+    let mut seen_interfaces: BTreeSet<&'a str> = BTreeSet::new();
+    for def in &chain {
+        for iface_name in &def.implements {
+            let Some(iface_def) = interfaces(iface_name.as_str()) else {
+                continue;
+            };
+            for owner in iface_def.contract_owners(|n: &InterfaceName| interfaces(n.as_str())) {
+                if seen_interfaces.insert(owner.name.as_str()) {
+                    properties.extend(
+                        owner
+                            .lifecycles
+                            .iter()
+                            .map(|lifecycle| lifecycle.property.clone()),
+                    );
+                }
+            }
+        }
+    }
+    properties
 }

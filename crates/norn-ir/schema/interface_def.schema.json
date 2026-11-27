@@ -7,6 +7,13 @@
     "description": {
       "type": "string"
     },
+    "disjointWith": {
+      "description": "Interfaces mutually exclusive with this one; no interface or object type may inherit both. Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/InterfaceName"
+      }
+    },
     "extends": {
       "description": "Parent contracts. All members, constraints, markings and invariants apply.",
       "type": "array",
@@ -19,6 +26,13 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/Invariant"
+      }
+    },
+    "lifecycles": {
+      "description": "Lifecycles every implementing object type and child interface inherits with non-weakening narrowing. Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Lifecycle"
       }
     },
     "links": {
@@ -266,6 +280,184 @@
             "$ref": "#/$defs/JsonValue"
           }
         }
+      ]
+    },
+    "Lifecycle": {
+      "description": "The declared state machine of one `enum` property of an object type.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "endings": {
+          "description": "LIFE-SOUND-1: the declared endings and their outcomes. A run is sound\nwhen it can always reach one. A non-`resting` ending is a terminal\nstate; a `resting` ending is a non-terminal state a perpetual object\nmay stay in (an account, an item). A terminal state with no entry here\nis an unclassified ending. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LifecycleEnding"
+          }
+        },
+        "events": {
+          "description": "LIFE-SOUND-6: the external event kinds an object of this lifecycle can\nreceive (connector observations, provider results, counterparty\ncancellations). Every reachable non-terminal state handles each one by\nan event-triggered transition or an explicit `ignoredIn` entry.\nOmitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LifecycleEvent"
+          }
+        },
+        "immutable": {
+          "description": "States in which non-lifecycle properties cannot be written. Declared\ntransitions may still leave these states. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "initial": {
+          "description": "The states a new object may be created in; non-empty. The property's\ndefault, if any, must be one of them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pathProperties": {
+          "description": "Structural ordering laws, checked over every declared transition path.\nGuards can remove paths but cannot introduce a path that avoids `via`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LifecyclePathProperty"
+          }
+        },
+        "property": {
+          "description": "The lifecycle property: a stored, non-nullable `enum` property of the\ntype (declared, inherited, or added by an extension). Its values are\nthe states.",
+          "$ref": "#/$defs/PropertyId"
+        },
+        "terminal": {
+          "description": "Absorbing states: no transition leaves them. Every other state has at\nleast one outgoing transition. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "transitions": {
+          "description": "The allowed transitions, in presentation order. A write that changes\nthe property from `a` to `b` is allowed exactly when a transition has\n`a` in `from` and `to == b`. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Transition"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "property",
+        "initial"
+      ]
+    },
+    "LifecycleEnding": {
+      "description": "One declared ending of a lifecycle.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "description": "What ending in it means.",
+          "$ref": "#/$defs/LifecycleOutcome"
+        },
+        "state": {
+          "description": "The state; listed once.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "outcome"
+      ]
+    },
+    "LifecycleEvent": {
+      "description": "An external event kind a lifecycle receives (LIFE-SOUND-6).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "The event id, same grammar as a transition id; unique per lifecycle.",
+          "type": "string"
+        },
+        "ignoredIn": {
+          "description": "States in which the event is deliberately ignored, each with a reason.\nOmitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LifecycleIgnore"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "LifecycleIgnore": {
+      "description": "States in which an external event is ignored on purpose.",
+      "type": "object",
+      "properties": {
+        "reason": {
+          "description": "Why ignoring it there is correct; non-blank.",
+          "type": "string"
+        },
+        "states": {
+          "description": "The states; non-empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "states",
+        "reason"
+      ]
+    },
+    "LifecycleOutcome": {
+      "description": "How a lifecycle run ended (LIFE-SOUND-1).",
+      "oneOf": [
+        {
+          "description": "The run did what it was for.",
+          "type": "string",
+          "const": "completed"
+        },
+        {
+          "description": "The run was undone and every dispatched effect was compensated.",
+          "type": "string",
+          "const": "compensated"
+        },
+        {
+          "description": "The run was abandoned before any uncompensated effect.",
+          "type": "string",
+          "const": "cancelled"
+        },
+        {
+          "description": "An obligation was breached and the breach is visible (a remedy owed).",
+          "type": "string",
+          "const": "breached_visible"
+        },
+        {
+          "description": "A non-terminal state a perpetual object may rest in indefinitely.",
+          "type": "string",
+          "const": "resting"
+        }
+      ]
+    },
+    "LifecyclePathProperty": {
+      "description": "Every path from an initial state to `target` must visit `via`, including\nthe initial and target states. An unreachable target satisfies this law\nvacuously, but is independently rejected by the reachability check.",
+      "type": "object",
+      "properties": {
+        "target": {
+          "description": "Destination state.",
+          "type": "string"
+        },
+        "via": {
+          "description": "Required state on every path to the destination.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "via"
       ]
     },
     "LinkCardinality": {
@@ -826,6 +1018,122 @@
           "description": "Source data supplies an offset. The runtime stores the instant in UTC;\nthe original source representation belongs to raw observations.",
           "type": "string",
           "const": "offset"
+        }
+      ]
+    },
+    "Transition": {
+      "description": "One named, allowed change of the lifecycle property.",
+      "type": "object",
+      "properties": {
+        "compensatedBy": {
+          "description": "LIFE-SOUND-8: this transition dispatches an irreversible external\neffect, and the named transition compensates it. A run that dispatched\nit may end `cancelled`, `compensated` or `breached_visible` only after\nthe compensating transition. Omitted when the transition dispatches none.",
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "from": {
+          "description": "The source states, non-empty and distinct; none is `to`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "guardRefusalCode": {
+          "description": "GUARD-DIAGNOSTIC-1: registered T6 error code for guard refusals.\nOmission inherits a parent's diagnostic; guard evidence is retained.",
+          "type": "string"
+        },
+        "guards": {
+          "description": "Boolean ZEN Expressions over the object's properties, evaluated on\nthe state before the change; the transition may be taken only when\nevery one holds (their conjunction). A subtype that redeclares the\ntransition restates every inherited guard verbatim and may append its\nown, so the declaration it carries is the full effective guard set;\ndropping or replacing an inherited guard is a checker error. A guard\nreads the object through `self`; the checker parses it (T1-ONT-2)\nand types it (T1-EXPR-5, #2523); enforcement at commit is the\nkernel's. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ZenExpression"
+          }
+        },
+        "id": {
+          "description": "Unique id within the lifecycle (`submit`, `cancel`).",
+          "$ref": "#/$defs/TransitionId"
+        },
+        "mode": {
+          "description": "LIFE-SOUND-5: fact or request. Omitted: a request, unless a trigger\nmakes it a fact.",
+          "$ref": "#/$defs/TransitionMode"
+        },
+        "to": {
+          "description": "The target state.",
+          "type": "string"
+        },
+        "trigger": {
+          "description": "LIFE-SOUND-3: a timer or external event that fires this transition.\nOmitted: an action fires it.",
+          "$ref": "#/$defs/TransitionTrigger"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "from",
+        "to"
+      ]
+    },
+    "TransitionId": {
+      "description": "Id of a [`Transition`], unique within its lifecycle. Same grammar as a\nproperty id ([`MEMBER_ID_PATTERN`]).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "TransitionMode": {
+      "description": "Whether a transition records a fact or asks for a change (LIFE-SOUND-5).",
+      "oneOf": [
+        {
+          "description": "A request: laws and guards may refuse it. The default.",
+          "type": "string",
+          "const": "request"
+        },
+        {
+          "description": "A fact (an observation, an offline sale, a count, a provider result):\nnever refused. It commits, commits with a variance or shortfall, or is\nquarantined. A fact transition carries no guard.",
+          "type": "string",
+          "const": "fact"
+        }
+      ]
+    },
+    "TransitionTrigger": {
+      "description": "What fires a transition (LIFE-SOUND-3). Omitted: an action fires it.",
+      "oneOf": [
+        {
+          "description": "The cell clock: the transition fires once the object has been in a\nsource state for `millis`. A deadline; always a fact.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "timer"
+            },
+            "millis": {
+              "description": "Positive canonical unsigned milliseconds, bounded by u64.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "millis"
+          ]
+        },
+        {
+          "description": "A declared external event of the lifecycle. Always a fact.",
+          "type": "object",
+          "properties": {
+            "event": {
+              "description": "The [`LifecycleEvent`] id.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "event"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "event"
+          ]
         }
       ]
     },
