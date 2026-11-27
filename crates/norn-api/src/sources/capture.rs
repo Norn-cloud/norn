@@ -27,12 +27,10 @@ pub(super) fn next_lease_id(base: &str) -> String {
     let seq = NEXT_LEASE_SEQ.fetch_add(1, Ordering::Relaxed);
     #[cfg(not(target_arch = "wasm32"))]
     {
-        use std::hash::{BuildHasher, Hash, Hasher};
+        use std::hash::BuildHasher;
 
         let pid = std::process::id();
-        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-        (pid, seq).hash(&mut hasher);
-        let salt = hasher.finish();
+        let salt = std::collections::hash_map::RandomState::new().hash_one((pid, seq));
         format!("{base}/l{seq}-{pid}-{salt:016x}")
     }
     #[cfg(target_arch = "wasm32")]
