@@ -121,8 +121,8 @@ pub use coverage_observer::{
     ObservedSqliteCell, TransitionKey,
 };
 pub use definition_scope::{
-    PRINCIPAL_INPUTS_PROPERTY, is_reserved_kernel_name, kernel_record_types,
-    kernel_record_types_recording_principal_inputs,
+    PRINCIPAL_INPUTS_PROPERTY, function_command_record_type, is_reserved_kernel_name,
+    kernel_record_types, kernel_record_types_recording_principal_inputs,
 };
 pub use error::CellError;
 
