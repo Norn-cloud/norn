@@ -334,6 +334,13 @@ fn present_runtime_value<'de, D: serde::Deserializer<'de>>(
     RuntimeValue::deserialize(deserializer).map(Some)
 }
 
+fn present_string<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    use serde::Deserialize;
+    String::deserialize(deserializer).map(Some)
+}
+
 /// Deserialize a connector feed's `initial` watermark.
 ///
 /// Accepts either `{ "version": ..., "id": ... }` (including explicit `null`,
@@ -351,7 +358,7 @@ pub(crate) fn deserialize_initial_watermark<'de, D: serde::Deserializer<'de>>(
         version: String,
         #[serde(default, deserialize_with = "present_runtime_value")]
         id: Option<RuntimeValue>,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "present_string")]
         id_decimal: Option<String>,
     }
     let raw = RawInitial::deserialize(deserializer)?;

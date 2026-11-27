@@ -42,7 +42,7 @@ export interface PullFeed {
     | { readonly version: string; readonly id: string | number | null }
     | { readonly version: string; readonly idDecimal: string }
   readonly mode?: "full_snapshot" | "patch"
-  readonly versionKind?: "lexicographical" | "uint64" | "rfc3339" | "opaque"
+  readonly versionKind?: "lexicographical" | "int64" | "uint64" | "rfc3339"
 }
 
 /** A generic pull profile: the source it observes and its dataset feeds, in order. */

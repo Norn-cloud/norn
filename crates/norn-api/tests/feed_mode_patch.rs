@@ -952,6 +952,7 @@ mod tests {
             r#"{"version":"0","id":9007199254740992.1}"#,
             r#"{"version":"0","id":1000000000000000.1}"#,
             r#"{"version":"0","id":null,"idDecimal":"1"}"#,
+            r#"{"version":"0","id":null,"idDecimal":null}"#,
         ] {
             let conn = format!(
                 r#"{{"extensions":{{"norn.pull/1":{{"source":"s","pipeline":"p/1","feeds":[{{"dataset":"D","request":{{"method":"GET","path":"/d"}},"itemsPath":"/data","paging":{{"kind":"keyset","size":10}},"idPath":"/id","versionPath":"/v","fields":{{"id":"/id"}},"initial":{bad}}}]}}}}}}"#
@@ -1269,7 +1270,11 @@ mod tests {
         assert!(!plan.unchanged, "v1 -> v2 must not report unchanged");
         assert_eq!(plan.changed.len(), 1);
         assert_eq!(plan.changed[0].artifact_id, "erpnext.rest.connector");
-        assert!(plan.same.is_empty());
+        assert!(
+            plan.same.is_empty(),
+            "v1 -> v2 must not report connector as unchanged: {:?}",
+            plan.same
+        );
         assert_ne!(plan.receipt_sha256, admitted_v1.receipt_sha256);
         let lossy_plan_body = format!(r#"{{"artifacts":[{lossy_connector}]}}"#);
         assert!(
