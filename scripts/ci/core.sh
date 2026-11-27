@@ -476,6 +476,7 @@ PY
       bash scripts/verify-kernel-inline-verus.sh all
       bash scripts/verify-kernel-overlay-verus.sh all
       crates/norn-skeleton-guard/scripts/zen-dependency-tree.sh
+      cargo fetch --locked
       bash scripts/ci/ascent-no-clock-dependency-tree.sh
       if [[ ${CI:-} == true || ${GITHUB_ACTIONS:-} == true ]]; then
         : "${NORN_CI_BASE:?guards: NORN_CI_BASE must be set in CI}"
