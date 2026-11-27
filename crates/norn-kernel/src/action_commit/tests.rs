@@ -117,6 +117,7 @@ fn reference_proof_rejects_changed_outputs_and_keeps_added_guards_full() {
         links: Vec::new(),
         link_reads: Vec::new(),
         event_count: 0,
+        laws_digest: ActionReferenceReads::governing_laws_digest(&[]).expect("digest"),
     };
     let mut changed = commit.clone();
     changed.writes[0].mutation = FactMutation::Put {
@@ -382,4 +383,247 @@ fn approved_intent_binds_each_piece_of_decision_evidence() {
             );
         }
     }
+}
+
+fn hr_create_types() -> Vec<norn_ir::ObjectTypeDef> {
+    serde_json::from_value(serde_json::json!([
+        {
+            "name": "hr.Person",
+            "identity": [{"name": "primary", "properties": ["id"]}],
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "status", "type": {"kind": "text"}},
+                {"id": "department", "type": {"kind": "text"}},
+                {"id": "national_id", "type": {"kind": "text"}}
+            ]
+        },
+        {
+            "name": "hr.Employee",
+            "extends": "hr.Person",
+            "properties": [
+                {"id": "badge", "type": {"kind": "text"}},
+                {"id": "computed_summary", "type": {"kind": "text"}, "computed": "self.national_id"}
+            ]
+        },
+        {
+            "name": "hr.LeaveRequest",
+            "identity": [{"name": "primary", "properties": ["id"]}],
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "days", "type": {"kind": "integer"}}
+            ],
+            "links": [{
+                "id": "employee",
+                "target": "hr.Person",
+                "inverse": "leave_requests",
+                "cardinality": {"to": "one", "from": "many"}
+            }]
+        }
+    ]))
+    .expect("types")
+}
+
+fn hr_create_action(
+    preconditions: &serde_json::Value,
+    slice: &serde_json::Value,
+    create_links: &serde_json::Value,
+) -> ActionRoot {
+    serde_json::from_value(serde_json::json!({
+        "actionId": "hr.submit_leave",
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": true,
+        "ledgered": true,
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "id": {"type": "string"},
+                "employee_id": {"type": "string"},
+                "days": {"type": "integer"}
+            },
+            "required": ["id", "employee_id", "days"]
+        },
+        "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+        "slice": slice,
+        "preconditions": preconditions,
+        "createLinks": create_links,
+        "effectProgram": {
+            "kind": "upsert_input_object",
+            "objectIdField": "id",
+            "objectKind": "hr.LeaveRequest",
+            "entityArtifactId": "hr.LeaveRequest.entity",
+            "entityArtifactVersion": "1.0.0",
+            "writeMode": {"kind": "create_only"}
+        }
+    }))
+    .expect("action")
+}
+
+fn hr_law(id: &str, subject: &str, expression: &str) -> norn_ir::ArtifactEnvelope {
+    serde_json::from_value(serde_json::json!({
+        "artifactId": format!("hr.{id}.law"),
+        "version": "1.0.0",
+        "kind": "law",
+        "name": id,
+        "namespace": "hr",
+        "irVersion": "0.1",
+        "lifecycle": "draft",
+        "dependencies": [],
+        "scope": {"orgId": "org_demo", "environmentId": "dev"},
+        "provenance": {"source": "system", "sourcePath": "test"},
+        "payload": {
+            "id": id,
+            "lawVersion": "0.1",
+            "modality": {"kind": "always"},
+            "owner": "hr",
+            "provenance": {"source": "system", "sourcePath": "test"},
+            "rationale": id,
+            "response": {"kind": "predicate", "expression": expression},
+            "scope": {"objectTypes": [subject], "root": {"kind": "entity", "id": subject}},
+            "severity": "error",
+            "subject": subject
+        }
+    }))
+    .expect("law")
+}
+
+#[test]
+fn create_slice_property_reads_merges_polymorphic_aliases_and_link_laws() {
+    let types = hr_create_types();
+    let target = FactKey::new("hr.LeaveRequest", "L1");
+    let catalog = crate::decision_commit::TypeCatalog::new(&types);
+    let aliased_action = hr_create_action(
+        &serde_json::json!([
+            "slice.first.status == 'active'",
+            "slice.second.department == 'eng'"
+        ]),
+        &serde_json::json!([
+            {"name": "first", "objectType": "hr.Person", "key": {"property": {"from": "input", "property": "employee_id"}}},
+            {"name": "second", "objectType": "hr.Employee", "key": {"property": {"from": "input", "property": "employee_id"}}}
+        ]),
+        &serde_json::json!([
+            {"link": "employee", "targetType": "hr.Person", "targetIdField": "employee_id"}
+        ]),
+    );
+    let emp_ref = FactExpectation {
+        key: FactKey::new("hr.Employee", "E1"),
+        expected: FactVersion(1),
+    };
+    let input = JsonObject::from([
+        ("id".to_owned(), RuntimeValue::String("L1".to_owned())),
+        (
+            "employee_id".to_owned(),
+            RuntimeValue::String("E1".to_owned()),
+        ),
+    ]);
+    let merged = super::receipt::create_reference_property_reads(
+        &catalog,
+        &aliased_action,
+        &target,
+        &input,
+        std::slice::from_ref(&emp_ref),
+    )
+    .expect("aliased polymorphic reads proved");
+    assert_eq!(
+        merged,
+        vec![(
+            emp_ref.clone(),
+            vec!["department".to_owned(), "status".to_owned()]
+        )]
+    );
+
+    let extra_ref = FactExpectation {
+        key: FactKey::new("hr.Person", "E2"),
+        expected: FactVersion(1),
+    };
+    assert!(
+        super::receipt::create_reference_property_reads(
+            &catalog,
+            &aliased_action,
+            &target,
+            &input,
+            &[emp_ref.clone(), extra_ref],
+        )
+        .is_none()
+    );
+
+    let forward_law = hr_law(
+        "leave_checks_nid",
+        "hr.LeaveRequest",
+        "self.employee.national_id != '000'",
+    );
+    let law_catalog = crate::decision_commit::TypeCatalog::new(&types)
+        .with_governing_laws(std::slice::from_ref(&forward_law));
+    let empty_precond = hr_create_action(
+        &serde_json::json!([]),
+        &serde_json::json!([
+            {"name": "emp", "objectType": "hr.Person", "key": {"property": {"from": "input", "property": "employee_id"}}}
+        ]),
+        &serde_json::json!([
+            {"link": "employee", "targetType": "hr.Person", "targetIdField": "employee_id"}
+        ]),
+    );
+    let law_reads = super::receipt::create_reference_property_reads(
+        &law_catalog,
+        &empty_precond,
+        &target,
+        &input,
+        std::slice::from_ref(&emp_ref),
+    )
+    .expect("forward link law read attributed");
+    assert_eq!(law_reads, vec![(emp_ref, vec!["national_id".to_owned()])]);
+    assert_ne!(
+        ActionReferenceReads::governing_laws_digest(&[]),
+        ActionReferenceReads::governing_laws_digest(std::slice::from_ref(&forward_law))
+    );
+}
+
+#[test]
+fn create_slice_property_reads_fails_closed_on_whole_object_computed_and_inverse_laws() {
+    let types = hr_create_types();
+    let target = FactKey::new("hr.LeaveRequest", "L1");
+    let catalog = crate::decision_commit::TypeCatalog::new(&types);
+    let emp_slice = serde_json::json!([
+        {"name": "emp", "objectType": "hr.Employee", "key": {"property": {"from": "input", "property": "employee_id"}}}
+    ]);
+    for precond in [
+        serde_json::json!(["slice.emp != null"]),
+        serde_json::json!(["slice.emp.computed_summary != ''"]),
+    ] {
+        let action = hr_create_action(&precond, &emp_slice, &serde_json::json!([]));
+        assert!(super::receipt::create_slice_property_reads(&catalog, &action, &target).is_none());
+    }
+    let sourced_link = hr_create_action(
+        &serde_json::json!([]),
+        &emp_slice,
+        &serde_json::json!([{
+            "source": {"objectType": "hr.LeaveRequest", "idField": "id"},
+            "link": "employee",
+            "targetType": "hr.Employee",
+            "targetIdField": "employee_id"
+        }]),
+    );
+    assert!(
+        super::receipt::create_slice_property_reads(&catalog, &sourced_link, &target).is_none()
+    );
+    let inverse_law = hr_law(
+        "person_leave_cap",
+        "hr.Person",
+        "sum(map(self.leave_requests, #.days)) <= 30",
+    );
+    let inverse_catalog = crate::decision_commit::TypeCatalog::new(&types)
+        .with_governing_laws(std::slice::from_ref(&inverse_law));
+    let empty_precond = hr_create_action(
+        &serde_json::json!([]),
+        &serde_json::json!([
+            {"name": "emp", "objectType": "hr.Person", "key": {"property": {"from": "input", "property": "employee_id"}}}
+        ]),
+        &serde_json::json!([
+            {"link": "employee", "targetType": "hr.Person", "targetIdField": "employee_id"}
+        ]),
+    );
+    assert!(
+        super::receipt::create_slice_property_reads(&inverse_catalog, &empty_precond, &target)
+            .is_none()
+    );
 }

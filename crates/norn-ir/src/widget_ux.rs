@@ -11,7 +11,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::value::RawValue;
 
+pub use crate::i18n::{LocaleText, WidgetMessage, WidgetMessageText, WidgetText, message_id};
 use crate::members::{IrVersion01, WholeNumber, present_non_null};
+use crate::runtime::{
+    guard_definition_numbers_text, guard_definition_numbers_value, is_serde_json_text_deserializer,
+    is_serde_json_value_deserializer,
+};
 use crate::{JsonValue, ZenExpression};
 
 /// Exact version of the first closed Widget UX contract.
@@ -60,6 +65,12 @@ pub struct WidgetUx {
     /// framework, each with a typed props contract, declared events and its machine.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub catalog: Vec<WidgetCatalogEntry>,
+    /// Reads of one object whose type and key a page's context supplies (UI-CONTEXT-READ-1): a
+    /// page that presents any object type, such as Studio's record page. A page machine reads
+    /// one as it reads a data binding; no property, field, form, filter or list names one, since
+    /// no entity is bound to check them against, so only catalog islands draw it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_reads: Vec<WidgetContextRead>,
 }
 
 #[derive(Deserialize)]
@@ -80,6 +91,8 @@ struct WidgetUxWire {
     overrides: Vec<WidgetOverride>,
     #[serde(default)]
     catalog: Vec<WidgetCatalogEntry>,
+    #[serde(default)]
+    context_reads: Vec<WidgetContextRead>,
 }
 
 impl From<WidgetUxWire> for WidgetUx {
@@ -97,6 +110,7 @@ impl From<WidgetUxWire> for WidgetUx {
             navigation_items: wire.navigation_items,
             overrides: wire.overrides,
             catalog: wire.catalog,
+            context_reads: wire.context_reads,
         }
     }
 }
@@ -108,13 +122,15 @@ impl<'de> Deserialize<'de> for WidgetUx {
     {
         if is_serde_json_value_deserializer::<D>() {
             let value = serde_json::Value::deserialize(deserializer)?;
-            guard_widget_ux_numeric_value(&value).map_err(serde::de::Error::custom)?;
+            guard_definition_numbers_value("Widget UX", &value)
+                .map_err(serde::de::Error::custom)?;
             let wire: WidgetUxWire =
                 serde_json::from_value(value).map_err(serde::de::Error::custom)?;
             Ok(Self::from(wire))
         } else if is_serde_json_text_deserializer::<D>() && deserializer.is_human_readable() {
             let raw = Box::<RawValue>::deserialize(deserializer)?;
-            guard_widget_ux_numeric_roundtrip(raw.get()).map_err(serde::de::Error::custom)?;
+            guard_definition_numbers_text("Widget UX", raw.get())
+                .map_err(serde::de::Error::custom)?;
             let wire: WidgetUxWire =
                 serde_json::from_str(raw.get()).map_err(serde::de::Error::custom)?;
             Ok(Self::from(wire))
@@ -122,42 +138,6 @@ impl<'de> Deserialize<'de> for WidgetUx {
             WidgetUxWire::deserialize(deserializer).map(Self::from)
         }
     }
-}
-
-/// Reject UX JSON numbers whose existing `JsonValue` representation changes
-/// their exact runtime value.
-pub(crate) fn guard_widget_ux_numeric_roundtrip(raw: &str) -> Result<(), String> {
-    let exact = crate::RuntimeValue::from_json_text(raw).map_err(|error| error.to_string())?;
-    let definition: JsonValue = serde_json::from_str(raw).map_err(|error| error.to_string())?;
-    let converted = crate::RuntimeValue::from_ir(&definition).map_err(|error| error.to_string())?;
-    if exact != converted {
-        return Err(
-            "Widget UX number changes value through the definition JSON representation".into(),
-        );
-    }
-    Ok(())
-}
-
-/// Apply the same value-preservation check to a constructed serde_json value.
-pub(crate) fn guard_widget_ux_numeric_value(value: &serde_json::Value) -> Result<(), String> {
-    let exact = crate::RuntimeValue::from_json(value.clone()).map_err(|error| error.to_string())?;
-    let definition: JsonValue =
-        serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
-    let converted = crate::RuntimeValue::from_ir(&definition).map_err(|error| error.to_string())?;
-    if exact != converted {
-        return Err(
-            "Widget UX number changes value through the definition JSON representation".into(),
-        );
-    }
-    Ok(())
-}
-
-fn is_serde_json_text_deserializer<D>() -> bool {
-    std::any::type_name::<D>().contains("serde_json::de::Deserializer<")
-}
-
-fn is_serde_json_value_deserializer<D>() -> bool {
-    std::any::type_name::<D>().contains("serde_json::value::Value")
 }
 
 /// A pinned reference to an artifact.
@@ -179,11 +159,6 @@ pub struct PropertyRef {
     /// Property id on the binding's object type.
     pub property_id: String,
 }
-
-/// Locale-keyed user-facing text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(transparent)]
-pub struct LocaleText(pub BTreeMap<String, String>);
 
 /// The application shell for a set of pages.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -818,7 +793,7 @@ pub struct WidgetCatalogEntry {
     /// Stable entry id.
     pub entry_id: String,
     /// Human-readable name.
-    pub label: LocaleText,
+    pub label: WidgetText,
     /// Trust ladder position.
     pub trust: WidgetTrust,
     /// The framework the implementation is written in (informational, for
@@ -939,7 +914,7 @@ pub enum WidgetComponent {
         /// Form whose submit action owns the parent and row mutations.
         form_id: String,
         /// Localized label used as the grid's accessible region and heading.
-        label: LocaleText,
+        label: WidgetText,
         /// Owned link id declared by the form action's pinned entity.
         collection_id: String,
         /// Owned collection ordering property copied for renderer ordering; checker proves it matches EntityIR.
@@ -983,7 +958,7 @@ pub enum WidgetComponent {
     /// events that name this node (UI-MACHINE-1). A `choice` or `text`
     /// control sends its value as the event payload member `value`.
     Control {
-        label: LocaleText,
+        label: WidgetText,
         input: WidgetControlInput,
     },
     /// An exact page of a pinned widget artifact composed as a baseline.
@@ -1070,7 +1045,7 @@ pub struct WidgetSection {
     /// Section or tab container.
     pub kind: WidgetSectionKind,
     /// Localized heading.
-    pub label: LocaleText,
+    pub label: WidgetText,
     /// Explicit property inclusion in presentation order.
     pub fields: Vec<PropertyRef>,
     /// Order among sibling sections.
@@ -1097,6 +1072,23 @@ pub enum WidgetSelectionMode {
     Single,
     /// A bounded set of rows may be selected.
     Multiple,
+}
+
+/// One read of the object a page's context names (UI-CONTEXT-READ-1): its type and its key are
+/// two required text parameters of one page, so the page serves every object type the cell
+/// serves. The cell decides the read; the checker has no entity to check its values against, so
+/// nothing but a catalog island draws it, and the island draws them as the cell projected them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WidgetContextRead {
+    /// Stable binding id, unique among data bindings and context reads.
+    pub binding_id: String,
+    /// The page whose context names the object, and whose machine reads it.
+    pub page_id: String,
+    /// The required text parameter holding the object type.
+    pub type_parameter_id: String,
+    /// The required text parameter holding the object's key.
+    pub key_parameter_id: String,
 }
 
 /// One exact object binding and its bounded query.
@@ -1262,13 +1254,15 @@ impl<'de> Deserialize<'de> for WidgetFilterValue {
     {
         if is_serde_json_value_deserializer::<D>() {
             let value = serde_json::Value::deserialize(deserializer)?;
-            guard_widget_ux_numeric_value(&value).map_err(serde::de::Error::custom)?;
+            guard_definition_numbers_value("Widget UX", &value)
+                .map_err(serde::de::Error::custom)?;
             let wire: WidgetFilterValueWire =
                 serde_json::from_value(value).map_err(serde::de::Error::custom)?;
             Ok(Self::from(wire))
         } else if is_serde_json_text_deserializer::<D>() && deserializer.is_human_readable() {
             let raw = Box::<RawValue>::deserialize(deserializer)?;
-            guard_widget_ux_numeric_roundtrip(raw.get()).map_err(serde::de::Error::custom)?;
+            guard_definition_numbers_text("Widget UX", raw.get())
+                .map_err(serde::de::Error::custom)?;
             let wire: WidgetFilterValueWire =
                 serde_json::from_str(raw.get()).map_err(serde::de::Error::custom)?;
             Ok(Self::from(wire))
@@ -1393,15 +1387,15 @@ pub struct WidgetFieldPresentation {
     /// Explicit object property or included form input presented by this field.
     pub target: WidgetFieldTarget,
     /// Localized visible label.
-    pub label: LocaleText,
+    pub label: WidgetText,
     /// Optional localized help text.
     #[serde(
         default,
         deserialize_with = "present_non_null",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "LocaleText")]
-    pub help: Option<LocaleText>,
+    #[schemars(with = "WidgetText")]
+    pub help: Option<WidgetText>,
     /// Control selected for the property's value type.
     pub control: WidgetFieldControl,
     /// Optional display format hint.
@@ -1579,7 +1573,7 @@ pub struct WidgetForm {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WidgetFormSubmit {
     /// Localized submit label.
-    pub label: LocaleText,
+    pub label: WidgetText,
     /// Confirmation applied when submitting, after input validation.
     pub confirmation: WidgetActionConfirmation,
     /// Effects handled specifically by the submit invocation.
@@ -1628,7 +1622,7 @@ pub struct WidgetActionPlacement {
     /// Action binding to place.
     pub binding_id: String,
     /// Localized text shown on the action control.
-    pub label: LocaleText,
+    pub label: WidgetText,
     /// Opening this form defers invocation until its explicit submit.
     #[serde(
         default,
@@ -1711,16 +1705,16 @@ pub struct WidgetActionConfirmation {
         deserialize_with = "present_non_null",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "LocaleText")]
-    pub message: Option<LocaleText>,
+    #[schemars(with = "WidgetText")]
+    pub message: Option<WidgetText>,
     /// Required localized phrase for typed confirmation; absent otherwise.
     #[serde(
         default,
         deserialize_with = "present_non_null",
         skip_serializing_if = "Option::is_none"
     )]
-    #[schemars(with = "LocaleText")]
-    pub phrase: Option<LocaleText>,
+    #[schemars(with = "WidgetText")]
+    pub phrase: Option<WidgetText>,
 }
 
 /// Impact category of an action.
@@ -1756,7 +1750,7 @@ pub struct WidgetNavigationItem {
     /// Stable navigation item id.
     pub item_id: String,
     /// Localized item label.
-    pub label: LocaleText,
+    pub label: WidgetText,
     /// Closed destination kind.
     pub destination: WidgetNavigationDestination,
     /// Capability required to show or follow the item; never a grant.
@@ -1832,7 +1826,7 @@ pub struct WidgetOverride {
 )]
 pub enum WidgetOverrideValue {
     /// Replace localized label text.
-    Label { value: LocaleText },
+    Label { value: WidgetText },
     /// Change sibling order.
     Order { value: WholeNumber },
     /// Change grouping label.

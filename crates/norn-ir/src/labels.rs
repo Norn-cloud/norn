@@ -15,7 +15,7 @@
 //! target and locale, a candidate catalog's label replaces the installed
 //! base's; two candidate catalogs that both label the same target and locale
 //! are refused (`norn-checker`), never resolved by order.
-use crate::widget_ux::LocaleText;
+use crate::i18n::LocaleText;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

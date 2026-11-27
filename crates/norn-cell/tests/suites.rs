@@ -46,8 +46,6 @@ mod dataset_laws_datafusion;
 mod definition_scope;
 #[path = "dirty_data_wedge.rs"]
 mod dirty_data_wedge;
-#[path = "explorer_documents.rs"]
-mod explorer_documents;
 #[path = "governed_create.rs"]
 mod governed_create;
 #[path = "jewelry_pricing.rs"]

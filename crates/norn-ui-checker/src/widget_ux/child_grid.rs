@@ -5,18 +5,18 @@ use std::collections::BTreeSet;
 use norn_expr::Type;
 use norn_expr::schema::Schema;
 use norn_ir::{
-    ActionEffectProgram, LocaleText, PropertyType, WidgetComponent, WidgetDataQuery,
-    WidgetFieldControl, WidgetFieldTarget, WidgetFormMode, WidgetNode, WidgetUx,
+    ActionEffectProgram, PropertyType, WidgetComponent, WidgetDataQuery, WidgetFieldControl,
+    WidgetFieldTarget, WidgetFormMode, WidgetNode, WidgetText, WidgetUx,
 };
 
 use norn_checker::entity_instance::EffectiveKind;
 
 use super::types::property_type;
-use super::{ActionSurface, UxChecker, has_initial_lifecycle_default, is_nonblank_locale_text};
+use super::{ActionSurface, UxChecker, has_initial_lifecycle_default};
 
 pub(super) struct ChildGridSpec<'a> {
     pub(super) form_id: &'a str,
-    pub(super) label: &'a LocaleText,
+    pub(super) label: &'a WidgetText,
     pub(super) collection_id: &'a str,
     pub(super) ordering_key: &'a str,
     pub(super) data_binding_id: Option<&'a str>,
@@ -48,7 +48,7 @@ impl UxChecker<'_, '_, '_> {
             field_ids,
             ..
         } = spec;
-        if !is_nonblank_locale_text(label) {
+        if label.is_blank() {
             self.error(
                 &format!("{path}/component/label"),
                 "child grid label must contain nonblank localized text",

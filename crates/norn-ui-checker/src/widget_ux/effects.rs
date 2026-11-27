@@ -13,7 +13,7 @@ use norn_checker::entity_instance::EffectiveObjectType;
 
 use super::{
     MAX_COMPOSITION_EXPANSIONS, UxChecker, action_cache_key, dependency_matches,
-    exceeds_widget_node_depth, is_nonblank_locale_text,
+    exceeds_widget_node_depth,
 };
 
 /// Why a transition's canonical UI enabled condition could not be generated.
@@ -866,7 +866,7 @@ fn valid_typed_confirmation(confirmation: &WidgetActionConfirmation) -> bool {
         && confirmation
             .phrase
             .as_ref()
-            .is_some_and(is_nonblank_locale_text)
+            .is_some_and(|phrase| !phrase.is_blank())
 }
 
 fn subtract_confirmation(
