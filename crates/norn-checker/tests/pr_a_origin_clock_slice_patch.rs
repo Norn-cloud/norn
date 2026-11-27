@@ -4,6 +4,8 @@
 //! - TRANSITION-PATCH-1 (`fire_transition` `setFields`)
 //! - ORIGIN-DATAFLOW-1 (`origin` and `immutableAfterCreate`, including subtype tightening)
 
+#![allow(clippy::expect_used, reason = "integration test fixture helpers")]
+
 use std::collections::BTreeSet;
 
 use norn_checker::{EntityArtifactSetContext, check_artifact_set};

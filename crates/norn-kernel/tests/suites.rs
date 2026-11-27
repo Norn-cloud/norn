@@ -48,6 +48,8 @@ mod invariant_commit;
 mod limits;
 #[path = "location_hierarchy.rs"]
 mod location_hierarchy;
+#[path = "outbox_ledger.rs"]
+mod outbox_ledger;
 #[path = "pr_a_runtime.rs"]
 mod pr_a_runtime;
 #[path = "predicate_slice_and_links.rs"]

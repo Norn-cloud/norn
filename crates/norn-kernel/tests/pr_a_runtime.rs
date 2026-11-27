@@ -3,6 +3,12 @@
 //! - ACTION-SLICE-DERIVE-1 (post-slice `derive` on upsert and transition)
 //! - TRANSITION-PATCH-1 (`fire_transition` `setFields` atomic update)
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "integration test fixture helpers"
+)]
+
 use std::collections::BTreeMap;
 
 use norn_ir::{ActionRoot, ObjectTypeDef, RuntimeValue};
