@@ -54,11 +54,13 @@ test("supply-lab retail truth slice questions lower to their committed QuestionI
   golden("retail.questions.json", result.questions)
 })
 
-test("supply-lab retail combined management view dashboard lowers its eleven tiles", () => {
+test("supply-lab retail combined management view dashboard and coverage manifest lower cleanly", async () => {
   const result = compileDashboards(RETAIL_SOURCE)
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
   expect(result.dashboards).toHaveLength(1)
   golden("retail.dashboard.json", result.dashboards)
+  const mod = await import(join(DIR, "retail_coverage.ts"))
+  golden("retail.coverage.json", mod.RetailCombinedViewCoverage)
 })
 
 test("supply-lab dashboard lowers its five tiles", () => {

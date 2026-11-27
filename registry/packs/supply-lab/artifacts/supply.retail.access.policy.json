@@ -218,6 +218,7 @@
       {
         "actions": [
           "supply.store_kpi.record",
+          "supply.store_kpi.refresh",
           "supply.store_kpi.record_withheld"
         ],
         "allOf": [

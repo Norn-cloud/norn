@@ -40,11 +40,13 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use norn_cell::combined_view::{
-    CellViewInput, CombinedViewKind, CombinedViewReport, CoverageTransformGate, ExpectedGrainGate,
-    ReconciliationComparison, ReconciliationGate, evaluate_cell_cut,
-    evaluate_combined_management_view,
+    CellCoverageSpec, CellViewInput, CombinedViewKind, CombinedViewReport, CoverageTransformGate,
+    SpecCellBinding, evaluate_cell_cut, evaluate_cell_cut_from_spec,
+    evaluate_combined_management_view_from_spec,
 };
-use norn_cell::compute::lineage::{ContributionSource, LineageDisclosure};
+use norn_cell::compute::lineage::{
+    ContributionSource, LineageDisclosure, keyed_lineage_handle, keyed_revision_handle,
+};
 use norn_cell::compute::transform::{RowAccess, TransformResult};
 use norn_cell::compute::{Freshness, Frontier, QueryContext, QueryResult, Watermark};
 use norn_cell::engine::NativeEngine;
@@ -71,8 +73,8 @@ use norn_kernel::read_envelope::{
 };
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
-    ActionReadAuthzRequest, ActionReadTypeAuthzRequest, CellHost as _, DecisionTurn, FactEvent,
-    LogicalTime, ObservationEvent, ObservationId, Observed, Provenance, commit_action,
+    ActionReadAuthzRequest, ActionReadTypeAuthzRequest, DecisionTurn, FactEvent, LogicalTime,
+    ObservationEvent, ObservationId, Observed, Provenance, commit_action,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -249,7 +251,7 @@ impl RetailPack {
         let registry = BTreeSet::new();
         let space = derive_metric_space(
             &ScopedView::uniform(&self.pool, &registry),
-            &LawRoot::Entity(question.object_set.clone()),
+            &LawRoot::Entity(question.object_set.as_str().to_owned()),
         )
         .map_err(|e| format!("derive metric space for {name}: {e:?}"))?;
         space
@@ -1942,16 +1944,19 @@ fn check_position_counts(
     (now_ms, max_age_ms): (u64, u64),
     findings: &mut Vec<CountCoverageFinding>,
 ) {
-    let has_future = |basis: &str| {
-        findings.iter().any(|f| {
-            f.store_id == store_id
-                && f.sku_id == sku_id
-                && matches!(&f.kind, CountCoverageKind::FutureCount { basis: b, .. } if b == basis)
-        })
-    };
+    let has_future_on_hand = findings.iter().any(|f| {
+        f.store_id == store_id
+            && f.sku_id == sku_id
+            && matches!(&f.kind, CountCoverageKind::FutureCount { basis, .. } if basis == "on_hand")
+    });
+    let has_future_avail = findings.iter().any(|f| {
+        f.store_id == store_id
+            && f.sku_id == sku_id
+            && matches!(&f.kind, CountCoverageKind::FutureCount { basis, .. } if basis == "available")
+    });
     let on_hand_qty = match on_hand {
         None => {
-            if !has_future("on_hand") && derived > Decimal::from(0_i64) {
+            if !has_future_on_hand && derived > Decimal::from(0_i64) {
                 findings.push(CountCoverageFinding {
                     store_id: store_id.to_owned(),
                     sku_id: sku_id.to_owned(),
@@ -1988,7 +1993,7 @@ fn check_position_counts(
     };
     match avail {
         None => {
-            if !has_future("available") && derived > Decimal::from(0_i64) {
+            if !has_future_avail && derived > Decimal::from(0_i64) {
                 findings.push(CountCoverageFinding {
                     store_id: store_id.to_owned(),
                     sku_id: sku_id.to_owned(),
@@ -2200,8 +2205,7 @@ fn verify_opening_cut_and_lot_date_refusals(sole: &mut EntityBook) -> Result<(),
         }),
     )?;
     assert_eq!(code, "core.action.precondition", "{msg}");
-    // 0c. Opening cut after depletion refuses original receipt value (10000 != remaining 6000)
-    // and refuses any cut_at preceded by later sales (`sales_by_cut_count < all_sales_count`).
+    // 0c. Opening cut after depletion refuses original receipt value (10000 != remaining 6000).
     let (code, msg) = sole.refused(
         "supply.stock_valuation_cut.record",
         "planner:omar",
@@ -2212,16 +2216,9 @@ fn verify_opening_cut_and_lot_date_refusals(sole: &mut EntityBook) -> Result<(),
         }),
     )?;
     assert_eq!(code, "core.action.precondition", "{msg}");
-    let (code, msg) = sole.refused(
-        "supply.stock_valuation_cut.record",
-        "planner:omar",
-        json!({
-            "cut_id": "CUT-S1-POST-SALES", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "currency": "EGP", "cost_status": "costed", "book_epoch": "1970-01-01T00:00:00Z",
-            "cut_at": "2026-08-11T00:00:00Z", "stock_value": "6000"
-        }),
-    )?;
-    assert_eq!(code, "core.action.precondition", "{msg}");
+    // 0c-bis. Isolated post-cutoff-sale test: all lots have `as_of <= cut_at` and matching
+    // `stock_value = 5000`, so ONLY `sales_by_cut_count < all_sales_count` triggers refusal.
+    verify_opening_cut_post_sales_refusal()?;
     // 0d. Rollup citing a nonexistent opening cut refuses fail-closed (forcing GMROI withheld).
     sole.refused(
         "supply.store_kpi.record",
@@ -2240,6 +2237,52 @@ fn verify_opening_cut_and_lot_date_refusals(sole: &mut EntityBook) -> Result<(),
             "average_inventory_value": "0", "gmroi": "0"
         }),
     )?;
+    Ok(())
+}
+
+fn verify_opening_cut_post_sales_refusal() -> Result<(), String> {
+    let mut iso = EntityBook::open(
+        SOLE_CELL_ID,
+        "org_family_sole_prop",
+        "prod",
+        "sole-post-sale-cut.sqlite",
+    )?;
+    seed_sole_prop(&mut iso)?;
+    iso.ok(
+        "supply.stock_lot.record",
+        "clerk:hana",
+        json!({
+            "lot_id": "LOT-ISO-1", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
+            "received_qty": "50", "remaining_qty": "50", "depleted_qty": "0", "sell_through_rate": "0",
+            "unit": "each", "received_at": "2026-08-05T09:00:00Z", "as_of": "2026-08-05T09:00:00Z",
+            "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
+            "stock_value": "0", "currency": "EGP"
+        }),
+    )?;
+    iso.ok(
+        "supply.pos_sale.record",
+        "clerk:hana",
+        json!({
+            "sale_id": "SALE-ISO-AFTER-CUT", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "sold_qty": "2", "unit": "each", "net_revenue": "400", "applied_unit_cost": "100",
+            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
+            "cost_status": "costed", "costed_ref": "COST-DRESS-1",
+            "currency": "EGP", "sold_at": "2026-08-12T14:00:00Z"
+        }),
+    )?;
+    // Lot `as_of` (2026-08-05) <= `cut_at` (2026-08-10) and `stock_value` (5000) == exact sum,
+    // so ONLY `sales_by_cut_count < all_sales_count` can trigger refusal.
+    let (code, msg) = iso.refused(
+        "supply.stock_valuation_cut.record",
+        "planner:omar",
+        json!({
+            "cut_id": "CUT-ISO-POST-SALE", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "currency": "EGP", "cost_status": "costed", "book_epoch": "1970-01-01T00:00:00Z",
+            "cut_at": "2026-08-10T00:00:00Z", "stock_value": "5000"
+        }),
+    )?;
+    assert_eq!(code, "core.action.precondition", "{msg}");
     Ok(())
 }
 
@@ -2264,6 +2307,10 @@ fn verify_store_kpi_rollup_temporal_refusals(
         }),
     )?;
     assert_eq!(code, "core.laws.violated", "{msg}");
+    assert!(
+        msg.contains("store_commercial_rollup_period_week_matches_end"),
+        "{msg}"
+    );
     // 2. Wrong-week Monday string (`2026-08-17`) matching `CUT-S1-2026-08-10` and `2 * 20 = 40`
     // passes all preconditions and refuses via `StoreCommercialRollupPeriodWeekMatchesEnd`.
     let (code, msg) = sole.refused(
@@ -2286,6 +2333,20 @@ fn verify_store_kpi_rollup_temporal_refusals(
         }),
     )?;
     assert_eq!(code, "core.laws.violated", "{msg}");
+    assert!(
+        msg.contains("store_commercial_rollup_period_week_matches_end"),
+        "{msg}"
+    );
+    verify_store_kpi_rollup_stale_and_backdate_refusals(
+        sole,
+        (s1_on_hand, s1_margin, s1_opening_val, s1_closing_val),
+    )
+}
+
+fn verify_store_kpi_rollup_stale_and_backdate_refusals(
+    sole: &mut EntityBook,
+    (s1_on_hand, s1_margin, s1_opening_val, s1_closing_val): (Decimal, Decimal, Decimal, Decimal),
+) -> Result<(), String> {
     // 3. Stale physical count (>7d before `period_end`) refuses via `StoreCommercialRollupCountNotFuture`.
     let (code, msg) = sole.refused(
         "supply.store_kpi.record",
@@ -2307,6 +2368,10 @@ fn verify_store_kpi_rollup_temporal_refusals(
         }),
     )?;
     assert_eq!(code, "core.laws.violated", "{msg}");
+    assert!(
+        msg.contains("store_commercial_rollup_count_not_future"),
+        "{msg}"
+    );
     // 4. Backdated `count_as_of` disagreeing with linked `StoreCount.as_of` refuses at write boundary.
     let (code, msg) = sole.refused(
         "supply.store_kpi.record",
@@ -3724,120 +3789,78 @@ fn legal_entity_read_authority(
     (key, authority)
 }
 
-struct RetailGatePlans {
-    entity_tf: norn_checker::transform::TransformPlan,
-    lot_tf: norn_checker::transform::TransformPlan,
-    active_tf: norn_checker::transform::TransformPlan,
-    oh_tf: norn_checker::transform::TransformPlan,
-    av_tf: norn_checker::transform::TransformPlan,
+const TEST_HANDLE_KEY: [u8; 32] = [0x42; 32];
+
+fn load_retail_coverage_spec() -> Result<CellCoverageSpec, String> {
+    let text =
+        fs::read_to_string(repo().join("registry/packs/supply-lab/questions/retail.coverage.json"))
+            .map_err(|e| format!("retail.coverage.json: {e}"))?;
+    serde_json::from_str(&text).map_err(|e| format!("decode retail.coverage.json: {e}"))
 }
 
-impl RetailGatePlans {
-    fn load(pack: &RetailPack) -> Result<Self, String> {
-        Ok(Self {
-            entity_tf: pack.transform_plan("supply.retail.entity_management_summary")?,
-            lot_tf: pack.transform_plan("supply.retail.store_lot_aging")?,
-            active_tf: pack.transform_plan("supply.retail.store_active_positions")?,
-            oh_tf: pack.transform_plan("supply.retail.store_on_hand_count_positions")?,
-            av_tf: pack.transform_plan("supply.retail.store_available_count_positions")?,
-        })
+fn load_spec_plans(
+    pack: &RetailPack,
+    spec: &CellCoverageSpec,
+) -> Result<
+    (
+        BTreeMap<String, norn_checker::transform::TransformPlan>,
+        BTreeMap<String, QuestionPlan>,
+    ),
+    String,
+> {
+    let mut tf_ids = BTreeSet::new();
+    for g in &spec.coverage_transforms {
+        tf_ids.insert(g.transform_id.as_str());
     }
+    for g in &spec.reconciliation_gates {
+        tf_ids.insert(g.expected_transform_id.as_str());
+        tf_ids.insert(g.observed_transform_id.as_str());
+    }
+    for g in &spec.expected_grain_gates {
+        tf_ids.insert(g.expected_transform_id.as_str());
+    }
+    let mut transforms = BTreeMap::new();
+    for id in tf_ids {
+        transforms.insert(id.to_owned(), pack.transform_plan(id)?);
+    }
+    let mut questions = BTreeMap::new();
+    for q in &spec.questions {
+        questions.insert(q.clone(), pack.retail_question(q)?);
+    }
+    Ok((transforms, questions))
+}
 
-    fn coverage_gates<'a>(
-        &'a self,
-        allow_tf: norn_cell::combined_view::TransformAuthorizer<'a>,
-        allow_all: norn_cell::combined_view::RowAccessDecider<'a>,
-    ) -> [CoverageTransformGate<'a>; 3] {
-        [
-            CoverageTransformGate {
-                name: "supply.retail.entity_management_summary",
-                plan: &self.entity_tf,
-                required_true_column: "cost_complete",
-                authorize_transform: allow_tf,
-                row_access: allow_all,
-            },
-            CoverageTransformGate {
-                name: "supply.retail.store_lot_aging",
-                plan: &self.lot_tf,
-                required_true_column: "cost_complete",
-                authorize_transform: allow_tf,
-                row_access: allow_all,
-            },
-            CoverageTransformGate {
-                name: "supply.retail.store_active_positions",
-                plan: &self.active_tf,
-                required_true_column: "cost_complete",
-                authorize_transform: allow_tf,
-                row_access: allow_all,
-            },
-        ]
-    }
-
-    fn reconciliation_gates<'a>(
-        &'a self,
-        allow_tf: norn_cell::combined_view::TransformAuthorizer<'a>,
-        allow_all: norn_cell::combined_view::RowAccessDecider<'a>,
-    ) -> [ReconciliationGate<'a>; 2] {
-        [
-            ReconciliationGate {
-                name: "supply.retail.on_hand_count_reconciliation",
-                expected_plan: &self.active_tf,
-                observed_plan: &self.oh_tf,
-                key_columns: &["store_id", "sku_id", "unit"],
-                expected_value_column: "derived_on_hand_qty",
-                observed_value_column: "on_hand_qty",
-                comparison: ReconciliationComparison::Eq,
-                observed_timestamp_column: "as_of",
-                max_age_ms: MAX_COUNT_AGE_MS,
-                authorize_expected: allow_tf,
-                authorize_observed: allow_tf,
-                row_access: allow_all,
-            },
-            ReconciliationGate {
-                name: "supply.retail.available_count_reconciliation",
-                expected_plan: &self.active_tf,
-                observed_plan: &self.av_tf,
-                key_columns: &["store_id", "sku_id", "unit"],
-                expected_value_column: "derived_on_hand_qty",
-                observed_value_column: "on_hand_qty",
-                comparison: ReconciliationComparison::Lte,
-                observed_timestamp_column: "as_of",
-                max_age_ms: MAX_COUNT_AGE_MS,
-                authorize_expected: allow_tf,
-                authorize_observed: allow_tf,
-                row_access: allow_all,
-            },
-        ]
-    }
-
-    fn grain_gates<'a>(
-        &'a self,
-        allow_tf: norn_cell::combined_view::TransformAuthorizer<'a>,
-        allow_all: norn_cell::combined_view::RowAccessDecider<'a>,
-    ) -> [ExpectedGrainGate<'a>; 2] {
-        [
-            ExpectedGrainGate {
-                name: "supply.retail.store_weeks_of_supply_coverage",
-                expected_plan: &self.active_tf,
-                expected_columns: &["store_id", "sku_id"],
-                question_name: "supply.retail.store_weeks_of_supply_weekly",
-                bucket_indices: &[1, 2],
-                require_non_null_value: true,
-                authorize_transform: allow_tf,
-                row_access: allow_all,
-            },
-            ExpectedGrainGate {
-                name: "supply.retail.store_gmroi_coverage",
-                expected_plan: &self.active_tf,
-                expected_columns: &["store_id", "sku_id"],
-                question_name: "supply.retail.store_gmroi_weekly",
-                bucket_indices: &[1, 2],
-                require_non_null_value: true,
-                authorize_transform: allow_tf,
-                row_access: allow_all,
-            },
-        ]
-    }
+fn evaluate_single_spec_cut(
+    book: &EntityBook,
+    legal_entity_id: &str,
+    spec: &CellCoverageSpec,
+    whole_world_values: bool,
+) -> Result<norn_cell::combined_view::CellCutSnapshot, String> {
+    let (transforms, questions) = load_spec_plans(book.pack, spec)?;
+    let allow_tf = |_: &norn_checker::transform::TransformPlan| Ok(());
+    let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
+    let frontier = || Ok((book.source_cursors.clone(), book.watermarks.clone()));
+    let (anchor_key, authority) = legal_entity_read_authority(book, legal_entity_id);
+    let binding = SpecCellBinding {
+        store: book.cell()?.store(),
+        anchor_key: &anchor_key,
+        authority: &authority,
+        context: book.query_context(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values,
+        read_frontier: &frontier,
+        authorize_transform: &allow_tf,
+        row_access: &allow_all,
+        transforms: &transforms,
+        questions: &questions,
+    };
+    evaluate_cell_cut_from_spec(spec, &binding, &mut |_, plan, ctx| {
+        book.cell()
+            .map_err(CellError::Engine)?
+            .store()
+            .evaluate_question(plan, ctx, |_| Ok(true))
+    })
+    .map_err(|e| format!("evaluate_cell_cut_from_spec: {e}"))
 }
 
 fn evaluate_two_cell_report(
@@ -3847,54 +3870,43 @@ fn evaluate_two_cell_report(
     partner_entity_id: &str,
     eval_fn: impl FnMut(usize, &str, &QuestionPlan, QueryContext) -> Result<QueryResult, CellError>,
 ) -> Result<CombinedViewReport, String> {
-    let mut plans = Vec::with_capacity(COMBINED_VIEW_QUESTIONS.len());
-    for q_name in COMBINED_VIEW_QUESTIONS {
-        plans.push((q_name, sole.pack.retail_question(q_name)?));
-    }
-    let q_refs: Vec<(&str, &QuestionPlan)> = plans.iter().map(|(n, p)| (*n, p)).collect();
-    let gate_plans = RetailGatePlans::load(sole.pack)?;
+    let spec = load_retail_coverage_spec()?;
+    let (transforms, questions) = load_spec_plans(sole.pack, &spec)?;
     let allow_tf = |_: &norn_checker::transform::TransformPlan| Ok(());
     let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
-    let cov_gates = gate_plans.coverage_gates(&allow_tf, &allow_all);
-    let recon_gates = gate_plans.reconciliation_gates(&allow_tf, &allow_all);
-    let grain_gates = gate_plans.grain_gates(&allow_tf, &allow_all);
     let sole_frontier = || Ok((sole.source_cursors.clone(), sole.watermarks.clone()));
     let partner_frontier = || Ok((partner.source_cursors.clone(), partner.watermarks.clone()));
     let (sole_key, sole_auth) = legal_entity_read_authority(sole, sole_entity_id);
     let (partner_key, partner_auth) = legal_entity_read_authority(partner, partner_entity_id);
-    let inputs = [
-        CellViewInput {
+    let bindings = [
+        SpecCellBinding {
             store: sole.cell()?.store(),
             anchor_key: &sole_key,
             authority: &sole_auth,
             context: sole.query_context(),
-            required_feeds: &REQUIRED_FEEDS,
+            handle_key: &TEST_HANDLE_KEY,
+            whole_world_values: false,
             read_frontier: &sole_frontier,
-            min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
-            evidence_types: &EVIDENCE_TYPES,
-            evidence_access: &allow_all,
-            coverage_transforms: &cov_gates,
-            reconciliation_gates: &recon_gates,
-            expected_grain_gates: &grain_gates,
-            questions: &q_refs,
+            authorize_transform: &allow_tf,
+            row_access: &allow_all,
+            transforms: &transforms,
+            questions: &questions,
         },
-        CellViewInput {
+        SpecCellBinding {
             store: partner.cell()?.store(),
             anchor_key: &partner_key,
             authority: &partner_auth,
             context: partner.query_context(),
-            required_feeds: &REQUIRED_FEEDS,
+            handle_key: &TEST_HANDLE_KEY,
+            whole_world_values: false,
             read_frontier: &partner_frontier,
-            min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
-            evidence_types: &EVIDENCE_TYPES,
-            evidence_access: &allow_all,
-            coverage_transforms: &cov_gates,
-            reconciliation_gates: &recon_gates,
-            expected_grain_gates: &grain_gates,
-            questions: &q_refs,
+            authorize_transform: &allow_tf,
+            row_access: &allow_all,
+            transforms: &transforms,
+            questions: &questions,
         },
     ];
-    evaluate_combined_management_view(&inputs, eval_fn)
+    evaluate_combined_management_view_from_spec(&spec, &bindings, eval_fn)
         .map_err(|e| format!("combined_management_view: {e}"))
 }
 
@@ -3941,6 +3953,8 @@ fn verify_library_combined_view_report(
         "supply.retail.store_active_positions",
         "supply.retail.on_hand_count_reconciliation",
         "supply.retail.available_count_reconciliation",
+        "supply.retail.rollup_sales_reconciliation",
+        "supply.retail.rollup_margin_reconciliation",
         "supply.retail.store_weeks_of_supply_coverage",
         "supply.retail.store_gmroi_coverage",
     ] {
@@ -3951,13 +3965,29 @@ fn verify_library_combined_view_report(
         );
     }
     // Partnership has complete costs, fresh reconciled counts, complete SKU rollups, and fresh feeds: complete!
+    // DATA-VALUES-1: with `whole_world_values: false`, disclosed answers carry keyed revision & lineage handles.
     assert!(c1.complete);
     assert_eq!(c1.read_token.completeness, Completeness::Complete);
     assert!(c1.failed_coverage_gates.is_empty());
+    let p_answers = c1
+        .answers
+        .as_ref()
+        .ok_or("missing complete partner answers")?;
+    assert_eq!(p_answers.len(), COMBINED_VIEW_QUESTIONS.len());
+    let raw_rev = partner.answer("supply.retail.store_revenue_weekly")?;
+    let disclosed_rev = p_answers
+        .get("supply.retail.store_revenue_weekly")
+        .ok_or("missing disclosed revenue answer")?;
     assert_eq!(
-        c1.answers.as_ref().map(BTreeMap::len),
-        Some(COMBINED_VIEW_QUESTIONS.len())
+        disclosed_rev.revision.hash,
+        keyed_revision_handle(&TEST_HANDLE_KEY, &raw_rev.revision.hash)
     );
+    assert_ne!(disclosed_rev.revision.hash, raw_rev.revision.hash);
+    assert_eq!(
+        disclosed_rev.lineage_ref,
+        keyed_lineage_handle(&TEST_HANDLE_KEY, &raw_rev.lineage_ref)
+    );
+    assert_ne!(disclosed_rev.lineage_ref, raw_rev.lineage_ref);
 
     // Duplicate cell identity must refuse fail-closed.
     let dup = evaluate_two_cell_report(sole, "LE-SOLE", sole, "LE-SOLE", |_, _, plan, ctx| {
@@ -3972,7 +4002,127 @@ fn verify_library_combined_view_report(
     );
     verify_library_cut_row_access_gate(partner)?;
     verify_expected_grain_missing_sku_gate()?;
+    verify_shipped_phantom_week_and_late_sale_gates()?;
     Ok(report)
+}
+
+fn verify_shipped_phantom_week_and_late_sale_gates() -> Result<(), String> {
+    let spec = load_retail_coverage_spec()?;
+    // 1. Late POS sale invalidates rollup via shipped reconciliation gates; `supply.store_kpi.refresh` restores complete!
+    let mut partner = EntityBook::open(
+        PARTNER_CELL_ID,
+        "org_family_partnership",
+        "prod",
+        "partner-late-sale.sqlite",
+    )?;
+    let mut sole_dummy = EntityBook::open(
+        SOLE_CELL_ID,
+        "org_family_sole_prop",
+        "prod",
+        "sole-late-sale.sqlite",
+    )?;
+    seed_sole_prop(&mut sole_dummy)?;
+    seed_partnership(&mut partner)?;
+    seed_partner_operations(&mut partner)?;
+    seed_partner_commercial_rollup(&mut partner)?;
+    ingest_baseline_entity_feeds(&mut sole_dummy, &mut partner)?;
+    partner.ok(
+        "supply.pos_sale.record",
+        "clerk:hana",
+        json!({
+            "sale_id": "SALE-P1-LATE", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
+            "sold_qty": "2", "unit": "each", "net_revenue": "800", "applied_unit_cost": "250",
+            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
+            "cost_status": "costed", "costed_ref": "COST-RING-1",
+            "currency": "USD", "sold_at": "2026-09-03T15:00:00Z"
+        }),
+    )?;
+    let stale_snap = evaluate_single_spec_cut(&partner, "LE-PARTNER", &spec, false)?;
+    assert!(!stale_snap.complete);
+    assert!(stale_snap.answers.is_none());
+    assert!(
+        stale_snap
+            .failed_coverage_gates
+            .contains("supply.retail.rollup_sales_reconciliation")
+    );
+    assert!(
+        stale_snap
+            .failed_coverage_gates
+            .contains("supply.retail.rollup_margin_reconciliation")
+    );
+    partner.ok(
+        "supply.store_kpi.refresh",
+        "planner:omar",
+        json!({
+            "rollup_id": "KPI-ST-PART-CFC-1-W9", "store_id": "ST-PART-CFC-1",
+            "sku_id": "SKU-RING-18K", "period_week": "2026-08-31",
+            "unit": "each", "currency": "USD", "cost_status": "costed", "count_status": "verified",
+            "on_hand_count_id": "ST-PART-CFC-1/SKU-RING-18K/on_hand",
+            "opening_cut_id": "CUT-P1-2026-08-31", "count_ref": "AUD-P2",
+            "count_as_of": "2026-09-06T10:00:00Z", "costed_ref": "COST-RING-1",
+            "book_epoch": "1970-01-01T00:00:00Z",
+            "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
+            "sales_weeks": 1, "on_hand_qty": "12", "avg_weekly_sales_qty": "10",
+            "weeks_of_supply": "0", "period_gross_margin": "1500",
+            "opening_stock_value": "5000", "closing_stock_value": "3000",
+            "average_inventory_value": "0", "gmroi": "0"
+        }),
+    )?;
+    let refreshed = evaluate_single_spec_cut(&partner, "LE-PARTNER", &spec, false)?;
+    assert!(refreshed.complete, "{:?}", refreshed.failed_coverage_gates);
+    verify_shipped_phantom_and_stale_week_gates(&mut partner, &spec)
+}
+
+fn verify_shipped_phantom_and_stale_week_gates(
+    partner: &mut EntityBook,
+    spec: &CellCoverageSpec,
+) -> Result<(), String> {
+    // 2. Older-week (`2026-08-31`) rollup must NOT satisfy target week `2026-09-07` in `ExpectedGrainGate`.
+    let mut next_wk_spec = spec.clone();
+    for g in &mut next_wk_spec.expected_grain_gates {
+        g.required_bucket_filters = vec![(3, "2026-09-07".to_owned())];
+    }
+    let wrong_wk = evaluate_single_spec_cut(partner, "LE-PARTNER", &next_wk_spec, false)?;
+    assert!(!wrong_wk.complete);
+    assert!(
+        wrong_wk
+            .failed_coverage_gates
+            .contains("supply.retail.store_weeks_of_supply_coverage")
+    );
+    assert!(
+        wrong_wk
+            .failed_coverage_gates
+            .contains("supply.retail.store_gmroi_coverage")
+    );
+    // 3. Phantom positive availability count with zero lots must fail `available_count_reconciliation`.
+    partner.ok(
+        "supply.store.register",
+        "eng:dina",
+        json!({
+            "store_id": "ST-PART-PHANTOM", "name": "Phantom Partner Branch",
+            "entity_id": "LE-PARTNER", "custodian_id": "CUST-MALL-CFC-OPS",
+            "location_kind": "standalone", "mall_code": null, "currency": "USD"
+        }),
+    )?;
+    partner.ok(
+        "supply.store_count.record",
+        "clerk:hana",
+        json!({
+            "store_count_id": "ST-PART-PHANTOM/SKU-RING-18K/available",
+            "store_id": "ST-PART-PHANTOM", "sku_id": "SKU-RING-18K",
+            "on_hand_qty": "5", "unit": "each", "quantity_basis": "available",
+            "as_of": "2026-09-06T10:00:00Z", "count_source": "store_audit", "count_ref": "AUD-PHANTOM"
+        }),
+    )?;
+    let phantom = evaluate_single_spec_cut(partner, "LE-PARTNER", spec, false)?;
+    assert!(!phantom.complete);
+    assert!(phantom.answers.is_none());
+    assert!(
+        phantom
+            .failed_coverage_gates
+            .contains("supply.retail.available_count_reconciliation")
+    );
+    Ok(())
 }
 
 fn verify_expected_grain_missing_sku_gate() -> Result<(), String> {
@@ -4066,12 +4216,8 @@ fn verify_library_cut_row_access_gate(partner: &EntityBook) -> Result<(), String
         .pack
         .transform_plan("supply.retail.entity_management_summary")?;
     let allow_tf = |_: &norn_checker::transform::TransformPlan| Ok(());
-    let deny_tf = |_: &norn_checker::transform::TransformPlan| {
-        Err(CellError::Encoding("transform access denied".to_owned()))
-    };
     let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
     let count_only = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Count);
-    let hide_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::None);
     let partner_frontier = || Ok((partner.source_cursors.clone(), partner.watermarks.clone()));
     let (partner_key, partner_auth) = legal_entity_read_authority(partner, "LE-PARTNER");
 
@@ -4080,6 +4226,8 @@ fn verify_library_cut_row_access_gate(partner: &EntityBook) -> Result<(), String
         anchor_key: &partner_key,
         authority: &partner_auth,
         context: partner.query_context(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &partner_frontier,
         min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4120,7 +4268,7 @@ fn verify_library_cut_hidden_and_denied_gate(
     entity_tf_plan: &norn_checker::transform::TransformPlan,
 ) -> Result<(), String> {
     let allow_tf = |_: &norn_checker::transform::TransformPlan| Ok(());
-    let deny_tf = |_: &norn_checker::transform::TransformPlan| {
+    let deny_tf = |_: &norn_checker::transform::TransformPlan| -> Result<(), CellError> {
         Err(CellError::Encoding("transform access denied".to_owned()))
     };
     let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
@@ -4135,6 +4283,8 @@ fn verify_library_cut_hidden_and_denied_gate(
         anchor_key: &partner_key,
         authority: &partner_auth,
         context: partner.query_context(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &partner_frontier,
         min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4169,6 +4319,8 @@ fn verify_library_cut_hidden_and_denied_gate(
         anchor_key: &partner_key,
         authority: &partner_auth,
         context: partner.query_context(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &partner_frontier,
         min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4583,6 +4735,8 @@ fn evaluate_single_library_cut_with_access(
         anchor_key: &anchor_key,
         authority: &authority,
         context: book.query_context(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &live_frontier,
         min_fresh_ms: book.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4626,6 +4780,8 @@ fn verify_library_cut_tampering_refusals(sole: &EntityBook) -> Result<(), String
         anchor_key: &anchor_key,
         authority: &authority,
         context: sole.query_context(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &live_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4655,6 +4811,8 @@ fn verify_library_cut_tampering_refusals(sole: &EntityBook) -> Result<(), String
         anchor_key: &anchor_key,
         authority: &authority,
         context: sole.query_context(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &live_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4704,6 +4862,8 @@ fn verify_library_cut_bad_authority_refusal(
         anchor_key,
         authority: &wrong_authority,
         context: sole.query_context(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &live_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4745,6 +4905,8 @@ fn verify_library_cut_bad_authority_refusal(
         anchor_key,
         authority: &sole_auth,
         context: sole.query_context(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &shifting_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4801,6 +4963,8 @@ fn verify_library_cut_durable_cursor_mismatch(
         anchor_key,
         authority: sole_auth,
         context: forged_ctx.clone(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &forged_frontier,
         min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
@@ -4835,6 +4999,8 @@ fn verify_library_cut_durable_cursor_mismatch(
         anchor_key: &m_key,
         authority: &m_auth,
         context: forged_ctx.clone(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &forged_frontier,
         min_fresh_ms: missing.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),

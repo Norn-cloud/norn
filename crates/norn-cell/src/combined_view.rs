@@ -2,20 +2,22 @@
 //!
 //! Projects multiple independent [`CellStore`] instances side-by-side at pinned
 //! local cuts without commingling ledgers, currencies, or write authority.
-//! Each cell snapshot verifies a single stable ledger head, definition pin,
-//! durable source cursor table, live feed frontier, and pending-observation
-//! identity set across all evaluated questions and declared coverage gates, and
-//! fails closed (`core.compute.stale_input`) if any boundary disagrees or shifts
-//! during the read. Visibility precedes data quality (`HOST-READ-2`), and raw
-//! ledger hashes are never exposed (`DATA-VALUES-1`).
+//! Each cell snapshot fences the entire read with [`crate::StoreReader::snapshot_version`],
+//! verifies a single stable ledger head, definition pin, durable source cursor
+//! table, live feed frontier, and pending-observation identity set across all
+//! evaluated questions and declared coverage gates, and fails closed
+//! (`core.compute.stale_input`) if any boundary disagrees or shifts during the
+//! read. Visibility precedes data quality (`HOST-READ-2`), and disclosed answers
+//! apply `DATA-VALUES-1` keyed revision/finding/lineage handles after internal
+//! pin verification.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use norn_checker::metric::compute::QuestionPlan;
 use norn_checker::transform::TransformPlan;
-use norn_ir::RuntimeValue;
 use norn_ir::cell_id::CellId;
 use norn_ir::data_quality::DataQualityFindingStatus;
+use norn_ir::{Decimal, RuntimeValue};
 use norn_kernel::FactKey;
 use norn_kernel::authz::CommitBinding;
 use norn_kernel::read_envelope::{
@@ -24,6 +26,7 @@ use norn_kernel::read_envelope::{
 use norn_kernel::world::pin::SnapshotPin;
 use serde::{Deserialize, Serialize};
 
+use crate::compute::lineage::{keyed_finding_handle, keyed_lineage_handle, keyed_revision_handle};
 use crate::compute::transform::{RowAccess, TransformResult, TransformRow};
 use crate::compute::{Freshness, Frontier, QueryContext, QueryResult, Watermark};
 use crate::engine::SqlEngine;
@@ -64,24 +67,23 @@ pub struct CoverageTransformGate<'a> {
 
 /// Numeric reconciliation comparison between an observed transform row and an
 /// expected population transform row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ReconciliationComparison {
-    /// Observed quantity must equal expected quantity exactly (for example
-    /// physical on-hand count vs derived lot remaining quantity).
+    /// Observed quantity must equal expected quantity exactly (missing expected key defaults to 0).
     Eq,
-    /// Observed quantity must not exceed expected quantity (for example
-    /// available quantity vs on-hand quantity).
+    /// Observed quantity must not exceed expected quantity (missing expected key defaults to 0).
     Lte,
 }
 
-/// Domain-agnostic reconciliation and timestamp-freshness gate between two
-/// admitted transforms sharing a grain key at the same pinned cut.
+/// Domain-agnostic reconciliation and optional timestamp-freshness gate between
+/// two admitted transforms sharing a grain key at the same pinned cut.
 pub struct ReconciliationGate<'a> {
     /// Gate identifier reported in [`CellCutSnapshot::failed_coverage_gates`].
     pub name: &'a str,
     /// Admitted transform enumerating expected population rows and values.
     pub expected_plan: &'a TransformPlan,
-    /// Admitted transform enumerating observed rows, values, and timestamps.
+    /// Admitted transform enumerating observed rows, values, and optional timestamps.
     pub observed_plan: &'a TransformPlan,
     /// Shared grain columns matching each expected row to one observed row.
     pub key_columns: &'a [&'a str],
@@ -91,10 +93,12 @@ pub struct ReconciliationGate<'a> {
     pub observed_value_column: &'a str,
     /// Comparison required between observed and expected numeric values.
     pub comparison: ReconciliationComparison,
-    /// RFC 3339 timestamp column in `observed_plan` checked for freshness (`<= now_ms`, age `<= max_age_ms`).
-    pub observed_timestamp_column: &'a str,
-    /// Maximum allowed age (milliseconds) relative to `QueryContext::now_ms`.
-    pub max_age_ms: u64,
+    /// Optional RFC 3339 timestamp column in `observed_plan` checked for freshness (`<= now_ms`, age `<= max_age_ms`).
+    pub observed_timestamp_column: Option<&'a str>,
+    /// Maximum allowed age (milliseconds) relative to `QueryContext::now_ms` when `observed_timestamp_column` is set.
+    pub max_age_ms: Option<u64>,
+    /// Optional exact-match column filters applied to `observed_plan` rows before reconciling.
+    pub observed_filters: &'a [(&'a str, RuntimeValue)],
     /// Pre-evaluation authorization check for `expected_plan` (`VIEW-READ-1`).
     pub authorize_expected: TransformAuthorizer<'a>,
     /// Pre-evaluation authorization check for `observed_plan` (`VIEW-READ-1`).
@@ -105,7 +109,7 @@ pub struct ReconciliationGate<'a> {
 
 /// Domain-agnostic expected-grain completeness gate ensuring every expected
 /// grain key emitted by an admitted transform is covered by an evaluated
-/// question's buckets (optionally requiring non-null, unsuppressed values).
+/// question's buckets matching `required_bucket_filters`.
 pub struct ExpectedGrainGate<'a> {
     /// Gate identifier reported in [`CellCutSnapshot::failed_coverage_gates`].
     pub name: &'a str,
@@ -119,10 +123,93 @@ pub struct ExpectedGrainGate<'a> {
     pub bucket_indices: &'a [usize],
     /// When `true`, a covered bucket with `value == None` or `suppressed == true` fails the gate.
     pub require_non_null_value: bool,
+    /// Optional exact-match filters on bucket positions (for example pinning a target ISO week).
+    pub required_bucket_filters: &'a [(usize, RuntimeValue)],
     /// Pre-evaluation authorization check for `expected_plan` (`VIEW-READ-1`).
     pub authorize_transform: TransformAuthorizer<'a>,
     /// Per-row visibility callback (`HOST-READ-2`).
     pub row_access: RowAccessDecider<'a>,
+}
+
+/// Serializable declarative spec for one [`CoverageTransformGate`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CoverageTransformSpec {
+    /// Gate identifier reported in [`CellCutSnapshot::failed_coverage_gates`].
+    pub name: String,
+    /// Admitted transform artifact identifier.
+    pub transform_id: String,
+    /// Boolean output column name that must evaluate to `true` on every row.
+    pub required_true_column: String,
+}
+
+/// Serializable declarative spec for one [`ReconciliationGate`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReconciliationSpec {
+    /// Gate identifier reported in [`CellCutSnapshot::failed_coverage_gates`].
+    pub name: String,
+    /// Expected population transform artifact identifier.
+    pub expected_transform_id: String,
+    /// Observed transform artifact identifier.
+    pub observed_transform_id: String,
+    /// Shared grain column names.
+    pub key_columns: Vec<String>,
+    /// Numeric column name in `expected_transform_id`.
+    pub expected_value_column: String,
+    /// Numeric column name in `observed_transform_id`.
+    pub observed_value_column: String,
+    /// Numeric comparison rule.
+    pub comparison: ReconciliationComparison,
+    /// Optional RFC 3339 timestamp column in `observed_transform_id`.
+    pub observed_timestamp_column: Option<String>,
+    /// Optional maximum timestamp age in milliseconds.
+    pub max_age_ms: Option<u64>,
+    /// Optional exact string column filters on `observed_transform_id`.
+    #[serde(default)]
+    pub observed_filters: Vec<(String, String)>,
+}
+
+/// Serializable declarative spec for one [`ExpectedGrainGate`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExpectedGrainSpec {
+    /// Gate identifier reported in [`CellCutSnapshot::failed_coverage_gates`].
+    pub name: String,
+    /// Expected population transform artifact identifier.
+    pub expected_transform_id: String,
+    /// Grain column names in `expected_transform_id`.
+    pub expected_columns: Vec<String>,
+    /// Target question name that must cover every expected grain tuple.
+    pub question_name: String,
+    /// Zero-based indices into `QueryRow::bucket`.
+    pub bucket_indices: Vec<usize>,
+    /// Whether covered buckets must carry a non-null, unsuppressed value.
+    pub require_non_null_value: bool,
+    /// Optional exact string bucket-position filters (for example pinning a target period week).
+    #[serde(default)]
+    pub required_bucket_filters: Vec<(usize, String)>,
+}
+
+/// Pack-authored declarative coverage manifest binding feeds, evidence types,
+/// questions, and gates for [`evaluate_cell_cut_from_spec`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CellCoverageSpec {
+    /// Required feed names whose durable cursors and live watermarks must match and be fresh.
+    pub required_feeds: Vec<String>,
+    /// Maximum allowed feed watermark age (milliseconds) relative to `QueryContext::now_ms`.
+    pub feed_max_age_ms: u64,
+    /// Evidence object types scanned for open data-quality findings.
+    pub evidence_types: Vec<String>,
+    /// Named questions evaluated at this cut.
+    pub questions: Vec<String>,
+    /// Boolean coverage transform gates.
+    pub coverage_transforms: Vec<CoverageTransformSpec>,
+    /// Numeric reconciliation and freshness gates.
+    pub reconciliation_gates: Vec<ReconciliationSpec>,
+    /// Expected-grain question coverage gates.
+    pub expected_grain_gates: Vec<ExpectedGrainSpec>,
 }
 
 /// Classification of a multi-cell read-only projection (`READ-LOCAL-1`).
@@ -145,6 +232,10 @@ pub struct CellViewInput<'a, E: SqlEngine> {
     pub authority: &'a CommitBinding,
     /// Query context pinning world, scope, mapping pin, clock, cursors, and watermarks.
     pub context: QueryContext,
+    /// Cell handle key used to key `DATA-VALUES-1` revision, finding, and lineage handles.
+    pub handle_key: &'a [u8],
+    /// Whether the caller holds whole-world unmarked Values disclosure (`DATA-VALUES-1`).
+    pub whole_world_values: bool,
     /// Required feed names whose durable cursors and live watermarks must match and be fresh.
     pub required_feeds: &'a [&'a str],
     /// Required live feed-frontier reader checked before and after evaluation so stale or
@@ -166,10 +257,10 @@ pub struct CellViewInput<'a, E: SqlEngine> {
     pub questions: &'a [(&'a str, &'a QuestionPlan)],
 }
 
-/// Pinned local frontier, coverage, and exact question answers for one cell.
+/// Pinned local frontier, coverage, and disclosed question answers for one cell.
 ///
-/// Omits raw ledger hashes (`DATA-VALUES-1`) so partial or scoped cuts never
-/// disclose value-committing hashes.
+/// Omits raw ledger hashes (`DATA-VALUES-1`) and keys answer lineage/revision/finding
+/// handles according to [`CellViewInput::whole_world_values`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CellCutSnapshot {
     /// Durable cell identity bound to this store.
@@ -204,7 +295,7 @@ pub struct CellCutSnapshot {
     pub failed_coverage_gates: BTreeSet<String>,
     /// True only when all answers are complete and fresh with zero open feed, evidence, or coverage issues.
     pub complete: bool,
-    /// Exact question answers keyed by declared question name, withheld (`None`)
+    /// Disclosed question answers keyed by declared question name, withheld (`None`)
     /// whenever `complete` is `false`.
     pub answers: Option<BTreeMap<String, QueryResult>>,
 }
@@ -293,9 +384,7 @@ fn verify_durable_cursors_match(
     for feed in required_feeds {
         let durable_parts = durable.get(*feed);
         let ctx_parts = context_cursors.get(*feed);
-        let durable_len = durable_parts.map_or(0, BTreeMap::len);
-        let ctx_len = ctx_parts.map_or(0, BTreeMap::len);
-        if durable_len != ctx_len {
+        if durable_parts.map_or(0, BTreeMap::len) != ctx_parts.map_or(0, BTreeMap::len) {
             return Err(stale());
         }
         if let (Some(d_map), Some(c_map)) = (durable_parts, ctx_parts) {
@@ -321,9 +410,7 @@ fn verify_live_frontier<E: SqlEngine>(input: &CellViewInput<'_, E>) -> Result<()
 }
 
 /// Count open data-quality findings strictly over evidence rows the reader may
-/// read (`HOST-READ-2`: visibility precedes data quality). `RowAccess::None`
-/// rows are invisible and skipped before inspecting findings; `RowAccess::Count`
-/// rows withhold finding counts and mark evidence coverage incomplete.
+/// read (`HOST-READ-2`: visibility precedes data quality).
 fn count_open_findings<E: SqlEngine>(
     store: &CellStore<E>,
     world: &str,
@@ -475,6 +562,45 @@ fn row_key(row: &TransformRow, columns: &[&str]) -> Option<Vec<RuntimeValue>> {
     Some(key)
 }
 
+fn index_observed_rows<'a>(
+    gate: &ReconciliationGate<'_>,
+    observed: &'a TransformResult,
+    now_ms: u64,
+) -> Option<HashMap<Vec<RuntimeValue>, &'a TransformRow>> {
+    let mut obs_map = HashMap::with_capacity(observed.rows.len());
+    for row in &observed.rows {
+        let matches_filters = gate
+            .observed_filters
+            .iter()
+            .all(|(col, want)| row.values.get(*col) == Some(want));
+        if !matches_filters {
+            continue;
+        }
+        if let Some(ts_col) = gate.observed_timestamp_column {
+            let max_age = gate.max_age_ms?;
+            if !instant_fresh(row.values.get(ts_col), now_ms, max_age) {
+                return None;
+            }
+        }
+        let key = row_key(row, gate.key_columns)?;
+        if obs_map.insert(key, row).is_some() {
+            return None;
+        }
+    }
+    Some(obs_map)
+}
+
+fn compare_reconciliation(
+    comparison: ReconciliationComparison,
+    obs_val: Decimal,
+    exp_val: Decimal,
+) -> bool {
+    match comparison {
+        ReconciliationComparison::Eq => obs_val == exp_val,
+        ReconciliationComparison::Lte => obs_val <= exp_val,
+    }
+}
+
 fn check_reconciliation_gate(
     gate: &ReconciliationGate<'_>,
     expected: &TransformResult,
@@ -484,23 +610,10 @@ fn check_reconciliation_gate(
     if !expected.complete || !observed.complete {
         return false;
     }
-    let mut obs_map: HashMap<Vec<RuntimeValue>, &TransformRow> =
-        HashMap::with_capacity(observed.rows.len());
-    for row in &observed.rows {
-        if !instant_fresh(
-            row.values.get(gate.observed_timestamp_column),
-            now_ms,
-            gate.max_age_ms,
-        ) {
-            return false;
-        }
-        let Some(key) = row_key(row, gate.key_columns) else {
-            return false;
-        };
-        if obs_map.insert(key, row).is_some() {
-            return false;
-        }
-    }
+    let Some(obs_map) = index_observed_rows(gate, observed, now_ms) else {
+        return false;
+    };
+    let mut exp_keys = HashSet::with_capacity(expected.rows.len());
     for exp_row in &expected.rows {
         let Some(key) = row_key(exp_row, gate.key_columns) else {
             return false;
@@ -514,31 +627,39 @@ fn check_reconciliation_gate(
         ) else {
             return false;
         };
-        let matched = match gate.comparison {
-            ReconciliationComparison::Eq => obs_val == exp_val,
-            ReconciliationComparison::Lte => obs_val <= exp_val,
+        if !compare_reconciliation(gate.comparison, *obs_val, *exp_val) {
+            return false;
+        }
+        exp_keys.insert(key);
+    }
+    let zero = Decimal::from(0_i64);
+    for (key, obs_row) in &obs_map {
+        if exp_keys.contains(key) {
+            continue;
+        }
+        let Some(RuntimeValue::Number(obs_val)) = obs_row.values.get(gate.observed_value_column)
+        else {
+            return false;
         };
-        if !matched {
+        if !compare_reconciliation(gate.comparison, *obs_val, zero) {
             return false;
         }
     }
     true
 }
 
+fn bucket_element(bucket: &RuntimeValue, index: usize) -> Option<&RuntimeValue> {
+    match bucket {
+        RuntimeValue::Array(items) => items.get(index),
+        scalar if index == 0 => Some(scalar),
+        _ => None,
+    }
+}
+
 fn bucket_tuple(bucket: &RuntimeValue, indices: &[usize]) -> Option<Vec<RuntimeValue>> {
     let mut tuple = Vec::with_capacity(indices.len());
-    match bucket {
-        RuntimeValue::Array(items) => {
-            for &idx in indices {
-                tuple.push(items.get(idx)?.clone());
-            }
-        }
-        scalar => {
-            if indices != [0] {
-                return None;
-            }
-            tuple.push(scalar.clone());
-        }
+    for &idx in indices {
+        tuple.push(bucket_element(bucket, idx)?.clone());
     }
     Some(tuple)
 }
@@ -557,6 +678,13 @@ fn check_expected_grain_gate(
     let mut covered: HashSet<Vec<RuntimeValue>> = HashSet::with_capacity(result.rows.len());
     for row in result.rows.values() {
         if gate.require_non_null_value && (row.value.is_none() || row.suppressed) {
+            continue;
+        }
+        let matches_filters = gate
+            .required_bucket_filters
+            .iter()
+            .all(|(idx, want)| bucket_element(&row.bucket, *idx) == Some(want));
+        if !matches_filters {
             continue;
         }
         if let Some(tuple) = bucket_tuple(&row.bucket, gate.bucket_indices) {
@@ -661,6 +789,26 @@ fn evaluate_pinned_questions<E: SqlEngine>(
     Ok(answers)
 }
 
+/// Apply `DATA-VALUES-1` (D53) keyed-handle disclosure to every evaluated
+/// [`QueryResult`] after internal pin validation.
+fn project_disclosed_answers(
+    answers: &mut BTreeMap<String, QueryResult>,
+    handle_key: &[u8],
+    whole_world_values: bool,
+) {
+    for result in answers.values_mut() {
+        if !whole_world_values && result.revision.seq != 0 {
+            result.revision.hash = keyed_revision_handle(handle_key, &result.revision.hash);
+        }
+        if !whole_world_values {
+            for finding in result.exclusions.values_mut() {
+                *finding = keyed_finding_handle(handle_key, finding);
+            }
+        }
+        result.lineage_ref = keyed_lineage_handle(handle_key, &result.lineage_ref);
+    }
+}
+
 struct CutEvidence {
     pin: SnapshotPin,
     head: LedgerHead,
@@ -675,7 +823,7 @@ struct CutEvidence {
 
 fn assemble_cell_cut_snapshot<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
-    ev: CutEvidence,
+    mut ev: CutEvidence,
 ) -> CellCutSnapshot {
     let mut missing_feeds = check_missing_feeds(
         input.required_feeds,
@@ -707,6 +855,9 @@ fn assemble_cell_cut_snapshot<E: SqlEngine>(
         complete,
         all_fresh && missing_feeds.is_empty(),
     );
+    if complete {
+        project_disclosed_answers(&mut ev.answers, input.handle_key, input.whole_world_values);
+    }
     CellCutSnapshot {
         cell_id,
         scope: input.context.scope.clone(),
@@ -738,9 +889,10 @@ fn assemble_cell_cut_snapshot<E: SqlEngine>(
 /// requested questions share the same name (validated before any evaluator call),
 /// `CellError::ComputeRefused("core.compute.stale_input")` if the anchor
 /// object is absent, durable source cursors disagree with `context.source_cursors`,
-/// or the ledger head, definition pin, query context, durable source cursor /
-/// pending capture state, live feed frontier, or pending-observation identity
-/// set shifts during evaluation, or propagates underlying store/evaluator errors.
+/// or the snapshot version, ledger head, definition pin, query context, durable
+/// source cursor / pending capture state, live feed frontier, or
+/// pending-observation identity set shifts during evaluation, or propagates
+/// underlying store/evaluator errors.
 pub fn evaluate_cell_cut<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
     evaluate: &mut impl FnMut(&str, &QuestionPlan, QueryContext) -> Result<QueryResult, CellError>,
@@ -752,6 +904,7 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
         }
     }
     verify_live_frontier(input)?;
+    let version_before = input.store.read().snapshot_version()?;
     let (pin, head_before) = capture_cut_anchor(input)?;
     let definition_pin = pin
         .definitions
@@ -774,11 +927,13 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
         input.evidence_types,
         input.evidence_access,
     )?;
-    let head_after = input.store.verified_head()?;
     let pending_after = pending_identities(input.store)?;
     let durable_feeds_after = durable_feed_cut(input.store, input.required_feeds)?;
+    let head_after = input.store.verified_head()?;
+    let version_after = input.store.read().snapshot_version()?;
     verify_live_frontier(input)?;
-    if head_after != head_before
+    if version_after != version_before
+        || head_after != head_before
         || pending_after != pending_before
         || durable_feeds_after != durable_feeds_before
     {
@@ -800,6 +955,189 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
     ))
 }
 
+/// Bindings supplied by a host executing a pack-authored [`CellCoverageSpec`].
+pub struct SpecCellBinding<'a, E: SqlEngine> {
+    /// Cell store to inspect.
+    pub store: &'a CellStore<E>,
+    /// Anchor object key covered by `authority`.
+    pub anchor_key: &'a FactKey,
+    /// Authorized PDP binding pinning this cell's read cut.
+    pub authority: &'a CommitBinding,
+    /// Query context pinning world, scope, mapping pin, clock, cursors, and watermarks.
+    pub context: QueryContext,
+    /// Cell handle key for `DATA-VALUES-1` keyed-handle disclosure.
+    pub handle_key: &'a [u8],
+    /// Whether the caller holds whole-world unmarked Values disclosure.
+    pub whole_world_values: bool,
+    /// Required live feed-frontier reader.
+    pub read_frontier: FrontierReader<'a>,
+    /// Pre-evaluation transform authorization callback (`VIEW-READ-1`).
+    pub authorize_transform: TransformAuthorizer<'a>,
+    /// Per-row visibility callback (`HOST-READ-2`).
+    pub row_access: RowAccessDecider<'a>,
+    /// Admitted transforms keyed by artifact id.
+    pub transforms: &'a BTreeMap<String, TransformPlan>,
+    /// Admitted questions keyed by question name.
+    pub questions: &'a BTreeMap<String, QuestionPlan>,
+}
+
+fn build_spec_reconciliation_gates<'a, E: SqlEngine>(
+    spec: &'a CellCoverageSpec,
+    binding: &SpecCellBinding<'a, E>,
+    key_refs: &'a [Vec<&'a str>],
+    filters: &'a [Vec<(&'a str, RuntimeValue)>],
+) -> Result<Vec<ReconciliationGate<'a>>, CellError> {
+    let stale = || CellError::ComputeRefused("core.compute.stale_input");
+    spec.reconciliation_gates
+        .iter()
+        .enumerate()
+        .map(|(idx, g)| {
+            Ok(ReconciliationGate {
+                name: g.name.as_str(),
+                expected_plan: binding
+                    .transforms
+                    .get(&g.expected_transform_id)
+                    .ok_or_else(stale)?,
+                observed_plan: binding
+                    .transforms
+                    .get(&g.observed_transform_id)
+                    .ok_or_else(stale)?,
+                key_columns: &key_refs[idx],
+                expected_value_column: g.expected_value_column.as_str(),
+                observed_value_column: g.observed_value_column.as_str(),
+                comparison: g.comparison,
+                observed_timestamp_column: g.observed_timestamp_column.as_deref(),
+                max_age_ms: g.max_age_ms,
+                observed_filters: &filters[idx],
+                authorize_expected: binding.authorize_transform,
+                authorize_observed: binding.authorize_transform,
+                row_access: binding.row_access,
+            })
+        })
+        .collect()
+}
+
+fn build_spec_grain_gates<'a, E: SqlEngine>(
+    spec: &'a CellCoverageSpec,
+    binding: &SpecCellBinding<'a, E>,
+    col_refs: &'a [Vec<&'a str>],
+    filters: &'a [Vec<(usize, RuntimeValue)>],
+) -> Result<Vec<ExpectedGrainGate<'a>>, CellError> {
+    let stale = || CellError::ComputeRefused("core.compute.stale_input");
+    spec.expected_grain_gates
+        .iter()
+        .enumerate()
+        .map(|(idx, g)| {
+            Ok(ExpectedGrainGate {
+                name: g.name.as_str(),
+                expected_plan: binding
+                    .transforms
+                    .get(&g.expected_transform_id)
+                    .ok_or_else(stale)?,
+                expected_columns: &col_refs[idx],
+                question_name: g.question_name.as_str(),
+                bucket_indices: &g.bucket_indices,
+                require_non_null_value: g.require_non_null_value,
+                required_bucket_filters: &filters[idx],
+                authorize_transform: binding.authorize_transform,
+                row_access: binding.row_access,
+            })
+        })
+        .collect()
+}
+
+/// Evaluate one cell's pinned cut directly from a pack-authored
+/// [`CellCoverageSpec`], removing any need for hard-coded host/test gate wiring.
+///
+/// # Errors
+/// Returns `CellError::ComputeRefused("core.compute.stale_input")` if any
+/// referenced transform or question is missing from `binding`, or propagates
+/// any error from [`evaluate_cell_cut`].
+pub fn evaluate_cell_cut_from_spec<E: SqlEngine>(
+    spec: &CellCoverageSpec,
+    binding: &SpecCellBinding<'_, E>,
+    evaluate: &mut impl FnMut(&str, &QuestionPlan, QueryContext) -> Result<QueryResult, CellError>,
+) -> Result<CellCutSnapshot, CellError> {
+    let stale = || CellError::ComputeRefused("core.compute.stale_input");
+    let required_feeds: Vec<&str> = spec.required_feeds.iter().map(String::as_str).collect();
+    let evidence_types: Vec<&str> = spec.evidence_types.iter().map(String::as_str).collect();
+    let questions: Vec<(&str, &QuestionPlan)> = spec
+        .questions
+        .iter()
+        .map(|name| {
+            Ok((
+                name.as_str(),
+                binding.questions.get(name).ok_or_else(stale)?,
+            ))
+        })
+        .collect::<Result<_, CellError>>()?;
+    let coverage_transforms: Vec<CoverageTransformGate<'_>> = spec
+        .coverage_transforms
+        .iter()
+        .map(|g| {
+            Ok(CoverageTransformGate {
+                name: g.name.as_str(),
+                plan: binding.transforms.get(&g.transform_id).ok_or_else(stale)?,
+                required_true_column: g.required_true_column.as_str(),
+                authorize_transform: binding.authorize_transform,
+                row_access: binding.row_access,
+            })
+        })
+        .collect::<Result<_, CellError>>()?;
+    let recon_key_refs: Vec<Vec<&str>> = spec
+        .reconciliation_gates
+        .iter()
+        .map(|g| g.key_columns.iter().map(String::as_str).collect())
+        .collect();
+    let recon_filters: Vec<Vec<(&str, RuntimeValue)>> = spec
+        .reconciliation_gates
+        .iter()
+        .map(|g| {
+            g.observed_filters
+                .iter()
+                .map(|(col, val)| (col.as_str(), RuntimeValue::String(val.clone())))
+                .collect()
+        })
+        .collect();
+    let reconciliation_gates =
+        build_spec_reconciliation_gates(spec, binding, &recon_key_refs, &recon_filters)?;
+    let grain_col_refs: Vec<Vec<&str>> = spec
+        .expected_grain_gates
+        .iter()
+        .map(|g| g.expected_columns.iter().map(String::as_str).collect())
+        .collect();
+    let grain_filters: Vec<Vec<(usize, RuntimeValue)>> = spec
+        .expected_grain_gates
+        .iter()
+        .map(|g| {
+            g.required_bucket_filters
+                .iter()
+                .map(|(pos, val)| (*pos, RuntimeValue::String(val.clone())))
+                .collect()
+        })
+        .collect();
+    let expected_grain_gates =
+        build_spec_grain_gates(spec, binding, &grain_col_refs, &grain_filters)?;
+    let input = CellViewInput {
+        store: binding.store,
+        anchor_key: binding.anchor_key,
+        authority: binding.authority,
+        context: binding.context.clone(),
+        handle_key: binding.handle_key,
+        whole_world_values: binding.whole_world_values,
+        required_feeds: &required_feeds,
+        read_frontier: binding.read_frontier,
+        min_fresh_ms: binding.context.now_ms.saturating_sub(spec.feed_max_age_ms),
+        evidence_types: &evidence_types,
+        evidence_access: binding.row_access,
+        coverage_transforms: &coverage_transforms,
+        reconciliation_gates: &reconciliation_gates,
+        expected_grain_gates: &expected_grain_gates,
+        questions: &questions,
+    };
+    evaluate_cell_cut(&input, evaluate)
+}
+
 /// Evaluate a read-only combined management view across independent cells
 /// (`READ-LOCAL-1`), refusing duplicate cell identities and unstable cuts.
 ///
@@ -815,6 +1153,37 @@ pub fn evaluate_combined_management_view<E: SqlEngine>(
     let mut cells = Vec::with_capacity(inputs.len());
     for (idx, input) in inputs.iter().enumerate() {
         let snap = evaluate_cell_cut(input, &mut |name, plan, ctx| evaluate(idx, name, plan, ctx))?;
+        if !seen_cells.insert(snap.cell_id.clone()) {
+            return Err(CellError::ComputeRefused("core.compute.duplicate_cell"));
+        }
+        cells.push(snap);
+    }
+    Ok(CombinedViewReport {
+        view_kind: CombinedViewKind::CombinedManagementView,
+        is_consolidated_financial_statement: false,
+        read_only: true,
+        cells,
+    })
+}
+
+/// Evaluate a read-only combined management view across independent cells from
+/// a shared pack-authored [`CellCoverageSpec`].
+///
+/// # Errors
+/// Returns `CellError::ComputeRefused("core.compute.duplicate_cell")` if two
+/// bindings resolve to the same [`CellId`], or propagates any error from
+/// [`evaluate_cell_cut_from_spec`].
+pub fn evaluate_combined_management_view_from_spec<E: SqlEngine>(
+    spec: &CellCoverageSpec,
+    bindings: &[SpecCellBinding<'_, E>],
+    mut evaluate: impl FnMut(usize, &str, &QuestionPlan, QueryContext) -> Result<QueryResult, CellError>,
+) -> Result<CombinedViewReport, CellError> {
+    let mut seen_cells = BTreeSet::new();
+    let mut cells = Vec::with_capacity(bindings.len());
+    for (idx, binding) in bindings.iter().enumerate() {
+        let snap = evaluate_cell_cut_from_spec(spec, binding, &mut |name, plan, ctx| {
+            evaluate(idx, name, plan, ctx)
+        })?;
         if !seen_cells.insert(snap.cell_id.clone()) {
             return Err(CellError::ComputeRefused("core.compute.duplicate_cell"));
         }

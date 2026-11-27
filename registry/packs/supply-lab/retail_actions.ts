@@ -905,6 +905,160 @@ export const RecordStoreCommercialRollup = Norn.action({
 })
 
 /**
+ * Governed restatement (`update_only`) of an existing verified store-SKU-week
+ * commercial KPI rollup at the same `(store_id, sku_id, period_week)` grain
+ * when late POS sales or stock updates land inside the effective window.
+ */
+export const RefreshStoreCommercialRollup = Norn.action({
+  id: "supply.store_kpi.refresh", title: "Refresh verified store commercial KPI rollup", version: "0.1.0",
+  label: { en: "Refresh store KPI rollup", ar: "تحديث ملخص مؤشرات المتجر" },
+  input: StoreCommercialRollupInput, output: StoreCommercialRollupRef,
+  scopeRequired: Scope, idempotent: true, ledgered: true, access: RetailAccessRef,
+  slice: [
+    { name: "existing", type: StoreCommercialRollup, key: { property: { from: "input", property: "rollup_id" } } },
+    { name: "store", type: Store, key: { property: { from: "input", property: "store_id" } } },
+    { name: "sku", type: Sku, key: { property: { from: "input", property: "sku_id" } } },
+    { name: "on_hand_count", type: StoreCount, key: { property: { from: "input", property: "on_hand_count_id" } } },
+    { name: "opening_cut", type: StockValuationCut, key: { property: { from: "input", property: "opening_cut_id" } } },
+    { name: "cost", type: UnitCost, key: { property: { from: "input", property: "sku_id" } } },
+  ],
+  aggregates: [
+    {
+      name: "total_sold_qty", type: PosSale,
+      filter: { store_id: "store_id", sku_id: "sku_id", unit: "unit" },
+      window: { property: "sold_at", start: "period_start", end: "period_end", startInclusive: true, endInclusive: true },
+      aggregate: { kind: "sum", property: "sold_qty" }, maxItems: 100,
+    },
+    {
+      name: "total_gross_margin", type: PosSale,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
+      window: { property: "sold_at", start: "period_start", end: "period_end", startInclusive: true, endInclusive: true },
+      aggregate: { kind: "sum", property: "gross_margin" }, maxItems: 100,
+    },
+    {
+      name: "all_sales_count", type: PosSale,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
+      window: { property: "sold_at", start: "period_start", end: "period_end", startInclusive: true, endInclusive: true },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
+    {
+      name: "costed_sales_count", type: PosSale,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency", cost_status: "cost_status" },
+      window: { property: "sold_at", start: "period_start", end: "period_end", startInclusive: true, endInclusive: true },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
+    {
+      name: "total_closing_stock_value", type: StockLot,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
+      aggregate: { kind: "sum", property: "stock_value" }, maxItems: 100,
+    },
+    {
+      name: "all_lots_count", type: StockLot,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
+    {
+      name: "lots_as_of_by_period_end", type: StockLot,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
+      window: { property: "as_of", start: "book_epoch", end: "period_end", startInclusive: true, endInclusive: true },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
+    {
+      name: "costed_lots_count", type: StockLot,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency", cost_status: "cost_status" },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
+    {
+      name: "total_lot_remaining_qty", type: StockLot,
+      filter: { store_id: "store_id", sku_id: "sku_id", unit: "unit" },
+      aggregate: { kind: "sum", property: "remaining_qty" }, maxItems: 100,
+    },
+  ],
+  derive: [
+    { field: "weeks_of_supply", inputRequired: false, expression: Norn.expression(StoreCommercialRollupInput, () => 0) },
+    {
+      field: "average_inventory_value", inputRequired: false,
+      expression: Norn.expression(StoreCommercialRollupInput, (x) => (x.opening_stock_value + x.closing_stock_value) * 0.5),
+    },
+    { field: "gmroi", inputRequired: false, expression: Norn.expression(StoreCommercialRollupInput, () => 0) },
+  ],
+  preconditions: [Norn.expression(
+    Schema.Struct({
+      input: StoreCommercialRollupInput,
+      slice: Schema.Struct({
+        existing: Schema.Struct({
+          store_id: Schema.String, sku_id: Schema.String, period_week: Schema.String,
+          on_hand_count_id: Schema.NullOr(Schema.String), opening_cut_id: Schema.NullOr(Schema.String),
+        }),
+        store: Schema.Struct({ status: Schema.String, currency: Schema.String }),
+        sku: Schema.Struct({ unit_of_measure: Schema.String }),
+        on_hand_count: Schema.Struct({
+          store_id: Schema.String, sku_id: Schema.String,
+          unit: Schema.String, quantity_basis: Schema.String,
+          as_of: Norn.timestamp("utc"),
+          count_ref: Schema.String, on_hand_qty: Norn.decimal(6),
+        }),
+        opening_cut: Schema.Struct({
+          store_id: Schema.String, sku_id: Schema.String,
+          currency: Schema.String, cut_at: Norn.timestamp("utc"),
+          stock_value: Norn.decimal(6),
+        }),
+        cost: Schema.Struct({ currency: Schema.String, cost_ref: Schema.String }),
+      }),
+      aggregates: Schema.Struct({
+        total_sold_qty: Norn.decimal(6),
+        total_gross_margin: Norn.decimal(6),
+        all_sales_count: Schema.Int,
+        costed_sales_count: Schema.Int,
+        total_closing_stock_value: Norn.decimal(6),
+        all_lots_count: Schema.Int,
+        lots_as_of_by_period_end: Schema.Int,
+        costed_lots_count: Schema.Int,
+        total_lot_remaining_qty: Norn.decimal(6),
+      }),
+    }),
+    (ctx) => ctx.slice.store.status === "active"
+      && ctx.slice.existing.store_id === ctx.input.store_id
+      && ctx.slice.existing.sku_id === ctx.input.sku_id
+      && ctx.slice.existing.period_week === ctx.input.period_week
+      && (ctx.slice.existing.on_hand_count_id ?? "") === ctx.input.on_hand_count_id
+      && (ctx.slice.existing.opening_cut_id ?? "") === ctx.input.opening_cut_id
+      && ctx.input.book_epoch === "1970-01-01T00:00:00Z"
+      && ctx.input.count_status === "verified"
+      && ctx.input.cost_status === "costed"
+      && ctx.input.sales_weeks >= 1
+      && Norn.secondsBetween(ctx.input.period_start, ctx.input.period_week + "T00:00:00Z")
+        === (ctx.input.sales_weeks - 1) * 604800
+      && ctx.input.unit === ctx.slice.sku.unit_of_measure
+      && ctx.input.currency === ctx.slice.store.currency
+      && ctx.input.store_id === ctx.slice.on_hand_count.store_id
+      && ctx.input.sku_id === ctx.slice.on_hand_count.sku_id
+      && ctx.input.unit === ctx.slice.on_hand_count.unit
+      && ctx.slice.on_hand_count.quantity_basis === "on_hand"
+      && Norn.parseTimestamp(ctx.input.count_as_of) === Norn.parseTimestamp(ctx.slice.on_hand_count.as_of)
+      && ctx.input.count_ref === ctx.slice.on_hand_count.count_ref
+      && ctx.input.on_hand_qty === ctx.slice.on_hand_count.on_hand_qty
+      && ctx.input.on_hand_qty === ctx.aggregates.total_lot_remaining_qty
+      && ctx.input.store_id === ctx.slice.opening_cut.store_id
+      && ctx.input.sku_id === ctx.slice.opening_cut.sku_id
+      && ctx.input.currency === ctx.slice.opening_cut.currency
+      && Norn.parseTimestamp(ctx.input.period_start) === Norn.parseTimestamp(ctx.slice.opening_cut.cut_at)
+      && ctx.input.opening_stock_value === ctx.slice.opening_cut.stock_value
+      && ctx.input.currency === ctx.slice.cost.currency
+      && ctx.input.costed_ref === ctx.slice.cost.cost_ref
+      && ctx.input.avg_weekly_sales_qty * ctx.input.sales_weeks === ctx.aggregates.total_sold_qty
+      && ctx.input.period_gross_margin === ctx.aggregates.total_gross_margin
+      && ctx.aggregates.costed_sales_count === ctx.aggregates.all_sales_count
+      && ctx.input.closing_stock_value === ctx.aggregates.total_closing_stock_value
+      && ctx.aggregates.lots_as_of_by_period_end === ctx.aggregates.all_lots_count
+      && ctx.aggregates.costed_lots_count === ctx.aggregates.all_lots_count,
+    { root: "context" },
+  )],
+  writes: [{ type: StoreCommercialRollup, change: "modified" }],
+  effect: { kind: "upsert_input_object", type: StoreCommercialRollup, objectIdField: "rollup_id", writeMode: { kind: "update_only" } },
+})
+
+/**
  * Record an explicitly withheld store commercial KPI rollup (`unverified` and
  * `missing_cost`): derives zero numerators and denominators so declared WOS and
  * GMROI questions evaluate directly to `null` (withheld) on the read path.
@@ -966,6 +1120,6 @@ export const RetailAccess = Norn.access({
     { ruleId: "store_count", actions: [RecordStoreCount, RecountStore], resourceType: StoreCount, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
     { ruleId: "pos_sale", actions: [RecordPosSale, RecordUncostedPosSale, PromotePosSaleFromEvidence], resourceType: PosSale, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
     { ruleId: "stock_valuation_cut", actions: [RecordStockValuationCut], resourceType: StockValuationCut, scope: org, allOf: [{ role: { anyOf: ["planner", "warehouse_clerk"] } }] },
-    { ruleId: "store_kpi", actions: [RecordStoreCommercialRollup, RecordWithheldStoreCommercialRollup], resourceType: StoreCommercialRollup, scope: org, allOf: [{ role: { anyOf: ["planner", "warehouse_clerk"] } }] },
+    { ruleId: "store_kpi", actions: [RecordStoreCommercialRollup, RefreshStoreCommercialRollup, RecordWithheldStoreCommercialRollup], resourceType: StoreCommercialRollup, scope: org, allOf: [{ role: { anyOf: ["planner", "warehouse_clerk"] } }] },
   ],
 })

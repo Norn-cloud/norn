@@ -145,21 +145,21 @@ export const PosFeedRevenueWeekly = Norn.question({
 })
 
 /**
- * Declared read-only Retail Combined Management View dashboard: projects all
- * store-level commercial KPIs side-by-side without write authority or statutory
- * consolidation claims (`READ-LOCAL-1`).
+ * Declared read-only Retail Combined Management View dashboard (`READ-LOCAL-1`):
+ * includes only tiles that are either cost-independent or emit explicit `null`
+ * (withheld) on unverified / missing-cost partitions (never rendering misleading
+ * zero sums for missing-cost rows or unverified availability). Raw cost-partitioned
+ * margin/valuation and availability coverage are enforced through the shipped
+ * `RetailCombinedViewCoverage` manifest (`retail.coverage.json`).
  */
 export const RetailCombinedManagementView = Norn.dashboard({
   title: "Retail combined management view (read-only; not consolidated financial statements)",
   tiles: [
-    { title: "Store availability, weekly", question: StoreAvailabilityWeekly, view: "bar" },
-    { title: "Store on-hand, weekly", question: StoreOnHandWeekly, view: "line" },
-    { title: "Store sell-through, weekly", question: StoreSellThroughWeekly, view: "line" },
-    { title: "Lot receipt aging cohorts, weekly", question: LotReceivedAgingWeekly, view: "bar" },
-    { title: "Store stock valuation, weekly", question: StoreStockValueWeekly, view: "area" },
+    { title: "Store unit sales, weekly", question: StoreSalesWeekly, view: "bar" },
     { title: "Store net revenue, weekly", question: StoreRevenueWeekly, view: "bar" },
-    { title: "Store gross margin, weekly", question: StoreGrossMarginWeekly, view: "bar" },
-    { title: "Store gross margin rate, weekly", question: StoreGrossMarginRateWeekly, view: "line" },
+    { title: "Store on-hand, weekly", question: StoreOnHandWeekly, view: "line" },
+    { title: "Lot receipt aging cohorts, weekly", question: LotReceivedAgingWeekly, view: "bar" },
+    { title: "Store sell-through, weekly", question: StoreSellThroughWeekly, view: "line" },
     { title: "Store weeks of supply, weekly", question: StoreWeeksOfSupplyWeekly, view: "line" },
     { title: "Store GMROI, weekly", question: StoreGmroiWeekly, view: "line" },
     { title: "POS feed revenue, weekly", question: PosFeedRevenueWeekly, view: "bar" },

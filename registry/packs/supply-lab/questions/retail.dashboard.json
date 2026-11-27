@@ -15,19 +15,10 @@
         "question": {
           "aggregate": [
             {
-              "metric": "analysis.object_737570706c792e53746f7265436f756e74.on_hand_qty.as_of_as_of"
+              "metric": "analysis.object_737570706c792e506f7353616c65.sold_qty.by_sold_at"
             }
           ],
           "calendar": "iso_utc",
-          "filter": [
-            {
-              "operator": "eq",
-              "path": {
-                "property": "quantity_basis"
-              },
-              "value": "available"
-            }
-          ],
           "freshness": {
             "kind": "live",
             "maxAgeMs": 60000
@@ -46,19 +37,19 @@
             {
               "grain": "week",
               "path": {
-                "property": "as_of"
+                "property": "sold_at"
               }
             }
           ],
           "irVersion": "0.1",
-          "name": "supply.retail.store_availability_weekly",
-          "objectSet": "supply.StoreCount",
+          "name": "supply.retail.store_sales_weekly",
+          "objectSet": "supply.PosSale",
           "window": {
             "end": "2026-10-26T00:00:00Z",
             "start": "2026-07-06T00:00:00Z"
           }
         },
-        "title": "Store availability, weekly",
+        "title": "Store unit sales, weekly",
         "view": {
           "chart": "bar",
           "kind": "chart"
@@ -71,6 +62,57 @@
           "w": 2,
           "x": 0,
           "y": 1
+        },
+        "question": {
+          "aggregate": [
+            {
+              "metric": "analysis.object_737570706c792e506f7353616c65.net_revenue.by_sold_at"
+            }
+          ],
+          "calendar": "iso_utc",
+          "freshness": {
+            "kind": "live",
+            "maxAgeMs": 60000
+          },
+          "groupBy": [
+            {
+              "path": {
+                "property": "currency"
+              }
+            },
+            {
+              "path": {
+                "property": "store_id"
+              }
+            },
+            {
+              "grain": "week",
+              "path": {
+                "property": "sold_at"
+              }
+            }
+          ],
+          "irVersion": "0.1",
+          "name": "supply.retail.store_revenue_weekly",
+          "objectSet": "supply.PosSale",
+          "window": {
+            "end": "2026-10-26T00:00:00Z",
+            "start": "2026-07-06T00:00:00Z"
+          }
+        },
+        "title": "Store net revenue, weekly",
+        "view": {
+          "chart": "bar",
+          "kind": "chart"
+        }
+      },
+      {
+        "id": "t3",
+        "layout": {
+          "h": 1,
+          "w": 2,
+          "x": 0,
+          "y": 2
         },
         "question": {
           "aggregate": [
@@ -110,51 +152,6 @@
           }
         },
         "title": "Store on-hand, weekly",
-        "view": {
-          "chart": "line",
-          "kind": "chart"
-        }
-      },
-      {
-        "id": "t3",
-        "layout": {
-          "h": 1,
-          "w": 2,
-          "x": 0,
-          "y": 2
-        },
-        "question": {
-          "aggregate": [
-            {
-              "metric": "analysis.object_737570706c792e53746f636b4c6f74.sell_through_rate.by_as_of.ratio_of_sums"
-            }
-          ],
-          "calendar": "iso_utc",
-          "freshness": {
-            "kind": "live",
-            "maxAgeMs": 60000
-          },
-          "groupBy": [
-            {
-              "path": {
-                "property": "unit"
-              }
-            },
-            {
-              "path": {
-                "property": "store_id"
-              }
-            }
-          ],
-          "irVersion": "0.1",
-          "name": "supply.retail.store_sell_through_weekly",
-          "objectSet": "supply.StockLot",
-          "window": {
-            "end": "2026-10-26T00:00:00Z",
-            "start": "2026-07-06T00:00:00Z"
-          }
-        },
-        "title": "Store sell-through, weekly",
         "view": {
           "chart": "line",
           "kind": "chart"
@@ -222,7 +219,7 @@
         "question": {
           "aggregate": [
             {
-              "metric": "analysis.object_737570706c792e53746f636b4c6f74.stock_value.as_of_as_of"
+              "metric": "analysis.object_737570706c792e53746f636b4c6f74.sell_through_rate.by_as_of.ratio_of_sums"
             }
           ],
           "calendar": "iso_utc",
@@ -233,37 +230,26 @@
           "groupBy": [
             {
               "path": {
-                "property": "currency"
+                "property": "unit"
               }
             },
             {
               "path": {
                 "property": "store_id"
               }
-            },
-            {
-              "path": {
-                "property": "cost_status"
-              }
-            },
-            {
-              "grain": "week",
-              "path": {
-                "property": "as_of"
-              }
             }
           ],
           "irVersion": "0.1",
-          "name": "supply.retail.store_stock_value_weekly",
+          "name": "supply.retail.store_sell_through_weekly",
           "objectSet": "supply.StockLot",
           "window": {
             "end": "2026-10-26T00:00:00Z",
             "start": "2026-07-06T00:00:00Z"
           }
         },
-        "title": "Store stock valuation, weekly",
+        "title": "Store sell-through, weekly",
         "view": {
-          "chart": "area",
+          "chart": "line",
           "kind": "chart"
         }
       },
@@ -274,169 +260,6 @@
           "w": 2,
           "x": 0,
           "y": 5
-        },
-        "question": {
-          "aggregate": [
-            {
-              "metric": "analysis.object_737570706c792e506f7353616c65.net_revenue.by_sold_at"
-            }
-          ],
-          "calendar": "iso_utc",
-          "freshness": {
-            "kind": "live",
-            "maxAgeMs": 60000
-          },
-          "groupBy": [
-            {
-              "path": {
-                "property": "currency"
-              }
-            },
-            {
-              "path": {
-                "property": "store_id"
-              }
-            },
-            {
-              "grain": "week",
-              "path": {
-                "property": "sold_at"
-              }
-            }
-          ],
-          "irVersion": "0.1",
-          "name": "supply.retail.store_revenue_weekly",
-          "objectSet": "supply.PosSale",
-          "window": {
-            "end": "2026-10-26T00:00:00Z",
-            "start": "2026-07-06T00:00:00Z"
-          }
-        },
-        "title": "Store net revenue, weekly",
-        "view": {
-          "chart": "bar",
-          "kind": "chart"
-        }
-      },
-      {
-        "id": "t7",
-        "layout": {
-          "h": 1,
-          "w": 2,
-          "x": 0,
-          "y": 6
-        },
-        "question": {
-          "aggregate": [
-            {
-              "metric": "analysis.object_737570706c792e506f7353616c65.gross_margin.by_sold_at"
-            }
-          ],
-          "calendar": "iso_utc",
-          "freshness": {
-            "kind": "live",
-            "maxAgeMs": 60000
-          },
-          "groupBy": [
-            {
-              "path": {
-                "property": "currency"
-              }
-            },
-            {
-              "path": {
-                "property": "store_id"
-              }
-            },
-            {
-              "path": {
-                "property": "cost_status"
-              }
-            },
-            {
-              "grain": "week",
-              "path": {
-                "property": "sold_at"
-              }
-            }
-          ],
-          "irVersion": "0.1",
-          "name": "supply.retail.store_gross_margin_weekly",
-          "objectSet": "supply.PosSale",
-          "window": {
-            "end": "2026-10-26T00:00:00Z",
-            "start": "2026-07-06T00:00:00Z"
-          }
-        },
-        "title": "Store gross margin, weekly",
-        "view": {
-          "chart": "bar",
-          "kind": "chart"
-        }
-      },
-      {
-        "id": "t8",
-        "layout": {
-          "h": 1,
-          "w": 2,
-          "x": 0,
-          "y": 7
-        },
-        "question": {
-          "aggregate": [
-            {
-              "metric": "analysis.object_737570706c792e506f7353616c65.gross_margin_rate.by_sold_at.ratio_of_sums"
-            }
-          ],
-          "calendar": "iso_utc",
-          "freshness": {
-            "kind": "live",
-            "maxAgeMs": 60000
-          },
-          "groupBy": [
-            {
-              "path": {
-                "property": "currency"
-              }
-            },
-            {
-              "path": {
-                "property": "store_id"
-              }
-            },
-            {
-              "path": {
-                "property": "cost_status"
-              }
-            },
-            {
-              "grain": "week",
-              "path": {
-                "property": "sold_at"
-              }
-            }
-          ],
-          "irVersion": "0.1",
-          "name": "supply.retail.store_gross_margin_rate_weekly",
-          "objectSet": "supply.PosSale",
-          "window": {
-            "end": "2026-10-26T00:00:00Z",
-            "start": "2026-07-06T00:00:00Z"
-          }
-        },
-        "title": "Store gross margin rate, weekly",
-        "view": {
-          "chart": "line",
-          "kind": "chart"
-        }
-      },
-      {
-        "id": "t9",
-        "layout": {
-          "h": 1,
-          "w": 2,
-          "x": 0,
-          "y": 8
         },
         "question": {
           "aggregate": [
@@ -487,12 +310,12 @@
         }
       },
       {
-        "id": "t10",
+        "id": "t7",
         "layout": {
           "h": 1,
           "w": 2,
           "x": 0,
-          "y": 9
+          "y": 6
         },
         "question": {
           "aggregate": [
@@ -543,12 +366,12 @@
         }
       },
       {
-        "id": "t11",
+        "id": "t8",
         "layout": {
           "h": 1,
           "w": 2,
           "x": 0,
-          "y": 10
+          "y": 7
         },
         "question": {
           "aggregate": [

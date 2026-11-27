@@ -1,5 +1,5 @@
 import { Norn } from "@norn/authoring"
-import { PosSale, StockLot, Store, StoreCount } from "./retail.ts"
+import { PosSale, StockLot, Store, StoreCommercialRollup, StoreCount } from "./retail.ts"
 
 // Chasm-trap-safe retail commercial KPI transforms: aggregate each fact stream
 // to `(store_id, sku_id, unit, currency)` (or receipt week) first, then join
@@ -232,4 +232,35 @@ export const StoreAvailableCountPositions = Norn.transform({
     },
   },
   output: "projected",
+})
+
+/**
+ * Verified and costed commercial KPI rollup sales/margin operands per
+ * `(store_id, sku_id, unit, currency, period_week)` so the shipped combined
+ * view fails closed whenever late POS facts make a published rollup stale.
+ */
+export const StoreRollupSalesOperands = Norn.transform({
+  id: "supply.retail.store_rollup_sales_operands", title: "Verified store rollup sales operands", version: "0.1.0",
+  inputs: { rollup: StoreCommercialRollup },
+  nodes: {
+    rollup: { op: "scan", input: "rollup" },
+    verified_only: {
+      op: "filter", input: "rollup",
+      predicate: "input.count_status == \"verified\" && input.cost_status == \"costed\"",
+    },
+    operands: {
+      op: "project", input: "verified_only", columns: [
+        { name: "id", expression: "input.id" },
+        { name: "store_id", expression: "input.store_id" },
+        { name: "sku_id", expression: "input.sku_id" },
+        { name: "unit", expression: "input.unit" },
+        { name: "currency", expression: "input.currency" },
+        { name: "period_week", expression: "input.period_week" },
+        { name: "implied_sold_qty", expression: "input.avg_weekly_sales_qty * input.sales_weeks" },
+        { name: "period_gross_margin", expression: "input.period_gross_margin" },
+        { name: "on_hand_qty", expression: "input.on_hand_qty" },
+      ],
+    },
+  },
+  output: "operands",
 })

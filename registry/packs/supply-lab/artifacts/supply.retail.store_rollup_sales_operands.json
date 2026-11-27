@@ -1,0 +1,93 @@
+{
+  "artifactId": "supply.retail.store_rollup_sales_operands",
+  "dependencies": [
+    {
+      "artifactId": "supply.StoreCommercialRollup.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Verified store rollup sales operands",
+  "namespace": "supply",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "operands": {
+          "columns": [
+            {
+              "expression": "input.id",
+              "name": "id"
+            },
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.sku_id",
+              "name": "sku_id"
+            },
+            {
+              "expression": "input.unit",
+              "name": "unit"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.period_week",
+              "name": "period_week"
+            },
+            {
+              "expression": "input.avg_weekly_sales_qty * input.sales_weeks",
+              "name": "implied_sold_qty"
+            },
+            {
+              "expression": "input.period_gross_margin",
+              "name": "period_gross_margin"
+            },
+            {
+              "expression": "input.on_hand_qty",
+              "name": "on_hand_qty"
+            }
+          ],
+          "input": "verified_only",
+          "op": "project"
+        },
+        "rollup": {
+          "input": "rollup",
+          "op": "scan"
+        },
+        "verified_only": {
+          "input": "rollup",
+          "op": "filter",
+          "predicate": "input.count_status == \"verified\" && input.cost_status == \"costed\""
+        }
+      },
+      "output": "operands"
+    },
+    "inputs": [
+      {
+        "alias": "rollup",
+        "artifactId": "supply.StoreCommercialRollup.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "supply.retail.store_rollup_sales_operands",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.retail.store_rollup_sales_operands.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
