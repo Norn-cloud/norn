@@ -636,9 +636,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// with a strictly monotonic fencing `generation`.
     ///
     /// # Errors
-    /// [`CellError::SourceLeaseFenced`] if another active lease holds
-    /// `connection_id` at `now_ms`, [`CellError::OutOfRange`] on zero TTL or
-    /// timestamp overflow, or store errors.
+    /// [`CellError::SourceLeaseFenced`], [`CellError::OutOfRange`], or store errors.
     pub fn acquire_source_lease(
         &mut self,
         connection_id: &str,
@@ -654,6 +652,7 @@ impl<E: SqlEngine> CellStore<E> {
             let existing = read_lease(&self.conn, connection_id)?;
             if let Some(current) = &existing
                 && now_ms < current.expires_at_ms
+                && current.lease_id != lease_id
             {
                 return Err(CellError::SourceLeaseFenced {
                     connection_id: connection_id.to_owned(),

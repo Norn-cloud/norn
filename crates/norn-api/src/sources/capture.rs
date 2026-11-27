@@ -2,6 +2,7 @@
 //! seeding, complete-page capture specs, and fenced-run report guards.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use norn_cell::MappingOutcome;
 use norn_cell::engine::SqlEngine;
@@ -10,10 +11,35 @@ use norn_cell::source_cursor::{
 };
 use norn_ir::RuntimeValue;
 
-use super::{CONNECTION_TYPE, ConnectionConfig, Failure, RUN_LEASE_MS, fail, rfc3339};
+use super::{
+    CELL_INSTANCE, CONNECTION_TYPE, ConnectionConfig, Failure, REPORT_MAPPING, RUN_LEASE_MS,
+    connect_profile, fail, rfc3339,
+};
 use crate::host::{DevHost, DisputeFallbackState, SourceCapturePlan};
 use crate::pull::{AcceptedPage, CursorAdvance, PullProfile, Watermark, observation};
 use norn_cell::mapping_bundle::MappingInput;
+
+/// Generate a distinct worker lease identity per claim so concurrent `Sources`
+/// instances claiming at the exact same millisecond are mutually fenced under
+/// `PullCursorAtomicity::acquireLease` (`current.lease_id != lease_id`).
+pub(super) fn next_lease_id(base: &str) -> String {
+    static NEXT_LEASE_SEQ: AtomicU64 = AtomicU64::new(1);
+    let seq = NEXT_LEASE_SEQ.fetch_add(1, Ordering::Relaxed);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::hash::{BuildHasher, Hash, Hasher};
+
+        let pid = std::process::id();
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        (pid, seq).hash(&mut hasher);
+        let salt = hasher.finish();
+        format!("{base}/l{seq}-{pid}-{salt:016x}")
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        format!("{base}/l{seq}")
+    }
+}
 
 /// One active source page draining through paced processing (`advance` is
 /// `None` for pages recovered from `_norn_source_pending` after a prior crash).
@@ -564,4 +590,193 @@ pub(super) fn capture_accepted_page<E: SqlEngine>(
             advance,
         )),
     }
+}
+
+/// The object type of a completed upload's durable record.
+pub const UPLOAD_TYPE: &str = "source.Upload";
+
+/// UPLOAD-RECORD-1: a completed upload as the cell keeps it, written through
+/// its own `norn-connect` mapping when `:complete` reads the object back, so
+/// it outlives the host. Every value is what the cell read or decided,
+/// never what a client claimed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptUpload {
+    /// The sealed upload id.
+    pub upload_id: String,
+    /// The store the object is in.
+    pub store: crate::uploads::Store,
+    /// The object's URI.
+    pub uri: String,
+    /// The SHA-256 of the bytes the cell read.
+    pub sha256: String,
+    /// Their size.
+    pub size: u64,
+    /// The content type the upload began with.
+    pub content_type: String,
+    /// The file name the upload began with.
+    pub file_name: String,
+    /// Whether the bytes are CSV the cell profiled.
+    pub csv: bool,
+    /// The profile's columns.
+    pub columns: Vec<crate::uploads::Column>,
+    /// Who completed it.
+    pub owner: String,
+    /// When, as RFC 3339.
+    pub completed_at: String,
+}
+
+/// The record key of the upload `upload_id`: its SHA-256.
+#[must_use]
+pub fn kept_upload_key(upload_id: &str) -> String {
+    crate::uploads::sha256_hex(upload_id.as_bytes())
+}
+
+/// Keep `upload` in the cell (UPLOAD-RECORD-1). The same bytes kept again
+/// are already kept; new bytes for the same upload are its next version.
+/// A cell whose definitions predate `source.Upload` first gets the cell's
+/// own sources pack through the governed install ([`ensure_upload_records`]).
+///
+/// # Errors
+/// The pack could not be installed, the cell refused the record, or the
+/// write failed.
+pub fn keep_upload<E: SqlEngine>(
+    host: &DevHost<E>,
+    upload: &KeptUpload,
+    now_ms: u64,
+) -> Result<(), String> {
+    ensure_upload_records(host, now_ms)?;
+    let key = kept_upload_key(&upload.upload_id);
+    let columns = serde_json::to_string(&upload.columns).map_err(|e| e.to_string())?;
+    let store = match upload.store {
+        crate::uploads::Store::Uploads => "uploads",
+        crate::uploads::Store::Documents => "documents",
+    };
+    let payload = norn_ir::runtime_object! {
+        "id" => key.as_str(), "upload_id" => upload.upload_id.as_str(), "store" => store,
+        "uri" => upload.uri.as_str(), "sha256" => upload.sha256.as_str(), "size" => upload.size,
+        "content_type" => upload.content_type.as_str(), "file_name" => upload.file_name.as_str(),
+        "format" => if upload.csv { "csv" } else { "other" }, "columns" => columns.as_str(),
+        "owner" => upload.owner.as_str(), "completed_at" => upload.completed_at.as_str(),
+    };
+    let profile = connect_profile();
+    let row = crate::pull::Row {
+        dataset: "upload".to_owned(),
+        source_id: key,
+        version: upload.sha256.clone(),
+        payload,
+    };
+    let raw = observation(&profile, &row, now_ms)?;
+    let input = MappingInput {
+        mapping: REPORT_MAPPING.to_owned(),
+        dataset: "upload".to_owned(),
+        connector_instance: CELL_INSTANCE.to_owned(),
+        partition: "upload".to_owned(),
+        recorded_at: norn_ir::provenance::UtcTimestamp(rfc3339(now_ms)),
+    };
+    let ingested = host
+        .ingest(&[(raw, input)])
+        .map_err(|refusal| refusal.message)?;
+    match ingested.first().map(|i| &i.outcome) {
+        Some(MappingOutcome::Landed | MappingOutcome::AlreadyLanded) => Ok(()),
+        Some(MappingOutcome::Quarantined(reasons)) => Err(format!(
+            "the cell refused the upload record: {}",
+            reasons
+                .iter()
+                .map(|r| format!("{}: {}", r.code, r.reason))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        None => Err("the cell captured no upload record".to_owned()),
+    }
+}
+
+/// The cell's own sources pack: connections, sync runs and upload records,
+/// and the mapping that lands the cell's reports as them.
+const SOURCES_PACK: [&str; 6] = [
+    include_str!("../../../../registry/packs/sources/artifacts/source.Synced.interface.json"),
+    include_str!("../../../../registry/packs/sources/artifacts/source.Connection.entity.json"),
+    include_str!("../../../../registry/packs/sources/artifacts/source.SyncRun.entity.json"),
+    include_str!("../../../../registry/packs/sources/artifacts/source.Upload.entity.json"),
+    include_str!("../../../../registry/packs/sources/artifacts/norn.connect.source.json"),
+    include_str!("../../../../registry/packs/sources/artifacts/norn.connect.mapping.json"),
+];
+
+/// UPLOAD-RECORD-1 for a cell provisioned before `source.Upload`: install the
+/// cell's own sources pack as the next governed definitions version (the
+/// shared install path, DEFS-REOPEN-1), once. `Ok(true)` when it installed.
+///
+/// # Errors
+/// The pack is refused or the install fails; the upload is then refused,
+/// never completed without its record.
+pub fn ensure_upload_records<E: SqlEngine>(
+    host: &DevHost<E>,
+    installed_at: u64,
+) -> Result<bool, String> {
+    if host
+        .serves_object_type(UPLOAD_TYPE)
+        .map_err(|refusal| refusal.message)?
+    {
+        return Ok(false);
+    }
+    let pack = SOURCES_PACK
+        .iter()
+        .map(|text| serde_json::from_str::<norn_ir::ArtifactEnvelope>(text))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("the sources pack: {e}"))?;
+    host.install_artifacts(&pack, installed_at)
+        .map_err(|reason| format!("the sources pack was not installed: {reason}"))?;
+    Ok(true)
+}
+
+/// The kept record of the upload `upload_id`, if the cell completed it.
+///
+/// # Errors
+/// A store failure, or a kept record the cell cannot read back.
+pub fn kept_upload<E: SqlEngine>(
+    host: &DevHost<E>,
+    upload_id: &str,
+) -> Result<Option<KeptUpload>, String> {
+    if !host
+        .serves_object_type(UPLOAD_TYPE)
+        .map_err(|refusal| refusal.message)?
+    {
+        return Ok(None);
+    }
+    let Some(object) = host
+        .host_object(UPLOAD_TYPE, &kept_upload_key(upload_id))
+        .map_err(|refusal| refusal.message)?
+    else {
+        return Ok(None);
+    };
+    let text = |name: &str| {
+        object
+            .get(name)
+            .and_then(RuntimeValue::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| format!("a kept upload has no {name}"))
+    };
+    if text("upload_id")? != upload_id {
+        return Ok(None);
+    }
+    let store = match text("store")?.as_str() {
+        "documents" => crate::uploads::Store::Documents,
+        _ => crate::uploads::Store::Uploads,
+    };
+    Ok(Some(KeptUpload {
+        upload_id: upload_id.to_owned(),
+        store,
+        uri: text("uri")?,
+        sha256: text("sha256")?,
+        size: object
+            .get("size")
+            .and_then(RuntimeValue::as_i64)
+            .and_then(|n| u64::try_from(n).ok())
+            .ok_or("a kept upload has no size")?,
+        content_type: text("content_type")?,
+        file_name: text("file_name")?,
+        csv: text("format")? == "csv",
+        columns: serde_json::from_str(&text("columns")?).map_err(|e| e.to_string())?,
+        owner: text("owner")?,
+        completed_at: text("completed_at").unwrap_or_default(),
+    }))
 }

@@ -355,12 +355,7 @@ impl Connect {
     /// Scoped `(connection_id -> mapping_id)` bindings from `NORN_SOURCES` for QUERY-FRESH-1.
     #[must_use]
     pub fn configured_mappings(&self) -> BTreeMap<String, String> {
-        self.sources
-            .connections()
-            .iter()
-            .filter(|conn| !conn.mapping.is_empty())
-            .map(|conn| (conn.id.clone(), conn.mapping.clone()))
-            .collect()
+        self.sources.configured_mappings()
     }
 
     /// The upload `id` names, when its object lies under a prefix the cell
@@ -563,10 +558,10 @@ impl Connect {
         };
         Some(match route {
             Route::Sync(id) => {
-                match self
+                let claimed = self
                     .sources
-                    .claim_on(host, id, Trigger::Manual, &actor, now_ms)
-                {
+                    .claim_on(host, id, Trigger::Manual, &actor, now_ms);
+                match claimed {
                     Ok(Ok(run)) => Routed {
                         response: json_response(202, &json!({"run": run})),
                         start_sync: Some(id.to_owned()),
@@ -1135,18 +1130,11 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str, bound: &LoadBo
     json_response(
         200,
         &json!({
-            "source": recorded.source,
-            "mapping": recorded.mapping,
-            "rows": ingested.len(),
-            "landed": landed,
-            "alreadyLanded": already,
-            "quarantined": quarantined,
-            "quarantineReasons": reasons,
-            "quarantine": explained,
-            "pages": report.pages,
-            "commits": report.commits,
-            // Resume with `snapshot[next..]` when the work budget stopped
-            // the load; null when every row is reported.
+            "source": recorded.source, "mapping": recorded.mapping, "rows": ingested.len(),
+            "landed": landed, "alreadyLanded": already, "quarantined": quarantined,
+            "quarantineReasons": reasons, "quarantine": explained,
+            "pages": report.pages, "commits": report.commits,
+            // Resume with `snapshot[next..]` when the work budget stopped; null when done.
             "next": report.next,
         }),
     )
