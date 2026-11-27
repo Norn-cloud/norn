@@ -1798,12 +1798,12 @@ fn forecast_evaluator_manifest_json() -> Value {
     json!({
         "abi": "norn.function-abi/1",
         "bounds": {
-            "maxCpuMillis": 60000,
-            "maxDecodedBytes": 67108864,
-            "maxInputBytes": 16777216,
-            "maxMemoryBytes": 536870912,
-            "maxOutputBytes": 1048576,
-            "maxWallMillis": 120000
+            "maxCpuMillis": 60_000,
+            "maxDecodedBytes": 67_108_864,
+            "maxInputBytes": 16_777_216,
+            "maxMemoryBytes": 536_870_912,
+            "maxOutputBytes": 1_048_576,
+            "maxWallMillis": 120_000
         },
         "cache": "none",
         "capabilities": [],
@@ -2085,7 +2085,13 @@ fn build_evaluation_receipt(
     };
     let encoded = match norn_ir::runtime::encode(&receipt).map_err(|e| format!("encode: {e}"))? {
         RuntimeValue::Object(obj) => obj,
-        other => return Err(format!("encoded receipt was not object: {other:?}")),
+        other @ (RuntimeValue::Null
+        | RuntimeValue::Bool(_)
+        | RuntimeValue::Number(_)
+        | RuntimeValue::String(_)
+        | RuntimeValue::Array(_)) => {
+            return Err(format!("encoded receipt was not object: {other:?}"));
+        }
     };
     Ok((dispatched, receipt, encoded))
 }
@@ -2205,11 +2211,11 @@ fn assert_forecast_evaluator_manifest_parity() -> Result<(), String> {
     Ok(())
 }
 
-fn accept_authenticated_evaluations(
+fn reject_unretained_and_wrong_manifest_receipts(
     stress: &mut Stress,
     k1: &str,
-    k2: &str,
-) -> Result<String, String> {
+    registered_sha: &str,
+) -> Result<(), String> {
     // Unretained/forged receipt digest is refused before any transition.
     let (unretained_code, _) = stress.refused(
         "ml.modelversion.accept_evaluation",
@@ -2218,8 +2224,6 @@ fn accept_authenticated_evaluations(
     )?;
     assert_eq!(unretained_code, "action.receipt_unknown");
 
-    let registered_sha = "ab".repeat(32);
-    let mismatched_sha = "ef".repeat(32);
     // Wrong manifest digest is refused even when retained by the host.
     let wrong_manifest = format!("sha256:{}", "9".repeat(64));
     let wrong_manifest_receipt = retain_evaluation_receipt(
@@ -2229,7 +2233,7 @@ fn accept_authenticated_evaluations(
             version_id: "v1",
             manifest_digest: &wrong_manifest,
             evaluated_revision: k1,
-            artifact_sha256: &registered_sha,
+            artifact_sha256: registered_sha,
             artifact_size: 4096,
             contracts_passed: true,
         },
@@ -2251,6 +2255,17 @@ fn accept_authenticated_evaluations(
             ..CellCommit::empty()
         })
         .map_err(|e| format!("consume rejected wrong-manifest delivery: {e}"))?;
+    Ok(())
+}
+
+fn accept_authenticated_evaluations(
+    stress: &mut Stress,
+    k1: &str,
+    k2: &str,
+) -> Result<String, String> {
+    let registered_sha = "ab".repeat(32);
+    let mismatched_sha = "ef".repeat(32);
+    reject_unretained_and_wrong_manifest_receipts(stress, k1, &registered_sha)?;
 
     // Retain and accept one receipt at a time so each perform/accept cycle advances the FIFO outbox.
     let r2 = retain_evaluation_receipt(
