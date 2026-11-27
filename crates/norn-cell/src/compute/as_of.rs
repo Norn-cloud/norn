@@ -88,10 +88,10 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
     }
 
     /// Distinct subject IDs of `kind` committed on or before the cutoff
-    /// frontier, stepping one primary-key B-tree seek per distinct subject ID
-    /// so repeated updates to one subject (such as routine `source.Connection`
-    /// sync reports) never hit a version-row scan cap and charge budget only
-    /// once per distinct ID.
+    /// frontier. First uses a bounded covering-index scan on `root_frontier`
+    /// (`commit_seq <= head`) so post-cutoff IDs never consume probe budget;
+    /// if pre-cutoff versions exceed 4,096 rows, falls back to a primary-key
+    /// skip-scan (one B-tree seek per distinct subject ID).
     pub(crate) fn distinct_ids(
         &self,
         world: &str,
@@ -99,7 +99,7 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
         max: usize,
         budget: &mut DecodeBudget,
     ) -> Result<(Vec<String>, bool), CellError> {
-        use crate::engine::params;
+        use crate::engine::{SqlRow, params};
         self.reader.check_history("historical distinct ids")?;
         let root = self.reader.root_type(kind)?;
         let cap = max.min(budget.remaining_rows());
@@ -108,6 +108,26 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
         }
         let head = i64::try_from(self.cutoff.frontier)
             .map_err(|_n| refused("core.compute.bound_exceeded"))?;
+        let fast_limit: usize = 4_096;
+        let sql_limit = i64::try_from(fast_limit.saturating_add(1))
+            .map_err(|_n| refused("core.compute.bound_exceeded"))?;
+        let rows = self.reader.conn.query(
+            "SELECT id FROM _norn_fact_values INDEXED BY \"_norn_fact_values/root_frontier\" \
+             WHERE world=?1 AND root_type=?2 AND commit_seq<=?3 \
+             ORDER BY commit_seq, id, version LIMIT ?4",
+            params![world, root, head, sql_limit],
+        )?;
+        if rows.len() <= fast_limit {
+            let mut seen = BTreeSet::new();
+            for row in rows {
+                let id: String = SqlRow(row).get(0)?;
+                seen.insert(id);
+                if seen.len() > cap {
+                    return Ok((Vec::new(), false));
+                }
+            }
+            return charge_distinct_ids(seen.into_iter().collect(), budget);
+        }
         let max_probes = cap.saturating_mul(16).max(4_096);
         let mut ids = Vec::new();
         let mut after: Option<String> = None;
@@ -129,18 +149,13 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
                 )?,
             };
             let Some((id, first_commit_seq)) = next else {
-                return Ok((ids, true));
+                return charge_distinct_ids(ids, budget);
             };
             after = Some(id.clone());
             if first_commit_seq > head {
                 continue;
             }
             if ids.len() >= cap {
-                return Ok((Vec::new(), false));
-            }
-            let bytes = u64::try_from(id.len().saturating_add(64))
-                .map_err(|_n| refused("core.compute.bound_exceeded"))?;
-            if !budget.charge_rows(1) || !budget.charge(bytes) {
                 return Ok((Vec::new(), false));
             }
             ids.push(id);
@@ -315,4 +330,18 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
         }
         Ok(collected)
     }
+}
+
+fn charge_distinct_ids(
+    ids: Vec<String>,
+    budget: &mut DecodeBudget,
+) -> Result<(Vec<String>, bool), CellError> {
+    for id in &ids {
+        let bytes = u64::try_from(id.len().saturating_add(64))
+            .map_err(|_n| refused("core.compute.bound_exceeded"))?;
+        if !budget.charge_rows(1) || !budget.charge(bytes) {
+            return Ok((Vec::new(), false));
+        }
+    }
+    Ok((ids, true))
 }

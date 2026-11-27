@@ -215,6 +215,7 @@ fn decode_pending(row: &SqlRow) -> Result<PendingSourceCapture, CellError> {
 /// Canonical encoding error.
 pub fn page_digest(
     advance: &CursorAdvanceSpec,
+    mapping: Option<&str>,
     observations: &[Observed<RuntimeValue>],
 ) -> Result<String, CellError> {
     #[derive(Serialize)]
@@ -236,6 +237,7 @@ pub fn page_digest(
     struct DigestInput<'a> {
         connection_id: &'a str,
         dataset: &'a str,
+        mapping: Option<&'a str>,
         rows: Vec<RowDigest<'a>>,
         expected_previous_cursor: Option<&'a str>,
         next_cursor: Option<&'a str>,
@@ -260,12 +262,13 @@ pub fn page_digest(
     let input = DigestInput {
         connection_id: &advance.connection_id,
         dataset: &advance.dataset,
+        mapping,
         rows: row_digests,
         expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
         next_cursor: advance.next_cursor.as_deref(),
     };
     Ok(norn_ir::canonical::domain_hash_hex(
-        b"norn.source.page.v2\0",
+        b"norn.source.page.v3\0",
         &input,
     )?)
 }

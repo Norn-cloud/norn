@@ -178,6 +178,10 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     now_ms: u64,
 ) -> Result<LoadedWatermarks, Failure> {
     let connection_id = config.id.as_str();
+    let expected_binding = host
+        .active_mapping_binding(&config.mapping)
+        .map_err(|r| fail("source.ingest", r.message))?
+        .unwrap_or_else(|| config.mapping.clone());
     let bound_mapping = host
         .source_mapping_binding(connection_id)
         .map_err(|r| fail("source.ingest", r.message))?;
@@ -185,9 +189,14 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
         .source_cursors(connection_id)
         .map_err(|r| fail("source.ingest", r.message))?;
     let stored_mapping = stored_connection_mapping(host, connection_id);
+    let legacy_revision_matches = bound_mapping.is_none()
+        && stored_mapping.as_deref() == Some(config.mapping.as_str())
+        && host
+            .connection_matches_mapping_binding(connection_id, &config.mapping, &expected_binding)
+            .unwrap_or(false);
     let proven_match = match bound_mapping.as_deref() {
-        Some(bound) => bound == config.mapping,
-        None => stored_mapping.as_deref() == Some(config.mapping.as_str()),
+        Some(bound) => bound == expected_binding,
+        None => legacy_revision_matches,
     };
     let has_prior_state =
         !cursors.is_empty() || bound_mapping.is_some() || stored_mapping.is_some() || has_pending;
@@ -198,7 +207,7 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
         }
         host.reset_source_cursors(
             connection_id,
-            &config.mapping,
+            &expected_binding,
             &lease.lease_id,
             lease.generation,
             now_ms,
@@ -212,7 +221,7 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
 
     if !cursors.is_empty() {
         if bound_mapping.is_none() {
-            bind_mapping(host, connection_id, &config.mapping, lease, now_ms)?;
+            bind_mapping(host, connection_id, &expected_binding, lease, now_ms)?;
         }
         let (parsed, raw_cursors) = decode_cursors(cursors);
         return Ok((parsed, raw_cursors, false));
@@ -221,14 +230,14 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     if bound_mapping.is_some() {
         return Ok((BTreeMap::new(), BTreeMap::new(), false));
     }
-    let legacy = if stored_mapping.as_deref() == Some(config.mapping.as_str()) {
+    let legacy = if legacy_revision_matches {
         legacy_connection_watermarks(host, connection_id)
             .or(known)
             .unwrap_or_default()
     } else {
         known.unwrap_or_default()
     };
-    bind_mapping(host, connection_id, &config.mapping, lease, now_ms)?;
+    bind_mapping(host, connection_id, &expected_binding, lease, now_ms)?;
     let mut encoded = BTreeMap::new();
     if !legacy.is_empty() {
         for (dataset, watermark) in &legacy {

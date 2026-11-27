@@ -310,7 +310,8 @@ impl<E: SqlEngine> CellStore<E> {
             Self::validate_page_framing(raws, input, true)?;
             Some(input)
         };
-        let digest = crate::source_cursor::page_digest(advance, raws)?;
+        let digest =
+            crate::source_cursor::page_digest(advance, input.map(|i| i.mapping.as_str()), raws)?;
         let model = self.model().clone();
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
@@ -672,5 +673,176 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         self.commit_observed_evidence(commit, &authorization, &bundles)
             .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
         Ok(())
+    }
+}
+
+impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
+    /// See [`CellStore::bind_source_mapping`].
+    ///
+    /// # Errors
+    /// Lease fencing, out-of-range timestamp, or store errors.
+    pub fn bind_source_mapping(
+        &mut self,
+        connection_id: &str,
+        mapping_id: &str,
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+    ) -> Result<(), CellError> {
+        self.store_mut().bind_source_mapping(
+            connection_id,
+            mapping_id,
+            lease_id,
+            generation,
+            now_ms,
+        )
+    }
+
+    /// See [`CellStore::reset_source_cursors`].
+    ///
+    /// # Errors
+    /// Lease fencing, pending captures conflict, out-of-range timestamp, or store errors.
+    pub fn reset_source_cursors(
+        &mut self,
+        connection_id: &str,
+        mapping_id: &str,
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+    ) -> Result<(), CellError> {
+        self.store_mut().reset_source_cursors(
+            connection_id,
+            mapping_id,
+            lease_id,
+            generation,
+            now_ms,
+        )
+    }
+}
+
+impl<E: SqlEngine> CellStore<E> {
+    /// Persist `connection_id -> mapping_id` in `_norn_source_binding` under
+    /// the active fencing lease, clearing any orphan `processed = 1` replay
+    /// rows if the previous binding was absent or different.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`], [`CellError::OutOfRange`], or store errors.
+    pub fn bind_source_mapping(
+        &mut self,
+        connection_id: &str,
+        mapping_id: &str,
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+    ) -> Result<(), CellError> {
+        use crate::engine::params;
+        use crate::source_cursor::{SOURCE_BINDING, SOURCE_PENDING, verify_active_lease};
+        let gen_i64 =
+            i64::try_from(generation).map_err(|_| CellError::OutOfRange("binding generation"))?;
+        let now_i64 =
+            i64::try_from(now_ms).map_err(|_| CellError::OutOfRange("binding updated_at_ms"))?;
+        self.write_tx(|| {
+            verify_active_lease(&self.conn, connection_id, lease_id, generation, now_ms)?;
+            let prev: Option<String> = self.conn.query_optional(
+                &format!(
+                    "SELECT \"mapping_id\" FROM \"{SOURCE_BINDING}\" WHERE \"connection_id\" = ?1"
+                ),
+                params![connection_id],
+                |row| row.get(0),
+            )?;
+            if prev.as_deref() != Some(mapping_id) {
+                self.conn.execute(
+                    &format!(
+                        "DELETE FROM \"{SOURCE_PENDING}\" \
+                         WHERE \"connection_id\" = ?1 AND \"processed\" = 1"
+                    ),
+                    params![connection_id],
+                )?;
+            }
+            self.conn.execute(
+                &format!(
+                    "INSERT OR REPLACE INTO \"{SOURCE_BINDING}\" \
+                     (\"connection_id\", \"mapping_id\", \"generation\", \"updated_at_ms\") \
+                     VALUES (?1, ?2, ?3, ?4)"
+                ),
+                params![connection_id, mapping_id, gen_i64, now_i64],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Clear durable cursors/replays and rebind `connection_id` to `mapping_id`
+    /// under the active lease. Refuses if unprocessed pending captures remain.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`], [`CellError::SourceCursorConflict`],
+    /// [`CellError::OutOfRange`], or store errors.
+    pub fn reset_source_cursors(
+        &mut self,
+        connection_id: &str,
+        mapping_id: &str,
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+    ) -> Result<(), CellError> {
+        use crate::engine::params;
+        use crate::source_cursor::{
+            SOURCE_BINDING, SOURCE_CURSOR, SOURCE_PENDING, verify_active_lease,
+        };
+        let gen_i64 =
+            i64::try_from(generation).map_err(|_| CellError::OutOfRange("binding generation"))?;
+        let now_i64 =
+            i64::try_from(now_ms).map_err(|_| CellError::OutOfRange("binding updated_at_ms"))?;
+        self.write_tx(|| {
+            verify_active_lease(&self.conn, connection_id, lease_id, generation, now_ms)?;
+            let pending: Option<String> = self.conn.query_optional(
+                &format!("SELECT \"dataset\" FROM \"{SOURCE_PENDING}\" WHERE \"connection_id\" = ?1 AND \"processed\" = 0 LIMIT 1"),
+                params![connection_id],
+                |row| row.get(0),
+            )?;
+            if let Some(dataset) = pending {
+                return Err(CellError::SourceCursorConflict {
+                    connection_id: connection_id.to_owned(),
+                    dataset,
+                    expected: None,
+                    actual: Some("pending".to_owned()),
+                });
+            }
+            self.conn.execute(
+                &format!("DELETE FROM \"{SOURCE_CURSOR}\" WHERE \"connection_id\" = ?1"),
+                params![connection_id],
+            )?;
+            self.conn.execute(
+                &format!("DELETE FROM \"{SOURCE_PENDING}\" WHERE \"connection_id\" = ?1"),
+                params![connection_id],
+            )?;
+            self.conn.execute(
+                &format!(
+                    "INSERT OR REPLACE INTO \"{SOURCE_BINDING}\" \
+                     (\"connection_id\", \"mapping_id\", \"generation\", \"updated_at_ms\") \
+                     VALUES (?1, ?2, ?3, ?4)"
+                ),
+                params![connection_id, mapping_id, gen_i64, now_i64],
+            )?;
+            Ok(())
+        })
+    }
+}
+
+impl<E: SqlEngine> crate::StoreReader<'_, E> {
+    /// Durably bound mapping pin for `connection_id` from `_norn_source_binding`.
+    ///
+    /// # Errors
+    /// Store errors.
+    pub fn source_mapping_binding(&self, connection_id: &str) -> Result<Option<String>, CellError> {
+        use crate::engine::params;
+        use crate::source_cursor::SOURCE_BINDING;
+        self.conn.query_optional(
+            &format!(
+                "SELECT \"mapping_id\" FROM \"{SOURCE_BINDING}\" WHERE \"connection_id\" = ?1"
+            ),
+            params![connection_id],
+            |row| row.get(0),
+        )
     }
 }

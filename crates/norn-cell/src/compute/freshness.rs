@@ -183,11 +183,26 @@ fn strict_connection_cursors(connection: &ObjectRecord) -> BTreeMap<String, Stri
     out
 }
 
+/// Canonical revision-pinned mapping binding (`<artifact_id>@<version>#<sha256>`)
+/// so installing a new mapping revision under the same artifact ID never
+/// inherits cursor coverage or completeness from its predecessor.
+///
+/// # Errors
+/// Canonical encoding errors from [`norn_checker::ArtifactRef::of`].
+pub fn mapping_binding_key(artifact: &ArtifactEnvelope) -> Result<String, CellError> {
+    let pin =
+        norn_checker::ArtifactRef::of(artifact).map_err(|e| CellError::Encoding(e.to_string()))?;
+    Ok(format!(
+        "{}@{}#{}",
+        pin.artifact_id, pin.version, pin.sha256
+    ))
+}
+
 fn mapping_datasets_for_plan(
     model: &crate::Model,
     artifacts: &[ArtifactEnvelope],
     plan: &QuestionPlan,
-) -> BTreeMap<String, BTreeSet<String>> {
+) -> Result<BTreeMap<String, (String, BTreeSet<String>)>, CellError> {
     let mut entity_types = BTreeMap::new();
     for artifact in artifacts
         .iter()
@@ -216,7 +231,7 @@ fn mapping_datasets_for_plan(
                 .any(|link_target| related(target_type, link_target))
     };
 
-    let mut required: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut required: BTreeMap<String, (String, BTreeSet<String>)> = BTreeMap::new();
     for artifact in artifacts.iter().filter(|artifact| {
         artifact.kind() == ArtifactKind::Mapping && artifact.artifact_id != HOST_REPORT_MAPPING
     }) {
@@ -228,6 +243,7 @@ fn mapping_datasets_for_plan(
         else {
             continue;
         };
+        let mut binding_key: Option<String> = None;
         for map in &mapping.maps {
             let Some(target_type) = entity_types.get(&map.target.entity) else {
                 continue;
@@ -240,23 +256,37 @@ fn mapping_datasets_for_plan(
                     .map_or(map.source.dataset.as_str(), |nested| {
                         nested.dataset.as_str()
                     });
+                let key = match &binding_key {
+                    Some(existing) => existing.clone(),
+                    None => {
+                        let computed = mapping_binding_key(artifact)?;
+                        binding_key = Some(computed.clone());
+                        computed
+                    }
+                };
                 required
                     .entry(artifact.artifact_id.clone())
-                    .or_default()
+                    .or_insert_with(|| (key, BTreeSet::new()))
+                    .1
                     .insert(dataset.to_owned());
             }
         }
     }
-    required
+    Ok(required)
+}
+
+struct ConnectedBinding {
+    mapping_id: String,
+    binding_key: String,
+    datasets: BTreeSet<String>,
 }
 
 /// Disjoint required source bindings for one plan: real connections (each
-/// pinned to its expected `mapping_id`) kept strictly separate from unconnected
-/// fallback mappings so a real connection whose ID equals another mapping's ID
-/// can never swallow or satisfy that unconnected mapping.
+/// pinned to its expected `mapping_id` and revision `binding_key`) kept
+/// strictly separate from unconnected fallback mappings.
 #[derive(Default)]
 struct RequiredBindings {
-    connected: BTreeMap<String, (String, BTreeSet<String>)>,
+    connected: BTreeMap<String, ConnectedBinding>,
     unconnected: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -280,7 +310,7 @@ impl RequiredBindings {
 }
 
 fn assemble_required_bindings(
-    mapping_datasets: BTreeMap<String, BTreeSet<String>>,
+    mapping_datasets: BTreeMap<String, (String, BTreeSet<String>)>,
     connections: &[ObjectRecord],
     configured: &BTreeMap<String, String>,
 ) -> RequiredBindings {
@@ -303,14 +333,18 @@ fn assemble_required_bindings(
         }
     }
     let mut required = RequiredBindings::default();
-    for (mapping_id, datasets) in mapping_datasets {
+    for (mapping_id, (binding_key, datasets)) in mapping_datasets {
         if let Some(conn_ids) = by_mapping.get(&mapping_id) {
             for conn_id in conn_ids {
                 required
                     .connected
                     .entry(conn_id.clone())
-                    .or_insert_with(|| (mapping_id.clone(), BTreeSet::new()))
-                    .1
+                    .or_insert_with(|| ConnectedBinding {
+                        mapping_id: mapping_id.clone(),
+                        binding_key: binding_key.clone(),
+                        datasets: BTreeSet::new(),
+                    })
+                    .datasets
                     .extend(datasets.iter().cloned());
             }
         } else {
@@ -328,7 +362,7 @@ fn bindings_to_required(bindings: &RequiredBindings) -> RequiredSources {
     let mut out: BTreeMap<String, BTreeSet<String>> = bindings
         .connected
         .iter()
-        .map(|(source, (_, datasets))| (source.clone(), datasets.clone()))
+        .map(|(source, req)| (source.clone(), req.datasets.clone()))
         .collect();
     for (mapping_id, key) in bindings.unconnected_keys() {
         if let Some(datasets) = bindings.unconnected.get(mapping_id) {
@@ -516,7 +550,7 @@ impl<E: SqlEngine> CellStore<E> {
             return Ok((RequiredBindings::default(), Vec::new()));
         };
         let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&active.canonical_set)?;
-        let mapping_datasets = mapping_datasets_for_plan(self.model(), &artifacts, plan);
+        let mapping_datasets = mapping_datasets_for_plan(self.model(), &artifacts, plan)?;
         if mapping_datasets.is_empty() {
             return Ok((RequiredBindings::default(), Vec::new()));
         }
@@ -580,7 +614,7 @@ impl<E: SqlEngine> CellStore<E> {
             .into_iter()
             .map(|record| (record.id.clone(), record))
             .collect();
-        self.build_live_snapshot(&bindings, &connections)
+        self.build_live_snapshot(world, &bindings, &connections)
     }
 
     /// Reconstruct the connector frontier (`source_cursors` and `watermarks`)
@@ -611,11 +645,12 @@ impl<E: SqlEngine> CellStore<E> {
             .into_iter()
             .map(|record| (record.id.clone(), record))
             .collect();
+        let reader = self.read();
         let mut snapshot = SourceFreshnessSnapshot::default();
         for key in bindings.unconnected_keys().into_values() {
             snapshot.source_cursors.entry(key).or_default();
         }
-        for (source_id, (expected_mapping, datasets)) in &bindings.connected {
+        for (source_id, req) in &bindings.connected {
             snapshot
                 .source_cursors
                 .entry(source_id.clone())
@@ -623,8 +658,13 @@ impl<E: SqlEngine> CellStore<E> {
             let Some(conn) = connections.get(source_id) else {
                 continue;
             };
-            let mapping_matches = conn.values.get("mapping_id").and_then(RuntimeValue::as_str)
-                == Some(expected_mapping.as_str());
+            let mapping_matches = conn_matches_mapping_binding(
+                &reader,
+                world,
+                conn,
+                &req.mapping_id,
+                &req.binding_key,
+            )?;
             let conn_healthy = mapping_matches
                 && conn.values.get("status").and_then(RuntimeValue::as_str) == Some("ok");
             let heartbeat_ms = conn
@@ -633,7 +673,7 @@ impl<E: SqlEngine> CellStore<E> {
                 .and_then(RuntimeValue::as_str)
                 .and_then(parse_rfc3339_ms);
             let cursors = strict_connection_cursors(conn);
-            for dataset in datasets {
+            for dataset in &req.datasets {
                 let Some(cursor_json) = cursors.get(dataset).cloned() else {
                     continue;
                 };
@@ -664,6 +704,7 @@ impl<E: SqlEngine> CellStore<E> {
 
     fn build_live_snapshot(
         &self,
+        world: &str,
         bindings: &RequiredBindings,
         connections: &BTreeMap<String, ObjectRecord>,
     ) -> Result<SourceFreshnessSnapshot, CellError> {
@@ -672,7 +713,7 @@ impl<E: SqlEngine> CellStore<E> {
         for key in bindings.unconnected_keys().into_values() {
             snapshot.source_cursors.entry(key).or_default();
         }
-        for (source_id, (expected_mapping, datasets)) in &bindings.connected {
+        for (source_id, req) in &bindings.connected {
             snapshot
                 .source_cursors
                 .entry(source_id.clone())
@@ -681,12 +722,20 @@ impl<E: SqlEngine> CellStore<E> {
             let bound_mapping = reader.source_mapping_binding(source_id)?;
             let binding_matches = bound_mapping
                 .as_deref()
-                .is_none_or(|bound| bound == expected_mapping.as_str());
-            let mapping_matches = binding_matches
-                && conn
-                    .and_then(|c| c.values.get("mapping_id"))
-                    .and_then(RuntimeValue::as_str)
-                    == Some(expected_mapping.as_str());
+                .is_none_or(|bound| bound == req.binding_key.as_str());
+            let conn_matches = conn
+                .map(|c| {
+                    conn_matches_mapping_binding(
+                        &reader,
+                        world,
+                        c,
+                        &req.mapping_id,
+                        &req.binding_key,
+                    )
+                })
+                .transpose()?
+                .unwrap_or(false);
+            let mapping_matches = binding_matches && conn_matches;
             let conn_healthy = mapping_matches
                 && conn
                     .and_then(|c| c.values.get("status"))
@@ -699,7 +748,7 @@ impl<E: SqlEngine> CellStore<E> {
             let cursors = reader.source_cursors(source_id)?;
             let conn_cursors = conn.map_or_else(BTreeMap::new, strict_connection_cursors);
             let pending = reader.pending_source_datasets(source_id)?;
-            for dataset in datasets {
+            for dataset in &req.datasets {
                 let Some(cursor_json) = cursors
                     .get(dataset)
                     .and_then(|record| validate_cursor_json(&record.cursor_json))
@@ -711,12 +760,6 @@ impl<E: SqlEngine> CellStore<E> {
                 else {
                     continue;
                 };
-                // A live answer reports `complete` (and thus may become `Exact`
-                // and traceable) only when the durable `source.Connection` report
-                // at the current frontier matches the expected mapping and
-                // validated cursor and records a valid `last_sync_ended_at`
-                // heartbeat, so pinned historical `:trace` reconstructs the exact
-                // same frontier.
                 let report_matches = conn_cursors.get(dataset) == Some(&cursor_json);
                 let heartbeat_ms = conn_heartbeat_ms;
                 let complete = conn_healthy
@@ -747,157 +790,90 @@ impl<E: SqlEngine> CellStore<E> {
         }
         Ok(snapshot)
     }
-
-    /// Persist `connection_id -> mapping_id` in `_norn_source_binding` under
-    /// the active fencing lease so cursor reuse requires a proven mapping match
-    /// even when `source.Connection` reports are absent or unreadable.
-    ///
-    /// # Errors
-    /// [`CellError::SourceLeaseFenced`], [`CellError::OutOfRange`], or store errors.
-    pub fn bind_source_mapping(
-        &mut self,
-        connection_id: &str,
-        mapping_id: &str,
-        lease_id: &str,
-        generation: u64,
-        now_ms: u64,
-    ) -> Result<(), CellError> {
-        use crate::engine::params;
-        use crate::source_cursor::{SOURCE_BINDING, verify_active_lease};
-        let gen_i64 =
-            i64::try_from(generation).map_err(|_| CellError::OutOfRange("binding generation"))?;
-        let now_i64 =
-            i64::try_from(now_ms).map_err(|_| CellError::OutOfRange("binding updated_at_ms"))?;
-        self.write_tx(|| {
-            verify_active_lease(&self.conn, connection_id, lease_id, generation, now_ms)?;
-            self.conn.execute(
-                &format!(
-                    "INSERT OR REPLACE INTO \"{SOURCE_BINDING}\" \
-                     (\"connection_id\", \"mapping_id\", \"generation\", \"updated_at_ms\") \
-                     VALUES (?1, ?2, ?3, ?4)"
-                ),
-                params![connection_id, mapping_id, gen_i64, now_i64],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Clear durable cursors/replays and rebind `connection_id` to `mapping_id`
-    /// under the active lease. Refuses if unprocessed pending captures remain.
-    ///
-    /// # Errors
-    /// [`CellError::SourceLeaseFenced`], [`CellError::SourceCursorConflict`],
-    /// [`CellError::OutOfRange`], or store errors.
-    pub fn reset_source_cursors(
-        &mut self,
-        connection_id: &str,
-        mapping_id: &str,
-        lease_id: &str,
-        generation: u64,
-        now_ms: u64,
-    ) -> Result<(), CellError> {
-        use crate::engine::params;
-        use crate::source_cursor::{
-            SOURCE_BINDING, SOURCE_CURSOR, SOURCE_PENDING, verify_active_lease,
-        };
-        let gen_i64 =
-            i64::try_from(generation).map_err(|_| CellError::OutOfRange("binding generation"))?;
-        let now_i64 =
-            i64::try_from(now_ms).map_err(|_| CellError::OutOfRange("binding updated_at_ms"))?;
-        self.write_tx(|| {
-            verify_active_lease(&self.conn, connection_id, lease_id, generation, now_ms)?;
-            let pending: Option<String> = self.conn.query_optional(
-                &format!("SELECT \"dataset\" FROM \"{SOURCE_PENDING}\" WHERE \"connection_id\" = ?1 AND \"processed\" = 0 LIMIT 1"),
-                params![connection_id],
-                |row| row.get(0),
-            )?;
-            if let Some(dataset) = pending {
-                return Err(CellError::SourceCursorConflict {
-                    connection_id: connection_id.to_owned(),
-                    dataset,
-                    expected: None,
-                    actual: Some("pending".to_owned()),
-                });
-            }
-            self.conn.execute(
-                &format!("DELETE FROM \"{SOURCE_CURSOR}\" WHERE \"connection_id\" = ?1"),
-                params![connection_id],
-            )?;
-            self.conn.execute(
-                &format!("DELETE FROM \"{SOURCE_PENDING}\" WHERE \"connection_id\" = ?1"),
-                params![connection_id],
-            )?;
-            self.conn.execute(
-                &format!(
-                    "INSERT OR REPLACE INTO \"{SOURCE_BINDING}\" \
-                     (\"connection_id\", \"mapping_id\", \"generation\", \"updated_at_ms\") \
-                     VALUES (?1, ?2, ?3, ?4)"
-                ),
-                params![connection_id, mapping_id, gen_i64, now_i64],
-            )?;
-            Ok(())
-        })
-    }
 }
 
 impl<E: SqlEngine> crate::StoreReader<'_, E> {
-    /// Durably bound `mapping_id` for `connection_id` from `_norn_source_binding`.
+    /// Resolve the active definition set's revision-pinned mapping binding
+    /// (`<artifact_id>@<version>#<sha256>`) for `mapping_id`, if installed.
     ///
     /// # Errors
-    /// Store errors.
-    pub fn source_mapping_binding(&self, connection_id: &str) -> Result<Option<String>, CellError> {
-        use crate::engine::params;
-        use crate::source_cursor::SOURCE_BINDING;
-        self.conn.query_optional(
-            &format!(
-                "SELECT \"mapping_id\" FROM \"{SOURCE_BINDING}\" WHERE \"connection_id\" = ?1"
-            ),
-            params![connection_id],
-            |row| row.get(0),
-        )
+    /// Active definitions cannot be read or decoded.
+    pub fn active_mapping_binding(&self, mapping_id: &str) -> Result<Option<String>, CellError> {
+        let Some(active) = self.installed_definitions(None)? else {
+            return Ok(None);
+        };
+        let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&active.canonical_set)?;
+        for artifact in &artifacts {
+            if artifact.kind() == ArtifactKind::Mapping && artifact.artifact_id == mapping_id {
+                return Ok(Some(mapping_binding_key(artifact)?));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Whether live `source.Connection` `source_id` was committed while the
+    /// exact retained mapping revision `expected_binding` was active.
+    ///
+    /// # Errors
+    /// Store or definition decoding errors.
+    pub fn connection_matches_mapping_binding(
+        &self,
+        world: &str,
+        source_id: &str,
+        mapping_id: &str,
+        expected_binding: &str,
+    ) -> Result<bool, CellError> {
+        if !self.model().has_type(CONNECTION_TYPE) {
+            return Ok(false);
+        }
+        let Some(conn) = self.object(world, CONNECTION_TYPE, source_id)? else {
+            return Ok(false);
+        };
+        conn_matches_mapping_binding(self, world, &conn, mapping_id, expected_binding)
     }
 }
 
-impl<E, C, I, S: SqlEngine> crate::host::SqliteCell<E, C, I, S> {
-    /// See [`CellStore::bind_source_mapping`].
-    ///
-    /// # Errors
-    /// Lease fencing, out-of-range timestamp, or store errors.
-    pub fn bind_source_mapping(
-        &mut self,
-        connection_id: &str,
-        mapping_id: &str,
-        lease_id: &str,
-        generation: u64,
-        now_ms: u64,
-    ) -> Result<(), CellError> {
-        self.store_mut().bind_source_mapping(
-            connection_id,
-            mapping_id,
-            lease_id,
-            generation,
-            now_ms,
-        )
+fn conn_matches_mapping_binding<E: SqlEngine>(
+    reader: &crate::StoreReader<'_, E>,
+    world: &str,
+    conn: &ObjectRecord,
+    mapping_id: &str,
+    expected_binding: &str,
+) -> Result<bool, CellError> {
+    use crate::engine::params;
+    if conn.values.get("mapping_id").and_then(RuntimeValue::as_str) != Some(mapping_id) {
+        return Ok(false);
     }
-
-    /// See [`CellStore::reset_source_cursors`].
-    ///
-    /// # Errors
-    /// Lease fencing, pending captures conflict, out-of-range timestamp, or store errors.
-    pub fn reset_source_cursors(
-        &mut self,
-        connection_id: &str,
-        mapping_id: &str,
-        lease_id: &str,
-        generation: u64,
-        now_ms: u64,
-    ) -> Result<(), CellError> {
-        self.store_mut().reset_source_cursors(
-            connection_id,
-            mapping_id,
-            lease_id,
-            generation,
-            now_ms,
-        )
+    let ver =
+        i64::try_from(conn.version).map_err(|_| CellError::OutOfRange("connection version"))?;
+    let mut seq: Option<i64> = reader.conn.query_optional(
+        "SELECT commit_seq FROM _norn_fact_values \
+         WHERE world=?1 AND root_type=?2 AND id=?3 AND version=?4",
+        params![world, CONNECTION_TYPE, conn.id.as_str(), ver],
+        |row| row.get(0),
+    )?;
+    if seq.is_none() && world != MAIN_WORLD {
+        seq = reader.conn.query_optional(
+            "SELECT commit_seq FROM _norn_fact_values \
+             WHERE world=?1 AND root_type=?2 AND id=?3 AND version=?4",
+            params![MAIN_WORLD, CONNECTION_TYPE, conn.id.as_str(), ver],
+            |row| row.get(0),
+        )?;
     }
+    let Some(commit_seq) = seq.and_then(|s| u64::try_from(s).ok()) else {
+        return Ok(false);
+    };
+    let Some(def_ver) = reader.definitions_version_at(commit_seq)? else {
+        return Ok(false);
+    };
+    let Some(installed) = reader.installed_definitions(Some(def_ver))? else {
+        return Ok(false);
+    };
+    let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&installed.canonical_set)?;
+    for artifact in &artifacts {
+        if artifact.kind() == ArtifactKind::Mapping && artifact.artifact_id == mapping_id {
+            return Ok(mapping_binding_key(artifact)? == expected_binding);
+        }
+    }
+    Ok(false)
 }

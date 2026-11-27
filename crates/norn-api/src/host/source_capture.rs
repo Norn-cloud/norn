@@ -202,7 +202,7 @@ impl<E: SqlEngine> DevHost<E> {
         .map_err(SourceCaptureError::from_cell)
     }
 
-    /// Read the durably bound `mapping_id` for `connection_id`, if recorded.
+    /// Read the durably bound mapping pin for `connection_id`, if recorded.
     ///
     /// # Errors
     /// Host or store failure.
@@ -212,6 +212,44 @@ impl<E: SqlEngine> DevHost<E> {
         cell.store()
             .read()
             .source_mapping_binding(connection_id)
+            .map_err(Refusal::host)
+    }
+
+    /// Resolve the active definition set's revision-pinned mapping binding
+    /// (`<artifact_id>@<version>#<sha256>`) for `mapping_id`, if installed.
+    ///
+    /// # Errors
+    /// Host or store failure.
+    pub fn active_mapping_binding(&self, mapping_id: &str) -> Result<Option<String>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .active_mapping_binding(mapping_id)
+            .map_err(Refusal::host)
+    }
+
+    /// Whether `source.Connection` `connection_id` was written under the exact
+    /// retained mapping revision `expected_binding` (`<id>@<version>#<sha256>`).
+    ///
+    /// # Errors
+    /// Host or store failure.
+    pub fn connection_matches_mapping_binding(
+        &self,
+        connection_id: &str,
+        mapping_id: &str,
+        expected_binding: &str,
+    ) -> Result<bool, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .connection_matches_mapping_binding(
+                norn_cell::MAIN_WORLD,
+                connection_id,
+                mapping_id,
+                expected_binding,
+            )
             .map_err(Refusal::host)
     }
 
@@ -359,8 +397,12 @@ impl<E: SqlEngine> DevHost<E> {
                 captured_at_ms: advance.now_ms,
             })),
             Err(CellError::MappingPageSpansDispute) if delivered.len() > 1 => {
-                let full_digest = norn_cell::source_cursor::page_digest(advance, &delivered)
-                    .map_err(SourceCaptureError::from_cell)?;
+                let full_digest = norn_cell::source_cursor::page_digest(
+                    advance,
+                    Some(input.mapping.as_str()),
+                    &delivered,
+                )
+                .map_err(SourceCaptureError::from_cell)?;
                 Ok(SourceCapturePlan::DisputeFallback(Box::new(
                     DisputeFallbackState {
                         rows: delivered.into(),
