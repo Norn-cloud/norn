@@ -477,7 +477,7 @@ fn core_commitment_base() -> Vec<Value> {
     base
 }
 
-fn core_commitment_source(base: &[Value], extra_invariants: Value) -> DefinitionSource {
+fn core_commitment_source(base: &[Value], extra_invariants: &Value) -> DefinitionSource {
     let party = json!({
         "irVersion": "0.1", "kind": "entity",
         "artifactId": "test.Party.entity", "version": "0.1.0",
@@ -564,7 +564,7 @@ fn core_commitment_source(base: &[Value], extra_invariants: Value) -> Definition
 #[test]
 fn core_commitment_with_invariants_and_nullable_measures_runs_life_sound_4() {
     let base = core_commitment_base();
-    let make_source = |extra_invariants: Value| core_commitment_source(&base, extra_invariants);
+    let make_source = |extra_invariants: &Value| core_commitment_source(&base, extra_invariants);
 
     let make_bounds = |unit: &str, currency: &str, qty: &str| Bounds {
         object_type: "test.OrderCommitment".into(),
@@ -579,7 +579,7 @@ fn core_commitment_with_invariants_and_nullable_measures_runs_life_sound_4() {
     };
 
     // 1. Valid measure (unit = "each", currency = null, quantity = 5): sound with zero dead ends.
-    let sound_source = make_source(json!([]));
+    let sound_source = make_source(&json!([]));
     let graph = super::lifecycle_tests::authority(&sound_source)
         .lifecycle_graph(
             &sound_source,
@@ -609,7 +609,7 @@ fn core_commitment_with_invariants_and_nullable_measures_runs_life_sound_4() {
     );
 
     // 3. An integrity invariant that blocks every exit from `promised` is caught as LAW_BLOCKED_EXIT.
-    let blocked_source = make_source(json!([
+    let blocked_source = make_source(&json!([
         {
             "id": "no_terminal_small_qty",
             "expression": "(self.status != 'fulfilled' and self.status != 'cancelled' and self.status != 'breached') or self.quantity >= 10",
