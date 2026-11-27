@@ -293,13 +293,13 @@ function stringLiteralsOf(value: TaintValue): readonly string[] | null {
   if (value.kind === "string") return [value.value]
   if (value.kind === "number") return [value.raw]
   if (value.kind === "union") {
-    const out: string[] = []
+    const out = new Set<string>()
     for (const member of value.members) {
       const part = stringLiteralsOf(member)
       if (part === null) return null
-      out.push(...part)
+      for (const item of part) out.add(item)
     }
-    return out
+    return [...out]
   }
   return null
 }
@@ -311,13 +311,13 @@ function templateStringsOf(value: TaintValue): readonly string[] | null {
     return null
   }
   if (value.kind === "union") {
-    const out: string[] = []
+    const out = new Set<string>()
     for (const member of value.members) {
       const part = templateStringsOf(member)
       if (part === null) return null
-      out.push(...part)
+      for (const item of part) out.add(item)
     }
-    return out
+    return [...out]
   }
   return null
 }

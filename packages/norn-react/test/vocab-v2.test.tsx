@@ -1563,6 +1563,7 @@ describe("Capabilities parity and zero-Radix invariant", () => {
     expect(referencesRecordVersion('input.draft["recordVersion"]')).toBe(false)
     expect(referencesRecordVersion("({ v12: input, v3: input.record })[`v${1 + 2}`].recordVersion")).toBe(false)
     expect(referencesRecordVersion("({ v36: input, v18: input.record })[`v${2 * 3 ** 2}`].recordVersion")).toBe(false)
+    expect(referencesRecordVersion('({ keep: input, [input.draft.flag ? "keep" : "keep"]: input.record }).keep.recordVersion')).toBe(false)
   })
 
   test("runtime.readSecurity synchronously captures withholding across batched ok -> pending transitions", async () => {
