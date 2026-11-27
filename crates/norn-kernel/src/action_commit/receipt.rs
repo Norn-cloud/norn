@@ -1,9 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_ir::{
-    ActionEffectProgram, ActionRoot, FactChange, ObjectTypeName, RuntimeValue, SliceDeclaration,
-    SliceKey, UpsertWriteMode,
-};
+use norn_ir::{ActionRoot, FactChange, ObjectTypeName, SliceDeclaration, SliceKey};
 
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, FactExpectation, FactKey, FactWrite, JsonObject,
@@ -393,7 +390,7 @@ impl ActionReferenceReads {
 /// Whether `property` is a declared non-computed stored property on `declared`
 /// and every concrete subtype that reaches it. Computed properties may depend
 /// on unrelated classified fields and fail closed to whole-object lineage.
-fn non_computed_property(
+pub(super) fn non_computed_property(
     catalog: &crate::decision_commit::TypeCatalog<'_>,
     declared: &ObjectTypeName,
     property: &str,
@@ -512,7 +509,7 @@ fn collect_create_law_property_reads<'a>(
 
 /// Exact non-computed slice property operands read ONLY by `action.preconditions`,
 /// keyed by slice alias.
-fn create_precondition_alias_reads<'a>(
+pub(super) fn create_precondition_alias_reads<'a>(
     catalog: &crate::decision_commit::TypeCatalog<'_>,
     action: &'a ActionRoot,
 ) -> Option<BTreeMap<&'a str, BTreeSet<String>>> {
@@ -604,107 +601,10 @@ impl SliceReadMode<'_> {
     }
 }
 
-/// Precomputed per-entry slice read plan for a closed `CreateOnly` action.
-pub(super) struct CreateSlicePlan(Option<Vec<Vec<String>>>);
-
-impl CreateSlicePlan {
-    pub(super) fn mode_for(&self, index: usize) -> SliceReadMode<'_> {
-        let Some(plan) = &self.0 else {
-            return SliceReadMode::Full;
-        };
-        match plan.get(index) {
-            Some(props) if props.is_empty() => SliceReadMode::Reference,
-            Some(props) => SliceReadMode::Projected(props.as_slice()),
-            None => SliceReadMode::Full,
-        }
-    }
-}
-
-/// Plan per-entry `CreateOnly` slice reads before loading any slice facts,
-/// downgrading `reference_only` to `false` whenever any entry cannot be
-/// projected safely without metering unread classified fields.
-pub(super) fn prepare_create_slice_plan<H: CellHost + ?Sized>(
-    host: &H,
-    catalog: &crate::decision_commit::TypeCatalog<'_>,
-    action: &ActionRoot,
-    effective_input: &JsonObject,
-    reference_only: &mut bool,
-) -> CreateSlicePlan {
-    let create_only = matches!(
-        action.effect_program,
-        Some(ActionEffectProgram::UpsertInputObject {
-            write_mode: UpsertWriteMode::CreateOnly,
-            ..
-        })
-    );
-    if !(*reference_only && create_only) {
-        return CreateSlicePlan(None);
-    }
-    let planned = plan_create_projected_slice(host, catalog, action, effective_input);
-    if planned.is_none() {
-        *reference_only = false;
-    }
-    CreateSlicePlan(planned)
-}
-
-/// Plan the projected precondition properties per slice entry (merged by
-/// canonical key across duplicate aliases) and confirm `host` can project every
-/// non-empty property set without metering unread classified columns.
-fn plan_create_projected_slice<H: CellHost + ?Sized>(
-    host: &H,
-    catalog: &crate::decision_commit::TypeCatalog<'_>,
-    action: &ActionRoot,
-    effective_input: &JsonObject,
-) -> Option<Vec<Vec<String>>> {
-    let by_alias = create_precondition_alias_reads(catalog, action)?;
-    let model = crate::CommitModel::new(catalog);
-    let mut by_canonical: BTreeMap<FactKey, BTreeSet<String>> = BTreeMap::new();
-    let mut entry_canonicals: Vec<(&SliceDeclaration, FactKey)> =
-        Vec::with_capacity(action.slice.len());
-    for entry in &action.slice {
-        let SliceKey::Property { from, property } = &entry.key else {
-            return None;
-        };
-        if from != "input" {
-            return None;
-        }
-        let key = effective_input
-            .get(property.as_str())
-            .and_then(RuntimeValue::as_str)
-            .filter(|value| !value.trim().is_empty())?;
-        let canonical = model.canonical(&FactKey::new(entry.object_type.as_str(), key));
-        let props = by_alias.get(entry.name.as_str())?;
-        by_canonical
-            .entry(canonical.clone())
-            .or_default()
-            .extend(props.iter().cloned());
-        entry_canonicals.push((entry, canonical));
-    }
-    let mut per_entry = Vec::with_capacity(entry_canonicals.len());
-    for (entry, canonical) in entry_canonicals {
-        let props = by_canonical.get(&canonical)?;
-        if !props
-            .iter()
-            .all(|prop| non_computed_property(catalog, &entry.object_type, prop))
-        {
-            return None;
-        }
-        let prop_list: Vec<String> = props.iter().cloned().collect();
-        if !prop_list.is_empty() {
-            let prop_refs: Vec<&str> = prop_list.iter().map(String::as_str).collect();
-            if !host.supports_projected_read(&entry.object_type, &prop_refs) {
-                return None;
-            }
-        }
-        per_entry.push(prop_list);
-    }
-    Some(per_entry)
-}
-
 /// Exact non-computed `self.<prop>` operands read by retained governing laws on
-/// `target` for a closed `Upsert` patch. Fails closed (`None`) on forward or
-/// inverse link laws targeting `target`, link reads on `target`, whole-root
-/// reads, element paths, or computed fields.
+/// `target` for a closed existing-target mutation. Fails closed (`None`) on
+/// forward or inverse link laws targeting `target`, link reads on `target`,
+/// whole-root reads, element paths, or computed fields.
 pub(super) fn collect_patch_law_property_reads(
     catalog: &crate::decision_commit::TypeCatalog<'_>,
     target: &FactKey,
@@ -748,58 +648,4 @@ pub(super) fn collect_patch_law_property_reads(
         }
     }
     Some(())
-}
-
-/// Bind each proved `CreateOnly` slice alias's read properties onto its exact
-/// canonical `FactExpectation` in `references`, merging duplicate aliases and
-/// refusing if any reference is unaccounted for.
-pub(super) fn create_reference_property_reads(
-    catalog: &crate::decision_commit::TypeCatalog<'_>,
-    action: &ActionRoot,
-    target: &FactKey,
-    effective_input: &JsonObject,
-    references: &[FactExpectation],
-) -> Option<Vec<(FactExpectation, Vec<String>)>> {
-    let by_alias = create_slice_property_reads(catalog, action, target)?;
-    let model = crate::CommitModel::new(catalog);
-    let mut matched = vec![false; references.len()];
-    let mut merged: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
-    for entry in &action.slice {
-        let SliceKey::Property { from, property } = &entry.key else {
-            return None;
-        };
-        if from != "input" {
-            return None;
-        }
-        let key = effective_input
-            .get(property.as_str())
-            .and_then(RuntimeValue::as_str)
-            .filter(|value| !value.trim().is_empty())?;
-        let canonical = model.canonical(&FactKey::new(entry.object_type.as_str(), key));
-        let mut candidates = references
-            .iter()
-            .enumerate()
-            .filter(|(_, reference)| model.canonical(&reference.key) == canonical);
-        let (index, reference) = candidates.next()?;
-        if candidates.next().is_some() || reference.expected.0 == 0 {
-            return None;
-        }
-        *matched.get_mut(index)? = true;
-        let properties = by_alias.get(&entry.name)?;
-        if !properties.is_empty() {
-            merged
-                .entry(index)
-                .or_default()
-                .extend(properties.iter().cloned());
-        }
-    }
-    if !matched.iter().all(|seen| *seen) {
-        return None;
-    }
-    let mut property_reads = Vec::with_capacity(merged.len());
-    for (index, properties) in merged {
-        let reference = references.get(index)?.clone();
-        property_reads.push((reference, properties.into_iter().collect()));
-    }
-    Some(property_reads)
 }

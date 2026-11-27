@@ -2948,7 +2948,7 @@ fn naming_series_preconditions_and_connector_commands_share_one_fuel_budget() {
 }
 
 #[test]
-fn naming_series_replay_rechecks_current_schema_and_preconditions() {
+fn naming_series_replay_rechecks_current_schema_and_authz_without_rerunning_preconditions() {
     let types = naming_series_types("gapless_within_commit", "year");
     let catalog = TypeCatalog::new(&types);
     let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
@@ -2974,16 +2974,20 @@ fn naming_series_replay_rechecks_current_schema_and_preconditions() {
     assert_eq!(outcome_key(replay), "SO-ACME-2025-00001");
     assert_eq!(cell.ledger().len(), ledger_after_create);
 
-    let mut tightened = naming_series_action("commerce.named_order.create");
-    tightened.preconditions = vec![norn_ir::ZenExpression("name == \"BLOCKED\"".to_owned())];
-    let tightened_retry = naming_call(
-        &tightened,
+    // Replay returns the already-committed record after current authorization
+    // without re-evaluating preconditions (matching `Upsert` and `FireTransition`
+    // replay semantics so later mutations cannot break idempotent retries).
+    let mut post_commit_precond = naming_series_action("commerce.named_order.create");
+    post_commit_precond.preconditions =
+        vec![norn_ir::ZenExpression("name == \"BLOCKED\"".to_owned())];
+    let precond_retry = naming_call(
+        &post_commit_precond,
         "ACME",
         "series-replay-validation",
         1_767_243_600_000,
     );
-    let refusal = commit_action(&mut cell, &catalog, &tightened_retry, &Allow).unwrap_err();
-    assert_eq!(refusal.code(), "action.precondition_failed");
+    let replayed = commit_action(&mut cell, &catalog, &precond_retry, &Allow).unwrap();
+    assert_eq!(outcome_key(replayed), "SO-ACME-2025-00001");
     assert_eq!(cell.ledger().len(), ledger_after_create);
 
     let mut required_generated_key = naming_series_action("commerce.named_order.create");
@@ -4824,6 +4828,61 @@ fn ancestor_addressed_action_with_subtype_slice_read_commits_and_reports_version
 
     let replayed = commit_action(&mut cell, &catalog, &noop_call, &AllowSlice).unwrap();
     assert!(matches!(replayed, ActionOutcome::Replayed { .. }));
+    assert_legacy_ancestor_replay(&mut cell, &catalog, &noop, &AllowSlice);
+}
+
+fn assert_legacy_ancestor_replay(
+    cell: &mut Cell,
+    catalog: &TypeCatalog<'_>,
+    noop: &ActionRoot,
+    authorizer: &dyn ActionAuthorizer,
+) {
+    // A pre-upgrade ancestor-addressed receipt stored under `ORDER/SO-sub`
+    // must still replay cleanly after concrete subtype resolution.
+    let mut legacy_call = call(noop, "SO-sub", "noop-legacy-ancestor");
+    legacy_call.input =
+        serde_json::from_value(json!({ "so_number": "SO-sub", "note": "ready" })).unwrap();
+    legacy_call.object_type = Some(ObjectTypeName(ORDER.to_owned()));
+    let legacy_record = ActionCallRecord {
+        action_id: noop.action_id.clone(),
+        action_artifact_id: Some(legacy_call.action_artifact_id.to_owned()),
+        action_version: Some(legacy_call.action_version.to_owned()),
+        effect_kind: Some("upsert_input_object".to_owned()),
+        rule_binding: None,
+        row_operations: Vec::new(),
+        object: FactKey::new(ORDER, "SO-sub"),
+        input: legacy_call.input.clone(),
+        effective_input: Some(legacy_call.input.clone()),
+        derived_values: BTreeMap::new(),
+        precondition_outcomes: Vec::new(),
+        parameter_pins: Vec::new(),
+        actor: legacy_call.actor.clone(),
+        turn: legacy_call.turn.id.clone(),
+        transition: String::new(),
+        from: String::new(),
+        to: String::new(),
+        trace: None,
+        principal_inputs: None,
+    };
+    cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: FactKey::new(
+                norn_kernel::ACTION_CALL_TYPE,
+                format!("{}/{}", noop.action_id, legacy_call.idempotency_key),
+            ),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: legacy_record.to_values(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .unwrap();
+    let legacy_replayed = commit_action(cell, catalog, &legacy_call, authorizer).unwrap();
+    assert!(matches!(
+        legacy_replayed,
+        ActionOutcome::Replayed { record } if record.object == FactKey::new(ORDER, "SO-sub")
+    ));
 }
 
 /// AUTH-INDEPENDENT-PERSON (#618), exhaustive-finite over a small identity

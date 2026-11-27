@@ -227,18 +227,21 @@ where
         });
     }
 
-    let target = FactKey {
-        object_type: object_type.clone(),
+    let requested_target = FactKey {
+        object_type,
         key: object_id.clone(),
     };
     let pre_auth_footprint = authorizer.action_policy_read_footprint(action);
-    let state = authorize_upsert_target(
+    let (target, state) = authorize_upsert_target(
         host,
+        catalog,
         call,
         &preparation.effective_input,
         authorizer,
-        &target,
+        object_kind,
+        &requested_target,
     )?;
+    let object_type = target.object_type.clone();
     if naming_series.is_some() && matches!(write_mode, UpsertWriteMode::Upsert) && !state.exists() {
         return Err(ActionRefusal::WriteModeFailed {
             mode: "upsert".to_owned(),
@@ -286,7 +289,13 @@ where
             &state,
         )?;
     }
-    if let Some(outcome) = replay(&recorded, &record, &call.idempotency_key)? {
+    if let Some(outcome) = replay(
+        catalog,
+        &recorded,
+        &record,
+        &requested_target,
+        &call.idempotency_key,
+    )? {
         return Ok(outcome);
     }
 
@@ -302,7 +311,8 @@ where
         &state,
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
-    if slice.reference_only && slice.policy_footprint != pre_auth_footprint {
+    if slice.tracked_reads.is_exact() && slice.tracked_reads.policy_footprint != pre_auth_footprint
+    {
         return Err(ActionRefusal::TargetNotFound);
     }
     preparation.precondition_outcomes = check_action_preconditions(
@@ -435,9 +445,9 @@ where
                 .unwrap_or_else(|| preparation.effective_input.clone()),
             remaining_fuel: &mut preparation.remaining_fuel,
             target,
+            requested_target,
             slice: slice.facts,
-            reference_only: slice.reference_only,
-            policy_footprint: slice.policy_footprint,
+            tracked_reads: slice.tracked_reads,
             link_reads: slice.link_reads,
             predicate_reads: slice.predicate_reads,
             precondition_reads: slice.precondition_keys,
