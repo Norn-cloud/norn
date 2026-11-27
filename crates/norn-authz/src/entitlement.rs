@@ -11,7 +11,9 @@ use norn_ir::entitlement::{
 };
 
 use crate::pdp::ConjunctOutcome;
-use crate::request::{AccessRequest, AttrValue, EntitlementInput, PrincipalInput, ScopeKey};
+use crate::request::{
+    AccessRequest, AttrValue, EntitlementInput, PrincipalInput, ScopeKey, is_exact_value,
+};
 
 /// Stable validation error for an imported entitlement row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -70,7 +72,8 @@ pub fn validate_entitlement(input: &EntitlementInput) -> Result<(), EntitlementV
     if !valid_object_type(row.target_type.as_str()) {
         return Err(EntitlementValidationError::IdentifierInvalid);
     }
-    if !valid_object_type(row.grantee.object_type().as_str()) || !exact(row.grantee.key()) {
+    if !valid_object_type(row.grantee.object_type().as_str()) || !is_exact_value(row.grantee.key())
+    {
         return Err(EntitlementValidationError::IdentifierInvalid);
     }
     match &row.grantee {
@@ -96,7 +99,7 @@ pub fn validate_entitlement(input: &EntitlementInput) -> Result<(), EntitlementV
         return Err(EntitlementValidationError::ActionsInvalid);
     }
     for (name, value) in &row.scope_attributes {
-        if !valid_member(name) || !exact(value) {
+        if !valid_member(name) || !is_exact_value(value) {
             return Err(EntitlementValidationError::ScopeAttributeInvalid);
         }
     }
@@ -111,7 +114,7 @@ pub fn validate_entitlement(input: &EntitlementInput) -> Result<(), EntitlementV
             if !valid_member(link.as_str()) {
                 return Err(EntitlementValidationError::LinkInvalid);
             }
-            if !valid_object_type(target.object_type.as_str()) || !exact(&target.key) {
+            if !valid_object_type(target.object_type.as_str()) || !is_exact_value(&target.key) {
                 return Err(EntitlementValidationError::IdentifierInvalid);
             }
         }
@@ -260,7 +263,10 @@ pub(crate) fn evaluate_entitlements(
         if row.status == EntitlementStatus::Shadow && !explain_shadow {
             continue;
         }
-        if !grantee_is_candidate(&row.grantee, &request.principal) || &input.scope != scope {
+        if !grantee_is_candidate(&row.grantee, &request.principal)
+            || &input.scope != scope
+            || &request.resource.scope != scope
+        {
             continue;
         }
         let outcome = match validate_entitlement(input) {
@@ -418,7 +424,10 @@ fn match_matches(
         return Err(EntitlementDenialReason::ActionMismatch);
     }
     for (name, value) in &row.scope_attributes {
-        if request.resource.attributes.get(name) != Some(&AttrValue::String(value.clone())) {
+        if !matches!(
+            request.resource.attributes.get(name),
+            Some(AttrValue::String(actual)) if actual == value
+        ) {
             return Err(EntitlementDenialReason::ScopeAttributeMismatch);
         }
     }
@@ -455,9 +464,7 @@ fn resource_link_matches(
     expected: &ObjectRef,
 ) -> bool {
     match attributes.get(link) {
-        Some(AttrValue::Record(_)) => {
-            attributes.get(link).and_then(object_ref).as_ref() == Some(expected)
-        }
+        Some(value @ AttrValue::Record(_)) => object_ref(value).as_ref() == Some(expected),
         Some(AttrValue::Set(values)) => values
             .iter()
             .filter_map(object_ref)
@@ -516,13 +523,8 @@ fn condition_kind(condition: &EntitlementCondition) -> &'static str {
     }
 }
 
-fn exact(value: &str) -> bool {
-    let value = value.trim();
-    !value.is_empty() && value != "*"
-}
-
 fn evidence_value(value: &str) -> bool {
-    exact(value) && value.len() <= MAX_EVIDENCE_VALUE_BYTES
+    is_exact_value(value) && value.len() <= MAX_EVIDENCE_VALUE_BYTES
 }
 
 fn bounded_text(value: &str) -> String {
@@ -569,7 +571,7 @@ fn valid_member(value: &str) -> bool {
 }
 
 fn valid_action_id(value: &str) -> bool {
-    exact(value)
+    is_exact_value(value)
         && value.split('.').all(|part| {
             !part.is_empty()
                 && part.chars().all(|character| {

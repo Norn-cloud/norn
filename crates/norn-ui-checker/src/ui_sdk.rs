@@ -180,11 +180,14 @@ fn prop_type(kind: &OptionKind) -> Option<WidgetValueType> {
         OptionKind::Boolean => Some(WidgetValueType::Boolean),
         OptionKind::Text => Some(WidgetValueType::Text),
         OptionKind::Number => Some(WidgetValueType::Number),
-        OptionKind::Enum(values) if values.iter().all(Value::is_string) => {
+        OptionKind::Enum(values) if !values.is_empty() && values.iter().all(Value::is_string) => {
             Some(WidgetValueType::Text)
         }
-        OptionKind::Enum(values) if values.iter().all(Value::is_boolean) => {
+        OptionKind::Enum(values) if !values.is_empty() && values.iter().all(Value::is_boolean) => {
             Some(WidgetValueType::Boolean)
+        }
+        OptionKind::Enum(values) if !values.is_empty() && values.iter().all(Value::is_number) => {
+            Some(WidgetValueType::Number)
         }
         OptionKind::Enum(_) | OptionKind::Union(..) => Some(WidgetValueType::Json),
         OptionKind::Callback(_) | OptionKind::Other => None,
@@ -351,18 +354,6 @@ fn call_kind(call: &norn_ir::WidgetMachineCall) -> &'static str {
 /// that lacks one cannot draw the contract and must refuse it.
 #[must_use]
 pub fn renderer_capabilities(ux: &WidgetUx) -> BTreeSet<String> {
-    fn walk(node: &WidgetNode, out: &mut BTreeSet<String>) {
-        out.insert(format!("component:{}", component_kind(&node.component)));
-        if let Some((component, _)) = primitive_of(node) {
-            out.insert(format!("ui-sdk:{component}"));
-        }
-        for behavior in &node.behaviors {
-            out.insert(format!("behavior:{}", behavior.0));
-        }
-        for child in &node.children {
-            walk(child, out);
-        }
-    }
     let mut out: BTreeSet<String> = AGENT_CAPABILITIES
         .iter()
         .map(|capability| (*capability).to_owned())
@@ -373,7 +364,17 @@ pub fn renderer_capabilities(ux: &WidgetUx) -> BTreeSet<String> {
         out.insert("read:context".to_owned());
     }
     for page in &ux.pages {
-        walk(&page.root, &mut out);
+        let mut stack = vec![&page.root];
+        while let Some(node) = stack.pop() {
+            out.insert(format!("component:{}", component_kind(&node.component)));
+            if let Some((component, _)) = primitive_of(node) {
+                out.insert(format!("ui-sdk:{component}"));
+            }
+            for behavior in &node.behaviors {
+                out.insert(format!("behavior:{}", behavior.0));
+            }
+            stack.extend(node.children.iter().rev());
+        }
         if let Some(view) = &page.view {
             out.insert(format!("view:{}", view_kind(view.kind)));
         }
@@ -423,17 +424,15 @@ pub fn missing_renderer_capabilities(
 /// binding to the server (L5).
 #[must_use]
 pub fn agent_steps(ux: &WidgetUx) -> BTreeMap<String, Vec<String>> {
-    fn walk(node: &WidgetNode, out: &mut BTreeMap<String, Vec<String>>) {
-        if let Some((_, primitive)) = primitive_of(node) {
-            out.insert(node.node_id.clone(), primitive.agent_actions.clone());
-        }
-        for child in &node.children {
-            walk(child, out);
-        }
-    }
     let mut out = BTreeMap::new();
     for page in &ux.pages {
-        walk(&page.root, &mut out);
+        let mut stack = vec![&page.root];
+        while let Some(node) = stack.pop() {
+            if let Some((_, primitive)) = primitive_of(node) {
+                out.insert(node.node_id.clone(), primitive.agent_actions.clone());
+            }
+            stack.extend(node.children.iter().rev());
+        }
     }
     out
 }
@@ -552,5 +551,24 @@ mod tests {
         assert_eq!(open_change.payload.len(), 1);
         assert!(entry("ui-sdk:no-such-primitive").is_none());
         assert!(entry("dialog").is_none());
+    }
+
+    #[test]
+    fn prop_type_maps_numeric_enums_and_rejects_empty_enum_as_json() {
+        assert_eq!(
+            prop_type(&OptionKind::Enum(vec![Value::from(12), Value::from(24)])),
+            Some(WidgetValueType::Number)
+        );
+        assert_eq!(
+            prop_type(&OptionKind::Enum(Vec::new())),
+            Some(WidgetValueType::Json)
+        );
+        let date_input = entry("ui-sdk:date-input").expect("date-input");
+        let hour_cycle = date_input
+            .props
+            .iter()
+            .find(|prop| prop.field_id == "hourCycle")
+            .expect("hourCycle");
+        assert_eq!(hour_cycle.value_type, WidgetValueType::Number);
     }
 }

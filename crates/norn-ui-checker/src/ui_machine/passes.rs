@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_checker::soundness::{self, Completion};
-use norn_expr::Type;
+use norn_expr::{Type, ZenTypeEnv};
 use norn_ir::{
     WidgetCallOutcome, WidgetComponent, WidgetControlInput, WidgetMachineCall, WidgetMachineEffect,
     WidgetMachineEvent, WidgetMachineEventSource, WidgetMachineState, WidgetMachineTransition,
@@ -12,15 +12,15 @@ use norn_ir::{
 
 use super::{
     ABSORBING_STATE, AWAIT_OUTSIDE_PENDING, CANCEL_OUTSIDE_PENDING, COMPLETION_UNKNOWN,
-    COMPONENT_GUARD_OUTSIDE_CATALOG, CONTROL_WITHOUT_EVENT, ERROR_WITHOUT_RECOVERY, Env,
+    COMPONENT_GUARD_OUTSIDE_CATALOG, CONTROL_WITHOUT_EVENT, ERROR_WITHOUT_RECOVERY,
     FAILURE_WITHOUT_RETRY_OR_CLOSE, Facts, Finding, INITIAL_NOT_IDLE, INPUT_FREE_CYCLE,
     INVALID_EVENT, INVALID_EXPRESSION, MachineChecker, NONDETERMINISTIC, OUTCOME_CODE_UNDECLARED,
     OUTCOME_IMPOSSIBLE, OUTCOME_OUTSIDE_PENDING, OutcomeValue, PENDING_ABANDONED,
     PENDING_ENTERED_WITHOUT_START, PENDING_OUTCOME_UNCOVERED, PENDING_WITHOUT_AWAIT,
     PENDING_WITHOUT_DEADLINE, START_WITHOUT_PENDING, TERMINAL_HAS_TRANSITION, TRAP_REGION,
     UNKNOWN_REFERENCE, UNREACHABLE_STATE, collect_nodes, event_payload, field_type, is_failure,
-    matched_outcomes, outcome_name, outcome_of, page_net, possible_outcomes, show_outcome,
-    subscribed,
+    machine_env, matched_outcomes, outcome_name, outcome_of, page_net, possible_outcomes,
+    show_outcome, subscribed,
 };
 
 struct TransitionCheck<'m, 'a> {
@@ -241,7 +241,12 @@ impl<'m> MachineChecker<'m> {
         }
     }
 
-    fn check_effects(&mut self, effects: &[WidgetMachineEffect], env: Env<'_>, pointer: &str) {
+    fn check_effects(
+        &mut self,
+        effects: &[WidgetMachineEffect],
+        env: Option<&Result<ZenTypeEnv, String>>,
+        pointer: &str,
+    ) {
         for (index, effect) in effects.iter().enumerate() {
             let at = format!("{pointer}/effects/{index}");
             match effect {
@@ -255,15 +260,17 @@ impl<'m> MachineChecker<'m> {
                                 .to_owned(),
                         );
                     }
-                    for (member, expression) in input {
-                        // Any type fits here; the operation's request schema judges the value and
-                        // the server refuses a body that does not fit it.
-                        self.check_expression(
-                            expression.as_str(),
-                            env,
-                            &Type::Json,
-                            format!("{at}/input/{member}"),
-                        );
+                    if let Some(env) = env {
+                        for (member, expression) in input {
+                            // Any type fits here; the operation's request schema judges the value and
+                            // the server refuses a body that does not fit it.
+                            self.check_expression_with_env(
+                                expression.as_str(),
+                                env,
+                                &Type::Json,
+                                format!("{at}/input/{member}"),
+                            );
+                        }
                     }
                 }
                 WidgetMachineEffect::Navigate { item_id } => {
@@ -332,27 +339,7 @@ impl<'m> MachineChecker<'m> {
                 "a page machine's guards are ZEN expressions; only a catalog entry's machine leaves a guard to its component".to_owned(),
             );
         }
-        let payload = event.map_or_default(event_payload);
-        let env = (field_types, &payload);
-        if let Some(guard) = &transition.guard {
-            self.check_expression(guard.as_str(), env, &Type::Bool, format!("{pointer}/guard"));
-        }
-        for (field, expression) in &transition.assign {
-            match field_types.get(field) {
-                None => self.push(
-                    UNKNOWN_REFERENCE,
-                    format!("{pointer}/assign/{field}"),
-                    format!("field `{field}` is not declared"),
-                ),
-                Some(expected) => self.check_expression(
-                    expression.as_str(),
-                    env,
-                    expected,
-                    format!("{pointer}/assign/{field}"),
-                ),
-            }
-        }
-        self.check_effects(&transition.effects, env, &pointer);
+        self.check_transition_expressions(transition, event, field_types, &pointer);
         let (Some(from_state), Some(target_state), Some(event)) = (from_state, target_state, event)
         else {
             return;
@@ -409,6 +396,7 @@ impl<'m> MachineChecker<'m> {
             index,
             transition,
             from_state,
+            target_state,
             event,
             pointer,
             ..
@@ -429,9 +417,61 @@ impl<'m> MachineChecker<'m> {
                     event.event_id
                 ),
             );
-        } else if transition.guard.is_none() && transition.component_guard.is_none() {
+        } else if transition.guard.is_none()
+            && transition.component_guard.is_none()
+            && from != target_state.state_id.as_str()
+            && target_state.role != WidgetStateRole::Error
+        {
             facts.recovers.insert(from);
         }
+    }
+
+    fn check_transition_expressions(
+        &mut self,
+        transition: &WidgetMachineTransition,
+        event: Option<&WidgetMachineEvent>,
+        field_types: &BTreeMap<String, Type>,
+        pointer: &str,
+    ) {
+        let has_expressions = transition.guard.is_some()
+            || !transition.assign.is_empty()
+            || transition.effects.iter().any(|effect| {
+                matches!(effect, WidgetMachineEffect::Start { input, .. } if !input.is_empty())
+            });
+        let env = has_expressions.then(|| {
+            let payload = event.map_or_default(event_payload);
+            machine_env((field_types, &payload))
+        });
+        if let Some(guard) = &transition.guard
+            && let Some(env) = &env
+        {
+            self.check_expression_with_env(
+                guard.as_str(),
+                env,
+                &Type::Bool,
+                format!("{pointer}/guard"),
+            );
+        }
+        for (field, expression) in &transition.assign {
+            match field_types.get(field) {
+                None => self.push(
+                    UNKNOWN_REFERENCE,
+                    format!("{pointer}/assign/{field}"),
+                    format!("field `{field}` is not declared"),
+                ),
+                Some(expected) => {
+                    if let Some(env) = &env {
+                        self.check_expression_with_env(
+                            expression.as_str(),
+                            env,
+                            expected,
+                            format!("{pointer}/assign/{field}"),
+                        );
+                    }
+                }
+            }
+        }
+        self.check_effects(&transition.effects, env.as_ref(), pointer);
     }
 
     fn check_transition_outcome(&mut self, check: &TransitionCheck<'m, '_>, facts: &mut Facts<'m>) {
@@ -466,6 +506,9 @@ impl<'m> MachineChecker<'m> {
         if let Some((outcome, category)) = outcome {
             match (from_state.role, &from_state.awaits) {
                 (WidgetStateRole::Pending, Some(call)) => {
+                    if outcome == WidgetCallOutcome::Cancelled {
+                        facts.cancelled_transitions.push((index, from));
+                    }
                     let possible = possible_outcomes(call, true, subscribed(self.machine, call));
                     let matched = matched_outcomes(outcome, category);
                     if matched.iter().all(|value| !possible.contains(value)) {
@@ -677,8 +720,18 @@ impl<'m> MachineChecker<'m> {
         }
     }
 
-    /// Every outcome the awaited call can have has an unguarded exit.
+    /// Every outcome the awaited call can have has an unguarded exit, and `cancelled` is only
+    /// handled when the pending state actually offers a `Cancel` effect.
     fn check_coverage(&mut self, facts: &Facts<'m>) {
+        for &(index, from) in &facts.cancelled_transitions {
+            if !facts.cancellable.contains(from) {
+                self.push(
+                    OUTCOME_IMPOSSIBLE,
+                    format!("{}/transitions/{index}/on", self.base),
+                    format!("the call `{from}` awaits cannot end `cancelled`"),
+                );
+            }
+        }
         for (index, state) in self.machine.states.iter().enumerate() {
             let (WidgetStateRole::Pending, Some(call)) = (state.role, &state.awaits) else {
                 continue;
