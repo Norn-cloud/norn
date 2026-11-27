@@ -237,7 +237,11 @@ fn sync_post_stamp_fields<H: PackHost>(
     let key_props: BTreeSet<&str> = object_type
         .identity
         .iter()
-        .flat_map(|spec| spec.properties.iter().map(|prop| prop.as_str()))
+        .flat_map(|spec| {
+            spec.properties
+                .iter()
+                .map(norn_kernel::pack_mbt_support::PropertyId::as_str)
+        })
         .collect();
     let mut changes = Vec::new();
     for (prop, val) in values {

@@ -886,22 +886,23 @@ fn fire_transition_expect_ok<H: PackHost>(
         transition_id,
         turn_nonce,
     };
-    let before = match super::seed::try_fire_receipt_transition_action(host, &receipt_spec)? {
-        Some(before) => before,
-        None => {
-            let before = host.ledger_len();
-            fire_transition_decision(
-                host,
-                ctx.catalog,
-                ty_name,
-                prop,
-                id,
-                transition_id,
-                turn_nonce,
-            )
-            .map_err(|err| format!("{ty_name}.{prop}.{transition_id} failed: {err}"))?;
-            before
-        }
+    let before = if let Some(before) =
+        super::seed::try_fire_receipt_transition_action(host, &receipt_spec)?
+    {
+        before
+    } else {
+        let before = host.ledger_len();
+        fire_transition_decision(
+            host,
+            ctx.catalog,
+            ty_name,
+            prop,
+            id,
+            transition_id,
+            turn_nonce,
+        )
+        .map_err(|err| format!("{ty_name}.{prop}.{transition_id} failed: {err}"))?;
+        before
     };
     if host.ledger_len() != before.saturating_add(1) {
         return Err(format!(
