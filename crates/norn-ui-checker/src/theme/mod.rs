@@ -599,9 +599,11 @@ pub fn validate_theme_payload(payload: &JsonValue, artifact_id: Option<&str>) ->
     findings.found
 }
 
-/// A workspace has at most one active theme: a second active theme under another id is refused, so
-/// the theme Studio applies is never a matter of order. A theme is replaced by applying it under
-/// the same id, or cleared by deprecating it (`lifecycle: "deprecated"`).
+/// A workspace has at most one active theme (`lifecycle: "active"`): a second active theme under
+/// another id is refused, so the theme Studio applies is never a matter of order. Non-active
+/// lifecycles (draft, proposed, approved, deprecated, superseded, rejected) do not occupy the
+/// workspace's active theme slot. A theme is replaced by applying it under the same id, or cleared
+/// by deprecating it (`lifecycle: "deprecated"`).
 #[must_use]
 pub fn check_theme_set<'a>(
     artifacts: impl IntoIterator<Item = &'a norn_ir::ArtifactEnvelope>,
@@ -610,12 +612,7 @@ pub fn check_theme_set<'a>(
         .into_iter()
         .filter(|artifact| {
             matches!(artifact.payload, norn_ir::ArtifactPayload::Theme(_))
-                && !matches!(
-                    artifact.lifecycle,
-                    norn_ir::ArtifactLifecycle::Deprecated
-                        | norn_ir::ArtifactLifecycle::Superseded
-                        | norn_ir::ArtifactLifecycle::Rejected
-                )
+                && matches!(artifact.lifecycle, norn_ir::ArtifactLifecycle::Active)
         })
         .map(|artifact| artifact.artifact_id.as_str())
         .collect();

@@ -1,8 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { useEffect, useLayoutEffect } from "react"
 import { Dot } from "@/components/system/status-dot"
 import { clearPublishedServedTheme, useAppearance } from "@/lib/appearance"
 import { studioScopeKey } from "@/lib/definitions"
-import { useServedTheme } from "@/lib/workspace-theme"
+import { subscribeThemeCacheEviction, useServedTheme } from "@/lib/workspace-theme"
 
 const useIsomorphicLayoutEffect = typeof globalThis.window === "undefined" ? useEffect : useLayoutEffect
 
@@ -13,6 +14,7 @@ const useIsomorphicLayoutEffect = typeof globalThis.window === "undefined" ? use
  * bleed, and a served theme the shared gate refuses never paints.
  */
 export function WorkspaceThemeFeed() {
+  const queryClient = useQueryClient()
   const { scope, served } = useServedTheme()
   const { setServed } = useAppearance()
   const scopeKey = scope === null ? null : studioScopeKey(scope)
@@ -25,6 +27,12 @@ export function WorkspaceThemeFeed() {
   useIsomorphicLayoutEffect(() => () => {
     clearPublishedServedTheme(scopeKey)
   }, [scopeKey])
+
+  // Clear synchronously the instant sign-out (`endSession` -> `forgetReads`) evicts read queries
+  // from the TanStack Query cache, before the follow-up `/api/me` response resolves.
+  useIsomorphicLayoutEffect(() => subscribeThemeCacheEviction(queryClient, () => {
+    clearPublishedServedTheme()
+  }), [queryClient])
 
   if (served.kind !== "invalid") return null
   const first = served.issues[0]

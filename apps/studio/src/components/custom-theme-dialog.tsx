@@ -62,6 +62,61 @@ export function captureThemeEditorSnapshot(scope: StudioScope | null, served: Se
   return null
 }
 
+const EMPTY_PROBLEMS: readonly Problem[] = []
+
+/**
+ * Immutable session state for one open lifecycle of `CustomThemeDialog`.
+ *
+ * - `openedScope` is pinned once on open (even while `served.kind === "loading"`) and never
+ *   overwritten while the dialog remains open.
+ * - If the decided workspace changes away from `openedScope` at any point (including before the
+ *   initial load finishes), `scopeChanged` latches `true` and `snapshot` is cleared so Apply/Reset
+ *   can never target another workspace.
+ * - Once `served` settles for `openedScope`, `snapshot` and `captured: true` lock the revision so
+ *   background feed updates never overwrite `expectedVersion` or the user's draft.
+ */
+export interface ThemeEditorSession {
+  readonly openedScope: StudioScope | null
+  readonly snapshot: ThemeEditorSnapshot | null
+  readonly captured: boolean
+  readonly scopeChanged: boolean
+}
+
+export function openThemeEditorSession(
+  liveScope: StudioScope | null,
+  served: ServedTheme,
+): ThemeEditorSession {
+  return {
+    openedScope: liveScope,
+    snapshot: captureThemeEditorSnapshot(liveScope, served),
+    captured: served.kind !== "loading",
+    scopeChanged: false,
+  }
+}
+
+export function reconcileThemeEditorSession(
+  session: ThemeEditorSession,
+  liveScope: StudioScope | null,
+  served: ServedTheme,
+): ThemeEditorSession {
+  if (session.scopeChanged) return session
+  if (!sameStudioScope(liveScope, session.openedScope)) {
+    return {
+      openedScope: session.openedScope,
+      snapshot: null,
+      captured: true,
+      scopeChanged: true,
+    }
+  }
+  if (session.captured || served.kind === "loading") return session
+  return {
+    openedScope: session.openedScope,
+    snapshot: captureThemeEditorSnapshot(session.openedScope, served),
+    captured: true,
+    scopeChanged: false,
+  }
+}
+
 const problemsOf = (result: ThemeApplyResult): readonly Problem[] => {
   if (result.applied) return []
   if ("findings" in result) return result.findings.map((finding) => ({ path: finding.pointer, message: finding.message }))
@@ -85,61 +140,63 @@ export function CustomThemeDialog({
   const queryClient = useQueryClient()
   const { skin, customTheme } = useAppearance()
   const { scope: liveScope, served } = useServedTheme()
-  const [snapshot, setSnapshot] = useState<ThemeEditorSnapshot | null>(null)
-  const [scopeChanged, setScopeChanged] = useState(false)
+  const [session, setSession] = useState<ThemeEditorSession | null>(null)
   const [draft, setDraft] = useState("")
-  const [problems, setProblems] = useState<readonly Problem[]>([])
+  const [problems, setProblems] = useState<readonly Problem[]>(EMPTY_PROBLEMS)
   const [refusedBy, setRefusedBy] = useState<"studio" | "cell">("studio")
   const [pending, setPending] = useState<"apply" | "reset" | null>(null)
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const capturedRef = useRef(false)
+  const sessionRef = useRef<ThemeEditorSession | null>(null)
   const dirtyRef = useRef(false)
-  const openedScopeRef = useRef<StudioScope | null>(null)
 
   useEffect(() => () => {
     if (copyTimer.current !== null) clearTimeout(copyTimer.current)
   }, [])
 
-  // Capture draft, scope and expectedVersion together once when opened; never let a background feed
-  // revision silently bump expectedVersion while the user edits an earlier draft.
+  // Pin `openedScope` immediately on open (even while loading), reconcile once when that scope's
+  // initial read settles, and immediately invalidate if the decided workspace changes before or
+  // after capture. Repeated loading renders for the same scope are strict no-ops.
   useEffect(() => {
     if (!open) {
-      capturedRef.current = false
-      dirtyRef.current = false
-      openedScopeRef.current = null
-      setSnapshot(null)
-      setScopeChanged(false)
+      if (sessionRef.current !== null) {
+        sessionRef.current = null
+        dirtyRef.current = false
+        setSession(null)
+      }
       return
     }
-    if (!capturedRef.current) {
-      openedScopeRef.current = liveScope
-      if (!dirtyRef.current) {
-        setDraft(exportStudioThemeJson(skin, served.kind === "theme" ? served.theme : customTheme))
-      }
-      setProblems([])
+    const current = sessionRef.current
+    if (current === null) {
+      const opened = openThemeEditorSession(liveScope, served)
+      sessionRef.current = opened
+      dirtyRef.current = false
+      setSession(opened)
+      setDraft(exportStudioThemeJson(skin, served.kind === "theme" ? served.theme : customTheme))
+      setProblems(EMPTY_PROBLEMS)
       setCopied(false)
-      setScopeChanged(false)
       if (copyTimer.current !== null) {
         clearTimeout(copyTimer.current)
         copyTimer.current = null
       }
-      const initial = captureThemeEditorSnapshot(liveScope, served)
-      setSnapshot(initial)
-      if (served.kind !== "loading") {
-        capturedRef.current = true
-      }
       return
     }
-    if (!sameStudioScope(liveScope, openedScopeRef.current)) {
-      setScopeChanged(true)
-      setSnapshot(null)
+    const next = reconcileThemeEditorSession(current, liveScope, served)
+    if (next === current) return
+    sessionRef.current = next
+    setSession(next)
+    if (!next.scopeChanged && !dirtyRef.current) {
+      setDraft(exportStudioThemeJson(skin, served.kind === "theme" ? served.theme : null))
     }
   }, [open, liveScope, served, skin, customTheme])
 
+  const snapshot = session?.snapshot ?? null
+  const scopeChanged = session?.scopeChanged ?? false
+  const loadingInitial = open && session !== null && !session.captured
+
   const settle = async (targetScope: StudioScope, result: ThemeApplyResult) => {
     if (result.applied) {
-      setProblems([])
+      setProblems(EMPTY_PROBLEMS)
       await queryClient.invalidateQueries({ queryKey: servedThemeKey(targetScope) })
       onOpenChange(false)
       return
@@ -158,6 +215,11 @@ export function CustomThemeDialog({
     if (scopeChanged) {
       setRefusedBy("studio")
       setProblems([{ path: null, message: WORKSPACE_CHANGED_MESSAGE }])
+      return
+    }
+    if (loadingInitial) {
+      setRefusedBy("studio")
+      setProblems([{ path: null, message: "Still loading this workspace's current theme revision. Try again in a moment." }])
       return
     }
     if (snapshot === null) {
@@ -180,7 +242,7 @@ export function CustomThemeDialog({
   }
 
   const reset = async () => {
-    if (scopeChanged || snapshot === null || !snapshot.hasActiveTheme) return
+    if (scopeChanged || loadingInitial || snapshot === null || !snapshot.hasActiveTheme) return
     setPending("reset")
     try {
       await settle(
@@ -242,7 +304,7 @@ export function CustomThemeDialog({
                 onClick={() => {
                   dirtyRef.current = true
                   setDraft(JSON.stringify(preset, null, 2))
-                  setProblems([])
+                  setProblems(EMPTY_PROBLEMS)
                 }}
               >
                 <Palette aria-hidden className="size-3" />
@@ -263,7 +325,7 @@ export function CustomThemeDialog({
             onChange={(event) => {
               dirtyRef.current = true
               setDraft(event.target.value)
-              if (problems.length > 0) setProblems([])
+              if (problems.length > 0) setProblems(EMPTY_PROBLEMS)
             }}
             className="h-72 w-full resize-y rounded-xl border border-input bg-well p-3 font-mono text-meta leading-relaxed text-foreground outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
           />
@@ -290,7 +352,7 @@ export function CustomThemeDialog({
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3">
           {snapshot?.hasActiveTheme ? (
-            <Button type="button" variant="ghost" size="sm" disabled={pending !== null || scopeChanged} onClick={() => void reset()}>
+            <Button type="button" variant="ghost" size="sm" disabled={pending !== null || scopeChanged || loadingInitial} onClick={() => void reset()}>
               {pending === "reset" ? <Loader2 aria-hidden className="size-3.5 animate-spin" /> : <RotateCcw aria-hidden className="size-3.5" />}Reset to default
             </Button>
           ) : (
@@ -298,7 +360,7 @@ export function CustomThemeDialog({
           )}
           <div className="flex items-center gap-2">
             <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="button" variant="default" size="sm" disabled={pending !== null || scopeChanged} onClick={() => void applyToWorkspace()}>
+            <Button type="button" variant="default" size="sm" disabled={pending !== null || scopeChanged || loadingInitial} onClick={() => void applyToWorkspace()}>
               {pending === "apply" && <Loader2 aria-hidden className="size-3.5 animate-spin" />}Use for this workspace
             </Button>
           </div>

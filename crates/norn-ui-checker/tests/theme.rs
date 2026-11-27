@@ -24,7 +24,7 @@ fn theme_json(id: &str, payload: &Value) -> Value {
         "namespace": "workspace",
         "name": "Workspace theme",
         "version": "0.1.0",
-        "lifecycle": "draft",
+        "lifecycle": "active",
         "scope": { "orgId": "org_demo", "environmentId": "dev" },
         "dependencies": [],
         "provenance": { "source": "authoring_sdk" },
@@ -236,6 +236,30 @@ fn a_workspace_holds_one_theme() {
         },
     );
     assert_eq!(error_codes(&after_reset), BTreeSet::new(), "{after_reset:#?}");
+
+    // Draft, proposed, and approved themes do not occupy the active workspace theme slot and must
+    // not block an active theme under a different id.
+    for lifecycle in [
+        norn_ir::ArtifactLifecycle::Draft,
+        norn_ir::ArtifactLifecycle::Proposed,
+        norn_ir::ArtifactLifecycle::Approved,
+    ] {
+        let mut non_active = theme("workspace.theme.staging", &valid);
+        non_active.lifecycle = lifecycle.clone();
+        let admitted = check_artifact_set(
+            &[theme("workspace.theme", &valid)],
+            &EntityArtifactSetContext {
+                registry: &registry,
+                base: &[non_active],
+                tenant: None,
+            },
+        );
+        assert_eq!(
+            error_codes(&admitted),
+            BTreeSet::new(),
+            "non-active theme ({lifecycle:?}) should not block an active theme: {admitted:#?}"
+        );
+    }
 }
 
 #[test]

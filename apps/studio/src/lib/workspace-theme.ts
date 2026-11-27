@@ -1,4 +1,5 @@
-import { queryOptions, useQuery } from "@tanstack/react-query"
+import { type QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useCallback, useMemo, useSyncExternalStore } from "react"
 import { THEME_KIND, WORKSPACE_THEME_ID } from "../../../../tools/norn-ts/src/builder/theme.ts"
 import {
   CellUnavailable,
@@ -57,7 +58,11 @@ type Fetch = (input: string, init?: RequestInit) => Promise<Response>
  */
 export const THEME_FEED_INTERVAL_MS = 4_000
 
-const INACTIVE_LIFECYCLES = new Set(["deprecated", "superseded", "rejected"])
+/** Shared stable sentinels so `useServedTheme()` never churns object identity while loading or unavailable. */
+export const LOADING_SERVED_THEME: ServedTheme = { kind: "loading" }
+export const UNAVAILABLE_SERVED_THEME: ServedTheme = { kind: "unavailable" }
+
+const THEME_EVICTION_QUERY_ROOTS = new Set(["workspace-theme", "studio-scope", "studio-mode"])
 
 const pinned = (scope: StudioScope) => async () => scope
 
@@ -113,7 +118,7 @@ function extractThemeEntries(artifacts: readonly unknown[]): readonly CatalogThe
     entries.push({
       id: typeof raw.artifactId === "string" && raw.artifactId !== "" ? raw.artifactId : WORKSPACE_THEME_ID,
       artifactVersion: typeof raw.version === "string" && raw.version !== "" ? raw.version : "0.1.0",
-      lifecycle: typeof raw.lifecycle === "string" ? raw.lifecycle : "active",
+      lifecycle: typeof raw.lifecycle === "string" ? raw.lifecycle : "",
       payload: raw.payload,
     })
   }
@@ -140,9 +145,11 @@ export async function readServedTheme(scope: StudioScope, fetcher: Fetch = defau
   }
   const definitionsVersion = body.version
   const allThemes = extractThemeEntries(body.artifacts)
-  const active = allThemes.filter((entry) => !INACTIVE_LIFECYCLES.has(entry.lifecycle))
+  // Fail-closed positive allowlist: only `lifecycle: "active"` themes occupy the workspace slot.
+  const active = allThemes.filter((entry) => entry.lifecycle === "active")
   if (active.length === 0) {
-    const retired = allThemes.find((entry) => entry.id === WORKSPACE_THEME_ID) ?? allThemes[0]
+    const retired = allThemes.find((entry) => entry.id === WORKSPACE_THEME_ID)
+      ?? allThemes.find((entry) => entry.lifecycle === "deprecated")
     return {
       kind: "none",
       version: definitionsVersion,
@@ -171,7 +178,7 @@ export const servedThemeKey = (scope: StudioScope | null) => ["workspace-theme",
 export function servedThemeQuery(scope: StudioScope | null, fetcher: Fetch = defaultFetch) {
   return queryOptions({
     queryKey: servedThemeKey(scope),
-    queryFn: ({ signal }) => (scope === null ? Promise.resolve<ServedTheme>({ kind: "unavailable" }) : readServedTheme(scope, fetcher, signal)),
+    queryFn: ({ signal }) => (scope === null ? Promise.resolve<ServedTheme>(UNAVAILABLE_SERVED_THEME) : readServedTheme(scope, fetcher, signal)),
     refetchInterval: scope === null ? false : THEME_FEED_INTERVAL_MS,
     refetchOnWindowFocus: true,
     retry: false,
@@ -179,17 +186,61 @@ export function servedThemeQuery(scope: StudioScope | null, fetcher: Fetch = def
 }
 
 /**
+ * Whether a TanStack Query cache event evicts or resets the workspace theme (for example,
+ * `endSession` -> `forgetReads` calling `removeQueries` synchronously before `/api/me` resolves).
+ */
+export function isThemeCacheEvictionEvent(event: {
+  readonly type: string
+  readonly query: { readonly queryKey: readonly unknown[]; readonly state: { readonly data: unknown } }
+}): boolean {
+  const root = event.query.queryKey[0]
+  if (typeof root !== "string" || !THEME_EVICTION_QUERY_ROOTS.has(root)) return false
+  if (event.type === "removed") return true
+  return root === "workspace-theme" && event.type === "updated" && event.query.state.data === undefined
+}
+
+/** Subscribe to TanStack Query cache evictions/resets that invalidate the painted workspace theme. */
+export function subscribeThemeCacheEviction(client: QueryClient, onEvict: () => void): () => void {
+  return client.getQueryCache().subscribe((event) => {
+    if (isThemeCacheEvictionEvent(event)) onEvict()
+  })
+}
+
+/**
  * The theme served for the decided workspace (`useWorkspace()`). Bound directly to the workspace
- * provider's decided scope so switching workspaces never reads or retains the prior workspace's
- * theme while an account refresh is pending.
+ * provider's decided scope, stabilized across loading renders, and cross-checked against the live
+ * TanStack Query cache so cache removal on sign-out never re-publishes a stale observer result.
  */
 export function useServedTheme(): { readonly scope: StudioScope | null; readonly served: ServedTheme } {
+  const queryClient = useQueryClient()
   const workspace = useWorkspace()
-  const scope = workspace.kind === "live" ? workspace.scope : null
-  const query = useQuery({ ...servedThemeQuery(scope), enabled: workspace.kind === "live" })
-  if (workspace.kind === "deciding") return { scope: null, served: { kind: "loading" } }
-  if (workspace.kind !== "live") return { scope: null, served: { kind: "unavailable" } }
-  return { scope, served: query.data ?? (query.isPending ? { kind: "loading" } : { kind: "unavailable" }) }
+  const liveScope = workspace.kind === "live" ? workspace.scope : null
+  const scopeKey = liveScope === null ? null : studioScopeKey(liveScope)
+  const queryKey = useMemo(() => servedThemeKey(liveScope), [scopeKey])
+  const options = useMemo(
+    () => ({ ...servedThemeQuery(liveScope), enabled: workspace.kind === "live" }),
+    [scopeKey, workspace.kind],
+  )
+  const query = useQuery(options)
+
+  const subscribeCache = useCallback(
+    (notify: () => void) => queryClient.getQueryCache().subscribe((event) => {
+      const root = event.query.queryKey[0]
+      if (typeof root === "string" && THEME_EVICTION_QUERY_ROOTS.has(root)) notify()
+    }),
+    [queryClient],
+  )
+  const readCached = () =>
+    liveScope === null ? undefined : queryClient.getQueryCache().find<ServedTheme>({ queryKey, exact: true })?.state.data
+  const cached = useSyncExternalStore(subscribeCache, readCached, readCached)
+
+  const served: ServedTheme = workspace.kind === "deciding"
+    ? LOADING_SERVED_THEME
+    : workspace.kind !== "live"
+      ? UNAVAILABLE_SERVED_THEME
+      : cached ?? (query.isPending || query.data !== undefined ? LOADING_SERVED_THEME : UNAVAILABLE_SERVED_THEME)
+
+  return useMemo(() => ({ scope: liveScope, served }), [liveScope, served])
 }
 
 /** What applying or resetting the workspace theme came to, in the cell's own words. */

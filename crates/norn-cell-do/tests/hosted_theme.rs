@@ -49,7 +49,8 @@ fn theme(id: &str, version: &str, payload: &str) -> Value {
 }
 
 /// What a live subscription to the catalog holds: the digest of the answer's status and body,
-/// and the active theme it serves (deprecated/superseded themes are cleared).
+/// and the active theme it serves (only `lifecycle: "active"` paints; draft, proposed, deprecated,
+/// etc. do not).
 #[allow(
     clippy::unwrap_used,
     clippy::indexing_slicing,
@@ -67,11 +68,7 @@ fn subscribed(cell: &mut Cell) -> (String, Option<Value>) {
         .unwrap()
         .iter()
         .filter(|artifact| {
-            artifact["kind"] == "theme"
-                && !matches!(
-                    artifact["lifecycle"].as_str(),
-                    Some("deprecated" | "superseded" | "rejected")
-                )
+            artifact["kind"] == "theme" && artifact["lifecycle"].as_str() == Some("active")
         })
         .cloned()
         .collect();
@@ -191,7 +188,8 @@ fn hosted_theme_rejects_unknown_fields_named_colors_invisible_warning_and_suppor
     assert_eq!(stale.status, 409, "{}", stale.body);
     assert_eq!(json_of(&stale)["code"], "defs.stale");
 
-    // Unknown top-level fields on a theme payload are refused fail-closed before round-trip.
+    // Unknown top-level fields on a theme payload are refused fail-closed at both :plan and :apply.
+    let before_refusals = cell.version();
     let mut with_unknown: Value = serde_json::from_str(VALID_LUMA).unwrap();
     with_unknown["fontFamily"] = json!("serif");
     let unknown_artifact = [theme_with_lifecycle(
@@ -207,24 +205,29 @@ fn hosted_theme_rejects_unknown_fields_named_colors_invisible_warning_and_suppor
         "{}",
         planned_unknown.body
     );
-    let applied_unknown = apply(&mut cell, "owner", &unknown_artifact);
+    let applied_unknown =
+        cell.change(APPLY_PATH, Some("owner"), &unknown_artifact, Some(before_refusals));
     assert_eq!(applied_unknown.status, 422, "{}", applied_unknown.body);
     assert!(
         refusal_codes(&applied_unknown).contains(&"theme.validation.schema".to_owned()),
         "{}",
         applied_unknown.body
     );
+    assert_eq!(cell.version(), before_refusals);
 
-    // Non-canonical named wire colors (e.g. "red") and invisible warning text ("#0000") are refused.
+    // Non-canonical named wire colors (e.g. "red") and invisible warning text ("#0000") are
+    // refused directly at :apply without advancing the definitions version.
     let named = [theme(THEME_ID, "0.2.0", NAMED_COLOR)];
-    let refused_named = apply(&mut cell, "owner", &named);
+    let refused_named = cell.change(APPLY_PATH, Some("owner"), &named, Some(before_refusals));
     assert_eq!(refused_named.status, 422, "{}", refused_named.body);
     assert_eq!(
         refusal_codes(&refused_named),
         vec!["theme.validation.invalid_color".to_owned()]
     );
+    assert_eq!(cell.version(), before_refusals);
     let invisible = [theme(THEME_ID, "0.2.0", INVISIBLE_WARNING)];
-    let refused_warning = apply(&mut cell, "owner", &invisible);
+    let refused_warning =
+        cell.change(APPLY_PATH, Some("owner"), &invisible, Some(before_refusals));
     assert_eq!(refused_warning.status, 422, "{}", refused_warning.body);
     assert!(
         refusal_codes(&refused_warning)
@@ -233,6 +236,7 @@ fn hosted_theme_rejects_unknown_fields_named_colors_invisible_warning_and_suppor
         "{}",
         refused_warning.body
     );
+    assert_eq!(cell.version(), before_refusals);
 
     // Resetting to default deprecates the workspace theme through the exact same :apply path;
     // GET /v1/definitions stops serving an active theme and its digest changes (pushed), and a
@@ -254,4 +258,53 @@ fn hosted_theme_rejects_unknown_fields_named_colors_invisible_warning_and_suppor
     let (after_reapply, served_again) = subscribed(&mut cell);
     assert_ne!(after_reapply, after_reset);
     assert_eq!(served_again.unwrap()["payload"]["name"], "Polar Monochrome");
+}
+
+#[test]
+fn hosted_draft_and_proposed_themes_do_not_paint_or_block_active_theme() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let luma_payload: Value = serde_json::from_str(VALID_LUMA).unwrap();
+    let polar_payload: Value = serde_json::from_str(VALID_POLAR).unwrap();
+
+    let draft = [theme_with_lifecycle(
+        "workspace.theme.draft",
+        "0.1.0",
+        "draft",
+        &luma_payload,
+    )];
+    let applied_draft = apply(&mut cell, "owner", &draft);
+    assert_eq!(applied_draft.status, 200, "{}", applied_draft.body);
+    assert_eq!(subscribed(&mut cell).1, None, "draft theme must not paint");
+
+    let proposed = [theme_with_lifecycle(
+        "workspace.theme.proposed",
+        "0.1.0",
+        "proposed",
+        &polar_payload,
+    )];
+    let applied_proposed = apply(&mut cell, "owner", &proposed);
+    assert_eq!(applied_proposed.status, 200, "{}", applied_proposed.body);
+    assert_eq!(subscribed(&mut cell).1, None, "proposed theme must not paint");
+
+    // An active theme under a different id is admitted without conflict and becomes the sole
+    // served active theme.
+    let active = [theme(THEME_ID, "0.1.0", VALID_LUMA)];
+    let installed = apply(&mut cell, "owner", &active);
+    assert_eq!(installed.status, 200, "{}", installed.body);
+    let served = subscribed(&mut cell).1.expect("active theme is served");
+    assert_eq!(served["artifactId"], THEME_ID);
+    assert_eq!(served["lifecycle"], "active");
+
+    // A second active theme under another id is still refused.
+    let second_active = [theme("workspace.theme.second", "0.1.0", VALID_POLAR)];
+    let current = cell.version();
+    let refused = cell.change(APPLY_PATH, Some("owner"), &second_active, Some(current));
+    assert_eq!(refused.status, 422, "{}", refused.body);
+    assert!(
+        refusal_codes(&refused).contains(&"theme.validation.multiple".to_owned()),
+        "{}",
+        refused.body
+    );
+    assert_eq!(cell.version(), current);
 }

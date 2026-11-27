@@ -2,20 +2,27 @@
 // gates it again, and applies or resets it through `POST /v1/cell/definitions:apply`.
 // Includes regression tests for Findings 1, 3, 4, 5, and 6.
 import { expect, test } from "bun:test"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClient, QueryClientProvider, QueryObserver } from "@tanstack/react-query"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { applyAppearance, clearPublishedServedTheme } from "../src/lib/appearance.tsx"
-import { captureThemeEditorSnapshot } from "../src/components/custom-theme-dialog.tsx"
+import {
+  captureThemeEditorSnapshot,
+  openThemeEditorSession,
+  reconcileThemeEditorSession,
+} from "../src/components/custom-theme-dialog.tsx"
 import { readDocument } from "../src/lib/exact.ts"
+import { endSession, type Account } from "../src/lib/session.ts"
 import { parseServedTheme, parseStudioTheme, type StudioTheme } from "../src/lib/studio-theme.ts"
 import { WorkspaceProvider, workspaceOf, type Workspace } from "../src/lib/workspace.tsx"
 import {
+  LOADING_SERVED_THEME,
   applyWorkspaceTheme,
   nextThemeArtifactVersion,
   readServedTheme,
   resetWorkspaceTheme,
   servedThemeKey,
+  subscribeThemeCacheEviction,
   themeArtifactEnvelope,
   useServedTheme,
   type ServedTheme,
@@ -242,4 +249,221 @@ test("Finding 6: useServedTheme follows WorkspaceProvider's decided scope, never
   expect(readUnder(liveB)).toEqual({ scope: scopeB, served: { kind: "loading" } })
   // Transitioning to recorded mode clears to unavailable.
   expect(readUnder(recorded)).toEqual({ scope: null, served: { kind: "unavailable" } })
+})
+
+test("R2 Finding 1: draft, proposed, approved, and missing-lifecycle themes never paint or block an active theme", async () => {
+  const withLifecycle = (id: string, lifecycle: string | undefined) => {
+    const base = themeArtifactEnvelope(scope, theme, { id, version: "0.1.0", lifecycle: "active" })
+    if (lifecycle === undefined) {
+      const { lifecycle: _omit, ...rest } = base
+      return rest
+    }
+    return { ...base, lifecycle }
+  }
+
+  const draft = withLifecycle("workspace.theme.draft", "draft")
+  const proposed = withLifecycle("workspace.theme.proposed", "proposed")
+  const approved = withLifecycle("workspace.theme.approved", "approved")
+  const missing = withLifecycle("workspace.theme.missing", undefined)
+
+  // None of draft/proposed/approved/missing-lifecycle paints or hijacks the default artifact id.
+  expect(await readServedTheme(scope, host(200, catalog(5, [draft, proposed, approved, missing])).fetcher)).toEqual({
+    kind: "none",
+    version: 5,
+  })
+
+  // Alongside an active theme under another id, only the active theme paints (no multiple-theme error).
+  const active = themeArtifactEnvelope(scope, theme, { id: "workspace.theme", version: "0.2.0", lifecycle: "active" })
+  expect(await readServedTheme(scope, host(200, catalog(6, [draft, proposed, active])).fetcher)).toEqual({
+    kind: "theme",
+    id: "workspace.theme",
+    artifactVersion: "0.2.0",
+    theme,
+    version: 6,
+  })
+})
+
+test("R2 Finding 2: editor opened during loading pins opening scope, rejects workspace switches before load, and avoids loading churn", () => {
+  const scopeA = { orgId: "org_a", environmentId: "env_a" }
+  const scopeB = { orgId: "org_b", environmentId: "env_b" }
+
+  // useServedTheme() returns the shared LOADING_SERVED_THEME sentinel on every render while loading.
+  const queryClient = new QueryClient()
+  const emptyCatalog = readDocument<readonly []>("[]", "live")
+  const liveA = workspaceOf({ status: "success", data: { kind: "live", scope: scopeA, catalog: emptyCatalog, counts: {}, publishedQuestions: new Set(), builtins: [] } })
+  const deciding = workspaceOf({ status: "pending" })
+  const sample = (workspace: Workspace) => {
+    let observed: ReturnType<typeof useServedTheme> | undefined
+    function Probe() {
+      observed = useServedTheme()
+      return null
+    }
+    renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(WorkspaceProvider, { workspace, children: createElement(Probe) }),
+      ),
+    )
+    return observed!
+  }
+  expect(sample(deciding).served).toBe(LOADING_SERVED_THEME)
+  expect(sample(liveA).served).toBe(LOADING_SERVED_THEME)
+  expect(sample(liveA).served).toBe(sample(liveA).served)
+
+  // Scenario A: opened on scope A while loading; repeated loading renders are strict no-ops (same object).
+  const opened = openThemeEditorSession(scopeA, LOADING_SERVED_THEME)
+  expect(opened).toEqual({ openedScope: scopeA, snapshot: null, captured: false, scopeChanged: false })
+  expect(reconcileThemeEditorSession(opened, scopeA, LOADING_SERVED_THEME)).toBe(opened)
+
+  // Switching to scope B BEFORE scope A answers immediately invalidates the session; when B answers,
+  // snapshot stays null and scopeChanged stays true so Apply/Reset can never target B.
+  const switchedEarly = reconcileThemeEditorSession(opened, scopeB, LOADING_SERVED_THEME)
+  expect(switchedEarly).toEqual({ openedScope: scopeA, snapshot: null, captured: true, scopeChanged: true })
+  const afterBAnswered = reconcileThemeEditorSession(switchedEarly, scopeB, {
+    kind: "theme",
+    id: "workspace.theme",
+    artifactVersion: "0.4.0",
+    theme,
+    version: 9,
+  })
+  expect(afterBAnswered).toBe(switchedEarly)
+  expect(afterBAnswered.snapshot).toBeNull()
+  expect(afterBAnswered.scopeChanged).toBe(true)
+
+  // Scenario B: staying on scope A until it answers captures A's revision once and ignores later revisions.
+  const capturedA = reconcileThemeEditorSession(opened, scopeA, {
+    kind: "theme",
+    id: "workspace.theme",
+    artifactVersion: "0.1.0",
+    theme,
+    version: 3,
+  })
+  expect(capturedA.captured).toBe(true)
+  expect(capturedA.scopeChanged).toBe(false)
+  expect(capturedA.snapshot?.expectedVersion).toBe(3)
+  expect(capturedA.snapshot?.scope).toEqual(scopeA)
+  const afterConcurrentA = reconcileThemeEditorSession(capturedA, scopeA, {
+    kind: "theme",
+    id: "workspace.theme",
+    artifactVersion: "0.2.0",
+    theme,
+    version: 4,
+  })
+  expect(afterConcurrentA).toBe(capturedA)
+  expect(afterConcurrentA.snapshot?.expectedVersion).toBe(3)
+})
+
+test("R2 Finding 3: endSession clears painted DOM theme immediately on cache eviction before /api/me resolves", async () => {
+  const scopeA = { orgId: "org_a", environmentId: "env_a" }
+  const queryClient = new QueryClient()
+  const accountA: Account = {
+    user: { id: "u1", name: "Ada", email: "ada@example.com" },
+    organization: { id: "org_a", name: "Alpha", role: "owner" },
+    environmentId: "env_a",
+  }
+
+  // Hold the follow-up /api/me session refresh open so we prove clearing happens BEFORE it resolves.
+  let resolveMe: ((value: Account | null) => void) | undefined
+  let meFetches = 0
+  const sessionObserver = new QueryObserver<Account | null>(queryClient, {
+    queryKey: ["session"],
+    queryFn: () => {
+      meFetches += 1
+      return new Promise<Account | null>((resolve) => {
+        resolveMe = resolve
+      })
+    },
+    staleTime: 60_000,
+    retry: false,
+  })
+  queryClient.setQueryData(["session"], accountA)
+  const unsubSession = sessionObserver.subscribe(() => {})
+
+  const themeKey = servedThemeKey(scopeA)
+  const servedA: ServedTheme = { kind: "theme", id: "workspace.theme", artifactVersion: "0.1.0", theme, version: 2 }
+  queryClient.setQueryData(themeKey, servedA)
+  queryClient.setQueryData(["studio-scope"], scopeA)
+
+  // Mount an active QueryObserver on the theme query (matching mounted `useQuery` behavior).
+  const themeObserver = new QueryObserver<ServedTheme>(queryClient, {
+    queryKey: themeKey,
+    queryFn: async () => servedA,
+    staleTime: 60_000,
+    retry: false,
+  })
+  const unsubTheme = themeObserver.subscribe(() => {})
+  expect(themeObserver.getCurrentResult().data).toEqual(servedA)
+
+  // Paint workspace A's theme onto a root element and attach the WorkspaceThemeFeed eviction listener.
+  const styles = new Map<string, string>()
+  const dataset: Record<string, string> = {}
+  const classes = new Set<string>()
+  const root = {
+    dataset,
+    classList: {
+      contains: (name: string) => classes.has(name),
+      toggle: (name: string, force?: boolean) => {
+        const next = force ?? !classes.has(name)
+        if (next) classes.add(name)
+        else classes.delete(name)
+        return next
+      },
+    },
+    style: {
+      setProperty: (k: string, v: string) => { styles.set(k, v) },
+      removeProperty: (k: string) => { styles.delete(k) },
+    },
+  } as unknown as HTMLElement
+
+  applyAppearance("luma", "sidebar", root, theme)
+  expect(dataset.customTheme).toBe("Paper")
+  expect(styles.get("--canvas")).toBe("#f4f2ed")
+
+  const unsubEvict = subscribeThemeCacheEviction(queryClient, () => {
+    clearPublishedServedTheme(undefined, root)
+  })
+
+  try {
+    // Run the real `endSession` while `/api/me` stays pending.
+    let finished = false
+    const signOutPromise = endSession(queryClient, async () => {}).then(() => { finished = true })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // `/api/me` is still in flight, yet the previous workspace's DOM theme overrides are already gone.
+    expect(meFetches).toBe(1)
+    expect(finished).toBe(false)
+    expect(dataset.customTheme).toBeUndefined()
+    expect(styles.size).toBe(0)
+    expect(dataset.skin).toBe("luma")
+
+    // Even though the TanStack Query observer retains its old data after `removeQueries`,
+    // `useServedTheme()` checks the live cache and never re-publishes workspace A's theme on re-render.
+    expect(themeObserver.getCurrentResult().data).toEqual(servedA)
+    const emptyCatalog = readDocument<readonly []>("[]", "live")
+    const staleLiveA = workspaceOf({ status: "success", data: { kind: "live", scope: scopeA, catalog: emptyCatalog, counts: {}, publishedQuestions: new Set(), builtins: [] } })
+    let observedAfterSignOut: ReturnType<typeof useServedTheme> | undefined
+    function Probe() {
+      observedAfterSignOut = useServedTheme()
+      return null
+    }
+    renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(WorkspaceProvider, { workspace: staleLiveA, children: createElement(Probe) }),
+      ),
+    )
+    expect(observedAfterSignOut?.served).toBe(LOADING_SERVED_THEME)
+
+    // Now let `/api/me` resolve as signed out and complete `endSession`.
+    resolveMe?.(null)
+    await signOutPromise
+    expect(finished).toBe(true)
+  } finally {
+    unsubEvict()
+    unsubTheme()
+    unsubSession()
+  }
 })
