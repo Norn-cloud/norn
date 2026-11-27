@@ -35,15 +35,65 @@ fn field<'a>(bundle: &'a MappingBundle, name: &str) -> Result<&'a str, CellError
 }
 
 fn content(bundle: &MappingBundle) -> Result<String, CellError> {
+    let kind = field(bundle, "kind")?;
+    let source_version = field(bundle, "source_version")?;
+    let payload_digest = field(bundle, "payload_digest")?;
+    let redaction = bundle.raw.get("redaction").filter(|v| !v.is_null());
+    // Canonicalize omitted and explicit default wire values so repeating the
+    // default (`full_snapshot` / `lexicographical`) never causes a spurious
+    // conflict while differing effective interpretations always conflict.
+    let feed_mode = bundle
+        .raw
+        .get("feed_mode")
+        .filter(|v| !v.is_null() && v.as_str() != Some(norn_ir::FeedMode::FullSnapshot.as_str()));
+    let version_kind = bundle.raw.get("version_kind").filter(|v| {
+        !v.is_null() && v.as_str() != Some(norn_ir::VersionKind::Lexicographical.as_str())
+    });
+    let canonical_version = version_kind
+        .and_then(RuntimeValue::as_str)
+        .and_then(norn_ir::VersionKind::parse_wire)
+        .and_then(|vk| norn_ir::SourceVersion::parse(vk, source_version).ok())
+        .map(|sv| sv.canonical_id());
+    let source_version = canonical_version.as_deref().unwrap_or(source_version);
+    if feed_mode.is_none() && version_kind.is_none() {
+        return Ok(norn_ir::canonical::domain_hash_hex(
+            b"norn.source.content.v1\0",
+            &(kind, source_version, payload_digest, redaction),
+        )?);
+    }
     Ok(norn_ir::canonical::domain_hash_hex(
         b"norn.source.content.v1\0",
         &(
-            field(bundle, "kind")?,
-            field(bundle, "source_version")?,
-            field(bundle, "payload_digest")?,
-            bundle.raw.get("redaction").filter(|v| !v.is_null()),
+            kind,
+            source_version,
+            payload_digest,
+            redaction,
+            feed_mode,
+            version_kind,
         ),
     )?)
+}
+
+/// Result of comparing an incoming bundle against previously captured bundles
+/// for the same `(connector_instance, partition, source, source_id, event_id)`.
+pub(crate) enum SourceEventCapture {
+    /// No conflicting prior bundle and no equivalent capture under the same
+    /// definitions/mapping/derivation; capture as a fresh bundle.
+    Fresh,
+    /// Equivalent replay (`content` matches under the same definitions, mapping,
+    /// dataset, and derivation); reuse the existing bundle ID without inserting
+    /// a new inbox row that could overwrite newer state.
+    Replay(String),
+    /// Conflicting content for the same immutable source event (`FEED-CONFLICT`).
+    Conflict(Box<MappingConflict>),
+}
+
+fn same_capture_pin(existing: &MappingBundle, incoming: &MappingBundle) -> bool {
+    existing.definitions_version == incoming.definitions_version
+        && existing.definitions_digest == incoming.definitions_digest
+        && existing.input.mapping == incoming.input.mapping
+        && existing.input.dataset == incoming.input.dataset
+        && existing.derivation == incoming.derivation
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
@@ -60,19 +110,27 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )
     }
 
-    /// Find a conflict against the first captured source event, including consumed captures.
-    pub(crate) fn mapping_conflict(
+    pub(crate) fn classify_source_event(
         &self,
         incoming: &MappingBundle,
-    ) -> Result<Option<MappingConflict>, CellError> {
+    ) -> Result<SourceEventCapture, CellError> {
         let new = content(incoming)?;
-        let Some(accepted) = self.source_event_bundles(incoming)?.into_iter().next() else {
-            return Ok(None);
+        let existing = self.source_event_bundles(incoming)?;
+        let Some(accepted) = existing.first() else {
+            return Ok(SourceEventCapture::Fresh);
         };
         let accepted_id = format!("mapping-bundle:{}", accepted.digest);
-        let old = content(&accepted)?;
+        let old = content(accepted)?;
         if old == new {
-            return Ok(None);
+            if incoming.reprocesses.is_none()
+                && let Some(matched) = existing.iter().find(|b| same_capture_pin(b, incoming))
+            {
+                return Ok(SourceEventCapture::Replay(format!(
+                    "mapping-bundle:{}",
+                    matched.digest
+                )));
+            }
+            return Ok(SourceEventCapture::Fresh);
         }
         let evidence = norn_ir::canonical::domain_hash_hex(
             b"norn.source.conflict.v1\0",
@@ -116,11 +174,22 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             DataQualityFindingStatus::Open,
         )?
         .with_evidence_digest(evidence)?;
-        Ok(Some(MappingConflict {
+        Ok(SourceEventCapture::Conflict(Box::new(MappingConflict {
             accepted_bundle_id: accepted_id,
             incoming: incoming.clone(),
             finding,
-        }))
+        })))
+    }
+
+    /// Find a conflict against the first captured source event, including consumed captures.
+    pub(crate) fn mapping_conflict(
+        &self,
+        incoming: &MappingBundle,
+    ) -> Result<Option<MappingConflict>, CellError> {
+        match self.classify_source_event(incoming)? {
+            SourceEventCapture::Conflict(conflict) => Ok(Some(*conflict)),
+            SourceEventCapture::Fresh | SourceEventCapture::Replay(_) => Ok(None),
+        }
     }
 
     /// OBS-EVIDENCE-1: disputed source identities quarantine every affected live subject.
@@ -176,16 +245,16 @@ pub(crate) fn capture<E: SqlEngine>(
     raw: &Observed<RuntimeValue>,
     bundle: &MappingBundle,
 ) -> Result<(String, bool), CellError> {
-    let (id, input) = if let Some(conflict) = store.read().mapping_conflict(bundle)? {
-        (
+    let (id, input) = match store.read().classify_source_event(bundle)? {
+        SourceEventCapture::Replay(existing_id) => return Ok((existing_id, false)),
+        SourceEventCapture::Conflict(conflict) => (
             format!("mapping-conflict:{}", conflict.finding.id),
-            norn_ir::runtime::encode(&conflict).map_err(CellError::Encoding)?,
-        )
-    } else {
-        (
+            norn_ir::runtime::encode(conflict.as_ref()).map_err(CellError::Encoding)?,
+        ),
+        SourceEventCapture::Fresh => (
             format!("mapping-bundle:{}", bundle.digest),
             norn_ir::runtime::encode(bundle).map_err(CellError::Encoding)?,
-        )
+        ),
     };
     let observed = Observed {
         id: ObservationId(id.clone()),
