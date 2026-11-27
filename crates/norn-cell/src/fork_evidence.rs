@@ -463,6 +463,24 @@ pub fn verify_main_receipt(receipt: &Receipt) -> Result<(), CellError> {
     Ok(())
 }
 
+/// FORK-EVIDENCE-1 (Lemma L6): refuse any [`ExportRecord`] whose receipt,
+/// written rows, or ledger entries carry a fork pin/world tag, without
+/// pre-empting a caller's own payload/value-commitment verification errors.
+pub(crate) fn refuse_fork_bound_export_record(record: &ExportRecord) -> Result<(), CellError> {
+    if record.receipt.body.fork_pin.is_some()
+        || record
+            .receipt
+            .body
+            .written
+            .iter()
+            .any(|row| row.fork_world.is_some())
+        || record.entries.iter().any(|entry| entry.fork_pin.is_some())
+    {
+        return Err(CellError::ForkEvidenceForbidden);
+    }
+    Ok(())
+}
+
 /// FORK-EVIDENCE-1 (Lemma L6): authenticate an [`ExportRecord`] as genuine
 /// `main`-world evidence, refusing `core.world.fork_evidence_forbidden` if its
 /// receipt, written rows, or ledger entries carry a fork pin (at any nesting
@@ -474,9 +492,7 @@ pub fn verify_main_receipt(receipt: &Receipt) -> Result<(), CellError> {
 /// hashes do not verify.
 pub fn verify_main_export_record(record: &ExportRecord) -> Result<(), CellError> {
     verify_main_receipt(&record.receipt)?;
-    if record.entries.iter().any(|entry| entry.fork_pin.is_some()) {
-        return Err(CellError::ForkEvidenceForbidden);
-    }
+    refuse_fork_bound_export_record(record)?;
     verify_export_record_integrity(record, None)
 }
 

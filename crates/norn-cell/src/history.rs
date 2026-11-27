@@ -2207,7 +2207,7 @@ impl<E: SqlEngine> CellStore<E> {
             .ok_or_else(refused)?;
         let mut previous = GENESIS_HASH.to_owned();
         for (index, record) in records.iter().enumerate() {
-            crate::fork_evidence::verify_main_export_record(record)?;
+            crate::fork_evidence::refuse_fork_bound_export_record(record)?;
             if record.format != crate::export::EXPORT_FORMAT
                 || record.store_format != STORE_FORMAT
                 || record.receipt.body.commit_seq

@@ -1131,17 +1131,16 @@ mod tests {
         fork.conn.backup_to_file(&fork_path)?;
         drop(fork);
 
-        // Reopen keyed fork and scrub to completion so it writes `_norn_open_checkpoint`.
+        // Reopen keyed fork and explicitly record a fork-MAC'd `_norn_open_checkpoint`
+        // (under `norn.open-checkpoint.fork.mac/1` + `ForkPin`).
         let reopened_fork = CellStore::open_bound(&fork_path, model.clone(), opts(), &id)?;
-        for _ in 0..64 {
-            match reopened_fork.scrub_step() {
-                crate::scrub::ScrubStatus::Idle => break,
-                crate::scrub::ScrubStatus::Verifying { .. } => {}
-                crate::scrub::ScrubStatus::Fenced { finding } => {
-                    return Err(CellError::Fenced(finding));
-                }
-            }
-        }
+        let fork_head = reopened_fork.verified_head()?;
+        reopened_fork.record_open_checkpoint(
+            None,
+            &fork_head,
+            None,
+            &reopened_fork.transparency.borrow(),
+        )?;
         assert!(matches!(
             crate::open_checkpoint::load(&reopened_fork.conn)?,
             crate::open_checkpoint::Loaded::Authentic(_)
