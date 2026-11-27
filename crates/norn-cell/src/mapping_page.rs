@@ -157,7 +157,7 @@ impl<E: SqlEngine> CellStore<E> {
         &self,
         raws: &[Observed<RuntimeValue>],
         input: &MappingInput,
-        canonical: &CommitModel<'_, '_>,
+        canonical: CommitModel<'_, '_>,
         max_run_rows: usize,
     ) -> Result<CapturedPage, CellError> {
         // Capture writes only inbox rows: a plan proven once holds for
@@ -281,7 +281,7 @@ impl<E: SqlEngine> CellStore<E> {
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
         self.write_tx(|| {
-            self.capture_mapping_page_rows_in_tx(raws, input, &canonical, MAX_PAGE_RECORDS)
+            self.capture_mapping_page_rows_in_tx(raws, input, canonical, MAX_PAGE_RECORDS)
         })
     }
 
@@ -329,7 +329,7 @@ impl<E: SqlEngine> CellStore<E> {
                 }
                 crate::source_cursor::Precondition::Advance => match input {
                     Some(input) => {
-                        self.capture_mapping_page_rows_in_tx(raws, input, &canonical, max_run_rows)?
+                        self.capture_mapping_page_rows_in_tx(raws, input, canonical, max_run_rows)?
                     }
                     None => CapturedPage {
                         pages: Vec::new(),
@@ -389,7 +389,7 @@ impl<E: SqlEngine> CellStore<E> {
                     records,
                 });
             }
-            let captured = self.capture_mapping_page_rows_in_tx(single, input, &canonical, 1)?;
+            let captured = self.capture_mapping_page_rows_in_tx(single, input, canonical, 1)?;
             let page_ids: Vec<String> = captured.pages.iter().map(|(id, _)| id.clone()).collect();
             crate::source_cursor::insert_pending_in_tx(
                 &self.conn,
@@ -435,7 +435,7 @@ impl<E: SqlEngine> CellStore<E> {
                     now_ms,
                 )?;
             }
-            self.capture_mapping_page_rows_in_tx(raws, input, &canonical, MAX_PAGE_RECORDS)
+            self.capture_mapping_page_rows_in_tx(raws, input, canonical, MAX_PAGE_RECORDS)
         })
     }
 }

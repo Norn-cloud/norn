@@ -9,17 +9,22 @@ use norn_cell::source_cursor::{CursorAdvanceSpec, PendingSourceCapture, SourceLe
 use norn_ir::RuntimeValue;
 
 use super::{CONNECTION_TYPE, ConnectionConfig, Failure, RUN_LEASE_MS, fail, rfc3339};
-use crate::host::DevHost;
+use crate::host::{DevHost, DisputeFallbackState, SourceCapturePlan};
 use crate::pull::{AcceptedPage, CursorAdvance, PullProfile, Watermark, observation};
 use norn_cell::mapping_bundle::MappingInput;
 
-/// One durably captured source page actively draining through paced post-capture
-/// processing (`advance` is `None` for pages recovered from `_norn_source_pending`
-/// after a prior crash).
-pub(super) struct ActiveCapture {
-    pub(super) pending: PendingSourceCapture,
-    pub(super) outcomes: BTreeMap<String, MappingOutcome>,
-    pub(super) advance: Option<CursorAdvance>,
+/// One active source page draining through paced processing (`advance` is
+/// `None` for pages recovered from `_norn_source_pending` after a prior crash).
+pub(super) enum ActiveCapture {
+    Captured {
+        pending: PendingSourceCapture,
+        outcomes: BTreeMap<String, MappingOutcome>,
+        advance: Option<CursorAdvance>,
+    },
+    DisputeFallback {
+        state: DisputeFallbackState,
+        advance: CursorAdvance,
+    },
 }
 
 /// Read the connection's durably committed watermarks. `_norn_source_cursor` is
@@ -158,7 +163,7 @@ pub(super) fn load_pending_captures<E: SqlEngine>(
         .map_err(|r| fail("source.ingest", r.message))?;
     Ok(entries
         .into_iter()
-        .map(|pending| ActiveCapture {
+        .map(|pending| ActiveCapture::Captured {
             pending,
             outcomes: BTreeMap::new(),
             advance: None,
@@ -168,8 +173,8 @@ pub(super) fn load_pending_captures<E: SqlEngine>(
 
 /// Seal every row of an accepted HTTP page and atomically capture the complete
 /// page + `_norn_source_cursor` + `_norn_source_pending` in one SQLite
-/// transaction under `lease`. Returns `None` for empty terminal pages (whose
-/// cursor has already been persisted atomically).
+/// transaction under `lease`, or return a paced dispute-fallback plan when the
+/// page spans an `OBS-LINK-DISPUTE-1` conflict or identity finding.
 pub(super) fn capture_accepted_page<E: SqlEngine>(
     host: &DevHost<E>,
     config: &ConnectionConfig,
@@ -200,22 +205,33 @@ pub(super) fn capture_accepted_page<E: SqlEngine>(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| fail("source.seal", e))?;
     let spec = cursor_advance_spec(config, lease, &accepted.advance, now_ms)?;
-    let (pending, outcomes) = host
-        .capture_source_page_atomic(&batch, &spec, step_rows.clamp(1, crate::host::PAGE_ROWS))
+    let plan = host
+        .capture_source_page_planned(&batch, &spec, step_rows.clamp(1, crate::host::PAGE_ROWS))
         .map_err(|error| {
             let (code, message) = error.code_and_message();
             fail(code, message)
         })?;
-    if pending.pages.is_empty() && pending.records.is_empty() {
-        return Ok((None, accepted.advance));
-    }
     let advance = accepted.advance.clone();
-    Ok((
-        Some(ActiveCapture {
-            pending,
-            outcomes,
-            advance: Some(accepted.advance),
-        }),
-        advance,
-    ))
+    match plan {
+        SourceCapturePlan::Captured(pending) => {
+            if pending.pages.is_empty() && pending.records.is_empty() {
+                return Ok((None, accepted.advance));
+            }
+            Ok((
+                Some(ActiveCapture::Captured {
+                    pending,
+                    outcomes: BTreeMap::new(),
+                    advance: Some(accepted.advance),
+                }),
+                advance,
+            ))
+        }
+        SourceCapturePlan::DisputeFallback(state) => Ok((
+            Some(ActiveCapture::DisputeFallback {
+                state,
+                advance: accepted.advance,
+            }),
+            advance,
+        )),
+    }
 }

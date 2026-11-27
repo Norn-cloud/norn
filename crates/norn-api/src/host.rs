@@ -13,7 +13,7 @@ use norn_cell::{
 };
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::{Command, FactEvent, ObservationEvent, Observed};
-pub use source_capture::SourceCaptureError;
+pub use source_capture::{DisputeFallbackState, SourceCaptureError, SourceCapturePlan};
 use std::{
     ops::{Deref, DerefMut},
     sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, atomic::Ordering},

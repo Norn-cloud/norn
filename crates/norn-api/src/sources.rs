@@ -840,31 +840,60 @@ fn advance<E: SqlEngine>(
 /// ephemeral `Pull` cursor and deleting `_norn_source_pending` once all rows of
 /// that page have been processed.
 fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure> {
-    let done_front = if let Some(active) = run.pending_captures.front_mut() {
-        let outcomes = host
-            .process_source_page_step(&mut active.pending, &mut active.outcomes, run.step_rows)
-            .map_err(|refusal| fail("source.ingest", refusal.message))?;
-        run.mapped = outcomes.len();
-        for ingested in outcomes {
-            crate::pull::tally_outcome(
-                &ingested.outcome,
-                &mut run.landed,
-                &mut run.quarantined,
-                &mut run.reasons,
-            );
+    let done_front = match run.pending_captures.front_mut() {
+        Some(capture::ActiveCapture::Captured {
+            pending, outcomes, ..
+        }) => {
+            let step = host
+                .process_source_page_step(pending, outcomes, run.step_rows)
+                .map_err(|refusal| fail("source.ingest", refusal.message))?;
+            run.mapped = step.len();
+            for ingested in step {
+                crate::pull::tally_outcome(
+                    &ingested.outcome,
+                    &mut run.landed,
+                    &mut run.quarantined,
+                    &mut run.reasons,
+                );
+            }
+            pending.pages.is_empty() && pending.records.is_empty()
         }
-        active.pending.pages.is_empty() && active.pending.records.is_empty()
-    } else {
-        false
+        Some(capture::ActiveCapture::DisputeFallback { state, .. }) => {
+            let step = host
+                .step_source_dispute_fallback(state, run.step_rows)
+                .map_err(|error| {
+                    let (code, message) = error.code_and_message();
+                    fail(code, message)
+                })?;
+            run.mapped = step.len();
+            for ingested in step {
+                crate::pull::tally_outcome(
+                    &ingested.outcome,
+                    &mut run.landed,
+                    &mut run.quarantined,
+                    &mut run.reasons,
+                );
+            }
+            state.is_complete()
+        }
+        None => false,
     };
     if done_front && let Some(finished) = run.pending_captures.pop_front() {
-        host.complete_source_pending(
-            &finished.pending.connection_id,
-            &finished.pending.dataset,
-            &finished.pending.page_digest,
-        )
-        .map_err(|refusal| fail("source.ingest", refusal.message))?;
-        if let (Some(pull), Some(advance)) = (run.pull.as_mut(), finished.advance) {
+        let advance = match finished {
+            capture::ActiveCapture::Captured {
+                pending, advance, ..
+            } => {
+                host.complete_source_pending(
+                    &pending.connection_id,
+                    &pending.dataset,
+                    &pending.page_digest,
+                )
+                .map_err(|refusal| fail("source.ingest", refusal.message))?;
+                advance
+            }
+            capture::ActiveCapture::DisputeFallback { advance, .. } => Some(advance),
+        };
+        if let (Some(pull), Some(advance)) = (run.pull.as_mut(), advance) {
             pull.confirm(&advance);
             run.committed_watermarks = pull.watermarks().clone();
         }

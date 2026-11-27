@@ -658,7 +658,34 @@ impl<E: SqlEngine> CellStore<E> {
                 records,
                 record_pending: false,
             };
-            commit_cursor_in_tx(&self.conn, advance, &precondition, &payload)
+            commit_cursor_in_tx(&self.conn, advance, &precondition, &payload)?;
+            // For a nonterminal cursor page (`next_cursor = None`), retain a
+            // processed (`processed = 1`) full-page replay record so exact
+            // redelivery hits `IdempotentReplay` without regrouping or creating
+            // a fresh `mapping-page:` row; the terminal cursor commit reaps it.
+            if matches!(precondition, Precondition::Advance)
+                && advance.next_cursor.is_none()
+                && (!pages.is_empty() || !records.is_empty())
+            {
+                let pages_json = serde_json::to_string(pages)?;
+                let records_json = serde_json::to_string(records)?;
+                self.conn.execute(
+                    &format!(
+                        "INSERT OR IGNORE INTO \"{SOURCE_PENDING}\" \
+                         (\"connection_id\", \"dataset\", \"page_digest\", \"pages_json\", \"records_json\", \"captured_at_ms\", \"processed\") \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)"
+                    ),
+                    params![
+                        advance.connection_id.as_str(),
+                        advance.dataset.as_str(),
+                        digest,
+                        pages_json.as_str(),
+                        records_json.as_str(),
+                        to_i64(advance.now_ms, "source pending captured_at_ms")?,
+                    ],
+                )?;
+            }
+            Ok(())
         })
     }
 

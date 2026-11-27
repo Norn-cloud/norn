@@ -46,8 +46,9 @@ mod tests {
         CellError, CellStore, InstalledDefinitionInput, MappingOutcome, Model, StoreOptions,
     };
     use norn_checker::EntityArtifactSetContext;
-    use norn_checker::receipt::{ReceiptSources, check_artifact_set_with_receipt};
+    use norn_checker::receipt::ReceiptSources;
     use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
+    use norn_ui_checker::check_artifact_set_with_receipt;
     use serde_json::{Value, json};
 
     const RECORDED_AT: &str = "2026-11-12T12:00:00Z";
@@ -1133,6 +1134,68 @@ mod tests {
         assert_eq!(replay[2].observation_id, first[2].observation_id);
     }
 
+    /// Regression 8b: a nonterminal dispute-spanning page (`next_cursor = None`)
+    /// retains a processed full-page replay marker so later-timestamp redelivery
+    /// returns identical observation IDs without regrouping or inserting a new
+    /// `mapping-page:` row.
+    #[test]
+    fn nonterminal_dispute_page_fallback_replays_idempotently() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let dataset = "Party".to_owned();
+        let (rows_t0, _) = sealed_page_for("erpnext", &dataset, T0);
+        let (rows_later, _) = sealed_page_for("erpnext", &dataset, T0.saturating_add(7_000));
+        host.ingest(&[rows_t0[1].clone()])
+            .expect("pre-capture baseline row");
+        let mut conflicting_t0 = rows_t0[1].clone();
+        let mut conflicting_later = rows_later[1].clone();
+        for row in [&mut conflicting_t0, &mut conflicting_later] {
+            if let RuntimeValue::Object(obj) = &mut row.0.input {
+                if let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload") {
+                    payload.insert(
+                        "customer_name".into(),
+                        RuntimeValue::String("Conflicting Nonterminal".into()),
+                    );
+                }
+                let digest = norn_ir::canonical::HashProfile::Norn1
+                    .hash_json(serde_json::to_string(&obj["payload"]).expect("json"))
+                    .expect("digest");
+                obj.insert("payload_digest".into(), RuntimeValue::String(digest));
+            }
+        }
+        let nonterm_page = vec![rows_t0[0].clone(), conflicting_t0];
+        let nonterm_page_later = vec![rows_later[0].clone(), conflicting_later];
+        let lease = host
+            .acquire_source_lease("erpnext.rest", "run-nt-dispute", T0, RUN_LEASE_MS)
+            .expect("lease");
+        let nonterm_adv = CursorAdvanceSpec {
+            connection_id: "erpnext.rest".into(),
+            dataset,
+            lease_id: lease.lease_id,
+            generation: lease.generation,
+            now_ms: T0.saturating_add(1),
+            expected_previous_cursor: None,
+            next_cursor: None,
+            renew_ttl_ms: Some(RUN_LEASE_MS),
+        };
+        let nt_first = host
+            .ingest_source_page(&nonterm_page, &nonterm_adv)
+            .expect("nonterminal dispute fallback");
+        let nt_replay = host
+            .ingest_source_page(&nonterm_page_later, &nonterm_adv)
+            .expect("nonterminal dispute replay");
+        assert_eq!(
+            nt_replay
+                .iter()
+                .map(|o| o.observation_id.as_str())
+                .collect::<Vec<_>>(),
+            nt_first
+                .iter()
+                .map(|o| o.observation_id.as_str())
+                .collect::<Vec<_>>(),
+            "nonterminal dispute replay must return exact original observation ids"
+        );
+    }
+
     /// Regression 9: replaying a nonterminal cursor page (`next_cursor = None`)
     /// at a later `extracted_at` timestamp hits `IdempotentReplay` via
     /// `_norn_source_pending` without creating fresh inbox rows or replacing the
@@ -1206,36 +1269,24 @@ mod tests {
         );
     }
 
-    /// Regression 10: lowering `max_rows` to 1 while draining a captured page
-    /// whose members are quarantined terminates cleanly in bounded steps without
-    /// retrying the same quarantined member forever.
+    /// Regression 10: lowering `max_rows` to 1 while draining a single captured
+    /// `mapping-page:` run whose members are commit-refused (`canon.Holding`
+    /// with missing required `canon.Item` targets, so both pass mapping into
+    /// one `mapping-page:` run and remain inbox-pending as quarantined on
+    /// commit) terminates cleanly in bounded steps without retrying the same
+    /// member forever.
     #[test]
     fn paced_drain_with_multiple_quarantined_rows_terminates_cleanly() {
         let host = open_native_host(&rest_artifacts(&[]));
-        let dataset = "product.product".to_owned();
-        let (rows, next_wm) = sealed_page_for("odoo", &dataset, T0);
-        assert!(rows.len() >= 2);
-        let mut two_bad = rows[..2].to_vec();
-        for (idx, (raw, _)) in two_bad.iter_mut().enumerate() {
-            if let RuntimeValue::Object(obj) = &mut raw.input {
-                if let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload") {
-                    payload.insert("x_norn_ref".into(), RuntimeValue::Null);
-                }
-                let digest = norn_ir::canonical::HashProfile::Norn1
-                    .hash_json(serde_json::to_string(&obj["payload"]).expect("json"))
-                    .expect("digest");
-                obj.insert("payload_digest".into(), RuntimeValue::String(digest));
-                obj.insert(
-                    "event_id".into(),
-                    RuntimeValue::String(format!("paced-quarantine-{idx}")),
-                );
-            }
-        }
+        let dataset = "Warehouse Lot Balance".to_owned();
+        let (rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
+        assert!(rows.len() >= 2, "need at least two holding rows");
+        let two_holdings = rows[..2].to_vec();
         let lease = host
-            .acquire_source_lease("odoo.rest", "run-q-pace", T0, RUN_LEASE_MS)
+            .acquire_source_lease("erpnext.rest", "run-q-pace", T0, RUN_LEASE_MS)
             .expect("lease");
         let advance = CursorAdvanceSpec {
-            connection_id: "odoo.rest".into(),
+            connection_id: "erpnext.rest".into(),
             dataset: dataset.clone(),
             lease_id: lease.lease_id.clone(),
             generation: lease.generation,
@@ -1244,9 +1295,16 @@ mod tests {
             next_cursor: Some(next_wm.cursor_json().expect("json")),
             renew_ttl_ms: Some(RUN_LEASE_MS),
         };
-        let (mut pending, mut outcomes) = host
-            .capture_source_page_atomic(&two_bad, &advance, 10)
+        let mut pending = host
+            .capture_source_page_atomic(&two_holdings, &advance, 10)
             .expect("captured");
+        assert_eq!(
+            pending.pages.len(),
+            1,
+            "both valid holding rows must enter one mapping-page: run to exercise paced page-member draining"
+        );
+        assert_eq!(pending.records.len(), 2);
+        let mut outcomes = BTreeMap::new();
         let mut seen = Vec::new();
         let mut steps = 0_usize;
         while !pending.pages.is_empty() || !pending.records.is_empty() {
@@ -1261,7 +1319,8 @@ mod tests {
         assert_eq!(seen.len(), 2);
         assert!(
             seen.iter()
-                .all(|o| matches!(o.outcome, MappingOutcome::Quarantined(_)))
+                .all(|o| matches!(o.outcome, MappingOutcome::Quarantined(_))),
+            "expected commit-refused quarantine outcomes, got {seen:#?}"
         );
     }
 }
