@@ -586,26 +586,44 @@ fn scan_rewind_in_range<E: SqlEngine>(
     hist_world: &str,
     conn_id: &str,
     (lower, upper): (i64, i64),
-    initial_wm: &str,
+    (initial_wm, after_wm, limit): (&str, Option<&str>, usize),
     binding: (u64, &str),
     active: &mut BTreeMap<&str, &str>,
 ) -> Result<bool, CellError> {
-    use crate::engine::{SqlRow, params};
-    let rows = reader.conn.query(
-        "SELECT version FROM _norn_fact_values \
+    use crate::engine::{SqlRow, SqlValue};
+    let limit_i64 = i64::try_from(limit).map_err(|_| CellError::OutOfRange("rewind limit"))?;
+    let tail = if after_wm.is_some() {
+        " AND COALESCE(json_extract(snapshot, '$.values.watermark'), '')>?7"
+    } else {
+        ""
+    };
+    let mut args = vec![
+        SqlValue::from(hist_world),
+        SqlValue::from(conn_id),
+        SqlValue::from(lower),
+        SqlValue::from(upper),
+        SqlValue::from(initial_wm),
+        SqlValue::from(limit_i64),
+    ];
+    if let Some(prev) = after_wm {
+        args.push(SqlValue::from(prev));
+    }
+    let sql = format!(
+        "SELECT COALESCE(json_extract(snapshot, '$.values.watermark'), '') AS wm, \
+                MAX(version) AS max_ver \
+         FROM _norn_fact_values \
          INDEXED BY \"_norn_fact_values/connection_nonfailed\" \
          WHERE world=?1 AND root_type='source.Connection' AND id=?2 \
            AND COALESCE(json_extract(snapshot, '$.values.status'), '')!='failed' \
            AND version>?3 AND version<?4 \
-           AND COALESCE(json_extract(snapshot, '$.values.watermark'), '')!=?5 \
-         ORDER BY version DESC LIMIT 4097",
-        params![hist_world, conn_id, lower, upper, initial_wm],
-    )?;
-    for values in rows
-        .into_iter()
-        .take(super::freshness::MAX_HISTORICAL_CONNECTIONS)
-    {
-        let witness_ver = SqlRow(values).get::<i64>(0)?;
+           AND COALESCE(json_extract(snapshot, '$.values.watermark'), '')!=?5{tail} \
+         GROUP BY wm \
+         ORDER BY wm ASC \
+         LIMIT ?6"
+    );
+    let rows = reader.conn.query(&sql, &args)?;
+    for values in rows {
+        let witness_ver = SqlRow(values).get::<i64>(1)?;
         if let Some(done) =
             apply_rewind_witness(reader, hist_world, conn_id, witness_ver, binding, active)?
         {
@@ -634,13 +652,18 @@ fn prove_rewind_in_range<E: SqlEngine>(
             hist_world,
             conn_id,
             (lower, upper),
-            initial_wm,
+            (
+                initial_wm,
+                None,
+                super::freshness::MAX_HISTORICAL_CONNECTIONS,
+            ),
             binding,
             active,
         );
     }
     let mut cursor: Option<String> = None;
     let mut visited = 0_usize;
+    let mut checked = 0_usize;
     while let Some(wm) = next_indexed_text(
         reader,
         "_norn_fact_values/connection_watermark",
@@ -650,12 +673,13 @@ fn prove_rewind_in_range<E: SqlEngine>(
     )? {
         visited = visited.saturating_add(1);
         if visited > MAX_SKIP_SCAN_STEPS {
+            let remaining = super::freshness::MAX_HISTORICAL_CONNECTIONS.saturating_sub(checked);
             return scan_rewind_in_range(
                 reader,
                 hist_world,
                 conn_id,
                 (lower, upper),
-                initial_wm,
+                (initial_wm, cursor.as_deref(), remaining),
                 binding,
                 active,
             );
@@ -672,10 +696,13 @@ fn prove_rewind_in_range<E: SqlEngine>(
                 params![hist_world, conn_id, wm.as_str(), lower, upper],
                 |row| row.get::<i64>(0),
             )?
-            && let Some(done) =
-                apply_rewind_witness(reader, hist_world, conn_id, witness_ver, binding, active)?
         {
-            return Ok(done);
+            checked = checked.saturating_add(1);
+            if let Some(done) =
+                apply_rewind_witness(reader, hist_world, conn_id, witness_ver, binding, active)?
+            {
+                return Ok(done);
+            }
         }
         cursor = Some(wm);
     }
@@ -1109,6 +1136,71 @@ mod tests {
                 "ok",
                 &later_wm,
                 5_000_u64.saturating_add(step),
+            );
+        }
+        assert!(
+            connection_history_proves_cursors_at(
+                &store.read(),
+                MAIN_WORLD,
+                &pinned,
+                ("m.mapping", &binding),
+                &req,
+                false,
+            )
+            .expect("after post-pin")
+        );
+    }
+
+    #[test]
+    fn duplicate_non_initial_watermarks_after_rewind_are_pin_invariant() {
+        // Initial (X, c) right after foreign (X, a) forces prove_rewind_in_range;
+        // decisive rewind (Y, d) followed by 4,096 duplicate non-initial watermarks
+        // (X, b) must stay provable after >64 earlier post-pin watermarks trigger fallback.
+        let (mut store, binding) = open_conn_store();
+        put_conn(&mut store, "other.mapping", "ok", &pair_wm("X", "a"), 2);
+        let target = pair_wm("X", "c");
+        put_conn(&mut store, "m.mapping", "ok", &target, 3);
+        put_conn(&mut store, "m.mapping", "ok", &pair_wm("Y", "d"), 4);
+        let dup_non_initial = pair_wm("X", "b");
+        for step in 0_u64..4_096 {
+            put_conn(
+                &mut store,
+                "m.mapping",
+                "ok",
+                &dup_non_initial,
+                5_u64.saturating_add(step),
+            );
+        }
+        put_conn(&mut store, "m.mapping", "ok", &target, 5_000);
+        let pinned = store
+            .read()
+            .object(MAIN_WORLD, "source.Connection", "conn")
+            .expect("read")
+            .expect("conn");
+        assert!(pinned.version > 4_096);
+        let req = BTreeMap::from([
+            ("ds1".into(), r#"{"version":"X","id":"1"}"#.to_owned()),
+            ("ds2".into(), r#"{"version":"c","id":"2"}"#.to_owned()),
+        ]);
+        assert!(
+            connection_history_proves_cursors_at(
+                &store.read(),
+                MAIN_WORLD,
+                &pinned,
+                ("m.mapping", &binding),
+                &req,
+                false,
+            )
+            .expect("before post-pin")
+        );
+        for step in 0_u64..128 {
+            let later_wm = pair_wm(&format!("0000-{step:05}"), "z");
+            put_conn(
+                &mut store,
+                "m.mapping",
+                "ok",
+                &later_wm,
+                6_000_u64.saturating_add(step),
             );
         }
         assert!(
