@@ -2717,19 +2717,18 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
                 "((self.large == self.small) ? null : null) == null",
             ),
             (
-                "null_cond_residue",
+                "temporal_null_overflow",
                 "error",
-                "((self.id == 'null-big' ? null : true) ? null : null) == null",
+                "date(((((self.large == self.small) ? null : null) ?? null) ?? '1970-01-02')) == date('1970-01-02')",
             ),
         ],
     );
     let ten_26 = "100000000000000000000000000";
-    // Row 1 (`b-1`): `10^26` overflows `DECIMAL(38,12)` across 8 rules -> residue (8 rules);
-    //   `null_cond_residue` evaluates `(true ? null : null) == null` cleanly in SQL.
+    // Row 1 (`b-1`): `10^26` overflows `DECIMAL(38,12)` across all 9 rules -> residue (9 rules).
     // Row 2 (`null`): `COALESCE(NULL, 0.000000000001)` passes 8 rules and fails ONLY `wide_compare` in SQL.
     // Row 3 (`null-big`): `short_circuit_or`, `short_circuit_and`, and 17-term `deep_short_circuit_or`
     //   short-circuit on their row-dependent LHS with 0 residue in BOTH DuckDB and DataFusion,
-    //   while the other 6 rules (4 decimal overflows + `null_branch_overflow_eq` + `null_cond_residue`)
+    //   while the other 6 rules (4 decimal overflows + `null_branch_overflow_eq` + `temporal_null_overflow`)
     //   go to residue in BOTH engines (6 rules).
     // Row 4 (`b-4`): `5` -> all 9 pass in SQL with 0 residue.
     let big_csv = format!(
@@ -2800,7 +2799,7 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
         "DataFusion matches DuckDB's DECIMAL(38, s) storage bound on branch, comparison, and short-circuit logicals"
     );
     assert_eq!(duck_big_landed.residue, df_big_landed.residue);
-    assert_eq!(duck_big_landed.residue[0].rules.len(), 8);
+    assert_eq!(duck_big_landed.residue[0].rules.len(), 9);
     assert_eq!(duck_big_landed.residue[1].rules.len(), 6);
     // Row 2 (`null`) must be held ONLY by `wide_compare` (`0 > 0.000000000001`),
     // NOT by `wide_coalesce`, `no_silent_round_to_zero`, or `nullable_mixed_eq`.
@@ -2812,48 +2811,149 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
         duck_big_landed.rules.values().next().expect("rule").label,
         "law:wide_compare"
     );
-    let null_cond_rule = big_req_base
-        .checks
-        .iter()
-        .find(|check| check.label == "law:null_cond_residue")
-        .expect("null_cond_residue check")
-        .rule
-        .as_str();
-    assert!(
-        duck_big_landed.residue[1]
-            .rules
-            .iter()
-            .any(|rule| rule == null_cond_rule),
-        "row 3 must send null_cond_residue to residue"
-    );
-    let overflow_only: Vec<_> = duck_big_landed
-        .residue
-        .iter()
-        .map(|row| norn_cell::analytics::ResidueRow {
-            row: row.row,
-            values: row.values.clone(),
-            rules: row
-                .rules
-                .iter()
-                .filter(|rule| rule.as_str() != null_cond_rule)
-                .cloned()
-                .collect(),
-        })
-        .collect();
     assert_eq!(
         big_store
-            .residue_findings(big_type, &big_req_base.load.table, &overflow_only)
+            .residue_findings(big_type, &big_req_base.load.table, &duck_big_landed.residue)
             .expect("per-row settles 10^26 cleanly"),
         Vec::new()
     );
-    let null_cond_only = vec![norn_cell::analytics::ResidueRow {
-        row: duck_big_landed.residue[1].row,
-        values: duck_big_landed.residue[1].values.clone(),
-        rules: vec![null_cond_rule.to_owned()],
-    }];
-    big_store
-        .residue_findings(big_type, &big_req_base.load.table, &null_cond_only)
-        .expect_err("per-row ZEN refuses a null ternary condition rather than taking ELSE");
+
+    // Sol 6.2 R9:
+    // 1. A ternary with a statically nullable test (`predicate: None`) routes all rows to
+    //    residue in both engines and per-row ZEN emits an `EvaluationFailed` finding (holds=true)
+    //    for the null-condition row (`null-big`).
+    // 2. Folded sibling `unless` exceptions evaluate eagerly once `when` holds: a true first
+    //    sibling (`self.id == 'null-big'`) must NOT short-circuit a second sibling's overflow
+    //    (`self.large * self.large > 0` at `10^26`). Both bulk engines route `null-big` to
+    //    residue and per-row ZEN records the `EvaluationFailed` finding (holds=true), while
+    //    `b-4` (`large = 5`) is lifted cleanly in SQL with zero residue.
+    let (mut eager_artifacts, eager_base) = support::artifacts(
+        big_type,
+        &big_fields,
+        &[
+            (
+                "null_cond_residue",
+                "error",
+                "((self.id == 'null-big' ? null : true) ? null : null) == null",
+            ),
+            ("eager_unless_overflow", "error", "self.large < 0"),
+        ],
+    );
+    let eager_law_slot = eager_artifacts
+        .iter_mut()
+        .find(|artifact| artifact.artifact_id.as_str() == "bench.eager_unless_overflow.law")
+        .expect("eager_unless_overflow law artifact");
+    let mut eager_law = serde_json::to_value(&*eager_law_slot).expect("law json");
+    eager_law["payload"]["exceptions"] = json!([
+        {
+            "id": "ex_match_first",
+            "overrides": "eager_unless_overflow",
+            "condition": "self.id == 'null-big'",
+            "rationale": "first sibling holds on null-big"
+        },
+        {
+            "id": "ex_overflow_second",
+            "overrides": "eager_unless_overflow",
+            "condition": "self.large * self.large > 0",
+            "rationale": "second sibling overflows at 10^26 and must still evaluate eagerly"
+        }
+    ]);
+    *eager_law_slot = serde_json::from_value(eager_law).expect("law");
+    let (_eager_dir, eager_cell) = support::cell_from_artifacts(&eager_artifacts, &eager_base);
+    let eager_store = eager_cell.store();
+    let eager_table = eager_store.analytics_table(big_type).expect("table");
+    let eager_checks = eager_store
+        .dataset_checks(big_type, &eager_table)
+        .expect("checks");
+    assert!(
+        eager_checks
+            .iter()
+            .find(|check| check.label == "law:null_cond_residue")
+            .expect("null_cond")
+            .predicate
+            .is_none(),
+        "nullable ternary test stays unlowered"
+    );
+    let eager_check = eager_checks
+        .iter()
+        .find(|check| check.label == "law:eager_unless_overflow")
+        .expect("eager_unless");
+    assert!(
+        eager_check.predicate.is_some() && eager_check.condition.is_some(),
+        "sibling unless tree folds into SQL with eager exception-definedness checks"
+    );
+    let eager_csv = format!(
+        "id,large,small\n\
+         null-big,{ten_26},0.000000000001\n\
+         b-4,5,0.000000000001\n"
+    );
+    let eager_req = LandRequest {
+        load: LoadRequest {
+            tenant: tenant(),
+            table: eager_table,
+            load: "land-eager".into(),
+            file: FileSource {
+                url: String::new(),
+                uri: "s3://synthetic/uploads/eager".into(),
+                sha256: norn_cell::analytics::hex_digest(eager_csv.as_bytes()),
+                format: FileFormat::Csv,
+            },
+            headers: BTreeMap::new(),
+        },
+        pins: eager_store
+            .dataset_pins(big_type, &BTreeMap::new(), "bench.dataset.mapping@test")
+            .expect("pins"),
+        landing: "landing-eager".into(),
+        attempt: String::new(),
+        checks: eager_checks,
+        residue_page: 7,
+    };
+    let duck_eager_dir = tempfile::tempdir().expect("duck eager dir");
+    let duck_eager = DuckDbEngine::new(DuckDbSettings {
+        root: duck_eager_dir.path().to_path_buf(),
+        memory_limit: "256MB".into(),
+        threads: 1,
+    })
+    .expect("duck");
+    let duck_eager_landed = duck_eager
+        .land(&eager_req, |mut f| {
+            f.write_all(eager_csv.as_bytes()).expect("csv");
+            Ok(())
+        })
+        .expect("duck eager land");
+    let df_eager_dir = tempfile::tempdir().expect("df eager dir");
+    let df_eager = DataFusionEngine::new(DataFusionSettings {
+        root: df_eager_dir.path().to_path_buf(),
+        memory_limit: "256MB".into(),
+        threads: 1,
+    })
+    .expect("df");
+    let df_eager_landed = df_eager
+        .land(&eager_req, |mut f| {
+            f.write_all(eager_csv.as_bytes()).expect("csv");
+            Ok(())
+        })
+        .expect("df eager land");
+    assert_eq!(duck_eager_landed.residue, df_eager_landed.residue);
+    assert_eq!(duck_eager_landed.residue_total, 2);
+    // Row 1 (`null-big`): BOTH `null_cond_residue` and `eager_unless_overflow` go to residue.
+    // Row 2 (`b-4`): ONLY `null_cond_residue` goes to residue; `eager_unless_overflow` lifts in SQL.
+    assert_eq!(duck_eager_landed.residue[0].rules.len(), 2);
+    assert_eq!(duck_eager_landed.residue[1].rules.len(), 1);
+    let eager_findings = eager_store
+        .residue_findings(big_type, &eager_req.load.table, &duck_eager_landed.residue)
+        .expect("per-row returns EvaluationFailed findings in Ok");
+    let settled: BTreeSet<(u64, String, bool)> = eager_findings
+        .into_iter()
+        .map(|finding| (finding.row, finding.label, finding.holds))
+        .collect();
+    assert_eq!(
+        settled,
+        BTreeSet::from([
+            (1, "law:eager_unless_overflow".to_owned(), true),
+            (1, "law:null_cond_residue".to_owned(), true),
+        ])
+    );
 }
 
 /// Sol 6.2 R1 (High 4): `RowPlan::fuel` pays for referenced column key bytes

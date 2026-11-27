@@ -192,12 +192,43 @@ pub struct RowPlan {
     pub fuel: u64,
 }
 
-fn disjoin(mut items: Vec<RowPredicate>) -> Option<RowPredicate> {
-    let mut iter = items.drain(..);
-    let first = iter.next()?;
-    Some(iter.fold(first, |acc, item| {
-        RowPredicate::Or(Box::new(acc), Box::new(item))
-    }))
+fn combine_balanced(
+    mut items: Vec<RowPredicate>,
+    join: fn(Box<RowPredicate>, Box<RowPredicate>) -> RowPredicate,
+) -> Option<RowPredicate> {
+    if items.is_empty() {
+        return None;
+    }
+    while items.len() > 1 {
+        let mut next = Vec::with_capacity(items.len().div_ceil(2));
+        let mut iter = items.into_iter();
+        while let Some(left) = iter.next() {
+            match iter.next() {
+                Some(right) => next.push(join(Box::new(left), Box::new(right))),
+                None => next.push(left),
+            }
+        }
+        items = next;
+    }
+    items.pop()
+}
+
+fn disjoin(items: Vec<RowPredicate>) -> Option<RowPredicate> {
+    combine_balanced(items, RowPredicate::Or)
+}
+
+/// Force eager evaluation of every `unless` exception condition once `when`
+/// holds (matching `governing_laws::exception_lifts`, which evaluates all
+/// exception conditions before folding): `(c_0 or true) AND ... AND (c_k or true)`
+/// evaluates every `c_i` to `true` when it succeeds as a Boolean and sends the
+/// row to residue if any `c_i` overflows or is non-Boolean, even if an earlier
+/// sibling exception was `true`.
+fn conjoin_defined(conditions: &[RowPredicate]) -> Option<RowPredicate> {
+    let defined: Vec<RowPredicate> = conditions
+        .iter()
+        .map(|cond| RowPredicate::Or(Box::new(cond.clone()), Box::new(RowPredicate::Bool(true))))
+        .collect();
+    combine_balanced(defined, RowPredicate::And)
 }
 
 fn lifted_under(
@@ -318,9 +349,17 @@ fn plan_law(
                     when_cond.zip(expr_pred).and_then(|(when, predicate)| {
                         let lifted = fold_exception_tree(&law.id, &law.exceptions, &ex_preds)?;
                         let not_lifted = RowPredicate::Not(Box::new(lifted));
+                        let exceptions_active = if ex_preds.len() > 1 {
+                            let all_defined = conjoin_defined(&ex_preds)?;
+                            RowPredicate::And(Box::new(all_defined), Box::new(not_lifted))
+                        } else {
+                            not_lifted
+                        };
                         let effective = match when {
-                            Some(when) => RowPredicate::And(Box::new(when), Box::new(not_lifted)),
-                            None => not_lifted,
+                            Some(when) => {
+                                RowPredicate::And(Box::new(when), Box::new(exceptions_active))
+                            }
+                            None => exceptions_active,
                         };
                         (effective.kind(table) == Some(crate::analytics::PredicateKind::Bool))
                             .then_some((Some(effective), Some(predicate)))

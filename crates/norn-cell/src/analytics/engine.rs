@@ -3625,6 +3625,17 @@ fn lower_temporal_leaf(
     })
 }
 
+/// Evaluate a conditional test `c` once and turn `c = NULL` into a conversion
+/// error caught by outer `TRY(...)` as residue, matching `DataFusion`'s
+/// `Val::Null => None` and ZEN's `Jump(IfTrue)` error instead of SQL `CASE`'s
+/// silent `ELSE` fallback.
+fn conditional_check(c_sql: &Frag) -> Frag {
+    Frag::fmt(
+        "CAST(list_extract(['x', '0', '1'], COALESCE(CAST(({}) AS BIGINT), -1) + 2) AS BIGINT) = 1",
+        &[c_sql],
+    )
+}
+
 /// Lower the argument tree of `date(...)` (`is_date = true`, `BIGINT` UTC
 /// midnight seconds) or `timestamp(...)` (`is_date = false`, `HUGEINT`
 /// order-isomorphic UTC nanoseconds) with exact ZEN `0001..=9999` guards.
@@ -3642,12 +3653,11 @@ fn lower_temporal(node: &RowPredicate, table: &TableSchema, is_date: bool) -> Ou
                 .ok_or_else(|| refusal(LAW, "a temporal coalesce the engine does not type"))?;
             let mut guards = a.guards;
             guards.extend(b.guards);
-            let sql = if a.kind == K::Null && b.kind == K::Null {
-                Frag::raw("NULL")
-            } else {
-                Frag::fmt("COALESCE({}, {})", &[&a.sql, &b.sql])
-            };
-            LoweredRule { sql, kind, guards }
+            LoweredRule {
+                sql: Frag::fmt("COALESCE({}, {})", &[&a.sql, &b.sql]),
+                kind,
+                guards,
+            }
         }
         P::Conditional(c, a, b) => {
             let c = lower_node(c, table)?;
@@ -3663,10 +3673,11 @@ fn lower_temporal(node: &RowPredicate, table: &TableSchema, is_date: bool) -> Ou
             let mut guards = c.guards;
             guards.extend(a.guards);
             guards.extend(b.guards);
+            let check = conditional_check(&c.sql);
             LoweredRule {
                 sql: Frag::fmt(
                     "(CASE WHEN {} THEN {} ELSE {} END)",
-                    &[&c.sql, &a.sql, &b.sql],
+                    &[&check, &a.sql, &b.sql],
                 ),
                 kind,
                 guards,
@@ -3778,13 +3789,7 @@ fn lower_conditional(
     guards.extend(a.guards);
     guards.extend(b.guards);
     let (a_sql, b_sql) = widen_decimal_pair(a.sql, a.kind, b.sql, b.kind);
-    // Evaluate `c` once and turn `c = NULL` into a conversion error caught by
-    // outer `TRY(...)` as residue, matching `DataFusion`'s `Val::Null => None`
-    // instead of SQL `CASE`'s silent `ELSE` fallback.
-    let check = Frag::fmt(
-        "CAST(list_extract(['x', '0', '1'], COALESCE(CAST(({}) AS BIGINT), -1) + 2) AS BIGINT) = 1",
-        &[&c.sql],
-    );
+    let check = conditional_check(&c.sql);
     Ok(LoweredRule {
         sql: Frag::fmt(
             "(CASE WHEN {} THEN {} ELSE {} END)",
