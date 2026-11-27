@@ -493,7 +493,7 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<Snapshot, CellError> {
         self.question_snapshot_at(plan, context, None, visible)
     }
-    pub(super) fn question_snapshot_in_fork(
+    fn question_snapshot_in_fork(
         &self,
         plan: &QuestionPlan,
         context: QueryContext,
