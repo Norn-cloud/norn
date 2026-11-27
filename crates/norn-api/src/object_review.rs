@@ -44,6 +44,14 @@ use crate::object_links::{GatedFinding, disclosed_findings, gate_findings};
 use crate::object_routes::{
     MAX_QUERY_SCAN, ObjectAccess, SCAN_BATCH, collection, locked, not_found, permitted,
 };
+use crate::privacy::{
+    DisclosedObjectFindings, DisclosedObjectHistory, DisclosedObjectVersion,
+    DisclosedQuarantinedPage, DisclosedSourceLineage,
+    disclosure::{
+        VersionProjection, project_object_findings, project_object_history, project_object_version,
+        project_quarantined_page, project_source_lineage,
+    },
+};
 use crate::refusal::Refusal;
 use crate::scope::ScopeQuery;
 
@@ -271,11 +279,11 @@ pub fn get_object_findings<E: SqlEngine>(
     object_type: &str,
     id: &str,
     access: &dyn ObjectAccess,
-) -> Result<NornObjectFindings, Refusal> {
+) -> Result<DisclosedObjectFindings, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let mut start = None;
     let row = reviewable(host, access, &actor, (object_type, id), &mut start)?;
-    let (mut document, linked, disputes, gated) = locked(host, access, &mut start, |reader| {
+    let (quarantined, linked, disputes, gated) = locked(host, access, &mut start, |reader| {
         let page = reader
             .links_touching_page(
                 MAIN_WORLD,
@@ -294,15 +302,9 @@ pub fn get_object_findings<E: SqlEngine>(
             .map(|edge| (edge.edge.source_type, edge.edge.source))
             .collect();
         Ok((
-            NornObjectFindings {
-                object_type: row.object_type.clone(),
-                id: row.id.clone(),
-                quarantined: reader
-                    .observation_is_quarantined(MAIN_WORLD, &row)
-                    .map_err(Refusal::host)?,
-                findings: Vec::new(),
-                evidence: Vec::new(),
-            },
+            reader
+                .observation_is_quarantined(MAIN_WORLD, &row)
+                .map_err(Refusal::host)?,
             linked,
             reader
                 .source_disagreements(MAIN_WORLD, &row.object_type, &row.id, None)
@@ -318,23 +320,25 @@ pub fn get_object_findings<E: SqlEngine>(
     })?;
     // OBS-LINK-DISPUTE-1: a held link is disclosed as the link would be,
     // at the snapshot the findings were read at.
-    document.findings = disclosed_findings(host, access, &actor, &mut start, vec![((), gated)])?
-        .into_iter()
-        .flat_map(|((), findings)| findings)
-        .collect();
+    let mut findings: Vec<DataQualityFinding> =
+        disclosed_findings(host, access, &actor, &mut start, vec![((), gated)])?
+            .into_iter()
+            .flat_map(|((), findings)| findings)
+            .collect();
+    let mut evidence = Vec::new();
     // Each evidence row is disclosed on its own Population and Values.
     for (object_type, id) in linked {
-        let evidence = locked(host, access, &mut start, |reader| {
+        let item = locked(host, access, &mut start, |reader| {
             reader
                 .object(MAIN_WORLD, &object_type, &id)
                 .map_err(Refusal::host)
         })?;
-        if let Some(evidence) = evidence
+        if let Some(item) = item
             && [Population, Values]
                 .into_iter()
-                .all(|capability| permitted(host, access, &actor, &evidence, capability))
+                .all(|capability| permitted(host, access, &actor, &item, capability))
         {
-            document.evidence.push(NornEvidenceRef { object_type, id });
+            evidence.push(NornEvidenceRef { object_type, id });
         }
     }
     // SOURCE-AGREE-1: a disagreement is disclosed only where the caller may
@@ -348,10 +352,16 @@ pub fn get_object_findings<E: SqlEngine>(
                     .all(|capability| permitted(host, access, &actor, version, capability))
             })
         {
-            document.findings.push(disputed.finding);
+            findings.push(disputed.finding);
         }
     }
-    Ok(document)
+    Ok(project_object_findings(
+        row.object_type,
+        row.id,
+        quarantined,
+        findings,
+        evidence,
+    ))
 }
 
 fn budget() -> DecodeBudget {
@@ -494,75 +504,49 @@ fn version_entry<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     row: &ObjectRecord,
     version: u64,
-) -> Result<Option<(NornObjectVersion, VisibleSignature)>, Refusal> {
+) -> Result<Option<(DisclosedObjectVersion, VisibleSignature)>, Refusal> {
     let Some((stored, sources)) = version_read((host, access, actor), reader, row, version)? else {
         return Ok(None);
     };
     let receipt = reader
         .receipt_for_fact_version(MAIN_WORLD, &row.object_type, &row.id, version)
         .map_err(Refusal::host)?;
-    let catalog = host.marking_catalog(reader)?;
-    // PRIVACY-1: each version's values are projected under that version's
-    // own markings; a marked version names no writer input or source row.
-    let mut marked = false;
-    let mut projected = crate::privacy::Projected::default();
-    let is_tombstone = stored.is_none();
-    let values = match stored {
-        Some(mut record) => {
-            let markings = crate::privacy::version_markings(reader, &catalog, &record)?;
-            marked = markings
-                .as_ref()
-                .is_none_or(|markings| markings.values().any(|ids| !ids.is_empty()));
-            projected =
-                crate::privacy::project(host, actor, &catalog, markings.as_ref(), &mut record);
-            Some(record.values.into_iter().collect())
-        }
-        None => None,
-    };
-    let fact = FactRef::new(row.object_type.as_str(), &row.id, version);
-    let lineage = if is_tombstone || marked || !sources {
-        None
-    } else {
-        reader
-            .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true))
-            .map_err(Refusal::host)?
-    };
-    let writer = match lineage {
-        _ if marked => NornVersionWriter::Other,
-        Some(lineage) => NornVersionWriter::Mapping { lineage },
-        None => action_writer((host, access, actor), reader, &receipt)?
-            .unwrap_or(NornVersionWriter::Other),
-    };
-    let writer_json = serde_json::to_string(&writer).map_err(Refusal::host)?;
+    let mut decode_budget = budget();
+    let (entry, projected) = project_object_version(
+        host,
+        reader,
+        actor,
+        VersionProjection {
+            row,
+            version,
+            stored,
+            sources,
+            receipt: &receipt,
+        },
+        &mut decode_budget,
+        || action_writer((host, access, actor), reader, &receipt),
+    )?;
+    let writer_json = serde_json::to_string(&entry.writer).map_err(Refusal::host)?;
     let signature = VisibleSignature {
-        values: values.clone(),
+        values: entry.values.clone(),
         writer_json,
         projected,
     };
-    Ok(Some((
-        NornObjectVersion {
-            version,
-            commit: receipt.body.commit_seq,
-            logical_time: receipt.body.logical_time,
-            values,
-            writer,
-        },
-        signature,
-    )))
+    Ok(Some((entry, signature)))
 }
 
 /// Walk backward from `head_version` down to `1` (bounded by `scan_limit`) to
 /// collapse consecutive equal-signature runs onto their earliest version and
 /// suppress any boundary run whose predecessor could not be inspected (#1534
 /// S6, S7).
-fn collect_history_versions(
+fn collect_history_versions<V>(
     head_version: u64,
     max_versions: usize,
     scan_limit: u64,
-    mut load_entry: impl FnMut(u64) -> Result<Option<(NornObjectVersion, VisibleSignature)>, Refusal>,
-) -> Result<(Vec<NornObjectVersion>, bool), Refusal> {
-    let mut versions: Vec<NornObjectVersion> = Vec::new();
-    let mut current_run: Option<(NornObjectVersion, VisibleSignature)> = None;
+    mut load_entry: impl FnMut(u64) -> Result<Option<(V, VisibleSignature)>, Refusal>,
+) -> Result<(Vec<V>, bool), Refusal> {
+    let mut versions: Vec<V> = Vec::new();
+    let mut current_run: Option<(V, VisibleSignature)> = None;
     let mut truncated = false;
     let mut scanned = 0_u64;
     let mut version = head_version;
@@ -625,7 +609,7 @@ pub fn get_object_history<E: SqlEngine>(
     object_type: &str,
     id: &str,
     access: &dyn ObjectAccess,
-) -> Result<NornObjectHistory, Refusal> {
+) -> Result<DisclosedObjectHistory, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let mut start = None;
     // The history is the row's values over time: Population and Values on the
@@ -638,12 +622,12 @@ pub fn get_object_history<E: SqlEngine>(
             collect_history_versions(row.version, max_versions, MAX_HISTORY_SCAN, |version| {
                 version_entry((host, access, &actor), reader, &row, version)
             })?;
-        Ok(NornObjectHistory {
-            object_type: row.object_type.clone(),
-            id: row.id.clone(),
+        Ok(project_object_history(
+            row.object_type.clone(),
+            row.id.clone(),
             versions,
             truncated,
-        })
+        ))
     })
 }
 
@@ -685,7 +669,7 @@ pub fn get_quarantined_objects<E: SqlEngine>(
     actor: Option<&str>,
     object_type: &str,
     access: &dyn ObjectAccess,
-) -> Result<NornQuarantinedPage, Refusal> {
+) -> Result<DisclosedQuarantinedPage, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let mut start = None;
     let mut after: Option<String> = None;
@@ -747,12 +731,12 @@ pub fn get_quarantined_objects<E: SqlEngine>(
             open_findings: u64::try_from(open.len()).unwrap_or(u64::MAX),
         })
         .collect();
-    Ok(NornQuarantinedPage {
-        object_type: object_type.to_owned(),
+    Ok(project_quarantined_page(
+        object_type.to_owned(),
         items,
-        approximate: !exhausted,
-        scan_limit: u64::try_from(MAX_QUERY_SCAN).unwrap_or(u64::MAX),
-    })
+        !exhausted,
+        u64::try_from(MAX_QUERY_SCAN).unwrap_or(u64::MAX),
+    ))
 }
 
 /// HOST-READ-6: where one version of an object came from, by version.
@@ -766,7 +750,7 @@ pub fn get_object_lineage_at<E: SqlEngine>(
     actor: Option<&str>,
     (object_type, id, version): (&str, &str, u64),
     access: &dyn ObjectAccess,
-) -> Result<InstanceSourceProvenance, Refusal> {
+) -> Result<DisclosedSourceLineage, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let mut start = None;
     let row = reviewable(host, access, &actor, (object_type, id), &mut start)?;
@@ -775,13 +759,7 @@ pub fn get_object_lineage_at<E: SqlEngine>(
     }
     let fact = FactRef::new(row.object_type.as_str(), &row.id, version);
     locked(host, access, &mut start, |reader| {
-        let catalog = host.marking_catalog(reader)?;
-        reader
-            .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |instance| {
-                crate::privacy::discloses_source(reader, &catalog, instance)
-            })
-            .map_err(Refusal::host)?
-            .ok_or_else(not_found)
+        project_source_lineage(host, reader, &fact, &mut budget())?.ok_or_else(not_found)
     })
 }
 

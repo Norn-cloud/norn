@@ -20,7 +20,7 @@ use norn_api::action_catalog::{ActionCatalogQuery, list_actions_on};
 use norn_api::actions::{
     ActionAnswer, ActionQuery, action_denied, call_action, decode_action_request,
 };
-use norn_api::authz::Operation;
+use norn_api::authz::{Operation, ReadCapability, ReadRequest};
 use norn_api::definition_routes::{
     self, DefinitionKinds, GetDefinitionQuery, ListDefinitionsQuery,
 };
@@ -34,6 +34,7 @@ use norn_api::object_review::{
     get_object_findings, get_object_history, get_object_lineage_at, get_quarantined_objects,
 };
 use norn_api::object_routes::{get_object_query, get_queried_object};
+use norn_api::privacy::serialize_disclosed;
 use norn_api::question_routes::{
     AdHocQuestions, AdHocTraceRequest, EvaluateRequest, QuestionRuntime, TraceQuery,
     evaluate_question, get_answer, get_numeric_trace, list_metrics, question_catalog, trace_ad_hoc,
@@ -46,8 +47,6 @@ use norn_api::transform_routes::{
     get_transform_row_lineage, get_transform_rows, refresh_transform,
 };
 use norn_cell::engine::SqlEngine;
-
-use norn_api::authz::{ReadCapability, ReadRequest};
 
 use crate::policy::{CallerSlot, CellObjectAccess, DEMO_GRANTS, READ_POLICY_ID, collection_access};
 use crate::principal::{PrincipalResolver, RequestScope};
@@ -511,7 +510,7 @@ fn transforms<E: SqlEngine>(
                 limit: fields.remove("limit"),
                 after: fields.remove("after"),
             };
-            document_json(&get_transform_rows(
+            serialize_disclosed(&get_transform_rows(
                 host,
                 &scope,
                 actor,
@@ -527,7 +526,7 @@ fn transforms<E: SqlEngine>(
                 org_id: fields.get("orgId").cloned(),
                 environment_id: fields.get("environmentId").cloned(),
             };
-            document_json(&get_transform_row_lineage(
+            serialize_disclosed(&get_transform_row_lineage(
                 host,
                 &scope,
                 actor,
@@ -792,12 +791,12 @@ fn route<E: SqlEngine>(
                     };
                     get_answer(cell(host)?, &scope, actor, name, named(runtime))
                 })
-                .and_then(|document| document_json(&document)),
+                .and_then(|document| serialize_disclosed(&document)),
             (Some((name, _)), Some(runtime)) => trace_query(query)
                 .and_then(|query| {
                     get_numeric_trace(cell(host)?, &query, actor, name, named(runtime))
                 })
-                .and_then(|document| document_json(&document)),
+                .and_then(|document| serialize_disclosed(&document)),
             (Some(_), None) => Err(Refusal::new(
                 StatusCode::NOT_FOUND,
                 "question.not_found",
@@ -961,10 +960,10 @@ fn ad_hoc_question<E: SqlEngine>(
     };
     if path == "/v1/questions:evaluate" {
         let request: EvaluateRequest = serde_json::from_str(body).map_err(malformed)?;
-        document_json(&evaluate_question(host, &scope, actor, &request, runtime)?)
+        serialize_disclosed(&evaluate_question(host, &scope, actor, &request, runtime)?)
     } else {
         let request: AdHocTraceRequest = serde_json::from_str(body).map_err(malformed)?;
-        document_json(&trace_ad_hoc(host, &scope, actor, &request, runtime)?)
+        serialize_disclosed(&trace_ad_hoc(host, &scope, actor, &request, runtime)?)
     }
 }
 
@@ -1311,7 +1310,7 @@ fn quarantined<E: SqlEngine>(
         org_id: fields.get("orgId").cloned(),
         environment_id: fields.get("environmentId").cloned(),
     };
-    document_json(&get_quarantined_objects(
+    serialize_disclosed(&get_quarantined_objects(
         cell(host)?,
         &scope,
         actor,
@@ -1359,7 +1358,7 @@ fn reviewed<E: SqlEngine>(
         environment_id: fields.get("environmentId").cloned(),
     };
     match (leaf, fields.get("version")) {
-        ("findings", _) => document_json(&get_object_findings(
+        ("findings", _) => serialize_disclosed(&get_object_findings(
             cell(host)?,
             &scope,
             actor,
@@ -1367,7 +1366,7 @@ fn reviewed<E: SqlEngine>(
             id,
             &CellObjectAccess,
         )?),
-        ("history", _) => document_json(&get_object_history(
+        ("history", _) => serialize_disclosed(&get_object_history(
             cell(host)?,
             &scope,
             actor,
@@ -1379,7 +1378,7 @@ fn reviewed<E: SqlEngine>(
             let version = version
                 .parse::<u64>()
                 .map_err(|_invalid| Refusal::invalid("version is a positive whole number"))?;
-            document_json(&get_object_lineage_at(
+            serialize_disclosed(&get_object_lineage_at(
                 cell(host)?,
                 &scope,
                 actor,
@@ -1387,7 +1386,7 @@ fn reviewed<E: SqlEngine>(
                 &CellObjectAccess,
             )?)
         }
-        (_, None) => document_json(&get_object_lineage(
+        (_, None) => serialize_disclosed(&get_object_lineage(
             cell(host)?,
             &scope,
             actor,
@@ -1446,7 +1445,7 @@ fn objects<E: SqlEngine>(
             after: fields.remove("after"),
         };
         let id = decoded(id)?;
-        return document_json(&get_object_links(
+        return serialize_disclosed(&get_object_links(
             cell(host)?,
             &scope,
             actor,
@@ -1474,7 +1473,7 @@ fn objects<E: SqlEngine>(
             &id,
             &CellObjectAccess,
         )?;
-        return document_json(&record);
+        return serialize_disclosed(&record);
     }
     // The cursor has its own bound, so any query the host accepts on a first
     // page stays acceptable with every cursor the host issues for it.
@@ -1497,7 +1496,7 @@ fn objects<E: SqlEngine>(
         filter: fields.remove("filter"),
         after: fields.remove("after"),
     };
-    document_json(&get_object_query(
+    serialize_disclosed(&get_object_query(
         cell(host)?,
         &scope,
         actor,
@@ -1776,7 +1775,7 @@ pub fn analytics<E: SqlEngine>(
         let actor = principals.resolve(request.authorization, request.now);
         let answer = scope_of(request.query).and_then(|scope| {
             let (kind, id) = (decoded(kind)?, decoded(id)?);
-            document_json(&norn_api::analytics_routes::record_object(
+            serialize_disclosed(&norn_api::analytics_routes::record_object(
                 host,
                 &scope,
                 actor.as_deref(),
@@ -1904,7 +1903,7 @@ fn engine_records<E: SqlEngine>(
         filter: fields.remove("filter"),
         after: fields.remove("after"),
     };
-    document_json(&norn_api::analytics_routes::page_objects(
+    serialize_disclosed(&norn_api::analytics_routes::page_objects(
         host,
         &scope,
         actor,
