@@ -145,13 +145,7 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn check_section_component(&mut self, section: &norn_ir::WidgetSection, path: &str) {
-        if section.label.0.is_empty()
-            || section
-                .label
-                .0
-                .values()
-                .any(|value| value.trim().is_empty())
-        {
+        if section.label.is_blank() {
             self.error(
                 &format!("{path}/component/section/label"),
                 "section label must contain nonblank localized text",

@@ -58,6 +58,8 @@ export const RENDERER_CAPABILITIES: ReadonlySet<string> = new Set([
   "event:page_opened", "event:user", "event:outcome", "event:subscription", "event:timer",
   ...OUTCOMES.map((outcome) => `outcome:${outcome}`),
   "effect:start:action", "effect:start:read", "effect:cancel", "effect:navigate",
+  // A context read (UI-CONTEXT-READ-1), read through the host's reader (`BindingRead` `record`).
+  "read:context",
 ])
 
 const primitives: ReadonlySet<string> = new Set(Object.keys(UI_SDK.components))
@@ -74,6 +76,7 @@ export function primitiveOf(node: WidgetNode): string | null {
 /** The capabilities `ux` requires, sorted as the checker sorts them (`BTreeSet<String>`). */
 export function requiredCapabilities(ux: WidgetUx): string[] {
   const out = new Set<string>(AGENT_CAPABILITIES)
+  if ((ux.contextReads ?? []).length > 0) out.add("read:context")
   for (const page of ux.pages) {
     for (const node of nodesOf(page.root)) {
       out.add(`component:${node.component.kind}`)

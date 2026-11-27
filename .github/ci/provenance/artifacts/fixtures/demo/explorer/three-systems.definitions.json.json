@@ -1,12 +1,12 @@
 {
-  "sha256": "be6a5abb611cdd7430bdc6b9905ce5efb97d34510e10de1b857163278978e916",
+  "sha256": "f65c0941b317af6705a82d0179b7cc50252f5773db72c0a0280d9298e537ddfc",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
   "parents": [
-    "crates/norn-cell/tests/explorer_documents.rs",
+    "crates/norn-api/tests/explorer_objects.rs",
     "registry/core/artifacts/core.Agent.interface.json",
     "registry/core/artifacts/core.AgentRole.interface.json",
     "registry/core/artifacts/core.Claim.interface.json",

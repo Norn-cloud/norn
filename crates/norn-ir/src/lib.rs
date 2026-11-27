@@ -65,6 +65,7 @@ pub mod fact_change;
 pub mod facts;
 pub mod flow_source_map;
 pub mod function;
+pub mod i18n;
 pub mod identifier_limits;
 pub mod jdm;
 pub mod layout;
@@ -191,6 +192,9 @@ pub use flow_source_map::{
     FlowSourceMapFlow, FlowSourceMapFormat, FlowSourceMapSourceLocation, FlowSourceMapStep,
     FlowSourceMapStepKind, flow_source_map_schema,
 };
+pub use i18n::{
+    LocaleText, WidgetMessage, WidgetMessageText, WidgetText, message_id as widget_message_id,
+};
 pub use jdm::{JdmGraph, JdmNode, JdmNodeType};
 pub use layout::{
     ArtifactLayout, CanvasPosition, ColumnLayout, EdgeLayout, LAYOUT_SIDECAR_VERSION, LayoutField,
@@ -252,23 +256,23 @@ pub use widget::{
     WidgetQuery, WidgetRoot, WidgetViewState,
 };
 pub use widget_ux::{
-    ArtifactRef as WidgetArtifactRef, LocaleText, PropertyRef, WIDGET_UX_V1_VERSION,
-    WidgetActionConfirmation, WidgetActionLocation, WidgetActionPlacement, WidgetActionSeverity,
-    WidgetApp, WidgetBehavior, WidgetCallOutcome, WidgetCatalogEntry, WidgetCatalogEvent,
-    WidgetCatalogRef, WidgetComponent, WidgetConfirmationStrength, WidgetConflictBehavior,
-    WidgetContextParam, WidgetControlInput, WidgetDataBinding, WidgetDataQuery, WidgetDensity,
-    WidgetDismissalMethod, WidgetEffectHandler, WidgetExpressionInputs, WidgetFieldControl,
-    WidgetFieldFormat, WidgetFieldPresentation, WidgetFieldTarget, WidgetFilter,
-    WidgetFilterOperator, WidgetFilterValue, WidgetForm, WidgetFormMode, WidgetFormSubmit,
-    WidgetKeyValue, WidgetLifecycleAssumption, WidgetLifecycleSync, WidgetMachine,
-    WidgetMachineCall, WidgetMachineEffect, WidgetMachineEvent, WidgetMachineEventSource,
-    WidgetMachineField, WidgetMachineLifecycle, WidgetMachineState, WidgetMachineTransition,
-    WidgetNativeProjection, WidgetNavigationDestination, WidgetNavigationItem, WidgetNode,
-    WidgetOutcomeState, WidgetOverride, WidgetOverrideValue, WidgetPage, WidgetPageBounds,
-    WidgetPageRef, WidgetRefusalCategory, WidgetRoute, WidgetRouteParameter, WidgetSection,
-    WidgetSectionKind, WidgetSelectionMode, WidgetShellHandlers, WidgetSort, WidgetSortDirection,
-    WidgetStateRole, WidgetTrust, WidgetUx, WidgetUxActionBinding, WidgetValueType,
-    WidgetVersionConflictBinding, WidgetView, WidgetViewKind, WidgetViewSubject, ZenCondition,
+    ArtifactRef as WidgetArtifactRef, PropertyRef, WIDGET_UX_V1_VERSION, WidgetActionConfirmation,
+    WidgetActionLocation, WidgetActionPlacement, WidgetActionSeverity, WidgetApp, WidgetBehavior,
+    WidgetCallOutcome, WidgetCatalogEntry, WidgetCatalogEvent, WidgetCatalogRef, WidgetComponent,
+    WidgetConfirmationStrength, WidgetConflictBehavior, WidgetContextParam, WidgetContextRead,
+    WidgetControlInput, WidgetDataBinding, WidgetDataQuery, WidgetDensity, WidgetDismissalMethod,
+    WidgetEffectHandler, WidgetExpressionInputs, WidgetFieldControl, WidgetFieldFormat,
+    WidgetFieldPresentation, WidgetFieldTarget, WidgetFilter, WidgetFilterOperator,
+    WidgetFilterValue, WidgetForm, WidgetFormMode, WidgetFormSubmit, WidgetKeyValue,
+    WidgetLifecycleAssumption, WidgetLifecycleSync, WidgetMachine, WidgetMachineCall,
+    WidgetMachineEffect, WidgetMachineEvent, WidgetMachineEventSource, WidgetMachineField,
+    WidgetMachineLifecycle, WidgetMachineState, WidgetMachineTransition, WidgetNativeProjection,
+    WidgetNavigationDestination, WidgetNavigationItem, WidgetNode, WidgetOutcomeState,
+    WidgetOverride, WidgetOverrideValue, WidgetPage, WidgetPageBounds, WidgetPageRef,
+    WidgetRefusalCategory, WidgetRoute, WidgetRouteParameter, WidgetSection, WidgetSectionKind,
+    WidgetSelectionMode, WidgetShellHandlers, WidgetSort, WidgetSortDirection, WidgetStateRole,
+    WidgetTrust, WidgetUx, WidgetUxActionBinding, WidgetValueType, WidgetVersionConflictBinding,
+    WidgetView, WidgetViewKind, WidgetViewSubject, ZenCondition,
 };
 
 /// Representation-independent JSON number classification (issue #2440).
@@ -1985,13 +1989,12 @@ impl<'de> Deserialize<'de> for ArtifactEnvelopeWire {
     where
         D: serde::Deserializer<'de>,
     {
-        let deserializer_type = std::any::type_name::<D>();
-        if deserializer_type.contains("serde_json::value::Value") {
+        if crate::runtime::is_serde_json_value_deserializer::<D>() {
             let value = serde_json::Value::deserialize(deserializer)?;
             if value.get("kind").and_then(serde_json::Value::as_str) == Some("widget")
                 && let Some(ux) = value.get("payload").and_then(|payload| payload.get("ux"))
             {
-                crate::widget_ux::guard_widget_ux_numeric_value(ux)
+                crate::runtime::guard_definition_numbers_value("Widget UX", ux)
                     .map_err(serde::de::Error::custom)?;
             }
 
@@ -2000,7 +2003,7 @@ impl<'de> Deserialize<'de> for ArtifactEnvelopeWire {
             return Ok(Self::from(decoded));
         }
 
-        let is_json_text = deserializer_type.contains("serde_json::de::Deserializer<")
+        let is_json_text = crate::runtime::is_serde_json_text_deserializer::<D>()
             && deserializer.is_human_readable();
         if !is_json_text {
             return ArtifactEnvelopeWireDecoded::deserialize(deserializer).map(Self::from);
@@ -2015,7 +2018,7 @@ impl<'de> Deserialize<'de> for ArtifactEnvelopeWire {
             let payload: WidgetPayloadUxProbe =
                 serde_json::from_str(probe.payload.get()).map_err(serde::de::Error::custom)?;
             if let Some(ux) = payload.ux {
-                crate::widget_ux::guard_widget_ux_numeric_roundtrip(ux.get())
+                crate::runtime::guard_definition_numbers_text("Widget UX", ux.get())
                     .map_err(serde::de::Error::custom)?;
             }
         }

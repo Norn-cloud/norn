@@ -18,7 +18,7 @@ const page = (name: string) => readDocument<ObjectPage>(readFileSync(join(import
 
 /** The workspace a live mode decided at `scope`: the only way to a DecidedScope. */
 function decided(scope: StudioScope = { orgId: "org_demo", environmentId: "analytics" }) {
-  const workspace = workspaceOf({ status: "success", data: { kind: "live", scope, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set<string>() } })
+  const workspace = workspaceOf({ status: "success", data: { kind: "live", scope, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set<string>(), builtins: [] } })
   if (workspace.kind !== "live") throw new Error("expected a live workspace")
   return workspace.scope
 }

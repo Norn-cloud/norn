@@ -14,7 +14,7 @@ type Workspace = import("../src/lib/workspace.tsx").Workspace
 
 const A: StudioScope = { orgId: "org_a", environmentId: "prod" }
 const B: StudioScope = { orgId: "org_b", environmentId: "prod" }
-const liveMode = (scope: StudioScope): Mode => ({ kind: "live", scope, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set() })
+const liveMode = (scope: StudioScope): Mode => ({ kind: "live", scope, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set(), builtins: [] })
 const signal = new AbortController().signal
 
 /** A cell at `active()`'s workspace: `/api/me` names it, and every host call is recorded with the scope it was sent to. */

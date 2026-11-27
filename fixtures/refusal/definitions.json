@@ -9125,6 +9125,575 @@
         "version": "0.1.0"
       }
     ],
+    "builtins": [
+      {
+        "artifact": {
+          "artifactId": "norn.studio.record.widget",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "widget",
+          "lifecycle": "active",
+          "name": "Record",
+          "namespace": "norn",
+          "payload": {
+            "actionBindings": [],
+            "dataDependencies": [],
+            "permissions": [],
+            "ux": {
+              "actionBindings": [],
+              "actionPlacements": [],
+              "catalog": [
+                {
+                  "entryId": "record-reading",
+                  "framework": "react",
+                  "label": {
+                    "msg": {
+                      "id": "mab651c50e3d7818b",
+                      "source": "Reading the record"
+                    }
+                  },
+                  "trust": "contract_checked"
+                },
+                {
+                  "entryId": "record-failed",
+                  "events": [
+                    {
+                      "eventId": "retry"
+                    }
+                  ],
+                  "framework": "react",
+                  "label": {
+                    "msg": {
+                      "id": "m4f63a5233e2a6e98",
+                      "source": "The record could not be read"
+                    }
+                  },
+                  "trust": "contract_checked"
+                },
+                {
+                  "entryId": "record-absent",
+                  "events": [
+                    {
+                      "eventId": "readAgain"
+                    }
+                  ],
+                  "framework": "react",
+                  "label": {
+                    "msg": {
+                      "id": "m8a61aec909ac0260",
+                      "source": "Record not available"
+                    }
+                  },
+                  "trust": "contract_checked"
+                },
+                {
+                  "entryId": "record-header",
+                  "events": [
+                    {
+                      "eventId": "readAgain"
+                    }
+                  ],
+                  "framework": "react",
+                  "label": {
+                    "msg": {
+                      "id": "mfb9b88e91de12183",
+                      "source": "The record's name, state and actions"
+                    }
+                  },
+                  "trust": "contract_checked"
+                },
+                {
+                  "entryId": "record-body",
+                  "events": [
+                    {
+                      "eventId": "readAgain"
+                    }
+                  ],
+                  "framework": "react",
+                  "label": {
+                    "msg": {
+                      "id": "m0670ed91077bc7ea",
+                      "source": "The record's facts, story, lineage and rules"
+                    }
+                  },
+                  "trust": "contract_checked"
+                }
+              ],
+              "contextReads": [
+                {
+                  "bindingId": "record",
+                  "keyParameterId": "id",
+                  "pageId": "record",
+                  "typeParameterId": "objectType"
+                }
+              ],
+              "dataBindings": [],
+              "fields": [],
+              "forms": [],
+              "navigationItems": [],
+              "overrides": [],
+              "pages": [
+                {
+                  "contextParams": [
+                    {
+                      "paramId": "objectType",
+                      "required": true,
+                      "type": "text"
+                    },
+                    {
+                      "paramId": "id",
+                      "required": true,
+                      "type": "text"
+                    }
+                  ],
+                  "machine": {
+                    "events": [
+                      {
+                        "eventId": "opened",
+                        "source": {
+                          "kind": "page_opened"
+                        }
+                      },
+                      {
+                        "eventId": "retry",
+                        "source": {
+                          "emits": "retry",
+                          "kind": "user",
+                          "nodeId": "record-failed"
+                        }
+                      },
+                      {
+                        "eventId": "read-again",
+                        "source": {
+                          "emits": "readAgain",
+                          "kind": "user",
+                          "nodeId": "record-header"
+                        }
+                      },
+                      {
+                        "eventId": "corrected",
+                        "source": {
+                          "emits": "readAgain",
+                          "kind": "user",
+                          "nodeId": "record-body"
+                        }
+                      },
+                      {
+                        "eventId": "released",
+                        "source": {
+                          "emits": "readAgain",
+                          "kind": "user",
+                          "nodeId": "record-absent"
+                        }
+                      },
+                      {
+                        "eventId": "accepted",
+                        "source": {
+                          "kind": "outcome",
+                          "outcome": "accepted"
+                        }
+                      },
+                      {
+                        "eventId": "hidden",
+                        "source": {
+                          "category": "visibility",
+                          "kind": "outcome",
+                          "outcome": "refused"
+                        }
+                      },
+                      {
+                        "eventId": "not-served",
+                        "source": {
+                          "kind": "outcome",
+                          "outcome": "not_served"
+                        }
+                      },
+                      {
+                        "eventId": "refused",
+                        "source": {
+                          "kind": "outcome",
+                          "outcome": "refused"
+                        }
+                      },
+                      {
+                        "eventId": "network-failure",
+                        "source": {
+                          "kind": "outcome",
+                          "outcome": "network_failure"
+                        }
+                      },
+                      {
+                        "eventId": "timeout",
+                        "source": {
+                          "kind": "outcome",
+                          "outcome": "timeout"
+                        }
+                      },
+                      {
+                        "eventId": "answer-moved",
+                        "source": {
+                          "kind": "outcome",
+                          "outcome": "answer_moved"
+                        }
+                      },
+                      {
+                        "eventId": "cancelled",
+                        "source": {
+                          "kind": "outcome",
+                          "outcome": "cancelled"
+                        }
+                      }
+                    ],
+                    "fields": [],
+                    "initialStateId": "opening",
+                    "machineVersion": "0.1",
+                    "states": [
+                      {
+                        "role": "idle",
+                        "stateId": "opening"
+                      },
+                      {
+                        "awaits": {
+                          "bindingId": "record",
+                          "kind": "read"
+                        },
+                        "deadlineMs": 15000,
+                        "role": "pending",
+                        "stateId": "loading"
+                      },
+                      {
+                        "awaits": {
+                          "bindingId": "record",
+                          "kind": "read"
+                        },
+                        "deadlineMs": 15000,
+                        "role": "pending",
+                        "stateId": "refreshing"
+                      },
+                      {
+                        "role": "idle",
+                        "stateId": "showing"
+                      },
+                      {
+                        "role": "idle",
+                        "stateId": "absent"
+                      },
+                      {
+                        "role": "error",
+                        "stateId": "failed"
+                      }
+                    ],
+                    "transitions": [
+                      {
+                        "effects": [
+                          {
+                            "call": {
+                              "bindingId": "record",
+                              "kind": "read"
+                            },
+                            "kind": "start"
+                          }
+                        ],
+                        "from": "opening",
+                        "on": "opened",
+                        "target": "loading",
+                        "transitionId": "open"
+                      },
+                      {
+                        "from": "loading",
+                        "on": "accepted",
+                        "target": "showing",
+                        "transitionId": "loading-accepted"
+                      },
+                      {
+                        "from": "loading",
+                        "on": "hidden",
+                        "target": "absent",
+                        "transitionId": "loading-hidden"
+                      },
+                      {
+                        "from": "loading",
+                        "on": "not-served",
+                        "target": "absent",
+                        "transitionId": "loading-not-served"
+                      },
+                      {
+                        "from": "loading",
+                        "on": "refused",
+                        "target": "failed",
+                        "transitionId": "loading-refused"
+                      },
+                      {
+                        "from": "loading",
+                        "on": "network-failure",
+                        "target": "failed",
+                        "transitionId": "loading-network-failure"
+                      },
+                      {
+                        "from": "loading",
+                        "on": "timeout",
+                        "target": "failed",
+                        "transitionId": "loading-timeout"
+                      },
+                      {
+                        "from": "loading",
+                        "on": "answer-moved",
+                        "target": "failed",
+                        "transitionId": "loading-answer-moved"
+                      },
+                      {
+                        "from": "refreshing",
+                        "on": "accepted",
+                        "target": "showing",
+                        "transitionId": "refreshing-accepted"
+                      },
+                      {
+                        "from": "refreshing",
+                        "on": "hidden",
+                        "target": "absent",
+                        "transitionId": "refreshing-hidden"
+                      },
+                      {
+                        "from": "refreshing",
+                        "on": "not-served",
+                        "target": "absent",
+                        "transitionId": "refreshing-not-served"
+                      },
+                      {
+                        "from": "refreshing",
+                        "on": "refused",
+                        "target": "failed",
+                        "transitionId": "refreshing-refused"
+                      },
+                      {
+                        "from": "refreshing",
+                        "on": "network-failure",
+                        "target": "failed",
+                        "transitionId": "refreshing-network-failure"
+                      },
+                      {
+                        "from": "refreshing",
+                        "on": "timeout",
+                        "target": "failed",
+                        "transitionId": "refreshing-timeout"
+                      },
+                      {
+                        "from": "refreshing",
+                        "on": "answer-moved",
+                        "target": "failed",
+                        "transitionId": "refreshing-answer-moved"
+                      },
+                      {
+                        "effects": [
+                          {
+                            "call": {
+                              "bindingId": "record",
+                              "kind": "read"
+                            },
+                            "kind": "start"
+                          }
+                        ],
+                        "from": "failed",
+                        "on": "retry",
+                        "target": "loading",
+                        "transitionId": "retry"
+                      },
+                      {
+                        "effects": [
+                          {
+                            "call": {
+                              "bindingId": "record",
+                              "kind": "read"
+                            },
+                            "kind": "start"
+                          }
+                        ],
+                        "from": "showing",
+                        "on": "read-again",
+                        "target": "refreshing",
+                        "transitionId": "read-again"
+                      },
+                      {
+                        "effects": [
+                          {
+                            "call": {
+                              "bindingId": "record",
+                              "kind": "read"
+                            },
+                            "kind": "start"
+                          }
+                        ],
+                        "from": "showing",
+                        "on": "corrected",
+                        "target": "refreshing",
+                        "transitionId": "corrected"
+                      },
+                      {
+                        "effects": [
+                          {
+                            "kind": "cancel"
+                          }
+                        ],
+                        "from": "refreshing",
+                        "on": "read-again",
+                        "target": "refreshing",
+                        "transitionId": "refreshing-read-again"
+                      },
+                      {
+                        "effects": [
+                          {
+                            "kind": "cancel"
+                          }
+                        ],
+                        "from": "refreshing",
+                        "on": "corrected",
+                        "target": "refreshing",
+                        "transitionId": "refreshing-corrected"
+                      },
+                      {
+                        "effects": [
+                          {
+                            "call": {
+                              "bindingId": "record",
+                              "kind": "read"
+                            },
+                            "kind": "start"
+                          }
+                        ],
+                        "from": "refreshing",
+                        "on": "cancelled",
+                        "target": "refreshing",
+                        "transitionId": "refreshing-cancelled"
+                      },
+                      {
+                        "effects": [
+                          {
+                            "call": {
+                              "bindingId": "record",
+                              "kind": "read"
+                            },
+                            "kind": "start"
+                          }
+                        ],
+                        "from": "absent",
+                        "on": "released",
+                        "target": "loading",
+                        "transitionId": "released"
+                      }
+                    ]
+                  },
+                  "name": "Record",
+                  "pageId": "record",
+                  "root": {
+                    "children": [
+                      {
+                        "children": [],
+                        "component": {
+                          "entry": {
+                            "entryId": "record-reading"
+                          },
+                          "heldIn": [
+                            "loading"
+                          ],
+                          "kind": "catalog"
+                        },
+                        "nodeId": "record-reading"
+                      },
+                      {
+                        "children": [],
+                        "component": {
+                          "entry": {
+                            "entryId": "record-failed"
+                          },
+                          "heldIn": [
+                            "failed"
+                          ],
+                          "kind": "catalog"
+                        },
+                        "nodeId": "record-failed"
+                      },
+                      {
+                        "children": [],
+                        "component": {
+                          "entry": {
+                            "entryId": "record-absent"
+                          },
+                          "heldIn": [
+                            "absent"
+                          ],
+                          "kind": "catalog"
+                        },
+                        "nodeId": "record-absent"
+                      },
+                      {
+                        "children": [],
+                        "component": {
+                          "entry": {
+                            "entryId": "record-header"
+                          },
+                          "heldIn": [
+                            "showing",
+                            "refreshing"
+                          ],
+                          "kind": "catalog"
+                        },
+                        "nodeId": "record-header"
+                      },
+                      {
+                        "children": [],
+                        "component": {
+                          "entry": {
+                            "entryId": "record-body"
+                          },
+                          "heldIn": [
+                            "showing",
+                            "refreshing"
+                          ],
+                          "kind": "catalog"
+                        },
+                        "nodeId": "record-body"
+                      }
+                    ],
+                    "component": {
+                      "kind": "section",
+                      "section": {
+                        "fields": [],
+                        "kind": "section",
+                        "label": {
+                          "msg": {
+                            "id": "mf0ebc9df5b847ed6",
+                            "source": "Record"
+                          }
+                        },
+                        "order": 0,
+                        "sectionId": "record"
+                      }
+                    },
+                    "nodeId": "record"
+                  }
+                }
+              ],
+              "uxVersion": "0.1"
+            },
+            "viewStates": [
+              {
+                "kind": "ready",
+                "stateId": "ready"
+              }
+            ],
+            "widgetId": "norn.studio.record.widget",
+            "widgetVersion": "0.1"
+          },
+          "provenance": {
+            "source": "system",
+            "sourcePath": "registry/studio/artifacts/norn.studio.record.widget.json"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        "sha256": "cdc1110467b149f38b77bf8d8d7e2e07707e1cd55894c348ea10130ff6b9e829"
+      }
+    ],
     "objectCounts": {
       "core.analytics.Restatement": {
         "count": 0,

@@ -436,6 +436,15 @@ export function sameStudioScope(a: StudioScope | null | undefined, b: StudioScop
 export const WORKSPACE_CHANGED_MESSAGE = "This workspace changed; reload to edit this view."
 
 /**
+ * The workspace failure a Widget UX read's answer carries as its cause (`readWidgetAtScope` answers
+ * `network_failure` with `{ workspace }`): the session's workspace, not the cell, did not answer.
+ */
+export function unavailableWorkspaceOf(cause: unknown): CellUnavailable | undefined {
+  const workspace = typeof cause === "object" && cause !== null ? (cause as { readonly workspace?: unknown }).workspace : undefined
+  return workspace instanceof CellUnavailable ? workspace : undefined
+}
+
+/**
  * Run a scope-pinned read only while `readScope()` matches `expectedScope` before dispatch and
  * after resolution, discarding any late result if the workspace changed in flight.
  */
