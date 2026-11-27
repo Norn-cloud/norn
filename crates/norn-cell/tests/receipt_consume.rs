@@ -967,15 +967,12 @@ impl CellHost for Host<'_> {
     ) -> Result<Option<norn_kernel::BoundedFact>, CellError> {
         self.cell.borrow().load_bounded(key, max_bytes)
     }
-    fn commit_action_references(
+    fn commit_with_evidence(
         &mut self,
         commit: CellCommit<FactEvent, JsonObject, JsonObject>,
-        proof: norn_kernel::action_commit::ActionReferenceReads,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+        evidence: norn_kernel::CommitEvidence<'_>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.cell
-            .get_mut()
-            .commit_action_references(commit, proof, quantity)
+        self.cell.get_mut().commit_with_evidence(commit, evidence)
     }
     fn resolve_accepted_receipt(
         &self,

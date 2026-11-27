@@ -416,13 +416,16 @@ impl CellHost for RacingCell {
             state,
         }))
     }
-    fn commit_action_references(
+    fn commit_with_evidence(
         &mut self,
-        _: CellCommit<FactEvent, JsonObject, JsonObject>,
-        _: norn_kernel::action_commit::ActionReferenceReads,
-        _: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
+        evidence: norn_kernel::CommitEvidence<'_>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
-        panic!("a changed policy proof must never retroactively grant reference precision")
+        assert!(
+            evidence.reference_reads.is_none(),
+            "a changed policy proof must never retroactively grant reference precision"
+        );
+        self.commit(commit)
     }
     fn load_bounded(
         &self,

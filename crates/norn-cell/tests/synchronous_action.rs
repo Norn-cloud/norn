@@ -340,14 +340,13 @@ impl<F: FnOnce(&mut Cell)> CellHost for DeliveryRace<'_, F> {
         self.compete();
         self.loser.commit(commit)
     }
-    fn commit_action_references(
+    fn commit_with_evidence(
         &mut self,
         commit: CellCommit<FactEvent, JsonObject, JsonObject>,
-        proof: norn_kernel::action_commit::ActionReferenceReads,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+        evidence: norn_kernel::CommitEvidence<'_>,
     ) -> Result<norn_kernel::CommitReceipt, norn_kernel::CommitError<Self::Error>> {
         self.compete();
-        self.loser.commit_action_references(commit, proof, quantity)
+        self.loser.commit_with_evidence(commit, evidence)
     }
     fn perform(&mut self) -> Result<Option<norn_kernel::Performed<Self::Input>>, Self::Error> {
         panic!("enqueue only")

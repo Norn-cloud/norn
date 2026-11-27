@@ -1114,6 +1114,39 @@ pub enum SerializationLane {
     },
 }
 
+/// Composable kernel evidence for [`CellHost::commit_with_evidence`]: creator
+/// stamp, field-level reference read lineage, and ordered quantity postings
+/// compose in one atomic transaction without one proof shadowing another.
+#[derive(Debug, Default)]
+pub struct CommitEvidence<'a> {
+    /// ACTOR-STAMP-1: kernel proof admitting a server-stamped creator field.
+    pub stamp: Option<crate::CreatorStampProof>,
+    /// ACTION-REF-IFC-1: kernel proof for field-level reference read lineage.
+    pub reference_reads: Option<crate::action_commit::ActionReferenceReads>,
+    /// Ordered partition quantity postings and their idempotency key.
+    pub quantity: Option<(&'a [norn_ir::quantity_ledger::QuantityRequest], &'a str)>,
+}
+
+impl<'a> CommitEvidence<'a> {
+    /// Evidence carrying only ordered partition quantity postings.
+    #[must_use]
+    pub const fn quantity(
+        requests: &'a [norn_ir::quantity_ledger::QuantityRequest],
+        idempotency_key: &'a str,
+    ) -> Self {
+        Self {
+            stamp: None,
+            reference_reads: None,
+            quantity: Some((requests, idempotency_key)),
+        }
+    }
+    /// Whether no proof or quantity posting is attached.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.stamp.is_none() && self.reference_reads.is_none() && self.quantity.is_none()
+    }
+}
+
 /// The impure perimeter of one tenant cell: four verbs plus the ordering and
 /// publish hooks (see the module docs).
 ///
@@ -1275,38 +1308,25 @@ pub trait CellHost {
         &mut self,
         commit: CellCommit<Self::Event, Self::Command, Self::Input>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>>;
-    /// Atomically commit one proposal and its ordered partition postings.
-    ///
-    /// # Errors
-    /// A commit refusal; nothing was applied.
-    fn commit_action_quantity(
-        &mut self,
-        _commit: CellCommit<Self::Event, Self::Command, Self::Input>,
-        _requests: &[norn_ir::quantity_ledger::QuantityRequest],
-        _idempotency_key: &str,
-    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
-        Err(CommitError::ObservationAuthorization)
-    }
-    /// Commit an action whose kernel proof distinguishes reference existence
-    /// from classified values.
+    /// Commit an action transaction with composable kernel evidence (creator
+    /// stamp, field-level reference lineage, and/or quantity postings). Simple
+    /// hosts refuse quantity postings and fall back to plain [`Self::commit`].
     ///
     /// # Errors
     /// A commit refusal; nothing was applied.
     #[allow(
         clippy::needless_pass_by_value,
-        reason = "the one-use kernel proof is consumed at the host boundary"
+        reason = "one-use kernel proofs inside CommitEvidence are consumed at the host boundary"
     )]
-    fn commit_action_references(
+    fn commit_with_evidence(
         &mut self,
         commit: CellCommit<Self::Event, Self::Command, Self::Input>,
-        _proof: crate::action_commit::ActionReferenceReads,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+        evidence: CommitEvidence<'_>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
-        if let Some((request, key)) = quantity {
-            self.commit_action_quantity(commit, std::slice::from_ref(request), key)
-        } else {
-            self.commit(commit)
+        if evidence.quantity.is_some() {
+            return Err(CommitError::ObservationAuthorization);
         }
+        self.commit(commit)
     }
 
     /// Commit the kernel-prepared parent and owned-row transaction.
@@ -1333,24 +1353,6 @@ pub trait CellHost {
             return Err(CommitError::ObservationAuthorization);
         }
         self.commit(commit)
-    }
-
-    /// ACTOR-STAMP-1: a stamped create, with its quantity posting if any, in
-    /// one transaction; the default's plain admission refuses the stamp.
-    /// # Errors
-    /// A commit refusal; nothing was applied.
-    fn commit_stamped(
-        &mut self,
-        commit: CellCommit<Self::Event, Self::Command, Self::Input>,
-        _proof: crate::CreatorStampProof,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
-    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
-        match quantity {
-            Some((request, key)) => {
-                self.commit_action_quantity(commit, std::slice::from_ref(request), key)
-            }
-            None => self.commit(commit),
-        }
     }
 
     /// Commit a snapshot prepared by the kernel's observation reconciler.

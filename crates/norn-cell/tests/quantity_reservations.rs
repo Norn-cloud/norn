@@ -2691,18 +2691,17 @@ fn post_partition_plan_fences_absences_and_commits_all_effects_once() {
     CellHost::commit(&mut cell, competitor).expect("competing empty-partition creation");
     let before = cell.store().read().dump().expect("before");
     assert!(
-        matches!(CellHost::commit_action_quantity(&mut cell, proposal.clone(), &postings, "stale-fact"), Err(CommitError::Conflict { key, .. }) if key == absent),
+        matches!(CellHost::commit_with_evidence(&mut cell, proposal.clone(), norn_kernel::CommitEvidence::quantity(&postings, "stale-fact")), Err(CommitError::Conflict { key, .. }) if key == absent),
         "POST-PARTITION-FENCES absence"
     );
     assert_eq!(before, cell.store().read().dump().expect("unchanged"));
     proposal.reads.clear();
     assert!(
         matches!(
-            CellHost::commit_action_quantity(
+            CellHost::commit_with_evidence(
                 &mut cell,
                 proposal.clone(),
-                &postings,
-                "later-refusal"
+                norn_kernel::CommitEvidence::quantity(&postings, "later-refusal"),
             ),
             Err(CommitError::Host(CellError::Quantity(
                 QuantityError::InsufficientAvailable { .. }
@@ -2715,14 +2714,21 @@ fn post_partition_plan_fences_absences_and_commits_all_effects_once() {
         cell.store().read().dump().expect("all effects unchanged")
     );
     postings.last_mut().expect("destination").operation = post(0, "consume", "ship", 6).operation;
-    let first =
-        CellHost::commit_action_quantity(&mut cell, proposal.clone(), &postings, "whole-proposal")
-            .expect("POST-ATOMIC-PARTITIONS");
+    let first = CellHost::commit_with_evidence(
+        &mut cell,
+        proposal.clone(),
+        norn_kernel::CommitEvidence::quantity(&postings, "whole-proposal"),
+    )
+    .expect("POST-ATOMIC-PARTITIONS");
     let committed = cell.store().read().dump().expect("committed");
     assert_eq!(
         first,
-        CellHost::commit_action_quantity(&mut cell, proposal, &postings, "whole-proposal")
-            .expect("POST-GROUP-IDENTITY")
+        CellHost::commit_with_evidence(
+            &mut cell,
+            proposal,
+            norn_kernel::CommitEvidence::quantity(&postings, "whole-proposal"),
+        )
+        .expect("POST-GROUP-IDENTITY")
     );
     assert_eq!(
         committed,

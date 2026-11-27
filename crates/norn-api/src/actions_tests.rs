@@ -1746,11 +1746,10 @@ fn open_checkpoint_scrub_actions_refusals_and_fenced_timers() {
     // commit hits CommitError::Host(CellError::Verifying) -> 503 cell.verifying.
     {
         let mut cell = host.cell().unwrap();
-        let err = norn_kernel::CellHost::commit_action_quantity(
+        let err = norn_kernel::CellHost::commit_with_evidence(
             &mut *cell,
             norn_kernel::CellCommit::empty(),
-            &[],
-            "unproven-receipt-key",
+            norn_kernel::CommitEvidence::quantity(&[], "unproven-receipt-key"),
         )
         .unwrap_err();
         let mapped = Refusal::from_commit_host_error(&err);
