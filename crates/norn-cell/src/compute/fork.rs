@@ -5,9 +5,9 @@
 //!   evaluator over a forked store, enforces the same read PDP visibility and
 //!   quarantine/exclusion rules, stamps `simulated: true`, rebinds
 //!   `context.world` to the fork's `WorldId`, and domain-separates both
-//!   `fork_query_pin` and `lineage_ref` with the durable [`ForkPin`] so fork
-//!   caches, subscriptions, and lineage handles can never collide with `main`
-//!   or sibling/nested forks (`WORLD-ISOLATE-1`, `FORK-PIN-1`,
+//!   `fork_query_pin` and `lineage_ref` with the durable [`crate::ForkPin`] so
+//!   fork caches, subscriptions, and lineage handles can never collide with
+//!   `main` or sibling/nested forks (`WORLD-ISOLATE-1`, `FORK-PIN-1`,
 //!   `FORK-EVIDENCE-1`).
 //! - [`compare_main_and_fork`] and [`compare_forks`] compose two validated
 //!   world answers over the same admitted question identity (`base_query_pin`),
