@@ -113,6 +113,7 @@ export function requiredCapabilities(ux: WidgetUx): string[] {
 
 type ZenToken =
   | { readonly kind: "ident"; readonly value: string }
+  | { readonly kind: "number"; readonly value: string }
   | { readonly kind: "string"; readonly value: string }
   | { readonly kind: "punct"; readonly value: string }
 
@@ -125,7 +126,7 @@ function tokenizeZen(expression: string): ZenToken[] {
       i += 1
       continue
     }
-    if (ch === '"' || ch === "'") {
+    if (ch === '"' || ch === "'" || ch === "`") {
       const quote = ch
       let value = ""
       i += 1
@@ -142,6 +143,23 @@ function tokenizeZen(expression: string): ZenToken[] {
       tokens.push({ kind: "string", value })
       continue
     }
+    if (/[0-9]/.test(ch)) {
+      let end = i + 1
+      while (end < expression.length && /[0-9_]/.test(expression[end]!)) end += 1
+      // Consume decimal fraction ONLY when `.` is followed by a digit (never consume `..` range operator).
+      if (expression[end] === "." && /[0-9]/.test(expression[end + 1] ?? "")) {
+        end += 1
+        while (end < expression.length && /[0-9_]/.test(expression[end]!)) end += 1
+      }
+      if ((expression[end] === "e" || expression[end] === "E") && /[0-9+-]/.test(expression[end + 1] ?? "")) {
+        end += 1
+        if (expression[end] === "+" || expression[end] === "-") end += 1
+        while (end < expression.length && /[0-9_]/.test(expression[end]!)) end += 1
+      }
+      tokens.push({ kind: "number", value: expression.slice(i, end) })
+      i = end
+      continue
+    }
     if (/[A-Za-z_$]/.test(ch)) {
       let end = i + 1
       while (end < expression.length && /[A-Za-z0-9_$]/.test(expression[end]!)) end += 1
@@ -151,6 +169,21 @@ function tokenizeZen(expression: string): ZenToken[] {
     }
     if (ch === "?" && expression[i + 1] === ".") {
       tokens.push({ kind: "punct", value: "?." })
+      i += 2
+      continue
+    }
+    if (ch === "." && expression[i + 1] === ".") {
+      if (expression[i + 2] === ".") {
+        tokens.push({ kind: "punct", value: "..." })
+        i += 3
+      } else {
+        tokens.push({ kind: "punct", value: ".." })
+        i += 2
+      }
+      continue
+    }
+    if (ch === "*" && expression[i + 1] === "*") {
+      tokens.push({ kind: "punct", value: "**" })
       i += 2
       continue
     }
@@ -310,7 +343,7 @@ export function referencesRecordVersion(expression: string): boolean {
   }
 
   const parseComparison = (): TaintValue => {
-    let left = parseAdditive()
+    let left = parseRange()
     while (true) {
       const t0 = peek()
       const t1 = peek(1)
@@ -323,20 +356,30 @@ export function referencesRecordVersion(expression: string): boolean {
         eat()
         eat()
         if (isPunct(peek(), "=")) eat()
-        parseAdditive()
+        parseRange()
         left = OTHER
       } else if (isPunct(t0, "<") || isPunct(t0, ">") || isIdent(t0, "in")) {
         eat()
-        parseAdditive()
+        parseRange()
         left = OTHER
       } else if (isIdent(t0, "not") && isIdent(t1, "in")) {
         eat()
         eat()
-        parseAdditive()
+        parseRange()
         left = OTHER
       } else {
         break
       }
+    }
+    return left
+  }
+
+  const parseRange = (): TaintValue => {
+    let left = parseAdditive()
+    if (isPunct(peek(), "..")) {
+      eat()
+      parseAdditive()
+      left = OTHER
     }
     return left
   }
@@ -357,7 +400,7 @@ export function referencesRecordVersion(expression: string): boolean {
 
   const parseMultiplicative = (): TaintValue => {
     let left = parseUnary()
-    while (isPunct(peek(), "*") || isPunct(peek(), "/") || isPunct(peek(), "%")) {
+    while (isPunct(peek(), "*") || isPunct(peek(), "/") || isPunct(peek(), "%") || isPunct(peek(), "**")) {
       eat()
       parseUnary()
       left = OTHER
@@ -428,19 +471,35 @@ export function referencesRecordVersion(expression: string): boolean {
     if (t0 === undefined) return OTHER
     if (isPunct(t0, "(")) {
       eat()
+      const startPos = pos
       const inner = parseExpr()
-      if (isPunct(peek(), ")")) eat()
+      const sawRange = tokens.slice(startPos, pos).some((tok) => tok.kind === "punct" && tok.value === "..")
+      if (isPunct(peek(), ")")) {
+        eat()
+      } else if (sawRange && isPunct(peek(), "]")) {
+        // Zen half-open interval `(a..b]`.
+        eat()
+        return OTHER
+      }
       return inner
     }
     if (isPunct(t0, "[")) {
       eat()
       const elements: TaintValue[] = []
-      while (pos < tokens.length && !isPunct(peek(), "]")) {
+      const startPos = pos
+      while (pos < tokens.length && !isPunct(peek(), "]") && !isPunct(peek(), ")")) {
         elements.push(parseExpr())
         if (isPunct(peek(), ",")) eat()
         else break
       }
-      if (isPunct(peek(), "]")) eat()
+      const sawRange = tokens.slice(startPos, pos).some((tok) => tok.kind === "punct" && tok.value === "..")
+      if (isPunct(peek(), "]")) {
+        eat()
+      } else if (sawRange && isPunct(peek(), ")")) {
+        // Zen half-open interval `[a..b)`.
+        eat()
+        return OTHER
+      }
       return { kind: "array", elements }
     }
     if (isPunct(t0, "{")) {
@@ -449,9 +508,21 @@ export function referencesRecordVersion(expression: string): boolean {
       while (pos < tokens.length && !isPunct(peek(), "}")) {
         const keyToken = peek()
         if (keyToken === undefined) break
-        let keyName: string | null = null
-        if (keyToken.kind === "ident" || keyToken.kind === "string") {
-          keyName = keyToken.value
+        if (isPunct(keyToken, "[")) {
+          eat()
+          const computedKey = parseExpr()
+          if (isPunct(peek(), "]")) eat()
+          if (isPunct(peek(), ":")) {
+            eat()
+            const fieldVal = parseExpr()
+            for (const keyName of stringLiteralsOf(computedKey)) {
+              if (keyName !== "__proto__" && keyName !== "constructor" && keyName !== "prototype") {
+                fields[keyName] = fieldVal
+              }
+            }
+          }
+        } else if (keyToken.kind === "ident" || keyToken.kind === "string") {
+          const keyName = keyToken.value
           eat()
           if (isPunct(peek(), ":")) {
             eat()
@@ -477,6 +548,10 @@ export function referencesRecordVersion(expression: string): boolean {
     if (t0.kind === "string") {
       eat()
       return { kind: "string", value: t0.value }
+    }
+    if (t0.kind === "number") {
+      eat()
+      return OTHER
     }
     if (t0.kind === "ident") {
       eat()
