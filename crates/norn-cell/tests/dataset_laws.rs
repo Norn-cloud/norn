@@ -1516,11 +1516,20 @@ fn excepted_predicate_laws_match_per_row_evaluation_across_nested_overrides() {
         .iter()
         .find(|check| check.label == "law:price_capped")
         .expect("price_capped check");
-    assert!(cap_check.condition.is_none());
-    assert!(cap_check.predicate.is_none());
+    assert!(
+        cap_check.condition.is_some(),
+        "row-tree unless exception tree folds into SQL condition"
+    );
+    assert!(cap_check.predicate.is_some());
     assert!(
         cap_check.fuel >= norn_cell::analytics::rule_fuel(0) + 2 * norn_cell::analytics::RULE_FUEL
     );
+    let never_check = checks
+        .iter()
+        .find(|check| check.label == "law:no_blocked_invoice")
+        .expect("no_blocked_invoice check");
+    assert!(never_check.condition.is_some());
+    assert!(never_check.predicate.is_some());
 
     let lines = vec![
         // 1: `when` false -> cap inactive (passes)
@@ -1590,7 +1599,10 @@ fn excepted_predicate_laws_match_per_row_evaluation_across_nested_overrides() {
 
     let (row_findings, row_held, row_trusted) = per_row(&mut cell, &lines);
     let bulk = set_based(&cell, &lines);
-    assert_eq!(bulk.residue, u64::try_from(lines.len()).expect("len"));
+    assert_eq!(
+        bulk.residue, 0,
+        "all row-tree excepted laws decide in SQL with zero residue"
+    );
     assert_eq!(bulk.findings, row_findings);
     assert_eq!(bulk.held, row_held);
     assert_eq!(bulk.data, row_trusted);
@@ -1598,4 +1610,1460 @@ fn excepted_predicate_laws_match_per_row_evaluation_across_nested_overrides() {
     // row 6 (unexcepted `never`/`warning`) is held while row 2 (`allow_uk`) passes.
     assert_eq!(bulk.held, BTreeSet::from([3, 5, 6, 7]));
     assert_eq!(bulk.data, BTreeSet::from([1, 2, 4]));
+}
+
+/// An `unless` exception outside the row-tree subset (a function call) falls
+/// back cleanly to per-row residue while matching per-row evaluation exactly.
+#[test]
+fn non_row_tree_exception_falls_back_to_per_row_residue() {
+    let (mut artifacts, base) = support::artifacts(
+        TYPE,
+        &fields(),
+        &[("price_capped", "error", "self.price <= 10")],
+    );
+    let cap_law = artifacts
+        .iter_mut()
+        .find(|artifact| artifact.artifact_id.as_str() == "bench.price_capped.law")
+        .expect("cap law");
+    let mut cap_json = serde_json::to_value(&*cap_law).expect("cap json");
+    cap_json["payload"]["exceptions"] = json!([
+        {
+            "id": "vip_prefix",
+            "overrides": "price_capped",
+            "condition": "startsWith(self.invoice, 'VIP')",
+            "rationale": "VIP invoices are exempt.",
+            "source": {"artifactId": "bench.price_capped.law", "pointer": "/payload/exceptions/0"}
+        }
+    ]);
+    *cap_law = serde_json::from_value(cap_json).expect("updated cap law");
+
+    let (_dir, mut cell) = support::cell_from_artifacts(&artifacts, &base);
+    let table = cell.store().analytics_table(TYPE).expect("table");
+    let checks = cell
+        .store()
+        .dataset_checks(TYPE, &table)
+        .expect("dataset checks");
+    let cap_check = checks
+        .iter()
+        .find(|check| check.label == "law:price_capped")
+        .expect("price_capped check");
+    assert!(cap_check.condition.is_none());
+    assert!(cap_check.predicate.is_none());
+
+    let lines = vec![
+        Line {
+            invoice: "VIP-1",
+            quantity: 1,
+            price: "50".into(),
+            customer: Some("ann"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+        Line {
+            invoice: "STD-2",
+            quantity: 1,
+            price: "50".into(),
+            customer: Some("bob"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+        Line {
+            invoice: "STD-3",
+            quantity: 1,
+            price: "5".into(),
+            customer: Some("cat"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+    ];
+    let (row_findings, row_held, row_trusted) = per_row(&mut cell, &lines);
+    let bulk = set_based(&cell, &lines);
+    assert_eq!(bulk.residue, 3);
+    assert_eq!(bulk.findings, row_findings);
+    assert_eq!(bulk.held, row_held);
+    assert_eq!(bulk.data, row_trusted);
+    assert_eq!(bulk.held, BTreeSet::from([2]));
+    assert_eq!(bulk.data, BTreeSet::from([1, 3]));
+}
+
+/// Lane A5.1: folding row-tree `unless` exception trees into SQL eliminates
+/// the 124K residue cap (`MAX_RESIDUE_PAGES * RESIDUE_PAGE_ROWS = 124,000`).
+#[test]
+fn excepted_row_tree_law_handles_over_124k_rows_with_zero_residue() {
+    let (mut artifacts, base) = support::artifacts(
+        TYPE,
+        &fields(),
+        &[("price_capped", "error", "self.price <= 10")],
+    );
+    let cap_law = artifacts
+        .iter_mut()
+        .find(|artifact| artifact.artifact_id.as_str() == "bench.price_capped.law")
+        .expect("cap law");
+    let mut cap_json = serde_json::to_value(&*cap_law).expect("cap json");
+    cap_json["payload"]["condition"] = json!("self.country != 'XX'");
+    cap_json["payload"]["exceptions"] = json!([
+        {
+            "id": "wholesale",
+            "overrides": "price_capped",
+            "condition": "self.quantity >= 10",
+            "rationale": "Bulk orders are exempt from the retail cap.",
+            "source": {"artifactId": "bench.price_capped.law", "pointer": "/payload/exceptions/0"}
+        },
+        {
+            "id": "audit_block",
+            "overrides": "wholesale",
+            "condition": "self.invoice == 'AUDIT'",
+            "rationale": "Audited bulk orders still enforce the retail cap.",
+            "source": {"artifactId": "bench.price_capped.law", "pointer": "/payload/exceptions/1"}
+        }
+    ]);
+    *cap_law = serde_json::from_value(cap_json).expect("updated cap law");
+
+    let (_dir, mut cell) = support::cell_from_artifacts(&artifacts, &base);
+    // 5 repeating patterns * 25,000 = 125,000 rows (> 124,000 residue cap):
+    // 0: inactive (`XX`) -> pass
+    // 1: within cap -> pass
+    // 2: over cap, no exception -> held
+    // 3: over cap, wholesale lifts -> pass
+    // 4: over cap, audit_block overrides wholesale -> held
+    let sample = vec![
+        Line {
+            invoice: "IN0",
+            quantity: 1,
+            price: "50".into(),
+            customer: Some("a"),
+            country: "XX",
+            occurred_at: INSTANTS[0],
+        },
+        Line {
+            invoice: "IN1",
+            quantity: 1,
+            price: "5".into(),
+            customer: Some("b"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+        Line {
+            invoice: "IN2",
+            quantity: 1,
+            price: "50".into(),
+            customer: Some("c"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+        Line {
+            invoice: "OK3",
+            quantity: 12,
+            price: "50".into(),
+            customer: Some("d"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+        Line {
+            invoice: "AUDIT",
+            quantity: 12,
+            price: "50".into(),
+            customer: Some("e"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+    ];
+    let (_row_findings, row_held, row_trusted) = per_row(&mut cell, &sample);
+    assert_eq!(row_held, BTreeSet::from([3, 5]));
+    assert_eq!(row_trusted, BTreeSet::from([1, 2, 4]));
+
+    let total_rows = 125_000usize;
+    let mut csv_bytes = String::with_capacity(total_rows * 64);
+    writeln!(csv_bytes, "{}", FIELDS.join(",")).expect("csv header");
+    for index in 0..total_rows {
+        let line = &sample[index % sample.len()];
+        writeln!(
+            csv_bytes,
+            "line-{},{},c,{},{},{},{},{}",
+            index + 1,
+            line.invoice,
+            line.quantity,
+            line.price,
+            line.customer.unwrap_or_default(),
+            line.country,
+            line.occurred_at,
+        )
+        .expect("csv line");
+    }
+    let (_engine_dir, engine) = engine_with("1GB");
+    let mut request = land_request(&cell, csv_bytes.as_bytes(), FileFormat::Csv);
+    request.residue_page = norn_cell::analytics::RESIDUE_PAGE_ROWS;
+    let landed = engine
+        .land(&request, |mut file| {
+            file.write_all(csv_bytes.as_bytes()).expect("source");
+            Ok(())
+        })
+        .expect("125k rows with row-tree unless law must not hit residue cap");
+    assert_eq!(
+        landed.residue_total, 0,
+        "125k rows with row-tree unless law must produce zero residue"
+    );
+    assert_eq!(landed.load.rows, 125_000);
+    assert_eq!(landed.held_by_rules, 50_000);
+    assert_eq!(landed.data.as_ref().expect("data").rows, 75_000);
+}
+
+/// Lane A5.1: first-class `RowPredicate::Coalesce` preserves the fallback when
+/// the LHS dynamically evaluates to `null` (fixing nested-null drop).
+#[test]
+fn coalesce_nested_null_and_nullable_conditionals_match_per_row() {
+    let rules: [(&str, &str, &str); 5] = [
+        (
+            "nested_num_coalesce",
+            "error",
+            "((self.country == 'XX' ? null : self.price) ?? 99) <= 50",
+        ),
+        (
+            "nested_text_coalesce",
+            "warning",
+            "((self.country == 'XX' ? null : self.customer) ?? 'fallback') != 'fallback'",
+        ),
+        (
+            "literal_null_coalesce",
+            "error",
+            "(null ?? self.price) >= 0",
+        ),
+        (
+            "deep_nested_coalesce",
+            "error",
+            "((self.country == 'XX' ? null : (self.invoice == 'C1' ? null : self.price)) ?? 50) <= 50",
+        ),
+        (
+            "nullable_coalesce_eq_null",
+            "warning",
+            "((self.country == 'XX' ? null : self.price) ?? null) != null",
+        ),
+    ];
+    let (_dir, mut cell) = cell(&rules);
+    let table = cell.store().analytics_table(TYPE).expect("table");
+    let checks = cell.store().dataset_checks(TYPE, &table).expect("checks");
+    assert_eq!(checks.len(), rules.len());
+    for check in &checks {
+        assert!(
+            check.predicate.is_some(),
+            "{} must lower into RowPredicate::Coalesce",
+            check.label
+        );
+    }
+
+    // All columns present: zero residue across every nested-null branch!
+    let present_lines = vec![
+        // country == 'XX': conditional produces null -> ?? 99 (>50, fails), ?? 'fallback' (fails), ?? 50 (<=50, passes), ?? null == null (fails)
+        Line {
+            invoice: "IN1",
+            quantity: 1,
+            price: "10".into(),
+            customer: Some("ann"),
+            country: "XX",
+            occurred_at: INSTANTS[0],
+        },
+        // country == 'FR', invoice == 'C1': inner conditional produces null -> ?? 50 (passes), outer non-null price 10 (passes)
+        Line {
+            invoice: "C1",
+            quantity: 1,
+            price: "10".into(),
+            customer: Some("bob"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+        // country == 'FR', price 60 (>50): non-null LHS fails nested_num_coalesce and deep_nested_coalesce
+        Line {
+            invoice: "IN3",
+            quantity: 1,
+            price: "60".into(),
+            customer: Some("cat"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+        // negative price: fails literal_null_coalesce
+        Line {
+            invoice: "IN4",
+            quantity: 1,
+            price: "-5".into(),
+            customer: Some("dan"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+    ];
+    let (row_findings, row_held, row_trusted) = per_row(&mut cell, &present_lines);
+    let bulk = set_based(&cell, &present_lines);
+    assert_eq!(
+        bulk.residue, 0,
+        "present-column nested-null coalesce decides in SQL"
+    );
+    assert_eq!(bulk.findings, row_findings);
+    assert_eq!(bulk.held, row_held);
+    assert_eq!(bulk.data, row_trusted);
+
+    // Optional column absent (`customer: None`): falls back to residue and still matches per-row!
+    let (_dir2, mut cell2) = cell(&rules);
+    let mut mixed_lines = present_lines;
+    mixed_lines.push(Line {
+        invoice: "IN5",
+        quantity: 1,
+        price: "10".into(),
+        customer: None,
+        country: "FR",
+        occurred_at: INSTANTS[0],
+    });
+    let (row_findings, row_held, row_trusted) = per_row(&mut cell2, &mixed_lines);
+    let bulk = set_based(&cell2, &mixed_lines);
+    assert_eq!(bulk.residue, 1);
+    assert_eq!(bulk.findings, row_findings);
+    assert_eq!(bulk.held, row_held);
+    assert_eq!(bulk.data, row_trusted);
+}
+
+/// Observe arbitrary JSON rows through `bench.dataset.mapping` for a custom
+/// schema test cell and return `(findings, held, trusted)`.
+fn per_row_custom(
+    cell: &mut Cell,
+    object_type: &str,
+    rows: &[serde_json::Value],
+) -> (BTreeSet<Finding>, BTreeSet<u64>, BTreeSet<u64>) {
+    let input = norn_cell::mapping_bundle::MappingInput {
+        mapping: "bench.dataset.mapping".into(),
+        dataset: "Rows".into(),
+        connector_instance: "public".into(),
+        partition: "sample".into(),
+        recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-04T00:00:00Z".into()),
+    };
+    let mut findings = BTreeSet::new();
+    let mut held = BTreeSet::new();
+    let mut trusted = BTreeSet::new();
+    for (index, payload_json) in rows.iter().enumerate() {
+        let row = u64::try_from(index + 1).expect("row");
+        let id = payload_json["id"].as_str().expect("id").to_owned();
+        let text = payload_json.to_string();
+        let Ok(payload) = Value::from_json_text(&text) else {
+            held.insert(row);
+            continue;
+        };
+        let observed = Observed {
+            id: ObservationId(format!("row-{row}")),
+            provenance: Provenance {
+                source: "Bench".into(),
+                source_id: id.clone(),
+                mapping_version: "pipeline/1".into(),
+                observed_at: LogicalTime::from_millis(1_793_750_400_000),
+            },
+            input: norn_ir::runtime_object! {"contract"=>"norn.raw_observation/v1", "source"=>"Bench",
+            "source_id"=>id, "event_id"=>format!("row-{row}"), "source_version"=>"2",
+            "pipeline_version"=>"pipeline/1", "kind"=>"upsert", "extracted_at"=>1_793_750_400_000u64,
+            "payload"=>payload,
+            "payload_digest"=>norn_ir::canonical::HashProfile::Norn1.hash_json(&text).expect("digest")},
+        };
+        let (bundle, _) = cell
+            .inject_mapping_bundle(&observed, &input)
+            .expect("captured");
+        let _processed = cell.process_mapping_bundle(&bundle);
+        let model = cell.store().model().clone();
+        let catalog = norn_kernel::TypeCatalog::new(model.object_types())
+            .with_interfaces(model.interfaces())
+            .with_property_types(model.property_types())
+            .with_governing_laws(model.law_artifacts());
+        let reader = cell.store().read();
+        let Some(record) = reader.object("main", object_type, &id).expect("read") else {
+            held.insert(row);
+            continue;
+        };
+        for finding in reader
+            .observation_findings("main", object_type, &id)
+            .expect("findings")
+        {
+            let holds = norn_kernel::snapshot_observe::finding_quarantines(
+                &catalog,
+                &finding.rule_ref,
+                finding.severity,
+            )
+            .expect("hold class");
+            findings.insert((row, rule_key(&finding.rule_ref).expect("rule"), holds));
+        }
+        if reader
+            .observation_is_quarantined("main", &record)
+            .expect("quarantine")
+        {
+            held.insert(row);
+        } else {
+            trusted.insert(row);
+        }
+    }
+    (findings, held, trusted)
+}
+
+/// Set-based land + settle for an arbitrary schema CSV.
+fn set_based_custom(cell: &Cell, object_type: &str, csv_text: &str) -> Bulk {
+    let store = cell.store();
+    let table = store.analytics_table(object_type).expect("table");
+    let checks = store.dataset_checks(object_type, &table).expect("checks");
+    let bytes = csv_text.as_bytes();
+    let mut request = LandRequest {
+        load: LoadRequest {
+            tenant: tenant(),
+            table,
+            load: "land-1".into(),
+            file: FileSource {
+                url: String::new(),
+                uri: "s3://synthetic/uploads/custom".into(),
+                sha256: norn_cell::analytics::hex_digest(bytes),
+                format: FileFormat::Csv,
+            },
+            headers: BTreeMap::new(),
+        },
+        pins: store
+            .dataset_pins(object_type, &BTreeMap::new(), "bench.dataset.mapping@test")
+            .expect("pins"),
+        landing: "landing-1".into(),
+        attempt: String::new(),
+        checks,
+        residue_page: 7,
+    };
+    let (engine_dir, engine) = engine();
+    let mut landed = engine
+        .land(&request, |mut file| {
+            file.write_all(bytes).expect("source");
+            Ok(())
+        })
+        .expect("landed");
+    request.attempt.clone_from(&landed.attempt);
+    let mut residue = 0u64;
+    while landed.residue_total > 0 {
+        let page = landed.residue.clone();
+        residue += u64::try_from(page.len()).expect("page");
+        let findings = store
+            .residue_findings(object_type, &request.load.table, &page)
+            .expect("per-row residue");
+        let through = page.last().expect("page").row;
+        landed = engine
+            .settle(&SettleRequest {
+                land: request.clone(),
+                through,
+                findings,
+            })
+            .expect("settled");
+    }
+    let (data_path, held_path) = files(engine_dir.path(), &landed.attempt);
+    let data = parquet_rows(&data_path, "CAST(NULL AS VARCHAR), CAST(NULL AS BOOLEAN)")
+        .into_iter()
+        .map(|(row, ..)| row)
+        .collect();
+    let mut findings = BTreeSet::new();
+    let mut held = BTreeSet::new();
+    for (row, rule, holds) in parquet_rows(&held_path, "\":rule\", \":holds\"") {
+        if let Some(rule) = rule {
+            findings.insert((row, rule, holds));
+            if holds {
+                held.insert(row);
+            }
+        } else {
+            held.insert(row);
+        }
+    }
+    Bulk {
+        findings,
+        held,
+        data,
+        residue,
+        residue_rows: Vec::new(),
+    }
+}
+
+/// Lane A5.1: civil-day `date(...)` and UTC-instant `timestamp(...)` ordering
+/// and equality lower into SQL with `0001..=9999` guards and match per-row.
+#[test]
+fn civil_date_and_timestamp_ordering_and_guards_match_per_row() {
+    use norn_cell::analytics::RowPredicate as P;
+    const WINDOW_TYPE: &str = "bench.TemporalWindow";
+    let schema_fields = vec![
+        Field {
+            id: "id",
+            kind: json!({"kind":"text"}),
+            required: true,
+        },
+        Field {
+            id: "start_date",
+            kind: json!({"kind":"date"}),
+            required: true,
+        },
+        Field {
+            id: "end_date",
+            kind: json!({"kind":"date"}),
+            required: true,
+        },
+        Field {
+            id: "opt_date",
+            kind: json!({"kind":"date"}),
+            required: false,
+        },
+        Field {
+            id: "created_at",
+            kind: json!({"kind":"timestamp","timezone":"utc"}),
+            required: true,
+        },
+        Field {
+            id: "updated_at",
+            kind: json!({"kind":"timestamp","timezone":"utc"}),
+            required: true,
+        },
+        Field {
+            id: "note",
+            kind: json!({"kind":"text"}),
+            required: true,
+        },
+    ];
+    let rules = [
+        (
+            "date_ordered",
+            "error",
+            "date(self.start_date) <= date(self.end_date)",
+        ),
+        (
+            "date_after_2020",
+            "error",
+            "date(self.start_date) >= date('2020-01-01')",
+        ),
+        (
+            "opt_date_before_end",
+            "warning",
+            "date(self.opt_date ?? '2026-01-01') <= date(self.end_date)",
+        ),
+        (
+            "ts_ordered",
+            "error",
+            "timestamp(self.created_at) <= timestamp(self.updated_at)",
+        ),
+        (
+            "ts_not_midnight",
+            "warning",
+            "timestamp(self.created_at) != timestamp('2026-01-01T00:00:00Z')",
+        ),
+        ("raw_date_eq", "warning", "self.start_date != '2025-12-31'"),
+    ];
+    let (_dir, mut cell) = support::cell(WINDOW_TYPE, &schema_fields, &rules);
+    let table = cell.store().analytics_table(WINDOW_TYPE).expect("table");
+    let checks = cell
+        .store()
+        .dataset_checks(WINDOW_TYPE, &table)
+        .expect("checks");
+    assert_eq!(checks.len(), rules.len());
+    for check in &checks {
+        assert!(
+            check.predicate.is_some(),
+            "{} must lower into RowPredicate",
+            check.label
+        );
+    }
+
+    // Negative typing checks: raw wire dates/timestamps cannot order; mixed
+    // Date/Timestamp cannot compare; year 0000 literals and free text reject.
+    assert!(
+        P::Less(
+            Box::new(P::Column("start_date".into())),
+            Box::new(P::Column("end_date".into()))
+        )
+        .kind(&table)
+        .is_none()
+    );
+    assert!(
+        P::Less(
+            Box::new(P::Column("created_at".into())),
+            Box::new(P::Column("updated_at".into()))
+        )
+        .kind(&table)
+        .is_none()
+    );
+    assert!(
+        P::Less(
+            Box::new(P::Date(Box::new(P::Column("start_date".into())))),
+            Box::new(P::Timestamp(Box::new(P::Column("created_at".into()))))
+        )
+        .kind(&table)
+        .is_none()
+    );
+    assert!(
+        P::Date(Box::new(P::Text("0000-01-01".into())))
+            .kind(&table)
+            .is_none()
+    );
+    assert!(
+        P::Timestamp(Box::new(P::Text("0000-12-31T23:00:00-02:00".into())))
+            .kind(&table)
+            .is_none()
+    );
+    assert!(
+        P::Timestamp(Box::new(P::Text("0001-01-01T00:00:00+02:00".into())))
+            .kind(&table)
+            .is_none()
+    );
+    assert!(
+        P::Date(Box::new(P::Column("note".into())))
+            .kind(&table)
+            .is_none()
+    );
+    assert!(P::Date(Box::new(P::Null)).kind(&table).is_none());
+
+    // Valid 0001..=9999 rows with all columns present -> zero residue!
+    let rows = vec![
+        // 1: leap day, all pass
+        json!({
+            "id": "w-1", "start_date": "2024-02-28", "end_date": "2024-02-29",
+            "opt_date": "2024-02-28",
+            "created_at": "2024-02-29T00:00:00.000000001Z",
+            "updated_at": "2024-02-29T00:00:00.000000002Z",
+            "note": "ok"
+        }),
+        // 2: cross-offset instant equality: 02:00+02:00 == 00:00Z -> triggers ts_not_midnight!
+        json!({
+            "id": "w-2", "start_date": "2026-01-01", "end_date": "2026-01-02",
+            "opt_date": "2026-01-01",
+            "created_at": "2026-01-01T02:00:00+02:00",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "note": "offset-eq"
+        }),
+        // 3: cross-offset ordering failure: created_at (03:00+02:00 = 01:00Z) > updated_at (00:30Z)
+        json!({
+            "id": "w-3", "start_date": "2026-05-01", "end_date": "2026-04-30",
+            "opt_date": "2026-05-01",
+            "created_at": "2026-05-01T03:00:00+02:00",
+            "updated_at": "2026-05-01T00:30:00Z",
+            "note": "reversed"
+        }),
+        // 4: pre-1970 nanosecond ordering + raw_date_eq trigger + date_after_2020 violation
+        json!({
+            "id": "w-4", "start_date": "2025-12-31", "end_date": "2025-12-31",
+            "opt_date": "2025-12-31",
+            "created_at": "1969-12-31T23:59:59.500000000Z",
+            "updated_at": "1970-01-01T00:00:00.000000000Z",
+            "note": "pre-epoch"
+        }),
+        // 5: before 2020-01-01
+        json!({
+            "id": "w-5", "start_date": "2019-12-31", "end_date": "2020-01-01",
+            "opt_date": "2019-12-31",
+            "created_at": "2019-12-31T23:59:59Z",
+            "updated_at": "2020-01-01T00:00:00Z",
+            "note": "pre-2020"
+        }),
+    ];
+    let mut csv_text = "id,start_date,end_date,opt_date,created_at,updated_at,note\n".to_owned();
+    for row in &rows {
+        writeln!(
+            csv_text,
+            "{},{},{},{},{},{},{}",
+            row["id"].as_str().expect("id"),
+            row["start_date"].as_str().expect("start_date"),
+            row["end_date"].as_str().expect("end_date"),
+            row["opt_date"].as_str().unwrap_or(""),
+            row["created_at"].as_str().expect("created_at"),
+            row["updated_at"].as_str().expect("updated_at"),
+            row["note"].as_str().expect("note"),
+        )
+        .expect("csv");
+    }
+    let (row_findings, row_held, row_trusted) = per_row_custom(&mut cell, WINDOW_TYPE, &rows);
+    let bulk = set_based_custom(&cell, WINDOW_TYPE, &csv_text);
+    assert_eq!(
+        bulk.residue, 0,
+        "valid 0001..=9999 temporal rows decide in SQL"
+    );
+    assert_eq!(bulk.findings, row_findings);
+    assert_eq!(bulk.held, row_held);
+    assert_eq!(bulk.data, row_trusted);
+    assert_eq!(bulk.data, BTreeSet::from([1]));
+    assert_eq!(bulk.held, BTreeSet::from([2, 3, 4, 5]));
+
+    // Raw timestamp equality (`self.created_at == self.updated_at`) must fall
+    // back to residue because per-row canonicalizes offsets to UTC before ZEN
+    // runs (`2026-01-01T02:00:00+02:00` == `2026-01-01T00:00:00Z`).
+    let (_dir_raw_ts, mut cell_raw_ts) = support::cell(
+        WINDOW_TYPE,
+        &schema_fields,
+        &[("raw_ts_eq", "error", "self.created_at == self.updated_at")],
+    );
+    let raw_ts_checks = cell_raw_ts
+        .store()
+        .dataset_checks(
+            WINDOW_TYPE,
+            &cell_raw_ts
+                .store()
+                .analytics_table(WINDOW_TYPE)
+                .expect("table"),
+        )
+        .expect("checks");
+    assert!(
+        raw_ts_checks[0].predicate.is_none(),
+        "raw Timestamp equality must not lower directly over un-canonicalized text"
+    );
+    let raw_ts_rows = vec![json!({
+        "id": "w-raw-ts", "start_date": "2026-01-01", "end_date": "2026-01-02",
+        "opt_date": "2026-01-01",
+        "created_at": "2026-01-01T02:00:00+02:00",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "note": "offset-raw-eq"
+    })];
+    let raw_ts_csv = "id,start_date,end_date,opt_date,created_at,updated_at,note\n\
+                      w-raw-ts,2026-01-01,2026-01-02,2026-01-01,2026-01-01T02:00:00+02:00,2026-01-01T00:00:00Z,offset-raw-eq\n";
+    let (raw_ts_findings, raw_ts_held, raw_ts_trusted) =
+        per_row_custom(&mut cell_raw_ts, WINDOW_TYPE, &raw_ts_rows);
+    let raw_ts_bulk = set_based_custom(&cell_raw_ts, WINDOW_TYPE, raw_ts_csv);
+    assert_eq!(raw_ts_bulk.residue, 1);
+    assert_eq!(raw_ts_bulk.findings, raw_ts_findings);
+    assert_eq!(raw_ts_bulk.held, raw_ts_held);
+    assert_eq!(raw_ts_bulk.data, raw_ts_trusted);
+    assert_eq!(raw_ts_bulk.data, BTreeSet::from([1]));
+
+    // Year-0000 guard test: DuckDB/DataFusion loaders accept 0000-06-15, while
+    // ZEN Temporal::date only admits 0001..=9999 -> must fall back to residue!
+    let (_dir0, mut cell0) = support::cell(
+        WINDOW_TYPE,
+        &schema_fields,
+        &[(
+            "date_ordered",
+            "error",
+            "date(self.start_date) <= date(self.end_date)",
+        )],
+    );
+    let year0_rows = vec![json!({
+        "id": "w-0", "start_date": "0000-06-15", "end_date": "2026-01-01",
+        "opt_date": "2026-01-01",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:01Z",
+        "note": "year0"
+    })];
+    let year0_csv = "id,start_date,end_date,opt_date,created_at,updated_at,note\n\
+                     w-0,0000-06-15,2026-01-01,2026-01-01,2026-01-01T00:00:00Z,2026-01-01T00:00:01Z,year0\n";
+    let (row_findings0, row_held0, row_trusted0) =
+        per_row_custom(&mut cell0, WINDOW_TYPE, &year0_rows);
+    let bulk0 = set_based_custom(&cell0, WINDOW_TYPE, year0_csv);
+    assert_eq!(
+        bulk0.residue, 1,
+        "year 0000 must go to residue via 0001..=9999 guard"
+    );
+    assert_eq!(bulk0.findings, row_findings0);
+    assert_eq!(bulk0.held, row_held0);
+    assert_eq!(bulk0.data, row_trusted0);
+}
+
+/// Lane A5.1: `DuckDB` byte-fuel uses `strlen` (UTF-8 bytes, matching ZEN)
+/// while `PointLaw::{MinLength, MaxLength}` uses `length` (Unicode char count,
+/// matching `entity_instance.rs:1155`).
+#[test]
+fn multibyte_utf8_byte_fuel_and_char_length_preserve_contracts() {
+    // Part A: 4-byte UTF-8 `'😀'` whose char count fits under `row_fuel`,
+    // while its UTF-8 byte length (4x) exceeds `row_fuel`.
+    let (_dir, cell) = wide_typed_cell();
+    let store = cell.store();
+    let table = store.analytics_table(TYPE).expect("table");
+    let checks = store.dataset_checks(TYPE, &table).expect("checks");
+    let budget = norn_cell::analytics::row_fuel();
+    let max_bytes = usize::try_from((budget - checks[0].fuel) / 2).expect("width");
+    // 4-byte emoji: `over_chars` has `2 * over_chars < budget - static` (would
+    // have passed a char-count check), yet `2 * (4 * over_chars) > budget - static`!
+    let ok_chars = max_bytes / 4;
+    let over_chars = ok_chars + 1;
+    // 125,000 4-byte chars = 500,000 UTF-8 bytes per operand (1,000,000+ fuel
+    // in ZEN), yet only 250,000 chars total (would have slipped past `length`).
+    let exhaust_chars = 125_000;
+    assert!(
+        exhaust_chars * 2 < max_bytes * 2,
+        "char count alone is well below byte budget"
+    );
+    assert!(over_chars * 4 > max_bytes, "UTF-8 bytes exceed byte budget");
+    let decimals: Vec<String> = (0..TYPED).map(|i| format!("d{i}")).collect();
+    let mut csv_bytes = format!("id,a,b,{}\n", decimals.join(","));
+    let ones = vec!["1"; TYPED].join(",");
+    let ok_text = "😀".repeat(ok_chars);
+    let over_text = "😀".repeat(over_chars);
+    let exhaust_text = "😀".repeat(exhaust_chars);
+    writeln!(csv_bytes, "line-1,{ok_text},{ok_text},{ones}").expect("row 1");
+    writeln!(csv_bytes, "line-2,{over_text},{over_text},{ones}").expect("row 2");
+    writeln!(csv_bytes, "line-3,{exhaust_text},{exhaust_text},{ones}").expect("row 3");
+    let (_engine_dir, engine) = engine_with("2GB");
+    let (request, landed) = land(&engine, &cell, csv_bytes.as_bytes(), FileFormat::Csv);
+    let residue_ids: Vec<u64> = landed.residue.iter().map(|r| r.row).collect();
+    assert_eq!(
+        residue_ids,
+        vec![2, 3],
+        "only the 4-byte UTF-8 rows past the UTF-8 byte fuel bound are residue"
+    );
+    store
+        .residue_findings(TYPE, &request.load.table, &landed.residue[1..2])
+        .expect_err("per-row ZEN evaluator exhausts fuel on the 500KB UTF-8 row");
+
+    // Part B: `minLength: 3, maxLength: 3` counts Unicode chars, NOT UTF-8 bytes!
+    let len_type = "bench.CharBound";
+    let (mut artifacts, base) = support::artifacts(
+        len_type,
+        &[
+            Field {
+                id: "id",
+                kind: json!({"kind":"text"}),
+                required: true,
+            },
+            Field {
+                id: "code",
+                kind: json!({"kind":"text"}),
+                required: true,
+            },
+        ],
+        &[],
+    );
+    let mut entity_json = serde_json::to_value(&artifacts[0]).expect("entity");
+    entity_json["payload"]["objectType"]["properties"][1]["constraints"] =
+        json!({"minLength": 3, "maxLength": 3});
+    artifacts[0] = serde_json::from_value(entity_json).expect("entity");
+    let (_len_dir, mut len_cell) = support::cell_from_artifacts(&artifacts, &base);
+    let rows = vec![
+        json!({"id": "c-1", "code": "😀😀😀"}), // 3 chars, 12 bytes -> admitted
+        json!({"id": "c-2", "code": "😀😀"}),   // 2 chars, 8 bytes  -> too_short
+        json!({"id": "c-3", "code": "😀😀😀😀"}), // 4 chars, 16 bytes -> too_long
+    ];
+    let len_csv = "id,code\nc-1,😀😀😀\nc-2,😀😀\nc-3,😀😀😀😀\n";
+    let (row_findings, row_held, row_trusted) = per_row_custom(&mut len_cell, len_type, &rows);
+    let bulk = set_based_custom(&len_cell, len_type, len_csv);
+    assert_eq!(bulk.findings, row_findings);
+    assert_eq!(bulk.held, row_held);
+    assert_eq!(bulk.data, row_trusted);
+    assert_eq!(bulk.data, BTreeSet::from([1]));
+    assert_eq!(bulk.held, BTreeSet::from([2, 3]));
+}
+
+/// Lane A5.1: 3-way differential test proving exact agreement across
+/// `Per-Row == DuckDB == DataFusion` (and identical residue counts between
+/// `DuckDB` and `DataFusion`) over nested-null `Coalesce`, `Conditional`,
+/// row-tree `unless` exception trees, `timestamp(...)` ordering, NFC/NFD text,
+/// and optional nulls.
+#[cfg(all(feature = "duckdb", feature = "datafusion", feature = "native"))]
+#[test]
+fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
+    use norn_cell::analytics::datafusion::{
+        Engine as DataFusionEngine, Settings as DataFusionSettings,
+    };
+    use norn_cell::analytics::engine::{Engine as DuckDbEngine, Settings as DuckDbSettings};
+
+    let (mut artifacts, base) = support::artifacts(
+        TYPE,
+        &fields(),
+        &[
+            (
+                "nested_coalesce",
+                "error",
+                "((self.country == 'XX' ? null : self.price) ?? 25) <= 20",
+            ),
+            (
+                "ts_floor",
+                "warning",
+                "timestamp(self.occurred_at) >= timestamp('2026-10-01T09:30:00.000000001Z')",
+            ),
+            ("price_capped", "error", "self.price <= 10"),
+            (
+                "nfc_customer",
+                "warning",
+                "(self.customer ?? 'nobody') != '\u{e9}'",
+            ),
+        ],
+    );
+    let cap_law = artifacts
+        .iter_mut()
+        .find(|artifact| artifact.artifact_id.as_str() == "bench.price_capped.law")
+        .expect("cap law");
+    let mut cap_json = serde_json::to_value(&*cap_law).expect("cap json");
+    cap_json["payload"]["condition"] = json!("self.country != 'XX'");
+    cap_json["payload"]["exceptions"] = json!([
+        {
+            "id": "wholesale",
+            "overrides": "price_capped",
+            "condition": "self.quantity >= 10",
+            "rationale": "Bulk orders are exempt.",
+            "source": {"artifactId": "bench.price_capped.law", "pointer": "/payload/exceptions/0"}
+        },
+        {
+            "id": "audit_block",
+            "overrides": "wholesale",
+            "condition": "self.invoice == 'AUDIT'",
+            "rationale": "Audited bulk orders still enforce the cap.",
+            "source": {"artifactId": "bench.price_capped.law", "pointer": "/payload/exceptions/1"}
+        }
+    ]);
+    *cap_law = serde_json::from_value(cap_json).expect("updated cap law");
+
+    let strategy = proptest::collection::vec(
+        (
+            proptest::sample::select(&["IN1", "AUDIT", "C1"][..]),
+            proptest::sample::select(&[1_i64, 12][..]),
+            proptest::sample::select(&["5", "15", "30"][..]),
+            proptest::sample::select(&[None, Some("ann"), Some("\u{e9}"), Some("e\u{301}")][..]),
+            proptest::sample::select(&["FR", "XX", "UK"][..]),
+            proptest::sample::select(&INSTANTS[..]),
+        ),
+        1..=10,
+    );
+    let mut runner =
+        proptest::test_runner::TestRunner::new(proptest::test_runner::Config::with_cases(24));
+    runner
+        .run(&strategy, |batch| {
+            let lines: Vec<Line> = batch
+                .into_iter()
+                .map(
+                    |(invoice, quantity, price, customer, country, occurred_at)| Line {
+                        invoice,
+                        quantity,
+                        price: price.to_owned(),
+                        customer,
+                        country,
+                        occurred_at,
+                    },
+                )
+                .collect();
+            let (_dir, mut cell) = support::cell_from_artifacts(&artifacts, &base);
+            let (row_findings, row_held, row_trusted) = per_row(&mut cell, &lines);
+            let bytes = parquet(&lines);
+            let base_request = land_request(&cell, &bytes, FileFormat::Parquet);
+            let store = cell.store();
+
+            // DuckDB
+            let duck_dir = tempfile::tempdir().expect("duck dir");
+            let duck = DuckDbEngine::new(DuckDbSettings {
+                root: duck_dir.path().to_path_buf(),
+                memory_limit: "256MB".into(),
+                threads: 1,
+            })
+            .expect("duckdb");
+            let mut duck_req = base_request.clone();
+            let mut duck_landed = duck
+                .land(&duck_req, |mut f| {
+                    f.write_all(&bytes).expect("src");
+                    Ok(())
+                })
+                .expect("duck land");
+            duck_req.attempt.clone_from(&duck_landed.attempt);
+            let mut duck_residue = 0u64;
+            while duck_landed.residue_total > 0 {
+                let page = duck_landed.residue.clone();
+                duck_residue += u64::try_from(page.len()).expect("len");
+                let findings = store
+                    .residue_findings(TYPE, &duck_req.load.table, &page)
+                    .expect("duck residue");
+                let through = page.last().expect("page").row;
+                duck_landed = duck
+                    .settle(&SettleRequest {
+                        land: duck_req.clone(),
+                        through,
+                        findings,
+                    })
+                    .expect("duck settle");
+            }
+            let (duck_data_p, duck_held_p) = files(duck_dir.path(), &duck_landed.attempt);
+            let duck_data: BTreeSet<u64> =
+                parquet_rows(&duck_data_p, "CAST(NULL AS VARCHAR), CAST(NULL AS BOOLEAN)")
+                    .into_iter()
+                    .map(|(r, ..)| r)
+                    .collect();
+            let mut duck_findings = BTreeSet::new();
+            let mut duck_held = BTreeSet::new();
+            for (r, rule, holds) in parquet_rows(&duck_held_p, "\":rule\", \":holds\"") {
+                if let Some(rule) = rule {
+                    duck_findings.insert((r, rule, holds));
+                    if holds {
+                        duck_held.insert(r);
+                    }
+                } else {
+                    duck_held.insert(r);
+                }
+            }
+
+            // DataFusion
+            let df_dir = tempfile::tempdir().expect("df dir");
+            let df = DataFusionEngine::new(DataFusionSettings {
+                root: df_dir.path().to_path_buf(),
+                memory_limit: "256MB".into(),
+                threads: 1,
+            })
+            .expect("datafusion");
+            let mut df_req = base_request;
+            let mut df_landed = df
+                .land(&df_req, |mut f| {
+                    f.write_all(&bytes).expect("src");
+                    Ok(())
+                })
+                .expect("df land");
+            df_req.attempt.clone_from(&df_landed.attempt);
+            let mut df_residue = 0u64;
+            while df_landed.residue_total > 0 {
+                let page = df_landed.residue.clone();
+                df_residue += u64::try_from(page.len()).expect("len");
+                let findings = store
+                    .residue_findings(TYPE, &df_req.load.table, &page)
+                    .expect("df residue");
+                let through = page.last().expect("page").row;
+                df_landed = df
+                    .settle(&SettleRequest {
+                        land: df_req.clone(),
+                        through,
+                        findings,
+                    })
+                    .expect("df settle");
+            }
+            let (df_data_p, df_held_p) = files(df_dir.path(), &df_landed.attempt);
+            let df_data: BTreeSet<u64> =
+                parquet_rows(&df_data_p, "CAST(NULL AS VARCHAR), CAST(NULL AS BOOLEAN)")
+                    .into_iter()
+                    .map(|(r, ..)| r)
+                    .collect();
+            let mut df_findings = BTreeSet::new();
+            let mut df_held = BTreeSet::new();
+            for (r, rule, holds) in parquet_rows(&df_held_p, "\":rule\", \":holds\"") {
+                if let Some(rule) = rule {
+                    df_findings.insert((r, rule, holds));
+                    if holds {
+                        df_held.insert(r);
+                    }
+                } else {
+                    df_held.insert(r);
+                }
+            }
+
+            proptest::prop_assert_eq!(&duck_findings, &row_findings);
+            proptest::prop_assert_eq!(&df_findings, &row_findings);
+            proptest::prop_assert_eq!(&duck_held, &row_held);
+            proptest::prop_assert_eq!(&df_held, &row_held);
+            proptest::prop_assert_eq!(&duck_data, &row_trusted);
+            proptest::prop_assert_eq!(&df_data, &row_trusted);
+            proptest::prop_assert_eq!(duck_residue, df_residue);
+            Ok(())
+        })
+        .expect("Per-Row == DuckDB == DataFusion across all batches");
+}
+
+/// Lane A5.1: mixed-scale `DECIMAL(38, s)` branch/comparison widening,
+/// short-circuit `AND`/`OR` (including 17-term chains), engine-boundary
+/// null-typed subexpressions, and eager sibling `unless` evaluation across
+/// `DuckDB`, per-row ZEN, and (when enabled) `DataFusion`.
+#[test]
+fn decimal_widening_short_circuit_and_eager_unless_parity() {
+    use norn_cell::analytics::RuleCheck;
+    use norn_cell::analytics::engine::{Engine as DuckDbEngine, Settings as DuckDbSettings};
+    use norn_cell::dataset_laws::plan_invariant;
+
+    let land_both = |req: &LandRequest, csv: &str| {
+        let duck_dir = tempfile::tempdir().expect("duck dir");
+        let duck = DuckDbEngine::new(DuckDbSettings {
+            root: duck_dir.path().to_path_buf(),
+            memory_limit: "256MB".into(),
+            threads: 1,
+        })
+        .expect("duck");
+        let duck_landed = duck
+            .land(req, |mut f| {
+                f.write_all(csv.as_bytes()).expect("csv");
+                Ok(())
+            })
+            .expect("duck land");
+        #[cfg(feature = "datafusion")]
+        {
+            use norn_cell::analytics::datafusion::{
+                Engine as DataFusionEngine, Settings as DataFusionSettings,
+            };
+            let df_dir = tempfile::tempdir().expect("df dir");
+            let df = DataFusionEngine::new(DataFusionSettings {
+                root: df_dir.path().to_path_buf(),
+                memory_limit: "256MB".into(),
+                threads: 1,
+            })
+            .expect("df");
+            let df_landed = df
+                .land(req, |mut f| {
+                    f.write_all(csv.as_bytes()).expect("csv");
+                    Ok(())
+                })
+                .expect("df land");
+            assert_eq!(duck_landed.residue_total, df_landed.residue_total);
+            assert_eq!(duck_landed.residue, df_landed.residue);
+            assert_eq!(duck_landed.held_by_rules, df_landed.held_by_rules);
+            assert_eq!(duck_landed.rules, df_landed.rules);
+        }
+        duck_landed
+    };
+
+    // Part 1: admitted 7-rule `BigDecimalBranch` fixture exercising mixed-scale
+    // `COALESCE` widening (no silent rounding to 0), comparison widening,
+    // row-dependent short-circuit `or`/`and` + 17-term left-associated `or`,
+    // and temporal conditional+coalesce with an overflowing decimal condition.
+    let big_type = "bench.BigDecimalBranch";
+    let big_fields = vec![
+        Field {
+            id: "id",
+            kind: json!({"kind":"text"}),
+            required: true,
+        },
+        Field {
+            id: "large",
+            kind: json!({"kind":"decimal","scale":0,"unit":{"system":"ucum","code":"1"},
+                "additivity":{"kind":"additive"}}),
+            required: true,
+        },
+        Field {
+            id: "small",
+            kind: json!({"kind":"decimal","scale":12,"unit":{"system":"ucum","code":"1"},
+                "additivity":{"kind":"additive"}}),
+            required: true,
+        },
+    ];
+    let deep_or_expr = format!(
+        "{} or (self.large != self.small)",
+        (1..=16)
+            .map(|i| format!("self.large == -{i}"))
+            .chain(std::iter::once("self.id == 'null-big'".to_owned()))
+            .collect::<Vec<_>>()
+            .join(" or ")
+    );
+    let (_big_dir, big_cell) = support::cell(
+        big_type,
+        &big_fields,
+        &[
+            (
+                "wide_coalesce",
+                "error",
+                "((self.id == 'null' ? null : self.large) ?? 0.000000000001) > 0",
+            ),
+            (
+                "no_silent_round_to_zero",
+                "error",
+                "((self.id == 'null' ? null : self.large) ?? 0.000000000001) != 0",
+            ),
+            (
+                "wide_compare",
+                "error",
+                "((self.id == 'null' ? null : self.large) ?? 0) > self.small",
+            ),
+            (
+                "short_circuit_or",
+                "error",
+                "self.id == 'null-big' or (self.large != self.small)",
+            ),
+            (
+                "short_circuit_and",
+                "error",
+                "not (self.id != 'null-big' and (self.large == self.small))",
+            ),
+            ("deep_short_circuit_or", "error", &deep_or_expr),
+            (
+                "temporal_coalesce_overflow",
+                "error",
+                "date((self.large == self.small ? '1970-01-01' : null) ?? '1970-01-02') == date('1970-01-02')",
+            ),
+        ],
+    );
+    let ten_26 = "100000000000000000000000000";
+    // Row 1 (`b-1`): `10^26` overflows `DECIMAL(38,12)` across all 7 rules -> residue (7 rules).
+    // Row 2 (`null`): `COALESCE(NULL, 0.000000000001)` passes 6 rules and fails ONLY `wide_compare` in SQL.
+    // Row 3 (`null-big`): `short_circuit_or`, `short_circuit_and`, and 17-term `deep_short_circuit_or`
+    //   short-circuit on their row-dependent LHS with 0 residue, while the other 4 rules overflow
+    //   `DECIMAL(38,12)` -> residue (4 rules).
+    // Row 4 (`b-4`): `5` -> all 7 pass in SQL with 0 residue.
+    let big_csv = format!(
+        "id,large,small\n\
+         b-1,{ten_26},0.000000000001\n\
+         null,5,0.000000000001\n\
+         null-big,{ten_26},0.000000000001\n\
+         b-4,5,0.000000000001\n"
+    );
+    let big_store = big_cell.store();
+    let big_table = big_store.analytics_table(big_type).expect("table");
+    let big_checks = big_store
+        .dataset_checks(big_type, &big_table)
+        .expect("checks");
+    let big_req_base = LandRequest {
+        load: LoadRequest {
+            tenant: tenant(),
+            table: big_table.clone(),
+            load: "land-big".into(),
+            file: FileSource {
+                url: String::new(),
+                uri: "s3://synthetic/uploads/big".into(),
+                sha256: norn_cell::analytics::hex_digest(big_csv.as_bytes()),
+                format: FileFormat::Csv,
+            },
+            headers: BTreeMap::new(),
+        },
+        pins: big_store
+            .dataset_pins(big_type, &BTreeMap::new(), "bench.dataset.mapping@test")
+            .expect("pins"),
+        landing: "landing-big".into(),
+        attempt: String::new(),
+        checks: big_checks,
+        residue_page: 7,
+    };
+    let big_landed = land_both(&big_req_base, &big_csv);
+    assert_eq!(
+        big_landed.residue_total, 2,
+        "only the two 10^26 overflow rows go to residue"
+    );
+    assert_eq!(
+        big_landed.residue.iter().map(|r| r.row).collect::<Vec<_>>(),
+        vec![1, 3]
+    );
+    assert_eq!(big_landed.residue[0].rules.len(), 7);
+    assert_eq!(big_landed.residue[1].rules.len(), 4);
+    assert_eq!(big_landed.held_by_rules, 1);
+    assert_eq!(big_landed.rules.len(), 1);
+    assert_eq!(
+        big_landed.rules.values().next().expect("rule").label,
+        "law:wide_compare"
+    );
+    assert_eq!(
+        big_store
+            .residue_findings(big_type, &big_req_base.load.table, &big_landed.residue)
+            .expect("per-row settles 10^26 cleanly"),
+        Vec::new()
+    );
+
+    // Part 2: engine-boundary `RuleCheck`s for expressions the static checker
+    // rejects at admission (nullable RHS equality, always-null ternary/coalesce
+    // branches, and null-coalesce inside `date(...)`), verifying DuckDB and
+    // DataFusion still preserve condition evaluation and match residue sets.
+    assert!(
+        plan_invariant(
+            "((self.id == 'null-big' ? null : true) ? null : null) == null",
+            &big_table,
+        )
+        .predicate
+        .is_none(),
+        "nullable ternary test stays unlowered by RowPlan"
+    );
+    let boundary_exprs = [
+        (
+            "nullable_mixed_eq",
+            "self.large != (self.id == 'null-big' ? null : self.small)",
+        ),
+        (
+            "null_branch_overflow_eq",
+            "((self.large == self.small) ? null : null) == null",
+        ),
+        (
+            "temporal_null_overflow",
+            "date(((((self.large == self.small) ? null : null) ?? null) ?? '1970-01-02')) == date('1970-01-02')",
+        ),
+    ];
+    let boundary_checks: Vec<RuleCheck> = boundary_exprs
+        .iter()
+        .map(|(id, expr)| {
+            let plan = plan_invariant(expr, &big_table);
+            assert!(
+                plan.predicate.is_some(),
+                "engine-boundary expression `{id}` must lower into RowPredicate"
+            );
+            RuleCheck {
+                rule: format!("boundary:{id}"),
+                label: format!("boundary:{id}"),
+                holds: true,
+                expect: true,
+                condition: plan.condition,
+                predicate: plan.predicate,
+                fuel: plan.fuel,
+            }
+        })
+        .collect();
+    let boundary_req = LandRequest {
+        landing: "landing-boundary".into(),
+        checks: boundary_checks,
+        ..big_req_base
+    };
+    let boundary_landed = land_both(&boundary_req, &big_csv);
+    assert_eq!(boundary_landed.residue_total, 2);
+    assert_eq!(
+        boundary_landed
+            .residue
+            .iter()
+            .map(|r| r.row)
+            .collect::<Vec<_>>(),
+        vec![1, 3]
+    );
+    assert_eq!(boundary_landed.residue[0].rules.len(), 3);
+    assert_eq!(boundary_landed.residue[1].rules.len(), 3);
+    assert_eq!(boundary_landed.held_by_rules, 0);
+
+    // Part 3: admitted sibling `unless` laws with `when: self.id != 'skip'`.
+    // 1. `eager_unless_widening` pairs `self.id == 'null-big'` with a mixed-scale
+    //    comparison `self.large == self.small` whose leaf guards pass: `null-big`
+    //    (`when = true`) MUST go to residue via `conjoin_defined` (not short-circuit
+    //    behind the true first sibling), while `skip` (`when = false`) MUST produce
+    //    zero residue for `eager_unless_widening`.
+    // 2. `eager_unless_zen_overflow` pairs `self.id == 'null-big'` with
+    //    `self.large * self.large > 0`, which overflows ZEN too: per-row
+    //    `residue_findings` returns `Ok` with the `EvaluationFailed` finding
+    //    `(row = 1, "law:eager_unless_zen_overflow", holds = true)`.
+    let (mut eager_artifacts, eager_base) = support::artifacts(
+        big_type,
+        &big_fields,
+        &[
+            ("eager_unless_widening", "error", "self.large < 0"),
+            ("eager_unless_zen_overflow", "error", "self.large < 0"),
+        ],
+    );
+    for (law_id, second_cond) in [
+        ("eager_unless_widening", "self.large == self.small"),
+        ("eager_unless_zen_overflow", "self.large * self.large > 0"),
+    ] {
+        let artifact_id = format!("bench.{law_id}.law");
+        let slot = eager_artifacts
+            .iter_mut()
+            .find(|artifact| artifact.artifact_id.as_str() == artifact_id)
+            .expect("eager law artifact");
+        let mut law_json = serde_json::to_value(&*slot).expect("law json");
+        law_json["payload"]["condition"] = json!("self.id != 'skip'");
+        law_json["payload"]["exceptions"] = json!([
+            {
+                "id": format!("{law_id}_first"),
+                "overrides": law_id,
+                "condition": "self.id == 'null-big'",
+                "rationale": "first sibling holds on null-big",
+                "source": {"artifactId": artifact_id, "pointer": "/payload/exceptions/0"}
+            },
+            {
+                "id": format!("{law_id}_second"),
+                "overrides": law_id,
+                "condition": second_cond,
+                "rationale": "second sibling overflows at 10^26 and must evaluate eagerly when `when` holds",
+                "source": {"artifactId": artifact_id, "pointer": "/payload/exceptions/1"}
+            }
+        ]);
+        *slot = serde_json::from_value(law_json).expect("law");
+    }
+    let (_eager_dir, eager_cell) = support::cell_from_artifacts(&eager_artifacts, &eager_base);
+    let eager_store = eager_cell.store();
+    let eager_table = eager_store.analytics_table(big_type).expect("table");
+    let eager_checks = eager_store
+        .dataset_checks(big_type, &eager_table)
+        .expect("checks");
+    for check in &eager_checks {
+        assert!(
+            check.predicate.is_some() && check.condition.is_some(),
+            "admitted sibling unless law `{}` folds into SQL",
+            check.label
+        );
+    }
+    let widening_rule = eager_checks
+        .iter()
+        .find(|check| check.label == "law:eager_unless_widening")
+        .expect("widening check")
+        .rule
+        .clone();
+    let zen_rule = eager_checks
+        .iter()
+        .find(|check| check.label == "law:eager_unless_zen_overflow")
+        .expect("zen check")
+        .rule
+        .clone();
+    let eager_csv = format!(
+        "id,large,small\n\
+         null-big,{ten_26},0.000000000001\n\
+         skip,{ten_26},0.000000000001\n\
+         b-4,5,0.000000000001\n"
+    );
+    let eager_req = LandRequest {
+        load: LoadRequest {
+            tenant: tenant(),
+            table: eager_table,
+            load: "land-eager".into(),
+            file: FileSource {
+                url: String::new(),
+                uri: "s3://synthetic/uploads/eager".into(),
+                sha256: norn_cell::analytics::hex_digest(eager_csv.as_bytes()),
+                format: FileFormat::Csv,
+            },
+            headers: BTreeMap::new(),
+        },
+        pins: eager_store
+            .dataset_pins(big_type, &BTreeMap::new(), "bench.dataset.mapping@test")
+            .expect("pins"),
+        landing: "landing-eager".into(),
+        attempt: String::new(),
+        checks: eager_checks,
+        residue_page: 7,
+    };
+    let eager_landed = land_both(&eager_req, &eager_csv);
+    // Row 1 (`null-big`, `when = true`): BOTH `eager_unless_widening` (via `conjoin_defined`,
+    //   since leaf guards pass!) and `eager_unless_zen_overflow` go to residue.
+    // Row 2 (`skip`, `when = false`): `eager_unless_widening` has ZERO residue (short-circuited
+    //   by `when = false`); only `eager_unless_zen_overflow` (arithmetic `in_range` guard) is residue.
+    // Row 3 (`b-4`, `large = 5`): zero residue; held ONLY by `eager_unless_widening` (5 < 0 fails)
+    //   while `eager_unless_zen_overflow` lifts in SQL (`25 > 0`).
+    assert_eq!(eager_landed.residue_total, 2);
+    assert_eq!(eager_landed.residue[0].row, 1);
+    assert_eq!(
+        eager_landed.residue[0]
+            .rules
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([widening_rule, zen_rule.clone()])
+    );
+    assert_eq!(eager_landed.residue[1].row, 2);
+    assert_eq!(eager_landed.residue[1].rules, vec![zen_rule]);
+    assert_eq!(eager_landed.held_by_rules, 1);
+    assert_eq!(
+        eager_landed.rules.values().next().expect("rule").label,
+        "law:eager_unless_widening"
+    );
+    let eager_findings = eager_store
+        .residue_findings(big_type, &eager_req.load.table, &eager_landed.residue)
+        .expect("per-row returns EvaluationFailed findings in Ok");
+    let settled: BTreeSet<(u64, String, bool)> = eager_findings
+        .into_iter()
+        .map(|finding| (finding.row, finding.label, finding.holds))
+        .collect();
+    assert_eq!(
+        settled,
+        BTreeSet::from([(1, "law:eager_unless_zen_overflow".to_owned(), true)])
+    );
+}
+
+/// Sol 6.2 R1 (High 4): `RowPlan::fuel` pays for referenced column key bytes
+/// so parenthesized receivers (`(self).<long_key>`) that compile to ZEN's
+/// metered `Fetch` opcode cannot bypass the S2 per-row fuel bound.
+#[test]
+fn row_plan_fuel_accounts_for_metered_property_key_bytes() {
+    let long_key: &'static str = Box::leak(format!("k_{}", "x".repeat(98)).into_boxed_str());
+    let (_dir, cell) = support::cell_with(
+        "bench.LongKey",
+        &[
+            Field {
+                id: "id",
+                kind: json!({"kind":"text"}),
+                required: true,
+            },
+            Field {
+                id: long_key,
+                kind: json!({"kind":"text"}),
+                required: true,
+            },
+        ],
+        &[],
+        &[(
+            "paren_key",
+            &format!("(self).{long_key} == (self).{long_key}"),
+        )],
+    );
+    let table = cell
+        .store()
+        .analytics_table("bench.LongKey")
+        .expect("table");
+    let checks = cell
+        .store()
+        .dataset_checks("bench.LongKey", &table)
+        .expect("checks");
+    assert!(checks[0].predicate.is_some());
+    let key_bytes = u64::try_from(long_key.len()).expect("len");
+    assert!(
+        checks[0].fuel >= norn_cell::analytics::rule_fuel(3) + 2 * key_bytes,
+        "fuel {} must include both column key lengths ({})",
+        checks[0].fuel,
+        2 * key_bytes
+    );
 }

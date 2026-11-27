@@ -595,7 +595,7 @@ pub fn law_rule(
 /// decided by the per-row evaluator alone.
 #[must_use]
 pub fn law_row_tree(source: &str) -> Option<norn_expr::RowExpr> {
-    norn_expr::row_expression(source, "self").ok().flatten()
+    norn_expr::law_row_expression(source, "self").ok().flatten()
 }
 
 fn supported(law: &LawIR) -> bool {

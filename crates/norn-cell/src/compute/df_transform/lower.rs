@@ -220,6 +220,7 @@ fn tree_expr(tree: &RowExpr, schema: &NodeSchema) -> Result<Expr, CellError> {
                 .otherwise(otherwise)
                 .map_err(|error| CellError::Engine(error.to_string()))?
         }
+        RowExpr::CalendarDate(_) | RowExpr::Timestamp(_) => return unsupported(),
     })
 }
 

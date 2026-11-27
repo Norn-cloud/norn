@@ -139,7 +139,14 @@ pub fn artifacts_with(
         .iter()
         .map(|field| {
             let value = if field.kind["kind"] == "timestamp" {
-                format!("timestamp(input.{})", field.id)
+                if field.required {
+                    format!("timestamp(input.{})", field.id)
+                } else {
+                    format!(
+                        "input.{} == null ? null : timestamp(input.{} ?? '')",
+                        field.id, field.id
+                    )
+                }
             } else {
                 format!("input.{}", field.id)
             };

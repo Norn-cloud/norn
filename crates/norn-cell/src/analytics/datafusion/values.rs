@@ -207,7 +207,7 @@ impl Dec {
         .filter(|d| d.s <= MAX_STORAGE_SCALE && d.in_storage())
     }
 
-    fn in_storage(&self) -> bool {
+    pub(super) fn in_storage(&self) -> bool {
         pow10(STORAGE_DIGITS).is_some_and(|bound| self.m.unsigned_abs() < bound.unsigned_abs())
     }
 

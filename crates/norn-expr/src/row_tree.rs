@@ -9,6 +9,7 @@
 //! members) projects to `None`, and the engine refuses rather than guess.
 //! The projection is syntax only: admission still owns types and bounds.
 
+use zen_expression::functions::{FunctionKind, InternalFunction};
 use zen_expression::lexer::{ArithmeticOperator, ComparisonOperator, LogicalOperator, Operator};
 use zen_expression::parser::Node;
 
@@ -71,28 +72,43 @@ pub enum RowExpr {
     Coalesce(Box<RowExpr>, Box<RowExpr>),
     /// `c ? x : y`.
     Conditional(Box<RowExpr>, Box<RowExpr>, Box<RowExpr>),
+    /// `date(x)`: civil calendar date.
+    CalendarDate(Box<RowExpr>),
+    /// `timestamp(x)`: UTC instant.
+    Timestamp(Box<RowExpr>),
 }
 
-/// Project `source` onto [`RowExpr`] with row reads rooted at `root`;
-/// `Ok(None)` when it uses anything outside the subset.
+/// Project `source` onto [`RowExpr`] with row reads rooted at `root`
+/// (excluding temporal builtins, for transform & conservation callers);
+/// `Ok(None)` when it uses anything outside that subset.
 ///
 /// # Errors
 /// A compile error for malformed or structurally over-budget source.
 pub fn row_expression(source: &str, root: &str) -> Result<Option<RowExpr>, ExprError> {
-    crate::reads::with_validated_ast(source, false, |ast| project(ast, root))
+    crate::reads::with_validated_ast(source, false, |ast| project(ast, root, false))
 }
 
-fn boxed(node: &Node<'_>, root: &str) -> Option<Box<RowExpr>> {
-    project(node, root).map(Box::new)
+/// Project `source` onto [`RowExpr`] with row reads rooted at `root`,
+/// including `date(...)` and `timestamp(...)` temporal constructors for
+/// dataset law planning; `Ok(None)` when it uses anything outside that subset.
+///
+/// # Errors
+/// A compile error for malformed or structurally over-budget source.
+pub fn law_row_expression(source: &str, root: &str) -> Result<Option<RowExpr>, ExprError> {
+    crate::reads::with_validated_ast(source, false, |ast| project(ast, root, true))
 }
 
-fn project(node: &Node<'_>, root: &str) -> Option<RowExpr> {
+fn boxed(node: &Node<'_>, root: &str, temporal: bool) -> Option<Box<RowExpr>> {
+    project(node, root, temporal).map(Box::new)
+}
+
+fn project(node: &Node<'_>, root: &str, temporal: bool) -> Option<RowExpr> {
     Some(match node {
         Node::Null => RowExpr::Null,
         Node::Bool(flag) => RowExpr::Bool(*flag),
         Node::Number(number) => RowExpr::Number(number.normalize().to_string().parse().ok()?),
         Node::String(text) => RowExpr::Text((*text).to_owned()),
-        Node::Parenthesized(inner) => project(inner, root)?,
+        Node::Parenthesized(inner) => project(inner, root, temporal)?,
         Node::Member { .. } => {
             let path = crate::reads::literal_path(node)?;
             let [first, column] = path.as_slice() else {
@@ -104,9 +120,9 @@ fn project(node: &Node<'_>, root: &str) -> Option<RowExpr> {
             RowExpr::Column(column.clone())
         }
         Node::Unary { node, operator } => match operator {
-            Operator::Logical(LogicalOperator::Not) => RowExpr::Not(boxed(node, root)?),
+            Operator::Logical(LogicalOperator::Not) => RowExpr::Not(boxed(node, root, temporal)?),
             Operator::Arithmetic(ArithmeticOperator::Subtract) => {
-                RowExpr::Negate(boxed(node, root)?)
+                RowExpr::Negate(boxed(node, root, temporal)?)
             }
             Operator::Arithmetic(_)
             | Operator::Logical(_)
@@ -123,17 +139,34 @@ fn project(node: &Node<'_>, root: &str) -> Option<RowExpr> {
             left,
             operator,
             right,
-        } => binary(left, *operator, right, root)?,
+        } => binary(left, *operator, right, root, temporal)?,
         Node::Conditional {
             condition,
             on_true,
             on_false,
         } => RowExpr::Conditional(
-            boxed(condition, root)?,
-            boxed(on_true, root)?,
-            boxed(on_false, root)?,
+            boxed(condition, root, temporal)?,
+            boxed(on_true, root, temporal)?,
+            boxed(on_false, root, temporal)?,
         ),
-        Node::TemplateString(_)
+        Node::FunctionCall { kind, arguments } if temporal => {
+            let [argument] = arguments else {
+                return None;
+            };
+            match kind {
+                FunctionKind::Internal(InternalFunction::CalendarDate) => {
+                    RowExpr::CalendarDate(boxed(argument, root, temporal)?)
+                }
+                FunctionKind::Internal(InternalFunction::Timestamp) => {
+                    RowExpr::Timestamp(boxed(argument, root, temporal)?)
+                }
+                FunctionKind::Internal(_)
+                | FunctionKind::Closure(_)
+                | FunctionKind::Deprecated(_) => return None,
+            }
+        }
+        Node::FunctionCall { .. }
+        | Node::TemplateString(_)
         | Node::Pointer
         | Node::Array(_)
         | Node::Object(_)
@@ -143,14 +176,19 @@ fn project(node: &Node<'_>, root: &str) -> Option<RowExpr> {
         | Node::Root
         | Node::Slice { .. }
         | Node::Interval { .. }
-        | Node::FunctionCall { .. }
         | Node::MethodCall { .. }
         | Node::Error { .. } => return None,
     })
 }
 
-fn binary(left: &Node<'_>, operator: Operator, right: &Node<'_>, root: &str) -> Option<RowExpr> {
-    let (left, right) = (boxed(left, root)?, boxed(right, root)?);
+fn binary(
+    left: &Node<'_>,
+    operator: Operator,
+    right: &Node<'_>,
+    root: &str,
+    temporal: bool,
+) -> Option<RowExpr> {
+    let (left, right) = (boxed(left, root, temporal)?, boxed(right, root, temporal)?);
     Some(match operator {
         Operator::Arithmetic(ArithmeticOperator::Add) => {
             RowExpr::Arithmetic(RowArithmetic::Add, left, right)

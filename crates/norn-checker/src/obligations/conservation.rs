@@ -391,7 +391,9 @@ fn proved_unequal(guards: Option<&[ZenExpression]>) -> BTreeSet<(String, String)
             | RowExpr::Compare(..)
             | RowExpr::Or(..)
             | RowExpr::Coalesce(..)
-            | RowExpr::Conditional(..) => {}
+            | RowExpr::Conditional(..)
+            | RowExpr::CalendarDate(_)
+            | RowExpr::Timestamp(_) => {}
         }
     }
     let mut out = BTreeSet::new();
