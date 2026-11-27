@@ -1115,6 +1115,9 @@ fn report<E: SqlEngine>(
     watermark: &str,
     ended_ms: Option<u64>,
 ) {
+    if run.drain_only && ended_ms.is_none() {
+        return;
+    }
     let started = rfc3339(run.started_ms);
     let ended = ended_ms.map(rfc3339);
     let reasons = summary
@@ -1127,31 +1130,19 @@ fn report<E: SqlEngine>(
         .error
         .clone()
         .map_or((None, None), |(c, m)| (Some(c), Some(m)));
-    let status = if ended.is_none() {
-        "syncing"
-    } else {
-        summary.outcome
-    };
-    let auth = if config.connector.is_empty() {
-        "presigned_upload"
-    } else {
-        "api_key"
-    };
-    let mapping_id = capture::reported_mapping_id(host, config, run);
-    let conn_ended = capture::reported_connection_ended(host, config, run, ended.as_deref());
-    let connection = norn_ir::runtime_object! {
-        "id" => config.id.as_str(), "system" => config.system.as_str(), "label" => config.label.as_str(),
-        "target" => config.base_url.as_str(), "auth" => auth, "status" => status,
-        "last_sync_started_at" => started.as_str(), "last_sync_ended_at" => conn_ended,
-        "last_trigger" => run.trigger.as_str(), "watermark" => watermark,
-        "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
-        "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
-        "last_error_code" => error_code, "last_error_message" => error_message,
-        "connector_id" => config.connector.as_str(), "source_schema_id" => source_schema_id(&mapping_id),
-        "mapping_id" => mapping_id.as_str(),
-    };
     let phase = if ended.is_some() { "end" } else { "start" };
-    let mut rows = vec![("connection", config.id.clone(), connection)];
+    let mut rows = Vec::new();
+    if !run.drain_only {
+        let connection = capture::connection_report_object(
+            host,
+            config,
+            run,
+            summary,
+            (&started, ended.as_deref(), watermark, &reasons),
+            (error_code.as_deref(), error_message.as_deref()),
+        );
+        rows.push(("connection", config.id.clone(), connection));
+    }
     if ended.is_some() {
         rows.push((
             "sync_run",

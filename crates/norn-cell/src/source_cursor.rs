@@ -31,10 +31,12 @@ pub(crate) const SOURCE_LEASE: &str = "_norn_source_lease";
 pub(crate) const SOURCE_CURSOR: &str = "_norn_source_cursor";
 /// Durable post-capture inbox recovery & nonterminal replay table.
 pub(crate) const SOURCE_PENDING: &str = "_norn_source_pending";
+/// Durable connection-to-mapping binding table for fail-closed rebind detection.
+pub(crate) const SOURCE_BINDING: &str = "_norn_source_binding";
 
-/// Additive DDL for source-sync leases, cursors, and post-capture recovery.
+/// Additive DDL for source-sync leases, cursors, recovery, and mapping bindings.
 /// Older engines ignore these tables, so no storage version bump is required.
-pub(crate) const DDL: [&str; 3] = [
+pub(crate) const DDL: [&str; 4] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_source_lease" (
   "connection_id" TEXT NOT NULL PRIMARY KEY,
   "lease_id" TEXT NOT NULL,
@@ -62,6 +64,12 @@ pub(crate) const DDL: [&str; 3] = [
   "captured_at_ms" INTEGER NOT NULL,
   "processed" INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY ("connection_id", "dataset", "page_digest")
+)"#,
+    r#"CREATE TABLE IF NOT EXISTS "_norn_source_binding" (
+  "connection_id" TEXT NOT NULL PRIMARY KEY,
+  "mapping_id" TEXT NOT NULL,
+  "generation" INTEGER NOT NULL,
+  "updated_at_ms" INTEGER NOT NULL
 )"#,
 ];
 
@@ -635,44 +643,6 @@ impl<E: SqlEngine> CellStore<E> {
         })
     }
 
-    /// Clear durable dataset cursors for `connection_id` under the active
-    /// fencing lease (used when a connection is rebound to a new mapping so it
-    /// backfills from `feed.initial` instead of inheriting the prior mapping's
-    /// cursors). Refuses if unprocessed pending captures remain.
-    ///
-    /// # Errors
-    /// [`CellError::SourceLeaseFenced`], [`CellError::SourceCursorConflict`],
-    /// or store errors.
-    pub fn reset_source_cursors(
-        &mut self,
-        connection_id: &str,
-        lease_id: &str,
-        generation: u64,
-        now_ms: u64,
-    ) -> Result<(), CellError> {
-        self.write_tx(|| {
-            verify_active_lease(&self.conn, connection_id, lease_id, generation, now_ms)?;
-            let pending: Option<String> = self.conn.query_optional(
-                &format!("SELECT \"dataset\" FROM \"{SOURCE_PENDING}\" WHERE \"connection_id\" = ?1 AND \"processed\" = 0 LIMIT 1"),
-                params![connection_id],
-                |row| row.get(0),
-            )?;
-            if let Some(dataset) = pending {
-                return Err(CellError::SourceCursorConflict {
-                    connection_id: connection_id.to_owned(),
-                    dataset,
-                    expected: None,
-                    actual: Some("pending".to_owned()),
-                });
-            }
-            self.conn.execute(
-                &format!("DELETE FROM \"{SOURCE_CURSOR}\" WHERE \"connection_id\" = ?1"),
-                params![connection_id],
-            )?;
-            Ok(())
-        })
-    }
-
     /// Persist `_norn_source_cursor` for a complete page whose rows were
     /// already captured and processed one-by-one under `OBS-LINK-DISPUTE-1`
     /// fallback, binding the full-page `digest`, `pages`, and `records` for
@@ -947,20 +917,6 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
     ) -> Result<(), CellError> {
         self.store_mut()
             .seed_source_cursors(connection_id, lease_id, generation, now_ms, cursors)
-    }
-
-    /// See [`CellStore::reset_source_cursors`].
-    /// # Errors
-    /// Lease fencing, pending captures conflict, or store errors.
-    pub fn reset_source_cursors(
-        &mut self,
-        connection_id: &str,
-        lease_id: &str,
-        generation: u64,
-        now_ms: u64,
-    ) -> Result<(), CellError> {
-        self.store_mut()
-            .reset_source_cursors(connection_id, lease_id, generation, now_ms)
     }
 
     /// See [`CellStore::commit_source_page_cursor`].

@@ -161,9 +161,8 @@ impl<E: SqlEngine> DevHost<E> {
         .map_err(SourceCaptureError::from_cell)
     }
 
-    /// Clear durable dataset cursors for `connection_id` under the active
-    /// fencing lease (used when a connection is rebound to a different mapping
-    /// so it backfills from `feed.initial`).
+    /// Clear durable dataset cursors/replays and rebind `connection_id` to
+    /// `mapping_id` under the active fencing lease.
     ///
     /// # Errors
     /// [`SourceCaptureError::LeaseFenced`], [`SourceCaptureError::CursorConflict`],
@@ -171,15 +170,49 @@ impl<E: SqlEngine> DevHost<E> {
     pub fn reset_source_cursors(
         &self,
         connection_id: &str,
+        mapping_id: &str,
         lease_id: &str,
         generation: u64,
         now_ms: u64,
     ) -> Result<(), SourceCaptureError> {
         let _epoch = self.definition_read()?;
         self.observing_raw(|cell| {
-            cell.reset_source_cursors(connection_id, lease_id, generation, now_ms)
+            cell.reset_source_cursors(connection_id, mapping_id, lease_id, generation, now_ms)
         })?
         .map_err(SourceCaptureError::from_cell)
+    }
+
+    /// Persist `connection_id -> mapping_id` in `_norn_source_binding` under
+    /// the active fencing lease.
+    ///
+    /// # Errors
+    /// [`SourceCaptureError::LeaseFenced`] or store failure.
+    pub fn bind_source_mapping(
+        &self,
+        connection_id: &str,
+        mapping_id: &str,
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+    ) -> Result<(), SourceCaptureError> {
+        let _epoch = self.definition_read()?;
+        self.observing_raw(|cell| {
+            cell.bind_source_mapping(connection_id, mapping_id, lease_id, generation, now_ms)
+        })?
+        .map_err(SourceCaptureError::from_cell)
+    }
+
+    /// Read the durably bound `mapping_id` for `connection_id`, if recorded.
+    ///
+    /// # Errors
+    /// Host or store failure.
+    pub fn source_mapping_binding(&self, connection_id: &str) -> Result<Option<String>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .source_mapping_binding(connection_id)
+            .map_err(Refusal::host)
     }
 
     /// Read all durably committed dataset cursors for `connection_id`.

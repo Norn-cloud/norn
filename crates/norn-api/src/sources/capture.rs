@@ -125,13 +125,50 @@ fn decode_cursors(
     (parsed, raw_cursors)
 }
 
+fn stored_connection_mapping<E: SqlEngine>(
+    host: &DevHost<E>,
+    connection_id: &str,
+) -> Option<String> {
+    host.host_object(CONNECTION_TYPE, connection_id)
+        .ok()
+        .flatten()
+        .and_then(|object| {
+            object
+                .get("mapping_id")
+                .and_then(RuntimeValue::as_str)
+                .filter(|m| !m.is_empty())
+                .map(str::to_owned)
+        })
+}
+
+fn bind_mapping<E: SqlEngine>(
+    host: &DevHost<E>,
+    connection_id: &str,
+    mapping_id: &str,
+    lease: &SourceLease,
+    now_ms: u64,
+) -> Result<(), Failure> {
+    host.bind_source_mapping(
+        connection_id,
+        mapping_id,
+        &lease.lease_id,
+        lease.generation,
+        now_ms,
+    )
+    .map_err(|error| {
+        let (code, message) = error.code_and_message();
+        fail(code, message)
+    })
+}
+
 /// Read the connection's durably committed watermarks alongside their exact
-/// stored cursor JSON strings. If `source.Connection.mapping_id` differs from
-/// `config.mapping` (a mapping rebind):
-/// - when pending captures from the old mapping remain, drain them first under
-///   their original captured binding (`drain_only = true`);
-/// - otherwise clear inherited cursors under the fencing lease so the rebound
-///   mapping pulls from `feed.initial`.
+/// stored cursor JSON strings. Durable cursor reuse requires a proven mapping
+/// match in `_norn_source_binding` (or, on first upgrade before a binding row
+/// exists, an explicit matching `source.Connection.mapping_id`). When a binding
+/// differs or is unproven:
+/// - if pending captures remain, drain them first (`drain_only = true`);
+/// - otherwise atomically clear old cursors/replays and bind `config.mapping`
+///   so the rebound mapping pulls from `feed.initial`.
 pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     host: &DevHost<E>,
     config: &ConnectionConfig,
@@ -141,44 +178,58 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     now_ms: u64,
 ) -> Result<LoadedWatermarks, Failure> {
     let connection_id = config.id.as_str();
-    let stored_mapping = host
-        .host_object(CONNECTION_TYPE, connection_id)
-        .ok()
-        .flatten()
-        .and_then(|object| {
-            object
-                .get("mapping_id")
-                .and_then(RuntimeValue::as_str)
-                .map(str::to_owned)
-        });
-    if stored_mapping
-        .as_deref()
-        .is_some_and(|m| !m.is_empty() && m != config.mapping)
-    {
-        if !has_pending {
-            host.reset_source_cursors(connection_id, &lease.lease_id, lease.generation, now_ms)
-                .map_err(|error| {
-                    let (code, message) = error.code_and_message();
-                    fail(code, message)
-                })?;
-            return Ok((BTreeMap::new(), BTreeMap::new(), false));
-        }
-        let cursors = host
-            .source_cursors(connection_id)
-            .map_err(|r| fail("source.ingest", r.message))?;
-        let (parsed, raw_cursors) = decode_cursors(cursors);
-        return Ok((parsed, raw_cursors, true));
-    }
+    let bound_mapping = host
+        .source_mapping_binding(connection_id)
+        .map_err(|r| fail("source.ingest", r.message))?;
     let cursors = host
         .source_cursors(connection_id)
         .map_err(|r| fail("source.ingest", r.message))?;
+    let stored_mapping = stored_connection_mapping(host, connection_id);
+    let proven_match = match bound_mapping.as_deref() {
+        Some(bound) => bound == config.mapping,
+        None => stored_mapping.as_deref() == Some(config.mapping.as_str()),
+    };
+
     if !cursors.is_empty() {
-        let (parsed, raw_cursors) = decode_cursors(cursors);
-        return Ok((parsed, raw_cursors, false));
+        if proven_match {
+            if bound_mapping.is_none() {
+                bind_mapping(host, connection_id, &config.mapping, lease, now_ms)?;
+            }
+            let (parsed, raw_cursors) = decode_cursors(cursors);
+            return Ok((parsed, raw_cursors, false));
+        }
+        if has_pending {
+            let (parsed, raw_cursors) = decode_cursors(cursors);
+            return Ok((parsed, raw_cursors, true));
+        }
+        host.reset_source_cursors(
+            connection_id,
+            &config.mapping,
+            &lease.lease_id,
+            lease.generation,
+            now_ms,
+        )
+        .map_err(|error| {
+            let (code, message) = error.code_and_message();
+            fail(code, message)
+        })?;
+        return Ok((BTreeMap::new(), BTreeMap::new(), false));
     }
-    let legacy = legacy_connection_watermarks(host, connection_id)
-        .or(known)
-        .unwrap_or_default();
+
+    if has_pending && !proven_match && (bound_mapping.is_some() || stored_mapping.is_some()) {
+        return Ok((BTreeMap::new(), BTreeMap::new(), true));
+    }
+
+    let legacy = if stored_mapping.as_deref() == Some(config.mapping.as_str()) {
+        legacy_connection_watermarks(host, connection_id)
+            .or(known)
+            .unwrap_or_default()
+    } else if bound_mapping.is_none() && stored_mapping.is_none() {
+        known.unwrap_or_default()
+    } else {
+        BTreeMap::new()
+    };
+    bind_mapping(host, connection_id, &config.mapping, lease, now_ms)?;
     let mut encoded = BTreeMap::new();
     if !legacy.is_empty() {
         for (dataset, watermark) in &legacy {
@@ -202,56 +253,56 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     Ok((legacy, encoded, false))
 }
 
+/// Build the `source.Connection` observation payload for `sources::report`.
+pub(super) fn connection_report_object<E: SqlEngine>(
+    host: &DevHost<E>,
+    config: &ConnectionConfig,
+    run: &super::Run,
+    summary: &super::RunSummary,
+    (started, ended, watermark, reasons): (&str, Option<&str>, &str, &str),
+    (error_code, error_message): (Option<&str>, Option<&str>),
+) -> RuntimeValue {
+    let status = if ended.is_none() {
+        "syncing"
+    } else {
+        summary.outcome
+    };
+    let auth = if config.connector.is_empty() {
+        "presigned_upload"
+    } else {
+        "api_key"
+    };
+    let mapping_id = reported_mapping_id(host, config, run);
+    norn_ir::runtime_object! {
+        "id" => config.id.as_str(), "system" => config.system.as_str(), "label" => config.label.as_str(),
+        "target" => config.base_url.as_str(), "auth" => auth, "status" => status,
+        "last_sync_started_at" => started, "last_sync_ended_at" => ended,
+        "last_trigger" => run.trigger.as_str(), "watermark" => watermark,
+        "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
+        "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons,
+        "last_error_code" => error_code, "last_error_message" => error_message,
+        "connector_id" => config.connector.as_str(),
+        "source_schema_id" => super::source_schema_id(&mapping_id),
+        "mapping_id" => mapping_id.as_str(),
+    }
+}
+
 /// Mapping ID to record on `source.Connection`: preserve the prior stored
 /// `mapping_id` when a connector sync fails before cursor reset/load completes,
 /// so a failed rebind reset cannot stamp the new mapping onto surviving cursors
 /// from the old mapping.
-pub(super) fn reported_mapping_id<E: SqlEngine>(
+fn reported_mapping_id<E: SqlEngine>(
     host: &DevHost<E>,
     config: &ConnectionConfig,
     run: &super::Run,
 ) -> String {
     if run.pull.is_none()
         && !config.connector.is_empty()
-        && let Some(existing) = host
-            .host_object(CONNECTION_TYPE, &config.id)
-            .ok()
-            .flatten()
-            .and_then(|object| {
-                object
-                    .get("mapping_id")
-                    .and_then(RuntimeValue::as_str)
-                    .filter(|m| !m.is_empty())
-                    .map(str::to_owned)
-            })
+        && let Some(existing) = stored_connection_mapping(host, &config.id)
     {
         return existing;
     }
     config.mapping.clone()
-}
-
-/// Heartbeat timestamp (`last_sync_ended_at`) to record on `source.Connection`:
-/// preserve the prior upstream heartbeat during a drain-only rebind run that
-/// never polled upstream, so draining old captures cannot refresh freshness.
-pub(super) fn reported_connection_ended<E: SqlEngine>(
-    host: &DevHost<E>,
-    config: &ConnectionConfig,
-    run: &super::Run,
-    ended: Option<&str>,
-) -> Option<String> {
-    if run.drain_only {
-        return host
-            .host_object(CONNECTION_TYPE, &config.id)
-            .ok()
-            .flatten()
-            .and_then(|object| {
-                object
-                    .get("last_sync_ended_at")
-                    .and_then(RuntimeValue::as_str)
-                    .map(str::to_owned)
-            });
-    }
-    ended.map(str::to_owned)
 }
 
 fn legacy_connection_watermarks<E: SqlEngine>(
