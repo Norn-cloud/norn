@@ -20,7 +20,9 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
-use norn_ir::canonical::canonical_json_exact_of;
+use norn_ir::canonical::{
+    CanonicalJsonError, JsonValue as CanonicalJsonValue, canonical_json_exact_of, parse_json_tokens,
+};
 use norn_ir::{ArtifactEnvelope, Decimal, ObjectTypeName, RuntimeValue};
 use norn_kernel::authz::{
     AccessRequest, ActorKind, AuthzSchema, Binding, CapabilityGrant, Pdp, ResourceInput, ScopeKey,
@@ -38,7 +40,7 @@ use norn_kernel::{
     LogicalTime,
 };
 use norn_testkit::cell_host::MemoryCell;
-use norn_testkit::pack_mbt::coverage::{DomainCoverage, ObservedPdpAuthorizer};
+use norn_testkit::pack_mbt::coverage::{DomainCoverage, ObservedPdpAuthorizer, PolicyRuleTarget};
 use norn_testkit::pack_mbt::driver::run_pack_mbt;
 use norn_testkit::pack_mbt::dst::{PackDstConfig, run_pack_dst};
 use norn_testkit::pack_mbt::static_gaps::{StructuralGap, analyze_static_gaps};
@@ -289,9 +291,37 @@ fn immutable_financial_entity() -> Value {
     })
 }
 
+fn post_entry_action(compensation_action_id: &str) -> Value {
+    json!({
+        "irVersion": "0.1", "artifactId": "fin.entry.post.action", "version": "1.0.0",
+        "kind": "action", "namespace": "fin", "name": "Post entry", "lifecycle": "active",
+        "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+        "payload": {
+            "actionId": "fin.entry.post",
+            "scopeRequired": ["orgId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": {"type": "object", "properties": {"entry_id": {"type": "string"}}, "required": ["entry_id"]},
+            "outputSchema": {"type": "object", "properties": {"entry_id": {"type": "string"}}, "required": ["entry_id"]},
+            "writes": [{"entityKind": "fin.LedgerEntry", "change": "created"}],
+            "compensation": {"actionId": compensation_action_id}
+        }
+    })
+}
+
+fn has_missing_financial_reversal(pack: &AdmittedPack, target: &str) -> bool {
+    analyze_static_gaps(pack).gaps.iter().any(|gap| {
+        matches!(
+            gap,
+            StructuralGap::ImmutableFinancialMissingReversal { object_type, .. }
+                if object_type == target
+        )
+    })
+}
+
 #[test]
-fn static_gaps_rejects_unrelated_compensation_and_accepts_linked_reversal() -> Result<(), String> {
-    let unrelated = decode_pack(
+fn static_gaps_rejects_unrelated_write_compensation() -> Result<(), String> {
+    let pack = decode_pack(
         "unrelated_comp",
         vec![
             immutable_financial_entity(),
@@ -308,21 +338,7 @@ fn static_gaps_rejects_unrelated_compensation_and_accepts_linked_reversal() -> R
                     }
                 }
             }),
-            json!({
-                "irVersion": "0.1", "artifactId": "fin.entry.post.action", "version": "1.0.0",
-                "kind": "action", "namespace": "fin", "name": "Post entry", "lifecycle": "active",
-                "scope": {}, "dependencies": [], "provenance": {"source": "system"},
-                "payload": {
-                    "actionId": "fin.entry.post",
-                    "scopeRequired": ["orgId"],
-                    "idempotent": true,
-                    "ledgered": true,
-                    "inputSchema": {"type": "object", "properties": {"entry_id": {"type": "string"}}, "required": ["entry_id"]},
-                    "outputSchema": {"type": "object", "properties": {"entry_id": {"type": "string"}}, "required": ["entry_id"]},
-                    "writes": [{"entityKind": "fin.LedgerEntry", "change": "created"}],
-                    "compensation": {"actionId": "audit.note.create"}
-                }
-            }),
+            post_entry_action("audit.note.create"),
             json!({
                 "irVersion": "0.1", "artifactId": "audit.note.create.action", "version": "1.0.0",
                 "kind": "action", "namespace": "audit", "name": "Create note", "lifecycle": "active",
@@ -339,18 +355,63 @@ fn static_gaps_rejects_unrelated_compensation_and_accepts_linked_reversal() -> R
             }),
         ],
     )?;
-
-    let unrelated_gaps = analyze_static_gaps(&unrelated);
     assert!(
-        unrelated_gaps.gaps.iter().any(|gap| matches!(
-            gap,
-            StructuralGap::ImmutableFinancialMissingReversal { object_type, .. }
-                if object_type == "fin.LedgerEntry"
-        )),
-        "unrelated audit.Note write must not verify financial reversal: {unrelated_gaps}"
+        has_missing_financial_reversal(&pack, "fin.LedgerEntry"),
+        "unrelated audit.Note write must not verify financial reversal"
     );
+    Ok(())
+}
 
-    let linked = decode_pack(
+#[test]
+fn static_gaps_rejects_unrelated_quantity_effect_compensation() -> Result<(), String> {
+    let pack = decode_pack(
+        "unrelated_qty_comp",
+        vec![
+            immutable_financial_entity(),
+            post_entry_action("inv.stock.reserve"),
+            json!({
+                "irVersion": "0.1", "artifactId": "inv.stock.reserve.action", "version": "1.0.0",
+                "kind": "action", "namespace": "inv", "name": "Reserve stock", "lifecycle": "active",
+                "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+                "payload": {
+                    "actionId": "inv.stock.reserve",
+                    "scopeRequired": ["orgId"],
+                    "idempotent": true,
+                    "ledgered": true,
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "res_id": {"type": "string"},
+                            "balance_versions": {"type": "object"}
+                        },
+                        "required": ["res_id", "balance_versions"]
+                    },
+                    "outputSchema": {"type": "object", "properties": {"res_id": {"type": "string"}}, "required": ["res_id"]},
+                    "quantityEffect": {
+                        "ledgerId": "inv.stock",
+                        "balanceVersionsField": "balance_versions",
+                        "operation": {
+                            "kind": "reserve",
+                            "reservationIdField": "res_id",
+                            "templateId": "hold_stock",
+                            "parameters": {},
+                            "ttlMs": 60_000
+                        }
+                    }
+                }
+            }),
+        ],
+    )?;
+    assert!(
+        has_missing_financial_reversal(&pack, "fin.LedgerEntry"),
+        "unrelated quantityEffect reservation must not verify financial reversal"
+    );
+    Ok(())
+}
+
+#[test]
+fn static_gaps_accepts_linked_financial_reversal_compensation() -> Result<(), String> {
+    let pack = decode_pack(
         "linked_comp",
         vec![
             immutable_financial_entity(),
@@ -368,21 +429,7 @@ fn static_gaps_rejects_unrelated_compensation_and_accepts_linked_reversal() -> R
                     }
                 }
             }),
-            json!({
-                "irVersion": "0.1", "artifactId": "fin.entry.post.action", "version": "1.0.0",
-                "kind": "action", "namespace": "fin", "name": "Post entry", "lifecycle": "active",
-                "scope": {}, "dependencies": [], "provenance": {"source": "system"},
-                "payload": {
-                    "actionId": "fin.entry.post",
-                    "scopeRequired": ["orgId"],
-                    "idempotent": true,
-                    "ledgered": true,
-                    "inputSchema": {"type": "object", "properties": {"entry_id": {"type": "string"}}, "required": ["entry_id"]},
-                    "outputSchema": {"type": "object", "properties": {"entry_id": {"type": "string"}}, "required": ["entry_id"]},
-                    "writes": [{"entityKind": "fin.LedgerEntry", "change": "created"}],
-                    "compensation": {"actionId": "fin.credit.issue"}
-                }
-            }),
+            post_entry_action("fin.credit.issue"),
             json!({
                 "irVersion": "0.1", "artifactId": "fin.credit.issue.action", "version": "1.0.0",
                 "kind": "action", "namespace": "fin", "name": "Issue credit memo", "lifecycle": "active",
@@ -400,15 +447,9 @@ fn static_gaps_rejects_unrelated_compensation_and_accepts_linked_reversal() -> R
             }),
         ],
     )?;
-
-    let linked_gaps = analyze_static_gaps(&linked);
     assert!(
-        !linked_gaps.gaps.iter().any(|gap| matches!(
-            gap,
-            StructuralGap::ImmutableFinancialMissingReversal { object_type, .. }
-                if object_type == "fin.LedgerEntry"
-        )),
-        "linked financial reversal should satisfy reversal coverage: {linked_gaps}"
+        !has_missing_financial_reversal(&pack, "fin.LedgerEntry"),
+        "linked financial reversal should satisfy reversal coverage"
     );
     Ok(())
 }
@@ -515,6 +556,7 @@ fn build_read_policy_fixture() -> Result<(AdmittedPack, Arc<Pdp>, ScopeKey, Scop
 fn make_read_authorizer(
     pdp: &Arc<Pdp>,
     coverage: &Arc<Mutex<DomainCoverage>>,
+    deny_rule_hint: Option<PolicyRuleTarget>,
     roles: Vec<String>,
     caller_scope: ScopeKey,
     resource_scope: ScopeKey,
@@ -522,9 +564,12 @@ fn make_read_authorizer(
     let r_roles = roles.clone();
     let r_scope = caller_scope.clone();
     let r_res_scope = resource_scope.clone();
-    ObservedPdpAuthorizer::new(Arc::clone(pdp), Arc::clone(coverage), None, |_| {
-        Err(ActionDenial::Invisible)
-    })
+    ObservedPdpAuthorizer::new(
+        Arc::clone(pdp),
+        Arc::clone(coverage),
+        deny_rule_hint,
+        |_| Err(ActionDenial::Invisible),
+    )
     .with_read_authorizers(
         move |req| {
             Ok(AccessRequest::new(
@@ -617,9 +662,15 @@ fn observed_pdp_authorizer_fails_closed_on_reads_and_enforces_pdp_read_rules() -
         Err(ActionDenial::Invisible)
     );
 
+    let action_hint = PolicyRuleTarget {
+        policy_id: "sec.access".to_owned(),
+        rule_id: "action_rule".to_owned(),
+    };
+
     let allowed = make_read_authorizer(
         &pdp,
         &coverage,
+        Some(action_hint.clone()),
         vec!["reader".to_owned()],
         home.clone(),
         home.clone(),
@@ -630,6 +681,7 @@ fn observed_pdp_authorizer_fails_closed_on_reads_and_enforces_pdp_read_rules() -
     let guest = make_read_authorizer(
         &pdp,
         &coverage,
+        Some(action_hint.clone()),
         vec!["guest".to_owned()],
         home.clone(),
         home.clone(),
@@ -643,8 +695,14 @@ fn observed_pdp_authorizer_fails_closed_on_reads_and_enforces_pdp_read_rules() -
         Err(ActionDenial::Invisible)
     );
 
-    let foreign_reader =
-        make_read_authorizer(&pdp, &coverage, vec!["reader".to_owned()], foreign, home);
+    let foreign_reader = make_read_authorizer(
+        &pdp,
+        &coverage,
+        Some(action_hint.clone()),
+        vec!["reader".to_owned()],
+        foreign,
+        home,
+    );
     assert_eq!(
         foreign_reader.authorize_read(&read_req),
         Err(ActionDenial::Invisible)
@@ -653,6 +711,12 @@ fn observed_pdp_authorizer_fails_closed_on_reads_and_enforces_pdp_read_rules() -
     let cov = coverage
         .lock()
         .map_err(|err| format!("coverage lock: {err}"))?;
+    assert_eq!(
+        cov.cedar_denies.get(&action_hint).copied().unwrap_or(0),
+        0,
+        "read denials must never credit the action rule's deny_rule_hint: {:?}",
+        cov.cedar_denies
+    );
     assert!(
         cov.cedar_allows
             .values()
@@ -664,11 +728,12 @@ fn observed_pdp_authorizer_fails_closed_on_reads_and_enforces_pdp_read_rules() -
     );
     assert!(
         cov.cedar_denies
-            .values()
-            .copied()
+            .iter()
+            .filter(|(target, _)| target.policy_id == "norn.read")
+            .map(|(_, count)| *count)
             .fold(0u64, u64::saturating_add)
             >= 2,
-        "expected PDP read deny hits to be recorded: {:?}",
+        "expected PDP read deny hits under norn.read: {:?}",
         cov.cedar_denies
     );
     Ok(())
@@ -683,6 +748,18 @@ fn nested_value(depth: usize) -> Value {
             current = Value::Object(map);
         } else {
             current = Value::Array(vec![current]);
+        }
+    }
+    current
+}
+
+fn nested_canonical_tree(depth: usize) -> CanonicalJsonValue {
+    let mut current = CanonicalJsonValue::String("leaf".to_owned());
+    for level in 0..depth {
+        if level.is_multiple_of(2) {
+            current = CanonicalJsonValue::Object(BTreeMap::from([("k".to_owned(), current)]));
+        } else {
+            current = CanonicalJsonValue::Array(vec![current]);
         }
     }
     current
@@ -706,9 +783,26 @@ fn decimal_wire_text(mantissa: i128, scale: u32) -> String {
 }
 
 #[test]
-fn canonical_json_exact_of_enforces_exact_256_depth_boundary() {
-    assert!(canonical_json_exact_of(&nested_value(256)).is_ok());
-    assert!(canonical_json_exact_of(&nested_value(257)).is_err());
+fn canonical_json_exact_of_enforces_exact_256_depth_boundary() -> Result<(), String> {
+    let encoded_256 =
+        canonical_json_exact_of(&nested_value(256)).map_err(|err| format!("depth 256: {err}"))?;
+    let decoded_256 =
+        parse_json_tokens(&encoded_256).map_err(|err| format!("decode 256: {err}"))?;
+    assert_eq!(decoded_256, nested_canonical_tree(256));
+
+    let over = canonical_json_exact_of(&nested_value(257));
+    assert!(
+        matches!(
+            over,
+            Err(CanonicalJsonError::NestingTooDeep {
+                depth: 257,
+                limit: 256,
+                ..
+            })
+        ),
+        "expected NestingTooDeep {{ depth: 257, limit: 256 }}, got {over:?}"
+    );
+    Ok(())
 }
 
 proptest! {
@@ -745,12 +839,12 @@ proptest! {
             .map_err(|err| TestCaseError::fail(format!("decode dec {wire}: {err}")))?;
         prop_assert_eq!(decoded_dec, rv_dec);
 
-        // 3. Valid JSON nesting depths 1..=256 canonicalize cleanly (including 129..=256).
+        // 3. Valid JSON nesting depths 1..=256 encode and decode structurally intact.
         let deep = nested_value(depth);
-        let canonical = canonical_json_exact_of(&deep);
-        prop_assert!(
-            canonical.is_ok(),
-            "canonical_json_exact_of failed at valid nesting depth {depth}: {canonical:?}"
-        );
+        let encoded_deep = canonical_json_exact_of(&deep)
+            .map_err(|err| TestCaseError::fail(format!("canonical depth {depth}: {err}")))?;
+        let decoded_deep = parse_json_tokens(&encoded_deep)
+            .map_err(|err| TestCaseError::fail(format!("decode depth {depth}: {err}")))?;
+        prop_assert_eq!(decoded_deep, nested_canonical_tree(depth));
     }
 }

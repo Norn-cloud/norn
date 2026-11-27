@@ -544,7 +544,12 @@ where
         guard.clone()
     }
 
-    fn evaluate_pdp(&self, access_request: &AccessRequest, fallback_action: &str) -> PdpDecision {
+    fn evaluate_pdp(
+        &self,
+        access_request: &AccessRequest,
+        deny_hint: Option<&PolicyRuleTarget>,
+        fallback_action: &str,
+    ) -> PdpDecision {
         let explanation = self.pdp.explain(access_request);
         {
             let mut last = match self.last_explanation.lock() {
@@ -569,7 +574,7 @@ where
             }
             PdpDecision::Deny(reason) => {
                 if reason == DenyReason::Access {
-                    if let Some(hint) = &self.deny_rule_hint {
+                    if let Some(hint) = deny_hint {
                         cov.hit_cedar_deny(hint.policy_id.clone(), hint.rule_id.clone());
                     } else {
                         cov.hit_cedar_deny(fallback_action.to_owned(), reason.code());
@@ -587,7 +592,11 @@ where
 {
     fn authorize(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
         let access_request = (self.build_request)(request)?;
-        match self.evaluate_pdp(&access_request, &request.action.action_id) {
+        match self.evaluate_pdp(
+            &access_request,
+            self.deny_rule_hint.as_ref(),
+            &request.action.action_id,
+        ) {
             PdpDecision::Allow => Ok(()),
             PdpDecision::Deny(reason) => Err(ActionDenial::Forbidden {
                 reason: reason.code().to_owned(),
@@ -601,7 +610,8 @@ where
             ReadAuthzMode::AllowActionOnlySliceReads => Ok(()),
             ReadAuthzMode::Pdp { build_read, .. } => {
                 let access_request = build_read(request)?;
-                match self.evaluate_pdp(&access_request, access_request.action_id()) {
+                // Never attribute slice-read denials to the action rule's hint.
+                match self.evaluate_pdp(&access_request, None, access_request.action_id()) {
                     PdpDecision::Allow => Ok(()),
                     PdpDecision::Deny(_) => Err(ActionDenial::Invisible),
                 }
@@ -620,7 +630,8 @@ where
                 build_read_type, ..
             } => {
                 let access_request = build_read_type(request)?;
-                match self.evaluate_pdp(&access_request, access_request.action_id()) {
+                // Never attribute collection-read denials to the action rule's hint.
+                match self.evaluate_pdp(&access_request, None, access_request.action_id()) {
                     PdpDecision::Allow => Ok(()),
                     PdpDecision::Deny(_) => Err(ActionDenial::Invisible),
                 }

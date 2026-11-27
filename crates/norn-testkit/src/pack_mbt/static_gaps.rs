@@ -638,7 +638,6 @@ fn action_reverses_type(action: &ActionRoot, object_type: &str) -> bool {
             .iter()
             .any(|link| link.target_type == object_type)
             && (!action.writes.is_empty() || action.effect_program.is_some()))
-        || action.quantity_effect.is_some()
 }
 
 fn classify_reversal_coverage(pack: &AdmittedPack, object_type: &str) -> ReversalCoverage {

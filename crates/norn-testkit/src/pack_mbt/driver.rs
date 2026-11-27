@@ -991,3 +991,7 @@ pub(crate) fn with_cov(coverage: &Arc<Mutex<DomainCoverage>>, f: impl FnOnce(&mu
     };
     f(&mut guard);
 }
+
+#[cfg(test)]
+#[path = "driver_tests.rs"]
+mod tests;
