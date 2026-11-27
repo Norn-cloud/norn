@@ -17,12 +17,12 @@ use norn_cell::mapping_bundle::MappingInput;
 /// `None` for pages recovered from `_norn_source_pending` after a prior crash).
 pub(super) enum ActiveCapture {
     Captured {
-        pending: PendingSourceCapture,
+        pending: Box<PendingSourceCapture>,
         outcomes: BTreeMap<String, MappingOutcome>,
         advance: Option<CursorAdvance>,
     },
     DisputeFallback {
-        state: DisputeFallbackState,
+        state: Box<DisputeFallbackState>,
         advance: CursorAdvance,
     },
 }
@@ -164,7 +164,7 @@ pub(super) fn load_pending_captures<E: SqlEngine>(
     Ok(entries
         .into_iter()
         .map(|pending| ActiveCapture::Captured {
-            pending,
+            pending: Box::new(pending),
             outcomes: BTreeMap::new(),
             advance: None,
         })
@@ -219,7 +219,7 @@ pub(super) fn capture_accepted_page<E: SqlEngine>(
             }
             Ok((
                 Some(ActiveCapture::Captured {
-                    pending,
+                    pending: Box::new(pending),
                     outcomes: BTreeMap::new(),
                     advance: Some(accepted.advance),
                 }),

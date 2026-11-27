@@ -565,12 +565,12 @@ impl Sources {
         run.stepped_ms = now_ms;
         run.mapped = 0;
         let outcome = match response {
-            None if run.pull.is_some() => drain(host, run),
+            None if run.pull.is_some() => drain(host, run, now_ms),
             None => begin(host, &config, &self.secrets, run, watermarks_known, now_ms),
             Some((status, body)) => {
                 advance(host, &config, run, status, body, now_ms).and_then(|after| {
                     run.after = after;
-                    drain(host, run)
+                    drain(host, run, now_ms)
                 })
             }
         };
@@ -742,7 +742,7 @@ fn begin<E: SqlEngine>(
     };
     if !run.pending_captures.is_empty() {
         run.after = next_req;
-        return drain(host, run);
+        return drain(host, run, now_ms);
     }
     Ok(next_req.map_or(Next::Done, Next::Request))
 }
@@ -839,7 +839,7 @@ fn advance<E: SqlEngine>(
 /// next already-captured page (recovered or freshly captured), confirming the
 /// ephemeral `Pull` cursor and deleting `_norn_source_pending` once all rows of
 /// that page have been processed.
-fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure> {
+fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run, now_ms: u64) -> Result<Next, Failure> {
     let done_front = match run.pending_captures.front_mut() {
         Some(capture::ActiveCapture::Captured {
             pending, outcomes, ..
@@ -860,7 +860,7 @@ fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure
         }
         Some(capture::ActiveCapture::DisputeFallback { state, .. }) => {
             let step = host
-                .step_source_dispute_fallback(state, run.step_rows)
+                .step_source_dispute_fallback(state, now_ms, run.step_rows)
                 .map_err(|error| {
                     let (code, message) = error.code_and_message();
                     fail(code, message)

@@ -43,11 +43,13 @@ impl SourceCaptureError {
     }
 
     fn from_cell(error: CellError) -> Self {
-        match error {
-            CellError::SourceLeaseFenced { .. } => Self::LeaseFenced(error.to_string()),
-            CellError::SourceCursorConflict { .. } => Self::CursorConflict(error.to_string()),
-            other => Self::Refusal(Refusal::host(other)),
+        if matches!(error, CellError::SourceLeaseFenced { .. }) {
+            return Self::LeaseFenced(error.to_string());
         }
+        if matches!(error, CellError::SourceCursorConflict { .. }) {
+            return Self::CursorConflict(error.to_string());
+        }
+        Self::Refusal(Refusal::host(error))
     }
 }
 
@@ -87,7 +89,7 @@ pub enum SourceCapturePlan {
     Captured(PendingSourceCapture),
     /// The multi-row page spanned a new `OBS-LINK-DISPUTE-1` dispute; step it
     /// via [`DevHost::step_source_dispute_fallback`] at the host's pace.
-    DisputeFallback(DisputeFallbackState),
+    DisputeFallback(Box<DisputeFallbackState>),
 }
 
 impl IngestReport {
@@ -304,15 +306,17 @@ impl<E: SqlEngine> DevHost<E> {
             Err(CellError::MappingPageSpansDispute) if delivered.len() > 1 => {
                 let full_digest = norn_cell::source_cursor::page_digest(advance, &delivered)
                     .map_err(SourceCaptureError::from_cell)?;
-                Ok(SourceCapturePlan::DisputeFallback(DisputeFallbackState {
-                    rows: delivered.into(),
-                    input: input.clone(),
-                    advance: advance.clone(),
-                    full_digest,
-                    next_index: 0,
-                    all_pages: Vec::new(),
-                    all_records: Vec::new(),
-                }))
+                Ok(SourceCapturePlan::DisputeFallback(Box::new(
+                    DisputeFallbackState {
+                        rows: delivered.into(),
+                        input: input.clone(),
+                        advance: advance.clone(),
+                        full_digest,
+                        next_index: 0,
+                        all_pages: Vec::new(),
+                        all_records: Vec::new(),
+                    },
+                )))
             }
             Err(error) => Err(SourceCaptureError::from_cell(error)),
         }
@@ -347,13 +351,15 @@ impl<E: SqlEngine> DevHost<E> {
     pub fn step_source_dispute_fallback(
         &self,
         state: &mut DisputeFallbackState,
+        now_ms: u64,
         max_rows: usize,
     ) -> Result<Vec<Ingested>, SourceCaptureError> {
         let _epoch = self.definition_read()?;
+        state.advance.now_ms = now_ms;
         let limit = max_rows.max(1);
         let mut step_out = Vec::new();
         while step_out.len() < limit
-            && let Some(raw) = state.rows.pop_front()
+            && let Some(raw) = state.rows.front().cloned()
         {
             let pending_key = format!("{}:row:{}", state.full_digest, state.next_index);
             let captured = self
@@ -367,17 +373,20 @@ impl<E: SqlEngine> DevHost<E> {
                 })?
                 .map_err(SourceCaptureError::from_cell)?;
             let mut outcomes = BTreeMap::new();
+            let mut row_pages = Vec::with_capacity(captured.pages.len());
             for (page_id, _) in &captured.pages {
                 let _consumed = self.process_one_mapping_page(page_id, &mut outcomes)?;
-                state.all_pages.push(page_id.clone());
+                row_pages.push(page_id.clone());
             }
+            let mut row_records = Vec::with_capacity(captured.records.len());
+            let mut row_out = Vec::with_capacity(captured.records.len());
             for record_id in captured.records {
                 let outcome = match outcomes.remove(&record_id) {
                     Some(outcome) => outcome,
                     None => self.observing(|cell| cell.process_mapping_outcome(&record_id))?,
                 };
-                state.all_records.push(record_id.clone());
-                step_out.push(Ingested {
+                row_records.push(record_id.clone());
+                row_out.push(Ingested {
                     observation_id: record_id,
                     outcome,
                 });
@@ -387,6 +396,10 @@ impl<E: SqlEngine> DevHost<E> {
                 &state.advance.dataset,
                 &pending_key,
             )?;
+            let _done = state.rows.pop_front();
+            state.all_pages.extend(row_pages);
+            state.all_records.extend(row_records);
+            step_out.extend(row_out);
             state.next_index = state.next_index.saturating_add(1);
         }
         if state.rows.is_empty() {
@@ -545,7 +558,11 @@ impl<E: SqlEngine> DevHost<E> {
             SourceCapturePlan::DisputeFallback(mut fallback) => {
                 let mut out = Vec::with_capacity(rows.len());
                 while !fallback.is_complete() {
-                    out.extend(self.step_source_dispute_fallback(&mut fallback, usize::MAX)?);
+                    out.extend(self.step_source_dispute_fallback(
+                        &mut fallback,
+                        advance.now_ms,
+                        usize::MAX,
+                    )?);
                 }
                 Ok(out)
             }

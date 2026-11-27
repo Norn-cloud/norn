@@ -97,8 +97,31 @@ mod tests {
             self.inner.transaction(f)
         }
 
+        fn platform_table_globs(&self) -> &'static [&'static str] {
+            self.inner.platform_table_globs()
+        }
+
         fn read_isolation(&self) -> ReadIsolation {
             self.inner.read_isolation()
+        }
+
+        fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+            self.inner.read_cache_revision()
+        }
+
+        fn external_data_version(&self) -> Result<Option<u64>, CellError> {
+            self.inner.external_data_version()
+        }
+
+        fn admitted(&self) -> Result<(), CellError> {
+            self.inner.admitted()
+        }
+
+        fn definition_writes<T>(
+            &self,
+            f: impl FnOnce() -> Result<T, CellError>,
+        ) -> Result<T, CellError> {
+            self.inner.definition_writes(f)
         }
     }
 
@@ -621,11 +644,11 @@ mod tests {
     /// advances `_norn_source_cursor` in SQLite even with zero rows.
     #[test]
     fn empty_terminal_page_advances_cursor_atomically() {
-        let mut cursor_connector =
-            load_artifact("fixtures/packs/erpnext-rest/artifacts/erpnext.rest.connector.json");
-        let mut payload =
-            serde_json::to_value(cursor_connector.payload.to_json_value()).expect("payload");
-        let mut profile = PullProfile::from_connector(&payload)
+        let mut cursor_doc = serde_json::to_value(load_artifact(
+            "fixtures/packs/erpnext-rest/artifacts/erpnext.rest.connector.json",
+        ))
+        .expect("connector json");
+        let mut profile = PullProfile::from_connector(&cursor_doc["payload"])
             .expect("valid")
             .expect("profile");
         let mut feed = profile.feeds[0].clone();
@@ -638,10 +661,12 @@ mod tests {
             .query
             .insert("after".into(), "{{cursor}}".into());
         profile.feeds = vec![feed.clone()];
-        payload["extensions"]["norn.pull/1"] = serde_json::to_value(&profile).expect("json");
-        cursor_connector.artifact_id = "erpnext.cursor.connector".into();
-        cursor_connector.name = "erpnext.cursor.connector".into();
-        cursor_connector.payload = serde_json::from_value(payload).expect("payload");
+        cursor_doc["artifactId"] = json!("erpnext.cursor.connector");
+        cursor_doc["name"] = json!("erpnext.cursor.connector");
+        cursor_doc["payload"]["extensions"]["norn.pull/1"] =
+            serde_json::to_value(&profile).expect("json");
+        let cursor_connector: ArtifactEnvelope =
+            serde_json::from_value(cursor_doc).expect("connector envelope");
 
         let host = open_native_host(&rest_artifacts(&[cursor_connector]));
         let config = serde_json::json!([{
@@ -1269,25 +1294,72 @@ mod tests {
         );
     }
 
+    fn seal_holding_rows(
+        mutate: impl FnOnce(&mut Vec<Value>),
+    ) -> (
+        Vec<(norn_kernel::Observed<RuntimeValue>, MappingInput)>,
+        Watermark,
+    ) {
+        let dataset = "Warehouse Lot Balance";
+        let mut profile = profile_of("erpnext");
+        let feed = profile
+            .feeds
+            .iter()
+            .find(|f| f.dataset == dataset)
+            .cloned()
+            .expect("holding feed");
+        profile.feeds = vec![feed];
+        let (status, mut body) = recorded_pages("erpnext").remove(dataset).expect("page");
+        let items = body["data"].as_array_mut().expect("rows");
+        items.truncate(2);
+        assert_eq!(items.len(), 2, "need two holding rows");
+        mutate(items);
+        let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
+        let _req = pull.next_request().expect("request");
+        let accepted = pull
+            .accept(status, body.to_string().as_bytes())
+            .expect("accepted");
+        let next_wm = accepted.advance.next.clone().expect("next wm");
+        let rows = accepted
+            .rows
+            .iter()
+            .map(|row| {
+                (
+                    observation(&profile, row, T0).expect("sealed"),
+                    MappingInput {
+                        mapping: "erpnext.rest.mapping".into(),
+                        dataset: row.dataset.clone(),
+                        connector_instance: "sandbox".into(),
+                        partition: row.dataset.clone(),
+                        recorded_at: norn_ir::provenance::UtcTimestamp(RECORDED_AT.into()),
+                    },
+                )
+            })
+            .collect();
+        (rows, next_wm)
+    }
+
     /// Regression 10: lowering `max_rows` to 1 while draining a single captured
     /// `mapping-page:` run whose members are commit-refused (`canon.Holding`
-    /// with missing required `canon.Item` targets, so both pass mapping into
-    /// one `mapping-page:` run and remain inbox-pending as quarantined on
-    /// commit) terminates cleanly in bounded steps without retrying the same
-    /// member forever.
+    /// with `stock_cost` set and `cost_currency = null`, so both pass mapping
+    /// into one `mapping-page:` run and fail `canon.StockValuation::cost_has_currency`
+    /// at commit while staying inbox-pending as quarantined) terminates cleanly
+    /// in bounded steps without retrying the same member forever.
     #[test]
     fn paced_drain_with_multiple_quarantined_rows_terminates_cleanly() {
         let host = open_native_host(&rest_artifacts(&[]));
         let dataset = "Warehouse Lot Balance".to_owned();
-        let (rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
-        assert!(rows.len() >= 2, "need at least two holding rows");
-        let two_holdings = rows[..2].to_vec();
+        let (two_holdings, next_wm) = seal_holding_rows(|items| {
+            for item in items.iter_mut() {
+                item["cost_currency"] = Value::Null;
+            }
+        });
         let lease = host
             .acquire_source_lease("erpnext.rest", "run-q-pace", T0, RUN_LEASE_MS)
             .expect("lease");
         let advance = CursorAdvanceSpec {
             connection_id: "erpnext.rest".into(),
-            dataset: dataset.clone(),
+            dataset,
             lease_id: lease.lease_id.clone(),
             generation: lease.generation,
             now_ms: T0.saturating_add(1),
@@ -1321,6 +1393,88 @@ mod tests {
             seen.iter()
                 .all(|o| matches!(o.outcome, MappingOutcome::Quarantined(_))),
             "expected commit-refused quarantine outcomes, got {seen:#?}"
+        );
+    }
+
+    /// Regression 11: paced `OBS-LINK-DISPUTE-1` fallback retains an uncaptured
+    /// row on store error (never skipping it or advancing cursor prematurely)
+    /// and enforces the fresh step `now_ms` against lease expiry on continuation.
+    #[test]
+    fn dispute_fallback_retains_row_on_error_and_checks_fresh_lease_clock() {
+        let artifacts = rest_artifacts(&[]);
+        let (host, _fail_cursor, fail_ledger) = open_faultable_host(&artifacts, None);
+        let dataset = "Warehouse Lot Balance".to_owned();
+        // A non-NFC `name` on row 1 after valid row 0 emits a new
+        // `mapping-identity:` finding and triggers `MappingPageSpansDispute`.
+        let (rows, next_wm) = seal_holding_rows(|items| {
+            items[1]["name"] = json!("WLB-cafe\u{0301}");
+        });
+        let lease = host
+            .acquire_source_lease("erpnext.rest", "run-dispute", T0, RUN_LEASE_MS)
+            .expect("lease");
+        let advance = CursorAdvanceSpec {
+            connection_id: "erpnext.rest".into(),
+            dataset: dataset.clone(),
+            lease_id: lease.lease_id.clone(),
+            generation: lease.generation,
+            now_ms: T0.saturating_add(1),
+            expected_previous_cursor: None,
+            next_cursor: Some(next_wm.cursor_json().expect("json")),
+            renew_ttl_ms: Some(RUN_LEASE_MS),
+        };
+        let norn_api::host::SourceCapturePlan::DisputeFallback(mut fallback) = host
+            .capture_source_page_planned(&rows, &advance, 10)
+            .expect("plan")
+        else {
+            panic!("expected dispute fallback plan for mid-page identity finding");
+        };
+
+        // Transient store fault during row 0 must retain row 0 and not commit cursor.
+        fail_ledger.store(true, Ordering::Release);
+        assert!(
+            host.step_source_dispute_fallback(&mut fallback, T0.saturating_add(2), 1)
+                .is_err()
+        );
+        assert!(!fallback.is_complete());
+        assert!(
+            host.source_cursors("erpnext.rest")
+                .expect("cursors")
+                .is_empty()
+        );
+
+        // Clearing the fault lets row 0 complete without skipping it.
+        fail_ledger.store(false, Ordering::Release);
+        let first_step = host
+            .step_source_dispute_fallback(&mut fallback, T0.saturating_add(3), 1)
+            .expect("retry row 0");
+        assert_eq!(first_step.len(), 1);
+        assert!(!fallback.is_complete());
+
+        // Advancing the step clock past lease expiry must fence row 1 even with
+        // no competing worker taking over the lease.
+        let expired_ms = T0.saturating_add(3).saturating_add(RUN_LEASE_MS);
+        assert!(matches!(
+            host.step_source_dispute_fallback(&mut fallback, expired_ms, 1),
+            Err(SourceCaptureError::LeaseFenced(_))
+        ));
+        assert!(!fallback.is_complete());
+        assert!(
+            host.source_cursors("erpnext.rest")
+                .expect("cursors")
+                .is_empty()
+        );
+
+        // Stepping row 1 while the lease is still valid completes the page and
+        // commits `_norn_source_cursor`.
+        let second_step = host
+            .step_source_dispute_fallback(&mut fallback, T0.saturating_add(4), 1)
+            .expect("row 1");
+        assert_eq!(second_step.len(), 1);
+        assert!(fallback.is_complete());
+        assert!(
+            host.source_cursors("erpnext.rest")
+                .expect("cursors")
+                .contains_key(&dataset)
         );
     }
 }
