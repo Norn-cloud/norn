@@ -510,8 +510,13 @@ pub fn promote_decision_fork<S: ForkEngine>(
     ) {
         Ok(result) => result,
         Err(error) => {
-            if !is_partial_main_replay(&error) {
-                let _ = fork.store_mut().release_fork_promotion();
+            if !is_partial_main_replay(&error)
+                && let Err(release_error) = fork.store_mut().release_fork_promotion()
+            {
+                tracing::warn!(
+                    %release_error,
+                    "failed to release fork promotion reservation after replay refusal"
+                );
             }
             return Err(error);
         }
