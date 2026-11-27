@@ -346,7 +346,7 @@ function BuiltAnswer({ question, catalog, title, scope }: { readonly question: Q
   const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: () => readMetrics(scope), retry: false, staleTime: 60_000 })
   const [picked, setPicked] = useState<UnitGroup | null>(null)
   if (metrics.isPending) return <LoadState status="pending" skeleton="panel" loadingLabel="Reading metric definitions" onRetry={() => void metrics.refetch()}>{() => null}</LoadState>
-  const partitions = question.aggregate.map(({ metric }) => metrics.data?.document.metrics.find(({ name }) => name === metric)?.unitPartition ?? [])
+  const partitions = question.aggregate.map(({ metric }) => [...metrics.data?.document.metrics ?? [], ...metrics.data?.document.combined ?? []].find(({ name }) => name === metric)?.unitPartition ?? [])
   const sources = partitions[0] ?? []
   const shared = partitions.every((partition) => partition.length === sources.length && partition.every((property, index) => property === sources[index]))
   if (sources.length === 0 || !shared) return <RunQuestion question={question} catalog={catalog} title={title} scope={scope} auto />

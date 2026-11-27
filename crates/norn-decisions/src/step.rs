@@ -151,6 +151,9 @@ impl DecisionContracts for StepContracts {
         key: &str,
         source: &str,
     ) -> Option<zen_engine::nodes::ExpressionContract> {
+        if self.expressions.is_empty() {
+            return None;
+        }
         self.expressions
             .get(&(node.to_owned(), key.to_owned(), source.to_owned()))
             .cloned()

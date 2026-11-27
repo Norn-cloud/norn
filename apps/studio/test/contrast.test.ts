@@ -671,8 +671,8 @@ test("the islands' glass falls back to opaque surfaces under reduced transparenc
   }
   for (const query of ["@media (prefers-reduced-transparency: reduce)", "@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)))"]) {
     const rules = block(query)
-    expect(rules, query).toContain('[data-island="nav"] { background-color: var(--shell); }')
-    expect(rules, query).toContain('[data-island="main"] { background-color: var(--canvas); }')
+    expect(rules, query).toContain('[data-shell-island="nav"] { background-color: var(--shell); }')
+    expect(rules, query).toContain('[data-shell-island="main"] { background-color: var(--canvas); }')
   }
   expect(block("@media (prefers-reduced-transparency: reduce)")).toMatch(/backdrop-filter: none/)
   expect(block("@media (forced-colors: active)")).toMatch(/backdrop-filter: none[\s\S]*border-color: CanvasText/)

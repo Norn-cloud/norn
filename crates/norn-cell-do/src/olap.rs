@@ -102,7 +102,21 @@ impl<A: AnalyticalEngine> InProcess<A> {
             })
             .and_then(|request| operation(&request));
         match outcome {
-            Ok(response) => (200, serde_json::to_string(&response).unwrap_or_default()),
+            Ok(response) => match serde_json::to_string(&response) {
+                Ok(body) => (200, body),
+                Err(error) => (
+                    500,
+                    serde_json::to_string(&EngineRefusal {
+                        code: "analytics.engine".to_owned(),
+                        detail: error.to_string(),
+                    })
+                    .unwrap_or_else(|_e| {
+                        String::from(
+                            "{\"code\":\"analytics.engine\",\"detail\":\"serialization failed\"}",
+                        )
+                    }),
+                ),
+            },
             Err(refused) => (
                 refusal_status(&refused.code),
                 serde_json::to_string(&refused).unwrap_or_default(),

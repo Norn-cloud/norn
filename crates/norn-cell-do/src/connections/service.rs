@@ -1400,7 +1400,15 @@ impl<E: SqlEngine> Connections<E> {
             .map_err(oauth_error);
         let response = match refreshed {
             Ok(response) => response,
-            Err(ConnError::Provider(code)) => {
+            Err(ConnError::Provider(
+                code @ ("invalid_grant"
+                | "invalid_client"
+                | "invalid_request"
+                | "invalid_scope"
+                | "unauthorized_client"
+                | "unsupported_grant_type"
+                | "provider_error"),
+            )) => {
                 return self
                     .mark_reconnect(actor, id, &record, code, now_ms)
                     .and(Err(ConnError::ReconnectNeeded));
@@ -1408,14 +1416,9 @@ impl<E: SqlEngine> Connections<E> {
             Err(error) => {
                 let code = failure_code(&error);
                 self.transaction(|vault| {
-                    // Only the credential this refresh read gets the error.
-                    vault
-                        .engine()
-                        .execute(
-                            r#"UPDATE "_norn_connection" SET "last_error" = ?1 WHERE "id" = ?2 AND "generation" = ?3 AND "revision" = ?4"#,
-                            &[text(code), text(id), SqlValue::Integer(seen.0), SqlValue::Integer(seen.1)],
-                        )
-                        .map_err(storage)?;
+                    let sql = r#"UPDATE "_norn_connection" SET "last_error" = ?1 WHERE "id" = ?2 AND "generation" = ?3 AND "revision" = ?4"#;
+                    let params = [text(code), text(id), SqlValue::Integer(seen.0), SqlValue::Integer(seen.1)];
+                    vault.engine().execute(sql, &params).map_err(storage)?;
                     Self::audit(vault, now_ms, id, "credential.failure", actor, Some(code))
                 })?;
                 return Err(error);
@@ -1446,14 +1449,8 @@ impl<E: SqlEngine> Connections<E> {
         };
         self.transaction(|vault| {
             if Self::epoch(vault, id)? != seen {
-                Self::audit(
-                    vault,
-                    now_ms,
-                    id,
-                    "credential.failure",
-                    actor,
-                    Some("superseded"),
-                )?;
+                let why = Some("superseded");
+                Self::audit(vault, now_ms, id, "credential.failure", actor, why)?;
                 return Ok(Decided::Refused(ConnError::Conflict));
             }
             Self::store(vault, id, next, &rotated, false, now_ms)?;

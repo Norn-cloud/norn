@@ -77,6 +77,7 @@ export const recordedTransportImpl: Transport = {
     asOf: recordedAnswer<HistoricalAnswer>("k1-as-of.answer.json"),
   }),
   catalog: async () => recorded<readonly Artifact[]>("explorer/three-systems.definitions.json"),
+  builtins: async () => [],
   objectCounts: async () => ({}),
   guarantees: async () => ["original", "mutant"].map((name) => ({ name, read: recorded<Guarantees>(`guarantees/constitution.${name}.guarantees.json`) })),
 }

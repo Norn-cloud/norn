@@ -24,6 +24,7 @@ const documents: Readonly<Record<string, WidgetUx>> = {
   fixture,
   "decision sheet": read("apps/studio/src/decisions/decision-sheet.widget.json").payload.ux,
   "lifecycle view": read("packages/norn-demo-ui/src/elements/lifecycle-view.widget.json").payload.ux,
+  "record page": read("registry/studio/artifacts/norn.studio.record.widget.json").payload.ux,
 }
 
 describe.skipIf(checker === null)("the capability walk is the checker's", () => {

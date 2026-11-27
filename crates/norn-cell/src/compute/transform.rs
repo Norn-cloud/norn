@@ -116,7 +116,7 @@ pub(crate) struct Snapshot {
 }
 
 /// The exact engine's read bounds: rows across all inputs and decoded bytes.
-fn limits() -> ReactiveLimits {
+pub(super) fn limits() -> ReactiveLimits {
     let rows = u32::try_from(MAX_ROWS).unwrap_or(u32::MAX);
     ReactiveLimits {
         max_records: rows,

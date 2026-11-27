@@ -497,7 +497,7 @@ pub(crate) fn check_commit_inner<E: 'static, C, T, V: CommitView + ?Sized>(
     let profile = crate::execution_profile::ProfileView::new(view);
     profile.validate_consumed(commit.consumes.as_ref())?;
     let result = check_commit_local(commit, model, &profile, authorization, trust);
-    profile.validate(commit, model)?;
+    profile.validate_after_local(commit, model, &result)?;
     result
 }
 

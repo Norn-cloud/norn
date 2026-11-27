@@ -518,3 +518,36 @@ fn refusal_detail_pdp_fixture_matches_the_generated_host_schema() {
         include_str!("../../norn-api/tests/fixtures/refusal-access.cedarschema")
     );
 }
+
+#[test]
+fn cedar_rejects_reserved_keywords_host_collisions_and_duplicate_action_resource_actions() {
+    let (mut types, properties, actions) = representative_model();
+    let host_collision: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+        "name": "Norn.Custom",
+        "properties": [{ "id": "in", "type": { "kind": "text" } }]
+    }))
+    .expect("type");
+    let ledger_collision: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+        "name": "norn.Ledger",
+        "properties": [{ "id": "note", "type": { "kind": "text" } }]
+    }))
+    .expect("type");
+    let keyword_attr: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+        "name": "alpha.KeywordTest",
+        "properties": [
+            { "id": "in", "type": { "kind": "text" } },
+            { "id": "action", "type": { "kind": "text" } }
+        ]
+    }))
+    .expect("type");
+    types.push(host_collision);
+    types.push(ledger_collision);
+    types.push(keyword_attr);
+    let dup_actions = vec![actions[0].clone(), actions[0].clone()];
+    let projected = project_cedar_schema_with_catalog(&types, &[], &properties, &dup_actions);
+    assert!(!projected.schema.contains("entity Custom"));
+    assert!(!projected.schema.contains("entity Ledger"));
+    assert!(!projected.attributes["alpha.KeywordTest"].contains_key("in"));
+    assert!(projected.attributes["alpha.KeywordTest"].contains_key("action"));
+    assert!(projected.resource_actions.is_empty());
+}

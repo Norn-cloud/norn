@@ -113,8 +113,19 @@ export function sourceDigest(root: string, manifest: Project): string {
   return hash.digest("hex")
 }
 
-/** The retained kinds a project's JSON sources may declare. */
-const RETAINED_KINDS: ReadonlySet<string> = new Set(["approval"])
+/**
+ * The retained kinds a project's JSON sources may declare: approvals, which
+ * ride the set, and questions and dashboards, which the dev host installs once
+ * the set serves (DEV-READ-DEFINITIONS-1).
+ */
+const RETAINED_KINDS: ReadonlySet<string> = new Set(["approval", "question", "dashboard"])
+
+/** A retained definition a JSON source declares. */
+export interface SourceDefinitionDoc {
+  readonly kind: "approval" | "question" | "dashboard"
+  readonly id: string
+  readonly payload: Json
+}
 
 /** A JSON source that names a retained kind but is not a definition of it. */
 class DefinitionSourceError extends Error {
@@ -140,15 +151,19 @@ function exactNumbers(inexact: string[]): (key: string, value: unknown, context?
 /**
  * Top-level `*.json` files in each source directory, checked for project
  * confinement before reading and parsed once for both pre-compiled artifact
- * envelopes and retained definitions (`{ kind, id, payload }`, kind `approval`).
+ * envelopes and retained definitions (`{ kind, id, payload }`, kind
+ * `approval`, `question` or `dashboard`). A document whose `kind` is a
+ * retained kind but whose `id` or `payload` is malformed, or whose `id`
+ * another JSON source declares, throws `DefinitionSourceError`: a gate the
+ * author declared is never silently dropped.
  */
 function projectJsonSources(
   root: string,
   dirs: readonly string[],
   realRoot: string,
-): { readonly artifacts: Json[]; readonly definitions: RetainedDefinitionDoc[] } {
+): { readonly artifacts: Json[]; readonly definitions: SourceDefinitionDoc[] } {
   const artifacts: Json[] = []
-  const definitions: RetainedDefinitionDoc[] = []
+  const definitions: SourceDefinitionDoc[] = []
   const seen = new Set<string>()
   for (const dir of dirs) {
     for (const entry of readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
@@ -167,11 +182,11 @@ function projectJsonSources(
         throw new DefinitionSourceError(path, `${path} writes the number ${inexact[0]}, which JSON cannot carry exactly: write an integer such as 1000, or the exact decimal as text, such as "1000.10"`)
       }
       if (typeof doc.id !== "string" || doc.id === "" || typeof doc.payload !== "object" || doc.payload === null || Array.isArray(doc.payload)) {
-        throw new DefinitionSourceError(path, `${path} declares an ${String(doc.kind)} that is not { kind, id, payload } with a non-empty id and an object payload`)
+        throw new DefinitionSourceError(path, `${path} declares ${doc.kind === "approval" ? "an" : "a"} ${doc.kind} that is not { kind, id, payload } with a non-empty id and an object payload`)
       }
       if (seen.has(doc.id)) throw new DefinitionSourceError(doc.id, `definition ${doc.id} is declared by more than one JSON source`)
       seen.add(doc.id)
-      definitions.push({ kind: "approval" as const, id: doc.id, payload: doc.payload as Json })
+      definitions.push({ kind: doc.kind as SourceDefinitionDoc["kind"], id: doc.id, payload: doc.payload as Json })
     }
   }
   return { artifacts, definitions }
@@ -201,6 +216,41 @@ function cellOwned(artifacts: ReadonlyArray<Json>): Json[] {
  * definitions, and the cell-owned types a mapping needs.
  */
 export function compileProjectPack(root: string, manifest: Project, options: { readonly forbidUnsafeZen?: boolean } = {}): PackResult {
+  return projectPack(root, manifest, options).pack
+}
+
+/** Why a hosted command (`norn plan`, `apply`, `check`) leaves a source question or dashboard out. */
+export const HOSTED_READS_REASON = "hosted cells install questions and dashboards only through the definitions API (POST /v1/definitions:install), not from sources"
+
+/** A source question or dashboard a hosted command leaves out, and why. */
+export interface OmittedDefinition {
+  readonly kind: string
+  readonly id: string
+  readonly reason: string
+}
+
+/**
+ * `compileProjectPack` for a hosted command, with the source questions and
+ * dashboards it leaves out (DEV-READ-DEFINITIONS-1): only `norn dev` installs
+ * them from sources, so a hosted plan, apply or check names each one it does
+ * not send, never dropping it silently.
+ */
+export function loadProjectPack(root: string, manifest: Project, options: { readonly forbidUnsafeZen?: boolean } = {}): { readonly pack: PackResult; readonly omitted: OmittedDefinition[] } {
+  const { pack, reads } = projectPack(root, manifest, options)
+  return { pack, omitted: reads.map((definition) => ({ kind: definition.kind, id: definition.id, reason: HOSTED_READS_REASON })) }
+}
+
+/** One line per omitted definition, for a hosted command's text output. */
+export function omittedLines(omitted: ReadonlyArray<OmittedDefinition>): string[] {
+  return omitted.map((definition) => `note: ${definition.kind} ${definition.id} is not sent: ${definition.reason}`)
+}
+
+/**
+ * `compileProjectPack`, with the sources' questions and dashboards
+ * (DEV-READ-DEFINITIONS-1) from the same one read of the JSON sources: the
+ * dev host installs them once a revision serves, and approvals ride the set.
+ */
+function projectPack(root: string, manifest: Project, options: { readonly forbidUnsafeZen?: boolean }): { readonly pack: PackResult; readonly reads: SourceDefinitionDoc[] } {
   const realRoot = realpathSync(root)
   const dirs = sourceDirs(root, manifest)
   const pack = compilePack(root, {
@@ -209,11 +259,11 @@ export function compileProjectPack(root: string, manifest: Project, options: { r
     root,
     ...(options.forbidUnsafeZen !== undefined ? { forbidUnsafeZen: options.forbidUnsafeZen } : {}),
   })
-  if (!pack.ok) return pack
-  const refused = (construct: string, message: string): PackResult =>
-    ({ ok: false, profile: pack.profile, failures: [{ file: ".", diagnostics: [{ code: "NORN-FLOW-LITERAL", start: { line: 1, column: 1 }, end: { line: 1, column: 1 }, construct, message }] }] })
+  if (!pack.ok) return { pack, reads: [] }
+  const refused = (construct: string, message: string): { readonly pack: PackResult; readonly reads: SourceDefinitionDoc[] } =>
+    ({ pack: { ok: false, profile: pack.profile, failures: [{ file: ".", diagnostics: [{ code: "NORN-FLOW-LITERAL", start: { line: 1, column: 1 }, end: { line: 1, column: 1 }, construct, message }] }] }, reads: [] })
   let files: Json[]
-  let definitions: RetainedDefinitionDoc[]
+  let definitions: SourceDefinitionDoc[]
   try {
     const jsonSources = projectJsonSources(root, dirs, realRoot)
     files = jsonSources.artifacts
@@ -233,38 +283,52 @@ export function compileProjectPack(root: string, manifest: Project, options: { r
   const ids = new Set(pack.retained.map((definition) => definition.id))
   const duplicate = definitions.find((definition) => ids.has(definition.id))
   if (duplicate) return refused(duplicate.id, `definition ${duplicate.id} is declared by a JSON source and by a module`)
-  return { ...pack, artifacts: [...owned, ...files, ...pack.artifacts], sources, retained: [...pack.retained, ...definitions] }
+  // Approvals ride the set wherever it is applied; questions and dashboards are
+  // the dev host's to install once it serves (`reads`).
+  const approvals = definitions.filter((definition): definition is RetainedDefinitionDoc => definition.kind === "approval")
+  return {
+    pack: { ...pack, artifacts: [...owned, ...files, ...pack.artifacts], sources, retained: [...pack.retained, ...approvals] },
+    reads: definitions.filter((definition) => definition.kind !== "approval"),
+  }
 }
 
 /** Shared project-vs-pack loader used by `norn check`, `norn compile`, `norn codegen`, and `norn plan|apply`. */
-export function compileInputPack(
-  input: string,
-  options: {
-    readonly scope?: { readonly orgId: string; readonly environmentId: string }
-    readonly overrideProjectScope?: boolean
-    readonly forbidUnsafeZen?: boolean
-  } = {},
-): PackResult {
+export function compileInputPack(input: string, options: InputPackOptions = {}): PackResult {
+  return loadInputPack(input, options).pack
+}
+
+/** Where `compileInputPack` and `loadInputPack` read a pack from, and as which scope. */
+export interface InputPackOptions {
+  readonly scope?: { readonly orgId: string; readonly environmentId: string }
+  readonly overrideProjectScope?: boolean
+  readonly forbidUnsafeZen?: boolean
+}
+
+/**
+ * `compileInputPack` for a hosted command (`norn plan`, `apply`, `check`), with
+ * a project's source questions and dashboards it leaves out (`loadProjectPack`).
+ * A pack that is not a project has none.
+ */
+export function loadInputPack(input: string, options: InputPackOptions = {}): { readonly pack: PackResult; readonly omitted: OmittedDefinition[] } {
   const full = resolve(input)
   const stat = statSync(full)
+  const unsafe = options.forbidUnsafeZen !== undefined ? { forbidUnsafeZen: options.forbidUnsafeZen } : {}
   if (stat.isDirectory() && existsSync(join(full, "norn.json"))) {
     const { root, manifest } = readProject(full)
     const effective = options.overrideProjectScope && options.scope ? { ...manifest, scope: options.scope } : manifest
-    return compileProjectPack(root, effective, { ...(options.forbidUnsafeZen !== undefined ? { forbidUnsafeZen: options.forbidUnsafeZen } : {}) })
+    return loadProjectPack(root, effective, unsafe)
   }
   if (!options.scope) throw new Error("--org and --env are required")
-  return compilePack(full, {
-    scope: options.scope,
-    root: process.cwd(),
-    ...(options.forbidUnsafeZen !== undefined ? { forbidUnsafeZen: options.forbidUnsafeZen } : {}),
-    ...(stat.isFile() ? { modules: [full] } : {}),
-  })
+  return {
+    pack: compilePack(full, { scope: options.scope, root: process.cwd(), ...unsafe, ...(stat.isFile() ? { modules: [full] } : {}) }),
+    omitted: [],
+  }
 }
 
 /** Compile every top-level module of every source directory as one set. */
 export function compileProject(root: string, manifest: Project, gen: number): CompiledEvent {
   const digest = sourceDigest(root, manifest)
-  const pack = compileProjectPack(root, manifest)
+  const { pack, reads } = projectPack(root, manifest, {})
   if (!pack.ok) {
     const diagnostics = pack.failures.flatMap((failure) => failure.diagnostics.map((diagnostic) => ({
       ...diagnostic,
@@ -274,7 +338,7 @@ export function compileProject(root: string, manifest: Project, gen: number): Co
   }
   return {
     event: "compiled", gen, sourceDigest: digest, ok: true,
-    artifacts: [...pack.baseArtifacts, ...pack.artifacts], definitions: pack.retained, sourceMap: pack.sourceMap, warnings: pack.warnings,
+    artifacts: [...pack.baseArtifacts, ...pack.artifacts], definitions: [...pack.retained, ...reads], sourceMap: pack.sourceMap, warnings: pack.warnings,
   }
 }
 

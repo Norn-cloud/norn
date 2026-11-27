@@ -18,25 +18,40 @@ use zen_engine::Variable;
 
 use crate::DecisionError;
 
+/// Maximum container nesting depth accepted by value conversion bridges.
+const MAX_VALUE_DEPTH: usize = 128;
+
+fn depth_exceeded() -> DecisionError {
+    DecisionError::Engine {
+        node_id: String::new(),
+        message: format!("value nesting depth exceeds {MAX_VALUE_DEPTH}"),
+    }
+}
+
 /// Converts a Norn value to the engine's form. Strings and keys are
 /// NFC-normalized, the form Norn1 canonicalizes them to (as `norn-expr` does).
 /// Objects are inserted in key order, and the vendored engine's ordered maps
 /// keep that order at every size.
 pub(crate) fn to_variable(value: &Value) -> Result<Variable, DecisionError> {
-    convert_to_variable(value, nfc)
+    convert_to_variable(value, nfc, 0)
 }
 
 /// [`to_variable`] keeping every string and key exactly as spelled: the
 /// representation a sub-decision boundary checked is the one that crosses it,
 /// so no key is renamed and no two checked keys collapse into one (#1708).
 pub(crate) fn to_variable_exact(value: &Value) -> Result<Variable, DecisionError> {
-    convert_to_variable(value, str::to_owned)
+    convert_to_variable(value, str::to_owned, 0)
 }
 
 fn convert_to_variable(
     value: &Value,
     spell: fn(&str) -> String,
+    depth: usize,
 ) -> Result<Variable, DecisionError> {
+    if depth > MAX_VALUE_DEPTH {
+        return Err(depth_exceeded());
+    }
+    let next = depth.saturating_add(1);
     Ok(match value {
         Value::Null => Variable::Null,
         Value::Bool(flag) => Variable::Bool(*flag),
@@ -50,7 +65,7 @@ fn convert_to_variable(
         Value::Array(items) => Variable::from_array(
             items
                 .iter()
-                .map(|item| convert_to_variable(item, spell))
+                .map(|item| convert_to_variable(item, spell, next))
                 .collect::<Result<Vec<_>, _>>()?,
         ),
         Value::Object(entries) => {
@@ -61,7 +76,7 @@ fn convert_to_variable(
                 for (key, item) in entries {
                     map.insert(
                         Variable::key(&spell(key)),
-                        convert_to_variable(item, spell)?,
+                        convert_to_variable(item, spell, next)?,
                     );
                 }
             }
@@ -73,6 +88,14 @@ fn convert_to_variable(
 /// Converts engine output back, preserving exact decimals and canonical S5
 /// temporal strings. Other dynamic values have no Norn representation.
 pub(crate) fn from_variable(variable: &Variable) -> Result<Value, DecisionError> {
+    from_variable_at(variable, 0)
+}
+
+fn from_variable_at(variable: &Variable, depth: usize) -> Result<Value, DecisionError> {
+    if depth > MAX_VALUE_DEPTH {
+        return Err(depth_exceeded());
+    }
+    let next = depth.saturating_add(1);
     Ok(match variable {
         Variable::Null => Value::Null,
         Variable::Bool(flag) => Value::Bool(*flag),
@@ -82,14 +105,14 @@ pub(crate) fn from_variable(variable: &Variable) -> Result<Value, DecisionError>
             items
                 .borrow()
                 .iter()
-                .map(from_variable)
+                .map(|item| from_variable_at(item, next))
                 .collect::<Result<_, _>>()?,
         ),
         Variable::Object(entries) => Value::Object(
             entries
                 .borrow()
                 .iter()
-                .map(|(key, item)| Ok((key.to_string(), from_variable(item)?)))
+                .map(|(key, item)| Ok((key.to_string(), from_variable_at(item, next)?)))
                 .collect::<Result<BTreeMap<_, _>, DecisionError>>()?,
         ),
         // Only the closed S5 registry can produce these dynamic kinds: input
@@ -126,8 +149,17 @@ fn number(text: &str) -> Result<Number, DecisionError> {
 /// # Errors
 ///
 /// [`DecisionError::InvalidNumber`] when a number is outside the engine's
-/// exact decimal range: it is rejected, never rounded.
+/// exact decimal range: it is rejected, never rounded; [`DecisionError::Engine`]
+/// when container nesting exceeds the depth bound.
 pub fn value_from_canonical(value: &CanonicalJson) -> Result<Value, DecisionError> {
+    value_from_canonical_at(value, 0)
+}
+
+fn value_from_canonical_at(value: &CanonicalJson, depth: usize) -> Result<Value, DecisionError> {
+    if depth > MAX_VALUE_DEPTH {
+        return Err(depth_exceeded());
+    }
+    let next = depth.saturating_add(1);
     Ok(match value {
         CanonicalJson::Null => Value::Null,
         CanonicalJson::Bool(flag) => Value::Bool(*flag),
@@ -136,34 +168,101 @@ pub fn value_from_canonical(value: &CanonicalJson) -> Result<Value, DecisionErro
         CanonicalJson::Array(items) => Value::Array(
             items
                 .iter()
-                .map(value_from_canonical)
+                .map(|item| value_from_canonical_at(item, next))
                 .collect::<Result<_, _>>()?,
         ),
         CanonicalJson::Object(entries) => Value::Object(
             entries
                 .iter()
-                .map(|(key, item)| Ok((key.clone(), value_from_canonical(item)?)))
+                .map(|(key, item)| Ok((key.clone(), value_from_canonical_at(item, next)?)))
                 .collect::<Result<BTreeMap<_, _>, DecisionError>>()?,
         ),
     })
+}
+
+enum CanonicalFrame<'a> {
+    Array {
+        iter: std::slice::Iter<'a, Value>,
+        out: Vec<CanonicalJson>,
+    },
+    Object {
+        iter: std::collections::btree_map::Iter<'a, String, Value>,
+        current_key: String,
+        out: BTreeMap<String, CanonicalJson>,
+    },
 }
 
 /// Converts a [`Value`] to canonical (Norn1) JSON, keeping every number's
 /// exact decimal text.
 #[must_use]
 pub fn value_to_canonical(value: &Value) -> CanonicalJson {
-    match value {
-        Value::Null => CanonicalJson::Null,
-        Value::Bool(flag) => CanonicalJson::Bool(*flag),
-        Value::Number(number) => CanonicalJson::Number(number.as_str().to_owned()),
-        Value::String(text) => CanonicalJson::String(text.clone()),
-        Value::Array(items) => CanonicalJson::Array(items.iter().map(value_to_canonical).collect()),
-        Value::Object(entries) => CanonicalJson::Object(
-            entries
-                .iter()
-                .map(|(key, item)| (key.clone(), value_to_canonical(item)))
-                .collect(),
-        ),
+    let mut frames: Vec<CanonicalFrame<'_>> = Vec::new();
+    let mut current = value;
+    loop {
+        let mut built = match current {
+            Value::Null => CanonicalJson::Null,
+            Value::Bool(flag) => CanonicalJson::Bool(*flag),
+            Value::Number(number) => CanonicalJson::Number(number.as_str().to_owned()),
+            Value::String(text) => CanonicalJson::String(text.clone()),
+            Value::Array(items) => {
+                let mut iter = items.iter();
+                if let Some(first) = iter.next() {
+                    frames.push(CanonicalFrame::Array {
+                        iter,
+                        out: Vec::with_capacity(items.len()),
+                    });
+                    current = first;
+                    continue;
+                }
+                CanonicalJson::Array(Vec::new())
+            }
+            Value::Object(entries) => {
+                let mut iter = entries.iter();
+                if let Some((first_key, first_val)) = iter.next() {
+                    frames.push(CanonicalFrame::Object {
+                        iter,
+                        current_key: first_key.clone(),
+                        out: BTreeMap::new(),
+                    });
+                    current = first_val;
+                    continue;
+                }
+                CanonicalJson::Object(BTreeMap::new())
+            }
+        };
+        loop {
+            let Some(frame) = frames.pop() else {
+                return built;
+            };
+            match frame {
+                CanonicalFrame::Array { mut iter, mut out } => {
+                    out.push(built);
+                    if let Some(next) = iter.next() {
+                        frames.push(CanonicalFrame::Array { iter, out });
+                        current = next;
+                        break;
+                    }
+                    built = CanonicalJson::Array(out);
+                }
+                CanonicalFrame::Object {
+                    mut iter,
+                    current_key,
+                    mut out,
+                } => {
+                    out.insert(current_key, built);
+                    if let Some((next_key, next_val)) = iter.next() {
+                        frames.push(CanonicalFrame::Object {
+                            iter,
+                            current_key: next_key.clone(),
+                            out,
+                        });
+                        current = next_val;
+                        break;
+                    }
+                    built = CanonicalJson::Object(out);
+                }
+            }
+        }
     }
 }
 
@@ -175,8 +274,17 @@ pub fn value_to_canonical(value: &Value) -> CanonicalJson {
 ///
 /// [`DecisionError::InvalidNumber`] if a number is outside the runtime decimal
 /// range (the same range as the engine's, so this does not happen for an
-/// engine value).
+/// engine value); [`DecisionError::Engine`] when container nesting exceeds the
+/// depth bound.
 pub fn value_to_runtime(value: &Value) -> Result<RuntimeValue, DecisionError> {
+    value_to_runtime_at(value, 0)
+}
+
+fn value_to_runtime_at(value: &Value, depth: usize) -> Result<RuntimeValue, DecisionError> {
+    if depth > MAX_VALUE_DEPTH {
+        return Err(depth_exceeded());
+    }
+    let next = depth.saturating_add(1);
     Ok(match value {
         Value::Null => RuntimeValue::Null,
         Value::Bool(flag) => RuntimeValue::Bool(*flag),
@@ -192,13 +300,13 @@ pub fn value_to_runtime(value: &Value) -> Result<RuntimeValue, DecisionError> {
         Value::Array(items) => RuntimeValue::Array(
             items
                 .iter()
-                .map(value_to_runtime)
+                .map(|item| value_to_runtime_at(item, next))
                 .collect::<Result<_, _>>()?,
         ),
         Value::Object(entries) => RuntimeValue::Object(
             entries
                 .iter()
-                .map(|(key, item)| Ok((key.clone(), value_to_runtime(item)?)))
+                .map(|(key, item)| Ok((key.clone(), value_to_runtime_at(item, next)?)))
                 .collect::<Result<BTreeMap<_, _>, DecisionError>>()?,
         ),
     })
@@ -209,18 +317,34 @@ pub fn value_to_runtime(value: &Value) -> Result<RuntimeValue, DecisionError> {
 ///
 /// # Errors
 ///
-/// [`DecisionError::InvalidNumber`] if a number is outside the engine's range.
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "The foreign non-exhaustive enum requires a catch-all; unknown variants retain the existing fallback"
-)]
+/// [`DecisionError::InvalidNumber`] if a number is outside the engine's range;
+/// [`DecisionError::Engine`] when container nesting exceeds the depth bound.
 pub fn value_from_runtime(value: &RuntimeValue) -> Result<Value, DecisionError> {
-    Value::try_from(value).map_err(|error| DecisionError::InvalidNumber {
-        input: match &error {
-            norn_expr::ExprError::InvalidNumber { input, .. } => input.clone(),
-            _ => String::new(),
-        },
-        reason: error.to_string(),
+    value_from_runtime_at(value, 0)
+}
+
+fn value_from_runtime_at(value: &RuntimeValue, depth: usize) -> Result<Value, DecisionError> {
+    if depth > MAX_VALUE_DEPTH {
+        return Err(depth_exceeded());
+    }
+    let next = depth.saturating_add(1);
+    Ok(match value {
+        RuntimeValue::Null => Value::Null,
+        RuntimeValue::Bool(flag) => Value::Bool(*flag),
+        RuntimeValue::Number(decimal) => Value::Number(number(&decimal.canonical())?),
+        RuntimeValue::String(text) => Value::String(text.clone()),
+        RuntimeValue::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| value_from_runtime_at(item, next))
+                .collect::<Result<_, _>>()?,
+        ),
+        RuntimeValue::Object(entries) => Value::Object(
+            entries
+                .iter()
+                .map(|(key, item)| Ok((key.clone(), value_from_runtime_at(item, next)?)))
+                .collect::<Result<BTreeMap<_, _>, DecisionError>>()?,
+        ),
     })
 }
 
@@ -233,6 +357,14 @@ pub fn value_from_runtime(value: &RuntimeValue) -> Result<Value, DecisionError> 
 /// ([`crate::AdmittedDecision::admit_with_defaults`]). Every other JSON value
 /// converts exactly.
 pub(crate) fn value_from_ir(value: &JsonValue) -> Result<Value, DecisionError> {
+    value_from_ir_at(value, 0)
+}
+
+fn value_from_ir_at(value: &JsonValue, depth: usize) -> Result<Value, DecisionError> {
+    if depth > MAX_VALUE_DEPTH {
+        return Err(depth_exceeded());
+    }
+    let next = depth.saturating_add(1);
     Ok(match value {
         JsonValue::Null => Value::Null,
         JsonValue::Bool(flag) => Value::Bool(*flag),
@@ -243,13 +375,16 @@ pub(crate) fn value_from_ir(value: &JsonValue) -> Result<Value, DecisionError> {
             });
         }
         JsonValue::String(text) => Value::String(text.clone()),
-        JsonValue::Array(items) => {
-            Value::Array(items.iter().map(value_from_ir).collect::<Result<_, _>>()?)
-        }
+        JsonValue::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| value_from_ir_at(item, next))
+                .collect::<Result<_, _>>()?,
+        ),
         JsonValue::Object(entries) => Value::Object(
             entries
                 .iter()
-                .map(|(key, item)| Ok((key.clone(), value_from_ir(item)?)))
+                .map(|(key, item)| Ok((key.clone(), value_from_ir_at(item, next)?)))
                 .collect::<Result<BTreeMap<_, _>, DecisionError>>()?,
         ),
     })
@@ -299,6 +434,58 @@ mod tests {
                 "79228162514264337593543950336".to_owned()
             ))
             .is_err()
+        );
+    }
+
+    #[test]
+    fn deeply_nested_values_enforce_depth_bound_without_overflow() {
+        let mut deep_value = Value::Null;
+        let mut deep_canonical = CanonicalJson::Null;
+        let mut deep_runtime = norn_ir::RuntimeValue::Null;
+        let mut deep_ir = norn_ir::JsonValue::Null;
+        for i in 0..=super::MAX_VALUE_DEPTH {
+            if i & 1 == 0 {
+                deep_value = Value::Array(vec![deep_value]);
+                deep_canonical = CanonicalJson::Array(vec![deep_canonical]);
+                deep_runtime = norn_ir::RuntimeValue::Array(vec![deep_runtime]);
+                deep_ir = norn_ir::JsonValue::Array(vec![deep_ir]);
+            } else {
+                deep_value = Value::object([("k", deep_value)]);
+                deep_canonical = CanonicalJson::Object(std::collections::BTreeMap::from([(
+                    "k".to_owned(),
+                    deep_canonical,
+                )]));
+                deep_runtime = norn_ir::RuntimeValue::Object(std::collections::BTreeMap::from([(
+                    "k".to_owned(),
+                    deep_runtime,
+                )]));
+                deep_ir = norn_ir::JsonValue::Object(std::collections::BTreeMap::from([(
+                    "k".to_owned(),
+                    deep_ir,
+                )]));
+            }
+        }
+        assert!(to_variable(&deep_value).is_err());
+        assert!(super::value_to_runtime(&deep_value).is_err());
+        assert!(super::value_from_runtime(&deep_runtime).is_err());
+        assert!(super::value_from_ir(&deep_ir).is_err());
+        assert!(value_from_canonical(&deep_canonical).is_err());
+        assert_eq!(value_to_canonical(&deep_value), deep_canonical);
+        // Empty and mixed object/array round-trip through iterative value_to_canonical.
+        let mixed = Value::object([
+            ("empty_arr", Value::Array(Vec::new())),
+            ("empty_obj", Value::object::<&str>([])),
+            (
+                "nested",
+                Value::Array(vec![Value::object([
+                    ("a", num("1")),
+                    ("b", Value::Bool(false)),
+                ])]),
+            ),
+        ]);
+        assert_eq!(
+            value_from_canonical(&value_to_canonical(&mixed)).unwrap(),
+            mixed
         );
     }
 }
