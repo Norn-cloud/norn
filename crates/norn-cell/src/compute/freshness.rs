@@ -422,43 +422,43 @@ impl<E: SqlEngine> CellStore<E> {
         if !self.has_connection_type() || cutoff.frontier == 0 {
             return Ok(Vec::new());
         }
-        self.conn.transaction(|| {
-            let reader = self.read();
-            let limits =
-                ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
-            let mut budget = DecodeBudget::new(&limits);
-            let mut as_of = AsOfReader::open(&reader, cutoff, now_ms, &mut budget)?;
-            let read_world = |as_of: &mut AsOfReader<'_, '_, E>,
-                              target_world: &str,
-                              budget: &mut DecodeBudget|
-             -> Result<Vec<ObjectRecord>, CellError> {
-                let (ids, complete) = as_of.distinct_ids(
-                    target_world,
-                    CONNECTION_TYPE,
-                    MAX_HISTORICAL_CONNECTIONS,
-                    budget,
-                )?;
-                if !complete {
-                    return Err(super::refused("core.compute.bound_exceeded"));
-                }
-                let mut out = Vec::with_capacity(ids.len());
-                for id in ids {
-                    match as_of.connection_record(target_world, &id, budget)? {
-                        BudgetedRead::Found(record) => out.push(record),
-                        BudgetedRead::Missing => {}
-                        BudgetedRead::Exhausted => {
-                            return Err(super::refused("core.compute.bound_exceeded"));
-                        }
+        let reader = self.read();
+        let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+        let mut budget = DecodeBudget::new(&limits);
+        let mut as_of = AsOfReader::open(&reader, cutoff, now_ms, &mut budget)?;
+        if reader.has_unverified_external_writes()? {
+            return Err(CellError::Verifying("as-of reads"));
+        }
+        let read_world = |as_of: &mut AsOfReader<'_, '_, E>,
+                          target_world: &str,
+                          budget: &mut DecodeBudget|
+         -> Result<Vec<ObjectRecord>, CellError> {
+            let (ids, complete) = as_of.distinct_ids(
+                target_world,
+                CONNECTION_TYPE,
+                MAX_HISTORICAL_CONNECTIONS,
+                budget,
+            )?;
+            if !complete {
+                return Err(super::refused("core.compute.bound_exceeded"));
+            }
+            let mut out = Vec::with_capacity(ids.len());
+            for id in ids {
+                match as_of.connection_record(target_world, &id, budget)? {
+                    BudgetedRead::Found(record) => out.push(record),
+                    BudgetedRead::Missing => {}
+                    BudgetedRead::Exhausted => {
+                        return Err(super::refused("core.compute.bound_exceeded"));
                     }
                 }
-                Ok(out)
-            };
-            let mut objects = read_world(&mut as_of, world, &mut budget)?;
-            if objects.is_empty() && world != MAIN_WORLD {
-                objects = read_world(&mut as_of, MAIN_WORLD, &mut budget)?;
             }
-            Ok(objects)
-        })
+            Ok(out)
+        };
+        let mut objects = read_world(&mut as_of, world, &mut budget)?;
+        if objects.is_empty() && world != MAIN_WORLD {
+            objects = read_world(&mut as_of, MAIN_WORLD, &mut budget)?;
+        }
+        Ok(objects)
     }
 
     /// Read one `source.Connection` record at live head (`historical == None`)
@@ -570,6 +570,20 @@ impl<E: SqlEngine> CellStore<E> {
         Ok((bindings, connections))
     }
 
+    /// Derive required external `(source, dataset)` pairs inside an
+    /// already-open transaction snapshot (exact historical query and IVM).
+    pub(crate) fn required_sources_for_plan_in_tx(
+        &self,
+        world: &str,
+        plan: &QuestionPlan,
+        cutoff: Option<KnowledgeCutoff>,
+        now_ms: u64,
+        configured: &BTreeMap<String, String>,
+    ) -> Result<RequiredSources, CellError> {
+        let (bindings, _) = self.required_bindings_at(world, plan, cutoff, now_ms, configured)?;
+        Ok(bindings_to_required(&bindings))
+    }
+
     /// Derive required external `(source, dataset)` pairs at either live state
     /// (`cutoff == None`) or an authenticated historical cutoff (`cutoff == Some`),
     /// unioned with any host-configured `(connection_id -> mapping_id)` bindings.
@@ -584,8 +598,13 @@ impl<E: SqlEngine> CellStore<E> {
         now_ms: u64,
         configured: &BTreeMap<String, String>,
     ) -> Result<RequiredSources, CellError> {
-        let (bindings, _) = self.required_bindings_at(world, plan, cutoff, now_ms, configured)?;
-        Ok(bindings_to_required(&bindings))
+        if cutoff.is_some() {
+            self.conn.transaction(|| {
+                self.required_sources_for_plan_in_tx(world, plan, cutoff, now_ms, configured)
+            })
+        } else {
+            self.required_sources_for_plan_in_tx(world, plan, cutoff, now_ms, configured)
+        }
     }
 
     /// Build the live connector frontier (`source_cursors` and `watermarks`)
@@ -640,85 +659,87 @@ impl<E: SqlEngine> CellStore<E> {
         now_ms: u64,
         configured: &BTreeMap<String, String>,
     ) -> Result<SourceFreshnessSnapshot, CellError> {
-        let cutoff = KnowledgeCutoff {
-            frontier,
-            recorded_at: LogicalTime::from_millis(now_ms),
-        };
-        let (bindings, conn_list) =
-            self.required_bindings_at(world, plan, Some(cutoff), now_ms, configured)?;
-        if bindings.is_empty() {
-            return Ok(SourceFreshnessSnapshot::default());
-        }
-        let connections: BTreeMap<String, ObjectRecord> = conn_list
-            .into_iter()
-            .map(|record| (record.id.clone(), record))
-            .collect();
-        let reader = self.read();
-        let mut snapshot = SourceFreshnessSnapshot::default();
-        for key in bindings.unconnected_keys().into_values() {
-            snapshot.source_cursors.entry(key).or_default();
-        }
-        for (source_id, req) in &bindings.connected {
-            snapshot
-                .source_cursors
-                .entry(source_id.clone())
-                .or_default();
-            let Some(conn) = connections.get(source_id) else {
-                continue;
+        self.conn.transaction(|| {
+            let cutoff = KnowledgeCutoff {
+                frontier,
+                recorded_at: LogicalTime::from_millis(now_ms),
             };
-            let heartbeat_ms = conn
-                .values
-                .get("last_sync_ended_at")
-                .and_then(RuntimeValue::as_str)
-                .and_then(parse_rfc3339_ms);
-            let cursors = strict_connection_cursors(conn);
-            let req_cursors: BTreeMap<String, String> = req
-                .datasets
-                .iter()
-                .filter_map(|ds| cursors.get(ds).map(|cj| (ds.clone(), cj.clone())))
+            let (bindings, conn_list) =
+                self.required_bindings_at(world, plan, Some(cutoff), now_ms, configured)?;
+            if bindings.is_empty() {
+                return Ok(SourceFreshnessSnapshot::default());
+            }
+            let connections: BTreeMap<String, ObjectRecord> = conn_list
+                .into_iter()
+                .map(|record| (record.id.clone(), record))
                 .collect();
-            let quarantined = reader.unresolved_quarantined_datasets_at(
-                &req.mapping_id,
-                Some(source_id),
-                Some((frontier, heartbeat_ms.unwrap_or(now_ms))),
-            )?;
-            let conn_healthy = !req_cursors.is_empty()
-                && super::as_of::connection_history_proves_cursors_at(
-                    &reader,
-                    world,
-                    conn,
-                    (&req.mapping_id, &req.binding_key),
-                    &req_cursors,
-                    !quarantined.is_empty(),
-                )?;
-            for dataset in &req.datasets {
-                let Some(cursor_json) = req_cursors.get(dataset).cloned() else {
-                    continue;
-                };
-                let complete = conn_healthy && !quarantined.contains(dataset);
-                if complete && let Some(hb) = heartbeat_ms {
-                    snapshot.max_heartbeat_ms = snapshot.max_heartbeat_ms.max(hb);
-                }
+            let reader = self.read();
+            let mut snapshot = SourceFreshnessSnapshot::default();
+            for key in bindings.unconnected_keys().into_values() {
+                snapshot.source_cursors.entry(key).or_default();
+            }
+            for (source_id, req) in &bindings.connected {
                 snapshot
                     .source_cursors
                     .entry(source_id.clone())
-                    .or_default()
-                    .insert(dataset.clone(), cursor_json.clone());
-                snapshot
-                    .watermarks
-                    .entry(source_id.clone())
-                    .or_default()
-                    .insert(
-                        dataset.clone(),
-                        Watermark {
-                            observed: cursor_json,
-                            heartbeat_ms,
-                            complete,
-                        },
-                    );
+                    .or_default();
+                let Some(conn) = connections.get(source_id) else {
+                    continue;
+                };
+                let heartbeat_ms = conn
+                    .values
+                    .get("last_sync_ended_at")
+                    .and_then(RuntimeValue::as_str)
+                    .and_then(parse_rfc3339_ms);
+                let cursors = strict_connection_cursors(conn);
+                let req_cursors: BTreeMap<String, String> = req
+                    .datasets
+                    .iter()
+                    .filter_map(|ds| cursors.get(ds).map(|cj| (ds.clone(), cj.clone())))
+                    .collect();
+                let quarantined = reader.unresolved_quarantined_datasets_at(
+                    &req.mapping_id,
+                    Some(source_id),
+                    Some((frontier, heartbeat_ms.unwrap_or(now_ms))),
+                )?;
+                let conn_healthy = !req_cursors.is_empty()
+                    && super::as_of::connection_history_proves_cursors_at(
+                        &reader,
+                        world,
+                        conn,
+                        (&req.mapping_id, &req.binding_key),
+                        &req_cursors,
+                        !quarantined.is_empty(),
+                    )?;
+                for dataset in &req.datasets {
+                    let Some(cursor_json) = req_cursors.get(dataset).cloned() else {
+                        continue;
+                    };
+                    let complete = conn_healthy && !quarantined.contains(dataset);
+                    if complete && let Some(hb) = heartbeat_ms {
+                        snapshot.max_heartbeat_ms = snapshot.max_heartbeat_ms.max(hb);
+                    }
+                    snapshot
+                        .source_cursors
+                        .entry(source_id.clone())
+                        .or_default()
+                        .insert(dataset.clone(), cursor_json.clone());
+                    snapshot
+                        .watermarks
+                        .entry(source_id.clone())
+                        .or_default()
+                        .insert(
+                            dataset.clone(),
+                            Watermark {
+                                observed: cursor_json,
+                                heartbeat_ms,
+                                complete,
+                            },
+                        );
+                }
             }
-        }
-        Ok(snapshot)
+            Ok(snapshot)
+        })
     }
 
     fn build_live_snapshot(

@@ -430,7 +430,7 @@ impl IncrementalQuestion {
         if self.members.len() > usize::try_from(self.plan.max_items()).map_err(|_n| stale())? {
             return Err(refused("core.compute.bound_exceeded"));
         }
-        let required = store.required_sources_for_plan_at(
+        let required = store.required_sources_for_plan_in_tx(
             &context.world,
             &self.plan,
             self.knowledge,

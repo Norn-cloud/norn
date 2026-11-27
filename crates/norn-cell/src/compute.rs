@@ -546,7 +546,7 @@ impl<E: SqlEngine> CellStore<E> {
             };
             let (query_pin, definition_pin) =
                 self.question_pins(plan, cutoff.filter(|_| !answered))?;
-            let required = self.required_sources_for_plan_at(
+            let required = self.required_sources_for_plan_in_tx(
                 &context.world,
                 plan,
                 cutoff,
