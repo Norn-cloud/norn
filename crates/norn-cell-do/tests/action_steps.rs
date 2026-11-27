@@ -252,3 +252,157 @@ fn flow_receipts_and_ledger_match_the_pre_u1_bytes() {
         "receipts:\n{receipts}\nledger:\n{ledger}"
     );
 }
+
+/// STEP-PIN-1 (D2): when the action targeted by a parked flow step changes
+/// after the flow run started, resuming the run refuses the step fail-closed
+/// with `action_step.definition_changed` rather than executing the mutated
+/// action definition.
+#[test]
+fn a_parked_step_refuses_when_its_action_definition_changes() {
+    let cell = cell();
+    let (status, opened) = call(
+        &cell,
+        "POST",
+        "/v1/runs",
+        OPERATOR,
+        &json!({ "flow": FLOW_ID, "runId": "melt-run-drifted" }).to_string(),
+    );
+    assert_eq!(status, 201, "{opened}");
+    assert_eq!(opened["state"], json!("awaiting_perform_ask_review"));
+
+    // Revise the action definition from DERIVES_LOSS to OMITS_LOSS while the
+    // run is parked on `ask_review`, keeping all installed flow artifacts intact.
+    let version = cell.host.active_definitions_version().unwrap();
+    let active_set = cell
+        .host
+        .cell()
+        .unwrap()
+        .store()
+        .read()
+        .installed_definitions(version)
+        .unwrap()
+        .unwrap();
+    let active_docs: Vec<Value> = serde_json::from_str(&active_set.canonical_set).unwrap();
+    let (model, input) = step_cell::action_cell::melt_install_edited(
+        step_cell::action_cell::OMITS_LOSS,
+        |docs| {
+            for doc in active_docs {
+                if !docs.iter().any(|d| d["artifactId"] == doc["artifactId"]) {
+                    docs.push(doc);
+                }
+            }
+        },
+        norn_api::action_admission::prepare_action_model,
+        step_cell::NOW * 1000 + 1,
+    );
+    cell.host
+        .install_definitions(model, input, version)
+        .expect("mutated action installs with existing flow retained");
+
+    let pending = format!("{SCOPE}&state=pending");
+    let (_, page) = call_with(&cell, "GET", "/v1/decisions", &pending, APPROVER, "");
+    assert_eq!(page["total"], json!(1), "{page}");
+    let id = page["items"][0]["id"].as_str().unwrap().to_owned();
+    let (status, decided) = call(
+        &cell,
+        "POST",
+        &format!("/v1/decisions/{id}:decide"),
+        APPROVER,
+        &json!({ "choice": "approve", "idempotencyKey": "k-drift" }).to_string(),
+    );
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["run"]["state"],
+        json!("failed_refused"),
+        "{decided}"
+    );
+    assert_eq!(melt(&cell), 404, "mutated action must never execute");
+}
+
+fn install_flow_with_pin(cell: &Cell, pin_expr: &str) {
+    let mut artifacts: Vec<Value> = serde_json::from_str(step_cell::LOWERED).unwrap();
+    for artifact in &mut artifacts {
+        artifact["scope"] = json!({ "orgId": "org_demo", "environmentId": "dev" });
+    }
+    let rule = &mut artifacts[1]["payload"];
+    let rules = rule["graph"]["nodes"][1]["content"]["rules"]
+        .as_array_mut()
+        .unwrap();
+    let convert_rule = rules
+        .iter_mut()
+        .find(|entry| entry["_id"] == "awaiting_perform_ask_review/result/1")
+        .unwrap();
+    convert_rule["o_commands"] = json!(format!(
+        "[{{kind: 'perform', runId: slice.run.run_id, step: 'convert', function: 'norn.action', functionVersion: '1', idempotencyKey: slice.run.run_id + ':convert', attempt: 1, input: {{convert: {{action: 'constitution.melt.convert', input: {{id: 'melt-7', input_fine_g: '12', output_fine_g: '10'}}, pin: {pin_expr}}}}}}}]"
+    ));
+    rule["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]["properties"]
+        ["convert"]["properties"]["pin"] = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "artifactId": { "type": "string" },
+            "version": { "type": "string" },
+            "digest": { "type": "string" },
+            "definitionsVersion": { "type": "integer" }
+        }
+    });
+    let mut body = json!({
+        "kind": "flow",
+        "id": FLOW_ID,
+        "payload": {
+            "flow": { "id": FLOW_ID, "version": "1.0.0", "title": "Approve a melt" },
+            "artifacts": artifacts,
+        }
+    });
+    let (status, admitted) = call(
+        cell,
+        "POST",
+        "/v1/definitions:admit",
+        OPERATOR,
+        &body.to_string(),
+    );
+    assert_eq!(status, 200, "{admitted}");
+    body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+    let (status, installed) = call(
+        cell,
+        "POST",
+        "/v1/definitions:install",
+        OPERATOR,
+        &body.to_string(),
+    );
+    assert_eq!(status, 200, "{installed}");
+}
+
+/// STEP-PIN-1 (D2): an explicit `pin` matching the active action definition
+/// executes cleanly, while a mismatched explicit `pin` refuses fail-closed
+/// without executing the action.
+#[test]
+fn a_parked_step_enforces_explicit_pin_match_and_mismatch() {
+    let ok_cell = step_cell::cell_on(
+        norn_cell::engine::NativeEngine::open_in_memory().unwrap(),
+        false,
+    );
+    install_flow_with_pin(
+        &ok_cell,
+        "{artifactId: 'constitution.melt.convert.action', version: '1.0.0', definitionsVersion: 2}",
+    );
+    let decided = start_and_approve(&ok_cell, OPERATOR, "melt-run-pin-ok");
+    assert_eq!(decided["run"]["state"], json!("completed"), "{decided}");
+    assert_eq!(melt(&ok_cell), 200);
+
+    let bad_cell = step_cell::cell_on(
+        norn_cell::engine::NativeEngine::open_in_memory().unwrap(),
+        false,
+    );
+    install_flow_with_pin(
+        &bad_cell,
+        "{artifactId: 'constitution.melt.convert.action', version: '9.9.9'}",
+    );
+    let refused = start_and_approve(&bad_cell, OPERATOR, "melt-run-pin-bad");
+    assert_eq!(
+        refused["run"]["state"],
+        json!("failed_refused"),
+        "{refused}"
+    );
+    assert_eq!(melt(&bad_cell), 404);
+}

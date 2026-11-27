@@ -25,4 +25,13 @@ test("an action step handle restates the norn-builtins contract, with the action
   expect(handle.output).toEqual(await schema("action.output"))
   const errors = await schema("action.error")
   expect(handle.errors.map((error) => error.tag)).toEqual(errors.properties._tag.enum)
+
+  const pinned = actionFn("ops.refund.approve", input, { pinned: true })
+  const pin = S.record(
+    { artifactId: S.text(), version: S.text(), digest: S.text(), definitionsVersion: S.integer },
+    ["artifactId", "version", "digest", "definitionsVersion"],
+  )
+  expect(pinned.input).toEqual(
+    S.record({ action: S.text(["ops.refund.approve"]), input, trace, pin }, ["trace", "pin"]),
+  )
 })

@@ -331,6 +331,7 @@ struct StepCall {
     call_key: String,
     input: RuntimeValue,
     starter: Option<RunStarter>,
+    run_definitions_version: Option<u64>,
 }
 
 /// Every parked `norn.action@1` step (of `run_id` only, when given), with
@@ -358,6 +359,16 @@ fn action_steps<E: SqlEngine>(
             .run_start(MAIN_WORLD, parsed.run_id)
             .map_err(Refusal::host)?
             .and_then(|start| start.started_by);
+        let run_definitions_version = match reader
+            .flow_run(MAIN_WORLD, parsed.run_id)
+            .map_err(Refusal::host)?
+        {
+            Some(row) => reader
+                .receipt_at(row.created_commit_seq)
+                .map_err(Refusal::host)?
+                .map(|receipt| receipt.body.definitions_version),
+            None => None,
+        };
         found.push((
             StepCall {
                 run_id: parsed.run_id.to_owned(),
@@ -368,6 +379,7 @@ fn action_steps<E: SqlEngine>(
                 attempt: parsed.attempt.clone(),
                 input,
                 starter,
+                run_definitions_version,
             },
             pending.result,
         ));
@@ -495,6 +507,7 @@ fn step_approval<E: SqlEngine>(
         crate::approvals::HeldCall,
         CallState,
     )> = None;
+    let expected_defs_version = action.pin.as_ref().and_then(|pin| pin.definitions_version);
     // In the ledger order of the approving commits: the last exact one binds.
     for row in rows {
         let (held, state) = crate::approvals::approved_state(cell, &row)?;
@@ -504,7 +517,7 @@ fn step_approval<E: SqlEngine>(
             && held.call.action == action.action
             && held.call.input == action.input
             && held.call.trace == action.trace
-            && held.call.definitions_version.is_none()
+            && held.call.definitions_version == expected_defs_version
             && held.call.requester == *starter;
         if exact {
             bound = Some((row, held, state));
@@ -646,86 +659,116 @@ pub fn drive_run<E: SqlEngine>(
             );
             (step, waiting)
         };
-        // S5a: the step attempt this dispatch runs the call for, carried to
-        // the gate by this trusted invocation.
-        let attempt = crate::approvals::StepAttempt {
-            run_id: step.run_id.clone(),
-            command: step.command.0.clone(),
-            generation: step.generation.0,
-        };
-        let parsed = norn_cell::flow_run::parse_action_step(&step.input);
-        // What the try ends with, and whether it is a denial of authority.
-        let (outcome, denied) = match (step.starter.as_ref(), parsed) {
-            (_, Err(refused)) => (failure("Refused", Some(refused.code())), false),
-            (None, Ok(_)) => (failure("Denied", None), true),
-            (Some(starter), Ok(action)) => {
-                let scope = crate::actions::ActionQuery {
-                    org_id: Some(host.scope().org_id.clone()),
-                    environment_id: Some(host.scope().environment_id.clone()),
-                    version: None,
-                };
-                let request = crate::actions::ActionRequest {
-                    input: RuntimeValue::Object(action.input),
-                    idempotency_key: step.call_key.clone(),
-                    trace: action.trace.map(Into::into),
-                };
-                // S2: the request's own authenticated principal, read before
-                // any recorded authority stands in for it. Only a try run as
-                // the requester carries it; a try under the starter's
-                // recorded authority never consumes an approval, even one
-                // recorded after this drive read the step.
-                let principal = waiting
-                    .then(|| host.authorizer.verified_principal(&starter.subject))
-                    .flatten();
-                let mut call = || {
-                    crate::actions::call_action_bound(
-                        host,
-                        &crate::actions::ActionCall {
-                            query: &scope,
-                            actor: Some(&starter.subject),
-                            principal: principal.as_ref(),
-                            attempt: Some(&attempt),
-                            action_id: &action.action,
-                            request: &request,
-                            now,
-                        },
-                        disclosure,
-                        None,
-                    )
-                };
-                let acting = if waiting { as_requester } else { as_starter };
-                match acting(starter, &mut call) {
-                    // The requester is not here to run its approved call.
-                    None if waiting => return Ok(()),
-                    None => (failure("Denied", None), true),
-                    // An approval gates the action: the step waits on its
-                    // decision, and the run moves once someone decides.
-                    Some(Ok(ActionAnswer::Pending(_))) => return Ok(()),
-                    Some(Ok(ActionAnswer::Receipt(receipt))) => (
-                        output(receipt.object_type, receipt.object_id, receipt.version)?,
-                        false,
-                    ),
-                    Some(Err(refused)) => match refused.category {
-                        crate::refusal::RefusalCategory::Internal => return Err(refused),
-                        crate::refusal::RefusalCategory::Permission
-                        | crate::refusal::RefusalCategory::Visibility => {
-                            (failure("Denied", None), true)
-                        }
-                        crate::refusal::RefusalCategory::Precondition
-                        | crate::refusal::RefusalCategory::Conflict
-                        | crate::refusal::RefusalCategory::Invalid
-                        | crate::refusal::RefusalCategory::Limit => {
-                            (failure("Refused", Some(&refused.code)), false)
-                        }
-                    },
-                }
-            }
+        let (outcome, denied) = match dispatch_step(
+            host,
+            &step,
+            waiting,
+            as_starter,
+            as_requester,
+            disclosure,
+            now,
+        )? {
+            Some(result) => result,
+            None => return Ok(()),
         };
         if !settle(host, &step, outcome, denied, now)? {
             return Ok(());
         }
     }
     Ok(())
+}
+
+/// Dispatch one parked `norn.action@1` step through `call_action_bound`.
+/// Returns `Ok(None)` when the step stays pending (waiting on approval or on
+/// its requester's own request).
+fn dispatch_step<E: SqlEngine>(
+    host: &DevHost<E>,
+    step: &StepCall,
+    waiting: bool,
+    as_starter: AsStarter<'_>,
+    as_requester: AsStarter<'_>,
+    disclosure: &dyn QuestionRuntime<E>,
+    now: LogicalTime,
+) -> Result<Option<(StepOutcome, bool)>, Refusal> {
+    // S5a: the step attempt this dispatch runs the call for, carried to
+    // the gate by this trusted invocation.
+    let attempt = crate::approvals::StepAttempt {
+        run_id: step.run_id.clone(),
+        command: step.command.0.clone(),
+        generation: step.generation.0,
+    };
+    let parsed = norn_cell::flow_run::parse_action_step(&step.input);
+    match (step.starter.as_ref(), parsed) {
+        (_, Err(refused)) => Ok(Some((failure("Refused", Some(refused.code())), false))),
+        (None, Ok(_)) => Ok(Some((failure("Denied", None), true))),
+        (Some(starter), Ok(action)) => {
+            let step_pin = crate::step_pin::StepActionPin {
+                run_definitions_version: step.run_definitions_version,
+                explicit: action.pin.clone(),
+            };
+            let scope = crate::actions::ActionQuery {
+                org_id: Some(host.scope().org_id.clone()),
+                environment_id: Some(host.scope().environment_id.clone()),
+                version: action.pin.as_ref().and_then(|pin| pin.definitions_version),
+            };
+            let request = crate::actions::ActionRequest {
+                input: RuntimeValue::Object(action.input),
+                idempotency_key: step.call_key.clone(),
+                trace: action.trace.map(Into::into),
+            };
+            // S2: the request's own authenticated principal, read before
+            // any recorded authority stands in for it. Only a try run as
+            // the requester carries it; a try under the starter's
+            // recorded authority never consumes an approval, even one
+            // recorded after this drive read the step.
+            let principal = waiting
+                .then(|| host.authorizer.verified_principal(&starter.subject))
+                .flatten();
+            let mut call = || {
+                crate::actions::call_action_bound(
+                    host,
+                    &crate::actions::ActionCall {
+                        query: &scope,
+                        actor: Some(&starter.subject),
+                        principal: principal.as_ref(),
+                        attempt: Some(&attempt),
+                        step_pin: Some(&step_pin),
+                        action_id: &action.action,
+                        request: &request,
+                        now,
+                    },
+                    disclosure,
+                    None,
+                )
+            };
+            let acting = if waiting { as_requester } else { as_starter };
+            match acting(starter, &mut call) {
+                // The requester is not here to run its approved call.
+                None if waiting => Ok(None),
+                None => Ok(Some((failure("Denied", None), true))),
+                // An approval gates the action: the step waits on its
+                // decision, and the run moves once someone decides.
+                Some(Ok(ActionAnswer::Pending(_))) => Ok(None),
+                Some(Ok(ActionAnswer::Receipt(receipt))) => Ok(Some((
+                    output(receipt.object_type, receipt.object_id, receipt.version)?,
+                    false,
+                ))),
+                Some(Err(refused)) => match refused.category {
+                    crate::refusal::RefusalCategory::Internal => Err(refused),
+                    crate::refusal::RefusalCategory::Permission
+                    | crate::refusal::RefusalCategory::Visibility => {
+                        Ok(Some((failure("Denied", None), true)))
+                    }
+                    crate::refusal::RefusalCategory::Precondition
+                    | crate::refusal::RefusalCategory::Conflict
+                    | crate::refusal::RefusalCategory::Invalid
+                    | crate::refusal::RefusalCategory::Limit => {
+                        Ok(Some((failure("Refused", Some(&refused.code)), false)))
+                    }
+                },
+            }
+        }
+    }
 }
 
 /// S7: record what a try of `step`'s call ended with, reconciled with the

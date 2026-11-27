@@ -53,20 +53,34 @@ const TRACE_CONTEXT = S.record(
   ["intentRef", "sessionDigest"],
 )
 
+/** Optional target-definition pin enforced by `norn.action@1` steps (STEP-PIN-1). */
+const ACTION_STEP_PIN = S.record(
+  {
+    artifactId: S.text(),
+    version: S.text(),
+    digest: S.text(),
+    definitionsVersion: S.integer,
+  },
+  ["artifactId", "version", "digest", "definitionsVersion"],
+)
+
 /**
  * `norn.action@1` (ACTION-STEP-1): a step that calls the governed action `action` with an input of
- * `input`'s shape (the action's own input record) and optional `trace` context. The cell executes it
- * through the ordinary action path, under the run starter's authority for the whole run; a person
- * who decided an earlier step lends it nothing. Its output is the action's target. Its typed
- * failures are `Denied` (the starter may not call the action) and `Refused` (any other refusal,
- * with its `code`). One handle per action: the input schema is the action's, the Function is the
- * same.
+ * `input`'s shape (the action's own input record) and optional `trace` context (and optional `pin`
+ * when `options.pinned` is enabled). The cell executes it through the ordinary action path, under
+ * the run starter's authority for the whole run; a person who decided an earlier step lends it
+ * nothing. Its output is the action's target. Its typed failures are `Denied` (the starter may not
+ * call the action) and `Refused` (any other refusal, with its `code`). One handle per action: the
+ * input schema is the action's, the Function is the same.
  */
-export function actionFn(action: string, input: S.ObjectSchema): FnRef {
+export function actionFn(action: string, input: S.ObjectSchema, options?: { pinned?: boolean }): FnRef {
+  const stepInput = options?.pinned
+    ? S.record({ action: S.text([action]), input, trace: TRACE_CONTEXT, pin: ACTION_STEP_PIN }, ["trace", "pin"])
+    : S.record({ action: S.text([action]), input, trace: TRACE_CONTEXT }, ["trace"])
   return fn({
     id: "norn.action",
     version: "1",
-    input: S.record({ action: S.text([action]), input, trace: TRACE_CONTEXT }, ["trace"]),
+    input: stepInput,
     output: S.record({ objectType: S.text(), objectId: S.text(), version: S.integer }),
     errors: [taggedError("Denied", S.record({}), { at }), taggedError("Refused", S.record({ code: S.text() }, ["code"]), { at })],
     at,
