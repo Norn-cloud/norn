@@ -381,6 +381,110 @@ fn refuses_self_and_mutual_compensation_cycles() {
 }
 
 #[test]
+fn refuses_candidate_to_base_compensation_cycle() {
+    let dev = scope(Some("org_demo"), Some("dev"));
+    let base_approve = transition_action(&ActionSpec {
+        artifact_id: "crm.contact.approve.action",
+        action_id: "crm.contact.approve",
+        scope: dev.clone(),
+        scope_required: &["orgId", "environmentId"],
+        ledgered: true,
+        lifecycle: ArtifactLifecycle::Active,
+        transition: Some("approve"),
+        compensation: Some("crm.contact.restore"),
+    });
+    let base_restore = transition_action(&ActionSpec {
+        artifact_id: "crm.contact.restore.action",
+        action_id: "crm.contact.restore",
+        scope: dev.clone(),
+        scope_required: &["orgId", "environmentId"],
+        ledgered: true,
+        lifecycle: ArtifactLifecycle::Active,
+        transition: Some("restore"),
+        compensation: Some("crm.contact.approve"),
+    });
+    let cand_archive = transition_action(&ActionSpec {
+        artifact_id: "crm.contact.archive.action",
+        action_id: "crm.contact.archive",
+        scope: dev,
+        scope_required: &["orgId", "environmentId"],
+        ledgered: true,
+        lifecycle: ArtifactLifecycle::Active,
+        transition: Some("archive"),
+        compensation: Some("crm.contact.approve"),
+    });
+    let base_cycle_errors = check_with_base(
+        &[cand_archive],
+        &[contact_entity(), base_approve, base_restore],
+    );
+    assert!(
+        base_cycle_errors.contains(&(
+            codes::COMPENSATION_CYCLE.to_owned(),
+            Some("/payload/compensation/actionId".to_owned()),
+        )),
+        "{base_cycle_errors:?}"
+    );
+}
+
+#[test]
+fn skips_spurious_cycle_on_ambiguous_return_edge() {
+    let dev = scope(Some("org_demo"), Some("dev"));
+    // Candidate `archive` duplicates base `archive` and points to `restore`,
+    // which points back to `archive` (ambiguous across candidate + base).
+    // Duplicate + ambiguity are reported without a misleading cycle finding.
+    let base_archive = transition_action(&ActionSpec {
+        artifact_id: "crm.contact.archive.base.action",
+        action_id: "crm.contact.archive",
+        scope: dev.clone(),
+        scope_required: &["orgId", "environmentId"],
+        ledgered: true,
+        lifecycle: ArtifactLifecycle::Active,
+        transition: Some("archive"),
+        compensation: None,
+    });
+    let dup_archive = transition_action(&ActionSpec {
+        artifact_id: "crm.contact.archive.cand.action",
+        action_id: "crm.contact.archive",
+        scope: dev.clone(),
+        scope_required: &["orgId", "environmentId"],
+        ledgered: true,
+        lifecycle: ArtifactLifecycle::Active,
+        transition: Some("archive"),
+        compensation: Some("crm.contact.restore"),
+    });
+    let restore = transition_action(&ActionSpec {
+        artifact_id: "crm.contact.restore.action",
+        action_id: "crm.contact.restore",
+        scope: dev,
+        scope_required: &["orgId", "environmentId"],
+        ledgered: true,
+        lifecycle: ArtifactLifecycle::Active,
+        transition: Some("restore"),
+        compensation: Some("crm.contact.archive"),
+    });
+    let dup_errors = check_with_base(&[dup_archive, restore], &[contact_entity(), base_archive]);
+    assert!(
+        dup_errors
+            .iter()
+            .any(|(code, _)| code == codes::DUPLICATE_ACTION_ID),
+        "{dup_errors:?}"
+    );
+    assert!(
+        dup_errors.contains(&(
+            codes::INVALID_COMPENSATION.to_owned(),
+            Some("/payload/compensation/actionId".to_owned()),
+        )),
+        "{dup_errors:?}"
+    );
+    assert!(
+        !dup_errors
+            .iter()
+            .any(|(code, _)| code == codes::COMPENSATION_CYCLE),
+        "ambiguous return edge must not emit a misleading cycle: {dup_errors:?}"
+    );
+}
+
+#[test]
 fn refuses_incompatible_scope_visibility_on_compensation() {
     let org_only = scope(Some("org_demo"), None);
     let dev_only = scope(Some("org_demo"), Some("dev"));

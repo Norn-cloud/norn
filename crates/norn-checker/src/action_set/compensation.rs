@@ -84,7 +84,7 @@ pub(super) fn compensation_findings(
 
         findings.extend(scope_finding(artifact, comp_artifact, COMPENSATION_POINTER));
         if let Some(cycle) =
-            find_compensation_cycle(root.action_id.as_str(), target_id, &by_action_id)
+            find_compensation_cycle(artifact, root.action_id.as_str(), target_id, &by_action_id)
         {
             findings.push(finding(
                 codes::COMPENSATION_CYCLE,
@@ -105,28 +105,36 @@ pub(super) fn compensation_findings(
     findings
 }
 
-/// Follow compensation edges from `start_id -> first_target`; returns the
-/// formatted cycle path (`a -> b -> a`) if the chain enters any cycle.
+/// Follow unique compensation edges from `start_artifact` (`start_id ->
+/// first_target`); returns the formatted cycle path (`a -> b -> a`) if the
+/// chain revisits a uniquely resolved action artifact. Stops without reporting
+/// a cycle if any edge resolves ambiguously or is unresolved.
 fn find_compensation_cycle(
+    start_artifact: &ArtifactEnvelope,
     start_id: &str,
     first_target: &str,
     by_action_id: &BTreeMap<&str, Vec<ActionEntry<'_>>>,
 ) -> Option<String> {
-    let mut visited: BTreeSet<&str> = BTreeSet::from([start_id]);
+    let mut visited: BTreeSet<(&str, &str)> = BTreeSet::from([(
+        start_artifact.artifact_id.as_str(),
+        start_artifact.version.as_str(),
+    )]);
     let mut chain: Vec<&str> = vec![start_id];
     let mut cursor = first_target;
     loop {
-        if !visited.insert(cursor) {
+        let [(next_artifact, next_root)] = by_action_id.get(cursor)?.as_slice() else {
+            return None;
+        };
+        let key = (
+            next_artifact.artifact_id.as_str(),
+            next_artifact.version.as_str(),
+        );
+        if !visited.insert(key) {
             chain.push(cursor);
             return Some(chain.join(" -> "));
         }
         chain.push(cursor);
-        let Some([(_, next_root)]) = by_action_id.get(cursor).map(Vec::as_slice) else {
-            return None;
-        };
-        let Some(next_comp) = &next_root.compensation else {
-            return None;
-        };
+        let next_comp = next_root.compensation.as_ref()?;
         cursor = next_comp.action_id.as_str();
     }
 }
@@ -187,9 +195,11 @@ fn check_compensation_contract(
 }
 
 /// When both the forward action and its compensating action fire transitions on
-/// the same effective lifecycle (same type or forward subtype of the
-/// compensating target type), at least one source state of the compensating
-/// transition must be reachable from the forward transition's destination state.
+/// the same effective lifecycle (resolving each effect's pinned entity artifact
+/// and version first, covering both identical target definitions and a forward
+/// subtype of the compensating target type), at least one source state of the
+/// compensating transition must be reachable from the forward transition's
+/// destination state.
 fn check_transition_reachability(
     artifact: &ArtifactEnvelope,
     root: &ActionRoot,
@@ -197,27 +207,44 @@ fn check_transition_reachability(
     model: &Model<'_>,
     findings: &mut Vec<Diagnostic>,
 ) {
+    let (Some(fwd_program), Some(comp_program)) = (&root.effect_program, &comp_root.effect_program)
+    else {
+        return;
+    };
     let (
-        Some(ActionEffectProgram::FireTransition {
+        ActionEffectProgram::FireTransition {
             object_kind: fwd_kind,
             lifecycle: fwd_lc,
             transition: fwd_tr,
             ..
-        }),
-        Some(ActionEffectProgram::FireTransition {
+        },
+        ActionEffectProgram::FireTransition {
             object_kind: comp_kind,
             lifecycle: comp_lc,
             transition: comp_tr,
             ..
-        }),
-    ) = (&root.effect_program, &comp_root.effect_program)
+        },
+    ) = (fwd_program, comp_program)
     else {
         return;
     };
     if fwd_lc != comp_lc {
         return;
     }
-    let Some(fwd_type) = model.effective_object_type_named(fwd_kind) else {
+    let (Some(fwd_admitted), Some(comp_admitted)) = (
+        model.effect_target(fwd_program),
+        model.effect_target(comp_program),
+    ) else {
+        return;
+    };
+    if fwd_kind == comp_kind
+        && (fwd_admitted.artifact().artifact_id != comp_admitted.artifact().artifact_id
+            || fwd_admitted.artifact().version != comp_admitted.artifact().version)
+    {
+        return;
+    }
+    let (Some(fwd_type), Some(_comp_type)) = (fwd_admitted.effective(), comp_admitted.effective())
+    else {
         return;
     };
     if !fwd_type

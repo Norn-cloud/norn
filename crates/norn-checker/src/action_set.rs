@@ -2627,7 +2627,7 @@ impl<'m, 'a> AdmittedType<'m, 'a> {
         &self.defined.name
     }
 
-    fn effective(self) -> Option<&'m EffectiveObjectType> {
+    pub(super) fn effective(self) -> Option<&'m EffectiveObjectType> {
         self.defined.effective_object_type.as_ref()?.as_ref().ok()
     }
 
