@@ -2138,6 +2138,7 @@ fn a_cell_without_connection_records_restores_no_schedule() {
 struct OneShotLedgerFaultEngine {
     inner: norn_cell::engine::NativeEngine,
     fail_next_ledger: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    injected_faults: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl norn_cell::engine::SqlEngine for OneShotLedgerFaultEngine {
@@ -2151,6 +2152,8 @@ impl norn_cell::engine::SqlEngine for OneShotLedgerFaultEngine {
                 .fail_next_ledger
                 .swap(false, std::sync::atomic::Ordering::AcqRel)
         {
+            self.injected_faults
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             return Err(norn_cell::CellError::Engine(
                 "injected mid-page ledger fault".to_owned(),
             ));
@@ -2207,6 +2210,7 @@ impl norn_cell::engine::SqlEngine for OneShotLedgerFaultEngine {
 
 fn faultable_owning_host(
     fail_next_ledger: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    injected_faults: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 ) -> DevHost<OneShotLedgerFaultEngine> {
     let arts = artifacts();
     let (base, candidate): (Vec<_>, Vec<_>) = arts
@@ -2254,6 +2258,7 @@ fn faultable_owning_host(
     let engine = OneShotLedgerFaultEngine {
         inner: norn_cell::engine::NativeEngine::open_in_memory().expect("sqlite"),
         fail_next_ledger,
+        injected_faults,
     };
     let mut store = CellStore::from_engine(engine, model.clone()).expect("store");
     let scope = cell_scope();
@@ -2354,7 +2359,11 @@ fn a_mid_page_ingest_failure_does_not_advance_the_durable_watermark() {
     // the unfinished page in `_norn_source_pending`, and a restart recovers
     // from that durable state before advancing `source.Connection.watermark`.
     let fail_next_ledger = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let owning_host = faultable_owning_host(std::sync::Arc::clone(&fail_next_ledger));
+    let injected_faults = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let owning_host = faultable_owning_host(
+        std::sync::Arc::clone(&fail_next_ledger),
+        std::sync::Arc::clone(&injected_faults),
+    );
     let mut owning = self::sources();
     owning
         .claim("odoo.rest", Trigger::Manual, "user:a", EXTRACTED_AT_MS)
@@ -2369,9 +2378,14 @@ fn a_mid_page_ingest_failure_does_not_advance_the_durable_watermark() {
         .iter()
         .find(|f| own_req.url.contains(f.request.path.as_str()))
         .expect("owning feed");
+    assert_eq!(own_feed.dataset, "res.partner");
     let (own_status, own_body) = recorded("odoo")
         .remove(&own_feed.dataset)
         .expect("owning multi-row page");
+    let stranded_party_key = own_body["records"][1]["x_norn_ref"]
+        .as_str()
+        .expect("second partner x_norn_ref")
+        .to_owned();
     let own_step = owning.step(
         &owning_host,
         "odoo.rest",
@@ -2385,11 +2399,22 @@ fn a_mid_page_ingest_failure_does_not_advance_the_durable_watermark() {
         panic!("same-cell ledger fault must terminate the run");
     };
     assert_eq!(own_failed.outcome, "failed");
+    assert_eq!(
+        own_failed.error.as_ref().map(|(code, _)| code.as_str()),
+        Some("source.ingest"),
+        "same-cell ledger fault must report public source.ingest error: {own_failed:#?}"
+    );
+    assert_eq!(
+        injected_faults.load(std::sync::atomic::Ordering::Acquire),
+        1,
+        "one-shot ledger fault injector must fire during mid-page drain"
+    );
     assert!(
-        own_failed.error.as_ref().is_some_and(|(code, message)| {
-            code == "source.ingest" && message.contains("injected mid-page ledger fault")
-        }),
-        "same-cell failure must be the injected ledger fault: {own_failed:#?}"
+        owning_host
+            .host_object("canon.Party", &stranded_party_key)
+            .expect("read stranded party")
+            .is_none(),
+        "stranded row {stranded_party_key} must not have landed before recovery"
     );
     let captured_cursor = owning_host
         .source_cursors("odoo.rest")
@@ -2398,10 +2423,12 @@ fn a_mid_page_ingest_failure_does_not_advance_the_durable_watermark() {
         .expect("captured cursor recorded in _norn_source_cursor");
     let captured_cursor_val: Value =
         serde_json::from_str(&captured_cursor.cursor_json).expect("captured cursor json");
+    let initial_cursor_val: Value =
+        serde_json::from_str(&own_feed.initial.cursor_json().expect("initial cursor json"))
+            .expect("initial cursor value");
     assert_ne!(
-        captured_cursor_val["id"],
-        json!("0"),
-        "captured cursor must advance past initial position: {captured_cursor_val}"
+        captured_cursor_val, initial_cursor_val,
+        "captured cursor must advance past the feed's initial cursor: {captured_cursor_val}"
     );
     let own_conn = owning_host
         .host_object("source.Connection", "odoo.rest")
@@ -2458,8 +2485,11 @@ fn a_mid_page_ingest_failure_does_not_advance_the_durable_watermark() {
     };
     assert_eq!(recovered.outcome, "ok", "{recovered:#?}");
     assert!(
-        recovered.rows_landed > 0,
-        "recovery must drain and land the stranded pending rows: {recovered:#?}"
+        owning_host
+            .host_object("canon.Party", &stranded_party_key)
+            .expect("read recovered party")
+            .is_some(),
+        "stranded row {stranded_party_key} must become durable during recovery"
     );
     assert!(
         owning_host
