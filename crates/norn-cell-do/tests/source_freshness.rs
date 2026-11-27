@@ -418,9 +418,12 @@ mod tests {
         let Step::Request(_) = failing.step(host, "erpnext.rest", None, t_fail) else {
             panic!("expected request");
         };
-        let Step::Done(failed_summary) =
-            failing.step(host, "erpnext.rest", Some((500, b"boom")), t_fail + 1)
-        else {
+        let Step::Done(failed_summary) = failing.step(
+            host,
+            "erpnext.rest",
+            Some((500, b"boom")),
+            t_fail.saturating_add(1),
+        ) else {
             panic!("expected failed sync");
         };
         assert_eq!(failed_summary.outcome, "failed");
@@ -498,7 +501,9 @@ mod tests {
             .expect("bucket")
             .clone();
         // Unpinned `:trace` 5 seconds later must still succeed on an unchanged native cell.
-        let rt5 = derived.questions_at(&host, T0 + 5_000).expect("rt5");
+        let rt5 = derived
+            .questions_at(&host, T0.saturating_add(5_000))
+            .expect("rt5");
         let trace_resp = call_http(
             &host,
             &principals,
@@ -602,18 +607,30 @@ mod tests {
             .expect("heartbeatMs");
 
         // Idle cell with ZERO new commits: advancing request clock ages `exact` -> `fresh` -> `stale`.
-        let fresh_body =
-            eval_question_at(&host, &principals, &derived, ADMIN, heartbeat + 5_000, &q);
+        let fresh_body = eval_question_at(
+            &host,
+            &principals,
+            &derived,
+            ADMIN,
+            heartbeat.saturating_add(5_000),
+            &q,
+        );
         assert_eq!(fresh_body["freshness"], "fresh", "{fresh_body}");
         assert_eq!(fresh_body["complete"], true);
 
-        let stale_body =
-            eval_question_at(&host, &principals, &derived, ADMIN, heartbeat + 120_000, &q);
+        let stale_body = eval_question_at(
+            &host,
+            &principals,
+            &derived,
+            ADMIN,
+            heartbeat.saturating_add(120_000),
+            &q,
+        );
         assert_eq!(stale_body["freshness"], "stale", "{stale_body}");
         assert_eq!(stale_body["complete"], true);
 
         // Failed sync transitions `source.Connection.status` to `failed` -> `incomplete`.
-        run_failing_erpnext_sync(&host, &scope, heartbeat + 130_000);
+        run_failing_erpnext_sync(&host, &scope, heartbeat.saturating_add(130_000));
         let failed_body = eval_question(&host, &principals, &derived, &q);
         assert_eq!(failed_body["freshness"], "incomplete", "{failed_body}");
         assert_eq!(failed_body["complete"], false);
@@ -724,7 +741,7 @@ mod tests {
         sync_erpnext_with(
             &host,
             &scope,
-            T0 + 30_000,
+            T0.saturating_add(30_000),
             erpnext_pages(Some("2026-11-12 18:00:00.000000")),
         );
         let second = eval_question(&host, &principals, &derived, &q);
@@ -1149,7 +1166,7 @@ mod tests {
             &host,
             &scope,
             "erpnext.b",
-            first_now + 10,
+            first_now.saturating_add(10),
             BTreeMap::new(),
             "ok",
         );
@@ -1157,7 +1174,7 @@ mod tests {
             &host,
             &scope,
             "erpnext.a",
-            first_now + 20,
+            first_now.saturating_add(20),
             BTreeMap::new(),
             "partial",
         );
@@ -1255,7 +1272,7 @@ mod tests {
             &name,
             "2026-11-12 20:00:00",
             bad_payload,
-            T0 + 100,
+            T0.saturating_add(100),
         );
         let out_q = ingest_party_row(
             &host,
@@ -1263,7 +1280,7 @@ mod tests {
             bad,
             &name,
             "2026-11-12 20:00:00",
-            T0 + 100,
+            T0.saturating_add(100),
         );
         assert!(matches!(
             out_q[0].outcome,
@@ -1271,14 +1288,20 @@ mod tests {
         ));
 
         // Sibling `erpnext.b` lands a strictly newer correction BEFORE A's answer.
-        let corr = party_obs(&profile, &name, "2099-01-01 00:00:00", party_row, T0 + 110);
+        let corr = party_obs(
+            &profile,
+            &name,
+            "2099-01-01 00:00:00",
+            party_row,
+            T0.saturating_add(110),
+        );
         let out_b = ingest_party_row(
             &host,
             "erpnext.b",
             corr.clone(),
             &name,
             "2099-01-01 00:00:00",
-            T0 + 110,
+            T0.saturating_add(110),
         );
         assert!(matches!(
             out_b[0].outcome,
@@ -1288,11 +1311,18 @@ mod tests {
             &host,
             &scope,
             "erpnext.a",
-            T0 + 120,
+            T0.saturating_add(120),
             BTreeMap::new(),
             "partial",
         );
-        sync_named_erpnext(&host, &scope, "erpnext.b", T0 + 120, BTreeMap::new(), "ok");
+        sync_named_erpnext(
+            &host,
+            &scope,
+            "erpnext.b",
+            T0.saturating_add(120),
+            BTreeMap::new(),
+            "ok",
+        );
 
         let derived = DerivedQuestions::new([7; 32], scope.clone()).with_configured_connections(
             BTreeMap::from([
@@ -1305,15 +1335,7 @@ mod tests {
         let q = order_line_question(&metric, 60_000);
         let ans = eval_question(&host, &principals, &derived, &q);
         assert_eq!(ans["freshness"], "exact", "{ans}");
-        let frontier = ans["knownAsOf"].as_u64().expect("frontier");
         let now_ms = ans["nowMs"].as_u64().expect("now");
-        let bucket = ans["rows"]
-            .as_object()
-            .unwrap()
-            .keys()
-            .next()
-            .unwrap()
-            .clone();
 
         // AFTER `frontier`, `erpnext.a` redelivers the exact correction row B landed earlier.
         ingest_party_row(
@@ -1322,22 +1344,9 @@ mod tests {
             corr,
             &name,
             "2099-01-01 00:00:00",
-            now_ms + 50,
+            now_ms.saturating_add(50),
         );
-
-        let trace = call_http(
-            &host,
-            &principals,
-            &runtime,
-            "POST",
-            "/v1/questions:trace",
-            &json!({
-                "question": q, "lineageRef": ans["lineageRef"], "bucket": bucket,
-                "knownAsOf": frontier, "nowMs": now_ms,
-            })
-            .to_string(),
-        );
-        assert_eq!(trace.status, 200, "{}", trace.body);
+        assert_pinned_trace_ok(&host, &principals, &runtime, &q, &ans);
     }
 
     fn ingest_nonterminal_party_row(
@@ -1428,47 +1437,41 @@ mod tests {
         let name = party_row["name"].as_str().unwrap().to_owned();
         let mut bad_payload = party_row.clone();
         bad_payload["custom_norn_ref"] = Value::Null;
-        let bad = party_obs(
-            &profile,
-            &name,
-            "2026-11-12 20:00:00",
-            bad_payload,
-            T0 + 100,
-        );
-        let q_out = ingest_party_row(
-            &host,
-            "erpnext.a",
-            bad,
-            &name,
-            "2026-11-12 20:00:00",
-            T0 + 100,
-        );
+        let (t100, t110) = (T0.saturating_add(100), T0.saturating_add(110));
+        let bad = party_obs(&profile, &name, "2026-11-12 20:00:00", bad_payload, t100);
+        let q_out = ingest_party_row(&host, "erpnext.a", bad, &name, "2026-11-12 20:00:00", t100);
         assert!(matches!(
             q_out[0].outcome,
             norn_cell::MappingOutcome::Quarantined(_)
         ));
-
-        let corr = party_obs(&profile, &name, "2099-01-01 00:00:00", party_row, T0 + 110);
+        let corr = party_obs(&profile, &name, "2099-01-01 00:00:00", party_row, t110);
         ingest_party_row(
             &host,
             "erpnext.b",
             corr.clone(),
             &name,
             "2099-01-01 00:00:00",
-            T0 + 110,
+            t110,
         );
         sync_named_erpnext(
             &host,
             &scope,
             "erpnext.a",
-            T0 + 120,
+            T0.saturating_add(120),
             BTreeMap::new(),
             "partial",
         );
-        sync_named_erpnext(&host, &scope, "erpnext.b", T0 + 120, BTreeMap::new(), "ok");
+        sync_named_erpnext(
+            &host,
+            &scope,
+            "erpnext.b",
+            T0.saturating_add(120),
+            BTreeMap::new(),
+            "ok",
+        );
 
         // BEFORE answering, `erpnext.a` receives `corr` on a nonterminal page (0 new commits).
-        ingest_nonterminal_party_row(&host, "erpnext.a", corr, T0 + 125);
+        ingest_nonterminal_party_row(&host, "erpnext.a", corr, T0.saturating_add(125));
 
         let derived = DerivedQuestions::new([7; 32], scope.clone()).with_configured_connections(
             BTreeMap::from([
@@ -1489,7 +1492,7 @@ mod tests {
             &host,
             &scope,
             "erpnext.a",
-            now_ms + 20,
+            now_ms.saturating_add(20),
             BTreeMap::new(),
             "ok",
         );
@@ -1497,7 +1500,7 @@ mod tests {
             &host,
             &scope,
             "erpnext.b",
-            now_ms + 20,
+            now_ms.saturating_add(20),
             BTreeMap::new(),
             "ok",
         );
@@ -1523,7 +1526,7 @@ mod tests {
             &name,
             "2026-11-12 20:00:00",
             bad1.clone(),
-            T0 + 100,
+            T0.saturating_add(100),
         );
         let q1 = ingest_party_row(
             &host,
@@ -1531,7 +1534,7 @@ mod tests {
             obs1,
             &name,
             "2026-11-12 20:00:00",
-            T0 + 100,
+            T0.saturating_add(100),
         );
         assert!(matches!(
             q1[0].outcome,
@@ -1541,32 +1544,44 @@ mod tests {
             &host,
             &scope,
             "erpnext.a",
-            T0 + 120,
+            T0.saturating_add(120),
             BTreeMap::new(),
             "partial",
         );
 
         // Land a correction clearing the committed quarantine while `source.Connection`
         // still reports `partial`.
-        let corr = party_obs(&profile, &name, "2099-01-01 00:00:00", party_row, T0 + 130);
+        let corr = party_obs(
+            &profile,
+            &name,
+            "2099-01-01 00:00:00",
+            party_row,
+            T0.saturating_add(130),
+        );
         ingest_party_row(
             &host,
             "erpnext.a",
             corr,
             &name,
             "2099-01-01 00:00:00",
-            T0 + 130,
+            T0.saturating_add(130),
         );
 
         // Capture a NEW uncommitted quarantine on unrelated `Party` (0 new commits).
-        let obs2 = party_obs(&profile, &name, "2099-01-02 00:00:00", bad1, T0 + 140);
+        let obs2 = party_obs(
+            &profile,
+            &name,
+            "2099-01-02 00:00:00",
+            bad1,
+            T0.saturating_add(140),
+        );
         let q2 = ingest_party_row(
             &host,
             "erpnext.a",
             obs2,
             &name,
             "2099-01-02 00:00:00",
-            T0 + 140,
+            T0.saturating_add(140),
         );
         assert!(matches!(
             q2[0].outcome,

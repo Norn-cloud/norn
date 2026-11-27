@@ -28,11 +28,11 @@ use crate::{CellError, CellStore, KnowledgeCutoff, MAIN_WORLD, ObjectRecord};
 /// Internal host-written sync-report mapping; never an external pull feed.
 const HOST_REPORT_MAPPING: &str = "norn.connect.mapping";
 /// Canonical connection object type written by the sources pack.
-const CONNECTION_TYPE: &str = "source.Connection";
+pub(super) const CONNECTION_TYPE: &str = "source.Connection";
 /// Page size for scanning live `source.Connection` objects.
 const CONNECTION_PAGE: usize = 256;
 /// Bound for scanning historical `source.Connection` objects at a cutoff.
-const MAX_HISTORICAL_CONNECTIONS: usize = 4_096;
+pub(super) const MAX_HISTORICAL_CONNECTIONS: usize = 4_096;
 
 /// Model-derived external source dependencies for a [`QuestionPlan`]:
 /// `source_id -> required dataset/partition names`.
@@ -159,17 +159,8 @@ pub(crate) fn validate_cursor_json(raw: &str) -> Option<String> {
     ))
 }
 
-/// Strict parser for `source.Connection.watermark` JSON: only accepts a map of
-/// `dataset -> {"version": "<nonblank>", "id": <string|number>}` validated by
-/// [`validate_cursor_json`].
-pub(crate) fn strict_connection_cursors(connection: &ObjectRecord) -> BTreeMap<String, String> {
-    let Some(raw) = connection
-        .values
-        .get("watermark")
-        .and_then(RuntimeValue::as_str)
-    else {
-        return BTreeMap::new();
-    };
+/// Strict parser for a `source.Connection.watermark` JSON string.
+pub(super) fn strict_watermark_text_cursors(raw: &str) -> BTreeMap<String, String> {
     let Ok(entries) = serde_json::from_str::<BTreeMap<String, &serde_json::value::RawValue>>(raw)
     else {
         return BTreeMap::new();
@@ -181,6 +172,17 @@ pub(crate) fn strict_connection_cursors(connection: &ObjectRecord) -> BTreeMap<S
         }
     }
     out
+}
+
+/// Strict parser for `source.Connection.watermark` JSON: only accepts a map of
+/// `dataset -> {"version": "<nonblank>", "id": <string|number>}` validated by
+/// [`validate_cursor_json`].
+pub(crate) fn strict_connection_cursors(connection: &ObjectRecord) -> BTreeMap<String, String> {
+    connection
+        .values
+        .get("watermark")
+        .and_then(RuntimeValue::as_str)
+        .map_or_else(BTreeMap::new, strict_watermark_text_cursors)
 }
 
 /// Canonical revision-pinned mapping binding (`<artifact_id>@<version>#<sha256>`)
@@ -675,7 +677,7 @@ impl<E: SqlEngine> CellStore<E> {
                 Some((frontier, heartbeat_ms.unwrap_or(now_ms))),
             )?;
             let conn_healthy = !req_cursors.is_empty()
-                && connection_history_proves_cursors_at(
+                && super::as_of::connection_history_proves_cursors_at(
                     &reader,
                     world,
                     conn,
@@ -742,7 +744,7 @@ impl<E: SqlEngine> CellStore<E> {
             };
             let conn_matches = conn
                 .map(|c| {
-                    conn_matches_mapping_binding(
+                    super::as_of::conn_matches_mapping_binding(
                         &reader,
                         world,
                         c,
@@ -847,139 +849,8 @@ impl<E: SqlEngine> crate::StoreReader<'_, E> {
         let Some(conn) = self.object(world, CONNECTION_TYPE, source_id)? else {
             return Ok(false);
         };
-        connection_history_proves_cursors_at(self, world, &conn, binding, required, false)
+        super::as_of::connection_history_proves_cursors_at(
+            self, world, &conn, binding, required, false,
+        )
     }
-}
-
-fn connection_history_proves_cursors_at<E: SqlEngine>(
-    reader: &crate::StoreReader<'_, E>,
-    world: &str,
-    conn: &ObjectRecord,
-    binding: (&str, &str),
-    required: &BTreeMap<String, String>,
-    allow_partial: bool,
-) -> Result<bool, CellError> {
-    use crate::engine::{SqlRow, params};
-    let (mapping_id, expected_binding) = binding;
-    let status = conn.values.get("status").and_then(RuntimeValue::as_str);
-    let status_ok = status == Some("ok") || (allow_partial && status == Some("partial"));
-    if required.is_empty()
-        || !status_ok
-        || !conn_matches_mapping_binding(reader, world, conn, mapping_id, expected_binding)?
-    {
-        return Ok(false);
-    }
-    let latest_cursors = strict_connection_cursors(conn);
-    if required
-        .iter()
-        .any(|(ds, cj)| latest_cursors.get(ds) != Some(cj))
-    {
-        return Ok(false);
-    }
-    let max_ver =
-        i64::try_from(conn.version).map_err(|_| CellError::OutOfRange("connection version"))?;
-    let mut hist_world = world;
-    let mut rows = reader.conn.query(
-        "SELECT version, commit_seq FROM _norn_fact_values \
-         WHERE world=?1 AND root_type=?2 AND id=?3 AND version<=?4 ORDER BY version DESC LIMIT 4097",
-        params![world, CONNECTION_TYPE, conn.id.as_str(), max_ver],
-    )?;
-    if rows.is_empty() && world != MAIN_WORLD {
-        hist_world = MAIN_WORLD;
-        rows = reader.conn.query(
-            "SELECT version, commit_seq FROM _norn_fact_values \
-             WHERE world=?1 AND root_type=?2 AND id=?3 AND version<=?4 ORDER BY version DESC LIMIT 4097",
-            params![MAIN_WORLD, CONNECTION_TYPE, conn.id.as_str(), max_ver],
-        )?;
-    }
-    let truncated = rows.len() > MAX_HISTORICAL_CONNECTIONS;
-    let mut active: BTreeMap<&str, &str> = required
-        .iter()
-        .map(|(ds, cj)| (ds.as_str(), cj.as_str()))
-        .collect();
-    for values in rows.into_iter().take(MAX_HISTORICAL_CONNECTIONS) {
-        let row = SqlRow(values);
-        let (Ok(ver), Ok(seq)) = (
-            u64::try_from(row.get::<i64>(0)?),
-            u64::try_from(row.get::<i64>(1)?),
-        ) else {
-            return Ok(false);
-        };
-        let Some(hist) = reader.object_at_version(hist_world, CONNECTION_TYPE, &conn.id, ver)?
-        else {
-            return Ok(true);
-        };
-        let hist_cursors = strict_connection_cursors(&hist);
-        let is_failed = hist.values.get("status").and_then(RuntimeValue::as_str) == Some("failed");
-        if !is_failed {
-            active.retain(|&ds, cj| hist_cursors.get(ds).map(String::as_str) == Some(*cj));
-            if active.is_empty() {
-                return Ok(true);
-            }
-        }
-        let carries_active = active
-            .iter()
-            .any(|(&ds, &cj)| hist_cursors.get(ds).map(String::as_str) == Some(cj));
-        if carries_active
-            && (hist.values.get("mapping_id").and_then(RuntimeValue::as_str) != Some(mapping_id)
-                || !commit_seq_matches_mapping_binding(reader, seq, mapping_id, expected_binding)?)
-        {
-            return Ok(false);
-        }
-    }
-    Ok(!truncated)
-}
-
-fn commit_seq_matches_mapping_binding<E: SqlEngine>(
-    reader: &crate::StoreReader<'_, E>,
-    commit_seq: u64,
-    mapping_id: &str,
-    expected_binding: &str,
-) -> Result<bool, CellError> {
-    let Some(def_ver) = reader.definitions_version_at(commit_seq)? else {
-        return Ok(false);
-    };
-    let Some(installed) = reader.installed_definitions(Some(def_ver))? else {
-        return Ok(false);
-    };
-    let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&installed.canonical_set)?;
-    for artifact in &artifacts {
-        if artifact.kind() == ArtifactKind::Mapping && artifact.artifact_id == mapping_id {
-            return Ok(mapping_binding_key(artifact)? == expected_binding);
-        }
-    }
-    Ok(false)
-}
-
-fn conn_matches_mapping_binding<E: SqlEngine>(
-    reader: &crate::StoreReader<'_, E>,
-    world: &str,
-    conn: &ObjectRecord,
-    mapping_id: &str,
-    expected_binding: &str,
-) -> Result<bool, CellError> {
-    use crate::engine::params;
-    if conn.values.get("mapping_id").and_then(RuntimeValue::as_str) != Some(mapping_id) {
-        return Ok(false);
-    }
-    let ver =
-        i64::try_from(conn.version).map_err(|_| CellError::OutOfRange("connection version"))?;
-    let mut seq: Option<i64> = reader.conn.query_optional(
-        "SELECT commit_seq FROM _norn_fact_values \
-         WHERE world=?1 AND root_type=?2 AND id=?3 AND version=?4",
-        params![world, CONNECTION_TYPE, conn.id.as_str(), ver],
-        |row| row.get(0),
-    )?;
-    if seq.is_none() && world != MAIN_WORLD {
-        seq = reader.conn.query_optional(
-            "SELECT commit_seq FROM _norn_fact_values \
-             WHERE world=?1 AND root_type=?2 AND id=?3 AND version=?4",
-            params![MAIN_WORLD, CONNECTION_TYPE, conn.id.as_str(), ver],
-            |row| row.get(0),
-        )?;
-    }
-    let Some(commit_seq) = seq.and_then(|s| u64::try_from(s).ok()) else {
-        return Ok(false);
-    };
-    commit_seq_matches_mapping_binding(reader, commit_seq, mapping_id, expected_binding)
 }

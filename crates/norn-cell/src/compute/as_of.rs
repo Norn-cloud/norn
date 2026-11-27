@@ -311,3 +311,324 @@ fn charge_distinct_ids(
     }
     Ok((ids, true))
 }
+
+fn definition_version_matches_mapping<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    def_ver: u64,
+    mapping_id: &str,
+    expected_binding: &str,
+) -> Result<bool, CellError> {
+    let Some(installed) = reader.installed_definitions(Some(def_ver))? else {
+        return Ok(false);
+    };
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(&installed.canonical_set)?;
+    for artifact in &artifacts {
+        if artifact.kind() == norn_ir::ArtifactKind::Mapping && artifact.artifact_id == mapping_id {
+            return Ok(super::freshness::mapping_binding_key(artifact)? == expected_binding);
+        }
+    }
+    Ok(false)
+}
+
+fn commit_seq_matches_mapping_binding<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    commit_seq: u64,
+    mapping_id: &str,
+    expected_binding: &str,
+) -> Result<bool, CellError> {
+    let Some(def_ver) = reader.definitions_version_at(commit_seq)? else {
+        return Ok(false);
+    };
+    definition_version_matches_mapping(reader, def_ver, mapping_id, expected_binding)
+}
+
+/// Earliest `commit_seq` of the contiguous tail of `_norn_definition_version`
+/// rows up to `conn_seq` where `mapping_id` had `expected_binding`.
+fn mapping_binding_valid_since<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    conn_seq: u64,
+    mapping_id: &str,
+    expected_binding: &str,
+) -> Result<Option<u64>, CellError> {
+    use crate::engine::{SqlRow, params};
+    let max_seq = i64::try_from(conn_seq).map_err(|_| CellError::OutOfRange("commit_seq"))?;
+    let defs = reader.conn.query(
+        "SELECT version, commit_seq FROM _norn_definition_version \
+         WHERE commit_seq <= ?1 ORDER BY commit_seq DESC",
+        params![max_seq],
+    )?;
+    let mut valid_since: Option<u64> = None;
+    for values in defs {
+        let row = SqlRow(values);
+        let (Ok(def_ver), Ok(seq)) = (
+            u64::try_from(row.get::<i64>(0)?),
+            u64::try_from(row.get::<i64>(1)?),
+        ) else {
+            break;
+        };
+        if definition_version_matches_mapping(reader, def_ver, mapping_id, expected_binding)? {
+            valid_since = Some(seq);
+        } else {
+            break;
+        }
+    }
+    Ok(valid_since)
+}
+
+fn connection_world_and_commit_seq<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    world: &str,
+    conn: &ObjectRecord,
+) -> Result<Option<(String, u64)>, CellError> {
+    use crate::engine::params;
+    let ver =
+        i64::try_from(conn.version).map_err(|_| CellError::OutOfRange("connection version"))?;
+    let mut chosen = world;
+    let mut seq: Option<i64> = reader.conn.query_optional(
+        "SELECT commit_seq FROM _norn_fact_values \
+         WHERE world=?1 AND root_type=?2 AND id=?3 AND version=?4",
+        params![
+            world,
+            super::freshness::CONNECTION_TYPE,
+            conn.id.as_str(),
+            ver
+        ],
+        |row| row.get(0),
+    )?;
+    if seq.is_none() && world != MAIN_WORLD {
+        chosen = MAIN_WORLD;
+        seq = reader.conn.query_optional(
+            "SELECT commit_seq FROM _norn_fact_values \
+             WHERE world=?1 AND root_type=?2 AND id=?3 AND version=?4",
+            params![
+                MAIN_WORLD,
+                super::freshness::CONNECTION_TYPE,
+                conn.id.as_str(),
+                ver
+            ],
+            |row| row.get(0),
+        )?;
+    }
+    Ok(seq
+        .and_then(|s| u64::try_from(s).ok())
+        .map(|s| (chosen.to_owned(), s)))
+}
+
+pub(super) fn conn_matches_mapping_binding<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    world: &str,
+    conn: &ObjectRecord,
+    mapping_id: &str,
+    expected_binding: &str,
+) -> Result<bool, CellError> {
+    if conn
+        .values
+        .get("mapping_id")
+        .and_then(norn_ir::RuntimeValue::as_str)
+        != Some(mapping_id)
+    {
+        return Ok(false);
+    }
+    let Some((_, commit_seq)) = connection_world_and_commit_seq(reader, world, conn)? else {
+        return Ok(false);
+    };
+    commit_seq_matches_mapping_binding(reader, commit_seq, mapping_id, expected_binding)
+}
+
+fn latest_foreign_connection_version<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    hist_world: &str,
+    conn_id: &str,
+    max_ver: i64,
+    valid_since: u64,
+    mapping_id: &str,
+) -> Result<Option<i64>, CellError> {
+    use crate::engine::params;
+    let valid_since_i64 =
+        i64::try_from(valid_since).map_err(|_| CellError::OutOfRange("commit_seq"))?;
+    Ok(reader
+        .conn
+        .query_optional(
+            "SELECT MAX(version) FROM _norn_fact_values \
+             WHERE world=?1 AND root_type=?2 AND id=?3 AND version<=?4 \
+               AND (commit_seq<?5 OR COALESCE(json_extract(snapshot, '$.values.mapping_id'), '')!=?6)",
+            params![
+                hist_world,
+                super::freshness::CONNECTION_TYPE,
+                conn_id,
+                max_ver,
+                valid_since_i64,
+                mapping_id
+            ],
+            |row| row.get::<Option<i64>>(0),
+        )?
+        .flatten())
+}
+
+pub(super) fn connection_history_proves_cursors_at<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    world: &str,
+    conn: &ObjectRecord,
+    binding: (&str, &str),
+    required: &BTreeMap<String, String>,
+    allow_partial: bool,
+) -> Result<bool, CellError> {
+    use crate::engine::{SqlRow, params};
+    let (mapping_id, expected_binding) = binding;
+    let status = conn
+        .values
+        .get("status")
+        .and_then(norn_ir::RuntimeValue::as_str);
+    let status_ok = status == Some("ok") || (allow_partial && status == Some("partial"));
+    if required.is_empty()
+        || !status_ok
+        || conn
+            .values
+            .get("mapping_id")
+            .and_then(norn_ir::RuntimeValue::as_str)
+            != Some(mapping_id)
+    {
+        return Ok(false);
+    }
+    let Some((hist_world, conn_seq)) = connection_world_and_commit_seq(reader, world, conn)? else {
+        return Ok(false);
+    };
+    let Some(valid_since) =
+        mapping_binding_valid_since(reader, conn_seq, mapping_id, expected_binding)?
+    else {
+        return Ok(false);
+    };
+    let latest_cursors = super::freshness::strict_connection_cursors(conn);
+    if required
+        .iter()
+        .any(|(ds, cj)| latest_cursors.get(ds) != Some(cj))
+    {
+        return Ok(false);
+    }
+    let max_ver =
+        i64::try_from(conn.version).map_err(|_| CellError::OutOfRange("connection version"))?;
+    let Some(bv) = latest_foreign_connection_version(
+        reader,
+        &hist_world,
+        &conn.id,
+        max_ver,
+        valid_since,
+        mapping_id,
+    )?
+    else {
+        // Every historical version <= conn.version ran under `expected_binding`
+        // with `mapping_id`, even across >4,096 repeated empty polls.
+        return Ok(true);
+    };
+    let mut active: BTreeMap<&str, &str> = required
+        .iter()
+        .map(|(ds, cj)| (ds.as_str(), cj.as_str()))
+        .collect();
+    // Collapse arbitrarily many identical empty polls in `(bv, conn.version]`
+    // via DISTINCT watermarks; any non-failed version whose cursor differs
+    // proves that dataset's cursor was established strictly after `bv`.
+    let distinct_wms = reader.conn.query(
+        "SELECT DISTINCT json_extract(snapshot, '$.values.watermark') FROM _norn_fact_values \
+         WHERE world=?1 AND root_type=?2 AND id=?3 AND version>?4 AND version<=?5 \
+           AND COALESCE(json_extract(snapshot, '$.values.status'), '')!='failed' LIMIT 4097",
+        params![
+            hist_world.as_str(),
+            super::freshness::CONNECTION_TYPE,
+            conn.id.as_str(),
+            bv,
+            max_ver
+        ],
+    )?;
+    for values in distinct_wms
+        .into_iter()
+        .take(super::freshness::MAX_HISTORICAL_CONNECTIONS)
+    {
+        let wm = SqlRow(values).get::<Option<String>>(0)?;
+        let cursors = wm.as_deref().map_or_else(
+            BTreeMap::new,
+            super::freshness::strict_watermark_text_cursors,
+        );
+        active.retain(|&ds, cj| cursors.get(ds).map(String::as_str) == Some(*cj));
+        if active.is_empty() {
+            return Ok(true);
+        }
+    }
+    prove_remaining_before(
+        reader,
+        &hist_world,
+        &conn.id,
+        bv,
+        (mapping_id, expected_binding),
+        active,
+    )
+}
+
+fn prove_remaining_before<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    hist_world: &str,
+    conn_id: &str,
+    max_ver: i64,
+    binding: (&str, &str),
+    mut active: BTreeMap<&str, &str>,
+) -> Result<bool, CellError> {
+    use crate::engine::{SqlRow, params};
+    let (mapping_id, expected_binding) = binding;
+    let rows = reader.conn.query(
+        "SELECT version, commit_seq FROM _norn_fact_values \
+         WHERE world=?1 AND root_type=?2 AND id=?3 AND version<=?4 ORDER BY version DESC LIMIT 4097",
+        params![
+            hist_world,
+            super::freshness::CONNECTION_TYPE,
+            conn_id,
+            max_ver
+        ],
+    )?;
+    let truncated = rows.len() > super::freshness::MAX_HISTORICAL_CONNECTIONS;
+    for values in rows
+        .into_iter()
+        .take(super::freshness::MAX_HISTORICAL_CONNECTIONS)
+    {
+        let row = SqlRow(values);
+        let (Ok(ver), Ok(seq)) = (
+            u64::try_from(row.get::<i64>(0)?),
+            u64::try_from(row.get::<i64>(1)?),
+        ) else {
+            return Ok(false);
+        };
+        let Some(hist) = reader.object_at_version(
+            hist_world,
+            super::freshness::CONNECTION_TYPE,
+            conn_id,
+            ver,
+        )?
+        else {
+            return Ok(true);
+        };
+        let hist_cursors = super::freshness::strict_connection_cursors(&hist);
+        let is_failed = hist
+            .values
+            .get("status")
+            .and_then(norn_ir::RuntimeValue::as_str)
+            == Some("failed");
+        if !is_failed {
+            active.retain(|&ds, cj| hist_cursors.get(ds).map(String::as_str) == Some(*cj));
+            if active.is_empty() {
+                return Ok(true);
+            }
+        }
+        let carries_active = active
+            .iter()
+            .any(|(&ds, &cj)| hist_cursors.get(ds).map(String::as_str) == Some(cj));
+        if carries_active
+            && (hist
+                .values
+                .get("mapping_id")
+                .and_then(norn_ir::RuntimeValue::as_str)
+                != Some(mapping_id)
+                || !commit_seq_matches_mapping_binding(reader, seq, mapping_id, expected_binding)?)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(!truncated)
+}

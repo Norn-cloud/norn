@@ -2235,14 +2235,15 @@ mod tests {
             .execute("DELETE FROM \"_norn_source_evidence\"", &[])
             .expect("clear evidence");
         let host = reopen_native_host(&artifacts, db.path());
-        ingest_bad(&host, "erpnext.b", T0 + 10);
+        ingest_bad(&host, "erpnext.b", T0.saturating_add(10));
         assert!(
             host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.a"))
                 .expect("a still quarantined")
                 .contains(&dataset),
             "sibling B's post-upgrade attribution must not hide legacy quarantine from A"
         );
-        // A legacy pre-upgrade landed correction with unknown attribution must NOT clear A.
+        // Verify a landed unscoped correction clears A, then strip its attribution
+        // (simulating an unattributed pre-upgrade landed row) and verify A's veto returns.
         let mut corr_row = rows[0].clone();
         if let RuntimeValue::Object(obj) = &mut corr_row.0.input {
             obj.insert(
@@ -2255,6 +2256,15 @@ mod tests {
             );
         }
         let landed = host.ingest(&[corr_row]).expect("land correction");
+        assert!(matches!(
+            landed[0].outcome,
+            MappingOutcome::Landed | MappingOutcome::AlreadyLanded
+        ));
+        assert!(
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.a"))
+                .expect("explicit unscoped correction clears A")
+                .is_empty()
+        );
         NativeEngine::open(db.path(), StoreOptions::default())
             .expect("sqlite")
             .execute(
