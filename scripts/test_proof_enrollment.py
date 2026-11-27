@@ -251,8 +251,9 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertEqual(combined["rest_shards"], 3)
         # norn-cell and norn-expr reach norn-checker-wasm, so the Studio browser rows run (#1113).
         # norn-cell is reached, so the DuckDB backend is built and tested too (#1206), and so is
-        # the Rivet host's own workspace, which builds norn-cell by path (D131).
-        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy", "browser", "duckdb", "rivet"])
+        # the Rivet host's own workspace, which builds norn-cell by path (D131). Any reached Rust
+        # crate also runs rustdoc (`doc`) so broken intra-doc links fail on the PR.
+        self.assertEqual(combined["phase"], ["guards", "provenance", "clippy", "doc", "browser", "duckdb", "rivet"])
         self.assertNotIn("heavy-1", self.plan("--affected", self.base, first)["shard"])
         self.assertEqual(self.plan("--affected", self.base)["mode"], "full")
 
@@ -292,6 +293,7 @@ class AffectedPlanTests(unittest.TestCase):
                 plan = self.plan("--affected", base)
                 self.assertEqual(plan["mode"], "affected")
                 self.assertEqual("rivet" in plan["phase"], planned, plan["phase"])
+                self.assertEqual("doc" in plan["phase"], planned, plan["phase"])
         self.assertIn("rivet", self.full["phase"])
         # Like formal, the Rivet conformance suite is a Boat gate that no CI plan selects.
         self.assertNotIn("rivet-conformance", self.full["phase"])
