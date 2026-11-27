@@ -6,7 +6,6 @@ mod as_of;
 /// VIEW-ENGINE-1: admitted transforms lowered to `DataFusion` (#1765).
 #[cfg(feature = "datafusion")]
 mod df_transform;
-/// Core 08 (E1): question evaluation in a forked world and host compare diff.
 pub mod fork;
 mod historical;
 /// Receipt-driven query maintenance.
