@@ -382,31 +382,56 @@ impl Sources {
             return Err(ClaimError::Running);
         }
         let run = format!("{id}/{now_ms}");
-        state.run = Some(Run {
-            id: run.clone(),
-            trigger,
-            actor: actor.to_owned(),
-            started_ms: now_ms,
-            stepped_ms: now_ms,
-            step_rows: crate::host::PAGE_ROWS,
-            mapped: 0,
-            pull: None,
-            drain_only: false,
-            mapping_binding: None,
-            auth: Vec::new(),
-            held: None,
-            pending_captures: std::collections::VecDeque::new(),
-            after: None,
-            lease: None,
-            watermark_from: String::new(),
-            committed_watermarks: BTreeMap::new(),
-            committed_cursor_json: BTreeMap::new(),
-            read: 0,
-            landed: 0,
-            quarantined: 0,
-            reasons: BTreeMap::new(),
-        });
+        state.run = Some(new_run(run.clone(), trigger, actor, now_ms, None));
         Ok(run)
+    }
+
+    /// SYNC-ONE-1 + SOURCE-CAPTURE-1: claim a sync of `id` for `actor` and
+    /// acquire its durable fencing lease on `host` immediately so the returned
+    /// run ID (`{id}/{now_ms}/g{generation}`) matches both `RunSummary.run` and
+    /// the stored `source.SyncRun` record.
+    ///
+    /// # Errors
+    /// Outer `Err` reports a durable lease-store failure; inner `Err` reports
+    /// [`ClaimError::Unknown`], [`ClaimError::Running`] (including an active
+    /// durable lease held by another worker), or [`ClaimError::Busy`].
+    pub fn claim_on<E: SqlEngine>(
+        &mut self,
+        host: &DevHost<E>,
+        id: &str,
+        trigger: Trigger,
+        actor: &str,
+        now_ms: u64,
+    ) -> Result<Result<String, ClaimError>, String> {
+        let Some(config) = self.connections.iter().find(|c| c.id == id).cloned() else {
+            return Ok(Err(ClaimError::Unknown));
+        };
+        if !auth::owns(host.scope(), &config) {
+            return Ok(Err(ClaimError::Unknown));
+        }
+        if let Some(other) = self.syncing(now_ms).filter(|other| other != id) {
+            return Ok(Err(ClaimError::Busy(other)));
+        }
+        if self
+            .state
+            .get(id)
+            .and_then(|s| s.run.as_ref())
+            .is_some_and(|run| held(run, now_ms))
+        {
+            return Ok(Err(ClaimError::Running));
+        }
+        let base = format!("{id}/{now_ms}");
+        let lease = match host.acquire_source_lease(id, &base, now_ms, RUN_LEASE_MS) {
+            Ok(lease) => lease,
+            Err(crate::host::SourceCaptureError::LeaseFenced(_)) => {
+                return Ok(Err(ClaimError::Running));
+            }
+            Err(error) => return Err(error.code_and_message().1),
+        };
+        let run = format!("{base}/g{}", lease.generation);
+        let state = self.state.entry(id.to_owned()).or_default();
+        state.run = Some(new_run(run.clone(), trigger, actor, now_ms, Some(lease)));
+        Ok(Ok(run))
     }
 
     /// SYNC-YIELD-2: map at most `rows` (1 to a page) in each step of the run
@@ -683,6 +708,39 @@ fn failed_summary(run: &str, code: &str, message: &str) -> RunSummary {
     }
 }
 
+fn new_run(
+    id: String,
+    trigger: Trigger,
+    actor: &str,
+    now_ms: u64,
+    lease: Option<SourceLease>,
+) -> Run {
+    Run {
+        id,
+        trigger,
+        actor: actor.to_owned(),
+        started_ms: now_ms,
+        stepped_ms: now_ms,
+        step_rows: crate::host::PAGE_ROWS,
+        mapped: 0,
+        pull: None,
+        drain_only: false,
+        mapping_binding: None,
+        auth: Vec::new(),
+        held: None,
+        pending_captures: std::collections::VecDeque::new(),
+        after: None,
+        lease,
+        watermark_from: String::new(),
+        committed_watermarks: BTreeMap::new(),
+        committed_cursor_json: BTreeMap::new(),
+        read: 0,
+        landed: 0,
+        quarantined: 0,
+        reasons: BTreeMap::new(),
+    }
+}
+
 fn begin<E: SqlEngine>(
     host: &DevHost<E>,
     config: &ConnectionConfig,
@@ -691,14 +749,32 @@ fn begin<E: SqlEngine>(
     known: Option<BTreeMap<String, Watermark>>,
     now_ms: u64,
 ) -> Result<Next, Failure> {
-    let lease = host
-        .acquire_source_lease(&config.id, &run.id, now_ms, RUN_LEASE_MS)
-        .map_err(|error| {
-            let (code, message) = error.code_and_message();
-            fail(code, message)
-        })?;
-    run.id = format!("{}/g{}", run.id, lease.generation);
-    run.lease = Some(lease.clone());
+    let lease = if let Some(lease) = run.lease.clone() {
+        let current = host
+            .source_lease(&config.id)
+            .map_err(|r| fail("source.ingest", r.message))?;
+        if !current.is_some_and(|cur| {
+            cur.lease_id == lease.lease_id
+                && cur.generation == lease.generation
+                && now_ms < cur.expires_at_ms
+        }) {
+            return Err(fail(
+                "source.lease_fenced",
+                "sync lease expired or was superseded before sync began",
+            ));
+        }
+        lease
+    } else {
+        let lease = host
+            .acquire_source_lease(&config.id, &run.id, now_ms, RUN_LEASE_MS)
+            .map_err(|error| {
+                let (code, message) = error.code_and_message();
+                fail(code, message)
+            })?;
+        run.id = format!("{}/g{}", run.id, lease.generation);
+        run.lease = Some(lease.clone());
+        lease
+    };
     let (profile, payload, expected_binding) = capture::load_connector_profile(host, config)?;
     run.mapping_binding = Some(expected_binding.clone());
     let token = client_credentials(&payload, secrets, config)?;

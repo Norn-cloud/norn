@@ -2385,6 +2385,24 @@ fn a_mid_page_ingest_failure_does_not_advance_the_durable_watermark() {
         panic!("same-cell ledger fault must terminate the run");
     };
     assert_eq!(own_failed.outcome, "failed");
+    assert!(
+        own_failed.error.as_ref().is_some_and(|(code, message)| {
+            code == "source.ingest" && message.contains("injected mid-page ledger fault")
+        }),
+        "same-cell failure must be the injected ledger fault: {own_failed:#?}"
+    );
+    let captured_cursor = owning_host
+        .source_cursors("odoo.rest")
+        .expect("read durable cursors")
+        .remove(&own_feed.dataset)
+        .expect("captured cursor recorded in _norn_source_cursor");
+    let captured_cursor_val: Value =
+        serde_json::from_str(&captured_cursor.cursor_json).expect("captured cursor json");
+    assert_ne!(
+        captured_cursor_val["id"],
+        json!("0"),
+        "captured cursor must advance past initial position: {captured_cursor_val}"
+    );
     let own_conn = owning_host
         .host_object("source.Connection", "odoo.rest")
         .expect("read owning connection")
@@ -2440,6 +2458,10 @@ fn a_mid_page_ingest_failure_does_not_advance_the_durable_watermark() {
     };
     assert_eq!(recovered.outcome, "ok", "{recovered:#?}");
     assert!(
+        recovered.rows_landed > 0,
+        "recovery must drain and land the stranded pending rows: {recovered:#?}"
+    );
+    assert!(
         owning_host
             .pending_source_captures("odoo.rest")
             .expect("pending after recovery")
@@ -2460,9 +2482,10 @@ fn a_mid_page_ingest_failure_does_not_advance_the_durable_watermark() {
             .expect("recovered watermark"),
     )
     .expect("watermark json");
-    assert!(
-        recovered_wm.contains_key(&own_feed.dataset),
-        "recovered watermark must contain drained feed {}: {recovered_wm:?}",
+    assert_eq!(
+        recovered_wm.get(&own_feed.dataset),
+        Some(&captured_cursor_val),
+        "recovered watermark must match the exact captured page cursor for {}: {recovered_wm:?}",
         own_feed.dataset
     );
 }
