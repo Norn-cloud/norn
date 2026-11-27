@@ -46,10 +46,6 @@
             "additivity": {
               "kind": "non_additive"
             },
-            "currencySource": {
-              "links": [],
-              "property": "currency"
-            },
             "kind": "decimal",
             "scale": 4
           }

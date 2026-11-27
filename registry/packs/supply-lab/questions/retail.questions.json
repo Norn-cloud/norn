@@ -238,6 +238,48 @@
   {
     "aggregate": [
       {
+        "metric": "analysis.object_737570706c792e506f7353616c65.gross_margin.by_sold_at"
+      }
+    ],
+    "calendar": "iso_utc",
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "currency"
+        }
+      },
+      {
+        "path": {
+          "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "property": "cost_status"
+        }
+      },
+      {
+        "grain": "week",
+        "path": {
+          "property": "sold_at"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "supply.retail.store_gross_margin_weekly",
+    "objectSet": "supply.PosSale",
+    "window": {
+      "end": "2026-10-26T00:00:00Z",
+      "start": "2026-07-06T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
         "metric": "analysis.object_737570706c792e506f7353616c65.gross_margin_rate.by_sold_at.ratio_of_sums"
       }
     ],

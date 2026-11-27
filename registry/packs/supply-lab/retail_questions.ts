@@ -69,6 +69,18 @@ export const StoreRevenueWeekly = Norn.question({
 })
 
 /**
+ * Store gross margin amount partitioned by `cost_status` so mixed buckets with
+ * any `missing_cost` sale fail closed (withheld) rather than reporting a partial total.
+ */
+export const StoreGrossMarginWeekly = Norn.question({
+  name: "supply.retail.store_gross_margin_weekly", of: PosSale,
+  measure: Norn.metricId({ kind: "sum", of: PosSale, property: "gross_margin", time: "sold_at" }),
+  where: [],
+  by: [{ property: "currency" }, { property: "store_id" }, { property: "cost_status" }, { property: "sold_at", grain: "week" }],
+  asOf: window, population: { kind: "authorized_objects" },
+})
+
+/**
  * Store gross margin rate: ratio of sums `sum(gross_margin) / sum(net_revenue)`
  * partitioned by `cost_status` so mixed buckets with any `missing_cost` sale
  * remain visible and fail closed (withheld) rather than reporting a partial rate.

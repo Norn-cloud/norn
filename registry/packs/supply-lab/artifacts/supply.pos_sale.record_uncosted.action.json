@@ -69,12 +69,6 @@
           ],
           "type": "string"
         },
-        "costed_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "currency": {
           "enum": [
             "EGP",
@@ -143,7 +137,6 @@
         "gross_margin",
         "gross_margin_rate",
         "cost_status",
-        "costed_ref",
         "currency",
         "sold_at"
       ],
@@ -163,7 +156,7 @@
       "type": "object"
     },
     "preconditions": [
-      "((((slice.store.status == 'active') and (input.cost_status == 'missing_cost')) and (input.costed_ref == null)) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)"
+      "(((slice.store.status == 'active') and (input.cost_status == 'missing_cost')) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)"
     ],
     "scopeRequired": [
       "orgId",

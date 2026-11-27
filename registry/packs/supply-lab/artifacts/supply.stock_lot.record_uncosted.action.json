@@ -109,9 +109,6 @@
             "l"
           ],
           "type": "string"
-        },
-        "unit_cost": {
-          "type": "null"
         }
       },
       "required": [
@@ -126,7 +123,6 @@
         "received_at",
         "as_of",
         "cost_status",
-        "unit_cost",
         "stock_value",
         "currency"
       ],

@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "A costed sale links a cost reference with non-negative COGS; an uncosted sale carries null costed_ref and zero placeholder COGS so margin totals withhold.",
+  "name": "A costed sale links a cost reference and applied unit cost with non-negative COGS; an uncosted sale carries null cost fields and zero placeholder COGS so margin totals withhold.",
   "namespace": "supply",
   "payload": {
     "id": "supply.PosSale.pos_sale_cost_valid",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/supply-lab/retail.ts"
     },
-    "rationale": "A costed sale links a cost reference with non-negative COGS; an uncosted sale carries null costed_ref and zero placeholder COGS so margin totals withhold.",
+    "rationale": "A costed sale links a cost reference and applied unit cost with non-negative COGS; an uncosted sale carries null cost fields and zero placeholder COGS so margin totals withhold.",
     "response": {
-      "expression": "(((self.cost_status == 'costed') and (self.costed_ref != null)) and (self.cogs_amount >= 0)) or (((self.cost_status == 'missing_cost') and (self.costed_ref == null)) and (self.cogs_amount == 0))",
+      "expression": "((((self.cost_status == 'costed') and (self.costed_ref != null)) and (self.applied_unit_cost != null)) and (self.cogs_amount >= 0)) or ((((self.cost_status == 'missing_cost') and (self.costed_ref == null)) and (self.applied_unit_cost == null)) and (self.cogs_amount == 0))",
       "kind": "predicate"
     },
     "scope": {

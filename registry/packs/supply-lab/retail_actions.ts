@@ -82,17 +82,17 @@ export const CloseStore = Norn.action({
 // -------------------------------------------------- governed unit costs
 
 const UnitCostInput = Schema.Struct({
-  cost_id: Schema.String,
   sku_id: Schema.String,
+  cost_ref: Schema.String,
   owner_entity_id: Schema.String,
   supplier_id: Schema.String,
   unit_cost: Norn.decimal(4),
   currency: Currency,
   effective_from: Norn.timestamp("utc"),
 })
-const UnitCostRef = Schema.Struct({ cost_id: Schema.String })
+const UnitCostRef = Schema.Struct({ sku_id: Schema.String })
 
-/** Register a governed SKU unit cost record for one active owning legal entity. */
+/** Register the active governed SKU unit cost record inside one owning legal entity's cell. */
 export const RecordUnitCost = Norn.action({
   id: "supply.unit_cost.record", title: "Record a SKU unit cost", version: "0.1.0",
   label: { en: "Record unit cost", ar: "تسجيل تكلفة الوحدة" },
@@ -115,7 +115,7 @@ export const RecordUnitCost = Norn.action({
     { link: "owner_entity", targetType: LegalEntity, targetIdField: "owner_entity_id" },
   ],
   writes: [{ type: UnitCost, change: "created" }],
-  effect: { kind: "upsert_input_object", type: UnitCost, objectIdField: "cost_id", writeMode: { kind: "create_only" } },
+  effect: { kind: "upsert_input_object", type: UnitCost, objectIdField: "sku_id", writeMode: { kind: "create_only" } },
 })
 
 // -------------------------------------------------- holding lots & aging
@@ -148,7 +148,6 @@ const UncostedStockLotInput = Schema.Struct({
   received_at: Norn.timestamp("utc"),
   as_of: Norn.timestamp("utc"),
   cost_status: CostStatus,
-  unit_cost: Schema.Null,
   stock_value: Norn.decimal(6),
   currency: Currency,
 })
@@ -360,6 +359,7 @@ const CostedPosSaleInput = Schema.Struct({
   sold_qty: Norn.decimal(6),
   unit: Unit,
   net_revenue: Norn.decimal(6),
+  applied_unit_cost: Norn.decimal(4),
   cogs_amount: Norn.decimal(6),
   gross_margin: Norn.decimal(6),
   gross_margin_rate: Norn.decimal(6),
@@ -379,15 +379,17 @@ const UncostedPosSaleInput = Schema.Struct({
   gross_margin: Norn.decimal(6),
   gross_margin_rate: Norn.decimal(6),
   cost_status: CostStatus,
-  costed_ref: Schema.NullOr(Schema.String),
   currency: Currency,
   sold_at: Norn.timestamp("utc"),
 })
 const PosSaleRef = Schema.Struct({ sale_id: Schema.String })
 
 /**
- * Record a costed POS sale line linked to a verified `UnitCost` record;
- * `gross_margin` and `gross_margin_rate` are derived by the kernel.
+ * Record a costed POS sale line linked to the SKU's governed `UnitCost` record.
+ * Validates `applied_unit_cost === cost.unit_cost` and `costed_ref === cost.cost_ref`,
+ * then derives `cogs_amount = sold_qty * applied_unit_cost` and
+ * `gross_margin = net_revenue - (sold_qty * applied_unit_cost)` in the kernel
+ * (never trusting caller-supplied COGS, and never storing an inexact line ratio).
  */
 export const RecordPosSale = Norn.action({
   id: "supply.pos_sale.record", title: "Record a costed POS sale line", version: "0.1.0",
@@ -397,14 +399,15 @@ export const RecordPosSale = Norn.action({
   slice: [
     { name: "store", type: Store, key: { property: { from: "input", property: "store_id" } } },
     { name: "sku", type: Sku, key: { property: { from: "input", property: "sku_id" } } },
-    { name: "cost", type: UnitCost, key: { property: { from: "input", property: "costed_ref" } } },
+    { name: "cost", type: UnitCost, key: { property: { from: "input", property: "sku_id" } } },
   ],
   derive: [
-    { field: "gross_margin", inputRequired: false, expression: Norn.expression(CostedPosSaleInput, (x) => x.net_revenue - x.cogs_amount) },
+    { field: "cogs_amount", inputRequired: false, expression: Norn.expression(CostedPosSaleInput, (x) => x.sold_qty * x.applied_unit_cost) },
     {
-      field: "gross_margin_rate", inputRequired: false,
-      expression: Norn.expression(CostedPosSaleInput, (x) => (x.net_revenue > 0 ? (x.net_revenue - x.cogs_amount) / x.net_revenue : 0)),
+      field: "gross_margin", inputRequired: false,
+      expression: Norn.expression(CostedPosSaleInput, (x) => x.net_revenue - (x.sold_qty * x.applied_unit_cost)),
     },
+    { field: "gross_margin_rate", inputRequired: false, expression: Norn.expression(CostedPosSaleInput, () => 0) },
   ],
   preconditions: [Norn.expression(
     Schema.Struct({
@@ -412,11 +415,13 @@ export const RecordPosSale = Norn.action({
       slice: Schema.Struct({
         store: Schema.Struct({ status: Schema.String, currency: Schema.String }),
         sku: Schema.Struct({ unit_of_measure: Schema.String }),
-        cost: Schema.Struct({ currency: Schema.String }),
+        cost: Schema.Struct({ currency: Schema.String, cost_ref: Schema.String, unit_cost: Norn.decimal(4) }),
       }),
     }),
     (ctx) => ctx.slice.store.status === "active"
       && ctx.input.cost_status === "costed"
+      && ctx.input.costed_ref === ctx.slice.cost.cost_ref
+      && ctx.input.applied_unit_cost === ctx.slice.cost.unit_cost
       && ctx.input.unit === ctx.slice.sku.unit_of_measure
       && ctx.input.currency === ctx.slice.store.currency
       && ctx.input.currency === ctx.slice.cost.currency,
@@ -425,7 +430,7 @@ export const RecordPosSale = Norn.action({
   createLinks: [
     { link: "store", targetType: Store, targetIdField: "store_id" },
     { link: "sku", targetType: Sku, targetIdField: "sku_id" },
-    { link: "cost_record", targetType: UnitCost, targetIdField: "costed_ref" },
+    { link: "cost_record", targetType: UnitCost, targetIdField: "sku_id" },
   ],
   writes: [{ type: PosSale, change: "created" }],
   effect: { kind: "upsert_input_object", type: PosSale, objectIdField: "sale_id", writeMode: { kind: "create_only" } },
@@ -433,8 +438,8 @@ export const RecordPosSale = Norn.action({
 
 /**
  * Record an explicitly uncosted POS sale line (`cost_status: "missing_cost"`,
- * `costed_ref: null`, `cogs_amount: 0`) so missing cost causes margin and GMROI
- * buckets to fail closed (withheld) rather than silently summing zero COGS.
+ * `costed_ref: null`, `applied_unit_cost: null`, `cogs_amount: 0`) so missing cost
+ * causes margin and GMROI buckets to fail closed (withheld).
  */
 export const RecordUncostedPosSale = Norn.action({
   id: "supply.pos_sale.record_uncosted", title: "Record an uncosted POS sale line", version: "0.1.0",
@@ -460,7 +465,6 @@ export const RecordUncostedPosSale = Norn.action({
     }),
     (ctx) => ctx.slice.store.status === "active"
       && ctx.input.cost_status === "missing_cost"
-      && ctx.input.costed_ref === null
       && ctx.input.unit === ctx.slice.sku.unit_of_measure
       && ctx.input.currency === ctx.slice.store.currency,
     { root: "context" },

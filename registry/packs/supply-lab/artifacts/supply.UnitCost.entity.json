@@ -13,7 +13,7 @@
         {
           "name": "primary",
           "properties": [
-            "cost_id"
+            "sku_id"
           ]
         }
       ],
@@ -43,13 +43,13 @@
       "name": "supply.UnitCost",
       "properties": [
         {
-          "id": "cost_id",
+          "id": "sku_id",
           "type": {
             "kind": "text"
           }
         },
         {
-          "id": "sku_id",
+          "id": "cost_ref",
           "type": {
             "kind": "text"
           }
@@ -71,10 +71,6 @@
           "type": {
             "additivity": {
               "kind": "non_additive"
-            },
-            "currencySource": {
-              "links": [],
-              "property": "currency"
             },
             "kind": "decimal",
             "scale": 4

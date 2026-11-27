@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "A POS sale linked to a UnitCost record must be costed and match that UnitCost record's currency.",
+  "name": "A POS sale linked to a UnitCost record must be costed, match that UnitCost record's SKU, currency, reference, and unit cost, and occur on or after its effective date.",
   "namespace": "supply",
   "payload": {
     "condition": "self.cost_record != null",
@@ -25,9 +25,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/supply-lab/retail.ts"
     },
-    "rationale": "A POS sale linked to a UnitCost record must be costed and match that UnitCost record's currency.",
+    "rationale": "A POS sale linked to a UnitCost record must be costed, match that UnitCost record's SKU, currency, reference, and unit cost, and occur on or after its effective date.",
     "response": {
-      "expression": "(self.currency == self.cost_record.currency) and (self.cost_status == 'costed')",
+      "expression": "(((((self.cost_status == 'costed') and (self.sku_id == self.cost_record.sku_id)) and (self.currency == self.cost_record.currency)) and ((self.costed_ref ?? '') == self.cost_record.cost_ref)) and ((self.applied_unit_cost ?? -1) == self.cost_record.unit_cost)) and (timestamp(self.cost_record.effective_from) <= timestamp(self.sold_at))",
       "kind": "predicate"
     },
     "scope": {

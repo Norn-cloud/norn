@@ -1,7 +1,7 @@
 {
   "sha256": "51ecf754e30146494f2997bf77586e5d6a0995dc3ad849796103af5b8eb6d056",
   "origin": "derived",
-  "category": "generated",
+  "category": "synthetic-golden",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],

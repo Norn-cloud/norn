@@ -349,19 +349,20 @@ const PosSaleProps = Schema.Struct({
   sold_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
   unit: Unit,
   net_revenue: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }),
+  applied_unit_cost: Schema.NullOr(Norn.decimal(4, { additivity: { kind: "non_additive" } })),
   cogs_amount: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }),
   gross_margin: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }),
   // Gross margin rate is a ratio of sums (`sum(gross_margin) / sum(net_revenue)`), never a mean of line rates.
   gross_margin_rate: Norn.decimal(6, { additivity: { kind: "ratio", numerator: "gross_margin", denominator: "net_revenue" } }),
   cost_status: CostStatus,
-  // Non-null reference to the cost record when `cost_status === "costed"`; null when missing cost.
+  // Non-null reference to the verified `UnitCost.cost_ref` when `cost_status === "costed"`; null when missing cost.
   costed_ref: Schema.NullOr(Schema.String),
   currency: Currency,
   sold_at: Norn.timestamp("utc"),
 })
 
 const CostFacts = Schema.Struct({
-  unit_cost: Norn.decimal(4, { currency: "currency", additivity: { kind: "non_additive" } }),
+  unit_cost: Norn.decimal(4, { additivity: { kind: "non_additive" } }),
   currency: Currency,
   effective_from: Norn.timestamp("utc"),
 })
@@ -391,22 +392,25 @@ export const UnitCostZeroViolated = Norn.example("a zero unit cost is quarantine
   expect: "violated",
 })
 
-/** Governed unit-cost record bound to an owning legal entity and catalog SKU. */
+/**
+ * Governed active SKU unit-cost record keyed by `sku_id` inside one legal entity's
+ * cell (D02), binding cost lookup to the exact SKU, currency, and effective date.
+ */
 export const UnitCost = Norn.type({
   name: "supply.UnitCost", title: "SKU unit cost", version: "0.1.0",
   label: { en: "SKU unit cost", ar: "تكلفة وحدة الصنف" },
   implements: [CostEvidence],
   properties: Schema.Struct({
-    cost_id: Schema.String,
     sku_id: Schema.String,
+    cost_ref: Schema.String,
     owner_entity_id: Schema.String,
     supplier_id: Schema.String,
-    unit_cost: Norn.decimal(4, { currency: "currency", additivity: { kind: "non_additive" } }),
+    unit_cost: Norn.decimal(4, { additivity: { kind: "non_additive" } }),
     currency: Currency,
     effective_from: Norn.timestamp("utc"),
   }),
   needsReview: ["ar"],
-  identity: [{ name: "primary", properties: ["cost_id"] }],
+  identity: [{ name: "primary", properties: ["sku_id"] }],
   links: [
     { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
     { id: "owner_entity", target: LegalEntity, cardinality: { to: "one", from: "many", required: true } },
@@ -438,15 +442,15 @@ export const PosSale = Norn.type({
 export const PosSaleCostValid = Norn.law("pos_sale_cost_valid", {
   on: PosSale,
   must: (self) =>
-    (self.cost_status === "costed" && self.costed_ref !== null && self.cogs_amount >= 0)
-    || (self.cost_status === "missing_cost" && self.costed_ref === null && self.cogs_amount === 0),
-  because: "A costed sale links a cost reference with non-negative COGS; an uncosted sale carries null costed_ref and zero placeholder COGS so margin totals withhold.",
+    (self.cost_status === "costed" && self.costed_ref !== null && self.applied_unit_cost !== null && self.cogs_amount >= 0)
+    || (self.cost_status === "missing_cost" && self.costed_ref === null && self.applied_unit_cost === null && self.cogs_amount === 0),
+  because: "A costed sale links a cost reference and applied unit cost with non-negative COGS; an uncosted sale carries null cost fields and zero placeholder COGS so margin totals withhold.",
 })
 export const PosSaleCostedHolds = Norn.example("a costed POS sale holds", {
   of: PosSaleCostValid,
   given: {
     sale_id: "SALE-1", store_id: "ST-1", sku_id: "SKU-1", sold_qty: 2, unit: "each",
-    net_revenue: 300, cogs_amount: 180, gross_margin: 120, gross_margin_rate: 0.4,
+    net_revenue: 300, applied_unit_cost: 90, cogs_amount: 180, gross_margin: 120, gross_margin_rate: 0,
     cost_status: "costed", costed_ref: "COST-1", currency: "EGP", sold_at: "2026-08-10T14:00:00Z",
   },
   expect: "holds",
@@ -455,7 +459,7 @@ export const PosSaleMissingCostHolds = Norn.example("an explicitly uncosted POS 
   of: PosSaleCostValid,
   given: {
     sale_id: "SALE-2", store_id: "ST-1", sku_id: "SKU-1", sold_qty: 1, unit: "each",
-    net_revenue: 150, cogs_amount: 0, gross_margin: 150, gross_margin_rate: 1,
+    net_revenue: 150, applied_unit_cost: null, cogs_amount: 0, gross_margin: 0, gross_margin_rate: 0,
     cost_status: "missing_cost", costed_ref: null, currency: "EGP", sold_at: "2026-08-10T14:00:00Z",
   },
   expect: "holds",
@@ -464,7 +468,7 @@ export const PosSaleUncostedWithCogsViolated = Norn.example("missing_cost sale w
   of: PosSaleCostValid,
   given: {
     sale_id: "SALE-3", store_id: "ST-1", sku_id: "SKU-1", sold_qty: 1, unit: "each",
-    net_revenue: 150, cogs_amount: 50, gross_margin: 100, gross_margin_rate: 0.666667,
+    net_revenue: 150, applied_unit_cost: null, cogs_amount: 50, gross_margin: 100, gross_margin_rate: 0,
     cost_status: "missing_cost", costed_ref: null, currency: "EGP", sold_at: "2026-08-10T14:00:00Z",
   },
   expect: "violated",
@@ -479,8 +483,14 @@ export const PosSaleMatchesStoreAndSku = Norn.law("pos_sale_matches_store_and_sk
 export const PosSaleMatchesCostRecord = Norn.law("pos_sale_matches_cost_record", {
   on: PosSale,
   when: (self): self is typeof self & { readonly cost_record: NonNullable<typeof self.cost_record> } => self.cost_record !== null,
-  must: (self) => self.currency === self.cost_record.currency && self.cost_status === "costed",
-  because: "A POS sale linked to a UnitCost record must be costed and match that UnitCost record's currency.",
+  must: (self) =>
+    self.cost_status === "costed"
+    && self.sku_id === self.cost_record.sku_id
+    && self.currency === self.cost_record.currency
+    && (self.costed_ref ?? "") === self.cost_record.cost_ref
+    && (self.applied_unit_cost ?? -1) === self.cost_record.unit_cost
+    && self.cost_record.effective_from <= self.sold_at,
+  because: "A POS sale linked to a UnitCost record must be costed, match that UnitCost record's SKU, currency, reference, and unit cost, and occur on or after its effective date.",
 })
 
 // ------------------------------------------------- messy feed evidence types
@@ -582,7 +592,7 @@ export const UnitCostEvidence = Norn.type({
     cost_id: Schema.String,
     sku_code: Schema.String,
     supplier_id: Schema.String,
-    unit_cost: Norn.decimal(4, { currency: "currency", additivity: { kind: "non_additive" } }),
+    unit_cost: Norn.decimal(4, { additivity: { kind: "non_additive" } }),
     currency: Currency,
     effective_from: Norn.timestamp("utc"),
   }),

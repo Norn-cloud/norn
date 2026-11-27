@@ -43,6 +43,7 @@ test("supply-lab retail truth slice questions lower to their committed QuestionI
     "supply.retail.lot_received_aging_weekly",
     "supply.retail.store_sales_weekly",
     "supply.retail.store_revenue_weekly",
+    "supply.retail.store_gross_margin_weekly",
     "supply.retail.store_gross_margin_rate_weekly",
     "supply.retail.pos_feed_revenue_weekly",
   ])

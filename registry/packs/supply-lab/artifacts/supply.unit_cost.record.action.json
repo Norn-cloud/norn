@@ -28,7 +28,7 @@
       "entityArtifactId": "supply.UnitCost.entity",
       "entityArtifactVersion": "0.1.0",
       "kind": "upsert_input_object",
-      "objectIdField": "cost_id",
+      "objectIdField": "sku_id",
       "objectKind": "supply.UnitCost",
       "writeMode": {
         "kind": "create_only"
@@ -38,7 +38,7 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
-        "cost_id": {
+        "cost_ref": {
           "type": "string"
         },
         "currency": {
@@ -70,8 +70,8 @@
         }
       },
       "required": [
-        "cost_id",
         "sku_id",
+        "cost_ref",
         "owner_entity_id",
         "supplier_id",
         "unit_cost",
@@ -84,12 +84,12 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
-        "cost_id": {
+        "sku_id": {
           "type": "string"
         }
       },
       "required": [
-        "cost_id"
+        "sku_id"
       ],
       "type": "object"
     },

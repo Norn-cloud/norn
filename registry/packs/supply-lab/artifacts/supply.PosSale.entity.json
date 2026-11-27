@@ -113,6 +113,19 @@
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "applied_unit_cost",
+          "type": {
+            "additivity": {
+              "kind": "non_additive"
+            },
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
           "id": "cogs_amount",
           "type": {
             "additivity": {

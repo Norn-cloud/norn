@@ -25,18 +25,23 @@
       },
       {
         "link": "cost_record",
-        "targetIdField": "costed_ref",
+        "targetIdField": "sku_id",
         "targetType": "supply.UnitCost"
       }
     ],
     "derive": [
       {
-        "expression": "input.net_revenue - input.cogs_amount",
+        "expression": "input.sold_qty * input.applied_unit_cost",
+        "field": "cogs_amount",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.net_revenue - (input.sold_qty * input.applied_unit_cost)",
         "field": "gross_margin",
         "inputRequired": false
       },
       {
-        "expression": "(input.net_revenue > 0) ? ((input.net_revenue - input.cogs_amount) / input.net_revenue) : 0",
+        "expression": "0",
         "field": "gross_margin_rate",
         "inputRequired": false
       }
@@ -55,6 +60,13 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "applied_unit_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 4
+          },
+          "type": "number"
+        },
         "cogs_amount": {
           "nornType": {
             "kind": "decimal",
@@ -136,6 +148,7 @@
         "sold_qty",
         "unit",
         "net_revenue",
+        "applied_unit_cost",
         "cogs_amount",
         "gross_margin",
         "gross_margin_rate",
@@ -160,7 +173,7 @@
       "type": "object"
     },
     "preconditions": [
-      "((((slice.store.status == 'active') and (input.cost_status == 'costed')) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.currency == slice.cost.currency)"
+      "((((((slice.store.status == 'active') and (input.cost_status == 'costed')) and (input.costed_ref == slice.cost.cost_ref)) and (input.applied_unit_cost == slice.cost.unit_cost)) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.currency == slice.cost.currency)"
     ],
     "scopeRequired": [
       "orgId",
@@ -191,7 +204,7 @@
         "key": {
           "property": {
             "from": "input",
-            "property": "costed_ref"
+            "property": "sku_id"
           }
         },
         "name": "cost",

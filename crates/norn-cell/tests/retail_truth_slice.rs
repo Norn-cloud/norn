@@ -6,7 +6,9 @@
 //!    file-backed `SqliteCell`s (sole proprietorship in EGP + partnership in USD
 //!    operating stores in the same mall with shared physical custodian), proving
 //!    custody != ownership, lot owner == store owner, unique store count
-//!    position (`ID-UNIQUE-1`), and cross-scope refusal.
+//!    position (`ID-UNIQUE-1`), governed `UnitCost` binding (forged unit cost,
+//!    wrong `costed_ref`, missing cost record, and future-effective `UnitCost`
+//!    all refuse), and cross-scope refusal.
 //! 2. **Messy retail feeds -> KPI -> `LINEAGE-SUM-1` source provenance:** POS
 //!    sales, store physical counts, retail supplier receipts, and supplier unit
 //!    costs ingested through real admitted mapping bundles on one `MapCell`
@@ -20,19 +22,23 @@
 //!    drift all fail closed (withheld totals); depleted lots drop out of active
 //!    aging cohorts.
 //! 4. **Single-cut pinned read-only combined management view (`READ-LOCAL-1`):**
-//!    cross-cell projection verifying every read matches the cell's pinned
-//!    `read_envelope` frontier, explicitly labelled combined management view
-//!    (never consolidated financial statements), never feeding a governed
-//!    write, with exact `DuckDB` combined-projection parity when built with
-//!    `--features duckdb,native`.
+//!    cross-cell projection over two cells with real installed definitions and
+//!    real mapped feed bundles, verifying every read matches the cell's pinned
+//!    `read_envelope` frontier, open feed quarantine findings withhold totals
+//!    until corrected, missing watermarks fail closed inside `evaluate_question`,
+//!    explicitly labelled combined management view (never consolidated financial
+//!    statements), never feeding a governed write, with exact `DuckDB` parity
+//!    across revenue, gross margin, gross margin rate, and POS feed revenue when
+//!    built with `--features duckdb,native`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use norn_cell::compute::lineage::{ContributionSource, LineageDisclosure};
 use norn_cell::compute::transform::{RowAccess, TransformResult};
-use norn_cell::compute::{QueryContext, QueryResult};
+use norn_cell::compute::{Freshness, Frontier, QueryContext, QueryResult, Watermark};
 use norn_cell::engine::NativeEngine;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::{
@@ -66,6 +72,7 @@ const SOLE_SCOPE: &str = "org_family_sole_prop/prod";
 const PARTNER_SCOPE: &str = "org_family_partnership/prod";
 const SOLE_CELL_ID: &str = "0000000000000000000000000000a101";
 const PARTNER_CELL_ID: &str = "0000000000000000000000000000b202";
+const FEED_PARTITION: &str = "MALL-CFC";
 
 /// 2026-09-07T12:00:00Z (after W1..W9 retail events).
 const CLOCK_MS: u64 = 1_788_782_400_000;
@@ -76,6 +83,12 @@ const REQUIRED_FEEDS: [&str; 4] = [
     "supply.store_counts",
     "supply.retail_receipts",
     "supply.unit_costs",
+];
+const EVIDENCE_TYPES: [&str; 4] = [
+    "supply.PosSaleEvidence",
+    "supply.StoreCountEvidence",
+    "supply.RetailReceiptEvidence",
+    "supply.UnitCostEvidence",
 ];
 
 fn repo() -> PathBuf {
@@ -115,33 +128,97 @@ fn core_base() -> Result<Vec<ArtifactEnvelope>, String> {
     .collect()
 }
 
+fn runtime_envelopes(artifacts: &[ArtifactEnvelope]) -> Result<Vec<RuntimeValue>, String> {
+    artifacts
+        .iter()
+        .map(|a| {
+            let wire = serde_json::to_value(a).map_err(|e| format!("{e}"))?;
+            RuntimeValue::from_json(wire).map_err(|e| format!("{e:?}"))
+        })
+        .collect()
+}
+
 struct RetailPack {
     candidate: Vec<ArtifactEnvelope>,
     pool: Vec<ArtifactEnvelope>,
     definitions: AdmittedDefinitions,
+    canonical_set: String,
+    receipt: String,
+    receipt_sha256: String,
 }
 
-fn retail_pack() -> Result<RetailPack, String> {
+fn build_retail_pack() -> Result<RetailPack, String> {
     let mut candidate = Vec::new();
     for dir in ["tracking", "ml", "supply-lab"] {
         candidate.extend(read_envelopes(
             &repo().join("registry/packs").join(dir).join("artifacts"),
         )?);
     }
-    let mut pool = core_base()?;
+    let base = core_base()?;
+    let mut pool = base.clone();
     pool.extend(candidate.iter().cloned());
     let definitions =
         AdmittedDefinitions::from_envelopes(&pool).map_err(|e| format!("definitions: {e}"))?;
+    let (sources, base_sources) = (runtime_envelopes(&candidate)?, runtime_envelopes(&base)?);
+    let registry = BTreeSet::new();
+    let checked = norn_checker::check_artifact_set_with_receipt(
+        &norn_checker::ReceiptSources::new(&sources, &base_sources)
+            .map_err(|e| format!("{e:?}"))?,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &base,
+            tenant: None,
+        },
+        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+    )
+    .map_err(|e| format!("receipt: {e:?}"))?;
+    if !checked.receipt.admitted {
+        return Err(format!("pack not admitted: {:?}", checked.diagnostics));
+    }
+    let wire = checked
+        .receipt
+        .to_canonical_value()
+        .map_err(|e| format!("{e:?}"))?;
+    let receipt =
+        String::from_utf8(norn_ir::canonical::serialize(&wire).map_err(|e| format!("{e:?}"))?)
+            .map_err(|e| format!("{e}"))?;
+    let receipt_sha256 =
+        norn_checker::admission_receipt_sha256(&receipt).map_err(|e| format!("{e:?}"))?;
+    let set: Vec<&ArtifactEnvelope> = candidate.iter().chain(&base).collect();
+    let canonical_set = serde_json::to_string(&set).map_err(|e| format!("{e}"))?;
     Ok(RetailPack {
         candidate,
         pool,
         definitions,
+        canonical_set,
+        receipt,
+        receipt_sha256,
     })
+}
+
+fn retail_pack() -> Result<&'static RetailPack, String> {
+    static PACK: OnceLock<Result<RetailPack, String>> = OnceLock::new();
+    PACK.get_or_init(build_retail_pack)
+        .as_ref()
+        .map_err(Clone::clone)
 }
 
 impl RetailPack {
     fn model(&self) -> &Model {
         self.definitions.model()
+    }
+
+    fn install_input(&self) -> norn_cell::InstalledDefinitionInput {
+        norn_cell::InstalledDefinitionInput {
+            canonical_set: self.canonical_set.clone(),
+            registry: Vec::new(),
+            receipt_sha256: self.receipt_sha256.clone(),
+            admission_receipt: Some(self.receipt.clone()),
+            readmission: None,
+            diff: json!({"suite": "retail-truth-slice"}),
+            installed_at: 1,
+            layout: None,
+        }
     }
 
     fn retail_question(&self, name: &str) -> Result<QuestionPlan, String> {
@@ -201,26 +278,62 @@ enum Outcome {
 }
 
 struct EntityBook {
-    pack: RetailPack,
+    pack: &'static RetailPack,
     _dir: TempDir,
     scope: String,
     org_id: String,
     env_id: String,
-    cell: RetailCell,
+    cell: Option<RetailCell>,
     tick: u64,
     calls: u64,
-    source_cursors: BTreeMap<String, String>,
-    watermarks: BTreeMap<String, u64>,
+    source_cursors: Frontier,
+    watermarks: BTreeMap<String, BTreeMap<String, Watermark>>,
 }
 
-fn complete_feed_watermarks(now_ms: u64) -> (BTreeMap<String, String>, BTreeMap<String, u64>) {
-    let mut cursors = BTreeMap::new();
-    let mut watermarks = BTreeMap::new();
+fn feed_watermarks(
+    cursors: &Frontier,
+    heartbeat_ms: u64,
+) -> BTreeMap<String, BTreeMap<String, Watermark>> {
+    cursors
+        .iter()
+        .map(|(feed, parts)| {
+            let wm_parts = parts
+                .iter()
+                .map(|(part, cursor)| {
+                    (
+                        part.clone(),
+                        Watermark {
+                            observed: cursor.clone(),
+                            heartbeat_ms: Some(heartbeat_ms),
+                            complete: true,
+                        },
+                    )
+                })
+                .collect();
+            (feed.clone(), wm_parts)
+        })
+        .collect()
+}
+
+fn default_feed_frontier(now_ms: u64) -> (Frontier, BTreeMap<String, BTreeMap<String, Watermark>>) {
+    let mut cursors: Frontier = BTreeMap::new();
     for feed in REQUIRED_FEEDS {
-        cursors.insert(feed.to_owned(), format!("cursor:{feed}:synced"));
-        watermarks.insert(feed.to_owned(), now_ms);
+        let mut parts = BTreeMap::new();
+        parts.insert(FEED_PARTITION.to_owned(), format!("cursor:{feed}:synced"));
+        cursors.insert(feed.to_owned(), parts);
     }
+    let watermarks = feed_watermarks(&cursors, now_ms);
     (cursors, watermarks)
+}
+
+struct FeedRow<'a> {
+    feed_id: &'a str,
+    mapping: &'a str,
+    dataset: &'a str,
+    source: &'a str,
+    event: &'a str,
+    record: &'a str,
+    payload: &'a str,
 }
 
 impl EntityBook {
@@ -243,25 +356,84 @@ impl EntityBook {
         store
             .bind("scope", &scope)
             .map_err(|e| format!("bind scope: {e}"))?;
-        let cell = RetailCell::new(store, scope.clone(), |c| c.payload.clone())
+        let mut cell = RetailCell::new(store, scope.clone(), |c| c.payload.clone())
             .map_err(|e| format!("open cell: {e}"))?;
-        let (source_cursors, watermarks) = complete_feed_watermarks(CLOCK_MS);
+        cell.install_definitions(pack.model().clone(), pack.install_input(), Some(0))
+            .map_err(|e| format!("install definitions {file_name}: {e}"))?;
         Ok(Self {
             pack,
             _dir: dir,
             scope,
             org_id: org_id.to_owned(),
             env_id: env_id.to_owned(),
-            cell,
+            cell: Some(cell),
             tick: 0,
             calls: 0,
-            source_cursors,
-            watermarks,
+            source_cursors: BTreeMap::new(),
+            watermarks: BTreeMap::new(),
         })
+    }
+
+    fn cell(&self) -> Result<&RetailCell, String> {
+        self.cell.as_ref().ok_or_else(|| "missing cell".to_owned())
+    }
+
+    fn cell_mut(&mut self) -> Result<&mut RetailCell, String> {
+        self.cell.as_mut().ok_or_else(|| "missing cell".to_owned())
     }
 
     fn now(&self) -> LogicalTime {
         LogicalTime::from_millis(CLOCK_MS.saturating_add(self.tick))
+    }
+
+    fn with_map_cell<T>(
+        &mut self,
+        f: impl FnOnce(&mut MapCell) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let cell = self.cell.take().ok_or("missing retail cell")?;
+        let store = cell.into_store();
+        let mut map_cell = MapCell::new(store, self.scope.clone(), |_| BTreeMap::new())
+            .map_err(|e| format!("open map view: {e}"))?;
+        let now = self.now();
+        map_cell.advance_to(now);
+        let result = f(&mut map_cell);
+        let store = map_cell.into_store();
+        let restored = RetailCell::new(store, self.scope.clone(), |c| c.payload.clone())
+            .map_err(|e| format!("restore retail cell: {e}"))?;
+        self.cell = Some(restored);
+        result
+    }
+
+    fn ingest_feed(&mut self, row: &FeedRow<'_>) -> Result<String, String> {
+        self.tick = self.tick.saturating_add(1_000);
+        let observed_at = self.now().as_millis();
+        let obs = raw_obs(row.source, row.event, row.record, row.payload)?;
+        let input = map_input(row.mapping, row.dataset);
+        let bundle = self.with_map_cell(|map_cell| {
+            let (bundle, _) = map_cell
+                .inject_mapping_bundle(&obs, &input)
+                .map_err(|e| format!("inject {}/{}: {e}", row.feed_id, row.record))?;
+            map_cell
+                .process_mapping_bundle(&bundle)
+                .map_err(|e| format!("process {}/{}: {e}", row.feed_id, row.record))?;
+            Ok(bundle)
+        })?;
+        self.source_cursors
+            .entry(row.feed_id.to_owned())
+            .or_default()
+            .insert(FEED_PARTITION.to_owned(), bundle.clone());
+        self.watermarks
+            .entry(row.feed_id.to_owned())
+            .or_default()
+            .insert(
+                FEED_PARTITION.to_owned(),
+                Watermark {
+                    observed: bundle.clone(),
+                    heartbeat_ms: Some(observed_at),
+                    complete: true,
+                },
+            );
+        Ok(bundle)
     }
 
     fn act(&mut self, action: &str, actor: &str, input: Value) -> Result<Outcome, String> {
@@ -279,24 +451,24 @@ impl EntityBook {
     ) -> Result<Outcome, String> {
         self.tick = self.tick.saturating_add(1_000);
         let now = self.now();
-        self.cell.advance_to(now);
-        let world = self.cell.store().world();
-        let admitted = self
-            .pack
+        let org_id = self.org_id.clone();
+        let env_id = self.env_id.clone();
+        let pack = self.pack;
+        let cell = self.cell_mut()?;
+        cell.advance_to(now);
+        let world = cell.store().world();
+        let admitted = pack
             .definitions
             .action(action)
             .ok_or_else(|| format!("no action {action}"))?;
         let input: JsonObject =
             serde_json::from_value(input).map_err(|e| format!("{action} input: {e}"))?;
-        let catalog = self.pack.definitions.catalog();
+        let catalog = pack.definitions.catalog();
         let call = ActionCall {
             action: &admitted.root,
             action_artifact_id: &admitted.artifact_id,
             action_version: &admitted.version,
-            scope: BTreeMap::from([
-                ("orgId".into(), self.org_id.clone()),
-                ("environmentId".into(), self.env_id.clone()),
-            ]),
+            scope: BTreeMap::from([("orgId".into(), org_id), ("environmentId".into(), env_id)]),
             actor: actor.to_owned(),
             approved_intent: None,
             input,
@@ -310,13 +482,11 @@ impl EntityBook {
             },
             trace: None,
         };
-        Ok(
-            match commit_action(&mut self.cell, &catalog, &call, &Allow) {
-                Ok(ActionOutcome::Committed { .. }) => Outcome::Committed,
-                Ok(ActionOutcome::Replayed { .. }) => Outcome::Replayed,
-                Err(refusal) => Outcome::Refused(refusal.code().to_owned(), refusal.to_string()),
-            },
-        )
+        Ok(match commit_action(cell, &catalog, &call, &Allow) {
+            Ok(ActionOutcome::Committed { .. }) => Outcome::Committed,
+            Ok(ActionOutcome::Replayed { .. }) => Outcome::Replayed,
+            Err(refusal) => Outcome::Refused(refusal.code().to_owned(), refusal.to_string()),
+        })
     }
 
     fn ok(&mut self, action: &str, actor: &str, input: Value) -> Result<(), String> {
@@ -353,7 +523,7 @@ impl EntityBook {
 
     fn answer(&self, name: &str) -> Result<QueryResult, String> {
         let plan = self.pack.retail_question(name)?;
-        self.cell
+        self.cell()?
             .store()
             .evaluate_question(&plan, self.query_context(), |_| Ok(true))
             .map_err(|e| format!("evaluate {name}: {e}"))
@@ -365,14 +535,14 @@ impl EntityBook {
         access: impl FnMut(&norn_cell::ObjectRecord) -> Result<RowAccess, CellError>,
     ) -> Result<TransformResult, String> {
         let plan = self.pack.transform_plan(artifact_id)?;
-        self.cell
+        self.cell()?
             .store()
             .evaluate_transform(&plan, "main", &self.scope, access)
             .map_err(|e| format!("transform {artifact_id}: {e}"))
     }
 
     fn head(&self) -> Result<LedgerHead, String> {
-        self.cell
+        self.cell()?
             .store()
             .read()
             .verify_ledger()
@@ -391,11 +561,11 @@ fn scalar(value: &RuntimeValue) -> String {
 }
 
 fn bucket_decimal(result: &QueryResult, parts: &[&str]) -> Option<Decimal> {
-    result.rows.iter().find_map(|(key, values)| {
+    result.rows.iter().find_map(|(key, row)| {
         parts
             .iter()
             .all(|part| key.contains(part))
-            .then(|| values.first().and_then(|v| *v))
+            .then_some(row.value)
             .flatten()
     })
 }
@@ -415,15 +585,13 @@ fn resolve_costed_bucket(result: &QueryResult, parts: &[&str]) -> Option<Decimal
     if has_missing {
         return None;
     }
-    result.rows.iter().find_map(|(key, values)| {
+    result.rows.iter().find_map(|(key, row)| {
         (key.contains("costed") && parts.iter().all(|part| key.contains(part)))
-            .then(|| values.first().and_then(|v| *v))
+            .then_some(row.value)
             .flatten()
     })
 }
 
-/// Convert a `Decimal` (canonical text with at most 6 fractional digits) to
-/// exact scale-6 integer units matching `norn_checker::metric::compute::arithmetic`.
 fn decimal_to_scaled_i128(value: Decimal) -> Result<i128, String> {
     let text = value.canonical();
     let (negative, unsigned) = match text.strip_prefix('-') {
@@ -451,10 +619,31 @@ fn decimal_to_scaled_i128(value: Decimal) -> Result<i128, String> {
     Ok(if negative { -magnitude } else { magnitude })
 }
 
-fn check_feed_coverage(watermarks: &BTreeMap<String, u64>, min_fresh_ms: u64) -> BTreeSet<String> {
+fn check_feed_coverage(
+    cursors: &Frontier,
+    watermarks: &BTreeMap<String, BTreeMap<String, Watermark>>,
+    min_fresh_ms: u64,
+) -> BTreeSet<String> {
     REQUIRED_FEEDS
         .iter()
-        .filter(|feed| watermarks.get(**feed).is_none_or(|wm| *wm < min_fresh_ms))
+        .filter(|feed| {
+            let Some(parts) = cursors.get(**feed) else {
+                return true;
+            };
+            if parts.is_empty() {
+                return true;
+            }
+            let Some(wm_parts) = watermarks.get(**feed) else {
+                return true;
+            };
+            !parts.iter().all(|(part, consumed)| {
+                wm_parts.get(part).is_some_and(|wm| {
+                    wm.complete
+                        && wm.observed == *consumed
+                        && wm.heartbeat_ms.is_some_and(|ts| ts >= min_fresh_ms)
+                })
+            })
+        })
         .map(|feed| (*feed).to_owned())
         .collect()
 }
@@ -471,7 +660,11 @@ fn seed_sole_prop(book: &mut EntityBook) -> Result<(), String> {
             "functional_currency": "EGP"
         }),
     )?;
-    for (sku, cat) in [("SKU-DRESS", "dry_goods"), ("SKU-RING-18K", "spares")] {
+    for (sku, cat) in [
+        ("SKU-DRESS", "dry_goods"),
+        ("SKU-RING-18K", "spares"),
+        ("SKU-SCARF", "dry_goods"),
+    ] {
         book.ok(
             "supply.sku.register",
             "eng:dina",
@@ -482,13 +675,11 @@ fn seed_sole_prop(book: &mut EntityBook) -> Result<(), String> {
         "supply.unit_cost.record",
         "eng:dina",
         json!({
-            "cost_id": "COST-DRESS-1", "sku_id": "SKU-DRESS", "owner_entity_id": "LE-SOLE",
+            "sku_id": "SKU-DRESS", "cost_ref": "COST-DRESS-1", "owner_entity_id": "LE-SOLE",
             "supplier_id": "SUP-ATELIER", "unit_cost": "100", "currency": "EGP",
             "effective_from": "2026-07-01T00:00:00Z"
         }),
     )?;
-    // Three stores in the shared mall (`MALL-CFC`, custodian `CUST-MALL-CFC-OPS` != owner `LE-SOLE`)
-    // plus one standalone store (`ST-SOLE-ZAM`).
     for (store_id, name, kind, mall, custodian) in [
         (
             "ST-SOLE-CFC-1",
@@ -553,13 +744,11 @@ fn seed_partnership(book: &mut EntityBook) -> Result<(), String> {
         "supply.unit_cost.record",
         "eng:dina",
         json!({
-            "cost_id": "COST-RING-1", "sku_id": "SKU-RING-18K", "owner_entity_id": "LE-PARTNER",
+            "sku_id": "SKU-RING-18K", "cost_ref": "COST-RING-1", "owner_entity_id": "LE-PARTNER",
             "supplier_id": "SUP-GOLD", "unit_cost": "250", "currency": "USD",
             "effective_from": "2026-07-01T00:00:00Z"
         }),
     )?;
-    // Two stores in the SAME mall (`MALL-CFC`, same physical custodian `CUST-MALL-CFC-OPS`,
-    // DIFFERENT owning legal entity `LE-PARTNER`, book, and USD currency!) plus one standalone.
     for (store_id, name, kind, mall, custodian) in [
         (
             "ST-PART-CFC-1",
@@ -596,10 +785,7 @@ fn seed_partnership(book: &mut EntityBook) -> Result<(), String> {
     Ok(())
 }
 
-fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Result<(), String> {
-    // --- Cell A (LE-SOLE, EGP) ---
-    // ST-SOLE-CFC-1: fully costed, fresh physical count, 2 live holding lots across W1 & W5
-    // plus 1 fully depleted lot on SKU-RING-18K (proving depleted lots drop from active aging).
+fn seed_sole_cfc1_lots(sole: &mut EntityBook) -> Result<(), String> {
     sole.ok(
         "supply.stock_lot.record",
         "clerk:hana",
@@ -611,16 +797,12 @@ fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Re
             "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
         }),
     )?;
-    // Partial depletion preserves original `received_at` (2026-07-08) and derives stock_value = 2500.
     sole.ok(
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-S1-W1",
-            "remaining_qty": "25",
-            "as_of": "2026-09-04T18:00:00Z",
-            "unit_cost": "100",
-            "stock_value": "0"
+            "lot_id": "LOT-S1-W1", "remaining_qty": "25",
+            "as_of": "2026-09-04T18:00:00Z", "unit_cost": "100", "stock_value": "0"
         }),
     )?;
     sole.ok(
@@ -634,7 +816,6 @@ fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Re
             "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
         }),
     )?;
-    // Fully depleted lot on SKU-RING-18K: must drop out of `StoreLotAging` (`remaining_qty > 0`).
     sole.ok(
         "supply.stock_lot.record",
         "clerk:hana",
@@ -650,49 +831,52 @@ fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Re
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-S1-DEPLETED",
-            "remaining_qty": "0",
-            "as_of": "2026-08-20T09:00:00Z",
-            "unit_cost": "100",
-            "stock_value": "0"
+            "lot_id": "LOT-S1-DEPLETED", "remaining_qty": "0",
+            "as_of": "2026-08-20T09:00:00Z", "unit_cost": "100", "stock_value": "0"
         }),
-    )?;
-    // Fresh physical counts at ST-SOLE-CFC-1 (initial count recounted to fresh `2026-09-05`).
+    )
+}
+
+fn seed_sole_cfc1(sole: &mut EntityBook) -> Result<(), String> {
+    seed_sole_cfc1_lots(sole)?;
     sole.ok(
         "supply.store_count.record",
         "clerk:hana",
         json!({
-            "store_count_id": "ST-SOLE-CFC-1/SKU-DRESS/available", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "on_hand_qty": "56", "unit": "each", "quantity_basis": "available",
-            "as_of": "2026-09-05T10:00:00Z", "count_source": "pos_cycle_count", "count_ref": "CC-101"
+            "store_count_id": "ST-SOLE-CFC-1/SKU-DRESS/available", "store_id": "ST-SOLE-CFC-1",
+            "sku_id": "SKU-DRESS", "on_hand_qty": "56", "unit": "each",
+            "quantity_basis": "available", "as_of": "2026-09-05T10:00:00Z",
+            "count_source": "pos_cycle_count", "count_ref": "CC-101"
         }),
     )?;
     sole.ok(
         "supply.store_count.record",
         "clerk:hana",
         json!({
-            "store_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "on_hand_qty": "62", "unit": "each", "quantity_basis": "on_hand",
-            "as_of": "2026-08-25T10:00:00Z", "count_source": "pos_cycle_count", "count_ref": "CC-100"
+            "store_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "store_id": "ST-SOLE-CFC-1",
+            "sku_id": "SKU-DRESS", "on_hand_qty": "62", "unit": "each",
+            "quantity_basis": "on_hand", "as_of": "2026-08-25T10:00:00Z",
+            "count_source": "pos_cycle_count", "count_ref": "CC-100"
         }),
     )?;
     sole.ok(
         "supply.store_count.recount",
         "clerk:hana",
         json!({
-            "store_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "on_hand_qty": "60", "unit": "each", "quantity_basis": "on_hand",
-            "as_of": "2026-09-05T10:00:00Z", "count_source": "pos_cycle_count", "count_ref": "CC-102"
+            "store_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "store_id": "ST-SOLE-CFC-1",
+            "sku_id": "SKU-DRESS", "on_hand_qty": "60", "unit": "each",
+            "quantity_basis": "on_hand", "as_of": "2026-09-05T10:00:00Z",
+            "count_source": "pos_cycle_count", "count_ref": "CC-102"
         }),
     )?;
-    // Two costed POS sales linked to verified `COST-DRESS-1` (ratio-of-sums = 5000 / 9000 = 0.555556).
+    // Kernel derives cogs_amount = sold_qty * applied_unit_cost (3000 & 1000) and gross_margin (3000 & 2000).
     sole.ok(
         "supply.pos_sale.record",
         "clerk:hana",
         json!({
             "sale_id": "SALE-S1-1", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "sold_qty": "30", "unit": "each", "net_revenue": "6000", "cogs_amount": "3000",
-            "gross_margin": "0", "gross_margin_rate": "0",
+            "sold_qty": "30", "unit": "each", "net_revenue": "6000", "applied_unit_cost": "100",
+            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
             "cost_status": "costed", "costed_ref": "COST-DRESS-1",
             "currency": "EGP", "sold_at": "2026-09-01T14:00:00Z"
         }),
@@ -702,15 +886,16 @@ fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Re
         "clerk:hana",
         json!({
             "sale_id": "SALE-S1-2", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "sold_qty": "10", "unit": "each", "net_revenue": "3000", "cogs_amount": "1000",
-            "gross_margin": "0", "gross_margin_rate": "0",
+            "sold_qty": "10", "unit": "each", "net_revenue": "3000", "applied_unit_cost": "100",
+            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
             "cost_status": "costed", "costed_ref": "COST-DRESS-1",
             "currency": "EGP", "sold_at": "2026-09-03T16:00:00Z"
         }),
-    )?;
+    )
+}
 
-    // ST-SOLE-CFC-2: MIXED costed + uncosted bucket (BOTH costed & uncosted lots, BOTH costed &
-    // uncosted sales in W9!) AND NO physical count (tests MissingCount fail-closed!).
+fn seed_sole_edge_stores(sole: &mut EntityBook) -> Result<(), String> {
+    // ST-SOLE-CFC-2: MIXED costed + uncosted bucket AND NO physical count.
     sole.ok(
         "supply.stock_lot.record",
         "clerk:hana",
@@ -730,7 +915,7 @@ fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Re
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
             "received_qty": "20", "remaining_qty": "15", "unit": "each",
             "received_at": "2026-08-20T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
-            "cost_status": "missing_cost", "unit_cost": null, "stock_value": "0", "currency": "EGP"
+            "cost_status": "missing_cost", "stock_value": "0", "currency": "EGP"
         }),
     )?;
     sole.ok(
@@ -738,8 +923,8 @@ fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Re
         "clerk:hana",
         json!({
             "sale_id": "SALE-S2-1", "store_id": "ST-SOLE-CFC-2", "sku_id": "SKU-DRESS",
-            "sold_qty": "3", "unit": "each", "net_revenue": "600", "cogs_amount": "300",
-            "gross_margin": "0", "gross_margin_rate": "0",
+            "sold_qty": "3", "unit": "each", "net_revenue": "600", "applied_unit_cost": "100",
+            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
             "cost_status": "costed", "costed_ref": "COST-DRESS-1",
             "currency": "EGP", "sold_at": "2026-09-02T12:00:00Z"
         }),
@@ -749,14 +934,13 @@ fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Re
         "clerk:hana",
         json!({
             "sale_id": "SALE-S2-2", "store_id": "ST-SOLE-CFC-2", "sku_id": "SKU-DRESS",
-            "sold_qty": "2", "unit": "each", "net_revenue": "400", "cogs_amount": "0",
-            "gross_margin": "0", "gross_margin_rate": "0",
-            "cost_status": "missing_cost", "costed_ref": null,
+            "sold_qty": "2", "unit": "each", "net_revenue": "400",
+            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
+            "cost_status": "missing_cost",
             "currency": "EGP", "sold_at": "2026-09-03T12:00:00Z"
         }),
     )?;
-
-    // ST-SOLE-CFC-3: STALE COUNT (>7 days old: 2026-08-10 vs CLOCK_MS 2026-09-07) + on-hand drift.
+    // ST-SOLE-CFC-3: STALE COUNT (>7 days old) + on-hand drift (28 vs 20).
     sole.ok(
         "supply.stock_lot.record",
         "clerk:hana",
@@ -772,13 +956,13 @@ fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Re
         "supply.store_count.record",
         "clerk:hana",
         json!({
-            "store_count_id": "ST-SOLE-CFC-3/SKU-DRESS/on_hand", "store_id": "ST-SOLE-CFC-3", "sku_id": "SKU-DRESS",
-            "on_hand_qty": "28", "unit": "each", "quantity_basis": "on_hand",
-            "as_of": "2026-08-10T09:00:00Z", "count_source": "handheld_scan", "count_ref": "CC-OLD"
+            "store_count_id": "ST-SOLE-CFC-3/SKU-DRESS/on_hand", "store_id": "ST-SOLE-CFC-3",
+            "sku_id": "SKU-DRESS", "on_hand_qty": "28", "unit": "each",
+            "quantity_basis": "on_hand", "as_of": "2026-08-10T09:00:00Z",
+            "count_source": "handheld_scan", "count_ref": "CC-OLD"
         }),
     )?;
-
-    // ST-SOLE-ZAM: FUTURE COUNT (`as_of: 2026-09-10 > CLOCK_MS 2026-09-07`) -> must fail closed!
+    // ST-SOLE-ZAM: FUTURE COUNT (`as_of: 2026-09-10 > CLOCK_MS 2026-09-07`).
     sole.ok(
         "supply.stock_lot.record",
         "clerk:hana",
@@ -794,14 +978,16 @@ fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Re
         "supply.store_count.record",
         "clerk:hana",
         json!({
-            "store_count_id": "ST-SOLE-ZAM/SKU-DRESS/on_hand", "store_id": "ST-SOLE-ZAM", "sku_id": "SKU-DRESS",
-            "on_hand_qty": "15", "unit": "each", "quantity_basis": "on_hand",
-            "as_of": "2026-09-10T09:00:00Z", "count_source": "pos_cycle_count", "count_ref": "CC-FUT"
+            "store_count_id": "ST-SOLE-ZAM/SKU-DRESS/on_hand", "store_id": "ST-SOLE-ZAM",
+            "sku_id": "SKU-DRESS", "on_hand_qty": "15", "unit": "each",
+            "quantity_basis": "on_hand", "as_of": "2026-09-10T09:00:00Z",
+            "count_source": "pos_cycle_count", "count_ref": "CC-FUT"
         }),
     )?;
+    Ok(())
+}
 
-    // --- Cell B (LE-PARTNER, USD) ---
-    // ST-PART-CFC-1: fully costed USD jewelry store in the same mall `MALL-CFC`, fresh counts.
+fn seed_partner_operations(partner: &mut EntityBook) -> Result<(), String> {
     partner.ok(
         "supply.stock_lot.record",
         "clerk:hana",
@@ -817,18 +1003,20 @@ fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Re
         "supply.store_count.record",
         "clerk:hana",
         json!({
-            "store_count_id": "ST-PART-CFC-1/SKU-RING-18K/available", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
-            "on_hand_qty": "12", "unit": "each", "quantity_basis": "available",
-            "as_of": "2026-09-06T10:00:00Z", "count_source": "store_audit", "count_ref": "AUD-P1"
+            "store_count_id": "ST-PART-CFC-1/SKU-RING-18K/available", "store_id": "ST-PART-CFC-1",
+            "sku_id": "SKU-RING-18K", "on_hand_qty": "12", "unit": "each",
+            "quantity_basis": "available", "as_of": "2026-09-06T10:00:00Z",
+            "count_source": "store_audit", "count_ref": "AUD-P1"
         }),
     )?;
     partner.ok(
         "supply.store_count.record",
         "clerk:hana",
         json!({
-            "store_count_id": "ST-PART-CFC-1/SKU-RING-18K/on_hand", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
-            "on_hand_qty": "12", "unit": "each", "quantity_basis": "on_hand",
-            "as_of": "2026-09-06T10:00:00Z", "count_source": "store_audit", "count_ref": "AUD-P2"
+            "store_count_id": "ST-PART-CFC-1/SKU-RING-18K/on_hand", "store_id": "ST-PART-CFC-1",
+            "sku_id": "SKU-RING-18K", "on_hand_qty": "12", "unit": "each",
+            "quantity_basis": "on_hand", "as_of": "2026-09-06T10:00:00Z",
+            "count_source": "store_audit", "count_ref": "AUD-P2"
         }),
     )?;
     partner.ok(
@@ -836,8 +1024,8 @@ fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Re
         "clerk:hana",
         json!({
             "sale_id": "SALE-P1-1", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
-            "sold_qty": "8", "unit": "each", "net_revenue": "3200", "cogs_amount": "2000",
-            "gross_margin": "0", "gross_margin_rate": "0",
+            "sold_qty": "8", "unit": "each", "net_revenue": "3200", "applied_unit_cost": "250",
+            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
             "cost_status": "costed", "costed_ref": "COST-RING-1",
             "currency": "USD", "sold_at": "2026-09-02T15:00:00Z"
         }),
@@ -845,115 +1033,79 @@ fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Re
     Ok(())
 }
 
+fn seed_retail_operations(sole: &mut EntityBook, partner: &mut EntityBook) -> Result<(), String> {
+    seed_sole_cfc1(sole)?;
+    seed_sole_edge_stores(sole)?;
+    seed_partner_operations(partner)
+}
+
 // ------------------------------------------------------------------ Test 1
 
-#[test]
-fn s1_two_entity_non_commingling_and_custody_separation() -> Result<(), String> {
-    let mut sole = EntityBook::open(SOLE_CELL_ID, "org_family_sole_prop", "prod", "sole.sqlite")?;
-    let mut partner = EntityBook::open(
-        PARTNER_CELL_ID,
-        "org_family_partnership",
-        "prod",
-        "partner.sqlite",
-    )?;
-    seed_sole_prop(&mut sole)?;
-    seed_partnership(&mut partner)?;
-
-    // Both entities operate inside `MALL-CFC` under shared physical custodian `CUST-MALL-CFC-OPS`,
-    // while legal ownership stays strictly bound to each cell's own LegalEntity.
-    let sole_store = sole
-        .cell
-        .store()
-        .read()
-        .object("main", "supply.Store", "ST-SOLE-CFC-1")
-        .map_err(|e| format!("{e}"))?
-        .ok_or("missing ST-SOLE-CFC-1")?;
-    assert_eq!(
-        sole_store.values.get("entity_id").map(scalar).as_deref(),
-        Some("LE-SOLE")
-    );
-    assert_eq!(
-        sole_store.values.get("custodian_id").map(scalar).as_deref(),
-        Some("CUST-MALL-CFC-OPS")
-    );
-    let partner_store = partner
-        .cell
-        .store()
-        .read()
-        .object("main", "supply.Store", "ST-PART-CFC-1")
-        .map_err(|e| format!("{e}"))?
-        .ok_or("missing ST-PART-CFC-1")?;
-    assert_eq!(
-        partner_store.values.get("entity_id").map(scalar).as_deref(),
-        Some("LE-PARTNER")
-    );
-    assert_eq!(
-        partner_store
-            .values
-            .get("custodian_id")
-            .map(scalar)
-            .as_deref(),
-        Some("CUST-MALL-CFC-OPS")
-    );
-
-    // Cross-entity write refuses: Cell A (`LE-SOLE`) cannot register a store owned by `LE-PARTNER`.
-    sole.refused(
-        "supply.store.register",
-        "eng:dina",
-        json!({
-            "store_id": "ST-ROGUE-PARTNER", "name": "Cross Entity", "entity_id": "LE-PARTNER",
-            "custodian_id": "CUST-MALL-CFC-OPS", "location_kind": "mall_store",
-            "mall_code": "MALL-CFC", "currency": "USD"
-        }),
-    )?;
-
-    // Cross-currency store under `LE-SOLE` (EGP) refuses.
-    sole.refused(
-        "supply.store.register",
-        "eng:dina",
-        json!({
-            "store_id": "ST-SOLE-USD", "name": "Wrong Currency", "entity_id": "LE-SOLE",
-            "custodian_id": "CUST-MALL-CFC-OPS", "location_kind": "mall_store",
-            "mall_code": "MALL-CFC", "currency": "USD"
-        }),
-    )?;
-
-    // Same-currency cross-owner StockLot refuses (`owner_entity_id != store.entity_id`).
-    sole.ok(
-        "supply.legal_entity.register",
-        "eng:dina",
-        json!({
-            "entity_id": "LE-OTHER-EGP", "legal_name": "Other EGP Entity",
-            "entity_kind": "corporation", "book_code": "BOOK-OTHER-EGP", "functional_currency": "EGP"
-        }),
-    )?;
-    sole.refused(
-        "supply.stock_lot.record",
-        "clerk:hana",
-        json!({
-            "lot_id": "LOT-WRONG-OWNER", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "owner_entity_id": "LE-OTHER-EGP", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "10", "remaining_qty": "10", "unit": "each",
-            "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-08-01T09:00:00Z",
-            "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
-        }),
-    )?;
-
-    // Costed POS sale without a real registered `UnitCost` refuses (no fabricated `costed_ref`).
+fn assert_cost_binding_refusals(sole: &mut EntityBook) -> Result<(), String> {
+    // 1. Forged `applied_unit_cost` (50 != 100 on COST-DRESS-1) refuses.
     sole.refused(
         "supply.pos_sale.record",
         "clerk:hana",
         json!({
-            "sale_id": "SALE-FAKE-COST", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "sold_qty": "2", "unit": "each", "net_revenue": "400", "cogs_amount": "200",
-            "gross_margin": "0", "gross_margin_rate": "0",
+            "sale_id": "SALE-FORGED-COST", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "sold_qty": "2", "unit": "each", "net_revenue": "400", "applied_unit_cost": "50",
+            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
+            "cost_status": "costed", "costed_ref": "COST-DRESS-1",
+            "currency": "EGP", "sold_at": "2026-09-01T14:00:00Z"
+        }),
+    )?;
+    // 2. Wrong `costed_ref` refuses.
+    sole.refused(
+        "supply.pos_sale.record",
+        "clerk:hana",
+        json!({
+            "sale_id": "SALE-WRONG-REF", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "sold_qty": "2", "unit": "each", "net_revenue": "400", "applied_unit_cost": "100",
+            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
             "cost_status": "costed", "costed_ref": "COST-NONEXISTENT",
             "currency": "EGP", "sold_at": "2026-09-01T14:00:00Z"
         }),
     )?;
+    // 3. SKU without any registered `UnitCost` (`SKU-RING-18K` on Cell A) refuses.
+    sole.refused(
+        "supply.pos_sale.record",
+        "clerk:hana",
+        json!({
+            "sale_id": "SALE-NO-COST-SKU", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-RING-18K",
+            "sold_qty": "1", "unit": "each", "net_revenue": "500", "applied_unit_cost": "100",
+            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
+            "cost_status": "costed", "costed_ref": "COST-DRESS-1",
+            "currency": "EGP", "sold_at": "2026-09-01T14:00:00Z"
+        }),
+    )?;
+    // 4. Future-effective `UnitCost` (`effective_from: 2026-10-01 > sold_at: 2026-09-01`) refuses!
+    sole.ok(
+        "supply.unit_cost.record",
+        "eng:dina",
+        json!({
+            "sku_id": "SKU-SCARF", "cost_ref": "COST-SCARF-OCT", "owner_entity_id": "LE-SOLE",
+            "supplier_id": "SUP-ATELIER", "unit_cost": "45", "currency": "EGP",
+            "effective_from": "2026-10-01T00:00:00Z"
+        }),
+    )?;
+    let (code, msg) = sole.refused(
+        "supply.pos_sale.record",
+        "clerk:hana",
+        json!({
+            "sale_id": "SALE-FUTURE-COST", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-SCARF",
+            "sold_qty": "2", "unit": "each", "net_revenue": "200", "applied_unit_cost": "45",
+            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
+            "cost_status": "costed", "costed_ref": "COST-SCARF-OCT",
+            "currency": "EGP", "sold_at": "2026-09-01T14:00:00Z"
+        }),
+    )?;
+    assert_eq!(code, "core.laws.violated", "{msg}");
+    assert!(msg.contains("sale_matches_cost_record"), "{msg}");
+    Ok(())
+}
 
-    // ID-UNIQUE-1: two StoreCount rows for the same `(store_id, sku_id, quantity_basis)`
-    // under different `store_count_id`s refuse so snapshot sums cannot double-count a position.
+fn assert_store_isolation_and_lifecycle_refusals(sole: &mut EntityBook) -> Result<(), String> {
+    // ID-UNIQUE-1: duplicate StoreCount for `(store_id, sku_id, quantity_basis)` refuses.
     sole.ok(
         "supply.store_count.record",
         "clerk:hana",
@@ -1005,7 +1157,7 @@ fn s1_two_entity_non_commingling_and_custody_separation() -> Result<(), String> 
     let mut foreign_ctx = sole.query_context();
     foreign_ctx.scope = PARTNER_SCOPE.to_owned();
     let cross_scope = sole
-        .cell
+        .cell()?
         .store()
         .evaluate_question(&plan, foreign_ctx, |_| Ok(true));
     assert!(
@@ -1015,7 +1167,96 @@ fn s1_two_entity_non_commingling_and_custody_separation() -> Result<(), String> 
         ),
         "foreign scope query must refuse with core.compute.stale_input: {cross_scope:?}"
     );
+    Ok(())
+}
 
+#[test]
+fn s1_two_entity_non_commingling_and_custody_separation() -> Result<(), String> {
+    let mut sole = EntityBook::open(SOLE_CELL_ID, "org_family_sole_prop", "prod", "sole.sqlite")?;
+    let mut partner = EntityBook::open(
+        PARTNER_CELL_ID,
+        "org_family_partnership",
+        "prod",
+        "partner.sqlite",
+    )?;
+    seed_sole_prop(&mut sole)?;
+    seed_partnership(&mut partner)?;
+
+    let sole_store = sole
+        .cell()?
+        .store()
+        .read()
+        .object("main", "supply.Store", "ST-SOLE-CFC-1")
+        .map_err(|e| format!("{e}"))?
+        .ok_or("missing ST-SOLE-CFC-1")?;
+    assert_eq!(
+        sole_store.values.get("entity_id").map(scalar).as_deref(),
+        Some("LE-SOLE")
+    );
+    assert_eq!(
+        sole_store.values.get("custodian_id").map(scalar).as_deref(),
+        Some("CUST-MALL-CFC-OPS")
+    );
+    let partner_store = partner
+        .cell()?
+        .store()
+        .read()
+        .object("main", "supply.Store", "ST-PART-CFC-1")
+        .map_err(|e| format!("{e}"))?
+        .ok_or("missing ST-PART-CFC-1")?;
+    assert_eq!(
+        partner_store.values.get("entity_id").map(scalar).as_deref(),
+        Some("LE-PARTNER")
+    );
+    assert_eq!(
+        partner_store
+            .values
+            .get("custodian_id")
+            .map(scalar)
+            .as_deref(),
+        Some("CUST-MALL-CFC-OPS")
+    );
+
+    sole.refused(
+        "supply.store.register",
+        "eng:dina",
+        json!({
+            "store_id": "ST-ROGUE-PARTNER", "name": "Cross Entity", "entity_id": "LE-PARTNER",
+            "custodian_id": "CUST-MALL-CFC-OPS", "location_kind": "mall_store",
+            "mall_code": "MALL-CFC", "currency": "USD"
+        }),
+    )?;
+    sole.refused(
+        "supply.store.register",
+        "eng:dina",
+        json!({
+            "store_id": "ST-SOLE-USD", "name": "Wrong Currency", "entity_id": "LE-SOLE",
+            "custodian_id": "CUST-MALL-CFC-OPS", "location_kind": "mall_store",
+            "mall_code": "MALL-CFC", "currency": "USD"
+        }),
+    )?;
+    sole.ok(
+        "supply.legal_entity.register",
+        "eng:dina",
+        json!({
+            "entity_id": "LE-OTHER-EGP", "legal_name": "Other EGP Entity",
+            "entity_kind": "corporation", "book_code": "BOOK-OTHER-EGP", "functional_currency": "EGP"
+        }),
+    )?;
+    sole.refused(
+        "supply.stock_lot.record",
+        "clerk:hana",
+        json!({
+            "lot_id": "LOT-WRONG-OWNER", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "owner_entity_id": "LE-OTHER-EGP", "custodian_id": "CUST-MALL-CFC-OPS",
+            "received_qty": "10", "remaining_qty": "10", "unit": "each",
+            "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-08-01T09:00:00Z",
+            "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
+        }),
+    )?;
+
+    assert_cost_binding_refusals(&mut sole)?;
+    assert_store_isolation_and_lifecycle_refusals(&mut sole)?;
     sole.head()?;
     partner.head()?;
     Ok(())
@@ -1023,44 +1264,7 @@ fn s1_two_entity_non_commingling_and_custody_separation() -> Result<(), String> 
 
 // ------------------------------------------------------------------ Test 2
 
-fn runtime_envelopes(artifacts: &[ArtifactEnvelope]) -> Result<Vec<RuntimeValue>, String> {
-    artifacts
-        .iter()
-        .map(|a| {
-            let wire = serde_json::to_value(a).map_err(|e| format!("{e}"))?;
-            RuntimeValue::from_json(wire).map_err(|e| format!("{e:?}"))
-        })
-        .collect()
-}
-
 fn open_retail_mapping_cell(pack: &RetailPack, dir: &Path) -> Result<MapCell, String> {
-    let base = core_base()?;
-    let (sources, base_sources) = (
-        runtime_envelopes(&pack.candidate)?,
-        runtime_envelopes(&base)?,
-    );
-    let registry = BTreeSet::new();
-    let checked = norn_checker::check_artifact_set_with_receipt(
-        &norn_checker::ReceiptSources::new(&sources, &base_sources)
-            .map_err(|e| format!("{e:?}"))?,
-        &EntityArtifactSetContext {
-            registry: &registry,
-            base: &base,
-            tenant: None,
-        },
-        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
-    )
-    .map_err(|e| format!("receipt: {e:?}"))?;
-    if !checked.receipt.admitted {
-        return Err(format!("not admitted: {:?}", checked.diagnostics));
-    }
-    let wire = checked
-        .receipt
-        .to_canonical_value()
-        .map_err(|e| format!("{e:?}"))?;
-    let receipt =
-        String::from_utf8(norn_ir::canonical::serialize(&wire).map_err(|e| format!("{e:?}"))?)
-            .map_err(|e| format!("{e}"))?;
     let model = pack.model().clone();
     let mut cell = MapCell::open(
         &dir.join("retail-map.sqlite"),
@@ -1070,23 +1274,8 @@ fn open_retail_mapping_cell(pack: &RetailPack, dir: &Path) -> Result<MapCell, St
         |_| BTreeMap::new(),
     )
     .map_err(|e| format!("open map cell: {e}"))?;
-    let set: Vec<&ArtifactEnvelope> = pack.candidate.iter().chain(&base).collect();
-    cell.install_definitions(
-        model,
-        norn_cell::InstalledDefinitionInput {
-            canonical_set: serde_json::to_string(&set).map_err(|e| format!("{e}"))?,
-            registry: Vec::new(),
-            receipt_sha256: norn_checker::admission_receipt_sha256(&receipt)
-                .map_err(|e| format!("{e:?}"))?,
-            admission_receipt: Some(receipt),
-            readmission: None,
-            diff: json!({"suite": "retail-truth-slice"}),
-            installed_at: 1,
-            layout: None,
-        },
-        Some(0),
-    )
-    .map_err(|e| format!("install: {e}"))?;
+    cell.install_definitions(model, pack.install_input(), Some(0))
+        .map_err(|e| format!("install: {e}"))?;
     Ok(cell)
 }
 
@@ -1128,7 +1317,7 @@ fn map_input(mapping: &str, dataset: &str) -> MappingInput {
         mapping: mapping.to_owned(),
         dataset: dataset.to_owned(),
         connector_instance: "retail-lab".to_owned(),
-        partition: "MALL-CFC".to_owned(),
+        partition: FEED_PARTITION.to_owned(),
         recorded_at: norn_ir::provenance::UtcTimestamp("2026-09-07T12:00:00Z".to_owned()),
     }
 }
@@ -1146,26 +1335,89 @@ fn open_findings(cell: &MapCell, object_type: &str, key: &str) -> Result<Vec<Str
         .collect()
 }
 
-#[test]
-fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), String> {
-    let pack = retail_pack()?;
-    let dir = tempfile::tempdir().map_err(|e| format!("{e}"))?;
-    let mut cell = open_retail_mapping_cell(&pack, dir.path())?;
-    let (source_cursors, watermarks) = complete_feed_watermarks(CLOCK_MS);
-    let feed_ctx = QueryContext {
-        world: "main".to_owned(),
-        scope: SOLE_SCOPE.to_owned(),
-        population_pin: "all".to_owned(),
-        authorization_epoch: 1,
-        mapping_pin: "supply.pos_sales.mapping/0.1.0".to_owned(),
-        now_ms: CLOCK_MS,
-        source_cursors,
-        watermarks: watermarks.clone(),
-    };
-    let pos_q = pack.retail_question("supply.retail.pos_feed_revenue_weekly")?;
+fn verify_pos_quarantine_and_recovery(
+    cell: &mut MapCell,
+    pos_in: &MappingInput,
+    pos_q: &QuestionPlan,
+    feed_ctx: &QueryContext,
+) -> Result<(), String> {
+    let bad_pos = r#"{"pos_line_id":"POS-BAD","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":-3,"uom":"PCS","net_amount":600,"ccy":"EGP","sold_at":"2026-09-01T14:00:00Z"}"#;
+    let (b_bad, fresh_bad) = cell
+        .inject_mapping_bundle(
+            &raw_obs("synthetic-pos", "ev-pos-bad", "POS-BAD", bad_pos)?,
+            pos_in,
+        )
+        .map_err(|e| format!("{e}"))?;
+    assert!(fresh_bad);
+    cell.process_mapping_bundle(&b_bad)
+        .map_err(|e| format!("{e}"))?;
+    let f = open_findings(cell, "supply.PosSaleEvidence", "POS-BAD")?;
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert!(f.iter().any(|r| r.contains("sale_positive")), "{f:?}");
 
-    // 1. POS sales feed: clean rows land, bad row quarantines, KPI reflects quarantine & recovery,
-    //    and LINEAGE-SUM-1 resolves producing POS source records!
+    let before_fix = cell
+        .store()
+        .evaluate_question(pos_q, feed_ctx.clone(), |_| Ok(true))
+        .map_err(|e| format!("pos feed query before fix: {e}"))?;
+    assert_eq!(
+        bucket_total(&before_fix, &["ST-SOLE-CFC-1", "EGP", "2026-08-31"]).as_deref(),
+        Some("1000")
+    );
+    assert!(!before_fix.complete);
+
+    let (b_dup, fresh_dup) = cell
+        .inject_mapping_bundle(
+            &raw_obs("synthetic-pos", "ev-pos-bad", "POS-BAD", bad_pos)?,
+            pos_in,
+        )
+        .map_err(|e| format!("{e}"))?;
+    assert!(!fresh_dup, "exact redelivery captured once");
+    assert!(
+        !cell
+            .process_mapping_bundle(&b_dup)
+            .map_err(|e| format!("{e}"))?
+    );
+    let (b_reemit, _) = cell
+        .inject_mapping_bundle(
+            &raw_obs("synthetic-pos", "ev-pos-bad-2", "POS-BAD", bad_pos)?,
+            pos_in,
+        )
+        .map_err(|e| format!("{e}"))?;
+    cell.process_mapping_bundle(&b_reemit)
+        .map_err(|e| format!("{e}"))?;
+    assert_eq!(
+        open_findings(cell, "supply.PosSaleEvidence", "POS-BAD")?.len(),
+        1
+    );
+
+    let fixed_pos = r#"{"pos_line_id":"POS-BAD","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":3,"uom":"PCS","net_amount":600,"ccy":"EGP","sold_at":"2026-09-01T14:05:00Z"}"#;
+    let (b_fix, _) = cell
+        .inject_mapping_bundle(
+            &raw_obs("synthetic-pos", "ev-pos-fix", "POS-BAD", fixed_pos)?,
+            pos_in,
+        )
+        .map_err(|e| format!("{e}"))?;
+    cell.process_mapping_bundle(&b_fix)
+        .map_err(|e| format!("{e}"))?;
+    assert!(open_findings(cell, "supply.PosSaleEvidence", "POS-BAD")?.is_empty());
+
+    let after_fix = cell
+        .store()
+        .evaluate_question(pos_q, feed_ctx.clone(), |_| Ok(true))
+        .map_err(|e| format!("pos feed query after fix: {e}"))?;
+    assert!(after_fix.complete);
+    assert_eq!(
+        bucket_total(&after_fix, &["ST-SOLE-CFC-1", "EGP", "2026-08-31"]).as_deref(),
+        Some("1600")
+    );
+    verify_pos_lineage(cell, pos_q, feed_ctx, &after_fix)
+}
+
+fn verify_pos_feed_and_lineage(
+    cell: &mut MapCell,
+    pos_q: &QuestionPlan,
+    feed_ctx: &QueryContext,
+) -> Result<(), String> {
     let pos_in = map_input("supply.pos_sales.mapping", "pos_sale_line");
     let clean_pos_1 = r#"{"pos_line_id":"POS-1","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":3,"uom":"PCS","net_amount":600,"ccy":"LE","sold_at":"2026-09-01T14:00:00Z"}"#;
     let clean_pos_2 = r#"{"pos_line_id":"POS-2","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":2,"uom":"PCS","net_amount":400,"ccy":"EGP","sold_at":"2026-09-02T14:00:00Z"}"#;
@@ -1196,103 +1448,29 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
         pos_obj.values.get("currency").map(scalar).as_deref(),
         Some("EGP")
     );
+    verify_pos_quarantine_and_recovery(cell, &pos_in, pos_q, feed_ctx)?;
 
-    // Bad POS row (negative quantity, 600 EGP) -> quarantined via SalePositive law.
-    let bad_pos = r#"{"pos_line_id":"POS-BAD","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":-3,"uom":"PCS","net_amount":600,"ccy":"EGP","sold_at":"2026-09-01T14:00:00Z"}"#;
-    let (b_bad, fresh_bad) = cell
+    let bad_uom = r#"{"pos_line_id":"POS-UOM","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":2,"uom":"BOX","net_amount":200,"ccy":"EGP","sold_at":"2026-09-01T14:00:00Z"}"#;
+    let (b_uom, _) = cell
         .inject_mapping_bundle(
-            &raw_obs("synthetic-pos", "ev-pos-bad", "POS-BAD", bad_pos)?,
+            &raw_obs("synthetic-pos", "ev-pos-uom", "POS-UOM", bad_uom)?,
             &pos_in,
         )
         .map_err(|e| format!("{e}"))?;
-    assert!(fresh_bad);
-    cell.process_mapping_bundle(&b_bad)
-        .map_err(|e| format!("{e}"))?;
-    let f = open_findings(&cell, "supply.PosSaleEvidence", "POS-BAD")?;
-    assert_eq!(f.len(), 1, "{f:?}");
-    assert!(f.iter().any(|r| r.contains("sale_positive")), "{f:?}");
+    assert!(matches!(
+        cell.process_mapping_outcome(&b_uom)
+            .map_err(|e| format!("{e}"))?,
+        MappingOutcome::Quarantined(_)
+    ));
+    Ok(())
+}
 
-    // End-to-end KPI check BEFORE correction: quarantined `POS-BAD` is excluded from the bucket
-    // (600 + 400 = 1000, never 1600) AND marks the result incomplete (`complete == false`)!
-    let before_fix = cell
-        .store()
-        .evaluate_question(&pos_q, feed_ctx.clone(), |_| Ok(true))
-        .map_err(|e| format!("pos feed query before fix: {e}"))?;
-    assert_eq!(
-        bucket_total(&before_fix, &["ST-SOLE-CFC-1", "EGP", "2026-08-31"]).as_deref(),
-        Some("1000"),
-        "quarantined POS-BAD is excluded from revenue bucket"
-    );
-    assert!(
-        !before_fix.complete,
-        "quarantined row must mark QueryResult incomplete"
-    );
-
-    // Exact redelivery + re-emitted duplicate event id: zero duplicate findings, unchanged KPI!
-    let (b_dup, fresh_dup) = cell
-        .inject_mapping_bundle(
-            &raw_obs("synthetic-pos", "ev-pos-bad", "POS-BAD", bad_pos)?,
-            &pos_in,
-        )
-        .map_err(|e| format!("{e}"))?;
-    assert!(!fresh_dup, "exact redelivery captured once");
-    assert!(
-        !cell
-            .process_mapping_bundle(&b_dup)
-            .map_err(|e| format!("{e}"))?
-    );
-    let (b_reemit, _) = cell
-        .inject_mapping_bundle(
-            &raw_obs("synthetic-pos", "ev-pos-bad-2", "POS-BAD", bad_pos)?,
-            &pos_in,
-        )
-        .map_err(|e| format!("{e}"))?;
-    cell.process_mapping_bundle(&b_reemit)
-        .map_err(|e| format!("{e}"))?;
-    assert_eq!(
-        open_findings(&cell, "supply.PosSaleEvidence", "POS-BAD")?.len(),
-        1,
-        "redelivery never duplicates active findings"
-    );
-    let after_redelivery = cell
-        .store()
-        .evaluate_question(&pos_q, feed_ctx.clone(), |_| Ok(true))
-        .map_err(|e| format!("pos feed query after redelivery: {e}"))?;
-    assert_eq!(
-        bucket_total(&after_redelivery, &["ST-SOLE-CFC-1", "EGP", "2026-08-31"]).as_deref(),
-        Some("1000"),
-        "redelivery never double-counts revenue"
-    );
-
-    // Valid correction clears the finding AND lifts the complete KPI bucket to 1600 EGP!
-    let fixed_pos = r#"{"pos_line_id":"POS-BAD","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":3,"uom":"PCS","net_amount":600,"ccy":"EGP","sold_at":"2026-09-01T14:05:00Z"}"#;
-    let (b_fix, _) = cell
-        .inject_mapping_bundle(
-            &raw_obs("synthetic-pos", "ev-pos-fix", "POS-BAD", fixed_pos)?,
-            &pos_in,
-        )
-        .map_err(|e| format!("{e}"))?;
-    cell.process_mapping_bundle(&b_fix)
-        .map_err(|e| format!("{e}"))?;
-    assert!(open_findings(&cell, "supply.PosSaleEvidence", "POS-BAD")?.is_empty());
-
-    let after_fix = cell
-        .store()
-        .evaluate_question(&pos_q, feed_ctx.clone(), |_| Ok(true))
-        .map_err(|e| format!("pos feed query after fix: {e}"))?;
-    assert!(
-        after_fix.complete,
-        "cleared finding restores complete answer"
-    );
-    assert_eq!(
-        bucket_total(&after_fix, &["ST-SOLE-CFC-1", "EGP", "2026-08-31"]).as_deref(),
-        Some("1600"),
-        "recovered POS-BAD joins bucket: 600 + 400 + 600 = 1600"
-    );
-
-    // LINEAGE-SUM-1: scoped number-to-source drill-through resolves the actual producing POS
-    // source records (`ContributionSource::Resolved`) for an authorized reader, and redacts them
-    // (`ContributionSource::Restricted`) for a restricted reader!
+fn verify_pos_lineage(
+    cell: &MapCell,
+    pos_q: &QuestionPlan,
+    feed_ctx: &QueryContext,
+    after_fix: &QueryResult,
+) -> Result<(), String> {
     let pos_bucket = after_fix
         .rows
         .keys()
@@ -1304,7 +1482,7 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
     let traced = cell
         .store()
         .trace_question(
-            &pos_q,
+            pos_q,
             feed_ctx.clone(),
             &after_fix.lineage_ref,
             &pos_bucket,
@@ -1321,7 +1499,7 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
         .iter()
         .filter_map(|c| match &c.source {
             ContributionSource::Resolved { provenance } => {
-                Some(provenance.source_record_ref.as_str().to_owned())
+                Some(provenance.source_record_ref.record.clone())
             }
             _ => None,
         })
@@ -1338,8 +1516,8 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
     let restricted = cell
         .store()
         .trace_question(
-            &pos_q,
-            feed_ctx,
+            pos_q,
+            feed_ctx.clone(),
             &after_fix.lineage_ref,
             &pos_bucket,
             |_| Ok(true),
@@ -1356,60 +1534,10 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
             && c.amounts.is_none()
             && matches!(c.source, ContributionSource::Restricted)
     }));
+    Ok(())
+}
 
-    // Missing feed watermark fails closed on feed coverage check.
-    let mut partial_wm = watermarks;
-    partial_wm.remove("supply.store_counts");
-    let missing_feeds = check_feed_coverage(&partial_wm, CLOCK_MS.saturating_sub(MAX_COUNT_AGE_MS));
-    assert!(missing_feeds.contains("supply.store_counts"));
-
-    // Unknown UOM ("BOX") lands quarantined at mapping time.
-    let bad_uom = r#"{"pos_line_id":"POS-UOM","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":2,"uom":"BOX","net_amount":200,"ccy":"EGP","sold_at":"2026-09-01T14:00:00Z"}"#;
-    let (b_uom, _) = cell
-        .inject_mapping_bundle(
-            &raw_obs("synthetic-pos", "ev-pos-uom", "POS-UOM", bad_uom)?,
-            &pos_in,
-        )
-        .map_err(|e| format!("{e}"))?;
-    let outcome = cell
-        .process_mapping_outcome(&b_uom)
-        .map_err(|e| format!("{e}"))?;
-    assert!(
-        matches!(outcome, MappingOutcome::Quarantined(_)),
-        "{outcome:?}"
-    );
-
-    // 2. Store physical count feed: inherits `on_hand_non_negative`, quarantines unknown basis.
-    let cnt_in = map_input("supply.store_counts.mapping", "store_count");
-    let neg_cnt = r#"{"count_id":"SC-BAD","store_code":"ST-SOLE-CFC-1","sku_code":"SKU-DRESS","counted_qty":-10,"uom":"EA","basis":"on_hand","counted_at":"2026-09-05T10:00:00Z"}"#;
-    let (b_cnt, _) = cell
-        .inject_mapping_bundle(
-            &raw_obs("synthetic-store-count", "ev-cnt-1", "SC-BAD", neg_cnt)?,
-            &cnt_in,
-        )
-        .map_err(|e| format!("{e}"))?;
-    cell.process_mapping_bundle(&b_cnt)
-        .map_err(|e| format!("{e}"))?;
-    let cnt_f = open_findings(&cell, "supply.StoreCountEvidence", "SC-BAD")?;
-    assert!(
-        cnt_f.iter().any(|r| r.contains("on_hand_non_negative")),
-        "{cnt_f:?}"
-    );
-
-    let bad_basis = r#"{"count_id":"SC-BASIS","store_code":"ST-SOLE-CFC-1","sku_code":"SKU-DRESS","counted_qty":10,"uom":"EA","basis":"shrinkage","counted_at":"2026-09-05T10:00:00Z"}"#;
-    let (b_basis, _) = cell
-        .inject_mapping_bundle(
-            &raw_obs("synthetic-store-count", "ev-cnt-2", "SC-BASIS", bad_basis)?,
-            &cnt_in,
-        )
-        .map_err(|e| format!("{e}"))?;
-    assert!(matches!(
-        cell.process_mapping_outcome(&b_basis)
-            .map_err(|e| format!("{e}"))?,
-        MappingOutcome::Quarantined(_)
-    ));
-
-    // 3. Retail supplier receipt feed: vendor normalization, missing cost allowed, negative cost & over-damage quarantined.
+fn verify_receipt_and_cost_feeds(cell: &mut MapCell) -> Result<(), String> {
     let rcpt_in = map_input("supply.retail_receipts.mapping", "retail_receipt");
     let nocost_rcpt = r#"{"receipt_line_id":"RR-NOCOST","store_code":"ST-SOLE-CFC-2","sku_code":"SKU-DRESS","vendor_code":"ATELIER-01","received_qty":20,"damaged_qty":0,"uom":"PCS","unit_cost":null,"ccy":"EGP","received_at":"2026-08-20T09:00:00Z"}"#;
     let (b_r1, _) = cell
@@ -1435,7 +1563,7 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
         r_obj.values.get("supplier_id").map(scalar).as_deref(),
         Some("SUP-ATELIER")
     );
-    assert!(open_findings(&cell, "supply.RetailReceiptEvidence", "RR-NOCOST")?.is_empty());
+    assert!(open_findings(cell, "supply.RetailReceiptEvidence", "RR-NOCOST")?.is_empty());
 
     let bad_rcpt = r#"{"receipt_line_id":"RR-BAD","store_code":"ST-SOLE-CFC-2","sku_code":"SKU-DRESS","vendor_code":"ATELIER-01","received_qty":10,"damaged_qty":12,"uom":"PCS","unit_cost":-5,"ccy":"EGP","received_at":"2026-08-20T09:00:00Z"}"#;
     let (b_r2, _) = cell
@@ -1446,7 +1574,7 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
         .map_err(|e| format!("{e}"))?;
     cell.process_mapping_bundle(&b_r2)
         .map_err(|e| format!("{e}"))?;
-    let r_f = open_findings(&cell, "supply.RetailReceiptEvidence", "RR-BAD")?;
+    let r_f = open_findings(cell, "supply.RetailReceiptEvidence", "RR-BAD")?;
     assert!(
         r_f.iter().any(|r| r.contains("damaged_within_received")),
         "{r_f:?}"
@@ -1456,7 +1584,6 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
         "{r_f:?}"
     );
 
-    // 4. Unit cost feed: zero unit cost quarantined, positive correction recovers.
     let cost_in = map_input("supply.unit_costs.mapping", "unit_cost");
     let bad_cost = r#"{"cost_id":"COST-BAD","sku_code":"SKU-DRESS","vendor_code":"ATELIER-01","unit_cost":0,"ccy":"EGP","effective_from":"2026-08-01T00:00:00Z"}"#;
     let (b_c1, _) = cell
@@ -1467,7 +1594,7 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
         .map_err(|e| format!("{e}"))?;
     cell.process_mapping_bundle(&b_c1)
         .map_err(|e| format!("{e}"))?;
-    let c_f = open_findings(&cell, "supply.UnitCostEvidence", "COST-BAD")?;
+    let c_f = open_findings(cell, "supply.UnitCostEvidence", "COST-BAD")?;
     assert!(
         c_f.iter().any(|r| r.contains("unit_cost_positive")),
         "{c_f:?}"
@@ -1482,8 +1609,80 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
         .map_err(|e| format!("{e}"))?;
     cell.process_mapping_bundle(&b_c2)
         .map_err(|e| format!("{e}"))?;
-    assert!(open_findings(&cell, "supply.UnitCostEvidence", "COST-BAD")?.is_empty());
+    assert!(open_findings(cell, "supply.UnitCostEvidence", "COST-BAD")?.is_empty());
+    Ok(())
+}
 
+fn verify_secondary_feeds(cell: &mut MapCell) -> Result<(), String> {
+    let cnt_in = map_input("supply.store_counts.mapping", "store_count");
+    let neg_cnt = r#"{"count_id":"SC-BAD","store_code":"ST-SOLE-CFC-1","sku_code":"SKU-DRESS","counted_qty":-10,"uom":"EA","basis":"on_hand","counted_at":"2026-09-05T10:00:00Z"}"#;
+    let (b_cnt, _) = cell
+        .inject_mapping_bundle(
+            &raw_obs("synthetic-store-count", "ev-cnt-1", "SC-BAD", neg_cnt)?,
+            &cnt_in,
+        )
+        .map_err(|e| format!("{e}"))?;
+    cell.process_mapping_bundle(&b_cnt)
+        .map_err(|e| format!("{e}"))?;
+    let cnt_f = open_findings(cell, "supply.StoreCountEvidence", "SC-BAD")?;
+    assert!(
+        cnt_f.iter().any(|r| r.contains("on_hand_non_negative")),
+        "{cnt_f:?}"
+    );
+
+    let bad_basis = r#"{"count_id":"SC-BASIS","store_code":"ST-SOLE-CFC-1","sku_code":"SKU-DRESS","counted_qty":10,"uom":"EA","basis":"shrinkage","counted_at":"2026-09-05T10:00:00Z"}"#;
+    let (b_basis, _) = cell
+        .inject_mapping_bundle(
+            &raw_obs("synthetic-store-count", "ev-cnt-2", "SC-BASIS", bad_basis)?,
+            &cnt_in,
+        )
+        .map_err(|e| format!("{e}"))?;
+    assert!(matches!(
+        cell.process_mapping_outcome(&b_basis)
+            .map_err(|e| format!("{e}"))?,
+        MappingOutcome::Quarantined(_)
+    ));
+    verify_receipt_and_cost_feeds(cell)
+}
+
+#[test]
+fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), String> {
+    let pack = retail_pack()?;
+    let dir = tempfile::tempdir().map_err(|e| format!("{e}"))?;
+    let mut cell = open_retail_mapping_cell(pack, dir.path())?;
+    let (source_cursors, watermarks) = default_feed_frontier(CLOCK_MS);
+    let feed_ctx = QueryContext {
+        world: "main".to_owned(),
+        scope: SOLE_SCOPE.to_owned(),
+        population_pin: "all".to_owned(),
+        authorization_epoch: 1,
+        mapping_pin: "supply.pos_sales.mapping/0.1.0".to_owned(),
+        now_ms: CLOCK_MS,
+        source_cursors: source_cursors.clone(),
+        watermarks: watermarks.clone(),
+    };
+    let pos_q = pack.retail_question("supply.retail.pos_feed_revenue_weekly")?;
+    verify_pos_feed_and_lineage(&mut cell, &pos_q, &feed_ctx)?;
+
+    // Missing feed watermark fails closed inside BOTH `evaluate_question` and `check_feed_coverage`.
+    let mut partial_wm = watermarks;
+    partial_wm.remove("supply.store_counts");
+    let mut degraded_ctx = feed_ctx;
+    degraded_ctx.watermarks = partial_wm.clone();
+    let degraded_res = cell
+        .store()
+        .evaluate_question(&pos_q, degraded_ctx, |_| Ok(true))
+        .map_err(|e| format!("degraded pos feed query: {e}"))?;
+    assert!(!degraded_res.complete);
+    assert_eq!(degraded_res.freshness, Freshness::Incomplete);
+    let missing_feeds = check_feed_coverage(
+        &source_cursors,
+        &partial_wm,
+        CLOCK_MS.saturating_sub(MAX_COUNT_AGE_MS),
+    );
+    assert!(missing_feeds.contains("supply.store_counts"));
+
+    verify_secondary_feeds(&mut cell)?;
     cell.store()
         .read()
         .verify_ledger()
@@ -1497,15 +1696,21 @@ fn s1_messy_retail_feeds_quarantine_idempotency_and_recovery() -> Result<(), Str
 enum CountCoverageKind {
     MissingCount,
     FutureCount {
+        basis: String,
         count_as_of: String,
     },
     StaleCount {
+        basis: String,
         last_count_as_of: String,
         age_ms: u64,
     },
     OnHandDrift {
         counted_qty: String,
         derived_lot_qty: String,
+    },
+    AvailableExceedsOnHand {
+        available_qty: String,
+        on_hand_qty: String,
     },
 }
 
@@ -1544,20 +1749,137 @@ fn list_objects(
     Ok(out)
 }
 
+type BasisCount = (u64, String, Decimal);
+
+fn collect_latest_counts(
+    counts: &[norn_cell::ObjectRecord],
+    now_ms: u64,
+    keys: &mut BTreeSet<(String, String)>,
+    findings: &mut Vec<CountCoverageFinding>,
+) -> Result<BTreeMap<(String, String, String), BasisCount>, String> {
+    let mut latest: BTreeMap<(String, String, String), BasisCount> = BTreeMap::new();
+    for count in counts {
+        let basis = count
+            .values
+            .get("quantity_basis")
+            .map(scalar)
+            .unwrap_or_default();
+        if basis != "on_hand" && basis != "available" {
+            continue;
+        }
+        let store_id = count.values.get("store_id").map(scalar).unwrap_or_default();
+        let sku_id = count.values.get("sku_id").map(scalar).unwrap_or_default();
+        let as_of = count.values.get("as_of").map(scalar).unwrap_or_default();
+        let as_of_ms = parse_rfc3339_ms(&as_of)?;
+        keys.insert((store_id.clone(), sku_id.clone()));
+
+        if as_of_ms > now_ms {
+            findings.push(CountCoverageFinding {
+                store_id,
+                sku_id,
+                kind: CountCoverageKind::FutureCount {
+                    basis,
+                    count_as_of: as_of,
+                },
+            });
+            continue;
+        }
+        let counted = match count.values.get("on_hand_qty") {
+            Some(RuntimeValue::Number(d)) => *d,
+            _ => Decimal::from(0_i64),
+        };
+        let bkey = (store_id, sku_id, basis);
+        if latest
+            .get(&bkey)
+            .is_none_or(|(prev_ms, _, _)| as_of_ms >= *prev_ms)
+        {
+            latest.insert(bkey, (as_of_ms, as_of, counted));
+        }
+    }
+    Ok(latest)
+}
+
+fn check_position_counts(
+    (store_id, sku_id): (&str, &str),
+    derived: Decimal,
+    (on_hand, avail): (Option<&BasisCount>, Option<&BasisCount>),
+    (now_ms, max_age_ms): (u64, u64),
+    findings: &mut Vec<CountCoverageFinding>,
+) {
+    let has_future = findings.iter().any(|f| {
+        f.store_id == store_id
+            && f.sku_id == sku_id
+            && matches!(f.kind, CountCoverageKind::FutureCount { .. })
+    });
+    let Some((as_of_ms, as_of, counted)) = on_hand else {
+        if !has_future && derived > Decimal::from(0_i64) {
+            findings.push(CountCoverageFinding {
+                store_id: store_id.to_owned(),
+                sku_id: sku_id.to_owned(),
+                kind: CountCoverageKind::MissingCount,
+            });
+        }
+        return;
+    };
+    let age_ms = now_ms.saturating_sub(*as_of_ms);
+    if age_ms > max_age_ms {
+        findings.push(CountCoverageFinding {
+            store_id: store_id.to_owned(),
+            sku_id: sku_id.to_owned(),
+            kind: CountCoverageKind::StaleCount {
+                basis: "on_hand".to_owned(),
+                last_count_as_of: as_of.clone(),
+                age_ms,
+            },
+        });
+    }
+    if *counted != derived {
+        findings.push(CountCoverageFinding {
+            store_id: store_id.to_owned(),
+            sku_id: sku_id.to_owned(),
+            kind: CountCoverageKind::OnHandDrift {
+                counted_qty: counted.canonical(),
+                derived_lot_qty: derived.canonical(),
+            },
+        });
+    }
+    if let Some((a_ms, a_as_of, a_qty)) = avail {
+        let a_age = now_ms.saturating_sub(*a_ms);
+        if a_age > max_age_ms {
+            findings.push(CountCoverageFinding {
+                store_id: store_id.to_owned(),
+                sku_id: sku_id.to_owned(),
+                kind: CountCoverageKind::StaleCount {
+                    basis: "available".to_owned(),
+                    last_count_as_of: a_as_of.clone(),
+                    age_ms: a_age,
+                },
+            });
+        }
+        if *a_qty > *counted {
+            findings.push(CountCoverageFinding {
+                store_id: store_id.to_owned(),
+                sku_id: sku_id.to_owned(),
+                kind: CountCoverageKind::AvailableExceedsOnHand {
+                    available_qty: a_qty.canonical(),
+                    on_hand_qty: counted.canonical(),
+                },
+            });
+        }
+    }
+}
+
 /// Fail-closed physical count coverage & staleness check across the union of all
-/// live holdings (`remaining_qty > 0`) and all `on_hand` `StoreCount`s.
-/// Selects the latest eligible (`as_of <= now_ms`) count per `(store_id, sku_id)`
-/// and emits structured findings for missing, future, stale, or drifted counts.
+/// live holdings (`remaining_qty > 0`) and all `on_hand` / `available` `StoreCount`s.
 /// (Wires into `#1905` `RequiredSources` freshness once B6 lands.)
 fn evaluate_count_coverage(
     book: &EntityBook,
     now_ms: u64,
     max_age_ms: u64,
 ) -> Result<Vec<CountCoverageFinding>, String> {
-    let reader = book.cell.store().read();
-    let lots = list_objects(&reader, "supply.StockLot")?;
+    let reader = book.cell()?.store().read();
     let mut derived_on_hand: BTreeMap<(String, String), Decimal> = BTreeMap::new();
-    for lot in &lots {
+    for lot in &list_objects(&reader, "supply.StockLot")? {
         let store_id = lot.values.get("store_id").map(scalar).unwrap_or_default();
         let sku_id = lot.values.get("sku_id").map(scalar).unwrap_or_default();
         if let Some(RuntimeValue::Number(qty)) = lot.values.get("remaining_qty") {
@@ -1569,127 +1891,37 @@ fn evaluate_count_coverage(
     }
 
     let counts = list_objects(&reader, "supply.StoreCount")?;
-    let mut latest_eligible: BTreeMap<(String, String), (u64, String, Decimal)> = BTreeMap::new();
     let mut findings = Vec::new();
     let mut keys: BTreeSet<(String, String)> = derived_on_hand
         .iter()
         .filter(|(_, qty)| **qty > Decimal::from(0_i64))
         .map(|(k, _)| k.clone())
         .collect();
-
-    for count in &counts {
-        if count.values.get("quantity_basis").map(scalar).as_deref() != Some("on_hand") {
-            continue;
-        }
-        let store_id = count.values.get("store_id").map(scalar).unwrap_or_default();
-        let sku_id = count.values.get("sku_id").map(scalar).unwrap_or_default();
-        let as_of = count.values.get("as_of").map(scalar).unwrap_or_default();
-        let as_of_ms = parse_rfc3339_ms(&as_of)?;
-        let key = (store_id.clone(), sku_id.clone());
-        keys.insert(key.clone());
-
-        if as_of_ms > now_ms {
-            findings.push(CountCoverageFinding {
-                store_id,
-                sku_id,
-                kind: CountCoverageKind::FutureCount { count_as_of: as_of },
-            });
-            continue;
-        }
-        let counted = match count.values.get("on_hand_qty") {
-            Some(RuntimeValue::Number(d)) => *d,
-            _ => Decimal::from(0_i64),
-        };
-        let replace = latest_eligible
-            .get(&key)
-            .is_none_or(|(prev_ms, _, _)| as_of_ms >= *prev_ms);
-        if replace {
-            latest_eligible.insert(key, (as_of_ms, as_of, counted));
-        }
-    }
+    let latest = collect_latest_counts(&counts, now_ms, &mut keys, &mut findings)?;
 
     for (store_id, sku_id) in keys {
         let derived = derived_on_hand
             .get(&(store_id.clone(), sku_id.clone()))
             .copied()
             .unwrap_or_else(|| Decimal::from(0_i64));
-        let has_future = findings.iter().any(|f| {
-            f.store_id == store_id
-                && f.sku_id == sku_id
-                && matches!(f.kind, CountCoverageKind::FutureCount { .. })
-        });
-        match latest_eligible.get(&(store_id.clone(), sku_id.clone())) {
-            None => {
-                if !has_future && derived > Decimal::from(0_i64) {
-                    findings.push(CountCoverageFinding {
-                        store_id,
-                        sku_id,
-                        kind: CountCoverageKind::MissingCount,
-                    });
-                }
-            }
-            Some((as_of_ms, as_of, counted)) => {
-                let age_ms = now_ms.saturating_sub(*as_of_ms);
-                if age_ms > max_age_ms {
-                    findings.push(CountCoverageFinding {
-                        store_id: store_id.clone(),
-                        sku_id: sku_id.clone(),
-                        kind: CountCoverageKind::StaleCount {
-                            last_count_as_of: as_of.clone(),
-                            age_ms,
-                        },
-                    });
-                }
-                if *counted != derived {
-                    findings.push(CountCoverageFinding {
-                        store_id,
-                        sku_id,
-                        kind: CountCoverageKind::OnHandDrift {
-                            counted_qty: counted.canonical(),
-                            derived_lot_qty: derived.canonical(),
-                        },
-                    });
-                }
-            }
-        }
+        let on_hand = latest.get(&(store_id.clone(), sku_id.clone(), "on_hand".to_owned()));
+        let avail = latest.get(&(store_id.clone(), sku_id.clone(), "available".to_owned()));
+        check_position_counts(
+            (&store_id, &sku_id),
+            derived,
+            (on_hand, avail),
+            (now_ms, max_age_ms),
+            &mut findings,
+        );
     }
     Ok(findings)
 }
 
-#[test]
-fn s1_holding_lot_aging_count_staleness_and_commercial_kpis_withholding() -> Result<(), String> {
-    let mut sole = EntityBook::open(SOLE_CELL_ID, "org_family_sole_prop", "prod", "sole.sqlite")?;
-    let mut partner = EntityBook::open(
-        PARTNER_CELL_ID,
-        "org_family_partnership",
-        "prod",
-        "partner.sqlite",
-    )?;
-    seed_sole_prop(&mut sole)?;
-    seed_partnership(&mut partner)?;
-    seed_retail_operations(&mut sole, &mut partner)?;
-
-    // Attempting to rewrite a lot's `received_at` during a balance update refuses at input validation
-    // (`additionalProperties: false` structurally excludes `received_at` from the update schema).
-    sole.refused(
-        "supply.stock_lot.update_balance",
-        "clerk:hana",
-        json!({
-            "lot_id": "LOT-S1-W1",
-            "remaining_qty": "20",
-            "as_of": "2026-09-06T09:00:00Z",
-            "unit_cost": "100",
-            "stock_value": "0",
-            "received_at": "2026-09-01T09:00:00Z"
-        }),
-    )?;
-
-    // Admit and evaluate all 7 operational retail KPI questions on Cell A.
+fn verify_retail_questions(sole: &EntityBook) -> Result<(Decimal, Decimal, Decimal), String> {
     let availability = sole.answer("supply.retail.store_availability_weekly")?;
     assert_eq!(
         bucket_total(&availability, &["ST-SOLE-CFC-1", "each", "2026-08-31"]).as_deref(),
-        Some("56"),
-        "store availability as-of W9"
+        Some("56")
     );
     let on_hand = sole.answer("supply.retail.store_on_hand_weekly")?;
     let s1_on_hand = bucket_decimal(&on_hand, &["ST-SOLE-CFC-1", "each", "2026-08-31"])
@@ -1700,8 +1932,6 @@ fn s1_holding_lot_aging_count_staleness_and_commercial_kpis_withholding() -> Res
         "derived lot on-hand = 25 + 35"
     );
 
-    // Cost-status-partitioned stock value: pure-costed ST-SOLE-CFC-1 publishes 6000 EGP;
-    // MIXED costed + uncosted ST-SOLE-CFC-2 FAILS CLOSED (`None` — no partial total!).
     let stock_val = sole.answer("supply.retail.store_stock_value_weekly")?;
     let s1_stock_val = resolve_costed_bucket(&stock_val, &["ST-SOLE-CFC-1", "EGP", "2026-08-31"])
         .ok_or("missing ST-SOLE-CFC-1 stock_value")?;
@@ -1715,14 +1945,13 @@ fn s1_holding_lot_aging_count_staleness_and_commercial_kpis_withholding() -> Res
     let aging_q = sole.answer("supply.retail.lot_received_aging_weekly")?;
     assert_eq!(
         bucket_total(&aging_q, &["ST-SOLE-CFC-1", "each", "2026-07-06"]).as_deref(),
-        Some("60"),
-        "W1 lot receipt cohort preserved after balance depletion"
+        Some("60")
     );
     assert_eq!(
         bucket_total(&aging_q, &["ST-SOLE-CFC-1", "each", "2026-08-03"]).as_deref(),
-        Some("40"),
-        "W5 lot receipt cohort"
+        Some("40")
     );
+
     let sales_q = sole.answer("supply.retail.store_sales_weekly")?;
     let s1_sold = bucket_decimal(&sales_q, &["ST-SOLE-CFC-1", "each", "2026-08-31"])
         .ok_or("missing ST-SOLE-CFC-1 sales")?;
@@ -1734,44 +1963,95 @@ fn s1_holding_lot_aging_count_staleness_and_commercial_kpis_withholding() -> Res
         Some("9000")
     );
 
-    // Gross margin rate: pure-costed ST-SOLE-CFC-1 = 5000 / 9000 = 0.555556 (rounded midpoint away
-    // from zero, ratio of sums != 0.583333 average of line rates); mixed ST-SOLE-CFC-2 WITHHOLDS!
+    let gm_sum = sole.answer("supply.retail.store_gross_margin_weekly")?;
+    let s1_gm = resolve_costed_bucket(&gm_sum, &["ST-SOLE-CFC-1", "EGP", "2026-08-31"])
+        .ok_or("missing ST-SOLE-CFC-1 gross margin")?;
+    assert_eq!(s1_gm.canonical(), "5000");
+    assert_eq!(
+        resolve_costed_bucket(&gm_sum, &["ST-SOLE-CFC-2", "EGP", "2026-08-31"]),
+        None
+    );
+
     let gm_rate = sole.answer("supply.retail.store_gross_margin_rate_weekly")?;
     let s1_rate = resolve_costed_bucket(&gm_rate, &["ST-SOLE-CFC-1", "EGP", "2026-08-31"])
         .ok_or("missing ST-SOLE-CFC-1 gross margin rate")?;
-    assert_eq!(
-        s1_rate.canonical(),
-        "0.555556",
-        "exact ratio-of-sums 5000/9000 rounded to scale 6"
-    );
+    assert_eq!(s1_rate.canonical(), "0.555556", "ratio-of-sums 5000/9000");
     assert_eq!(
         resolve_costed_bucket(&gm_rate, &["ST-SOLE-CFC-2", "EGP", "2026-08-31"]),
-        None,
-        "mixed costed + uncosted gross margin bucket must withhold"
+        None
+    );
+    Ok((s1_on_hand, s1_stock_val, s1_sold))
+}
+
+fn verify_transform_withholding(
+    sole: &EntityBook,
+    sales_tf: &TransformResult,
+    aging_tf: &TransformResult,
+) -> Result<(), String> {
+    let s2_sales = sales_tf
+        .rows
+        .iter()
+        .find(|r| r.values.get("store_id").map(scalar).as_deref() == Some("ST-SOLE-CFC-2"))
+        .ok_or("missing ST-SOLE-CFC-2 sales row")?;
+    assert_eq!(
+        s2_sales.values.get("cost_complete"),
+        Some(&RuntimeValue::Bool(false))
+    );
+    assert_eq!(
+        s2_sales.values.get("effective_cogs"),
+        Some(&RuntimeValue::Null)
+    );
+    assert_eq!(
+        s2_sales.values.get("effective_gross_margin"),
+        Some(&RuntimeValue::Null)
+    );
+    let s2_lot = aging_tf
+        .rows
+        .iter()
+        .find(|r| r.values.get("store_id").map(scalar).as_deref() == Some("ST-SOLE-CFC-2"))
+        .ok_or("missing ST-SOLE-CFC-2 lot row")?;
+    assert_eq!(
+        s2_lot.values.get("cost_complete"),
+        Some(&RuntimeValue::Bool(false))
     );
 
-    // Chasm-trap-safe retail transforms: StoreSalesPerformance & StoreLotAging.
+    let withheld_tf = sole.evaluate_transform("supply.retail.store_sales_performance", |obj| {
+        if obj.object_type == "supply.PosSale" && obj.id == "SALE-S1-2" {
+            Ok(RowAccess::Count)
+        } else {
+            Ok(RowAccess::Read)
+        }
+    })?;
+    assert!(!withheld_tf.complete);
+    assert_eq!(withheld_tf.withheld.get("sale").copied(), Some(1));
+    Ok(())
+}
+
+fn verify_retail_transforms_and_kpis(
+    sole: &EntityBook,
+    s1_on_hand: Decimal,
+    s1_stock_val: Decimal,
+    s1_sold: Decimal,
+) -> Result<(), String> {
     let sales_tf = sole.evaluate_transform("supply.retail.store_sales_performance", |_| {
         Ok(RowAccess::Read)
     })?;
     assert!(sales_tf.complete);
-    let s1_sales_row = sales_tf
+    let s1_sales = sales_tf
         .rows
         .iter()
         .find(|r| r.values.get("store_id").map(scalar).as_deref() == Some("ST-SOLE-CFC-1"))
         .ok_or("missing ST-SOLE-CFC-1 sales row")?;
     assert_eq!(
-        s1_sales_row.values.get("cost_complete"),
+        s1_sales.values.get("cost_complete"),
         Some(&RuntimeValue::Bool(true))
     );
-    let s1_margin = match s1_sales_row.values.get("effective_gross_margin") {
+    let s1_margin = match s1_sales.values.get("effective_gross_margin") {
         Some(RuntimeValue::Number(d)) => *d,
         other => return Err(format!("expected numeric margin, got {other:?}")),
     };
     assert_eq!(s1_margin.canonical(), "5000");
 
-    // Active lot aging transform (`remaining_qty > 0` filter): depleted LOT-S1-DEPLETED (SKU-RING-18K)
-    // drops out completely, while live W1 & W5 SKU-DRESS lots sum to 100 received!
     let aging_tf =
         sole.evaluate_transform("supply.retail.store_lot_aging", |_| Ok(RowAccess::Read))?;
     assert!(
@@ -1792,112 +2072,85 @@ fn s1_holding_lot_aging_count_staleness_and_commercial_kpis_withholding() -> Res
     }
     assert_eq!(s1_live_received.canonical(), "100");
 
-    // Compute sell-through, WOS (4-week window), and GMROI directly from REAL cell outputs!
-    let sell_through = ratio(
-        decimal_to_scaled_i128(s1_sold)?,
-        decimal_to_scaled_i128(s1_live_received)?,
-    );
     assert_eq!(
-        sell_through,
-        Some(400_000),
-        "cell-derived sell-through = 0.400000"
+        ratio(
+            decimal_to_scaled_i128(s1_sold)?,
+            decimal_to_scaled_i128(s1_live_received)?
+        ),
+        Some(400_000)
     );
     let weekly_sales = ratio(
         decimal_to_scaled_i128(s1_sold)?,
         4_i128.saturating_mul(FACTOR),
     )
-    .ok_or("weekly sales")?;
-    let wos = ratio(decimal_to_scaled_i128(s1_on_hand)?, weekly_sales);
-    assert_eq!(wos, Some(6_000_000), "cell-derived WOS = 6.000000 weeks");
-    let gmroi = ratio(
-        decimal_to_scaled_i128(s1_margin)?,
-        decimal_to_scaled_i128(s1_stock_val)?,
+    .ok_or("weekly")?;
+    assert_eq!(
+        ratio(decimal_to_scaled_i128(s1_on_hand)?, weekly_sales),
+        Some(6_000_000)
     );
     assert_eq!(
-        gmroi,
-        Some(833_333),
-        "cell-derived GMROI = 5000/6000 = 0.833333"
+        ratio(
+            decimal_to_scaled_i128(s1_margin)?,
+            decimal_to_scaled_i128(s1_stock_val)?
+        ),
+        Some(833_333)
     );
+    verify_transform_withholding(sole, &sales_tf, &aging_tf)
+}
 
-    // Missing-cost withholding at ST-SOLE-CFC-2 in both transforms.
-    let s2_sales_row = sales_tf
-        .rows
-        .iter()
-        .find(|r| r.values.get("store_id").map(scalar).as_deref() == Some("ST-SOLE-CFC-2"))
-        .ok_or("missing ST-SOLE-CFC-2 sales row")?;
-    assert_eq!(
-        s2_sales_row.values.get("cost_complete"),
-        Some(&RuntimeValue::Bool(false))
-    );
-    assert_eq!(
-        s2_sales_row.values.get("effective_cogs"),
-        Some(&RuntimeValue::Null)
-    );
-    assert_eq!(
-        s2_sales_row.values.get("effective_gross_margin"),
-        Some(&RuntimeValue::Null)
-    );
-    let s2_lot_row = aging_tf
-        .rows
-        .iter()
-        .find(|r| r.values.get("store_id").map(scalar).as_deref() == Some("ST-SOLE-CFC-2"))
-        .ok_or("missing ST-SOLE-CFC-2 lot row")?;
-    assert_eq!(
-        s2_lot_row.values.get("cost_complete"),
-        Some(&RuntimeValue::Bool(false))
-    );
+#[test]
+fn s1_holding_lot_aging_count_staleness_and_commercial_kpis_withholding() -> Result<(), String> {
+    let mut sole = EntityBook::open(SOLE_CELL_ID, "org_family_sole_prop", "prod", "sole.sqlite")?;
+    let mut partner = EntityBook::open(
+        PARTNER_CELL_ID,
+        "org_family_partnership",
+        "prod",
+        "partner.sqlite",
+    )?;
+    seed_sole_prop(&mut sole)?;
+    seed_partnership(&mut partner)?;
+    seed_retail_operations(&mut sole, &mut partner)?;
 
-    // Row-level authorization withholding (`RowAccess::Count`) marks transform incomplete!
-    let withheld_tf = sole.evaluate_transform("supply.retail.store_sales_performance", |obj| {
-        if obj.object_type == "supply.PosSale" && obj.id == "SALE-S1-2" {
-            Ok(RowAccess::Count)
-        } else {
-            Ok(RowAccess::Read)
-        }
-    })?;
+    // Immutable `received_at` cannot be rewritten via `supply.stock_lot.update_balance`.
+    sole.refused(
+        "supply.stock_lot.update_balance",
+        "clerk:hana",
+        json!({
+            "lot_id": "LOT-S1-W1", "remaining_qty": "20", "as_of": "2026-09-06T09:00:00Z",
+            "unit_cost": "100", "stock_value": "0", "received_at": "2026-09-01T09:00:00Z"
+        }),
+    )?;
+
+    let (s1_on_hand, s1_stock_val, s1_sold) = verify_retail_questions(&sole)?;
+    verify_retail_transforms_and_kpis(&sole, s1_on_hand, s1_stock_val, s1_sold)?;
+
+    let findings = evaluate_count_coverage(&sole, CLOCK_MS, MAX_COUNT_AGE_MS)?;
     assert!(
-        !withheld_tf.complete,
-        "withheld sale row marks transform incomplete"
+        !findings.iter().any(|f| f.store_id == "ST-SOLE-CFC-1"),
+        "{findings:?}"
     );
-    assert_eq!(withheld_tf.withheld.get("sale").copied(), Some(1));
-
-    // Count coverage fails closed on ALL 4 cases:
-    // - ST-SOLE-CFC-1: fresh + matched -> zero findings
-    // - ST-SOLE-CFC-2: positive holding with zero counts -> MissingCount
-    // - ST-SOLE-CFC-3: >7d old + 28 != 20 -> StaleCount + OnHandDrift
-    // - ST-SOLE-ZAM: future count (2026-09-10 > CLOCK_MS) -> FutureCount
-    let coverage_findings = evaluate_count_coverage(&sole, CLOCK_MS, MAX_COUNT_AGE_MS)?;
     assert!(
-        !coverage_findings
+        findings
             .iter()
-            .any(|f| f.store_id == "ST-SOLE-CFC-1"),
-        "fresh matched store has zero findings: {coverage_findings:?}"
+            .any(|f| f.store_id == "ST-SOLE-CFC-2"
+                && matches!(f.kind, CountCoverageKind::MissingCount)),
+        "{findings:?}"
     );
     assert!(
-        coverage_findings.iter().any(|f| {
-            f.store_id == "ST-SOLE-CFC-2" && matches!(f.kind, CountCoverageKind::MissingCount)
-        }),
-        "missing count on positive holding must fail closed: {coverage_findings:?}"
+        findings.iter().any(|f| f.store_id == "ST-SOLE-CFC-3"
+            && matches!(f.kind, CountCoverageKind::StaleCount { .. })),
+        "{findings:?}"
     );
     assert!(
-        coverage_findings.iter().any(|f| {
-            f.store_id == "ST-SOLE-CFC-3" && matches!(f.kind, CountCoverageKind::StaleCount { .. })
-        }),
-        "stale count must fail closed: {coverage_findings:?}"
+        findings.iter().any(|f| f.store_id == "ST-SOLE-CFC-3"
+            && matches!(f.kind, CountCoverageKind::OnHandDrift { .. })),
+        "{findings:?}"
     );
     assert!(
-        coverage_findings.iter().any(|f| {
-            f.store_id == "ST-SOLE-CFC-3" && matches!(f.kind, CountCoverageKind::OnHandDrift { .. })
-        }),
-        "drifted count must fail closed: {coverage_findings:?}"
+        findings.iter().any(|f| f.store_id == "ST-SOLE-ZAM"
+            && matches!(f.kind, CountCoverageKind::FutureCount { .. })),
+        "{findings:?}"
     );
-    assert!(
-        coverage_findings.iter().any(|f| {
-            f.store_id == "ST-SOLE-ZAM" && matches!(f.kind, CountCoverageKind::FutureCount { .. })
-        }),
-        "future count must fail closed: {coverage_findings:?}"
-    );
-
     Ok(())
 }
 
@@ -1915,15 +2168,22 @@ struct EntityFrontierSnapshot {
     revision: u64,
     definition_version: u64,
     complete: bool,
+    open_feed_findings: usize,
     missing_feed_coverage: BTreeSet<String>,
     missing_cost_stores: BTreeSet<String>,
     count_issue_stores: BTreeSet<String>,
-    /// Withheld (`None`) whenever row/feed coverage is incomplete; never cross-currency summed.
+    /// Withheld (`None`) whenever row/feed coverage or quarantine findings are incomplete.
     entity_net_revenue: Option<String>,
-    /// Withheld (`None`) whenever any store has missing cost or incomplete feed/row coverage.
+    /// Withheld (`None`) whenever any store has missing cost or incomplete coverage/quarantine.
     entity_gross_margin: Option<String>,
-    /// Withheld (`None`) whenever any store has missing, stale, future, or drifted counts.
+    /// Ratio-of-sums gross margin rate (`scale-6` canonical) withheld whenever margin is withheld.
+    entity_gross_margin_rate: Option<String>,
+    /// POS feed revenue from mapped `PosSaleEvidence`, withheld on incomplete feed/quarantine.
+    entity_pos_feed_revenue: Option<String>,
+    /// Withheld (`None`) whenever any store has missing, stale, future, drifted, or over-available counts.
     entity_on_hand_verified: Option<bool>,
+    /// Gated on the same count coverage so `available` never publishes without valid physical counts.
+    entity_availability_verified: Option<bool>,
 }
 
 /// Read-only combined management view across multiple legal-entity cells.
@@ -1937,12 +2197,140 @@ struct CombinedManagementView {
     entities: Vec<EntityFrontierSnapshot>,
 }
 
-fn project_entity_frontier(
+fn count_open_evidence_findings(book: &EntityBook) -> Result<usize, String> {
+    let reader = book.cell()?.store().read();
+    let mut open = 0_usize;
+    for ty in EVIDENCE_TYPES {
+        let ids = reader
+            .ids_after("main", ty, None, 1_000)
+            .map_err(|e| format!("ids_after {ty}: {e}"))?;
+        for id in ids {
+            let found = reader
+                .observation_findings("main", ty, &id)
+                .map_err(|e| format!("findings {ty}/{id}: {e}"))?;
+            open = open.saturating_add(
+                found
+                    .into_iter()
+                    .filter(|f| matches!(f.status, DataQualityFindingStatus::Open))
+                    .count(),
+            );
+        }
+    }
+    Ok(open)
+}
+
+fn ingest_baseline_entity_feeds(
+    sole: &mut EntityBook,
+    partner: &mut EntityBook,
+) -> Result<(), String> {
+    let sole_rows = [
+        FeedRow {
+            feed_id: "supply.pos_sales",
+            mapping: "supply.pos_sales.mapping",
+            dataset: "pos_sale_line",
+            source: "synthetic-pos",
+            event: "ev-sole-pos-1",
+            record: "POS-SOLE-1",
+            payload: r#"{"pos_line_id":"POS-SOLE-1","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":30,"uom":"PCS","net_amount":6000,"ccy":"EGP","sold_at":"2026-09-01T14:00:00Z"}"#,
+        },
+        FeedRow {
+            feed_id: "supply.store_counts",
+            mapping: "supply.store_counts.mapping",
+            dataset: "store_count",
+            source: "synthetic-store-count",
+            event: "ev-sole-cnt-1",
+            record: "SC-SOLE-1",
+            payload: r#"{"count_id":"SC-SOLE-1","store_code":"ST-SOLE-CFC-1","sku_code":"SKU-DRESS","counted_qty":60,"uom":"EA","basis":"on_hand","counted_at":"2026-09-05T10:00:00Z"}"#,
+        },
+        FeedRow {
+            feed_id: "supply.retail_receipts",
+            mapping: "supply.retail_receipts.mapping",
+            dataset: "retail_receipt",
+            source: "synthetic-retail-receipt",
+            event: "ev-sole-rr-1",
+            record: "RR-SOLE-1",
+            payload: r#"{"receipt_line_id":"RR-SOLE-1","store_code":"ST-SOLE-CFC-1","sku_code":"SKU-DRESS","vendor_code":"ATELIER-01","received_qty":60,"damaged_qty":0,"uom":"PCS","unit_cost":100,"ccy":"EGP","received_at":"2026-07-08T09:00:00Z"}"#,
+        },
+        FeedRow {
+            feed_id: "supply.unit_costs",
+            mapping: "supply.unit_costs.mapping",
+            dataset: "unit_cost",
+            source: "synthetic-cost",
+            event: "ev-sole-cost-1",
+            record: "COST-SOLE-1",
+            payload: r#"{"cost_id":"COST-SOLE-1","sku_code":"SKU-DRESS","vendor_code":"ATELIER-01","unit_cost":100,"ccy":"EGP","effective_from":"2026-07-01T00:00:00Z"}"#,
+        },
+    ];
+    for row in &sole_rows {
+        sole.ingest_feed(row)?;
+    }
+
+    let partner_rows = [
+        FeedRow {
+            feed_id: "supply.pos_sales",
+            mapping: "supply.pos_sales.mapping",
+            dataset: "pos_sale_line",
+            source: "synthetic-pos",
+            event: "ev-part-pos-1",
+            record: "POS-PART-1",
+            payload: r#"{"pos_line_id":"POS-PART-1","branch_code":"ST-PART-CFC-1","barcode_sku":"SKU-RING-18K","qty":8,"uom":"PCS","net_amount":3200,"ccy":"USD","sold_at":"2026-09-02T15:00:00Z"}"#,
+        },
+        FeedRow {
+            feed_id: "supply.store_counts",
+            mapping: "supply.store_counts.mapping",
+            dataset: "store_count",
+            source: "synthetic-store-count",
+            event: "ev-part-cnt-1",
+            record: "SC-PART-1",
+            payload: r#"{"count_id":"SC-PART-1","store_code":"ST-PART-CFC-1","sku_code":"SKU-RING-18K","counted_qty":12,"uom":"EA","basis":"on_hand","counted_at":"2026-09-06T10:00:00Z"}"#,
+        },
+        FeedRow {
+            feed_id: "supply.retail_receipts",
+            mapping: "supply.retail_receipts.mapping",
+            dataset: "retail_receipt",
+            source: "synthetic-retail-receipt",
+            event: "ev-part-rr-1",
+            record: "RR-PART-1",
+            payload: r#"{"receipt_line_id":"RR-PART-1","store_code":"ST-PART-CFC-1","sku_code":"SKU-RING-18K","vendor_code":"GOLD-09","received_qty":20,"damaged_qty":0,"uom":"PCS","unit_cost":250,"ccy":"USD","received_at":"2026-07-22T09:00:00Z"}"#,
+        },
+        FeedRow {
+            feed_id: "supply.unit_costs",
+            mapping: "supply.unit_costs.mapping",
+            dataset: "unit_cost",
+            source: "synthetic-cost",
+            event: "ev-part-cost-1",
+            record: "COST-PART-1",
+            payload: r#"{"cost_id":"COST-PART-1","sku_code":"SKU-RING-18K","vendor_code":"GOLD-09","unit_cost":250,"ccy":"USD","effective_from":"2026-07-01T00:00:00Z"}"#,
+        },
+    ];
+    for row in &partner_rows {
+        partner.ingest_feed(row)?;
+    }
+    Ok(())
+}
+
+fn sum_currency_buckets(result: &QueryResult, currency: &str) -> Result<Decimal, String> {
+    let mut sum = Decimal::from(0_i64);
+    for (bucket, row) in &result.rows {
+        if bucket.contains(currency)
+            && let Some(amount) = row.value
+        {
+            sum = sum.checked_add(amount).ok_or("currency bucket overflow")?;
+        }
+    }
+    Ok(sum)
+}
+
+fn format_scaled_ratio(scaled: i128) -> Result<String, String> {
+    Decimal::parse(&format!("{scaled}e-6"))
+        .map(|d| d.canonical())
+        .map_err(|e| format!("format ratio {scaled}: {e}"))
+}
+
+fn read_entity_pin(
     book: &EntityBook,
     legal_entity_id: &str,
-    eval_question: &mut dyn FnMut(&str) -> Result<QueryResult, String>,
-) -> Result<EntityFrontierSnapshot, String> {
-    // READ-LOCAL-1: capture authenticated local point read + frontier on the legal entity root.
+) -> Result<(String, String, String, String, u64, u64), String> {
     let key = FactKey::new("supply.LegalEntity", legal_entity_id);
     let authority = CommitBinding {
         action_id: "read".into(),
@@ -1956,7 +2344,7 @@ fn project_entity_frontier(
         evaluated_at_logical_time: book.now().as_millis().to_string(),
     };
     let envelope = book
-        .cell
+        .cell()?
         .read_envelope(&key, &authority)
         .map_err(|e| format!("read_envelope {legal_entity_id}: {e}"))?;
     assert_eq!(envelope.token.completeness, Completeness::Complete);
@@ -1965,10 +2353,8 @@ fn project_entity_frontier(
         .token
         .validate(&envelope.token.context, ReadRequirement::Exact)
         .map_err(|e| format!("validate token {legal_entity_id}: {e}"))?;
-    let pinned_rev = envelope.token.context.frontier.revision;
-
     let entity_obj = book
-        .cell
+        .cell()?
         .store()
         .read()
         .object("main", "supply.LegalEntity", legal_entity_id)
@@ -1984,91 +2370,239 @@ fn project_entity_frontier(
         .get("functional_currency")
         .map(scalar)
         .ok_or("missing functional_currency")?;
+    Ok((
+        envelope.token.context.frontier.cell.as_str().to_owned(),
+        envelope.token.context.frontier.world,
+        book_code,
+        currency,
+        envelope.token.context.frontier.revision,
+        envelope.token.context.definition_pin.version,
+    ))
+}
 
-    let sales = book.evaluate_transform("supply.retail.store_sales_performance", |_| {
-        Ok(RowAccess::Read)
-    })?;
-    let lots = book.evaluate_transform("supply.retail.store_lot_aging", |_| Ok(RowAccess::Read))?;
-    let rev_q = eval_question("supply.retail.store_revenue_weekly")?;
-    let gm_q = eval_question("supply.retail.store_gross_margin_rate_weekly")?;
-    let count_issues = evaluate_count_coverage(book, CLOCK_MS, MAX_COUNT_AGE_MS)?;
-    let head_after = book.head()?;
-
-    // Single-cut verification: refuse if the cell advanced between `read_envelope` and any read.
-    if sales.revision.commits != pinned_rev
-        || lots.revision.commits != pinned_rev
-        || rev_q.known_as_of != pinned_rev
-        || gm_q.known_as_of != pinned_rev
-        || head_after.commits != pinned_rev
-    {
-        return Err(format!(
-            "frontier moved during projection of {legal_entity_id}: envelope={pinned_rev}, sales={}, lots={}, rev_q={}, gm_q={}, after={}",
-            sales.revision.commits,
-            lots.revision.commits,
-            rev_q.known_as_of,
-            gm_q.known_as_of,
-            head_after.commits,
-        ));
-    }
-
-    let missing_feed_coverage =
-        check_feed_coverage(&book.watermarks, CLOCK_MS.saturating_sub(MAX_COUNT_AGE_MS));
-    let mut missing_cost_stores = BTreeSet::new();
-    let mut rev_sum = Decimal::from(0_i64);
-    for (bucket, vals) in &rev_q.rows {
-        if bucket.contains(&currency)
-            && let Some(Some(amount)) = vals.first()
-        {
-            rev_sum = rev_sum.checked_add(*amount).ok_or("rev overflow")?;
-        }
-    }
-    let mut margin_sum = Decimal::from(0_i64);
-    for row in &sales.rows {
-        let store_id = row.values.get("store_id").map(scalar).unwrap_or_default();
-        if row.values.get("cost_complete") == Some(&RuntimeValue::Bool(true)) {
-            if let Some(RuntimeValue::Number(gm)) = row.values.get("effective_gross_margin") {
-                margin_sum = margin_sum.checked_add(*gm).ok_or("margin overflow")?;
+fn detect_missing_cost_stores(
+    gm_q: &QueryResult,
+    gm_rate_q: &QueryResult,
+    lots: &TransformResult,
+) -> (BTreeSet<String>, bool) {
+    let mut stores = BTreeSet::new();
+    for key_str in gm_q.rows.keys().chain(gm_rate_q.rows.keys()) {
+        if key_str.contains("missing_cost") {
+            for store in [
+                "ST-SOLE-CFC-1",
+                "ST-SOLE-CFC-2",
+                "ST-SOLE-CFC-3",
+                "ST-SOLE-ZAM",
+                "ST-PART-CFC-1",
+            ] {
+                if key_str.contains(store) {
+                    stores.insert(store.to_owned());
+                }
             }
-        } else {
-            missing_cost_stores.insert(store_id);
         }
     }
     for row in &lots.rows {
         if row.values.get("cost_complete") != Some(&RuntimeValue::Bool(true)) {
-            missing_cost_stores.insert(row.values.get("store_id").map(scalar).unwrap_or_default());
+            stores.insert(row.values.get("store_id").map(scalar).unwrap_or_default());
         }
     }
-    // Also detect any `missing_cost` slice surfaced directly in `store_gross_margin_rate_weekly`.
-    let has_missing_cost_slice = gm_q.rows.keys().any(|k| k.contains("missing_cost"));
+    let has_slice = gm_q.rows.keys().any(|k| k.contains("missing_cost"))
+        || gm_rate_q.rows.keys().any(|k| k.contains("missing_cost"));
+    (stores, has_slice)
+}
+
+fn project_entity_frontier(
+    book: &EntityBook,
+    legal_entity_id: &str,
+    eval_question: &mut dyn FnMut(&str) -> Result<QueryResult, String>,
+) -> Result<EntityFrontierSnapshot, String> {
+    let (cell_id, world, book_code, currency, pinned_rev, definition_version) =
+        read_entity_pin(book, legal_entity_id)?;
+    let lots = book.evaluate_transform("supply.retail.store_lot_aging", |_| Ok(RowAccess::Read))?;
+    let rev_q = eval_question("supply.retail.store_revenue_weekly")?;
+    let gm_q = eval_question("supply.retail.store_gross_margin_weekly")?;
+    let gm_rate_q = eval_question("supply.retail.store_gross_margin_rate_weekly")?;
+    let pos_feed_q = eval_question("supply.retail.pos_feed_revenue_weekly")?;
+    let open_feed_findings = count_open_evidence_findings(book)?;
+    let count_issues = evaluate_count_coverage(book, CLOCK_MS, MAX_COUNT_AGE_MS)?;
+    if lots.revision.commits != pinned_rev
+        || rev_q.known_as_of != pinned_rev
+        || gm_q.known_as_of != pinned_rev
+        || gm_rate_q.known_as_of != pinned_rev
+        || pos_feed_q.known_as_of != pinned_rev
+        || book.head()?.commits != pinned_rev
+    {
+        return Err(format!(
+            "frontier moved during projection of {legal_entity_id}"
+        ));
+    }
+
+    let missing_feed_coverage = check_feed_coverage(
+        &book.source_cursors,
+        &book.watermarks,
+        CLOCK_MS.saturating_sub(MAX_COUNT_AGE_MS),
+    );
+    let rev_sum = sum_currency_buckets(&rev_q, &currency)?;
+    let gm_sum = sum_currency_buckets(&gm_q, &currency)?;
+    let pos_feed_sum = sum_currency_buckets(&pos_feed_q, &currency)?;
+    let (missing_cost_stores, has_missing_cost_slice) =
+        detect_missing_cost_stores(&gm_q, &gm_rate_q, &lots);
     let count_issue_stores: BTreeSet<String> =
         count_issues.into_iter().map(|f| f.store_id).collect();
-    let feeds_and_rows_complete = sales.complete
-        && lots.complete
+    let feeds_and_rows_complete = lots.complete
         && rev_q.complete
         && gm_q.complete
+        && gm_rate_q.complete
+        && pos_feed_q.complete
+        && open_feed_findings == 0
         && missing_feed_coverage.is_empty();
     let cost_complete = missing_cost_stores.is_empty() && !has_missing_cost_slice;
-    let complete = feeds_and_rows_complete && cost_complete && count_issue_stores.is_empty();
+    let counts_verified = feeds_and_rows_complete && count_issue_stores.is_empty();
+    let gm_rate_str = if feeds_and_rows_complete && cost_complete {
+        ratio(
+            decimal_to_scaled_i128(gm_sum)?,
+            decimal_to_scaled_i128(rev_sum)?,
+        )
+        .map(format_scaled_ratio)
+        .transpose()?
+    } else {
+        None
+    };
 
     Ok(EntityFrontierSnapshot {
-        cell_id: envelope.token.context.frontier.cell.as_str().to_owned(),
+        cell_id,
         legal_entity_id: legal_entity_id.to_owned(),
         book_code,
         currency,
         scope: book.scope.clone(),
-        world: envelope.token.context.frontier.world,
+        world,
         revision: pinned_rev,
-        definition_version: envelope.token.context.definition_pin.version,
-        complete,
-        entity_net_revenue: feeds_and_rows_complete.then(|| rev_sum.canonical()),
-        entity_gross_margin: (feeds_and_rows_complete && cost_complete)
-            .then(|| margin_sum.canonical()),
-        entity_on_hand_verified: (feeds_and_rows_complete && count_issue_stores.is_empty())
-            .then_some(true),
+        definition_version,
+        complete: counts_verified && cost_complete,
+        open_feed_findings,
         missing_feed_coverage,
         missing_cost_stores,
         count_issue_stores,
+        entity_net_revenue: feeds_and_rows_complete.then(|| rev_sum.canonical()),
+        entity_gross_margin: (feeds_and_rows_complete && cost_complete).then(|| gm_sum.canonical()),
+        entity_gross_margin_rate: gm_rate_str,
+        entity_pos_feed_revenue: feeds_and_rows_complete.then(|| pos_feed_sum.canonical()),
+        entity_on_hand_verified: counts_verified.then_some(true),
+        entity_availability_verified: counts_verified.then_some(true),
     })
+}
+
+#[cfg(all(feature = "duckdb", feature = "native"))]
+fn verify_duckdb_combined_view_parity(
+    sole: &EntityBook,
+    partner: &EntityBook,
+    cell_view: &CombinedManagementView,
+) -> Result<(), String> {
+    use norn_cell::analytics::TenantId;
+    let dir = tempfile::tempdir().map_err(|e| format!("{e}"))?;
+    let duck = norn_cell::analytics::engine::Engine::new(norn_cell::analytics::engine::Settings {
+        root: dir.path().join("duckdb"),
+        memory_limit: "256MB".into(),
+        threads: 1,
+    })
+    .map_err(|e| format!("duckdb: {e}"))?;
+
+    let sync_tenant = |book: &EntityBook| -> Result<TenantId, String> {
+        let store = book.cell()?.store();
+        let tenant = TenantId::of_scope(&book.scope);
+        let mut frontier = duck
+            .frontier(
+                &store
+                    .analytics_frontier(&tenant, "main")
+                    .map_err(|e| format!("frontier: {e}"))?,
+            )
+            .map_err(|e| format!("{}: {}", e.code, e.detail))?
+            .frontier;
+        loop {
+            let batch = store
+                .analytics_delta(&tenant, "main", frontier, 64)
+                .map_err(|e| format!("delta: {e}"))?;
+            frontier = duck
+                .sync(&batch.request)
+                .map_err(|e| format!("{}: {}", e.code, e.detail))?
+                .frontier;
+            if batch.complete {
+                break;
+            }
+        }
+        Ok(tenant)
+    };
+
+    let sole_tenant = sync_tenant(sole)?;
+    let partner_tenant = sync_tenant(partner)?;
+    let duck_eval =
+        |book: &EntityBook, tenant: &TenantId, q_name: &str| -> Result<QueryResult, String> {
+            let plan = book.pack.retail_question(q_name)?;
+            let prepared = book
+                .cell()?
+                .store()
+                .analytics_prepare(&plan, book.query_context(), tenant)
+                .map_err(|e| format!("prepare {q_name}: {e}"))?;
+            let response = duck
+                .evaluate(prepared.request())
+                .map_err(|e| format!("duckdb {q_name}: {} {}", e.code, e.detail))?;
+            book.cell()?
+                .store()
+                .analytics_answer(prepared, response)
+                .map_err(|e| format!("answer {q_name}: {e}"))
+        };
+
+    let duck_view = CombinedManagementView {
+        view_kind: "combined_management_view",
+        is_consolidated_financial_statement: false,
+        read_only: true,
+        entities: vec![
+            project_entity_frontier(sole, "LE-SOLE", &mut |q| duck_eval(sole, &sole_tenant, q))?,
+            project_entity_frontier(partner, "LE-PARTNER", &mut |q| {
+                duck_eval(partner, &partner_tenant, q)
+            })?,
+        ],
+    };
+    assert_eq!(
+        duck_view, *cell_view,
+        "DuckDB combined management view must match Cell combined management view exactly"
+    );
+    Ok(())
+}
+
+fn verify_degraded_and_quarantined_view(sole: &mut EntityBook) -> Result<(), String> {
+    // 1. Removing a feed watermark causes `evaluate_question` + view to withhold revenue.
+    let saved_wm = sole.watermarks.remove("supply.pos_sales");
+    let degraded = project_entity_frontier(sole, "LE-SOLE", &mut |q| sole.answer(q))?;
+    assert!(degraded.missing_feed_coverage.contains("supply.pos_sales"));
+    assert_eq!(degraded.entity_net_revenue, None);
+    assert_eq!(degraded.entity_pos_feed_revenue, None);
+    if let Some(wm) = saved_wm {
+        sole.watermarks.insert("supply.pos_sales".to_owned(), wm);
+    }
+
+    // 2. Ingesting a real quarantined POS row on Cell A withholds revenue until corrected!
+    sole.ingest_feed(&FeedRow {
+        feed_id: "supply.pos_sales", mapping: "supply.pos_sales.mapping", dataset: "pos_sale_line",
+        source: "synthetic-pos", event: "ev-sole-pos-bad", record: "POS-SOLE-BAD",
+        payload: r#"{"pos_line_id":"POS-SOLE-BAD","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":-4,"uom":"PCS","net_amount":800,"ccy":"EGP","sold_at":"2026-09-02T14:00:00Z"}"#,
+    })?;
+    let quarantined = project_entity_frontier(sole, "LE-SOLE", &mut |q| sole.answer(q))?;
+    assert_eq!(quarantined.open_feed_findings, 1);
+    assert_eq!(quarantined.entity_net_revenue, None);
+    assert_eq!(quarantined.entity_pos_feed_revenue, None);
+
+    // Valid correction clears the finding and lifts POS feed revenue to 6800 EGP!
+    sole.ingest_feed(&FeedRow {
+        feed_id: "supply.pos_sales", mapping: "supply.pos_sales.mapping", dataset: "pos_sale_line",
+        source: "synthetic-pos", event: "ev-sole-pos-fix", record: "POS-SOLE-BAD",
+        payload: r#"{"pos_line_id":"POS-SOLE-BAD","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":4,"uom":"PCS","net_amount":800,"ccy":"EGP","sold_at":"2026-09-02T14:05:00Z"}"#,
+    })?;
+    let recovered = project_entity_frontier(sole, "LE-SOLE", &mut |q| sole.answer(q))?;
+    assert_eq!(recovered.open_feed_findings, 0);
+    assert_eq!(recovered.entity_net_revenue.as_deref(), Some("10000"));
+    assert_eq!(recovered.entity_pos_feed_revenue.as_deref(), Some("6800"));
+    Ok(())
 }
 
 #[test]
@@ -2083,6 +2617,7 @@ fn s1_read_only_combined_management_view_across_two_cells() -> Result<(), String
     seed_sole_prop(&mut sole)?;
     seed_partnership(&mut partner)?;
     seed_retail_operations(&mut sole, &mut partner)?;
+    ingest_baseline_entity_feeds(&mut sole, &mut partner)?;
 
     let cell_view = CombinedManagementView {
         view_kind: "combined_management_view",
@@ -2093,142 +2628,49 @@ fn s1_read_only_combined_management_view_across_two_cells() -> Result<(), String
             project_entity_frontier(&partner, "LE-PARTNER", &mut |q| partner.answer(q))?,
         ],
     };
-
     assert_eq!(cell_view.view_kind, "combined_management_view");
     assert!(!cell_view.is_consolidated_financial_statement);
     assert!(cell_view.read_only);
-    assert_eq!(cell_view.entities.len(), 2);
 
-    // Cell A (`LE-SOLE`, EGP): feeds complete so revenue (10000 EGP) is published, while
-    // missing cost (ST-SOLE-CFC-2) withholds gross margin and count issues (ST-SOLE-CFC-2 missing,
-    // ST-SOLE-CFC-3 stale+drifted, ST-SOLE-ZAM future) withhold verified on-hand.
     let sole_snap = cell_view.entities.first().ok_or("missing sole snap")?;
     assert_eq!(sole_snap.cell_id, SOLE_CELL_ID);
     assert_eq!(sole_snap.book_code, "BOOK-SOLE-EGP");
     assert_eq!(sole_snap.currency, "EGP");
-    assert!(sole_snap.revision > 0);
+    assert_eq!(sole_snap.definition_version, 1);
+    assert_eq!(sole_snap.open_feed_findings, 0);
     assert!(!sole_snap.complete);
     assert_eq!(sole_snap.entity_net_revenue.as_deref(), Some("10000"));
-    assert_eq!(
-        sole_snap.entity_gross_margin, None,
-        "withheld on missing cost"
-    );
-    assert_eq!(
-        sole_snap.entity_on_hand_verified, None,
-        "withheld on count issues"
-    );
+    assert_eq!(sole_snap.entity_pos_feed_revenue.as_deref(), Some("6000"));
+    assert_eq!(sole_snap.entity_gross_margin, None);
+    assert_eq!(sole_snap.entity_gross_margin_rate, None);
+    assert_eq!(sole_snap.entity_on_hand_verified, None);
+    assert_eq!(sole_snap.entity_availability_verified, None);
     assert!(sole_snap.missing_cost_stores.contains("ST-SOLE-CFC-2"));
     assert!(sole_snap.count_issue_stores.contains("ST-SOLE-CFC-2"));
     assert!(sole_snap.count_issue_stores.contains("ST-SOLE-CFC-3"));
     assert!(sole_snap.count_issue_stores.contains("ST-SOLE-ZAM"));
 
-    // Cell B (`LE-PARTNER`, USD): completely independent frontier and currency, complete = true.
     let partner_snap = cell_view.entities.get(1).ok_or("missing partner snap")?;
     assert_eq!(partner_snap.cell_id, PARTNER_CELL_ID);
     assert_ne!(partner_snap.cell_id, sole_snap.cell_id);
     assert_eq!(partner_snap.book_code, "BOOK-PARTNER-USD");
     assert_eq!(partner_snap.currency, "USD");
-    assert!(partner_snap.revision > 0);
+    assert_eq!(partner_snap.definition_version, 1);
     assert!(partner_snap.complete);
     assert_eq!(partner_snap.entity_net_revenue.as_deref(), Some("3200"));
     assert_eq!(partner_snap.entity_gross_margin.as_deref(), Some("1200"));
-    assert_eq!(partner_snap.entity_on_hand_verified, Some(true));
-
-    // When a required feed watermark is missing on Cell A, revenue is ALSO withheld!
-    sole.watermarks.remove("supply.pos_sales");
-    let degraded_sole = project_entity_frontier(&sole, "LE-SOLE", &mut |q| sole.answer(q))?;
-    assert!(!degraded_sole.complete);
-    assert!(
-        degraded_sole
-            .missing_feed_coverage
-            .contains("supply.pos_sales")
+    assert_eq!(
+        partner_snap.entity_gross_margin_rate.as_deref(),
+        Some("0.375")
     );
     assert_eq!(
-        degraded_sole.entity_net_revenue, None,
-        "missing POS feed watermark must withhold revenue"
+        partner_snap.entity_pos_feed_revenue.as_deref(),
+        Some("3200")
     );
-    // Restore watermark for DuckDB combined-view parity check below.
-    sole.watermarks
-        .insert("supply.pos_sales".to_owned(), CLOCK_MS);
+    assert_eq!(partner_snap.entity_on_hand_verified, Some(true));
+    assert_eq!(partner_snap.entity_availability_verified, Some(true));
 
-    // DuckDB combined management view projection: mirror BOTH isolated tenant cells into DuckDB,
-    // construct `CombinedManagementView` directly from DuckDB answers, and assert exact parity
-    // with the Cell-built `CombinedManagementView`!
     #[cfg(all(feature = "duckdb", feature = "native"))]
-    {
-        use norn_cell::analytics::TenantId;
-        let dir = tempfile::tempdir().map_err(|e| format!("{e}"))?;
-        let duck =
-            norn_cell::analytics::engine::Engine::new(norn_cell::analytics::engine::Settings {
-                root: dir.path().join("duckdb"),
-                memory_limit: "256MB".into(),
-                threads: 1,
-            })
-            .map_err(|e| format!("duckdb: {e}"))?;
-
-        let sync_tenant = |book: &EntityBook| -> Result<TenantId, String> {
-            let store = book.cell.store();
-            let tenant = TenantId::of_scope(&book.scope);
-            let mut frontier = duck
-                .frontier(
-                    &store
-                        .analytics_frontier(&tenant, "main")
-                        .map_err(|e| format!("frontier: {e}"))?,
-                )
-                .map_err(|e| format!("{}: {}", e.code, e.detail))?
-                .frontier;
-            loop {
-                let batch = store
-                    .analytics_delta(&tenant, "main", frontier, 64)
-                    .map_err(|e| format!("delta: {e}"))?;
-                frontier = duck
-                    .sync(&batch.request)
-                    .map_err(|e| format!("{}: {}", e.code, e.detail))?
-                    .frontier;
-                if batch.complete {
-                    break;
-                }
-            }
-            Ok(tenant)
-        };
-
-        let sole_tenant = sync_tenant(&sole)?;
-        let partner_tenant = sync_tenant(&partner)?;
-        let duck_eval =
-            |book: &EntityBook, tenant: &TenantId, q_name: &str| -> Result<QueryResult, String> {
-                let plan = book.pack.retail_question(q_name)?;
-                let prepared = book
-                    .cell
-                    .store()
-                    .analytics_prepare(&plan, book.query_context(), tenant)
-                    .map_err(|e| format!("prepare {q_name}: {e}"))?;
-                let response = duck
-                    .evaluate(prepared.request())
-                    .map_err(|e| format!("duckdb {q_name}: {} {}", e.code, e.detail))?;
-                book.cell
-                    .store()
-                    .analytics_answer(prepared, response)
-                    .map_err(|e| format!("answer {q_name}: {e}"))
-            };
-
-        let duck_view = CombinedManagementView {
-            view_kind: "combined_management_view",
-            is_consolidated_financial_statement: false,
-            read_only: true,
-            entities: vec![
-                project_entity_frontier(&sole, "LE-SOLE", &mut |q| {
-                    duck_eval(&sole, &sole_tenant, q)
-                })?,
-                project_entity_frontier(&partner, "LE-PARTNER", &mut |q| {
-                    duck_eval(&partner, &partner_tenant, q)
-                })?,
-            ],
-        };
-        assert_eq!(
-            duck_view, cell_view,
-            "DuckDB combined management view must match Cell combined management view exactly"
-        );
-    }
-
-    Ok(())
+    verify_duckdb_combined_view_parity(&sole, &partner, &cell_view)?;
+    verify_degraded_and_quarantined_view(&mut sole)
 }
