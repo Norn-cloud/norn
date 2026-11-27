@@ -1,0 +1,188 @@
+{
+  "artifactId": "units.compute.UnitDefinition.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Compute, storage, sub-second time, and AI UCUM unit catalog",
+  "namespace": "units.compute",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Exact UCUM 2.2 / IEC 80000-13 unit catalog for sub-second time (ms, us, ns), IEC binary and SI decimal storage (bit, By, KiBy..TiBy, kBy..TBy), and AI/compute countable/compound units ({token}, {input_token}, {output_token}, {request}, {vCPU}.s, {vCPU}.h, {GPU}.s, {GPU}.h, {seat}).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "code"
+          ]
+        }
+      ],
+      "name": "units.compute.UnitDefinition",
+      "properties": [
+        {
+          "id": "code",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "ms"
+              },
+              {
+                "value": "us"
+              },
+              {
+                "value": "ns"
+              },
+              {
+                "value": "bit"
+              },
+              {
+                "value": "By"
+              },
+              {
+                "value": "KiBy"
+              },
+              {
+                "value": "MiBy"
+              },
+              {
+                "value": "GiBy"
+              },
+              {
+                "value": "TiBy"
+              },
+              {
+                "value": "kBy"
+              },
+              {
+                "value": "MBy"
+              },
+              {
+                "value": "GBy"
+              },
+              {
+                "value": "TBy"
+              },
+              {
+                "value": "{token}"
+              },
+              {
+                "value": "{input_token}"
+              },
+              {
+                "value": "{output_token}"
+              },
+              {
+                "value": "{request}"
+              },
+              {
+                "value": "{vCPU}.s"
+              },
+              {
+                "value": "{vCPU}.h"
+              },
+              {
+                "value": "{GPU}.s"
+              },
+              {
+                "value": "{GPU}.h"
+              },
+              {
+                "value": "{seat}"
+              }
+            ]
+          }
+        },
+        {
+          "id": "dimension",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "time"
+              },
+              {
+                "value": "information"
+              },
+              {
+                "value": "compute_count"
+              },
+              {
+                "value": "compute_time"
+              }
+            ]
+          }
+        },
+        {
+          "id": "base_code",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "s"
+              },
+              {
+                "value": "By"
+              },
+              {
+                "value": "{token}"
+              },
+              {
+                "value": "{input_token}"
+              },
+              {
+                "value": "{output_token}"
+              },
+              {
+                "value": "{request}"
+              },
+              {
+                "value": "{vCPU}.s"
+              },
+              {
+                "value": "{GPU}.s"
+              },
+              {
+                "value": "{seat}"
+              }
+            ]
+          }
+        },
+        {
+          "id": "numerator",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "denominator",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "standard",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "ucum-2.2"
+              },
+              {
+                "value": "iec-80000-13"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/units.compute.UnitDefinition.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

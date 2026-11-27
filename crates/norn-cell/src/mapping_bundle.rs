@@ -149,12 +149,21 @@ pub(crate) struct MappingPlan {
     source_system: String,
     source_instance: String,
     datasets: Vec<String>,
+    feed_declaration: Option<norn_ir::feed::FeedDeclaration>,
     compiled: Result<CompiledMapping, Vec<Diagnostic>>,
     artifact_pins: Vec<(String, String, String)>,
     definitions_digest: String,
     /// Journal model snapshot the full retained proof ran on; a hit requires
     /// the journal to still hold exactly this snapshot.
     model_snapshot: crate::ModelDefinitionSnapshot,
+}
+
+impl MappingPlan {
+    pub(crate) fn declared_feed(&self, dataset: &str) -> Option<norn_ir::feed::FeedContract> {
+        self.feed_declaration
+            .as_ref()
+            .and_then(|decl| decl.feeds.get(dataset).copied())
+    }
 }
 
 /// MAPPING-PLAN-1: retained-definition work is memoized per store, keyed by the
@@ -414,10 +423,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 Ok((pin.artifact_id, pin.version, pin.sha256))
             })
             .collect::<Result<Vec<_>, CellError>>()?;
+        let feed_declaration =
+            norn_ir::feed::FeedDeclaration::from_extensions(document.extensions.as_ref())
+                .map_err(|_err| mismatch())?;
         let plan = Arc::new(MappingPlan {
             source_system: schema.source.system,
             source_instance: schema.source.instance,
             datasets: schema.datasets.into_iter().map(|d| d.id).collect(),
+            feed_declaration,
             compiled: compile_mapping_artifact(mapping, &artifacts, &[]),
             artifact_pins,
             definitions_digest: semantic_definitions_digest(&artifacts)?,
@@ -568,7 +581,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         {
             return Err(mismatch());
         }
-        let source_document = SourceDocument::from_json(&input.dataset, &payload_text, None)?;
+        let feed_mode = parse_raw_feed_mode(plan, &input.dataset, raw, field("source_version")?)?;
+        let source_document =
+            SourceDocument::from_json(&input.dataset, &payload_text, None)?.with_mode(feed_mode);
         let (records, diagnostics) = if field("kind")? == "upsert" {
             let outcome = match &plan.compiled {
                 Ok(compiled) => compiled
@@ -845,6 +860,70 @@ fn explained(refusal: &norn_checker::mapping::RowRefusal) -> serde_json::Value {
         }
     }
     value
+}
+
+impl<E: SqlEngine> StoreReader<'_, E> {
+    /// Authoritative [`norn_ir::VersionKind`] for `bundle`: combines the
+    /// retained mapping's `norn.feed/1` declaration with any envelope
+    /// `"version_kind"`, refusing contradictions instead of silently falling
+    /// back to lexical order.
+    pub(crate) fn bundle_version_kind(
+        &self,
+        bundle: &MappingBundle,
+    ) -> Result<norn_ir::VersionKind, CellError> {
+        let plan = self.mapping_plan(&bundle.input, bundle.definitions_version)?;
+        let declared = plan.declared_feed(&bundle.input.dataset);
+        resolve_version_kind(declared, &bundle.raw)
+    }
+}
+
+fn resolve_version_kind(
+    declared: Option<norn_ir::feed::FeedContract>,
+    raw: &RuntimeValue,
+) -> Result<norn_ir::VersionKind, CellError> {
+    let raw_kind = match raw.get("version_kind") {
+        None => norn_ir::VersionKind::Lexicographical,
+        Some(value) => value
+            .as_str()
+            .and_then(norn_ir::VersionKind::parse_wire)
+            .ok_or_else(mismatch)?,
+    };
+    if let Some(contract) = declared
+        && raw_kind != contract.version_kind
+    {
+        return Err(mismatch());
+    }
+    Ok(raw_kind)
+}
+
+/// Resolve and cross-check `feed_mode` and `version_kind` between the retained
+/// mapping's `norn.feed/1` declaration and the raw observation envelope
+/// (`FEED-MODE-1`). Unbound or contradictory deliveries fail closed so a
+/// snapshot-projected payload can never enter a `Patch` mapping as clears.
+fn parse_raw_feed_mode(
+    plan: &MappingPlan,
+    dataset: &str,
+    raw: &RuntimeValue,
+    source_version: &str,
+) -> Result<norn_ir::FeedMode, CellError> {
+    let declared = plan.declared_feed(dataset);
+    let raw_mode = match raw.get("feed_mode") {
+        None => norn_ir::FeedMode::FullSnapshot,
+        Some(value) => value
+            .as_str()
+            .and_then(norn_ir::FeedMode::parse_wire)
+            .ok_or_else(mismatch)?,
+    };
+    if let Some(contract) = declared
+        && raw_mode != contract.mode
+    {
+        return Err(mismatch());
+    }
+    let version_kind = resolve_version_kind(declared, raw)?;
+    if declared.is_some() || raw.get("version_kind").is_some() {
+        norn_ir::SourceVersion::parse(version_kind, source_version).map_err(|_err| mismatch())?;
+    }
+    Ok(raw_mode)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

@@ -1,0 +1,210 @@
+{
+  "artifactId": "compute.QuotaHold.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Compute quota hold",
+  "namespace": "compute",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Rate-limit, budget lock, or GPU reservation held against a compute resource (implements core.Hold with LIFE-SOUND-1..8 lifecycle).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Hold"
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "completed",
+              "state": "consumed"
+            },
+            {
+              "outcome": "compensated",
+              "state": "released"
+            },
+            {
+              "outcome": "cancelled",
+              "state": "expired"
+            }
+          ],
+          "immutable": [
+            "released",
+            "consumed",
+            "expired"
+          ],
+          "initial": [
+            "open"
+          ],
+          "property": "status",
+          "terminal": [
+            "released",
+            "consumed",
+            "expired"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "open"
+              ],
+              "id": "consume",
+              "to": "consumed"
+            },
+            {
+              "from": [
+                "open"
+              ],
+              "id": "release",
+              "to": "released"
+            },
+            {
+              "from": [
+                "open"
+              ],
+              "id": "expire",
+              "to": "expired"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Compute resource or token pool locked by this hold.",
+          "id": "resource",
+          "target": "compute.TokenPool"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Agent or workload holding the quota reservation.",
+          "id": "holder",
+          "target": "compute.Agent"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional capacity commitment secured by this hold.",
+          "id": "secures",
+          "target": "core.Commitment"
+        }
+      ],
+      "name": "compute.QuotaHold",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "open",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "open"
+              },
+              {
+                "value": "released"
+              },
+              {
+                "value": "consumed"
+              },
+              {
+                "value": "expired"
+              }
+            ]
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
+            "kind": "ref",
+            "name": "core.quantity",
+            "unitSource": [
+              "unit",
+              "currency"
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "expires_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "quota_scope",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "rate_limit"
+              },
+              {
+                "value": "budget_lock"
+              },
+              {
+                "value": "gpu_reservation"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/compute.QuotaHold.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

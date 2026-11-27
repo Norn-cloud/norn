@@ -165,6 +165,7 @@ fn link_record() -> norn_ir::mapping::MappedRecord {
             provenance: provenance.clone(),
         }],
         cleared_links: vec![LinkId("optional".into())],
+        field_patches: std::collections::BTreeMap::new(),
         property_provenance: std::collections::BTreeMap::new(),
         provenance,
     }
