@@ -635,15 +635,15 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
     );
     assert!(
         schema["properties"]["greeting"]["anyOf"].is_array(),
-        "template interpolation `${input.greeting}` must not be misread as whole-environment `$`"
+        "template interpolation `${{input.greeting}}` must not be misread as whole-environment `$`"
     );
     assert!(
         schema["properties"].get("actor_greeting").is_none(),
-        "template interpolation `${actor.subjectId}` is still detected as an actor read"
+        "template interpolation `${{actor.subjectId}}` is still detected as an actor read"
     );
     assert!(
         schema["properties"].get("escaped_template_actor").is_none(),
-        "ZEN template_string has no backslash escapes, so `\\${actor.subjectId}` still reads actor"
+        "ZEN template_string has no backslash escapes, so `\\${{actor.subjectId}}` still reads actor"
     );
     assert!(
         schema["properties"].get("escaped_quote_actor").is_none(),
