@@ -58,10 +58,19 @@ mod lifecycle_initialization;
 mod lifecycle_updates;
 #[path = "mapping_links.rs"]
 mod mapping_links;
+#[cfg(not(target_arch = "wasm32"))]
+#[path = "mcp_kernel_parity.rs"]
+mod mcp_kernel_parity;
 #[path = "model_interfaces.rs"]
 mod model_interfaces;
 #[path = "ontology_lending.rs"]
 mod ontology_lending;
+#[cfg(feature = "native")]
+#[path = "outbox_generations.rs"]
+mod outbox_generations;
+#[cfg(feature = "native")]
+#[path = "outbox_generations_restore.rs"]
+mod outbox_generations_restore;
 #[path = "parent_rows.rs"]
 mod parent_rows;
 #[path = "principal_inputs.rs"]

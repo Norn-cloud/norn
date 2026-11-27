@@ -1,0 +1,47 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "retail.cancel_reorder.action",
+  "kind": "action",
+  "namespace": "retail",
+  "name": "Cancel Reorder SKU",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {
+    "orgId": "org_demo",
+    "environmentId": "dev"
+  },
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/ir/retail-cancel-reorder.action.json"
+  },
+  "payload": {
+    "actionId": "retail.sku.cancel_reorder",
+    "title": "Cancel Reorder SKU",
+    "description": "Cancel a purchase request created by retail.sku.reorder.",
+    "scopeRequired": ["orgId", "environmentId"],
+    "idempotent": true,
+    "ledgered": true,
+    "ledgerCategory": "procurement.purchase_request",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": { "type": "string" }
+      },
+      "required": ["requestId"],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "requestId": { "type": "string" }
+      },
+      "required": ["requestId"],
+      "additionalProperties": false
+    },
+    "preconditions": ["len(requestId) > 0"],
+    "writes": [
+      { "entityKind": "retail.PurchaseRequest", "change": "modified" }
+    ]
+  }
+}
