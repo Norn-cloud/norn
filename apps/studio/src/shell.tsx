@@ -18,9 +18,9 @@ import { TopBarExtras } from "@/top-bar-extras"
 import { DENSITY } from "@/lib/perspective"
 import { appletHome, appletMenu, appletOf, appletOfSection, appletsOf, claim, decoded, destinationIn, initials, placeOf, shown, target, type Applet, type AppletMenu, type MenuEntry, type Menus, type Section } from "@/lib/nav-model"
 import {
-  appendRecent, clearRecent, getOwn, initialRecentTracker, isSafeRecordKey, readMenuState, readRecent,
+  accountScopeIdentity, appendRecent, clearRecent, getOwn, initialRecentTracker, isSafeRecordKey, readMenuState, readRecent,
   recentForPath, recentScopeFingerprint, recentStorageKey, stepRecentTracker, updateChosenBranches,
-  writeMenuState, type RecentItem, type RecentTracker,
+  updateRecentLabelIfPresent, writeMenuState, type RecentItem, type RecentTracker,
 } from "@/lib/nav-storage"
 import { AppletRail, AssistantButton, SheetApplets, SubmenuPanel, appletBadge, type MenuState, type RailApplet } from "@/shell-nav"
 import { usePageShowsWorkspaceUnavailable } from "@/lib/workspace"
@@ -902,7 +902,7 @@ const isGlobalAppletMenu = (menu: AppletMenu | undefined): boolean =>
  * recorded workspace and role (`fingerprint`). Fails closed while the scope is unconfirmed (`null`),
  * never records a pathname carried across a workspace switch or role change, and syncs cross-tab clears.
  */
-function useRecentItems(fingerprint: string | null, pathname: string, menus: Menus) {
+function useRecentItems(accountKey: string, fingerprint: string | null, pathname: string, menus: Menus) {
   const [items, setItems] = useState<readonly RecentItem[]>(() => fingerprint === null ? [] : readRecent(fingerprint))
   const [loadedFingerprint, setLoadedFingerprint] = useState<string | null>(fingerprint)
   if (loadedFingerprint !== fingerprint) {
@@ -921,7 +921,8 @@ function useRecentItems(fingerprint: string | null, pathname: string, menus: Men
     return () => window.removeEventListener("storage", onStorage)
   }, [fingerprint])
 
-  const trackerRef = useRef<RecentTracker>(initialRecentTracker(pathname, fingerprint))
+  const trackerRef = useRef<RecentTracker>(initialRecentTracker(pathname, fingerprint, accountKey))
+  const recordedVisitRef = useRef<{ readonly fingerprint: string; readonly pathname: string; readonly href: string } | null>(null)
   const candidate = recentForPath(pathname, menus)
   const candidateHref = candidate?.href
   const candidateLabel = candidate?.label
@@ -929,15 +930,25 @@ function useRecentItems(fingerprint: string | null, pathname: string, menus: Men
   const candidateDetail = candidate?.detail
 
   useEffect(() => {
-    const { next, shouldRecord } = stepRecentTracker(trackerRef.current, pathname, fingerprint)
+    const { next, shouldRecord } = stepRecentTracker(trackerRef.current, pathname, fingerprint, accountKey)
     trackerRef.current = next
     if (!shouldRecord || fingerprint === null || candidateHref === undefined || candidateLabel === undefined || candidateKind === undefined) return
-    const current = readRecent(fingerprint)
-    const head = current[0]
-    if (head && head.href === candidateHref && head.label === candidateLabel && head.detail === candidateDetail) {
-      setItems(current)
+    const lastRecorded = recordedVisitRef.current
+    const alreadyRecordedThisVisit =
+      lastRecorded !== null
+      && lastRecorded.fingerprint === fingerprint
+      && lastRecorded.pathname === pathname
+      && lastRecorded.href === candidateHref
+    if (alreadyRecordedThisVisit) {
+      // Only a label/detail update on the same visit: refresh in place if still present, never resurrect after Clear.
+      setItems(updateRecentLabelIfPresent(fingerprint, {
+        href: candidateHref,
+        label: candidateLabel,
+        ...(candidateDetail !== undefined ? { detail: candidateDetail } : {}),
+      }))
       return
     }
+    recordedVisitRef.current = { fingerprint, pathname, href: candidateHref }
     const merged = appendRecent(fingerprint, {
       href: candidateHref,
       label: candidateLabel,
@@ -946,7 +957,7 @@ function useRecentItems(fingerprint: string | null, pathname: string, menus: Men
       visitedAt: Date.now(),
     })
     setItems(merged)
-  }, [fingerprint, pathname, candidateHref, candidateLabel, candidateKind, candidateDetail])
+  }, [accountKey, fingerprint, pathname, candidateHref, candidateLabel, candidateKind, candidateDetail])
 
   return {
     items: fingerprint === null ? [] : items,
@@ -967,7 +978,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, recent
   const { open, isMobile, openMobile, setOpenMobile } = useSidebar()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuState = useMenuStates()
-  const recent = useRecentItems(recentFingerprint, pathname, navigation.menus)
+  const recent = useRecentItems(accountScopeIdentity(account), recentFingerprint, pathname, navigation.menus)
   const rail: readonly RailApplet[] = appletsOf(sections).map((each) => ({
     applet: each,
     home: appletHome(each, sections, navigation.menus),

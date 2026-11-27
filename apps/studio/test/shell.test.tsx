@@ -10,9 +10,9 @@ import {
   type Applet, type MenuEntry, type Section,
 } from "../src/lib/nav-model.ts"
 import {
-  MAX_RECENT, appendRecent, clearRecent, getOwn, initialRecentTracker, readMenuState, readRecent,
+  MAX_RECENT, accountScopeIdentity, appendRecent, clearRecent, getOwn, initialRecentTracker, readMenuState, readRecent,
   recentForPath, recentScopeFingerprint, recordRecent, stepRecentTracker, updateChosenBranches,
-  writeMenuState, writeRecent,
+  updateRecentLabelIfPresent, writeMenuState, writeRecent,
 } from "../src/lib/nav-storage.ts"
 import type { Account } from "../src/lib/session.ts"
 import { Shell, commandNavigation } from "../src/shell.tsx"
@@ -455,11 +455,18 @@ test("Recent fails closed across workspace switches, unconfirmed scopes, and rol
   const viewerA: Account = { ...adminA, organization: { id: "org_a", name: "Org A", role: "viewer" } }
   const adminB: Account = { user: { id: "u1", name: "Ada", email: "ada@example.com" }, organization: { id: "org_b", name: "Org B", role: "admin" }, environmentId: "env_b" }
 
-  // Pending / error / disagreeing account+mode scopes fail closed to null.
+  // Pending / error / disagreeing account+mode scopes (including explicit environmentId: null) fail closed to null.
   expect(recentScopeFingerprint(adminA, { status: "pending", data: undefined })).toBeNull()
   expect(recentScopeFingerprint(adminA, { status: "error", data: undefined })).toBeNull()
   expect(recentScopeFingerprint(adminB, { status: "success", data: modeA })).toBeNull()
   expect(recentScopeFingerprint({ ...adminA, environmentId: "env_b" }, { status: "success", data: modeA })).toBeNull()
+  expect(recentScopeFingerprint({ ...adminA, environmentId: null }, { status: "success", data: modeA })).toBeNull()
+
+  // Recorded mode also isolates distinct environments within the same organization.
+  const recordedMode: Mode = { kind: "recorded" }
+  const fpRecEnvA = recentScopeFingerprint(adminA, { status: "success", data: recordedMode })!
+  const fpRecEnvB = recentScopeFingerprint({ ...adminA, environmentId: "env_b" }, { status: "success", data: recordedMode })!
+  expect(fpRecEnvA).not.toBe(fpRecEnvB)
 
   const fpAdminA = recentScopeFingerprint(adminA, { status: "success", data: modeA })!
   const fpViewerA = recentScopeFingerprint(viewerA, { status: "success", data: modeA })!
@@ -467,24 +474,31 @@ test("Recent fails closed across workspace switches, unconfirmed scopes, and rol
   expect(fpAdminA).not.toBe(fpAdminB)
   expect(fpAdminA).not.toBe(fpViewerA)
 
-  // Fresh page load on a detail route records once the initial scope settles.
-  let tracker = initialRecentTracker("/sources/canon.Holding/secret-1", null)
-  let step = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", null)
+  // Account/role change BEFORE the first mode settles must NOT record the carried-over URL under the next workspace/role.
+  const preSettleTracker = initialRecentTracker("/sources/canon.Holding/secret-pre", null, accountScopeIdentity(adminA))
+  const preSettleSwitched = stepRecentTracker(preSettleTracker, "/sources/canon.Holding/secret-pre", fpAdminB, accountScopeIdentity(adminB))
+  expect(preSettleSwitched.shouldRecord).toBe(false)
+  const preSettleRoleChanged = stepRecentTracker(preSettleTracker, "/sources/canon.Holding/secret-pre", fpViewerA, accountScopeIdentity(viewerA))
+  expect(preSettleRoleChanged.shouldRecord).toBe(false)
+
+  // Fresh page load on a detail route records once the initial scope settles for the same account.
+  let tracker = initialRecentTracker("/sources/canon.Holding/secret-1", null, accountScopeIdentity(adminA))
+  let step = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", null, accountScopeIdentity(adminA))
   expect(step.shouldRecord).toBe(false)
-  step = stepRecentTracker(step.next, "/sources/canon.Holding/secret-1", fpAdminA)
+  step = stepRecentTracker(step.next, "/sources/canon.Holding/secret-1", fpAdminA, accountScopeIdentity(adminA))
   tracker = step.next
   expect(step.shouldRecord).toBe(true)
 
   // Switching workspace directly (A -> B) or via pending (A -> null -> B) while staying on the same URL never records it under B.
-  step = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", fpAdminB)
+  step = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", fpAdminB, accountScopeIdentity(adminB))
   expect(step.shouldRecord).toBe(false)
-  const pendingStep = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", null)
+  const pendingStep = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", null, accountScopeIdentity(adminB))
   expect(pendingStep.shouldRecord).toBe(false)
-  const settledBStep = stepRecentTracker(pendingStep.next, "/sources/canon.Holding/secret-1", fpAdminB)
+  const settledBStep = stepRecentTracker(pendingStep.next, "/sources/canon.Holding/secret-1", fpAdminB, accountScopeIdentity(adminB))
   expect(settledBStep.shouldRecord).toBe(false)
 
   // Role downgrade (admin -> viewer) on the same URL also refuses to record under the downgraded role, and isolates stored items.
-  const downgradeStep = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", fpViewerA)
+  const downgradeStep = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", fpViewerA, accountScopeIdentity(viewerA))
   expect(downgradeStep.shouldRecord).toBe(false)
   const storage = memoryStorage()
   writeRecent(fpAdminA, [{ href: "/sources/canon.Holding/secret-1", label: "secret-1", kind: "record", detail: "Holding", visitedAt: 1 }], storage)
@@ -492,22 +506,30 @@ test("Recent fails closed across workspace switches, unconfirmed scopes, and rol
   expect(readRecent(fpAdminB, storage)).toEqual([])
 
   // Navigating to a new detail route after switching to B records normally under B.
-  const navigatedB = stepRecentTracker(settledBStep.next, "/runs/run-b-1", fpAdminB)
+  const navigatedB = stepRecentTracker(settledBStep.next, "/runs/run-b-1", fpAdminB, accountScopeIdentity(adminB))
   expect(navigatedB.shouldRecord).toBe(true)
 })
 
-test("appendRecent reads fresh storage so another tab clearing Recent is never resurrected", () => {
+test("appendRecent and updateRecentLabelIfPresent never resurrect a cross-tab Clear", () => {
   const storage = memoryStorage()
   const fp = JSON.stringify(["live", "u1", "o1", "e1", "viewer"])
-  appendRecent(fp, { href: "/runs/r1", label: "r1", kind: "run", visitedAt: 1 }, storage)
-  appendRecent(fp, { href: "/runs/r2", label: "r2", kind: "run", visitedAt: 2 }, storage)
-  expect(readRecent(fp, storage).map((item) => item.href)).toEqual(["/runs/r2", "/runs/r1"])
+  appendRecent(fp, { href: "/views/open-items", label: "open-items", kind: "view", visitedAt: 1 }, storage)
+  expect(readRecent(fp, storage).map((item) => item.label)).toEqual(["open-items"])
+
+  // Label update while entry is still present refreshes it in place.
+  const renamed = updateRecentLabelIfPresent(fp, { href: "/views/open-items", label: "Open items" }, storage)
+  expect(renamed.map((item) => item.label)).toEqual(["Open items"])
 
   // Tab A clears Recent.
   clearRecent(fp, storage)
   expect(readRecent(fp, storage)).toEqual([])
 
-  // Tab B opens r3 without re-introducing r1 or r2.
+  // Late label update on the already-open view must NOT re-insert the cleared item without navigation.
+  const afterClearLabel = updateRecentLabelIfPresent(fp, { href: "/views/open-items", label: "Open items v2" }, storage)
+  expect(afterClearLabel).toEqual([])
+  expect(readRecent(fp, storage)).toEqual([])
+
+  // Navigating to r3 in Tab B records only r3 without resurrecting cleared items.
   const merged = appendRecent(fp, { href: "/runs/r3", label: "r3", kind: "run", visitedAt: 3 }, storage)
   expect(merged.map((item) => item.href)).toEqual(["/runs/r3"])
   expect(readRecent(fp, storage).map((item) => item.href)).toEqual(["/runs/r3"])

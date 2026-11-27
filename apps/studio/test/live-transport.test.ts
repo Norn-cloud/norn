@@ -1309,3 +1309,123 @@ test("retryWorkspace returns false while offline/paused even when mode previousl
     fetch.mockRestore()
   }
 })
+
+test("retryWorkspace recovers errored pages even when TanStack structural sharing keeps the previous Mode reference", async () => {
+  const client = new QueryClient()
+  const scopeA = { orgId: ME.organization.id, environmentId: ME.environmentId }
+  let failPage = true
+  let pageReads = 0
+  const fetchProbe = async (...[input]: Parameters<typeof globalThis.fetch>) => {
+    const url = String(input)
+    if (url === "/api/me") return Response.json(ME)
+    return new Response(DEFINITIONS, { headers: { "content-type": "application/json" } })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }))
+  client.setQueryData(["studio-scope"], scopeA)
+  const mode = new QueryObserver(client, { ...modeQuery(scopeA), retryDelay: 0 })
+  const page = new QueryObserver(client, {
+    queryKey: ["page-read-structural-sharing"],
+    retry: false,
+    queryFn: async () => {
+      pageReads += 1
+      if (failPage) throw new CellUnavailable(503, "transient")
+      return "recovered"
+    },
+  })
+  const offMode = mode.subscribe(() => {})
+  const offPage = page.subscribe(() => {})
+  try {
+    await until(mode, (result) => result.isSuccess)
+    await until(page, settled)
+    failPage = false
+    pageReads = 0
+
+    // Mode was already live and returns an identical payload (structural sharing can preserve prior object identity).
+    // retryWorkspace must still return true and refetch the errored page query.
+    expect(await retryWorkspace(client)).toBe(true)
+    expect(pageReads).toBe(1)
+    expect(page.getCurrentResult().data).toBe("recovered")
+  } finally {
+    offPage()
+    offMode()
+    client.clear()
+    fetch.mockRestore()
+  }
+})
+
+test("retryWorkspace resolves false promptly when going offline mid-probe and when superseded during page refetch", async () => {
+  const client = new QueryClient()
+  const scopeA = { orgId: ME.organization.id, environmentId: ME.environmentId }
+  let modeCalls = 0
+  let releaseSecondMode!: () => void
+  const secondModeGate = new Promise<void>((resolve) => { releaseSecondMode = resolve })
+  let pageStarted!: () => void
+  const pageRefetchBegan = new Promise<void>((resolve) => { pageStarted = resolve })
+  let releasePage!: () => void
+  const pageGate = new Promise<void>((resolve) => { releasePage = resolve })
+  let pageCalls = 0
+
+  const fetchProbe = async (...[input, init]: Parameters<typeof globalThis.fetch>) => {
+    const url = String(input)
+    if (url === "/api/me") return Response.json(ME)
+    modeCalls += 1
+    if (modeCalls === 1) {
+      return new Response(DEFINITIONS, { headers: { "content-type": "application/json" } })
+    }
+    if (modeCalls === 2) {
+      // Retry 1 mode probe succeeds immediately so Retry 1 enters page refetch.
+      return new Response(DEFINITIONS, { headers: { "content-type": "application/json" } })
+    }
+    if (modeCalls === 3) {
+      // Retry 2 mode probe stays pending until released.
+      await secondModeGate
+      return new Response(DEFINITIONS, { headers: { "content-type": "application/json" } })
+    }
+    // Retry 3 goes offline during a retryable failure.
+    if (init?.signal?.aborted) throw new DOMException("aborted", "AbortError")
+    return new Response("down", { status: 503 })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }))
+  client.setQueryData(["studio-scope"], scopeA)
+  const mode = new QueryObserver(client, { ...modeQuery(scopeA), retryDelay: 50 })
+  const page = new QueryObserver(client, {
+    queryKey: ["page-read-overlap-race"],
+    retry: false,
+    queryFn: async () => {
+      pageCalls += 1
+      if (pageCalls === 1) throw new CellUnavailable(503, "down")
+      pageStarted()
+      await pageGate
+      return "ok"
+    },
+  })
+  const offMode = mode.subscribe(() => {})
+  const offPage = page.subscribe(() => {})
+  try {
+    await until(mode, (result) => result.isSuccess)
+    await until(page, settled)
+
+    // 1. Overlap race: Retry 1 enters page refetch; Retry 2 starts probing mode before Retry 1 finishes.
+    const retry1 = retryWorkspace(client)
+    await pageRefetchBegan
+    const retry2 = retryWorkspace(client)
+    releasePage()
+    // Older Retry 1 must return false because Retry 2 is now probing mode.
+    expect(await retry1).toBe(false)
+    releaseSecondMode()
+    expect(await retry2).toBe(true)
+
+    // 2. Offline mid-probe: losing connectivity while a retryable mode probe is retrying resolves false promptly.
+    const retry3 = retryWorkspace(client)
+    setTimeout(() => onlineManager.setOnline(false), 10)
+    expect(await retry3).toBe(false)
+  } finally {
+    releasePage()
+    releaseSecondMode()
+    onlineManager.setOnline(true)
+    offPage()
+    offMode()
+    client.clear()
+    fetch.mockRestore()
+  }
+})

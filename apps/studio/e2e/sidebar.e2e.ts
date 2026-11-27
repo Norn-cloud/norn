@@ -561,7 +561,18 @@ test("Workspace unavailable shows once: the page's full state, or a one-line sta
       check()
       requestAnimationFrame(check)
     })
-    observer.observe(document, { childList: true, subtree: true })
+    observer.observe(document, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-connection"],
+    })
+    check()
+    const tick = () => {
+      check()
+      requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
   })
   await session(page)
   await page.route("**/api/host/v1/**", (route) => {

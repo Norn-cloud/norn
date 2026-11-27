@@ -41,6 +41,7 @@ export interface RecentScopeMode {
 
 export interface RecentTracker {
   readonly pathname: string
+  readonly enteredAccountKey: string
   readonly enteredFingerprint: string | null
   readonly hadSettled: boolean
 }
@@ -147,17 +148,30 @@ export function writeMenuState(
 export const recentStorageKey = (scopeKey: string): string => `${RECENT_STORAGE_PREFIX}:${scopeKey}`
 
 /**
+ * Stable identity tuple for the currently signed-in account, organization, environment, and role.
+ * Used to detect workspace or role changes even before the mode probe settles.
+ */
+export const accountScopeIdentity = (account: Account): string =>
+  JSON.stringify([
+    account.user.id,
+    account.organization?.id ?? null,
+    account.environmentId ?? null,
+    account.organization?.role ?? null,
+  ])
+
+/**
  * Collision-free fingerprint binding browser-local Recent items to the confirmed live or recorded
  * workspace scope and role. Returns `null` while mode is pending/failed or while `account` and
- * `mode.data.scope` disagree (mid-switch), failing closed so nothing is read or written across scopes.
+ * `mode.data.scope` disagree (mid-switch or explicit `environmentId: null`), failing closed so
+ * nothing is read or written across scopes.
  */
 export function recentScopeFingerprint(account: Account, mode: RecentScopeMode): string | null {
   if (mode.status !== "success" || mode.data === undefined) return null
   if (mode.data.kind === "live") {
     if (account.organization === null || account.organization.id !== mode.data.scope.orgId) return null
+    if (account.environmentId === null) return null
     if (
       account.environmentId !== undefined
-      && account.environmentId !== null
       && account.environmentId !== mode.data.scope.environmentId
     ) return null
     return JSON.stringify([
@@ -172,41 +186,56 @@ export function recentScopeFingerprint(account: Account, mode: RecentScopeMode):
     "recorded",
     account.user.id,
     account.organization?.id ?? "",
+    account.environmentId ?? "",
     account.organization?.role ?? "",
   ])
 }
 
 /** Initial navigation-bound tracker state for {@link stepRecentTracker}. */
-export const initialRecentTracker = (pathname: string, fingerprint: string | null): RecentTracker => ({
+export const initialRecentTracker = (
+  pathname: string,
+  fingerprint: string | null,
+  accountKey = "",
+): RecentTracker => ({
   pathname,
+  enteredAccountKey: accountKey,
   enteredFingerprint: fingerprint,
   hadSettled: fingerprint !== null,
 })
 
 /**
- * Decide whether the current `(pathname, fingerprint)` may record a Recent item.
- * A pathname opened before a workspace switch or role change (`enteredFingerprint !== fingerprint`,
- * even across a transient `null` while the new scope loads) is never recorded under the new scope.
+ * Decide whether the current `(pathname, fingerprint, accountKey)` may record a Recent item.
+ * A pathname opened before a workspace switch or role change (`enteredAccountKey !== accountKey`
+ * or `enteredFingerprint !== fingerprint`, even before the first mode settles or across a
+ * transient `null` while the new scope loads) is never recorded under the new scope.
  */
 export function stepRecentTracker(
   tracker: RecentTracker,
   pathname: string,
   fingerprint: string | null,
+  accountKey = tracker.enteredAccountKey,
 ): { readonly next: RecentTracker; readonly shouldRecord: boolean } {
   if (pathname !== tracker.pathname) {
     const next: RecentTracker = {
       pathname,
+      enteredAccountKey: accountKey,
       enteredFingerprint: fingerprint,
       hadSettled: tracker.hadSettled || fingerprint !== null,
     }
     return { next, shouldRecord: fingerprint !== null }
+  }
+  if (accountKey !== tracker.enteredAccountKey) {
+    return {
+      next: { ...tracker, hadSettled: true },
+      shouldRecord: false,
+    }
   }
   if (fingerprint === null) {
     return { next: tracker, shouldRecord: false }
   }
   if (tracker.enteredFingerprint === null && !tracker.hadSettled) {
     return {
-      next: { pathname, enteredFingerprint: fingerprint, hadSettled: true },
+      next: { pathname, enteredAccountKey: accountKey, enteredFingerprint: fingerprint, hadSettled: true },
       shouldRecord: true,
     }
   }
@@ -285,6 +314,32 @@ export function appendRecent(
   storage: StorageLike | undefined = defaultStorage(),
 ): readonly RecentItem[] {
   const merged = recordRecent(readRecent(scopeKey, storage), next)
+  writeRecent(scopeKey, merged, storage)
+  return merged
+}
+
+/**
+ * Refresh the label/detail of an already-recorded visit in place, ONLY if that `href` is still
+ * present in fresh storage. If another tab (or this tab) cleared Recent meanwhile, this is a
+ * no-op so late-arriving menu labels never resurrect a cleared list without navigation.
+ */
+export function updateRecentLabelIfPresent(
+  scopeKey: string,
+  next: Pick<RecentItem, "href" | "label" | "detail">,
+  storage: StorageLike | undefined = defaultStorage(),
+): readonly RecentItem[] {
+  const current = readRecent(scopeKey, storage)
+  const index = current.findIndex((item) => item.href === next.href)
+  if (index === -1) return current
+  const existing = current[index]!
+  if (existing.label === next.label && existing.detail === next.detail) return current
+  const updated: RecentItem = {
+    ...existing,
+    label: next.label,
+    ...(next.detail !== undefined ? { detail: next.detail } : {}),
+  }
+  if (next.detail === undefined) delete (updated as { detail?: string }).detail
+  const merged = current.map((item, i) => (i === index ? updated : item))
   writeRecent(scopeKey, merged, storage)
   return merged
 }
