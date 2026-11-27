@@ -136,7 +136,7 @@ fn parse_rfc3339_ms(text: &str) -> Option<u64> {
 /// rejecting `null`, booleans, arrays, objects, or malformed entries while
 /// allowing valid empty-feed initial cursors (e.g. `{"version":"","id":""}`)
 /// and preserving exact raw numeric `id` tokens matching `Watermark::cursor_json()`.
-fn validate_cursor_json(raw: &str) -> Option<String> {
+pub(crate) fn validate_cursor_json(raw: &str) -> Option<String> {
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     struct StoredWatermark<'a> {
@@ -162,7 +162,7 @@ fn validate_cursor_json(raw: &str) -> Option<String> {
 /// Strict parser for `source.Connection.watermark` JSON: only accepts a map of
 /// `dataset -> {"version": "<nonblank>", "id": <string|number>}` validated by
 /// [`validate_cursor_json`].
-fn strict_connection_cursors(connection: &ObjectRecord) -> BTreeMap<String, String> {
+pub(crate) fn strict_connection_cursors(connection: &ObjectRecord) -> BTreeMap<String, String> {
     let Some(raw) = connection
         .values
         .get("watermark")
@@ -811,26 +811,119 @@ impl<E: SqlEngine> crate::StoreReader<'_, E> {
         Ok(None)
     }
 
-    /// Whether live `source.Connection` `source_id` was committed while the
-    /// exact retained mapping revision `expected_binding` was active.
-    ///
-    /// # Errors
-    /// Store or definition decoding errors.
-    pub fn connection_matches_mapping_binding(
+    pub(crate) fn connection_history_proves_cursors(
         &self,
         world: &str,
         source_id: &str,
-        mapping_id: &str,
-        expected_binding: &str,
+        binding: (&str, &str),
+        required: &BTreeMap<String, String>,
     ) -> Result<bool, CellError> {
-        if !self.model().has_type(CONNECTION_TYPE) {
-            return Ok(false);
-        }
-        let Some(conn) = self.object(world, CONNECTION_TYPE, source_id)? else {
+        connection_history_proves_cursors(self, world, source_id, binding, required)
+    }
+}
+
+fn connection_history_proves_cursors<E: SqlEngine>(
+    reader: &crate::StoreReader<'_, E>,
+    world: &str,
+    source_id: &str,
+    binding: (&str, &str),
+    required: &BTreeMap<String, String>,
+) -> Result<bool, CellError> {
+    use crate::engine::{SqlRow, params};
+    let (mapping_id, expected_binding) = binding;
+    if required.is_empty() || !reader.model().has_type(CONNECTION_TYPE) {
+        return Ok(false);
+    }
+    let Some(conn) = reader.object(world, CONNECTION_TYPE, source_id)? else {
+        return Ok(false);
+    };
+    if conn.values.get("status").and_then(RuntimeValue::as_str) != Some("ok")
+        || !conn_matches_mapping_binding(reader, world, &conn, mapping_id, expected_binding)?
+    {
+        return Ok(false);
+    }
+    let latest_cursors = strict_connection_cursors(&conn);
+    if required
+        .iter()
+        .any(|(ds, cj)| latest_cursors.get(ds) != Some(cj))
+    {
+        return Ok(false);
+    }
+    let mut hist_world = world;
+    let mut rows = reader.conn.query(
+        "SELECT version, commit_seq FROM _norn_fact_values \
+         WHERE world=?1 AND root_type=?2 AND id=?3 ORDER BY version ASC LIMIT 4097",
+        params![world, CONNECTION_TYPE, source_id],
+    )?;
+    if rows.is_empty() && world != MAIN_WORLD {
+        hist_world = MAIN_WORLD;
+        rows = reader.conn.query(
+            "SELECT version, commit_seq FROM _norn_fact_values \
+             WHERE world=?1 AND root_type=?2 AND id=?3 ORDER BY version ASC LIMIT 4097",
+            params![MAIN_WORLD, CONNECTION_TYPE, source_id],
+        )?;
+    }
+    if rows.len() > MAX_HISTORICAL_CONNECTIONS {
+        return Ok(false);
+    }
+    let mut remaining: BTreeMap<&str, &str> = required
+        .iter()
+        .map(|(ds, cj)| (ds.as_str(), cj.as_str()))
+        .collect();
+    for values in rows {
+        let row = SqlRow(values);
+        let (Ok(ver), Ok(seq)) = (
+            u64::try_from(row.get::<i64>(0)?),
+            u64::try_from(row.get::<i64>(1)?),
+        ) else {
             return Ok(false);
         };
-        conn_matches_mapping_binding(self, world, &conn, mapping_id, expected_binding)
+        let Some(hist) = reader.object_at_version(hist_world, CONNECTION_TYPE, source_id, ver)?
+        else {
+            continue;
+        };
+        let hist_cursors = strict_connection_cursors(&hist);
+        let matched: Vec<&str> = remaining
+            .iter()
+            .filter_map(|(&ds, &cj)| {
+                (hist_cursors.get(ds).map(String::as_str) == Some(cj)).then_some(ds)
+            })
+            .collect();
+        if matched.is_empty() {
+            continue;
+        }
+        if !commit_seq_matches_mapping_binding(reader, seq, mapping_id, expected_binding)? {
+            return Ok(false);
+        }
+        for ds in matched {
+            remaining.remove(ds);
+        }
+        if remaining.is_empty() {
+            return Ok(true);
+        }
     }
+    Ok(remaining.is_empty())
+}
+
+fn commit_seq_matches_mapping_binding<E: SqlEngine>(
+    reader: &crate::StoreReader<'_, E>,
+    commit_seq: u64,
+    mapping_id: &str,
+    expected_binding: &str,
+) -> Result<bool, CellError> {
+    let Some(def_ver) = reader.definitions_version_at(commit_seq)? else {
+        return Ok(false);
+    };
+    let Some(installed) = reader.installed_definitions(Some(def_ver))? else {
+        return Ok(false);
+    };
+    let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&installed.canonical_set)?;
+    for artifact in &artifacts {
+        if artifact.kind() == ArtifactKind::Mapping && artifact.artifact_id == mapping_id {
+            return Ok(mapping_binding_key(artifact)? == expected_binding);
+        }
+    }
+    Ok(false)
 }
 
 fn conn_matches_mapping_binding<E: SqlEngine>(
@@ -863,17 +956,5 @@ fn conn_matches_mapping_binding<E: SqlEngine>(
     let Some(commit_seq) = seq.and_then(|s| u64::try_from(s).ok()) else {
         return Ok(false);
     };
-    let Some(def_ver) = reader.definitions_version_at(commit_seq)? else {
-        return Ok(false);
-    };
-    let Some(installed) = reader.installed_definitions(Some(def_ver))? else {
-        return Ok(false);
-    };
-    let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&installed.canonical_set)?;
-    for artifact in &artifacts {
-        if artifact.kind() == ArtifactKind::Mapping && artifact.artifact_id == mapping_id {
-            return Ok(mapping_binding_key(artifact)? == expected_binding);
-        }
-    }
-    Ok(false)
+    commit_seq_matches_mapping_binding(reader, commit_seq, mapping_id, expected_binding)
 }

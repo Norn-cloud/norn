@@ -142,28 +142,41 @@ impl<E: SqlEngine> DevHost<E> {
     }
 
     /// Seed legacy dataset cursors (upgraded from `source.Connection.watermark`)
-    /// into `_norn_source_cursor` under the active fencing lease using
-    /// `INSERT OR IGNORE`.
+    /// into `_norn_source_cursor` under the active fencing lease and optional
+    /// mapping revision pin using `INSERT OR IGNORE`.
     ///
     /// # Errors
     /// [`SourceCaptureError::LeaseFenced`] or store failure.
     pub fn seed_source_cursors(
         &self,
         connection_id: &str,
-        lease_id: &str,
-        generation: u64,
+        lease: &SourceLease,
         now_ms: u64,
         cursors: &BTreeMap<String, String>,
+        expected_binding: Option<(&str, &str)>,
     ) -> Result<(), SourceCaptureError> {
         let _epoch = self.definition_read()?;
         self.observing_raw(|cell| {
-            cell.seed_source_cursors(connection_id, lease_id, generation, now_ms, cursors)
+            Self::verify_active_mapping_binding(
+                cell,
+                expected_binding,
+                Some((connection_id, &lease.lease_id, lease.generation)),
+            )?;
+            cell.seed_source_cursors(
+                connection_id,
+                &lease.lease_id,
+                lease.generation,
+                now_ms,
+                cursors,
+            )
         })?
         .map_err(SourceCaptureError::from_cell)
     }
 
     /// Clear durable dataset cursors/replays and rebind `connection_id` to
-    /// `mapping_id` under the active fencing lease.
+    /// `mapping.1` (`(mapping_id, expected_binding)`) under the active fencing
+    /// lease, verifying atomically that `mapping.1` is still the active mapping
+    /// revision.
     ///
     /// # Errors
     /// [`SourceCaptureError::LeaseFenced`], [`SourceCaptureError::CursorConflict`],
@@ -171,34 +184,58 @@ impl<E: SqlEngine> DevHost<E> {
     pub fn reset_source_cursors(
         &self,
         connection_id: &str,
-        mapping_id: &str,
-        lease_id: &str,
-        generation: u64,
+        mapping: (&str, &str),
+        lease: &SourceLease,
         now_ms: u64,
     ) -> Result<(), SourceCaptureError> {
         let _epoch = self.definition_read()?;
         self.observing_raw(|cell| {
-            cell.reset_source_cursors(connection_id, mapping_id, lease_id, generation, now_ms)
+            Self::verify_active_mapping_binding(
+                cell,
+                Some(mapping),
+                Some((connection_id, &lease.lease_id, lease.generation)),
+            )?;
+            cell.reset_source_cursors(
+                connection_id,
+                mapping.1,
+                &lease.lease_id,
+                lease.generation,
+                now_ms,
+            )
         })?
         .map_err(SourceCaptureError::from_cell)
     }
 
-    /// Persist `connection_id -> mapping_id` in `_norn_source_binding` under
-    /// the active fencing lease.
+    /// Atomically verify the active mapping revision `mapping` (`(mapping_id,
+    /// expected_binding)`), persist `connection_id -> mapping.1` in
+    /// `_norn_source_binding`, and seed any `seed_cursors` into
+    /// `_norn_source_cursor` in one SQLite transaction under `lease`.
     ///
     /// # Errors
     /// [`SourceCaptureError::LeaseFenced`] or store failure.
     pub fn bind_source_mapping(
         &self,
         connection_id: &str,
-        mapping_id: &str,
-        lease_id: &str,
-        generation: u64,
+        mapping: (&str, &str),
+        lease: &SourceLease,
         now_ms: u64,
+        seed_cursors: &BTreeMap<String, String>,
     ) -> Result<(), SourceCaptureError> {
         let _epoch = self.definition_read()?;
         self.observing_raw(|cell| {
-            cell.bind_source_mapping(connection_id, mapping_id, lease_id, generation, now_ms)
+            Self::verify_active_mapping_binding(
+                cell,
+                Some(mapping),
+                Some((connection_id, &lease.lease_id, lease.generation)),
+            )?;
+            cell.bind_source_mapping(
+                connection_id,
+                mapping.1,
+                &lease.lease_id,
+                lease.generation,
+                now_ms,
+                seed_cursors,
+            )
         })?
         .map_err(SourceCaptureError::from_cell)
     }
@@ -230,12 +267,13 @@ impl<E: SqlEngine> DevHost<E> {
             .map_err(Refusal::host)
     }
 
-    /// Whether `source.Connection` `connection_id` was written under the exact
-    /// retained mapping revision `expected_binding` (`<id>@<version>#<sha256>`).
+    /// Whether legacy (unbound) durable cursors or `source.Connection.watermark`
+    /// for `connection_id` carry direct proof of belonging to `expected_binding`
+    /// (`<id>@<version>#<sha256>`).
     ///
     /// # Errors
     /// Host or store failure.
-    pub fn connection_matches_mapping_binding(
+    pub fn legacy_cursors_match_mapping_binding(
         &self,
         connection_id: &str,
         mapping_id: &str,
@@ -245,7 +283,7 @@ impl<E: SqlEngine> DevHost<E> {
         let cell = self.cell()?;
         cell.store()
             .read()
-            .connection_matches_mapping_binding(
+            .legacy_cursors_match_mapping_binding(
                 norn_cell::MAIN_WORLD,
                 connection_id,
                 mapping_id,
@@ -369,6 +407,33 @@ impl<E: SqlEngine> DevHost<E> {
                 expected_binding,
                 lease.map(|(c, l, g, _)| (c, l, g)),
             )?;
+            if let Some((connection_id, lease_id, generation, now_ms)) = lease
+                && let Some(current) = cell.store().read().source_lease(connection_id)?
+                && (current.lease_id != lease_id
+                    || current.generation != generation
+                    || now_ms >= current.expires_at_ms)
+            {
+                return Err(CellError::SourceLeaseFenced {
+                    connection_id: connection_id.to_owned(),
+                    lease_id: lease_id.to_owned(),
+                    generation,
+                });
+            }
+            let Some((_, first_input)) = rows.first() else {
+                return Ok(());
+            };
+            // SYNC-REPORT-1: a cell without the report definitions keeps its
+            // in-memory state only; propagate every error once installed.
+            if !cell.store().model().has_type("source.Connection")
+                || !cell.store().model().has_type("source.SyncRun")
+                || cell
+                    .store()
+                    .read()
+                    .active_mapping_binding(&first_input.mapping)?
+                    .is_none()
+            {
+                return Ok(());
+            }
             for (raw, input) in rows {
                 let captured =
                     cell.capture_source_report_checked(std::slice::from_ref(raw), input, lease)?;

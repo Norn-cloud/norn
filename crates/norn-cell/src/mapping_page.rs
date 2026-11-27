@@ -31,7 +31,7 @@ use norn_kernel::{
     CellCommit, CommitModel, DecisionTurn, FactKey, ObservationAuthorization, ObservationEvent,
     ObservationId, Observed, TypeCatalog,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The most records one page carries.
 pub const MAX_PAGE_RECORDS: usize = 1_000;
@@ -688,6 +688,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         lease_id: &str,
         generation: u64,
         now_ms: u64,
+        seed_cursors: &BTreeMap<String, String>,
     ) -> Result<(), CellError> {
         self.store_mut().bind_source_mapping(
             connection_id,
@@ -695,6 +696,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             lease_id,
             generation,
             now_ms,
+            seed_cursors,
         )
     }
 
@@ -721,9 +723,11 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
 }
 
 impl<E: SqlEngine> CellStore<E> {
-    /// Persist `connection_id -> mapping_id` in `_norn_source_binding` under
-    /// the active fencing lease, clearing any orphan `processed = 1` replay
-    /// rows if the previous binding was absent or different.
+    /// Persist `connection_id -> mapping_id` in `_norn_source_binding` and
+    /// optionally seed legacy `_norn_source_cursor` rows in the same SQLite
+    /// transaction under the active fencing lease, clearing any orphan
+    /// `processed = 1` replay rows if the previous binding was absent or
+    /// different.
     ///
     /// # Errors
     /// [`CellError::SourceLeaseFenced`], [`CellError::OutOfRange`], or store errors.
@@ -734,9 +738,12 @@ impl<E: SqlEngine> CellStore<E> {
         lease_id: &str,
         generation: u64,
         now_ms: u64,
+        seed_cursors: &BTreeMap<String, String>,
     ) -> Result<(), CellError> {
         use crate::engine::params;
-        use crate::source_cursor::{SOURCE_BINDING, SOURCE_PENDING, verify_active_lease};
+        use crate::source_cursor::{
+            SOURCE_BINDING, SOURCE_CURSOR, SOURCE_PENDING, verify_active_lease,
+        };
         let gen_i64 =
             i64::try_from(generation).map_err(|_| CellError::OutOfRange("binding generation"))?;
         let now_i64 =
@@ -767,6 +774,23 @@ impl<E: SqlEngine> CellStore<E> {
                 ),
                 params![connection_id, mapping_id, gen_i64, now_i64],
             )?;
+            for (dataset, cursor_json) in seed_cursors {
+                self.conn.execute(
+                    &format!(
+                        "INSERT OR IGNORE INTO \"{SOURCE_CURSOR}\" \
+                         (\"connection_id\", \"dataset\", \"cursor_json\", \"generation\", \"page_digest\", \
+                          \"pages_json\", \"records_json\", \"updated_at_ms\") \
+                         VALUES (?1, ?2, ?3, ?4, 'legacy-seed', '[]', '[]', ?5)"
+                    ),
+                    params![
+                        connection_id,
+                        dataset.as_str(),
+                        cursor_json.as_str(),
+                        gen_i64,
+                        now_i64,
+                    ],
+                )?;
+            }
             Ok(())
         })
     }
@@ -845,4 +869,91 @@ impl<E: SqlEngine> crate::StoreReader<'_, E> {
             |row| row.get(0),
         )
     }
+
+    /// Whether legacy (unbound) durable cursors or `source.Connection.watermark`
+    /// for `source_id` carry direct proof of belonging to `expected_binding`
+    /// (`<id>@<version>#<sha256>`).
+    ///
+    /// # Errors
+    /// Store or definition decoding errors.
+    pub fn legacy_cursors_match_mapping_binding(
+        &self,
+        world: &str,
+        source_id: &str,
+        mapping_id: &str,
+        expected_binding: &str,
+    ) -> Result<bool, CellError> {
+        let cursors = self.source_cursors(source_id)?;
+        if !cursors.is_empty() {
+            let mut fallback = BTreeMap::new();
+            for (dataset, record) in &cursors {
+                match cursor_bundles_match_binding(self, record, mapping_id, expected_binding) {
+                    Some(true) => {}
+                    Some(false) => return Ok(false),
+                    None => {
+                        let Some(canonical) =
+                            crate::compute::freshness::validate_cursor_json(&record.cursor_json)
+                        else {
+                            return Ok(false);
+                        };
+                        fallback.insert(dataset.clone(), canonical);
+                    }
+                }
+            }
+            if fallback.is_empty() {
+                return Ok(true);
+            }
+            return self.connection_history_proves_cursors(
+                world,
+                source_id,
+                (mapping_id, expected_binding),
+                &fallback,
+            );
+        }
+        if !self.model().has_type("source.Connection") {
+            return Ok(false);
+        }
+        let Some(conn) = self.object(world, "source.Connection", source_id)? else {
+            return Ok(false);
+        };
+        let conn_cursors = crate::compute::freshness::strict_connection_cursors(&conn);
+        if conn_cursors.is_empty() {
+            return Ok(false);
+        }
+        self.connection_history_proves_cursors(
+            world,
+            source_id,
+            (mapping_id, expected_binding),
+            &conn_cursors,
+        )
+    }
+}
+
+fn cursor_bundles_match_binding<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    record: &crate::source_cursor::SourceCursorRecord,
+    mapping_id: &str,
+    expected_binding: &str,
+) -> Option<bool> {
+    let mut saw_bundle = false;
+    for id in &record.records {
+        if !id.starts_with("mapping-bundle:") {
+            continue;
+        }
+        saw_bundle = true;
+        let Ok(bundle) = reader.inbox_bundle(id) else {
+            return Some(false);
+        };
+        if bundle.input.mapping != mapping_id {
+            return Some(false);
+        }
+        let pin_matches = bundle
+            .artifact_pins
+            .iter()
+            .any(|(art_id, ver, sha)| format!("{art_id}@{ver}#{sha}") == expected_binding);
+        if !pin_matches {
+            return Some(false);
+        }
+    }
+    saw_bundle.then_some(true)
 }

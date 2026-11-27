@@ -686,6 +686,7 @@ fn begin<E: SqlEngine>(
     now_ms: u64,
 ) -> Result<Next, Failure> {
     let (profile, payload, expected_binding) = capture::load_connector_profile(host, config)?;
+    run.mapping_binding = Some(expected_binding.clone());
     let token = client_credentials(&payload, secrets, config)?;
     if token.is_none() {
         run.auth = auth_headers(&payload, secrets, config)?;
@@ -708,7 +709,9 @@ fn begin<E: SqlEngine>(
         now_ms,
     )?;
     run.drain_only = drain_only;
-    run.mapping_binding = (!drain_only).then_some(expected_binding);
+    if drain_only {
+        run.mapping_binding = None;
+    }
     run.watermark_from = watermark_text(&watermarks);
     run.committed_watermarks = watermarks.clone();
     run.committed_cursor_json = raw_cursors;
@@ -1182,10 +1185,11 @@ fn report<E: SqlEngine>(
         .as_deref()
         .map(|binding| (config.mapping.as_str(), binding));
     match host.ingest_source_report_checked(&batch, lease_check, expected_binding) {
-        Err(crate::host::SourceCaptureError::LeaseFenced(msg)) => {
-            Some(fail("source.lease_fenced", msg))
+        Ok(()) => None,
+        Err(error) => {
+            let (code, message) = error.code_and_message();
+            Some(fail(code, message))
         }
-        _ => None,
     }
 }
 

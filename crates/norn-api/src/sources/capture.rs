@@ -160,30 +160,25 @@ fn stored_connection_mapping<E: SqlEngine>(
 fn bind_mapping<E: SqlEngine>(
     host: &DevHost<E>,
     connection_id: &str,
-    mapping_id: &str,
+    mapping: (&str, &str),
     lease: &SourceLease,
     now_ms: u64,
+    seed_cursors: &BTreeMap<String, String>,
 ) -> Result<(), Failure> {
-    host.bind_source_mapping(
-        connection_id,
-        mapping_id,
-        &lease.lease_id,
-        lease.generation,
-        now_ms,
-    )
-    .map_err(|error| {
-        let (code, message) = error.code_and_message();
-        fail(code, message)
-    })
+    host.bind_source_mapping(connection_id, mapping, lease, now_ms, seed_cursors)
+        .map_err(|error| {
+            let (code, message) = error.code_and_message();
+            fail(code, message)
+        })
 }
 
 /// Read the connection's durably committed watermarks alongside their exact
 /// stored cursor JSON strings. Durable cursor reuse requires a proven mapping
-/// match in `_norn_source_binding` (or, on first upgrade before a binding row
-/// exists, an explicit matching `source.Connection.mapping_id`). When a binding
-/// differs or is unproven:
+/// revision match in `_norn_source_binding` (or, on first upgrade before a
+/// binding row exists, direct cursor-level proof against `expected_binding`).
+/// When a binding differs or is unproven:
 /// - if pending captures remain, drain them first (`drain_only = true`);
-/// - otherwise atomically clear old cursors/replays and bind `config.mapping`
+/// - otherwise atomically clear old cursors/replays and bind `expected_binding`
 ///   so the rebound mapping pulls from `feed.initial`.
 pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     host: &DevHost<E>,
@@ -194,7 +189,18 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     has_pending: bool,
     now_ms: u64,
 ) -> Result<LoadedWatermarks, Failure> {
+    let current_binding = host
+        .active_mapping_binding(&config.mapping)
+        .map_err(|r| fail("source.ingest", r.message))?
+        .unwrap_or_else(|| config.mapping.clone());
+    if current_binding != expected_binding {
+        return Err(fail(
+            "source.lease_fenced",
+            "active mapping revision changed before sync started",
+        ));
+    }
     let connection_id = config.id.as_str();
+    let mapping = (config.mapping.as_str(), expected_binding);
     let bound_mapping = host
         .source_mapping_binding(connection_id)
         .map_err(|r| fail("source.ingest", r.message))?;
@@ -203,9 +209,8 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
         .map_err(|r| fail("source.ingest", r.message))?;
     let stored_mapping = stored_connection_mapping(host, connection_id);
     let legacy_revision_matches = bound_mapping.is_none()
-        && stored_mapping.as_deref() == Some(config.mapping.as_str())
         && host
-            .connection_matches_mapping_binding(connection_id, &config.mapping, expected_binding)
+            .legacy_cursors_match_mapping_binding(connection_id, &config.mapping, expected_binding)
             .unwrap_or(false);
     let proven_match = match bound_mapping.as_deref() {
         Some(bound) => bound == expected_binding,
@@ -218,23 +223,24 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
             let (parsed, raw_cursors) = decode_cursors(cursors);
             return Ok((parsed, raw_cursors, true));
         }
-        host.reset_source_cursors(
-            connection_id,
-            expected_binding,
-            &lease.lease_id,
-            lease.generation,
-            now_ms,
-        )
-        .map_err(|error| {
-            let (code, message) = error.code_and_message();
-            fail(code, message)
-        })?;
+        host.reset_source_cursors(connection_id, mapping, lease, now_ms)
+            .map_err(|error| {
+                let (code, message) = error.code_and_message();
+                fail(code, message)
+            })?;
         return Ok((BTreeMap::new(), BTreeMap::new(), false));
     }
 
     if !cursors.is_empty() {
         if bound_mapping.is_none() {
-            bind_mapping(host, connection_id, expected_binding, lease, now_ms)?;
+            bind_mapping(
+                host,
+                connection_id,
+                mapping,
+                lease,
+                now_ms,
+                &BTreeMap::new(),
+            )?;
         }
         let (parsed, raw_cursors) = decode_cursors(cursors);
         return Ok((parsed, raw_cursors, false));
@@ -250,27 +256,14 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     } else {
         known.unwrap_or_default()
     };
-    bind_mapping(host, connection_id, expected_binding, lease, now_ms)?;
     let mut encoded = BTreeMap::new();
-    if !legacy.is_empty() {
-        for (dataset, watermark) in &legacy {
-            let cursor_json = watermark
-                .cursor_json()
-                .map_err(|e| fail("source.ingest", e.to_string()))?;
-            encoded.insert(dataset.clone(), cursor_json);
-        }
-        host.seed_source_cursors(
-            connection_id,
-            &lease.lease_id,
-            lease.generation,
-            now_ms,
-            &encoded,
-        )
-        .map_err(|error| {
-            let (code, message) = error.code_and_message();
-            fail(code, message)
-        })?;
+    for (dataset, watermark) in &legacy {
+        let cursor_json = watermark
+            .cursor_json()
+            .map_err(|e| fail("source.ingest", e.to_string()))?;
+        encoded.insert(dataset.clone(), cursor_json);
     }
+    bind_mapping(host, connection_id, mapping, lease, now_ms, &encoded)?;
     Ok((legacy, encoded, false))
 }
 

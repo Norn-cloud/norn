@@ -1514,4 +1514,225 @@ mod tests {
                 .contains_key(&dataset)
         );
     }
+
+    /// Regression 12: stale mapping revisions are fenced inside `reset_source_cursors`,
+    /// `bind_source_mapping`, and `seed_source_cursors` before any cursor/binding mutation.
+    #[test]
+    fn stale_mapping_revision_fences_reset_bind_and_seed() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let active = host
+            .active_mapping_binding("erpnext.rest.mapping")
+            .expect("active binding")
+            .expect("mapping installed");
+        let stale = "erpnext.rest.mapping@0.0.0#stale";
+        assert_ne!(active, stale);
+        let lease = host
+            .acquire_source_lease("erpnext.rest", "run-stale-rev", T0, RUN_LEASE_MS)
+            .expect("lease");
+        let seed = BTreeMap::from([(
+            "Party".to_owned(),
+            r#"{"version":"2026-01-01 00:00:00","id":"CUST-1"}"#.to_owned(),
+        )]);
+        assert!(matches!(
+            host.reset_source_cursors("erpnext.rest", ("erpnext.rest.mapping", stale), &lease, T0),
+            Err(SourceCaptureError::LeaseFenced(_))
+        ));
+        assert!(matches!(
+            host.bind_source_mapping(
+                "erpnext.rest",
+                ("erpnext.rest.mapping", stale),
+                &lease,
+                T0,
+                &seed,
+            ),
+            Err(SourceCaptureError::LeaseFenced(_))
+        ));
+        assert!(matches!(
+            host.seed_source_cursors(
+                "erpnext.rest",
+                &lease,
+                T0,
+                &seed,
+                Some(("erpnext.rest.mapping", stale)),
+            ),
+            Err(SourceCaptureError::LeaseFenced(_))
+        ));
+        assert!(
+            host.source_mapping_binding("erpnext.rest")
+                .expect("binding")
+                .is_none()
+        );
+        assert!(
+            host.source_cursors("erpnext.rest")
+                .expect("cursors")
+                .is_empty()
+        );
+    }
+
+    /// Regression 13: legacy binding and cursor seeding commit atomically in one
+    /// SQLite transaction; a fault during cursor seeding rolls back the binding.
+    #[test]
+    fn bind_source_mapping_rolls_back_binding_on_seed_cursor_fault() {
+        let (host, fail_cursor, _fail_ledger) = open_faultable_host(&rest_artifacts(&[]), None);
+        let active = host
+            .active_mapping_binding("erpnext.rest.mapping")
+            .expect("active binding")
+            .expect("mapping installed");
+        let lease = host
+            .acquire_source_lease("erpnext.rest", "run-atomic-seed", T0, RUN_LEASE_MS)
+            .expect("lease");
+        let seed = BTreeMap::from([(
+            "Party".to_owned(),
+            r#"{"version":"2026-01-01 00:00:00","id":"CUST-1"}"#.to_owned(),
+        )]);
+        fail_cursor.store(true, Ordering::Release);
+        assert!(
+            host.bind_source_mapping(
+                "erpnext.rest",
+                ("erpnext.rest.mapping", &active),
+                &lease,
+                T0,
+                &seed,
+            )
+            .is_err()
+        );
+        assert!(
+            host.source_mapping_binding("erpnext.rest")
+                .expect("binding")
+                .is_none(),
+            "binding must roll back when legacy cursor seed faults"
+        );
+        assert!(
+            host.source_cursors("erpnext.rest")
+                .expect("cursors")
+                .is_empty()
+        );
+        fail_cursor.store(false, Ordering::Release);
+        host.bind_source_mapping(
+            "erpnext.rest",
+            ("erpnext.rest.mapping", &active),
+            &lease,
+            T0,
+            &seed,
+        )
+        .expect("atomic bind+seed");
+        assert_eq!(
+            host.source_mapping_binding("erpnext.rest")
+                .expect("binding")
+                .as_deref(),
+            Some(active.as_str())
+        );
+        assert!(
+            host.source_cursors("erpnext.rest")
+                .expect("cursors")
+                .contains_key("Party")
+        );
+    }
+
+    /// Regression 14: when the sources report pack is installed, a real store
+    /// error during end-of-run `report()` fails the run instead of returning `ok`.
+    #[test]
+    fn report_write_fault_with_report_pack_installed_fails_finish() {
+        let (host, _fail_cursor, fail_ledger) = open_faultable_host(&rest_artifacts(&[]), None);
+        let profile = profile_of("erpnext");
+        let mut sources = rest_sources(ERPNEXT_CONFIG);
+        sources
+            .claim("erpnext.rest", Trigger::Manual, "user:owner@demo", T0)
+            .expect("claim");
+        let mut step = sources.step(&host, "erpnext.rest", None, T0);
+        let mut t = T0;
+        let feed_count = profile.feeds.len();
+        let mut seen = 0_usize;
+        let summary = loop {
+            match step {
+                Step::Request(req) => {
+                    seen += 1;
+                    let feed = profile
+                        .feeds
+                        .iter()
+                        .find(|f| req.url.contains(f.request.path.as_str()))
+                        .expect("feed");
+                    let body = empty_page(&profile, &feed.dataset).to_string();
+                    if seen == feed_count {
+                        // Fault ledger writes for the final `source.Connection` / `source.SyncRun` report.
+                        fail_ledger.store(true, Ordering::Release);
+                    }
+                    t = t.saturating_add(1);
+                    step = sources.step(&host, "erpnext.rest", Some((200, body.as_bytes())), t);
+                }
+                Step::Continue => {
+                    t = t.saturating_add(1);
+                    step = sources.step(&host, "erpnext.rest", None, t);
+                }
+                Step::Done(summary) => break summary,
+            }
+        };
+        assert_eq!(summary.outcome, "failed", "{summary:#?}");
+        assert!(summary.error.is_some());
+    }
+
+    /// Regression 15: a failed `source.Connection` report (e.g. auth failure)
+    /// without `_norn_source_binding` never proves legacy cursor ownership for
+    /// `legacy_cursors_match_mapping_binding`.
+    #[test]
+    fn failed_legacy_connection_report_does_not_prove_cursor_binding() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let active = host
+            .active_mapping_binding("erpnext.rest.mapping")
+            .expect("active binding")
+            .expect("mapping installed");
+        let legacy_wm = BTreeMap::from([(
+            "Party".to_owned(),
+            Watermark {
+                version: "2026-01-01 00:00:00".into(),
+                id: norn_ir::RuntimeValue::String("CUST-LEGACY".into()),
+            },
+        )]);
+        let legacy_json = serde_json::to_string(&legacy_wm).expect("json");
+        let connect_profile = PullProfile {
+            source: "norn-connect".into(),
+            pipeline: "norn-connect/1".into(),
+            feeds: Vec::new(),
+            token: None,
+        };
+        let failed_conn = norn_api::pull::Row {
+            dataset: "connection".into(),
+            source_id: "erpnext.rest".into(),
+            version: "auth-fail/end".into(),
+            payload: norn_ir::runtime_object! {
+                "id" => "erpnext.rest", "system" => "erpnext", "label" => "ERPNext REST",
+                "target" => "http://erpnext-rest:8000", "auth" => "api_key", "status" => "failed",
+                "last_sync_started_at" => RECORDED_AT, "last_sync_ended_at" => RECORDED_AT,
+                "last_trigger" => "manual", "watermark" => legacy_json.as_str(),
+                "rows_read" => 0_u64, "rows_landed" => 0_u64, "rows_quarantined" => 0_u64,
+                "quarantine_reasons" => "", "last_error_code" => "source.auth",
+                "last_error_message" => "missing secret",
+                "connector_id" => "erpnext.rest.connector",
+                "source_schema_id" => "erpnext.rest.source",
+                "mapping_id" => "erpnext.rest.mapping",
+            },
+        };
+        let raw = observation(&connect_profile, &failed_conn, T0).expect("raw");
+        host.ingest(&[(
+            raw,
+            MappingInput {
+                mapping: "norn.connect.mapping".into(),
+                dataset: "connection".into(),
+                connector_instance: "cell".into(),
+                partition: "connection".into(),
+                recorded_at: norn_ir::provenance::UtcTimestamp(RECORDED_AT.into()),
+            },
+        )])
+        .expect("record failed connection");
+        assert!(
+            !host
+                .legacy_cursors_match_mapping_binding(
+                    "erpnext.rest",
+                    "erpnext.rest.mapping",
+                    &active,
+                )
+                .expect("legacy check"),
+            "failed report must never bless legacy cursors"
+        );
+    }
 }

@@ -7,7 +7,7 @@ mod as_of;
 #[cfg(feature = "datafusion")]
 mod df_transform;
 /// QUERY-FRESH-1: model-derived required external sources and live freshness.
-mod freshness;
+pub(crate) mod freshness;
 mod historical;
 /// Receipt-driven query maintenance.
 pub mod ivm;
