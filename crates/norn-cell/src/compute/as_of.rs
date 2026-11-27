@@ -1128,4 +1128,66 @@ mod tests {
         put_conn(&mut stale, "m.mapping", "ok", &pair_wm("X", "P"), 6);
         assert!(!proves_both(&stale, &stale_binding, "X", "P"));
     }
+
+    #[test]
+    fn over_4096_pre_pin_with_post_pin_distinct_entries_preserves_proof() {
+        let (mut store, binding) = open_conn_store();
+        put_conn(&mut store, "other.mapping", "ok", &pair_wm("X", "a"), 2);
+        put_conn(&mut store, "m.mapping", "ok", &pair_wm("X", "b"), 3);
+        put_conn(&mut store, "m.mapping", "ok", &pair_wm("X", "c"), 4);
+        put_conn(&mut store, "m.mapping", "ok", &pair_wm("Y", "d"), 5);
+        let target = pair_wm("X", "c");
+        for step in 0_u64..4_096 {
+            put_conn(
+                &mut store,
+                "m.mapping",
+                "ok",
+                &target,
+                6_u64.saturating_add(step),
+            );
+        }
+        let pinned = store
+            .read()
+            .object(MAIN_WORLD, "source.Connection", "conn")
+            .expect("read")
+            .expect("conn");
+        assert!(pinned.version > 4_096);
+        let req = BTreeMap::from([
+            ("ds1".into(), r#"{"version":"X","id":"1"}"#.to_owned()),
+            ("ds2".into(), r#"{"version":"c","id":"2"}"#.to_owned()),
+        ]);
+        assert!(
+            connection_history_proves_cursors_at(
+                &store.read(),
+                MAIN_WORLD,
+                &pinned,
+                ("m.mapping", &binding),
+                &req,
+                false,
+            )
+            .expect("before post-pin")
+        );
+        for step in 0_u64..4_105 {
+            let later_map = format!("0000-map-{step:05}");
+            let later_wm = pair_wm(&format!("0000-{step:05}"), "z");
+            put_conn(
+                &mut store,
+                &later_map,
+                "ok",
+                &later_wm,
+                5_000_u64.saturating_add(step),
+            );
+        }
+        assert!(
+            connection_history_proves_cursors_at(
+                &store.read(),
+                MAIN_WORLD,
+                &pinned,
+                ("m.mapping", &binding),
+                &req,
+                false,
+            )
+            .expect("after post-pin")
+        );
+    }
 }

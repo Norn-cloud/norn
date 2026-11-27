@@ -888,7 +888,7 @@ fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run, now_ms: u64) -> Result<
             capture::ActiveCapture::Captured {
                 pending, advance, ..
             } => {
-                let lease = capture::drain_fence(run, now_ms).lease;
+                let lease = capture::drain_fence(run.lease.as_ref(), now_ms).lease;
                 host.complete_source_pending_checked(
                     &pending.connection_id,
                     &pending.dataset,
