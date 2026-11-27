@@ -284,7 +284,7 @@ impl CellHost for SqlitePackHost {
         manifest: &Digest,
     ) -> Result<Option<ReceiptBinding<JsonObject>>, ReceiptBindingError<CellError>> {
         self.cell_ref()
-            .map_err(ReceiptBindingError::Host)?
+            .map_err(ReceiptBindingError::Store)?
             .resolve_accepted_receipt(reference, manifest)
     }
 
@@ -462,7 +462,7 @@ impl PackHost for SqlitePackHost {
             .map_err(|err| format!("encode invocation: {err}"))?;
         let freshness = dispatched
             .freshness()
-            .map_err(|err| format!("dispatched freshness: {err}"))?;
+            .ok_or_else(|| "dispatched freshness missing".to_owned())?;
         let cell = self
             .cell_mut()
             .map_err(|err| format!("cell_mut: {err}"))?
