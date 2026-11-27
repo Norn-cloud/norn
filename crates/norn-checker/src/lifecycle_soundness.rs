@@ -249,6 +249,43 @@ pub(crate) fn check_effective_transitions(
                 &at("guards"),
             ));
         }
+        if transition.compensated_by.is_none()
+            && let Some(compensation) = edge.compensated_by
+            && (compensation == edge.id
+                || !machine.transitions.iter().any(|t| t.id == compensation))
+        {
+            out.push(finding(
+                codes::INVALID_TRIGGER,
+                format!(
+                    "transition {id:?} inherits compensation {:?}, which is not another transition of the effective lifecycle",
+                    compensation.as_str()
+                ),
+                &at("id"),
+            ));
+        }
+    }
+    out
+}
+
+/// Checks that every compensating transition referenced by an inherited
+/// machine without a local redeclaration still survives in `machine`.
+pub(crate) fn check_inherited_compensation(machine: &Machine<'_>) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for edge in &machine.transitions {
+        if let Some(compensation) = edge.compensated_by
+            && (compensation == edge.id
+                || !machine.transitions.iter().any(|t| t.id == compensation))
+        {
+            out.push(finding(
+                codes::INVALID_TRIGGER,
+                format!(
+                    "transition {:?} is compensated by {:?}, which is not another transition of the effective lifecycle",
+                    edge.id.as_str(),
+                    compensation.as_str()
+                ),
+                &[],
+            ));
+        }
     }
     out
 }
