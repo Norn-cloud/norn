@@ -374,7 +374,7 @@ impl<E: SqlEngine> DevHost<E> {
 
     fn verify_active_mapping_binding(
         cell: &norn_cell::host::SqliteCell<
-            norn_cell::ObservationEvent,
+            norn_kernel::ObservationEvent,
             norn_ir::RuntimeObject,
             norn_ir::RuntimeObject,
             E,
