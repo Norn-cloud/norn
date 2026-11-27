@@ -18,7 +18,7 @@ use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::object_links::LINK_COUNT_BOUND;
 use norn_api::object_links::{ObjectLinkParams, get_object_lineage, get_object_links};
-use norn_api::objects::{NornLinkCount, NornLinkDirection, NornObjectLinkPage};
+use norn_api::objects::{NornLinkCount, NornLinkDirection};
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;

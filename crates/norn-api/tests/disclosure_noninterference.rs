@@ -1148,7 +1148,7 @@ mod tests {
                 ..CommitBatch::default()
             })
             .expect("seed orders");
-        let raw_head = store.read().verified_head().expect("head").hash;
+        let raw_head = store.verified_head().expect("head").hash;
         let host = DevHost::from_store(store, physical(), |cmd| cmd.payload.clone())
             .expect("host")
             .with_authorizer(WorldPolicy)
