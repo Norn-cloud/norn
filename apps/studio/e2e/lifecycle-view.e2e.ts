@@ -351,12 +351,13 @@ test("technical: the reader's sentence first, the code and the checker's own wor
   await expect(view.locator(".norn-life-technical")).toContainText("widget.lifecycle.stuck page state `done` with the object `draft`")
 })
 
-test("locale: Arabic runs right to left with Arabic digits, mirrored cards, and aligned SVG arrows", async ({ page }) => {
+test("locale: Arabic runs right to left with Western (latn) digits, mirrored cards, and aligned SVG arrows", async ({ page }) => {
   const view = await specimen(page, "lifecycle-view/rtl", "ar")
   await expect(view.locator(".norn-life")).toHaveAttribute("dir", "rtl")
-  await expect(card(view, "draft").locator("[data-count]")).toHaveText("١٢")
-  await expect(view.getByText("الخطوة ٤ من ٤")).toBeVisible()
+  await expect(card(view, "draft").locator("[data-count]")).toHaveText("12")
+  await expect(view.getByText("الخطوة 4 من 4")).toBeVisible()
   await expect(view.getByRole("button", { name: "قد تعرض الصفحة «تم» بينما أمر شراء ما زال «مسودة»، ولا شيء يستطيع إنهاءه." })).toBeVisible()
+  expect(await view.textContent()).not.toMatch(/[٠-٩]/)
   // Geometry check in RTL: draft sits to the RIGHT of submitted, and the first arrow starts on draft's left edge.
   const draftBox = await card(view, "draft").boundingBox()
   const submittedBox = await card(view, "submitted").boundingBox()
@@ -369,12 +370,21 @@ test("locale: Arabic runs right to left with Arabic digits, mirrored cards, and 
   expect(Number(match![1])).toBeCloseTo(draftBox!.x - stageBox!.x, 0)
 })
 
-test("not served: a cell without the facets route says so, never counting forever", async ({ page }) => {
+test("not served: a cell without the facets route enters not_served with no Retry button or retry loop in en and ar", async ({ page }) => {
   const view = await specimen(page, "lifecycle-view/not-served")
-  await expect(view.getByText(/This cell does not serve lifecycle counts yet\./)).toBeVisible()
-  await expect(view.locator(".norn-life")).toHaveAttribute("data-machine-state", "unavailable")
+  await expect(view.locator('[data-region="not-served"]')).toHaveText("This cell does not serve lifecycle counts yet.")
+  await expect(view.locator(".norn-life")).toHaveAttribute("data-machine-state", "not_served")
   await expect(card(view, "draft").locator("[data-count]")).toHaveText("—")
-  await expect(view.getByRole("button", { name: "Try again" })).toBeVisible()
+  await expect(view.getByRole("button", { name: "Try again" })).toBeHidden()
+  await expect(view.getByText(/Asking again shortly\./)).toHaveCount(0)
+
+  const arView = await specimen(page, "lifecycle-view/not-served", "ar")
+  await expect(arView.locator(".norn-life")).toHaveAttribute("dir", "rtl")
+  await expect(arView.locator(".norn-life")).toHaveAttribute("data-machine-state", "not_served")
+  await expect(arView.locator('[data-region="not-served"]')).toHaveText("هذه الخلية لا تقدّم أعداد دورة الحياة بعد.")
+  await expect(card(arView, "draft").locator("[data-count]")).toHaveText("—")
+  await expect(arView.getByRole("button", { name: "حاول مرة أخرى" })).toBeHidden()
+  await expect(arView.getByText(/سنسأل مرة أخرى بعد قليل\./)).toHaveCount(0)
 })
 
 // --- Full Studio Records & Record page rows ---
@@ -467,8 +477,9 @@ test.describe("Records page Lifecycle view mode", () => {
     await expect(page.locator('[data-slot="tabs"]')).toHaveAttribute("dir", "rtl")
     const statusView = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
     await expect(statusView.locator(".norn-life")).toHaveAttribute("dir", "rtl")
-    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("٦٬٢٠٠ على الأقل")
-    await expect(statusView.getByText("١٠٬٠٠٠ سجل على الأقل")).toBeVisible()
+    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("6,200 على الأقل")
+    await expect(statusView.getByText("10,000 سجل على الأقل")).toBeVisible()
+    expect(await statusView.textContent()).not.toMatch(/[٠-٩]/)
     // Wait for the WASM checker findings to settle before measuring card/arrow geometry and taking the screenshot.
     await expect(statusView.getByRole("button", { name: "قد تعرض الصفحة «Done» بينما أمر شراء ما زال «مسودة»، ولا شيء يستطيع إنهاءه." })).toBeVisible({ timeout: 20_000 })
     await expect.poll(async () => {
@@ -503,7 +514,25 @@ test.describe("Records page Lifecycle view mode", () => {
     await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("12")
   })
 
-  test("records page: Try again reads the facets route after it becomes available", async ({ page }) => {
+  test("records page: Try again reads the facets route after a transient 503 clears", async ({ page }) => {
+    const cell = await lifecycleCell(page, {
+      status: { status: 503, body: undefined },
+    }, {
+      includeWidget: false,
+      onFacetsSubscribe: (sub) => { if (sub.property !== "status") sub.sendSnapshot() },
+    })
+    await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
+    const statusView = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
+    await expect(statusView.locator(".norn-life")).toHaveAttribute("data-machine-state", "unavailable")
+    await expect(statusView.getByText("The cell did not answer.", { exact: false })).toBeVisible()
+    expect(statusFacetReads(cell.facetRequests)).toHaveLength(1)
+    cell.setFacets("status", okFacets("status", { draft: 15 }))
+    await statusView.getByRole("button", { name: "Try again" }).click()
+    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("15", { timeout: 5_000 })
+    expect(statusFacetReads(cell.facetRequests)).toHaveLength(2)
+  })
+
+  test("records page: HTTP 404 enters not_served with no Try again button and no retry loop", async ({ page }) => {
     const cell = await lifecycleCell(page, {
       status: { status: 404, body: { code: "route.not_found" } },
     }, {
@@ -512,12 +541,12 @@ test.describe("Records page Lifecycle view mode", () => {
     })
     await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
     const statusView = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
-    await expect(statusView.getByText("This cell does not serve lifecycle counts yet.", { exact: false })).toBeVisible()
+    await expect(statusView.locator(".norn-life")).toHaveAttribute("data-machine-state", "not_served")
+    await expect(statusView.locator('[data-region="not-served"]')).toHaveText("This cell does not serve lifecycle counts yet.")
+    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("—")
+    await expect(statusView.getByRole("button", { name: "Try again" })).toBeHidden()
+    await expect(statusView.getByText(/Asking again shortly\./)).toHaveCount(0)
     expect(statusFacetReads(cell.facetRequests)).toHaveLength(1)
-    cell.setFacets("status", okFacets("status", { draft: 15 }))
-    await statusView.getByRole("button", { name: "Try again" }).click()
-    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("15", { timeout: 5_000 })
-    expect(statusFacetReads(cell.facetRequests)).toHaveLength(2)
   })
 
   for (const failures of [1, 2]) {
