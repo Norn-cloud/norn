@@ -17,6 +17,7 @@ use norn_kernel::{
     ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
     authz::{ActorKind, ResourceInput, ScopeKey},
 };
+use std::collections::BTreeMap;
 
 #[path = "../tests/support/action_cell.rs"]
 mod action_cell;
