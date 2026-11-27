@@ -1313,12 +1313,15 @@ mod wedge {
     }
 
     fn envelope(id: &str, kind: &str, ns: &str, payload: Value, deps: Value) -> ArtifactEnvelope {
-        serde_json::from_value(json!({
+        let mut object = json!({
             "irVersion": "0.1", "artifactId": id, "kind": kind, "namespace": ns,
             "name": id, "version": "0.1.0", "lifecycle": "active", "scope": {},
-            "dependencies": deps, "provenance": {"source": "system"}, "payload": payload
-        }))
-        .expect("envelope")
+            "provenance": {"source": "system"}
+        });
+        let map = object.as_object_mut().expect("envelope object");
+        map.insert("dependencies".into(), deps);
+        map.insert("payload".into(), payload);
+        serde_json::from_value(object).expect("envelope")
     }
 
     fn crm_entities_and_law() -> Vec<ArtifactEnvelope> {
