@@ -2000,9 +2000,9 @@ impl CellModel {
                 self.claim();
             }
             self.settled_generations
-                .entry(head.id.clone())
+                .entry(delivered.command.clone())
                 .or_default()
-                .insert(head.generation.0);
+                .insert(delivered.generation.0);
             self.executions = self.executions.saturating_add(1);
             self.head_performed = true;
         }

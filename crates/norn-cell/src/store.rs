@@ -3663,7 +3663,7 @@ impl<E: SqlEngine> CellStore<E> {
     }
 
     /// Durably attach an external outcome verified by `proof` to its original
-    /// generation (`D1`), committing a zero-event [`SystemWrite::RecordLateOutcome`]
+    /// generation (`D1`), committing a zero-event `SystemWrite::RecordLateOutcome`
     /// so the evidence survives export and restore.
     ///
     /// Fails closed with [`CellError::OutboxLedgerRefused`] on an invalid
@@ -3700,7 +3700,7 @@ impl<E: SqlEngine> CellStore<E> {
 
     /// Durably record an outbox reconciliation decision for `(command_id, generation)` (`D1`).
     ///
-    /// Commits a zero-event [`SystemWrite::ReconcileOutbox`] recorded in the
+    /// Commits a zero-event `SystemWrite::ReconcileOutbox` recorded in the
     /// export journal and replayed across restores.
     ///
     /// # Errors

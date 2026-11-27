@@ -734,6 +734,7 @@ pub(crate) fn record_consumed<E: SqlEngine>(
 
 /// Persist an [`OutboxRecordKind::RestoreFenced`] record when restore fences a
 /// pending command.
+#[cfg(feature = "native")]
 pub(crate) fn record_restore_fence<E: SqlEngine>(
     conn: &E,
     command_id: &str,
