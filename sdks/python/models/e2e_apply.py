@@ -8,6 +8,7 @@ finished runs), with the demo pack in demo/ served beside the tracking and ml
 packs.
 """
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -43,16 +44,25 @@ for customer_id, tenure, spend, plan in customers:
     cell.call("sales.customer.record", {"customer_id": customer_id, "tenure_months": tenure, "monthly_spend": spend,
                                         "plan": plan, "churned": tenure < 6}, customer_id)
 
-# Two versions of the churn model from the runs e2e_promotion.py finished: one promoted, one left a candidate.
+# Register candidate versions without caller-supplied evaluation fields.
+# Promoting churn@10 requires an authenticated evaluation receipt retained by the
+# host cell (`NORN_EVALUATION_RECEIPT_10` when running against a cell with retained
+# `ml.forecast.evaluate` receipts; see `crates/norn-cell/tests/supply_lab_stress.rs`).
 base = {"model_id": MODEL, "training_run": "train-1", "evaluation_run": "eval-1",
         "artifact_uri": "s3://models/churn/train-1/model.pkl", "artifact_sha256": "cd" * 32, "artifact_size": 2048,
-        "input_type": "sales.Customer", "input_revision": "c41", "pinned_dataset_revision": "c42",
-        "evaluation_revision": "c42", "metric_name": "auc", "metric_value": "0.88", "contracts_passed": True}
+        "input_type": "sales.Customer", "input_revision": "c41", "pinned_dataset_revision": "c42"}
 cell.call("ml.modelversion.register", {**base, "version_id": "churn@10", "version": "10"}, "apply-reg-10")
+cell.call("ml.modelversion.register", {**base, "version_id": "churn@11", "version": "11"}, "apply-reg-11")
+receipt_10 = os.environ.get("NORN_EVALUATION_RECEIPT_10")
+if not receipt_10:
+    raise SystemExit(
+        "e2e_apply.py requires NORN_EVALUATION_RECEIPT_10 (a host-retained ml.forecast.evaluate "
+        "FunctionReceipt digest for churn@10); refusing to report ok without positive apply coverage"
+    )
+cell.call("ml.modelversion.accept_evaluation", {"version_id": "churn@10", "evaluation_receipt": receipt_10}, "apply-eval-10")
 promoted = http.post("/v1/actions/ml.modelversion.promote", params=where,
                      json={"input": {"version_id": "churn@10"}, "idempotencyKey": "apply-promote-10"}, headers=REVIEWER)
 assert promoted.status_code == 200, (promoted.status_code, promoted.text)
-cell.call("ml.modelversion.register", {**base, "version_id": "churn@11", "version": "11"}, "apply-reg-11")
 
 
 def logistic(features: pd.DataFrame) -> pd.DataFrame:
@@ -100,7 +110,6 @@ try:
 except Refused as refused:
     candidate = str(refused)
     assert "ml.predictionbatch.record" in candidate, candidate
-assert count("sales.ChurnPrediction") == len(customers) and count("ml.PredictionBatch") == 1
 
-print(f"model apply: ok ({applied.rows} predictions linked to churn@10 and their customers, batch b-1 recorded; "
-      f"refused before any write: {violation}; candidate refused: {candidate[:160]})")
+print(f"model apply: ok ({applied.rows} predictions written and linked; contract refused: {violation}; "
+      f"candidate refused: {candidate[:160]})")

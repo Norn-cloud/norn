@@ -331,7 +331,8 @@ def _suite(frame: pd.DataFrame, target: str, features: list[str], order: str | N
     fitted = np.asarray(fit.fittedvalues)
     theoretical = sstats.norm.ppf((np.arange(1, n + 1) - 0.5) / n)
     plots = {"fitted": fitted, "residuals": residuals, "qq": {"theoretical": theoretical, "sample": np.sort(residuals)},
-             "n": n, "coefficients": {name: float(value) for name, value in fit.params.items()}}
+             "n": n, "r_squared": float(fit.rsquared),
+             "coefficients": {name: float(value) for name, value in fit.params.items()}}
     return checks, plots
 
 
