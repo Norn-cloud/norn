@@ -543,6 +543,45 @@ describe("not_served vs unavailable (DESIGN.md §12.2, §12.4)", () => {
     controller.dispose()
     expect(stopCalls).toBe(1)
   })
+
+  test("Refresh from unavailable uses the declared changed transition (not retry)", async () => {
+    const timers = fakeClock()
+    let readCalls = 0
+    let emitRefusal: ((refusal: { code: string; message: string }) => void) | undefined
+    // Strip unavailable-retry from a cloned machine to prove refresh() dispatches `changed`, not `retry`.
+    const machineWithoutUnavailableRetry = {
+      ...VIEW_MACHINE,
+      transitions: VIEW_MACHINE.transitions.filter((t) => t.transitionId !== "unavailable-retry"),
+    }
+    expect(VIEW_MACHINE.transitions.some((t) => t.transitionId === "unavailable-changed" && t.from === "unavailable" && t.on === "changed")).toBe(true)
+
+    const answers: LiveAnswer[] = [
+      { status: 503, body: undefined },
+      facetsAnswer(9),
+    ]
+    const controller = createLifecycleReadController({
+      machine: machineWithoutUnavailableRetry,
+      clock: timers.clock,
+      read: async () => answers[readCalls++] ?? facetsAnswer(9),
+      changes: (_onAnswer, onRefusal) => {
+        emitRefusal = onRefusal
+        return () => {}
+      },
+      onState: () => {},
+    })
+
+    await settle()
+    emitRefusal?.({ code: "live.unavailable", message: "Live updates unavailable" })
+    expect(controller.state()).toBe("unavailable")
+    expect(readCalls).toBe(1)
+
+    controller.refresh()
+    await settle()
+    expect(readCalls).toBe(2)
+    expect(controller.state()).toBe("showing")
+    expect(draftCountOf(controller.lastAnswer())).toBe(9)
+    controller.dispose()
+  })
 })
 
 // A property over generated lifecycles, in both directions: on the board's grid (11rem cards,

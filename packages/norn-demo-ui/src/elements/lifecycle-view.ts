@@ -506,8 +506,9 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
         queueMicrotask(() => {
           if (disposed || terminal) return
           const current = driver.snapshot().stateId
-          if (current === "unavailable") driver.dispatch({ kind: "user", eventId: "retry" })
-          else if (current !== "reading" && current !== "opening" && current !== "not_served") driver.dispatch({ kind: "user", eventId: "changed" })
+          if (current !== "reading" && current !== "opening" && current !== "not_served") {
+            driver.dispatch({ kind: "user", eventId: "changed" })
+          }
         })
       }
     },
@@ -519,8 +520,6 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
     if (state === "not_served") return
     if (state === "reading" || state === "opening") {
       pendingRefresh = true
-    } else if (state === "unavailable") {
-      driver.dispatch({ kind: "user", eventId: "retry" })
     } else {
       driver.dispatch({ kind: "user", eventId: "changed" })
     }

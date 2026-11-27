@@ -95,6 +95,7 @@ export const lifecycleViewWidget: W.WidgetDef = W.widget({
           { transitionId: "changed", from: "showing", on: "changed", target: "reading", effects: [readFacets] },
           { transitionId: "refused-changed", from: "refused", on: "changed", target: "reading", effects: [readFacets] },
           { transitionId: "refused-retry", from: "refused", on: "retry", target: "reading", effects: [readFacets] },
+          { transitionId: "unavailable-changed", from: "unavailable", on: "changed", target: "reading", effects: [readFacets] },
           { transitionId: "unavailable-retry", from: "unavailable", on: "retry", target: "reading", effects: [readFacets] },
           { transitionId: "unavailable-again", from: "unavailable", on: "again", target: "reading", effects: [readFacets] },
         ],

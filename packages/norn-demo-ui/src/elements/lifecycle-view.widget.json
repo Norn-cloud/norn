@@ -235,6 +235,21 @@
                   }
                 ],
                 "from": "unavailable",
+                "on": "changed",
+                "target": "reading",
+                "transitionId": "unavailable-changed"
+              },
+              {
+                "effects": [
+                  {
+                    "call": {
+                      "kind": "operation",
+                      "operationId": "facetObjects"
+                    },
+                    "kind": "start"
+                  }
+                ],
+                "from": "unavailable",
                 "on": "retry",
                 "target": "reading",
                 "transitionId": "unavailable-retry"
