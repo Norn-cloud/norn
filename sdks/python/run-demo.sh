@@ -18,8 +18,13 @@ mkdir -p "$work"
 work="$(cd "$work" && pwd)"
 
 # 1. Generate, from a derived copy of the document (prepare.py says what differs).
-python3 -m venv "$work/gen"
-"$work/gen/bin/python" -m pip install --disable-pip-version-check --no-input -q --require-hashes -r "$here/requirements.txt"
+if command -v uv > /dev/null 2>&1; then
+  uv venv --quiet --python python3 "$work/gen"
+  uv pip install --quiet --python "$work/gen/bin/python" --require-hashes -r "$here/requirements.txt"
+else
+  python3 -m venv "$work/gen"
+  "$work/gen/bin/python" -m pip install --disable-pip-version-check --no-input -q --require-hashes -r "$here/requirements.txt"
+fi
 python3 -I "$here/prepare.py" "$repo/sdks/openapi/norn-api.openapi.json" "$work/client-input.json"
 rm -rf "$work/client"
 mkdir -p "$work/client"
@@ -33,8 +38,13 @@ if grep -Eq "Warning|WARNING|Unable to process" "$work/generate.log"; then
 fi
 
 # 2. The demo's environment, and a type check of the generated package.
-python3 -m venv "$work/demo"
-"$work/demo/bin/python" -m pip install --disable-pip-version-check --no-input -q --require-hashes -r "$here/examples/requirements.txt"
+if command -v uv > /dev/null 2>&1; then
+  uv venv --quiet --python python3 "$work/demo"
+  uv pip install --quiet --python "$work/demo/bin/python" --require-hashes -r "$here/examples/requirements.txt"
+else
+  python3 -m venv "$work/demo"
+  "$work/demo/bin/python" -m pip install --disable-pip-version-check --no-input -q --require-hashes -r "$here/examples/requirements.txt"
+fi
 (cd "$work/client" && "$work/demo/bin/python" -m mypy --no-incremental --config-file "$here/mypy.ini" norn_client)
 
 # 3. A project with two linked types, served by `norn dev`.
