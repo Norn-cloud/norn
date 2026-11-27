@@ -40,7 +40,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use norn_cell::combined_view::{
-    CellViewInput, CombinedViewKind, CombinedViewReport, evaluate_combined_management_view,
+    CellViewInput, CombinedViewKind, CombinedViewReport, evaluate_cell_cut,
+    evaluate_combined_management_view,
 };
 use norn_cell::compute::lineage::{ContributionSource, LineageDisclosure};
 use norn_cell::compute::transform::{RowAccess, TransformResult};
@@ -2073,30 +2074,20 @@ fn resolve_costed_window_bucket(
     bucket_decimal_exact(result, &[currency, store_id, "costed"])
 }
 
-fn resolve_verified_wos_bucket(
-    result: &QueryResult,
-    unit: &str,
-    store_id: &str,
-    week: &str,
-) -> Option<Decimal> {
-    if bucket_decimal_exact(result, &[unit, store_id, "unverified", week]).is_some() {
-        return None;
-    }
-    bucket_decimal_exact(result, &[unit, store_id, "verified", week])
-}
-
 fn verify_store_kpi_rollup_refusals(
     sole: &mut EntityBook,
     (s1_on_hand, s1_margin, s1_opening_val, s1_closing_val): (Decimal, Decimal, Decimal, Decimal),
 ) -> Result<(), String> {
-    // Forged on_hand_qty disagreeing with governed StoreCount refuses at write boundary.
+    // 1. Forged on_hand_qty disagreeing with governed StoreCount refuses at write boundary.
     let (code, msg) = sole.refused(
         "supply.store_kpi.record",
         "planner:omar",
         json!({
             "rollup_id": "KPI-ST-SOLE-CFC-1-FORGED", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "unit": "each", "currency": "EGP", "cost_status": "costed", "count_status": "verified",
-            "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "costed_ref": "COST-DRESS-1",
+            "period_week": "2026-09-07", "unit": "each", "currency": "EGP",
+            "cost_status": "costed", "count_status": "verified",
+            "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102",
+            "count_as_of": "2026-09-05T10:00:00Z", "costed_ref": "COST-DRESS-1",
             "period_end": "2026-09-12T18:00:00Z",
             "on_hand_qty": "99", "avg_weekly_sales_qty": "10",
             "weeks_of_supply": "0", "period_gross_margin": "5000",
@@ -2105,15 +2096,17 @@ fn verify_store_kpi_rollup_refusals(
         }),
     )?;
     assert_eq!(code, "core.action.precondition", "{msg}");
-    // Duplicate rollup at the same `(store_id, sku_id, period_end)` grain under a new rollup_id refuses.
+    // 2. Duplicate `(store_id, period_week)` under a different `period_end` timestamp refuses.
     sole.refused(
         "supply.store_kpi.record",
         "planner:omar",
         json!({
             "rollup_id": "KPI-ST-SOLE-CFC-1-W9-DUP", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "unit": "each", "currency": "EGP", "cost_status": "costed", "count_status": "verified",
-            "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "costed_ref": "COST-DRESS-1",
-            "period_end": "2026-09-05T18:00:00Z",
+            "period_week": "2026-08-31", "unit": "each", "currency": "EGP",
+            "cost_status": "costed", "count_status": "verified",
+            "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102",
+            "count_as_of": "2026-09-05T10:00:00Z", "costed_ref": "COST-DRESS-1",
+            "period_end": "2026-09-06T18:00:00Z",
             "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
             "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
             "opening_stock_value": s1_opening_val.canonical(),
@@ -2121,7 +2114,46 @@ fn verify_store_kpi_rollup_refusals(
             "average_inventory_value": "0", "gmroi": "0"
         }),
     )?;
-    Ok(())
+    // 3. Future `count_as_of > period_end` refuses via `StoreCommercialRollupCountNotFuture`.
+    let (code, msg) = sole.refused(
+        "supply.store_kpi.record",
+        "planner:omar",
+        json!({
+            "rollup_id": "KPI-ST-SOLE-CFC-1-FUTURE-CNT", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "period_week": "2026-08-24", "unit": "each", "currency": "EGP",
+            "cost_status": "costed", "count_status": "verified",
+            "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102",
+            "count_as_of": "2026-09-05T10:00:00Z", "costed_ref": "COST-DRESS-1",
+            "period_end": "2026-08-30T18:00:00Z",
+            "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
+            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
+            "opening_stock_value": s1_opening_val.canonical(),
+            "closing_stock_value": s1_closing_val.canonical(),
+            "average_inventory_value": "0", "gmroi": "0"
+        }),
+    )?;
+    assert_eq!(code, "core.laws.violated", "{msg}");
+    // 4. Subsequent `RecountStore` after recording a historical rollup must succeed (not freeze recounts).
+    sole.ok(
+        "supply.store_count.recount",
+        "clerk:hana",
+        json!({
+            "store_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "store_id": "ST-SOLE-CFC-1",
+            "sku_id": "SKU-DRESS", "on_hand_qty": "61", "unit": "each",
+            "quantity_basis": "on_hand", "as_of": "2026-09-05T10:30:00Z",
+            "count_source": "pos_cycle_count", "count_ref": "CC-102B"
+        }),
+    )?;
+    sole.ok(
+        "supply.store_count.recount",
+        "clerk:hana",
+        json!({
+            "store_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "store_id": "ST-SOLE-CFC-1",
+            "sku_id": "SKU-DRESS", "on_hand_qty": "60", "unit": "each",
+            "quantity_basis": "on_hand", "as_of": "2026-09-05T10:00:00Z",
+            "count_source": "pos_cycle_count", "count_ref": "CC-102"
+        }),
+    )
 }
 
 fn seed_partner_commercial_rollup(partner: &mut EntityBook) -> Result<(), String> {
@@ -2143,10 +2175,12 @@ fn seed_partner_commercial_rollup(partner: &mut EntityBook) -> Result<(), String
         "planner:omar",
         json!({
             "rollup_id": "KPI-ST-PART-CFC-1-W9", "store_id": "ST-PART-CFC-1",
-            "sku_id": "SKU-RING-18K", "unit": "each", "currency": "USD",
+            "sku_id": "SKU-RING-18K", "period_week": "2026-08-31",
+            "unit": "each", "currency": "USD",
             "cost_status": "costed", "count_status": "verified",
-            "on_hand_count_id": "ST-PART-CFC-1/SKU-RING-18K/on_hand", "costed_ref": "COST-RING-1",
-            "period_end": "2026-09-05T18:00:00Z",
+            "on_hand_count_id": "ST-PART-CFC-1/SKU-RING-18K/on_hand", "count_ref": "AUD-P2",
+            "count_as_of": "2026-09-06T10:00:00Z", "costed_ref": "COST-RING-1",
+            "period_end": "2026-09-06T18:00:00Z",
             "on_hand_qty": "12", "avg_weekly_sales_qty": "8", "weeks_of_supply": "0",
             "period_gross_margin": "1200",
             "opening_stock_value": p1_opening_val.canonical(),
@@ -2156,9 +2190,9 @@ fn seed_partner_commercial_rollup(partner: &mut EntityBook) -> Result<(), String
     )
 }
 
-/// Seed governed `StoreCommercialRollup` rows derived strictly from each cell's
-/// own evaluated questions (`on_hand`, `sold/weeks`, `margin`, immutable lot-level
-/// `opening_stock_value`, closing `stock_value`) and count-coverage report.
+/// Seed governed store-week `StoreCommercialRollup` rows derived strictly from
+/// each cell's own evaluated questions (`on_hand`, `sold/weeks`, `margin`,
+/// immutable lot-level `opening_stock_value`, closing `stock_value`).
 fn seed_store_commercial_rollups(
     sole: &mut EntityBook,
     partner: &mut EntityBook,
@@ -2201,8 +2235,10 @@ fn seed_store_commercial_rollups(
         "planner:omar",
         json!({
             "rollup_id": "KPI-ST-SOLE-CFC-1-W9", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "unit": "each", "currency": "EGP", "cost_status": "costed", "count_status": "verified",
-            "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "costed_ref": "COST-DRESS-1",
+            "period_week": "2026-08-31", "unit": "each", "currency": "EGP",
+            "cost_status": "costed", "count_status": "verified",
+            "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "count_ref": "CC-102",
+            "count_as_of": "2026-09-05T10:00:00Z", "costed_ref": "COST-DRESS-1",
             "period_end": "2026-09-05T18:00:00Z",
             "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
             "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
@@ -2215,13 +2251,17 @@ fn seed_store_commercial_rollups(
         sole,
         (s1_on_hand, s1_margin, s1_opening_val, s1_closing_val),
     )?;
+    // Mixed-coverage store `ST-SOLE-CFC-2` (costed + missing_cost lots, unverified count):
+    // unique `(store_id, period_week)` grain records ONE withheld rollup so the declared
+    // dashboard tile returns ONLY `None` for the entire store-week (zero partial numeric bucket).
     sole.ok(
         "supply.store_kpi.record_withheld",
         "planner:omar",
         json!({
             "rollup_id": "KPI-ST-SOLE-CFC-2-W9", "store_id": "ST-SOLE-CFC-2", "sku_id": "SKU-DRESS",
-            "unit": "each", "currency": "EGP", "cost_status": "missing_cost",
-            "count_status": "unverified", "period_end": "2026-09-05T18:00:00Z",
+            "period_week": "2026-08-31", "unit": "each", "currency": "EGP",
+            "cost_status": "missing_cost", "count_status": "unverified",
+            "period_end": "2026-09-05T18:00:00Z",
             "on_hand_qty": "0", "avg_weekly_sales_qty": "0", "weeks_of_supply": "0",
             "period_gross_margin": "0", "opening_stock_value": "0",
             "closing_stock_value": "0", "average_inventory_value": "0", "gmroi": "0"
@@ -2247,48 +2287,44 @@ fn verify_declared_kpi_ratio_questions(sole: &EntityBook) -> Result<(), String> 
         Some("0.4")
     );
 
-    // Declared WOS & GMROI questions withhold (`value: None`) directly on the read path
-    // for unverified / missing_cost buckets — no test-helper masking required.
+    // Declared WOS & GMROI questions at unique store-week grain: `ST-SOLE-CFC-2` has ONLY ONE
+    // bucket for W9 and its value is `None` directly on the declared read path (zero partial split).
     let wos_q = sole.answer("supply.retail.store_weeks_of_supply_weekly")?;
     assert_eq!(
-        bucket_decimal_exact(&wos_q, &["each", "ST-SOLE-CFC-1", "verified", "2026-08-31"])
+        bucket_decimal_exact(&wos_q, &["each", "ST-SOLE-CFC-1", "2026-08-31"])
             .map(|d| d.canonical())
             .as_deref(),
         Some("6")
     );
-    let s2_wos_row = wos_q
+    let s2_wos_rows: Vec<_> = wos_q
         .rows
         .values()
-        .find(|r| bucket_parts(&r.bucket) == ["each", "ST-SOLE-CFC-2", "unverified", "2026-08-31"])
-        .ok_or("missing ST-SOLE-CFC-2 unverified WOS bucket")?;
+        .filter(|r| bucket_parts(&r.bucket).get(1).map(String::as_str) == Some("ST-SOLE-CFC-2"))
+        .collect();
+    assert_eq!(s2_wos_rows.len(), 1);
     assert_eq!(
-        s2_wos_row.value, None,
-        "unverified WOS bucket must withhold (None) directly on the declared read path"
-    );
-    assert_eq!(
-        resolve_verified_wos_bucket(&wos_q, "each", "ST-SOLE-CFC-2", "2026-08-31"),
-        None
+        s2_wos_rows.first().and_then(|r| r.value),
+        None,
+        "mixed/unverified store-week WOS must withhold (None) directly on the declared read path"
     );
 
     let gmroi_q = sole.answer("supply.retail.store_gmroi_weekly")?;
     assert_eq!(
-        bucket_decimal_exact(&gmroi_q, &["EGP", "ST-SOLE-CFC-1", "costed", "2026-08-31"])
+        bucket_decimal_exact(&gmroi_q, &["EGP", "ST-SOLE-CFC-1", "2026-08-31"])
             .map(|d| d.canonical())
             .as_deref(),
         Some("0.625")
     );
-    let s2_gmroi_row = gmroi_q
+    let s2_gmroi_rows: Vec<_> = gmroi_q
         .rows
         .values()
-        .find(|r| bucket_parts(&r.bucket) == ["EGP", "ST-SOLE-CFC-2", "missing_cost", "2026-08-31"])
-        .ok_or("missing ST-SOLE-CFC-2 missing_cost GMROI bucket")?;
+        .filter(|r| bucket_parts(&r.bucket).get(1).map(String::as_str) == Some("ST-SOLE-CFC-2"))
+        .collect();
+    assert_eq!(s2_gmroi_rows.len(), 1);
     assert_eq!(
-        s2_gmroi_row.value, None,
-        "missing_cost GMROI bucket must withhold (None) directly on the declared read path"
-    );
-    assert_eq!(
-        resolve_costed_bucket(&gmroi_q, "EGP", "ST-SOLE-CFC-2", "2026-08-31"),
-        None
+        s2_gmroi_rows.first().and_then(|r| r.value),
+        None,
+        "mixed/missing_cost store-week GMROI must withhold (None) directly on the declared read path"
     );
     Ok(())
 }
@@ -3620,8 +3656,86 @@ fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> R
     Ok(())
 }
 
+fn evaluate_single_library_cut(
+    book: &EntityBook,
+) -> Result<norn_cell::combined_view::CellCutSnapshot, String> {
+    let rev_plan = book
+        .pack
+        .retail_question("supply.retail.store_revenue_weekly")?;
+    let input = CellViewInput {
+        store: book.cell()?.store(),
+        context: book.query_context(),
+        required_feeds: &REQUIRED_FEEDS,
+        min_fresh_ms: book.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
+        evidence_types: &EVIDENCE_TYPES,
+        questions: &[("supply.retail.store_revenue_weekly", &rev_plan)],
+    };
+    evaluate_cell_cut(&input, &mut |_, plan, ctx| {
+        book.cell()
+            .map_err(CellError::Engine)?
+            .store()
+            .evaluate_question(plan, ctx, |_| Ok(true))
+    })
+    .map_err(|e| format!("evaluate_cell_cut: {e}"))
+}
+
+fn verify_library_cut_degraded_and_tampered(sole: &mut EntityBook) -> Result<(), String> {
+    // 1. Wrong-question substitution callback must refuse (`query_pin` mismatch).
+    let rev_plan = sole
+        .pack
+        .retail_question("supply.retail.store_revenue_weekly")?;
+    let gm_plan = sole
+        .pack
+        .retail_question("supply.retail.store_gross_margin_weekly")?;
+    let input = CellViewInput {
+        store: sole.cell()?.store(),
+        context: sole.query_context(),
+        required_feeds: &REQUIRED_FEEDS,
+        min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
+        evidence_types: &EVIDENCE_TYPES,
+        questions: &[("supply.retail.store_revenue_weekly", &rev_plan)],
+    };
+    let swapped = evaluate_cell_cut(&input, &mut |_, _, ctx| {
+        sole.cell()
+            .map_err(CellError::Engine)?
+            .store()
+            .evaluate_question(&gm_plan, ctx, |_| Ok(true))
+    });
+    assert!(
+        matches!(
+            swapped,
+            Err(CellError::ComputeRefused("core.compute.stale_input"))
+        ),
+        "substituted question answer must refuse: {swapped:?}"
+    );
+
+    // 2. Observed-vs-consumed cursor mismatch must mark the feed missing and incomplete.
+    let prev_obs = sole
+        .watermarks
+        .get_mut("supply.pos_sales")
+        .and_then(|m| m.get_mut(FEED_PARTITION))
+        .map(|wm| std::mem::replace(&mut wm.observed, "cursor:drifted".to_owned()));
+    let drift_snap = evaluate_single_library_cut(sole)?;
+    assert!(drift_snap.missing_feeds.contains("supply.pos_sales"));
+    assert!(!drift_snap.complete);
+    if let (Some(obs), Some(wm)) = (
+        prev_obs,
+        sole.watermarks
+            .get_mut("supply.pos_sales")
+            .and_then(|m| m.get_mut(FEED_PARTITION)),
+    ) {
+        wm.observed = obs;
+    }
+    Ok(())
+}
+
 fn verify_degraded_stale_and_quarantined_view(sole: &mut EntityBook) -> Result<(), String> {
+    verify_library_cut_degraded_and_tampered(sole)?;
+
     let saved_wm = sole.watermarks.remove("supply.pos_sales");
+    let lib_degraded = evaluate_single_library_cut(sole)?;
+    assert!(lib_degraded.missing_feeds.contains("supply.pos_sales"));
+    assert!(!lib_degraded.complete);
     let degraded = project_entity_frontier(sole, "LE-SOLE", &mut |q| sole.answer(q))?;
     assert!(degraded.missing_feed_coverage.contains("supply.pos_sales"));
     assert_eq!(degraded.entity_net_revenue, None);
@@ -3636,6 +3750,9 @@ fn verify_degraded_stale_and_quarantined_view(sole: &mut EntityBook) -> Result<(
         .get_mut("supply.pos_sales")
         .and_then(|m| m.get_mut(FEED_PARTITION))
         .and_then(|wm| wm.heartbeat_ms.replace(stale_hb));
+    let lib_stale = evaluate_single_library_cut(sole)?;
+    assert!(lib_stale.missing_feeds.contains("supply.pos_sales"));
+    assert!(!lib_stale.complete);
     let stale_q = sole.answer("supply.retail.store_revenue_weekly")?;
     assert_eq!(stale_q.freshness, Freshness::Stale);
     let stale_view = project_entity_frontier(sole, "LE-SOLE", &mut |q| sole.answer(q))?;

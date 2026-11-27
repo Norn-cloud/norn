@@ -155,6 +155,9 @@
           },
           "type": "number"
         },
+        "period_week": {
+          "type": "string"
+        },
         "rollup_id": {
           "type": "string"
         },
@@ -184,6 +187,7 @@
         "rollup_id",
         "store_id",
         "sku_id",
+        "period_week",
         "unit",
         "currency",
         "cost_status",

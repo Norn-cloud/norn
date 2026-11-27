@@ -17,11 +17,10 @@
           ]
         },
         {
-          "name": "period_grain",
+          "name": "store_week_grain",
           "properties": [
             "store_id",
-            "sku_id",
-            "period_end"
+            "period_week"
           ]
         }
       ],
@@ -77,6 +76,12 @@
         },
         {
           "id": "sku_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "period_week",
           "type": {
             "kind": "text"
           }
@@ -150,6 +155,25 @@
           "id": "on_hand_count_id",
           "type": {
             "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "count_ref",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "count_as_of",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
           }
         },
         {

@@ -564,11 +564,15 @@ const StoreCommercialRollupProps = Schema.Struct({
   rollup_id: Schema.String,
   store_id: Schema.String,
   sku_id: Schema.String,
+  // Canonical ISO week key (e.g. `"2026-08-31"`) enforcing one rollup per store-week.
+  period_week: Schema.String,
   unit: Unit,
   currency: Currency,
   cost_status: CostStatus,
   count_status: CountStatus,
   on_hand_count_id: Schema.NullOr(Schema.String),
+  count_ref: Schema.NullOr(Schema.String),
+  count_as_of: Schema.NullOr(Norn.timestamp("utc")),
   costed_ref: Schema.NullOr(Schema.String),
   period_end: Norn.timestamp("utc"),
   on_hand_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
@@ -584,10 +588,10 @@ const StoreCommercialRollupProps = Schema.Struct({
 })
 
 /**
- * Governed period commercial KPI rollup unique at `(store_id, sku_id, period_end)`
- * grain, linked to governed `StoreCount` and `UnitCost` evidence so declared
- * `weeks_of_supply` and `gmroi` ratio questions withhold (`null` via zero
- * denominators) directly on the dashboard read path whenever incomplete.
+ * Governed store-week commercial KPI rollup unique at `(store_id, period_week)`
+ * grain so a store-week cannot publish both a verified partition and a withheld
+ * partition; bound to governed `StoreCount` and `UnitCost` evidence while
+ * keeping future recounts unblocked.
  */
 export const StoreCommercialRollup = Norn.type({
   name: "supply.StoreCommercialRollup", title: "Store commercial KPI rollup", version: "0.1.0",
@@ -601,7 +605,7 @@ export const StoreCommercialRollup = Norn.type({
   needsReview: ["ar"],
   identity: [
     { name: "primary", properties: ["rollup_id"] },
-    { name: "period_grain", properties: ["store_id", "sku_id", "period_end"] },
+    { name: "store_week_grain", properties: ["store_id", "period_week"] },
   ],
   links: [
     { id: "store", target: Store, cardinality: { to: "one", from: "many", required: true } },
@@ -615,14 +619,21 @@ export const StoreCommercialRollupValid = Norn.law("store_commercial_rollup_vali
   on: StoreCommercialRollup,
   must: (self) =>
     (
-      (self.count_status === "verified" && self.on_hand_count_id !== null && self.on_hand_qty >= 0 && self.avg_weekly_sales_qty >= 0)
-      || (self.count_status === "unverified" && self.on_hand_count_id === null && self.on_hand_qty === 0 && self.avg_weekly_sales_qty === 0)
+      (self.count_status === "verified" && self.on_hand_count_id !== null && self.count_ref !== null && self.count_as_of !== null && self.on_hand_qty >= 0 && self.avg_weekly_sales_qty >= 0)
+      || (self.count_status === "unverified" && self.on_hand_count_id === null && self.count_ref === null && self.count_as_of === null && self.on_hand_qty === 0 && self.avg_weekly_sales_qty === 0)
     )
     && (
       (self.cost_status === "costed" && self.costed_ref !== null && self.opening_stock_value >= 0 && self.closing_stock_value >= 0 && self.average_inventory_value >= 0)
       || (self.cost_status === "missing_cost" && self.costed_ref === null && self.period_gross_margin === 0 && self.opening_stock_value === 0 && self.closing_stock_value === 0 && self.average_inventory_value === 0)
     ),
-  because: "A commercial KPI rollup zeroes WOS inputs when unverified and GMROI inputs when missing_cost so both ratios evaluate to null (withheld) directly on the read path.",
+  because: "A store-week KPI rollup zeroes WOS inputs when unverified and GMROI inputs when missing_cost so both ratios evaluate to null (withheld) directly on the read path.",
+})
+
+export const StoreCommercialRollupCountNotFuture = Norn.law("store_commercial_rollup_count_not_future", {
+  on: StoreCommercialRollup,
+  when: (self): self is typeof self & { readonly count_as_of: NonNullable<typeof self.count_as_of> } => self.count_as_of !== null,
+  must: (self) => self.count_as_of <= self.period_end,
+  because: "A verified commercial KPI rollup cannot cite a physical count dated after its period_end cutoff.",
 })
 
 export const StoreCommercialRollupRequiresEvidenceLinks = Norn.law("store_commercial_rollup_requires_evidence_links", {
@@ -641,9 +652,8 @@ export const StoreCommercialRollupMatchesCount = Norn.law("store_commercial_roll
     && self.store_id === self.on_hand_count.store_id
     && self.sku_id === self.on_hand_count.sku_id
     && self.unit === self.on_hand_count.unit
-    && self.on_hand_count.quantity_basis === "on_hand"
-    && self.on_hand_qty === self.on_hand_count.on_hand_qty,
-  because: "A verified commercial KPI rollup must match its linked on-hand StoreCount's store, SKU, unit, basis, and exact counted on-hand quantity.",
+    && self.on_hand_count.quantity_basis === "on_hand",
+  because: "A verified commercial KPI rollup must bind to an on-hand StoreCount for the same store, SKU, and unit while allowing subsequent period recounts.",
 })
 
 export const StoreCommercialRollupMatchesCost = Norn.law("store_commercial_rollup_matches_cost", {
@@ -652,8 +662,9 @@ export const StoreCommercialRollupMatchesCost = Norn.law("store_commercial_rollu
   must: (self) =>
     self.sku_id === self.cost_record.sku_id
     && self.currency === self.cost_record.currency
-    && (self.costed_ref ?? "") === self.cost_record.cost_ref,
-  because: "A costed commercial KPI rollup must match its linked UnitCost's SKU, currency, and cost reference.",
+    && (self.costed_ref ?? "") === self.cost_record.cost_ref
+    && self.cost_record.effective_from <= self.period_end,
+  because: "A costed commercial KPI rollup must match its linked UnitCost's SKU, currency, reference, and effective_from <= period_end.",
 })
 
 export const StoreCommercialRollupMatchesStoreAndSku = Norn.law("store_commercial_rollup_matches_store_and_sku", {

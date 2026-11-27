@@ -9,15 +9,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_checker::QuestionPlan;
-use norn_ir::DataQualityFindingStatus;
+use norn_checker::metric::compute::QuestionPlan;
+use norn_ir::cell_id::CellId;
+use norn_ir::data_quality::DataQualityFindingStatus;
 use serde::{Deserialize, Serialize};
 
-use crate::cell_identity::CellId;
-use crate::compute::{Freshness, QueryContext, QueryResult};
+use crate::compute::{Freshness, Frontier, QueryContext, QueryResult, Watermark};
 use crate::engine::SqlEngine;
 use crate::error::CellError;
-use crate::source_cursor::{Frontier, Watermark};
 use crate::store::CellStore;
 
 /// Classification of a multi-cell read-only projection (`READ-LOCAL-1`).
@@ -124,9 +123,11 @@ fn check_missing_feeds(
             let Some(wm_parts) = watermarks.get(**feed) else {
                 return true;
             };
-            parts.keys().any(|part| {
+            parts.iter().any(|(part, consumed)| {
                 wm_parts.get(part).is_none_or(|wm| {
-                    !wm.complete || wm.heartbeat_ms.is_none_or(|hb| hb < min_fresh_ms)
+                    !wm.complete
+                        || wm.observed != *consumed
+                        || wm.heartbeat_ms.is_none_or(|hb| hb < min_fresh_ms)
                 })
             })
         })
@@ -189,14 +190,16 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
 
     let mut answers = BTreeMap::new();
     for (name, plan) in input.questions {
+        let (expected_query_pin, expected_def_pin) = input.store.question_pins(plan, None)?;
+        if expected_def_pin != definition_pin {
+            return Err(stale());
+        }
         let result = evaluate(name, plan, input.context.clone())?;
-        if result.revision != head_before
+        if result.query_pin != expected_query_pin
+            || result.revision != head_before
             || result.known_as_of != head_before.commits
             || result.definition_pin != definition_pin
-            || result.context.world != input.context.world
-            || result.context.scope != input.context.scope
-            || result.context.source_cursors != input.context.source_cursors
-            || result.context.watermarks != input.context.watermarks
+            || result.context != input.context
         {
             return Err(stale());
         }

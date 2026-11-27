@@ -594,11 +594,14 @@ const StoreCommercialRollupInput = Schema.Struct({
   rollup_id: Schema.String,
   store_id: Schema.String,
   sku_id: Schema.String,
+  period_week: Schema.String,
   unit: Unit,
   currency: Currency,
   cost_status: CostStatus,
   count_status: CountStatus,
   on_hand_count_id: Schema.String,
+  count_ref: Schema.String,
+  count_as_of: Norn.timestamp("utc"),
   costed_ref: Schema.String,
   period_end: Norn.timestamp("utc"),
   on_hand_qty: Norn.decimal(6),
@@ -614,6 +617,7 @@ const WithheldStoreCommercialRollupInput = Schema.Struct({
   rollup_id: Schema.String,
   store_id: Schema.String,
   sku_id: Schema.String,
+  period_week: Schema.String,
   unit: Unit,
   currency: Currency,
   cost_status: CostStatus,
@@ -631,9 +635,10 @@ const WithheldStoreCommercialRollupInput = Schema.Struct({
 const StoreCommercialRollupRef = Schema.Struct({ rollup_id: Schema.String })
 
 /**
- * Record a verified and costed store commercial KPI rollup bound to an actual
- * governed `on_hand` `StoreCount` and `UnitCost` record, unique at `(store_id,
- * sku_id, period_end)` grain, deriving `average_inventory_value = (opening + closing) * 0.5`.
+ * Record a verified and costed store-week commercial KPI rollup bound at
+ * snapshot time to an actual governed `on_hand` `StoreCount` (exact qty and
+ * `count_ref`) and `UnitCost` record, unique at `(store_id, period_week)` grain,
+ * deriving `average_inventory_value = (opening + closing) * 0.5`.
  */
 export const RecordStoreCommercialRollup = Norn.action({
   id: "supply.store_kpi.record", title: "Record verified store commercial KPI rollup", version: "0.1.0",
@@ -663,7 +668,7 @@ export const RecordStoreCommercialRollup = Norn.action({
         on_hand_count: Schema.Struct({
           store_id: Schema.String, sku_id: Schema.String,
           unit: Schema.String, quantity_basis: Schema.String,
-          on_hand_qty: Norn.decimal(6),
+          count_ref: Schema.String, on_hand_qty: Norn.decimal(6),
         }),
         cost: Schema.Struct({ currency: Schema.String, cost_ref: Schema.String }),
       }),
@@ -677,6 +682,7 @@ export const RecordStoreCommercialRollup = Norn.action({
       && ctx.input.sku_id === ctx.slice.on_hand_count.sku_id
       && ctx.input.unit === ctx.slice.on_hand_count.unit
       && ctx.slice.on_hand_count.quantity_basis === "on_hand"
+      && ctx.input.count_ref === ctx.slice.on_hand_count.count_ref
       && ctx.input.on_hand_qty === ctx.slice.on_hand_count.on_hand_qty
       && ctx.input.currency === ctx.slice.cost.currency
       && ctx.input.costed_ref === ctx.slice.cost.cost_ref,

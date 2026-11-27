@@ -97,6 +97,12 @@
         "costed_ref": {
           "type": "string"
         },
+        "count_as_of": {
+          "type": "string"
+        },
+        "count_ref": {
+          "type": "string"
+        },
         "count_status": {
           "enum": [
             "verified",
@@ -146,6 +152,9 @@
           },
           "type": "number"
         },
+        "period_week": {
+          "type": "string"
+        },
         "rollup_id": {
           "type": "string"
         },
@@ -175,11 +184,14 @@
         "rollup_id",
         "store_id",
         "sku_id",
+        "period_week",
         "unit",
         "currency",
         "cost_status",
         "count_status",
         "on_hand_count_id",
+        "count_ref",
+        "count_as_of",
         "costed_ref",
         "period_end",
         "on_hand_qty",
@@ -207,7 +219,7 @@
       "type": "object"
     },
     "preconditions": [
-      "(((((((((((slice.store.status == 'active') and (input.count_status == 'verified')) and (input.cost_status == 'costed')) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.store_id == slice.on_hand_count.store_id)) and (input.sku_id == slice.on_hand_count.sku_id)) and (input.unit == slice.on_hand_count.unit)) and (slice.on_hand_count.quantity_basis == 'on_hand')) and (input.on_hand_qty == slice.on_hand_count.on_hand_qty)) and (input.currency == slice.cost.currency)) and (input.costed_ref == slice.cost.cost_ref)"
+      "((((((((((((slice.store.status == 'active') and (input.count_status == 'verified')) and (input.cost_status == 'costed')) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.store_id == slice.on_hand_count.store_id)) and (input.sku_id == slice.on_hand_count.sku_id)) and (input.unit == slice.on_hand_count.unit)) and (slice.on_hand_count.quantity_basis == 'on_hand')) and (input.count_ref == slice.on_hand_count.count_ref)) and (input.on_hand_qty == slice.on_hand_count.on_hand_qty)) and (input.currency == slice.cost.currency)) and (input.costed_ref == slice.cost.cost_ref)"
     ],
     "scopeRequired": [
       "orgId",

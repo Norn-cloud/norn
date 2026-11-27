@@ -409,11 +409,6 @@
         }
       },
       {
-        "path": {
-          "property": "count_status"
-        }
-      },
-      {
         "grain": "week",
         "path": {
           "property": "period_end"
@@ -448,11 +443,6 @@
       {
         "path": {
           "property": "store_id"
-        }
-      },
-      {
-        "path": {
-          "property": "cost_status"
         }
       },
       {

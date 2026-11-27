@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "A verified commercial KPI rollup must match its linked on-hand StoreCount's store, SKU, unit, basis, and exact counted on-hand quantity.",
+  "name": "A verified commercial KPI rollup must bind to an on-hand StoreCount for the same store, SKU, and unit while allowing subsequent period recounts.",
   "namespace": "supply",
   "payload": {
     "condition": "self.on_hand_count != null",
@@ -25,9 +25,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/supply-lab/retail.ts"
     },
-    "rationale": "A verified commercial KPI rollup must match its linked on-hand StoreCount's store, SKU, unit, basis, and exact counted on-hand quantity.",
+    "rationale": "A verified commercial KPI rollup must bind to an on-hand StoreCount for the same store, SKU, and unit while allowing subsequent period recounts.",
     "response": {
-      "expression": "((((((self.on_hand_count_id ?? '') == self.on_hand_count.store_count_id) and (self.store_id == self.on_hand_count.store_id)) and (self.sku_id == self.on_hand_count.sku_id)) and (self.unit == self.on_hand_count.unit)) and (self.on_hand_count.quantity_basis == 'on_hand')) and (self.on_hand_qty == self.on_hand_count.on_hand_qty)",
+      "expression": "(((((self.on_hand_count_id ?? '') == self.on_hand_count.store_count_id) and (self.store_id == self.on_hand_count.store_id)) and (self.sku_id == self.on_hand_count.sku_id)) and (self.unit == self.on_hand_count.unit)) and (self.on_hand_count.quantity_basis == 'on_hand')",
       "kind": "predicate"
     },
     "scope": {
