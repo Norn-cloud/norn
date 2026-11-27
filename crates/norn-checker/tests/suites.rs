@@ -16,6 +16,8 @@
 
 #[path = "action_aggregate_set.rs"]
 mod action_aggregate_set;
+#[path = "action_compensation.rs"]
+mod action_compensation;
 #[path = "action_effect_program.rs"]
 mod action_effect_program;
 #[path = "action_firing.rs"]
