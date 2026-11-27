@@ -43,8 +43,10 @@ impl AdmittedDefinitions {
     /// Project `artifacts` (an admitted set, with the base artifacts its
     /// references resolve against): the model holds every `EntityIR` v2 object
     /// type, interface and property type, plus exactly the
-    /// [`crate::kernel_record_types`], so it is the projection installation
-    /// accepts; it retains the set's laws; the guards are those of its actions.
+    /// [`crate::kernel_record_types`] (and [`crate::function_command_record_type`]
+    /// when any admitted action accepts a Function receipt), so it is the
+    /// projection installation accepts; it retains the set's laws; the guards
+    /// are those of its actions.
     ///
     /// # Errors
     ///
@@ -93,6 +95,18 @@ impl AdmittedDefinitions {
             }
         }
         types.extend(crate::kernel_record_types());
+        let needs_function_receipts = actions.iter().any(|action| {
+            matches!(
+                &action.root.effect_program,
+                Some(norn_ir::ActionEffectProgram::FireTransition {
+                    accept_receipt: Some(_),
+                    ..
+                })
+            )
+        });
+        if needs_function_receipts {
+            types.push(crate::function_command_record_type());
+        }
         let model = Model::from_definitions_with_interfaces(&types, &property_types, &interfaces)?
             .with_governing_laws(artifacts)?;
         let guards = norn_kernel::transition_guards(actions.iter().map(|action| &action.root));

@@ -54,12 +54,6 @@
         "artifact_uri": {
           "type": "string"
         },
-        "contracts_passed": {
-          "type": "boolean"
-        },
-        "evaluation_revision": {
-          "type": "string"
-        },
         "evaluation_run": {
           "type": "string"
         },
@@ -68,16 +62,6 @@
         },
         "input_type": {
           "type": "string"
-        },
-        "metric_name": {
-          "type": "string"
-        },
-        "metric_value": {
-          "nornType": {
-            "kind": "decimal",
-            "scale": 9
-          },
-          "type": "number"
         },
         "model_id": {
           "type": "string"
@@ -110,10 +94,6 @@
         "input_type",
         "input_revision",
         "pinned_dataset_revision",
-        "evaluation_revision",
-        "metric_name",
-        "metric_value",
-        "contracts_passed",
         "registered_by"
       ],
       "type": "object"
