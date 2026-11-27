@@ -165,6 +165,61 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
         )
     }
 
+    /// O(1) authenticated `source.Connection` incarnation at this cutoff via
+    /// `_norn_fact_values/connection_commit`, avoiding O(versions) scans when a
+    /// connection has thousands of empty polls.
+    pub(crate) fn connection_record(
+        &mut self,
+        world: &str,
+        id: &str,
+        budget: &mut DecodeBudget,
+    ) -> Result<BudgetedRead, CellError> {
+        use crate::engine::params;
+        self.reader.check_history("as-of reads")?;
+        let head = i64::try_from(self.cutoff.frontier)
+            .map_err(|_n| refused("core.compute.bound_exceeded"))?;
+        let Some(ver) = self.reader.conn.query_optional(
+            "SELECT version FROM _norn_fact_values INDEXED BY \"_norn_fact_values/connection_commit\" \
+             WHERE world=?1 AND root_type='source.Connection' AND id=?2 AND commit_seq<=?3 \
+             ORDER BY commit_seq DESC, version DESC LIMIT 1",
+            params![world, id, head],
+            |row| row.get::<i64>(0),
+        )?
+        else {
+            return Ok(BudgetedRead::Missing);
+        };
+        let ver_u64 = u64::try_from(ver).map_err(|_err| CellError::OutOfRange("fact version"))?;
+        let Some(proof) = self.history.evidence(
+            world,
+            super::freshness::CONNECTION_TYPE,
+            id,
+            ver_u64,
+            budget,
+        )?
+        else {
+            return Ok(BudgetedRead::Exhausted);
+        };
+        if proof.receipt().body.logical_time > self.cutoff.recorded_at.as_millis() {
+            return Err(CellError::TemporalLeakage);
+        }
+        let snapshot = proof.snapshot();
+        if snapshot.model_hash != self.model_hash {
+            return Err(refused(UNSUPPORTED_ENGINE));
+        }
+        Ok(snapshot
+            .values
+            .clone()
+            .map_or(BudgetedRead::Missing, |values| {
+                BudgetedRead::Found(ObjectRecord {
+                    object_type: snapshot.object_type.clone(),
+                    id: snapshot.key.clone(),
+                    scope: snapshot.scope.clone(),
+                    version: snapshot.version,
+                    values,
+                })
+            }))
+    }
+
     /// Stored incarnations of `(world, kind, id)` committed by the cutoff frontier.
     pub(crate) fn versions(
         &self,

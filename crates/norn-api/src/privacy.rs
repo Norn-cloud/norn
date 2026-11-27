@@ -899,7 +899,7 @@ pub(crate) fn classify_transform_in_tx<E: SqlEngine>(
 }
 
 /// DATA-SOURCES-1: unified `Sources` check over the disclosed `source.Connection`
-/// records and evaluated output member versions across ExactCell, IVM, OLAP, and
+/// records and evaluated output member versions across `ExactCell`, IVM, OLAP, and
 /// `:trace`. Fails closed on missing or unproven records.
 fn result_sources_granted<E: SqlEngine>(
     host: &DevHost<E>,

@@ -441,7 +441,7 @@ impl<E: SqlEngine> CellStore<E> {
             }
             let mut out = Vec::with_capacity(ids.len());
             for id in ids {
-                match as_of.record(target_world, CONNECTION_TYPE, &id, budget)? {
+                match as_of.connection_record(target_world, &id, budget)? {
                     BudgetedRead::Found(record) => out.push(record),
                     BudgetedRead::Missing => {}
                     BudgetedRead::Exhausted => {
@@ -494,14 +494,14 @@ impl<E: SqlEngine> CellStore<E> {
             recorded_at: LogicalTime::from_millis(now_ms),
         };
         let mut as_of = AsOfReader::open(&reader, cutoff, now_ms, &mut budget)?;
-        match as_of.record(world, CONNECTION_TYPE, source_id, &mut budget)? {
+        match as_of.connection_record(world, source_id, &mut budget)? {
             BudgetedRead::Found(record) => return Ok(Some(record)),
             BudgetedRead::Exhausted => return Ok(None),
             BudgetedRead::Missing => {}
         }
         if world != MAIN_WORLD
             && let BudgetedRead::Found(record) =
-                as_of.record(MAIN_WORLD, CONNECTION_TYPE, source_id, &mut budget)?
+                as_of.connection_record(MAIN_WORLD, source_id, &mut budget)?
         {
             return Ok(Some(record));
         }

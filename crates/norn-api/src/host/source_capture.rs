@@ -727,7 +727,8 @@ impl<E: SqlEngine> DevHost<E> {
         )
         .map_err(|error| match error {
             SourceCaptureError::Refusal(refusal) => refusal,
-            other => {
+            other
+            @ (SourceCaptureError::LeaseFenced(_) | SourceCaptureError::CursorConflict(_)) => {
                 let (code, message) = other.code_and_message();
                 Refusal::host(CellError::Engine(format!("{code}: {message}")))
             }

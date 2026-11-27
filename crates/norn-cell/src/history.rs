@@ -141,7 +141,7 @@ impl<S: SqlEngine> HistoryRead<'_, '_, S> {
             |root, version, budget| self.evidence(world, root, key, version, budget),
         )
     }
-    fn evidence(
+    pub(crate) fn evidence(
         &mut self,
         world: &str,
         kind: &str,

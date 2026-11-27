@@ -1623,6 +1623,71 @@ mod tests {
             .expect("commit order line");
     }
 
+    fn connection_poll_batch(
+        scope: &CellScope,
+        conn_id: &str,
+        mapping_id: &str,
+        status: &str,
+        watermark: &str,
+        logical_time: u64,
+    ) -> CommitBatch {
+        CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: scope.key(),
+            logical_time,
+            writes: vec![FactWriteRow::Put {
+                object_type: "source.Connection".into(),
+                key: conn_id.into(),
+                values: BTreeMap::from([
+                    ("id".into(), RuntimeValue::from(conn_id)),
+                    ("system".into(), RuntimeValue::from("erpnext")),
+                    ("label".into(), RuntimeValue::from("ERPNext REST")),
+                    (
+                        "target".into(),
+                        RuntimeValue::from("http://erpnext-rest:8000"),
+                    ),
+                    ("auth".into(), RuntimeValue::from("api_key")),
+                    ("status".into(), RuntimeValue::from(status)),
+                    (
+                        "last_sync_started_at".into(),
+                        RuntimeValue::from("2026-11-12T12:00:00Z"),
+                    ),
+                    (
+                        "last_sync_ended_at".into(),
+                        RuntimeValue::from("2026-11-12T12:00:10Z"),
+                    ),
+                    ("last_trigger".into(), RuntimeValue::from("manual")),
+                    ("watermark".into(), RuntimeValue::from(watermark)),
+                    (
+                        "rows_read".into(),
+                        RuntimeValue::Number(Decimal::from(0_i64)),
+                    ),
+                    (
+                        "rows_landed".into(),
+                        RuntimeValue::Number(Decimal::from(0_i64)),
+                    ),
+                    (
+                        "rows_quarantined".into(),
+                        RuntimeValue::Number(Decimal::from(0_i64)),
+                    ),
+                    ("quarantine_reasons".into(), RuntimeValue::from("{}")),
+                    ("last_error_code".into(), RuntimeValue::Null),
+                    ("last_error_message".into(), RuntimeValue::Null),
+                    (
+                        "connector_id".into(),
+                        RuntimeValue::from("erpnext.rest.connector"),
+                    ),
+                    (
+                        "source_schema_id".into(),
+                        RuntimeValue::from("erpnext.rest.source"),
+                    ),
+                    ("mapping_id".into(), RuntimeValue::from(mapping_id)),
+                ]),
+            }],
+            ..CommitBatch::default()
+        }
+    }
+
     fn commit_connection_poll_status(
         store: &mut CellStore<NativeEngine>,
         scope: &CellScope,
@@ -1632,63 +1697,27 @@ mod tests {
         watermark: &str,
         logical_time: u64,
     ) {
-        store
-            .commit(&CommitBatch {
-                world: MAIN_WORLD.into(),
-                scope: scope.key(),
-                logical_time,
-                writes: vec![FactWriteRow::Put {
-                    object_type: "source.Connection".into(),
-                    key: conn_id.into(),
-                    values: BTreeMap::from([
-                        ("id".into(), RuntimeValue::from(conn_id)),
-                        ("system".into(), RuntimeValue::from("erpnext")),
-                        ("label".into(), RuntimeValue::from("ERPNext REST")),
-                        (
-                            "target".into(),
-                            RuntimeValue::from("http://erpnext-rest:8000"),
-                        ),
-                        ("auth".into(), RuntimeValue::from("api_key")),
-                        ("status".into(), RuntimeValue::from(status)),
-                        (
-                            "last_sync_started_at".into(),
-                            RuntimeValue::from("2026-11-12T12:00:00Z"),
-                        ),
-                        (
-                            "last_sync_ended_at".into(),
-                            RuntimeValue::from("2026-11-12T12:00:10Z"),
-                        ),
-                        ("last_trigger".into(), RuntimeValue::from("manual")),
-                        ("watermark".into(), RuntimeValue::from(watermark)),
-                        (
-                            "rows_read".into(),
-                            RuntimeValue::Number(Decimal::from(0_i64)),
-                        ),
-                        (
-                            "rows_landed".into(),
-                            RuntimeValue::Number(Decimal::from(0_i64)),
-                        ),
-                        (
-                            "rows_quarantined".into(),
-                            RuntimeValue::Number(Decimal::from(0_i64)),
-                        ),
-                        ("quarantine_reasons".into(), RuntimeValue::from("{}")),
-                        ("last_error_code".into(), RuntimeValue::Null),
-                        ("last_error_message".into(), RuntimeValue::Null),
-                        (
-                            "connector_id".into(),
-                            RuntimeValue::from("erpnext.rest.connector"),
-                        ),
-                        (
-                            "source_schema_id".into(),
-                            RuntimeValue::from("erpnext.rest.source"),
-                        ),
-                        ("mapping_id".into(), RuntimeValue::from(mapping_id)),
-                    ]),
-                }],
-                ..CommitBatch::default()
-            })
-            .expect("commit connection poll");
+        let batch =
+            connection_poll_batch(scope, conn_id, mapping_id, status, watermark, logical_time);
+        store.commit(&batch).expect("commit connection poll");
+    }
+
+    fn commit_connection_polls(
+        store: &mut CellStore<NativeEngine>,
+        scope: &CellScope,
+        batches: impl IntoIterator<Item = CommitBatch>,
+    ) {
+        let placeholder = CellStore::open_in_memory(store.model().clone()).expect("placeholder");
+        let mut cell = super::governed::Governed::new(
+            std::mem::replace(store, placeholder),
+            scope.key(),
+            |command| command.payload.clone(),
+        )
+        .expect("governed cell");
+        for batch in batches {
+            super::governed::commit_on(&mut cell, &batch).expect("commit connection poll");
+        }
+        *store = cell.into_store();
     }
 
     fn commit_connection_poll(
@@ -1760,16 +1789,20 @@ mod tests {
         let cursor_json = order_cursor_json("2026-11-12 12:00:00", "SO-1");
         let watermark = order_watermark_json("2026-11-12 12:00:00", "SO-1");
         commit_sample_order_line(&mut store, &scope, T0);
-        for step in 1..=POLL_COUNT {
-            commit_connection_poll(
-                &mut store,
-                &scope,
-                "erpnext.rest",
-                "erpnext.rest.mapping",
-                &watermark,
-                T0.saturating_add(step),
-            );
-        }
+        commit_connection_polls(
+            &mut store,
+            &scope,
+            (1..=POLL_COUNT).map(|step| {
+                connection_poll_batch(
+                    &scope,
+                    "erpnext.rest",
+                    "erpnext.rest.mapping",
+                    "ok",
+                    &watermark,
+                    T0.saturating_add(step),
+                )
+            }),
+        );
         seed_order_cursor_binding(
             &mut store,
             "erpnext.rest",
@@ -1805,16 +1838,20 @@ mod tests {
             &prior_watermark,
             T0.saturating_add(1),
         );
-        for step in 2..=POLL_COUNT.saturating_add(1) {
-            commit_connection_poll(
-                &mut stale_store,
-                &stale_scope,
-                "erpnext.rest",
-                "erpnext.rest.mapping",
-                &prior_watermark,
-                T0.saturating_add(step),
-            );
-        }
+        commit_connection_polls(
+            &mut stale_store,
+            &stale_scope,
+            (2..=POLL_COUNT.saturating_add(1)).map(|step| {
+                connection_poll_batch(
+                    &stale_scope,
+                    "erpnext.rest",
+                    "erpnext.rest.mapping",
+                    "ok",
+                    &prior_watermark,
+                    T0.saturating_add(step),
+                )
+            }),
+        );
         let (stale_host, stale_principals, stale_scope) = wrap_host(stale_store, stale_scope);
         let stale_derived = DerivedQuestions::new([7; 32], stale_scope);
         let stale_rt = stale_derived
@@ -1848,16 +1885,20 @@ mod tests {
             &prior_watermark,
             T0.saturating_add(1),
         );
-        for step in 2..=POLL_COUNT.saturating_add(2) {
-            commit_connection_poll(
-                &mut fresh_store,
-                &fresh_scope,
-                "erpnext.rest",
-                "erpnext.rest.mapping",
-                &advanced_watermark,
-                T0.saturating_add(step),
-            );
-        }
+        commit_connection_polls(
+            &mut fresh_store,
+            &fresh_scope,
+            (2..=POLL_COUNT.saturating_add(2)).map(|step| {
+                connection_poll_batch(
+                    &fresh_scope,
+                    "erpnext.rest",
+                    "erpnext.rest.mapping",
+                    "ok",
+                    &advanced_watermark,
+                    T0.saturating_add(step),
+                )
+            }),
+        );
         seed_order_cursor_binding(
             &mut fresh_store,
             "erpnext.rest",
@@ -2176,16 +2217,20 @@ mod tests {
             );
         }
         // Pad to 605 versions before pinning so the pin exercises >512-version spans too.
-        for pad in 0_u64..600 {
-            commit_connection_poll(
-                &mut store,
-                &scope,
-                "erpnext.rest",
-                "erpnext.rest.mapping",
-                &target_pair,
-                T0.saturating_add(10).saturating_add(pad),
-            );
-        }
+        commit_connection_polls(
+            &mut store,
+            &scope,
+            (0_u64..600).map(|pad| {
+                connection_poll_batch(
+                    &scope,
+                    "erpnext.rest",
+                    "erpnext.rest.mapping",
+                    "ok",
+                    &target_pair,
+                    T0.saturating_add(10).saturating_add(pad),
+                )
+            }),
+        );
         seed_order_cursor_binding(
             &mut store,
             "erpnext.rest",
@@ -2205,18 +2250,22 @@ mod tests {
         // Append >4,096 post-pin polls with distinct watermarks/mappings sorting before `v4`.
         let mut reopened =
             CellStore::open(db.path(), model, StoreOptions::default()).expect("open");
-        for step in 0_u64..4_105 {
-            let later_wm = pair_watermark_json(&format!("0000-{step:05}"), "9999");
-            let later_map = format!("0000-map-{step:05}");
-            commit_connection_poll(
-                &mut reopened,
-                &scope,
-                "erpnext.rest",
-                &later_map,
-                &later_wm,
-                T0.saturating_add(1_000).saturating_add(step),
-            );
-        }
+        commit_connection_polls(
+            &mut reopened,
+            &scope,
+            (0_u64..4_105).map(|step| {
+                let later_wm = pair_watermark_json(&format!("0000-{step:05}"), "9999");
+                let later_map = format!("0000-map-{step:05}");
+                connection_poll_batch(
+                    &scope,
+                    "erpnext.rest",
+                    &later_map,
+                    "ok",
+                    &later_wm,
+                    T0.saturating_add(1_000).saturating_add(step),
+                )
+            }),
+        );
         let (reopened_host, reopened_principals, reopened_scope) = wrap_host(reopened, scope);
         let reopened_derived = DerivedQuestions::new([7; 32], reopened_scope);
         let reopened_rt = reopened_derived
