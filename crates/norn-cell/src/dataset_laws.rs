@@ -192,6 +192,46 @@ pub struct RowPlan {
     pub fuel: u64,
 }
 
+fn disjoin(mut items: Vec<RowPredicate>) -> Option<RowPredicate> {
+    let mut iter = items.drain(..);
+    let first = iter.next()?;
+    Some(iter.fold(first, |acc, item| {
+        RowPredicate::Or(Box::new(acc), Box::new(item))
+    }))
+}
+
+fn lifted_under(
+    parent: &str,
+    exceptions: &[norn_ir::LawException],
+    conditions: &[RowPredicate],
+    children: &BTreeMap<&str, Vec<usize>>,
+    depth: usize,
+) -> Option<RowPredicate> {
+    if depth > exceptions.len() {
+        return None;
+    }
+    let mut branches = Vec::new();
+    for &index in children.get(parent).into_iter().flatten() {
+        let exception = exceptions.get(index)?;
+        let cond = conditions.get(index)?.clone();
+        let branch = match lifted_under(
+            exception.id.as_str(),
+            exceptions,
+            conditions,
+            children,
+            depth.saturating_add(1),
+        ) {
+            Some(overridden) => RowPredicate::And(
+                Box::new(cond),
+                Box::new(RowPredicate::Not(Box::new(overridden))),
+            ),
+            None => cond,
+        };
+        branches.push(branch);
+    }
+    disjoin(branches)
+}
+
 /// Fold an admitted, acyclic exception tree rooted at `law_id` into a single
 /// Boolean [`RowPredicate`] computing `lifted(law_id)` (exact match with
 /// `norn_checker::law_exceptions::fold`).
@@ -210,47 +250,6 @@ fn fold_exception_tree(
             .or_default()
             .push(index);
     }
-
-    fn disjoin(mut items: Vec<RowPredicate>) -> Option<RowPredicate> {
-        let mut iter = items.drain(..);
-        let first = iter.next()?;
-        Some(iter.fold(first, |acc, item| {
-            RowPredicate::Or(Box::new(acc), Box::new(item))
-        }))
-    }
-
-    fn lifted_under(
-        parent: &str,
-        exceptions: &[norn_ir::LawException],
-        conditions: &[RowPredicate],
-        children: &BTreeMap<&str, Vec<usize>>,
-        depth: usize,
-    ) -> Option<RowPredicate> {
-        if depth > exceptions.len() {
-            return None;
-        }
-        let mut branches = Vec::new();
-        for &index in children.get(parent).into_iter().flatten() {
-            let exception = exceptions.get(index)?;
-            let cond = conditions.get(index)?.clone();
-            let branch = match lifted_under(
-                exception.id.as_str(),
-                exceptions,
-                conditions,
-                children,
-                depth.saturating_add(1),
-            ) {
-                Some(overridden) => RowPredicate::And(
-                    Box::new(cond),
-                    Box::new(RowPredicate::Not(Box::new(overridden))),
-                ),
-                None => cond,
-            };
-            branches.push(branch);
-        }
-        disjoin(branches)
-    }
-
     lifted_under(law_id, exceptions, conditions, &children, 0)
 }
 

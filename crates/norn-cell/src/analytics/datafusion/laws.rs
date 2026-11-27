@@ -85,6 +85,16 @@ impl Typed<'_> {
         }
     }
 
+    /// Compare two decimals at their common `DECIMAL(38, max(s_a, s_b))` scale
+    /// (`|m| < 10^38`), matching `DuckDB`'s comparison coercion domain so both
+    /// engines produce identical residue sets on scale-widening overflow.
+    fn compare_numbers(left: Dec, right: Dec) -> Option<std::cmp::Ordering> {
+        let scale = left.s.max(right.s);
+        let l = left.rescale(scale).filter(Dec::in_storage)?;
+        let r = right.rescale(scale).filter(Dec::in_storage)?;
+        Some(l.m.cmp(&r.m))
+    }
+
     /// Evaluate a `date(...)` or `timestamp(...)` argument into its exact ZEN
     /// temporal value, matching `Temporal::date` / `Temporal::timestamp`
     /// (`0001..=9999` local and UTC range).
@@ -103,9 +113,9 @@ impl Typed<'_> {
             P::Column(id) => match cells.get(self.index(id)?)? {
                 Cell::Null => Some(Val::Null),
                 Cell::Instant { text, t, n } => {
-                    if !text.get(..4).is_some_and(|year| year >= "0001")
-                        || !(FIRST_ZEN_SECOND..=LAST_ZEN_SECOND).contains(t)
-                    {
+                    let in_zen_years = text.get(..4).is_some_and(|year| year >= "0001")
+                        && (FIRST_ZEN_SECOND..=LAST_ZEN_SECOND).contains(t);
+                    if !in_zen_years {
                         return None;
                     }
                     if is_date {
@@ -118,14 +128,36 @@ impl Typed<'_> {
             },
             P::Coalesce(a, b) => match self.eval_temporal(a, cells, is_date)? {
                 Val::Null => self.eval_temporal(b, cells, is_date),
-                value => Some(value),
+                value @ (Val::Bool(_)
+                | Val::Text(_)
+                | Val::Num(_)
+                | Val::Date(_)
+                | Val::Timestamp(_, _)) => Some(value),
             },
             P::Conditional(c, a, b) => match self.eval(c, cells)? {
                 Val::Bool(true) => self.eval_temporal(a, cells, is_date),
                 Val::Bool(false) => self.eval_temporal(b, cells, is_date),
-                Val::Null | Val::Text(_) | Val::Num(_) | Val::Date(_) | Val::Timestamp(_) => None,
+                Val::Null | Val::Text(_) | Val::Num(_) | Val::Date(_) | Val::Timestamp(_, _) => {
+                    None
+                }
             },
-            _ => None,
+            P::Bool(_)
+            | P::Number(_)
+            | P::Not(_)
+            | P::Negate(_)
+            | P::Add(..)
+            | P::Subtract(..)
+            | P::Multiply(..)
+            | P::Equal(..)
+            | P::NotEqual(..)
+            | P::Less(..)
+            | P::LessOrEqual(..)
+            | P::Greater(..)
+            | P::GreaterOrEqual(..)
+            | P::And(..)
+            | P::Or(..)
+            | P::Date(_)
+            | P::Timestamp(_) => None,
         }
     }
 
@@ -145,7 +177,7 @@ impl Typed<'_> {
             },
             P::Not(inner) => match self.eval(inner, cells)? {
                 Val::Bool(flag) => Val::Bool(!flag),
-                Val::Null | Val::Text(_) | Val::Num(_) | Val::Date(_) | Val::Timestamp(_) => {
+                Val::Null | Val::Text(_) | Val::Num(_) | Val::Date(_) | Val::Timestamp(_, _) => {
                     return None;
                 }
             },
@@ -154,7 +186,7 @@ impl Typed<'_> {
                     m: value.m.checked_neg()?,
                     s: value.s,
                 }),
-                Val::Null | Val::Bool(_) | Val::Text(_) | Val::Date(_) | Val::Timestamp(_) => {
+                Val::Null | Val::Bool(_) | Val::Text(_) | Val::Date(_) | Val::Timestamp(_, _) => {
                     return None;
                 }
             },
@@ -178,7 +210,9 @@ impl Typed<'_> {
                 let same = match (self.eval(a, cells)?, self.eval(b, cells)?) {
                     (Val::Null, Val::Null) => true,
                     (Val::Null, _) | (_, Val::Null) => false,
-                    (Val::Num(left), Val::Num(right)) => left.compare(right).is_eq(),
+                    (Val::Num(left), Val::Num(right)) => {
+                        Self::compare_numbers(left, right)?.is_eq()
+                    }
                     (Val::Text(left), Val::Text(right)) => left == right,
                     (Val::Bool(left), Val::Bool(right)) => left == right,
                     (Val::Date(left), Val::Date(right)) => left == right,
@@ -205,22 +239,30 @@ impl Typed<'_> {
             }
             P::Coalesce(a, b) => match self.eval(a, cells)? {
                 Val::Null => self.widen(self.eval(b, cells)?, node)?,
-                value => self.widen(value, node)?,
+                value @ (Val::Bool(_)
+                | Val::Text(_)
+                | Val::Num(_)
+                | Val::Date(_)
+                | Val::Timestamp(_, _)) => self.widen(value, node)?,
             },
             P::Conditional(c, a, b) => match self.eval(c, cells)? {
                 Val::Bool(true) => self.widen(self.eval(a, cells)?, node)?,
                 Val::Bool(false) => self.widen(self.eval(b, cells)?, node)?,
-                Val::Null | Val::Text(_) | Val::Num(_) | Val::Date(_) | Val::Timestamp(_) => {
+                Val::Null | Val::Text(_) | Val::Num(_) | Val::Date(_) | Val::Timestamp(_, _) => {
                     return None;
                 }
             },
             P::Date(inner) => match self.eval_temporal(inner, cells, true)? {
                 value @ Val::Date(_) => value,
-                _ => return None,
+                Val::Null | Val::Bool(_) | Val::Text(_) | Val::Num(_) | Val::Timestamp(_, _) => {
+                    return None;
+                }
             },
             P::Timestamp(inner) => match self.eval_temporal(inner, cells, false)? {
                 value @ Val::Timestamp(_, _) => value,
-                _ => return None,
+                Val::Null | Val::Bool(_) | Val::Text(_) | Val::Num(_) | Val::Date(_) => {
+                    return None;
+                }
             },
         })
     }
@@ -241,7 +283,7 @@ impl Typed<'_> {
         cells: &[Cell],
     ) -> Option<std::cmp::Ordering> {
         match (self.eval(a, cells)?, self.eval(b, cells)?) {
-            (Val::Num(left), Val::Num(right)) => Some(left.compare(right)),
+            (Val::Num(left), Val::Num(right)) => Self::compare_numbers(left, right),
             (Val::Date(left), Val::Date(right)) => Some(left.cmp(&right)),
             (Val::Timestamp(lt, ln), Val::Timestamp(rt, rn)) => Some((lt, ln).cmp(&(rt, rn))),
             _ => None,
@@ -249,7 +291,7 @@ impl Typed<'_> {
     }
 
     /// A conditional or coalesce branch at the node's own scale, bounded by
-    /// `DECIMAL(38, scale)` storage (`|m| < 10^38`) to match DuckDB's branch
+    /// `DECIMAL(38, scale)` storage (`|m| < 10^38`) to match `DuckDB`'s branch
     /// widening domain exactly.
     fn widen(&self, value: Val, node: &RowPredicate) -> Option<Val> {
         match (value, self.scale_of(node)) {
@@ -261,7 +303,7 @@ impl Typed<'_> {
     }
 
     /// Guards for a `date(...)` / `timestamp(...)` argument tree (matching
-    /// DuckDB's `lower_temporal` guards on every branch so residue sets agree).
+    /// `DuckDB`'s `lower_temporal` guards on every branch so residue sets agree).
     fn temporal_guards(&self, node: &RowPredicate, cells: &[Cell], is_date: bool) -> bool {
         use RowPredicate as P;
         match node {
@@ -291,7 +333,23 @@ impl Typed<'_> {
                     && self.temporal_guards(a, cells, is_date)
                     && self.temporal_guards(b, cells, is_date)
             }
-            _ => false,
+            P::Bool(_)
+            | P::Number(_)
+            | P::Not(_)
+            | P::Negate(_)
+            | P::Add(..)
+            | P::Subtract(..)
+            | P::Multiply(..)
+            | P::Equal(..)
+            | P::NotEqual(..)
+            | P::Less(..)
+            | P::LessOrEqual(..)
+            | P::Greater(..)
+            | P::GreaterOrEqual(..)
+            | P::And(..)
+            | P::Or(..)
+            | P::Date(_)
+            | P::Timestamp(_) => false,
         }
     }
 

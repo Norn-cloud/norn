@@ -3550,7 +3550,25 @@ fn lower_temporal_leaf(
                 guards: vec![guard],
             }
         }
-        _ => return Err(refusal(LAW, "unsupported temporal argument")),
+        P::Bool(_)
+        | P::Number(_)
+        | P::Not(_)
+        | P::Negate(_)
+        | P::Add(..)
+        | P::Subtract(..)
+        | P::Multiply(..)
+        | P::Equal(..)
+        | P::NotEqual(..)
+        | P::Less(..)
+        | P::LessOrEqual(..)
+        | P::Greater(..)
+        | P::GreaterOrEqual(..)
+        | P::And(..)
+        | P::Or(..)
+        | P::Coalesce(..)
+        | P::Conditional(..)
+        | P::Date(_)
+        | P::Timestamp(_) => return Err(refusal(LAW, "unsupported temporal argument")),
     })
 }
 
@@ -3601,12 +3619,54 @@ fn lower_temporal(node: &RowPredicate, table: &TableSchema, is_date: bool) -> Ou
                 guards,
             }
         }
-        _ => return Err(refusal(LAW, "unsupported temporal argument")),
+        P::Bool(_)
+        | P::Number(_)
+        | P::Not(_)
+        | P::Negate(_)
+        | P::Add(..)
+        | P::Subtract(..)
+        | P::Multiply(..)
+        | P::Equal(..)
+        | P::NotEqual(..)
+        | P::Less(..)
+        | P::LessOrEqual(..)
+        | P::Greater(..)
+        | P::GreaterOrEqual(..)
+        | P::And(..)
+        | P::Or(..)
+        | P::Date(_)
+        | P::Timestamp(_) => return Err(refusal(LAW, "unsupported temporal argument")),
     })
 }
 
+/// Cast mixed-scale decimal operands explicitly to `DECIMAL(38, max(x, y))` so
+/// `DuckDB` never rounds a higher-scale branch/operand down to a lower-scale
+/// sibling's type and cast overflow routes cleanly to residue.
+fn widen_decimal_pair(
+    a_sql: Frag,
+    a_kind: PredicateKind,
+    b_sql: Frag,
+    b_kind: PredicateKind,
+) -> (Frag, Frag) {
+    if let (PredicateKind::Number(x), PredicateKind::Number(y)) = (a_kind, b_kind)
+        && x != y
+    {
+        let to = x.max(y);
+        let cast = |sql: Frag, scale: u32| {
+            if scale == to {
+                sql
+            } else {
+                Frag::fmt(&format!("CAST({{}} AS DECIMAL(38,{to}))"), &[&sql])
+            }
+        };
+        return (cast(a_sql, x), cast(b_sql, y));
+    }
+    (a_sql, b_sql)
+}
+
 /// `a == b` or `a != b`; uses SQL null-safe equality (`IS [NOT] DISTINCT FROM`)
-/// so dynamically nullable branches match ZEN's `null == null` / `null == x`.
+/// with explicit mixed-scale decimal widening so dynamically nullable branches
+/// match ZEN's `null == null` / `null == x` without rounding.
 fn lower_equality(
     equal: bool,
     a: &RowPredicate,
@@ -3628,12 +3688,13 @@ fn lower_equality(
             Frag::fmt(&format!("({{}} {test})"), &[&a.sql])
         }
         _ => {
+            let (a_sql, b_sql) = widen_decimal_pair(a.sql, a.kind, b.sql, b.kind);
             let op = if equal {
                 "IS NOT DISTINCT FROM"
             } else {
                 "IS DISTINCT FROM"
             };
-            Frag::fmt(&format!("({{}} {op} {{}})"), &[&a.sql, &b.sql])
+            Frag::fmt(&format!("({{}} {op} {{}})"), &[&a_sql, &b_sql])
         }
     };
     Ok(LoweredRule {
@@ -3652,7 +3713,8 @@ fn lower_coalesce(a: &RowPredicate, b: &RowPredicate, table: &TableSchema) -> Ou
     let sql = if a.kind == PredicateKind::Null && b.kind == PredicateKind::Null {
         Frag::raw("NULL")
     } else {
-        Frag::fmt("COALESCE({}, {})", &[&a.sql, &b.sql])
+        let (a_sql, b_sql) = widen_decimal_pair(a.sql, a.kind, b.sql, b.kind);
+        Frag::fmt("COALESCE({}, {})", &[&a_sql, &b_sql])
     };
     Ok(LoweredRule { sql, kind, guards })
 }
@@ -3677,10 +3739,11 @@ fn lower_conditional(
     let mut guards = c.guards;
     guards.extend(a.guards);
     guards.extend(b.guards);
+    let (a_sql, b_sql) = widen_decimal_pair(a.sql, a.kind, b.sql, b.kind);
     Ok(LoweredRule {
         sql: Frag::fmt(
             "(CASE WHEN {} THEN {} ELSE {} END)",
-            &[&c.sql, &a.sql, &b.sql],
+            &[&c.sql, &a_sql, &b_sql],
         ),
         kind,
         guards,
@@ -3706,6 +3769,17 @@ fn lower_node(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> 
             lower_node(b, table)?,
             kind,
         ))
+    };
+    let compare = |op: &str, a: &RowPredicate, b: &RowPredicate| -> Outcome<LoweredRule> {
+        let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
+        let mut guards = a.guards;
+        guards.extend(b.guards);
+        let (a_sql, b_sql) = widen_decimal_pair(a.sql, a.kind, b.sql, b.kind);
+        Ok(LoweredRule {
+            sql: Frag::fmt(&format!("({{}} {op} {{}})"), &[&a_sql, &b_sql]),
+            kind: K::Bool,
+            guards,
+        })
     };
     let arithmetic = |op: &str,
                       a: &RowPredicate,
@@ -3749,10 +3823,10 @@ fn lower_node(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> 
         P::Equal(a, b) | P::NotEqual(a, b) => {
             lower_equality(matches!(node, P::Equal(..)), a, b, table)?
         }
-        P::Less(a, b) => binary("<", a, b, K::Bool)?,
-        P::LessOrEqual(a, b) => binary("<=", a, b, K::Bool)?,
-        P::Greater(a, b) => binary(">", a, b, K::Bool)?,
-        P::GreaterOrEqual(a, b) => binary(">=", a, b, K::Bool)?,
+        P::Less(a, b) => compare("<", a, b)?,
+        P::LessOrEqual(a, b) => compare("<=", a, b)?,
+        P::Greater(a, b) => compare(">", a, b)?,
+        P::GreaterOrEqual(a, b) => compare(">=", a, b)?,
         P::And(a, b) => binary("AND", a, b, K::Bool)?,
         P::Or(a, b) => binary("OR", a, b, K::Bool)?,
         P::Coalesce(a, b) => lower_coalesce(a, b, table)?,
