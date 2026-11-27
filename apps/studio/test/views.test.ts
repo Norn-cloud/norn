@@ -51,7 +51,7 @@ const SCOPE_B: StudioScope = { orgId: "org_b", environmentId: "prod" }
 const SCOPE_A_STAGING: StudioScope = { orgId: "org_a", environmentId: "staging" }
 /** The workspace a live mode decided at `scope`, its reads sent through `fetcher`: the only way to a DecidedScope. */
 function liveAt(scope: StudioScope, fetcher?: Fetch) {
-  const workspace = workspaceOf({ status: "success", data: { kind: "live", scope, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set<string>() } }, fetcher)
+  const workspace = workspaceOf({ status: "success", data: { kind: "live", scope, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set<string>(), builtins: [] } }, fetcher)
   if (workspace.kind !== "live") throw new Error("expected a live workspace")
   return workspace
 }

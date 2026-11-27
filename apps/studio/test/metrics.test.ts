@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { additivityOf, metricHeading } from "../src/lib/metrics.ts"
+import { additivityOf, metricHeading, splitMetrics } from "../src/lib/metrics.ts"
 
 // Labels as the metric deriver writes them (crates/norn-checker/src/metric/derive.rs).
 const SUM = { kind: "simple", expression: "quantity", label: "sum(quantity); conservation [law.a@1]" }
@@ -48,4 +48,14 @@ test("a date's range sent as epoch milliseconds opens a window; with no range at
   const profile = { properties: [{ property: "observed_at", min: Date.UTC(2026, 9, 21, 9), max: Date.UTC(2026, 10, 12, 18) }] } as unknown as Parameters<typeof windowOf>[0]
   expect(windowOf(profile, "observed_at")).toEqual({ start: "2026-10-19T00:00:00Z", end: "2026-11-16T00:00:00Z", grain: "week" })
   expect(recentWindow(Date.UTC(2026, 10, 14, 4, 30))).toEqual({ start: "2025-11-17T00:00:00Z", end: "2026-11-16T00:00:00Z", grain: "week" })
+})
+
+test("a metric the cell lists over no single type is kept apart, never asked as if it had one", () => {
+  const base = { label: "x", kind: "simple", expression: "qty", timeProperty: null, numerator: null, denominator: null }
+  const split = splitMetrics([
+    { ...base, name: "a.qty", objectType: "a.Thing" },
+    { ...base, name: "a.rate", kind: "ratio", expression: null, objectType: null, numerator: "a.qty", denominator: "b.qty" },
+  ])
+  expect(split.metrics.map(({ name }) => name)).toEqual(["a.qty"])
+  expect(split.combined.map(({ name }) => name)).toEqual(["a.rate"])
 })
