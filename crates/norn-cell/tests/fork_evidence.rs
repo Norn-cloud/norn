@@ -123,7 +123,7 @@ fn open_sim_cell(store: CellStore) -> Result<SimCell, CellError> {
             key: cmd.payload.key.clone(),
         }
     })?;
-    cell.advance_to(LogicalTime(CLOCK));
+    cell.advance_to(LogicalTime::from_millis(CLOCK));
     Ok(cell)
 }
 
@@ -154,7 +154,7 @@ fn main_context() -> QueryContext {
 }
 
 fn commit_conversion(cell: &mut SimCell, key: &str, recovered_mg: i64, time_ms: u64) -> TestResult {
-    cell.advance_to(LogicalTime(time_ms));
+    cell.advance_to(LogicalTime::from_millis(time_ms));
     let expected = FactVersion(cell.store().read().version(
         MAIN_WORLD,
         query_support::TYPE,
@@ -343,7 +343,7 @@ fn lemma_l6_refuses_fork_evidence_as_main_at_depths_one_and_two() -> TestResult 
         Err(CellError::ForkInvalidWorld)
     ));
 
-    let manifest = ExportManifest::empty().advance(&seeded.main_export)?;
+    let manifest = ExportManifest::default().advance(&seeded.main_export)?;
     for evidence in [&seeded.d1_ev, &seeded.s1_ev] {
         assert!(matches!(
             verify_main_receipt(&evidence.record.receipt),
@@ -443,7 +443,7 @@ fn simulated_decision_card_evidence_persists_on_main_and_outlives_discarded_fork
     )?;
     let encoded = bundle.to_runtime_value()?;
 
-    main.advance_to(LogicalTime(CLOCK + 2));
+    main.advance_to(LogicalTime::from_millis(CLOCK + 2));
     main.commit(CellCommit {
         writes: vec![FactWrite {
             key: FactKey::new(CARD_TYPE, "card-1"),
