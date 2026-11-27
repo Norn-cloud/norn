@@ -852,7 +852,7 @@ fn advance<E: SqlEngine>(
 /// ephemeral `Pull` cursor and deleting `_norn_source_pending` once all rows of
 /// that page have been processed.
 fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run, now_ms: u64) -> Result<Next, Failure> {
-    let fence = capture::drain_fence(run, now_ms);
+    let fence = capture::drain_fence(run.lease.as_ref(), now_ms);
     let (done_front, step_res) = match run.pending_captures.front_mut() {
         Some(capture::ActiveCapture::Captured {
             pending, outcomes, ..

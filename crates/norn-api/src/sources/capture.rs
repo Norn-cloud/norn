@@ -123,11 +123,11 @@ pub(super) fn mark_fenced(summary: &mut super::RunSummary, fenced: Failure) {
 }
 
 pub(super) fn drain_fence(
-    run: &super::Run,
+    lease: Option<&norn_cell::source_cursor::SourceLease>,
     now_ms: u64,
 ) -> norn_cell::source_cursor::SourceReportFence<'_> {
     norn_cell::source_cursor::SourceReportFence {
-        lease: run.lease.as_ref().map(|lease| {
+        lease: lease.map(|lease| {
             (
                 lease.connection_id.as_str(),
                 lease.lease_id.as_str(),
