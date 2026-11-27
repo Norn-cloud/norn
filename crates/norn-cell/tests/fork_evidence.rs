@@ -269,7 +269,7 @@ fn pin_bound_fork_writes_tag_receipts_rows_and_entries_across_nesting_depths() -
     assert!(seeded.d1_ev.record.receipt.is_fork_minted());
     assert_eq!(seeded.d1_ev.commit_pin, d1_pin);
     assert_eq!(seeded.d1_ev.exporting_pin, d1_pin);
-    assert!(seeded.d1_ev.lineage_chain.is_empty());
+    assert_eq!(seeded.d1_ev.lineage_chain, Vec::new());
     assert_eq!(
         seeded
             .d1_ev
@@ -294,7 +294,7 @@ fn pin_bound_fork_writes_tag_receipts_rows_and_entries_across_nesting_depths() -
     verify_fork_commit_evidence(&seeded.s1_ev, &seeded.cell_id)?;
     assert_eq!(seeded.s1_ev.commit_pin, s1_pin);
     assert_eq!(seeded.s1_ev.exporting_pin, s1_pin);
-    assert!(seeded.s1_ev.lineage_chain.is_empty());
+    assert_eq!(seeded.s1_ev.lineage_chain, Vec::new());
 
     // Exporting earlier inherited commit 2 from S_1 (base = commit 3) carries
     // commit 3 in `lineage_chain`, cryptographically proving membership in S_1.
@@ -315,7 +315,7 @@ fn pin_bound_fork_writes_tag_receipts_rows_and_entries_across_nesting_depths() -
         .export_fork_commit_evidence(3)?
         .ok_or("s1 inherited commit 3 evidence missing")?;
     verify_fork_commit_evidence(&inherited_tip, &seeded.cell_id)?;
-    assert!(inherited_tip.lineage_chain.is_empty());
+    assert_eq!(inherited_tip.lineage_chain, Vec::new());
 
     assert!(seeded.s1.store().export_record(1)?.is_some());
     assert!(matches!(
