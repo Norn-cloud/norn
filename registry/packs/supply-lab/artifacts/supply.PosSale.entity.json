@@ -38,6 +38,14 @@
           },
           "id": "sku",
           "target": "supply.Sku"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "cost_record",
+          "target": "supply.UnitCost"
         }
       ],
       "name": "supply.PosSale",

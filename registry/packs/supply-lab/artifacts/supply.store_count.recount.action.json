@@ -120,7 +120,7 @@
       {
         "key": {
           "property": {
-            "from": "input",
+            "from": "count",
             "property": "store_id"
           }
         },

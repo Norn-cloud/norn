@@ -1,0 +1,139 @@
+{
+  "artifactId": "supply.unit_cost.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a SKU unit cost",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.retail.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.unit_cost.record",
+    "createLinks": [
+      {
+        "link": "sku",
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      },
+      {
+        "link": "owner_entity",
+        "targetIdField": "owner_entity_id",
+        "targetType": "supply.LegalEntity"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.UnitCost.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "cost_id",
+      "objectKind": "supply.UnitCost",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cost_id": {
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "effective_from": {
+          "type": "string"
+        },
+        "owner_entity_id": {
+          "type": "string"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "supplier_id": {
+          "type": "string"
+        },
+        "unit_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 4
+          },
+          "type": "number"
+        }
+      },
+      "required": [
+        "cost_id",
+        "sku_id",
+        "owner_entity_id",
+        "supplier_id",
+        "unit_cost",
+        "currency",
+        "effective_from"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cost_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cost_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.owner_entity.status == 'active') and (input.currency == slice.owner_entity.functional_currency)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "owner_entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      }
+    ],
+    "title": "Record a SKU unit cost",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.UnitCost"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.unit_cost.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

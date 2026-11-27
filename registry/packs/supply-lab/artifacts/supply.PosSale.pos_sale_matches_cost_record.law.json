@@ -1,0 +1,51 @@
+{
+  "artifactId": "supply.PosSale.pos_sale_matches_cost_record.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.PosSale.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A POS sale linked to a UnitCost record must be costed and match that UnitCost record's currency.",
+  "namespace": "supply",
+  "payload": {
+    "condition": "self.cost_record != null",
+    "id": "supply.PosSale.pos_sale_matches_cost_record",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "A POS sale linked to a UnitCost record must be costed and match that UnitCost record's currency.",
+    "response": {
+      "expression": "(self.currency == self.cost_record.currency) and (self.cost_status == 'costed')",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.PosSale"
+      ],
+      "root": {
+        "id": "supply.PosSale",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.PosSale"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.PosSale.pos_sale_matches_cost_record.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

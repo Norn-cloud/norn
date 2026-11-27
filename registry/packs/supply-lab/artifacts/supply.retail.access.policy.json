@@ -100,7 +100,31 @@
       },
       {
         "actions": [
+          "supply.unit_cost.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "data_engineer",
+                "planner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.UnitCost",
+        "ruleId": "catalog_unit_cost",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
           "supply.stock_lot.record",
+          "supply.stock_lot.record_uncosted",
           "supply.stock_lot.update_balance"
         ],
         "allOf": [
@@ -146,7 +170,8 @@
       },
       {
         "actions": [
-          "supply.pos_sale.record"
+          "supply.pos_sale.record",
+          "supply.pos_sale.record_uncosted"
         ],
         "allOf": [
           {

@@ -4,7 +4,7 @@
   "irVersion": "0.1",
   "kind": "labels",
   "lifecycle": "active",
-  "name": "Record a POS sale line labels",
+  "name": "Record a costed POS sale line labels",
   "namespace": "supply",
   "payload": {
     "entries": [

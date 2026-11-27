@@ -156,10 +156,6 @@
             {
               "expression": "input.costed_lines == input.sale_lines ? input.gross_margin : null",
               "name": "effective_gross_margin"
-            },
-            {
-              "expression": "(input.costed_lines == input.sale_lines and input.net_revenue > 0) ? input.gross_margin / input.net_revenue : null",
-              "name": "gross_margin_rate"
             }
           ],
           "input": "joined",

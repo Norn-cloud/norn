@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "Imported unit cost evidence must be strictly positive; zero or negative unit costs are quarantined.",
+  "name": "Unit cost records and imported unit cost evidence must be strictly positive; zero or negative unit costs are refused or quarantined.",
   "namespace": "supply",
   "payload": {
     "id": "supply.CostEvidence.unit_cost_positive",
@@ -24,7 +24,7 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/supply-lab/retail.ts"
     },
-    "rationale": "Imported unit cost evidence must be strictly positive; zero or negative unit costs are quarantined.",
+    "rationale": "Unit cost records and imported unit cost evidence must be strictly positive; zero or negative unit costs are refused or quarantined.",
     "response": {
       "expression": "self.unit_cost > 0",
       "kind": "predicate"

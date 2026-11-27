@@ -12,6 +12,13 @@
       "version": "0.1.0"
     },
     "actionId": "supply.stock_lot.update_balance",
+    "derive": [
+      {
+        "expression": "input.remaining_qty * input.unit_cost",
+        "field": "stock_value",
+        "inputRequired": false
+      }
+    ],
     "effectProgram": {
       "entityArtifactId": "supply.StockLot.entity",
       "entityArtifactVersion": "0.1.0",
@@ -29,39 +36,8 @@
         "as_of": {
           "type": "string"
         },
-        "cost_status": {
-          "enum": [
-            "costed",
-            "missing_cost"
-          ],
-          "type": "string"
-        },
-        "currency": {
-          "enum": [
-            "EGP",
-            "USD",
-            "EUR"
-          ],
-          "type": "string"
-        },
-        "custodian_id": {
-          "type": "string"
-        },
         "lot_id": {
           "type": "string"
-        },
-        "owner_entity_id": {
-          "type": "string"
-        },
-        "received_at": {
-          "type": "string"
-        },
-        "received_qty": {
-          "nornType": {
-            "kind": "decimal",
-            "scale": 6
-          },
-          "type": "number"
         },
         "remaining_qty": {
           "nornType": {
@@ -70,9 +46,6 @@
           },
           "type": "number"
         },
-        "sku_id": {
-          "type": "string"
-        },
         "stock_value": {
           "nornType": {
             "kind": "decimal",
@@ -80,43 +53,20 @@
           },
           "type": "number"
         },
-        "store_id": {
-          "type": "string"
-        },
-        "unit": {
-          "enum": [
-            "each",
-            "kg",
-            "l"
-          ],
-          "type": "string"
-        },
         "unit_cost": {
           "nornType": {
             "kind": "decimal",
             "scale": 4
           },
-          "type": [
-            "number",
-            "null"
-          ]
+          "type": "number"
         }
       },
       "required": [
         "lot_id",
-        "store_id",
-        "sku_id",
-        "owner_entity_id",
-        "custodian_id",
-        "received_qty",
         "remaining_qty",
-        "unit",
-        "received_at",
         "as_of",
-        "cost_status",
         "unit_cost",
-        "stock_value",
-        "currency"
+        "stock_value"
       ],
       "type": "object"
     },
@@ -134,7 +84,7 @@
       "type": "object"
     },
     "preconditions": [
-      "(((((((slice.store.status == 'active') and (slice.lot.store_id == input.store_id)) and (slice.lot.sku_id == input.sku_id)) and (slice.lot.owner_entity_id == input.owner_entity_id)) and (slice.lot.received_qty == input.received_qty)) and (slice.lot.unit == input.unit)) and (slice.lot.currency == input.currency)) and (slice.lot.received_at == input.received_at)"
+      "(slice.store.status == 'active') and (slice.lot.cost_status == 'costed')"
     ],
     "scopeRequired": [
       "orgId",
@@ -154,7 +104,7 @@
       {
         "key": {
           "property": {
-            "from": "input",
+            "from": "lot",
             "property": "store_id"
           }
         },

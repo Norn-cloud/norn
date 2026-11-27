@@ -15,6 +15,14 @@
           "properties": [
             "store_count_id"
           ]
+        },
+        {
+          "name": "position",
+          "properties": [
+            "store_id",
+            "sku_id",
+            "quantity_basis"
+          ]
         }
       ],
       "implements": [

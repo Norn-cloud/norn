@@ -1,0 +1,201 @@
+{
+  "artifactId": "supply.stock_lot.record_uncosted.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record an uncosted store stock lot",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.retail.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.stock_lot.record_uncosted",
+    "createLinks": [
+      {
+        "link": "store",
+        "targetIdField": "store_id",
+        "targetType": "supply.Store"
+      },
+      {
+        "link": "sku",
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "0",
+        "field": "stock_value",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.StockLot.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "lot_id",
+      "objectKind": "supply.StockLot",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "cost_status": {
+          "enum": [
+            "costed",
+            "missing_cost"
+          ],
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "custodian_id": {
+          "type": "string"
+        },
+        "lot_id": {
+          "type": "string"
+        },
+        "owner_entity_id": {
+          "type": "string"
+        },
+        "received_at": {
+          "type": "string"
+        },
+        "received_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "remaining_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "stock_value": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        },
+        "unit_cost": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "lot_id",
+        "store_id",
+        "sku_id",
+        "owner_entity_id",
+        "custodian_id",
+        "received_qty",
+        "remaining_qty",
+        "unit",
+        "received_at",
+        "as_of",
+        "cost_status",
+        "unit_cost",
+        "stock_value",
+        "currency"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "lot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "lot_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((((slice.store.status == 'active') and (slice.owner_entity.status == 'active')) and (input.cost_status == 'missing_cost')) and (input.owner_entity_id == slice.store.entity_id)) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.currency == slice.owner_entity.functional_currency)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "store",
+            "property": "entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      }
+    ],
+    "title": "Record an uncosted store stock lot",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.StockLot"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.stock_lot.record_uncosted.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

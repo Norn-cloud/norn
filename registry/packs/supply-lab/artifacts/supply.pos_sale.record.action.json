@@ -4,7 +4,7 @@
   "irVersion": "0.1",
   "kind": "action",
   "lifecycle": "active",
-  "name": "Record a POS sale line",
+  "name": "Record a costed POS sale line",
   "namespace": "supply",
   "payload": {
     "access": {
@@ -22,6 +22,11 @@
         "link": "sku",
         "targetIdField": "sku_id",
         "targetType": "supply.Sku"
+      },
+      {
+        "link": "cost_record",
+        "targetIdField": "costed_ref",
+        "targetType": "supply.UnitCost"
       }
     ],
     "derive": [
@@ -65,10 +70,7 @@
           "type": "string"
         },
         "costed_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string"
         },
         "currency": {
           "enum": [
@@ -158,7 +160,7 @@
       "type": "object"
     },
     "preconditions": [
-      "((slice.store.status == 'active') and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)"
+      "((((slice.store.status == 'active') and (input.cost_status == 'costed')) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.currency == slice.cost.currency)"
     ],
     "scopeRequired": [
       "orgId",
@@ -184,9 +186,19 @@
         },
         "name": "sku",
         "objectType": "supply.Sku"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "costed_ref"
+          }
+        },
+        "name": "cost",
+        "objectType": "supply.UnitCost"
       }
     ],
-    "title": "Record a POS sale line",
+    "title": "Record a costed POS sale line",
     "writes": [
       {
         "change": "created",

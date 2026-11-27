@@ -4,7 +4,7 @@
   "irVersion": "0.1",
   "kind": "labels",
   "lifecycle": "active",
-  "name": "Record a store stock lot labels",
+  "name": "Record a costed store stock lot labels",
   "namespace": "supply",
   "payload": {
     "entries": [

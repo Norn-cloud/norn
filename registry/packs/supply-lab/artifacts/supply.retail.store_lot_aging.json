@@ -23,6 +23,11 @@
     "calc": {
       "kind": "relational",
       "nodes": {
+        "active_lots": {
+          "input": "lot",
+          "op": "filter",
+          "predicate": "input.remaining_qty > 0"
+        },
         "aging": {
           "columns": [
             {
@@ -105,7 +110,7 @@
               "label": "Receipt week"
             }
           ],
-          "input": "lot",
+          "input": "active_lots",
           "measures": [
             {
               "column": "received_qty",

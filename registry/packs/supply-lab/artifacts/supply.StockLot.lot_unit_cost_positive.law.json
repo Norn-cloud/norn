@@ -14,7 +14,6 @@
   "name": "When a holding lot carries a unit cost, that unit cost must be strictly positive.",
   "namespace": "supply",
   "payload": {
-    "condition": "self.unit_cost != null",
     "id": "supply.StockLot.lot_unit_cost_positive",
     "lawVersion": "0.1",
     "modality": {
@@ -27,7 +26,7 @@
     },
     "rationale": "When a holding lot carries a unit cost, that unit cost must be strictly positive.",
     "response": {
-      "expression": "self.unit_cost > 0",
+      "expression": "(self.unit_cost ?? 1) > 0",
       "kind": "predicate"
     },
     "scope": {

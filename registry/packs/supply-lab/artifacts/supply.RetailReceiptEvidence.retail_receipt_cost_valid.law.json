@@ -14,7 +14,6 @@
   "name": "A retail receipt row either omits unit cost (missing cost) or states a strictly positive unit cost.",
   "namespace": "supply",
   "payload": {
-    "condition": "self.unit_cost != null",
     "id": "supply.RetailReceiptEvidence.retail_receipt_cost_valid",
     "lawVersion": "0.1",
     "modality": {
@@ -27,7 +26,7 @@
     },
     "rationale": "A retail receipt row either omits unit cost (missing cost) or states a strictly positive unit cost.",
     "response": {
-      "expression": "self.unit_cost > 0",
+      "expression": "(self.unit_cost ?? 1) > 0",
       "kind": "predicate"
     },
     "scope": {

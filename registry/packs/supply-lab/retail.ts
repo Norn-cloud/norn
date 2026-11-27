@@ -154,7 +154,6 @@ export const StockLot = Norn.type({
   links: [
     { id: "store", target: Store, cardinality: { to: "one", from: "many", required: true }, inverse: "lots" },
     { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
-    { id: "owner_entity", target: LegalEntity, cardinality: { to: "one", from: "many", required: true } },
   ],
 })
 
@@ -227,8 +226,7 @@ export const StockLotCostedWithoutPriceViolated = Norn.example("a costed lot wit
 
 export const StockLotUnitCostPositive = Norn.law("lot_unit_cost_positive", {
   on: StockLot,
-  when: (self): self is typeof self & { readonly unit_cost: NonNullable<typeof self.unit_cost> } => self.unit_cost !== null,
-  must: (self) => self.unit_cost > 0,
+  must: (self) => (self.unit_cost ?? 1) > 0,
   because: "When a holding lot carries a unit cost, that unit cost must be strictly positive.",
 })
 export const StockLotPositiveCostHolds = Norn.example("a lot with positive unit cost holds", {
@@ -288,7 +286,10 @@ export const StoreCount = Norn.type({
     },
   },
   needsReview: ["ar"],
-  identity: [{ name: "primary", properties: ["store_count_id"] }],
+  identity: [
+    { name: "primary", properties: ["store_count_id"] },
+    { name: "position", properties: ["store_id", "sku_id", "quantity_basis"] },
+  ],
   links: [
     { id: "store", target: Store, cardinality: { to: "one", from: "many", required: true } },
     { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
@@ -359,7 +360,66 @@ const PosSaleProps = Schema.Struct({
   sold_at: Norn.timestamp("utc"),
 })
 
-/** Governed POS sale line bound to one store and SKU in the store's currency. */
+const CostFacts = Schema.Struct({
+  unit_cost: Norn.decimal(4, { currency: "currency", additivity: { kind: "non_additive" } }),
+  currency: Currency,
+  effective_from: Norn.timestamp("utc"),
+})
+
+/** Shared contract for unit-cost records and imported supplier unit-cost evidence. */
+export const CostEvidence = Norn.interfaceType({
+  name: "supply.CostEvidence", title: "Unit cost evidence", version: "0.1.0",
+  label: { en: "Unit cost evidence", ar: "بيانات تكلفة الوحدة" },
+  needsReview: ["ar"],
+  disjointWith: [CountEvidence, ReceiptEvidence, SaleEvidence],
+  properties: CostFacts,
+})
+
+export const UnitCostPositive = Norn.law("unit_cost_positive", {
+  on: CostEvidence,
+  must: (self) => self.unit_cost > 0,
+  because: "Unit cost records and imported unit cost evidence must be strictly positive; zero or negative unit costs are refused or quarantined.",
+})
+export const UnitCostPositiveHolds = Norn.example("a positive unit cost holds", {
+  of: UnitCostPositive,
+  given: { unit_cost: 42.5, currency: "EGP", effective_from: "2026-08-01T00:00:00Z" },
+  expect: "holds",
+})
+export const UnitCostZeroViolated = Norn.example("a zero unit cost is quarantined", {
+  of: UnitCostPositive,
+  given: { unit_cost: 0, currency: "EGP", effective_from: "2026-08-01T00:00:00Z" },
+  expect: "violated",
+})
+
+/** Governed unit-cost record bound to an owning legal entity and catalog SKU. */
+export const UnitCost = Norn.type({
+  name: "supply.UnitCost", title: "SKU unit cost", version: "0.1.0",
+  label: { en: "SKU unit cost", ar: "تكلفة وحدة الصنف" },
+  implements: [CostEvidence],
+  properties: Schema.Struct({
+    cost_id: Schema.String,
+    sku_id: Schema.String,
+    owner_entity_id: Schema.String,
+    supplier_id: Schema.String,
+    unit_cost: Norn.decimal(4, { currency: "currency", additivity: { kind: "non_additive" } }),
+    currency: Currency,
+    effective_from: Norn.timestamp("utc"),
+  }),
+  needsReview: ["ar"],
+  identity: [{ name: "primary", properties: ["cost_id"] }],
+  links: [
+    { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
+    { id: "owner_entity", target: LegalEntity, cardinality: { to: "one", from: "many", required: true } },
+  ],
+})
+
+export const UnitCostMatchesEntityCurrency = Norn.law("unit_cost_matches_entity_currency", {
+  on: UnitCost,
+  must: (self) => self.currency === self.owner_entity.functional_currency,
+  because: "A governed unit cost record must be denominated in its owning legal entity's functional currency.",
+})
+
+/** Governed POS sale line bound to one store and SKU in the store's currency, with optional link to verified `UnitCost`. */
 export const PosSale = Norn.type({
   name: "supply.PosSale", title: "POS sale line", version: "0.1.0",
   label: { en: "POS sale", ar: "مبيعات نقطة البيع" },
@@ -371,6 +431,7 @@ export const PosSale = Norn.type({
   links: [
     { id: "store", target: Store, cardinality: { to: "one", from: "many", required: true } },
     { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
+    { id: "cost_record", target: UnitCost, cardinality: { to: "one", from: "many" } },
   ],
 })
 
@@ -415,38 +476,14 @@ export const PosSaleMatchesStoreAndSku = Norn.law("pos_sale_matches_store_and_sk
   because: "A POS sale must record quantities in its catalog SKU's unit of measure and amounts in its store's functional currency.",
 })
 
+export const PosSaleMatchesCostRecord = Norn.law("pos_sale_matches_cost_record", {
+  on: PosSale,
+  when: (self): self is typeof self & { readonly cost_record: NonNullable<typeof self.cost_record> } => self.cost_record !== null,
+  must: (self) => self.currency === self.cost_record.currency && self.cost_status === "costed",
+  because: "A POS sale linked to a UnitCost record must be costed and match that UnitCost record's currency.",
+})
+
 // ------------------------------------------------- messy feed evidence types
-
-const CostFacts = Schema.Struct({
-  unit_cost: Norn.decimal(4, { currency: "currency", additivity: { kind: "non_additive" } }),
-  currency: Currency,
-  effective_from: Norn.timestamp("utc"),
-})
-
-/** Shared contract for imported supplier unit-cost evidence. */
-export const CostEvidence = Norn.interfaceType({
-  name: "supply.CostEvidence", title: "Unit cost evidence", version: "0.1.0",
-  label: { en: "Unit cost evidence", ar: "بيانات تكلفة الوحدة" },
-  needsReview: ["ar"],
-  disjointWith: [CountEvidence, ReceiptEvidence, SaleEvidence],
-  properties: CostFacts,
-})
-
-export const UnitCostPositive = Norn.law("unit_cost_positive", {
-  on: CostEvidence,
-  must: (self) => self.unit_cost > 0,
-  because: "Imported unit cost evidence must be strictly positive; zero or negative unit costs are quarantined.",
-})
-export const UnitCostPositiveHolds = Norn.example("a positive unit cost holds", {
-  of: UnitCostPositive,
-  given: { unit_cost: 42.5, currency: "EGP", effective_from: "2026-08-01T00:00:00Z" },
-  expect: "holds",
-})
-export const UnitCostZeroViolated = Norn.example("a zero unit cost is quarantined", {
-  of: UnitCostPositive,
-  given: { unit_cost: 0, currency: "EGP", effective_from: "2026-08-01T00:00:00Z" },
-  expect: "violated",
-})
 
 /** Raw POS export line captured as evidence before governed promotion. */
 export const PosSaleEvidence = Norn.type({
@@ -508,8 +545,7 @@ export const RetailReceiptEvidence = Norn.type({
 
 export const RetailReceiptCostValid = Norn.law("retail_receipt_cost_valid", {
   on: RetailReceiptEvidence,
-  when: (self): self is typeof self & { readonly unit_cost: NonNullable<typeof self.unit_cost> } => self.unit_cost !== null,
-  must: (self) => self.unit_cost > 0,
+  must: (self) => (self.unit_cost ?? 1) > 0,
   because: "A retail receipt row either omits unit cost (missing cost) or states a strictly positive unit cost.",
 })
 export const RetailReceiptPositiveCostHolds = Norn.example("a receipt row with positive cost holds", {
@@ -520,13 +556,13 @@ export const RetailReceiptPositiveCostHolds = Norn.example("a receipt row with p
   },
   expect: "holds",
 })
-export const RetailReceiptMissingCostNotApplicable = Norn.example("a receipt row with null cost is not applicable", {
+export const RetailReceiptMissingCostHolds = Norn.example("a receipt row with null cost holds as missing cost", {
   of: RetailReceiptCostValid,
   given: {
     receipt_line_id: "RR-1b", store_code: "ST-1", sku_code: "SKU-1", supplier_id: "SUP-NILE",
     received_qty: 20, damaged_qty: 0, unit: "each", unit_cost: null, currency: "EGP", received_at: "2026-08-01T08:00:00Z",
   },
-  expect: "not_applicable",
+  expect: "holds",
 })
 export const RetailReceiptNegativeCostViolated = Norn.example("a receipt row with negative unit cost is quarantined", {
   of: RetailReceiptCostValid,

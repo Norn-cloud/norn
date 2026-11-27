@@ -36,15 +36,6 @@
           },
           "id": "sku",
           "target": "supply.Sku"
-        },
-        {
-          "cardinality": {
-            "from": "many",
-            "required": true,
-            "to": "one"
-          },
-          "id": "owner_entity",
-          "target": "supply.LegalEntity"
         }
       ],
       "name": "supply.StockLot",

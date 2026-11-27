@@ -89,15 +89,6 @@
       }
     ],
     "calendar": "iso_utc",
-    "filter": [
-      {
-        "operator": "eq",
-        "path": {
-          "property": "cost_status"
-        },
-        "value": "costed"
-      }
-    ],
     "freshness": {
       "kind": "live",
       "maxAgeMs": 60000
@@ -111,6 +102,11 @@
       {
         "path": {
           "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "property": "cost_status"
         }
       },
       {
@@ -246,15 +242,6 @@
       }
     ],
     "calendar": "iso_utc",
-    "filter": [
-      {
-        "operator": "eq",
-        "path": {
-          "property": "cost_status"
-        },
-        "value": "costed"
-      }
-    ],
     "freshness": {
       "kind": "live",
       "maxAgeMs": 60000
@@ -271,6 +258,11 @@
         }
       },
       {
+        "path": {
+          "property": "cost_status"
+        }
+      },
+      {
         "grain": "week",
         "path": {
           "property": "sold_at"
@@ -280,6 +272,43 @@
     "irVersion": "0.1",
     "name": "supply.retail.store_gross_margin_rate_weekly",
     "objectSet": "supply.PosSale",
+    "window": {
+      "end": "2026-10-26T00:00:00Z",
+      "start": "2026-07-06T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_737570706c792e506f7353616c6545766964656e6365.net_revenue.by_sold_at"
+      }
+    ],
+    "calendar": "iso_utc",
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "currency"
+        }
+      },
+      {
+        "path": {
+          "property": "store_code"
+        }
+      },
+      {
+        "grain": "week",
+        "path": {
+          "property": "sold_at"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "supply.retail.pos_feed_revenue_weekly",
+    "objectSet": "supply.PosSaleEvidence",
     "window": {
       "end": "2026-10-26T00:00:00Z",
       "start": "2026-07-06T00:00:00Z"

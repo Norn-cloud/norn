@@ -4,7 +4,7 @@
   "irVersion": "0.1",
   "kind": "action",
   "lifecycle": "active",
-  "name": "Record a store stock lot",
+  "name": "Record a costed store stock lot",
   "namespace": "supply",
   "payload": {
     "access": {
@@ -22,11 +22,13 @@
         "link": "sku",
         "targetIdField": "sku_id",
         "targetType": "supply.Sku"
-      },
+      }
+    ],
+    "derive": [
       {
-        "link": "owner_entity",
-        "targetIdField": "owner_entity_id",
-        "targetType": "supply.LegalEntity"
+        "expression": "input.remaining_qty * input.unit_cost",
+        "field": "stock_value",
+        "inputRequired": false
       }
     ],
     "effectProgram": {
@@ -113,10 +115,7 @@
             "kind": "decimal",
             "scale": 4
           },
-          "type": [
-            "number",
-            "null"
-          ]
+          "type": "number"
         }
       },
       "required": [
@@ -151,7 +150,7 @@
       "type": "object"
     },
     "preconditions": [
-      "((((slice.store.status == 'active') and (slice.owner_entity.status == 'active')) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.currency == slice.owner_entity.functional_currency)"
+      "((((((slice.store.status == 'active') and (slice.owner_entity.status == 'active')) and (input.cost_status == 'costed')) and (input.owner_entity_id == slice.store.entity_id)) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.currency == slice.owner_entity.functional_currency)"
     ],
     "scopeRequired": [
       "orgId",
@@ -181,15 +180,15 @@
       {
         "key": {
           "property": {
-            "from": "input",
-            "property": "owner_entity_id"
+            "from": "store",
+            "property": "entity_id"
           }
         },
         "name": "owner_entity",
         "objectType": "supply.LegalEntity"
       }
     ],
-    "title": "Record a store stock lot",
+    "title": "Record a costed store stock lot",
     "writes": [
       {
         "change": "created",

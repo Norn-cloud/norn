@@ -5,12 +5,13 @@ import { PosSale, StockLot, Store } from "./retail.ts"
 // to `(store_id, sku_id, unit, currency)` (or receipt week) first, then join
 // once onto `Store` at its primary key so store attributes never multiply rows.
 // Missing cost (`costed_lines < sale_lines` or `costed_lots < lot_count`)
-// surfaces explicitly (`cost_complete: false`) and withholds margin/ratio fields.
+// surfaces explicitly (`cost_complete: false`) and withholds currency-bound
+// margin/COGS fields without breaking `VAL-EXACT-1` currency typing.
 
 /**
  * Store sales, gross margin, and cost-coverage summary per `(store, sku, unit, currency)`.
- * Withholds `effective_gross_margin` and `gross_margin_rate` whenever any sale
- * line in the bucket lacks a cost reference (`costed_lines < sale_lines`).
+ * Withholds `effective_cogs` and `effective_gross_margin` whenever any sale
+ * line in the bucket lacks a verified cost reference (`costed_lines < sale_lines`).
  */
 export const StoreSalesPerformance = Norn.transform({
   id: "supply.retail.store_sales_performance", title: "Store sales and gross margin", version: "0.1.0",
@@ -50,10 +51,6 @@ export const StoreSalesPerformance = Norn.transform({
         { name: "cost_complete", expression: "input.costed_lines == input.sale_lines" },
         { name: "effective_cogs", expression: "input.costed_lines == input.sale_lines ? input.cogs_amount : null" },
         { name: "effective_gross_margin", expression: "input.costed_lines == input.sale_lines ? input.gross_margin : null" },
-        {
-          name: "gross_margin_rate",
-          expression: "(input.costed_lines == input.sale_lines and input.net_revenue > 0) ? input.gross_margin / input.net_revenue : null",
-        },
       ],
     },
   },
@@ -61,18 +58,20 @@ export const StoreSalesPerformance = Norn.transform({
 })
 
 /**
- * Holding lot receipt cohorts per `(store, sku, unit, currency, received_week)`:
- * tracks original lot receipt dates for inventory aging and flags missing unit
- * cost (`costed_lots < lot_count`) so valuation/GMROI can fail closed.
+ * Active holding lot receipt cohorts per `(store, sku, unit, currency, received_week)`:
+ * filters strictly to live lots (`remaining_qty > 0`) so fully depleted lots do
+ * not pollute inventory aging, preserves original lot receipt dates, and flags
+ * missing unit cost (`costed_lots < lot_count`) so valuation/GMROI fail closed.
  */
 export const StoreLotAging = Norn.transform({
   id: "supply.retail.store_lot_aging", title: "Store holding lot aging cohorts", version: "0.1.0",
   inputs: { lot: StockLot, store: Store },
   nodes: {
     lot: { op: "scan", input: "lot" },
+    active_lots: { op: "filter", input: "lot", predicate: "input.remaining_qty > 0" },
     store: { op: "scan", input: "store" },
     cohorts: {
-      op: "aggregate", input: "lot",
+      op: "aggregate", input: "active_lots",
       groupBy: [
         { column: "store_id" }, { column: "sku_id" }, { column: "unit" }, { column: "currency" },
         { column: "received_at", grain: "week", label: "Receipt week" },
