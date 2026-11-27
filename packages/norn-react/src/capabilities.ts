@@ -126,7 +126,7 @@ function tokenizeZen(expression: string): ZenToken[] {
       i += 1
       continue
     }
-    if (ch === '"' || ch === "'" || ch === "`") {
+    if (ch === '"' || ch === "'") {
       const quote = ch
       let value = ""
       i += 1
@@ -141,6 +141,60 @@ function tokenizeZen(expression: string): ZenToken[] {
       }
       if (i < expression.length) i += 1
       tokens.push({ kind: "string", value })
+      continue
+    }
+    if (ch === "`") {
+      // Tokenize Zen template strings into `("chunk" + (expr) + ...)` so `${input.recordVersion}` is analyzed.
+      tokens.push({ kind: "punct", value: "(" })
+      let value = ""
+      let emitted = false
+      const flushChunk = () => {
+        if (emitted) tokens.push({ kind: "punct", value: "+" })
+        tokens.push({ kind: "string", value })
+        value = ""
+        emitted = true
+      }
+      i += 1
+      while (i < expression.length && expression[i] !== "`") {
+        if (expression[i] === "\\" && i + 1 < expression.length) {
+          value += expression[i + 1]!
+          i += 2
+          continue
+        }
+        if (expression[i] === "$" && expression[i + 1] === "{") {
+          flushChunk()
+          i += 2
+          let depth = 1
+          const exprStart = i
+          while (i < expression.length && depth > 0) {
+            const c = expression[i]!
+            if (c === '"' || c === "'") {
+              const q = c
+              i += 1
+              while (i < expression.length && expression[i] !== q) {
+                i += expression[i] === "\\" && i + 1 < expression.length ? 2 : 1
+              }
+              if (i < expression.length) i += 1
+              continue
+            }
+            if (c === "{") depth += 1
+            else if (c === "}") depth -= 1
+            if (depth > 0) i += 1
+          }
+          const innerExpr = expression.slice(exprStart, i)
+          if (i < expression.length && expression[i] === "}") i += 1
+          tokens.push({ kind: "punct", value: "+" })
+          tokens.push({ kind: "punct", value: "(" })
+          tokens.push(...tokenizeZen(innerExpr))
+          tokens.push({ kind: "punct", value: ")" })
+          continue
+        }
+        value += expression[i]!
+        i += 1
+      }
+      if (i < expression.length) i += 1
+      if (!emitted || value !== "") flushChunk()
+      tokens.push({ kind: "punct", value: ")" })
       continue
     }
     if (/[0-9]/.test(ch)) {
@@ -521,7 +575,7 @@ export function referencesRecordVersion(expression: string): boolean {
               }
             }
           }
-        } else if (keyToken.kind === "ident" || keyToken.kind === "string") {
+        } else if (keyToken.kind === "ident" || keyToken.kind === "string" || keyToken.kind === "number") {
           const keyName = keyToken.value
           eat()
           if (isPunct(peek(), ":")) {
@@ -551,7 +605,7 @@ export function referencesRecordVersion(expression: string): boolean {
     }
     if (t0.kind === "number") {
       eat()
-      return OTHER
+      return { kind: "string", value: t0.value }
     }
     if (t0.kind === "ident") {
       eat()
