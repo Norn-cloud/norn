@@ -246,7 +246,7 @@ fn check_with_base(
     check_artifact_set(artifacts, &ctx)
         .into_iter()
         .filter(norn_checker::Diagnostic::is_error)
-        .map(|d| (d.code.0, d.span.map(|s| s.pointer)))
+        .map(|d| (d.code.as_str().to_owned(), d.span.map(|s| s.pointer)))
         .collect()
 }
 
