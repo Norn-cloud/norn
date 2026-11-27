@@ -8,6 +8,8 @@ use http::StatusCode;
 use norn_cell::engine::SqlEngine;
 use norn_cell::flow_run::ActionStepPin;
 use norn_ir::{ActionRoot, ArtifactEnvelope, RuntimeValue};
+use norn_kernel::cell_host::CellHost;
+use norn_kernel::{ACTION_CALL_TYPE, ActionCallRecord, FactKey};
 
 use crate::action_admission::RetainedActions;
 use crate::host::{ActionCell, DevHost};
@@ -114,10 +116,39 @@ fn verify_explicit_definitions_version(
     Ok(())
 }
 
+/// STEP-PIN-1 retry recovery: if `attempt` already committed `action_id`
+/// under `idempotency_key` before an interruption prior to step settlement,
+/// recover its committed target `(object_type, object_id, version)` directly
+/// from the cell's ledger so a subsequent definition change cannot turn an
+/// already-committed attempt into a pin refusal.
+pub(crate) fn committed_step_outcome<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    action_id: &str,
+    idempotency_key: &str,
+    attempt: &crate::approvals::StepAttempt,
+) -> Result<Option<(String, String, u64)>, Refusal> {
+    let key = FactKey::new(ACTION_CALL_TYPE, format!("{action_id}/{idempotency_key}"));
+    let recorded = CellHost::load(cell, &key).map_err(Refusal::host)?;
+    let Some(record) = recorded
+        .values
+        .as_ref()
+        .and_then(ActionCallRecord::from_values)
+    else {
+        return Ok(None);
+    };
+    if record.action_id != action_id
+        || !crate::flow_driver::owns(cell.store(), action_id, idempotency_key, attempt)?
+    {
+        return Ok(None);
+    }
+    crate::actions::recorded_target(cell.store(), &record, idempotency_key).map(Some)
+}
+
 /// Check why `action_id` is absent from the active catalog when executing a
 /// parked flow step: fail closed with `action_step.pin_mismatch` if an
-/// explicit pin was declared, or `action_step.definition_changed` if the
-/// action existed in the run's starting definitions set and was retired.
+/// explicit pin was declared, `action_step.pin_unavailable` if run-start
+/// evidence is missing, or `action_step.definition_changed` if the action
+/// existed in the run's starting definitions set and was retired.
 fn check_missing_active_action<E: SqlEngine>(
     host: &DevHost<E>,
     cell: &ActionCell<E>,
@@ -128,9 +159,7 @@ fn check_missing_active_action<E: SqlEngine>(
     if pin.explicit.is_some() {
         return Err(pin_mismatch());
     }
-    let Some(started_version) = pin.run_definitions_version else {
-        return Ok(());
-    };
+    let started_version = pin.run_definitions_version.ok_or_else(pin_unavailable)?;
     if started_version == installed_version {
         return Ok(());
     }
@@ -143,6 +172,42 @@ fn check_missing_active_action<E: SqlEngine>(
         return Err(definition_changed());
     }
     Ok(())
+}
+
+/// Build the active type catalog, compute the action's effective digest, and
+/// verify that `(artifact, effective_digest, installed_version)` satisfies
+/// both any explicit `pin` and the implicit run-start action contract pinned
+/// at `run_definitions_version`.
+pub(crate) fn prepare_verified_catalog<E: SqlEngine>(
+    host: &DevHost<E>,
+    cell: &ActionCell<E>,
+    installed_version: u64,
+    admitted: &RetainedActions,
+    active_artifact: &ArtifactEnvelope,
+    active_action: &ActionRoot,
+    step_pin: Option<&StepActionPin>,
+) -> Result<(norn_kernel::TypeCatalog, String), Refusal> {
+    let model = cell.store().model().clone();
+    // ADMIT-CACHE-1: the model's definition work is derived once per model.
+    let catalog = model
+        .type_catalog()
+        .with_governing_laws(model.law_artifacts())
+        .with_action_rules(&admitted.rules)
+        .with_transition_guards(&admitted.guards);
+    let active_digest =
+        crate::action_admission::effective_digest(admitted, active_action, &model, &catalog)?;
+    if let Some(pin) = step_pin {
+        verify_step_pin(
+            host,
+            cell,
+            installed_version,
+            active_artifact,
+            active_action,
+            &active_digest,
+            pin,
+        )?;
+    }
+    Ok((catalog, active_digest))
 }
 
 /// Verify that the active `(artifact, effective_digest, installed_version)`
@@ -160,9 +225,7 @@ pub(crate) fn verify_step_pin<E: SqlEngine>(
     if let Some(explicit) = &pin.explicit {
         verify_explicit_fields(installed_version, active_artifact, active_digest, explicit)?;
     }
-    let Some(started_version) = pin.run_definitions_version else {
-        return Ok(());
-    };
+    let started_version = pin.run_definitions_version.ok_or_else(pin_unavailable)?;
     // Fast path: definitions have not changed since the run started.
     if started_version == installed_version {
         return Ok(());
@@ -274,5 +337,44 @@ pub(crate) fn require_owned<E: SqlEngine>(
             Err(foreign_step_record())
         }
         _owned_or_direct => Ok(()),
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "assembles norn_kernel::ActionCall from the verified call_action_bound inputs"
+)]
+pub(crate) fn build_kernel_call<'a, E: SqlEngine>(
+    host: &DevHost<E>,
+    cell: &ActionCell<E>,
+    artifact: &'a ArtifactEnvelope,
+    action: &'a ActionRoot,
+    actor: &str,
+    input: &norn_ir::RuntimeObject,
+    idempotency_key: &str,
+    now: norn_kernel::LogicalTime,
+    trace: Option<norn_ir::TraceContext>,
+) -> norn_kernel::ActionCall<'a> {
+    norn_kernel::ActionCall {
+        action,
+        action_artifact_id: &artifact.artifact_id,
+        action_version: &artifact.version,
+        scope: std::collections::BTreeMap::from([
+            ("orgId".into(), host.scope().org_id.clone()),
+            ("environmentId".into(), host.scope().environment_id.clone()),
+        ]),
+        actor: actor.to_owned(),
+        approved_intent: None,
+        input: input.clone(),
+        idempotency_key: idempotency_key.to_owned(),
+        object_type: None,
+        turn: norn_kernel::DecisionTurn {
+            id: format!("{}/{idempotency_key}", action.action_id),
+            now,
+            // L5 (Fable S2): the turn's world is the store's pin, never assumed.
+            world: cell.store().world(),
+            consumes: None,
+        },
+        trace,
     }
 }

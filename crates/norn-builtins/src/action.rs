@@ -95,9 +95,10 @@ pub fn parse_step(input: &RuntimeValue) -> Result<ActionStep, StepRefusal> {
     let RuntimeValue::Object(members) = input else {
         return Err(StepRefusal::Shape);
     };
-    let expected_len =
-        2 + usize::from(members.contains_key("trace")) + usize::from(members.contains_key("pin"));
-    if members.len() != expected_len {
+    if !members
+        .keys()
+        .all(|key| matches!(key.as_str(), "action" | "input" | "trace" | "pin"))
+    {
         return Err(StepRefusal::Shape);
     }
     let (Some(RuntimeValue::String(action)), Some(RuntimeValue::Object(step_input))) =

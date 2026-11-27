@@ -406,3 +406,168 @@ fn a_parked_step_enforces_explicit_pin_match_and_mismatch() {
     );
     assert_eq!(melt(&bad_cell), 404);
 }
+
+fn revise_action_to_omits_loss(cell: &Cell) {
+    let version = cell.host.active_definitions_version().unwrap();
+    let active_set = cell
+        .host
+        .cell()
+        .unwrap()
+        .store()
+        .read()
+        .installed_definitions(version)
+        .unwrap()
+        .unwrap();
+    let active_docs: Vec<Value> = serde_json::from_str(&active_set.canonical_set).unwrap();
+    let (model, input) = step_cell::action_cell::melt_install_edited(
+        step_cell::action_cell::OMITS_LOSS,
+        |docs| {
+            for doc in active_docs {
+                if !docs.iter().any(|d| d["artifactId"] == doc["artifactId"]) {
+                    docs.push(doc);
+                }
+            }
+        },
+        norn_api::action_admission::prepare_action_model,
+        step_cell::NOW * 1000 + 1,
+    );
+    cell.host
+        .install_definitions(model, input, version)
+        .expect("mutated action installs");
+}
+
+fn starter_caller(starter: &norn_cell::flow_run::RunStarter) -> norn_cell_do::policy::Caller {
+    let actor_kind = match starter.actor_kind.as_str() {
+        "service" => "service",
+        _ => "user",
+    };
+    norn_cell_do::policy::Caller {
+        subject_id: starter.subject.clone(),
+        roles: starter.roles.clone(),
+        actor_kind,
+        role_table: "studio-roles/1",
+        accountable_person: starter.accountable_person.clone(),
+    }
+}
+
+fn decide_ask_review_without_driving(cell: &Cell, decision_id: &str, key: &str) {
+    let scope = norn_api::scope::ScopeQuery {
+        org_id: Some("org_demo".to_owned()),
+        environment_id: Some("dev".to_owned()),
+    };
+    let reads = |cap: norn_api::authz::ReadCapability, ty: &str| {
+        norn_cell_do::policy::collection_access(cell.host.scope(), "approver@steps", cap, ty)
+    };
+    let body = norn_api::decisions::DecideRequest {
+        choice: "approve".to_owned(),
+        note: None,
+        idempotency_key: key.to_owned(),
+    };
+    let no_requester = |_p: &norn_cell::flow_run::RunStarter,
+                        _c: &mut dyn FnMut() -> Result<
+        norn_api::actions::ActionAnswer,
+        norn_api::refusal::Refusal,
+    >| None;
+    cell.caller.record(Some(norn_cell_do::policy::Caller {
+        subject_id: "approver@steps".to_owned(),
+        roles: vec!["admin".to_owned()],
+        actor_kind: "user",
+        role_table: "studio-roles/1",
+        accountable_person: None,
+    }));
+    norn_api::decisions::decide(
+        &cell.host,
+        &norn_api::decisions::DecideCall {
+            scope: &scope,
+            actor: Some("approver@steps"),
+            id: decision_id,
+            body: &body,
+            now: norn_kernel::LogicalTime::from_millis(step_cell::NOW.saturating_mul(1000)),
+        },
+        &reads,
+        &cell.handles,
+        &no_requester,
+    )
+    .expect("ask_review decides");
+    cell.caller.record(None);
+}
+
+/// STEP-PIN-1 retry recovery: when a parked action step commits its action and
+/// the process stops before settling the step, a later definition change must
+/// not turn the retry into a pin refusal; retry recovers the attempt-owned
+/// committed outcome and completes the run.
+#[test]
+fn retry_after_commit_and_definition_change_recovers_committed_outcome() {
+    let cell = cell();
+    let (status, opened) = call(
+        &cell,
+        "POST",
+        "/v1/runs",
+        OPERATOR,
+        &json!({ "flow": FLOW_ID, "runId": "melt-run-recover" }).to_string(),
+    );
+    assert_eq!(status, 201, "{opened}");
+    let pending = format!("{SCOPE}&state=pending");
+    let (_, page) = call_with(&cell, "GET", "/v1/decisions", &pending, APPROVER, "");
+    let id = page["items"][0]["id"].as_str().unwrap().to_owned();
+
+    // Decide `ask_review` directly without driving `convert`, leaving it parked.
+    decide_ask_review_without_driving(&cell, &id, "k-recover");
+
+    let now_ms = step_cell::NOW.saturating_mul(1000);
+    let no_requester = |_p: &norn_cell::flow_run::RunStarter,
+                        _c: &mut dyn FnMut() -> Result<
+        norn_api::actions::ActionAnswer,
+        norn_api::refusal::Refusal,
+    >| None;
+    // First drive commits the action, then simulates an interruption before `settle`.
+    let crash_after_commit = |starter: &norn_cell::flow_run::RunStarter,
+                              dispatch: &mut dyn FnMut() -> Result<
+        norn_api::actions::ActionAnswer,
+        norn_api::refusal::Refusal,
+    >| {
+        cell.caller.record(Some(starter_caller(starter)));
+        let committed = dispatch();
+        cell.caller.record(None);
+        assert!(committed.is_ok(), "action must commit: {committed:?}");
+        Some(Err(norn_api::refusal::Refusal::host("simulated crash")))
+    };
+    assert!(
+        norn_api::flow_driver::drive_run(
+            &cell.host,
+            "melt-run-recover",
+            &crash_after_commit,
+            &no_requester,
+            &cell.handles,
+            norn_kernel::LogicalTime::from_millis(now_ms),
+        )
+        .is_err()
+    );
+    assert_eq!(melt(&cell), 200, "action side effect is already committed");
+    let (_, mid_run) = call(&cell, "GET", "/v1/runs/melt-run-recover", OPERATOR, "");
+    assert_eq!(mid_run["state"], json!("awaiting_perform_convert"));
+
+    // Mutate action definition before retry; retry recovers committed outcome.
+    revise_action_to_omits_loss(&cell);
+    let as_starter = |starter: &norn_cell::flow_run::RunStarter,
+                      dispatch: &mut dyn FnMut() -> Result<
+        norn_api::actions::ActionAnswer,
+        norn_api::refusal::Refusal,
+    >| {
+        cell.caller.record(Some(starter_caller(starter)));
+        let out = dispatch();
+        cell.caller.record(None);
+        Some(out)
+    };
+    norn_api::flow_driver::drive_run(
+        &cell.host,
+        "melt-run-recover",
+        &as_starter,
+        &no_requester,
+        &cell.handles,
+        norn_kernel::LogicalTime::from_millis(now_ms.saturating_add(2)),
+    )
+    .expect("retry settles committed step cleanly");
+    let (_, final_run) = call(&cell, "GET", "/v1/runs/melt-run-recover", OPERATOR, "");
+    assert_eq!(final_run["state"], json!("completed"), "{final_run}");
+}

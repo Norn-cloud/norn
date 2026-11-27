@@ -473,7 +473,7 @@ enum StepApproval {
 /// approval binds a step only when its parked call is exactly the call the
 /// step attempt makes: parked for that exact attempt (its run, its command
 /// and generation), under the attempt's idempotency key, the action, the
-/// input, no definitions pin (a step calls the active catalog), and the
+/// input, matching definitions pin (the step's explicit pin, if any), and the
 /// run's starter, its whole recorded identity, as requester (S5a); a call
 /// parked before attempts were recorded binds by its approval's recorded
 /// run (S6b, [`crate::approvals::binding`]). Another call under the same
@@ -640,7 +640,7 @@ pub fn drive_run<E: SqlEngine>(
     now: LogicalTime,
 ) -> Result<(), Refusal> {
     for _ in 0..MAX_ACTION_STEPS {
-        let (step, waiting) = {
+        let (step, waiting, already_committed) = {
             let _epoch = host.definition_read()?;
             let mut cell = host.cell()?;
             if let Some(recorded) = recorded_steps(&cell)?
@@ -657,8 +657,18 @@ pub fn drive_run<E: SqlEngine>(
                 step_approval(&cell, &step)?,
                 Some((.., StepApproval::Waiting))
             );
-            (step, waiting)
+            // STEP-PIN-1 retry recovery: if this attempt already committed its
+            // action before a crash prior to settlement, recover that committed
+            // outcome before checking pins for a new execution.
+            let committed = committed_outcome_for_step(&cell, &step)?;
+            (step, waiting, committed)
         };
+        if let Some(outcome) = already_committed {
+            if !settle(host, &step, outcome, false, now)? {
+                return Ok(());
+            }
+            continue;
+        }
         let (outcome, denied) = match dispatch_step(
             host,
             &step,
@@ -771,6 +781,26 @@ fn dispatch_step<E: SqlEngine>(
     }
 }
 
+fn committed_outcome_for_step<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    step: &StepCall,
+) -> Result<Option<StepOutcome>, Refusal> {
+    let Ok(action) = norn_cell::flow_run::parse_action_step(&step.input) else {
+        return Ok(None);
+    };
+    let attempt = crate::approvals::StepAttempt {
+        run_id: step.run_id.clone(),
+        command: step.command.0.clone(),
+        generation: step.generation.0,
+    };
+    let Some((object_type, object_id, version)) =
+        crate::step_pin::committed_step_outcome(cell, &action.action, &step.call_key, &attempt)?
+    else {
+        return Ok(None);
+    };
+    output(object_type, object_id, version).map(Some)
+}
+
 /// S7: record what a try of `step`'s call ended with, reconciled with the
 /// step's approval under one cell hold: an approved call with an outcome by
 /// now (committed, or its refusal recorded, by any request) gives the step
@@ -792,7 +822,13 @@ fn settle<E: SqlEngine>(
     let outcome = match step_approval(&cell, step)? {
         Some((.., StepApproval::Outcome(recorded))) => recorded,
         Some((.., StepApproval::Waiting)) if denied => return Ok(false),
-        Some((.., StepApproval::Waiting | StepApproval::Superseded)) | None => tried,
+        Some((.., StepApproval::Waiting | StepApproval::Superseded)) | None => {
+            if let Some(committed) = committed_outcome_for_step(&cell, step)? {
+                committed
+            } else {
+                tried
+            }
+        }
     };
     deliver_in(
         &mut cell,

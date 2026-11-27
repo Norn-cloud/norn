@@ -432,19 +432,7 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     let actor = actor
         .filter(|actor| !actor.trim().is_empty())
         .ok_or_else(action_denied)?;
-    let epoch = host.definition_read();
-    let authorized = host.authorizer.authorize(&AccessRequest {
-        scope: host.scope(),
-        actor: Some(actor),
-        operation: Operation::CallAction(action_id.to_owned()),
-    });
-    let scoped = host
-        .scope()
-        .admit(query.org_id.as_deref(), query.environment_id.as_deref());
-    if authorized.is_err() || scoped.is_err() {
-        return Err(action_denied());
-    }
-    let _epoch = epoch?;
+    let _epoch = authorize_action_call(host, query, actor, action_id)?;
     let key = handle_key(disclosure)?;
     let RuntimeValue::Object(input) = &request.input else {
         return Err(invalid_at("/input", "input must be a JSON object"));
@@ -472,51 +460,29 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     if query.version.is_some_and(|pin| pin != installed_version) {
         return Err(stale_pin(&mut cell, approved, principal, attempt)?);
     }
-    let model = cell.store().model().clone();
-    // ADMIT-CACHE-1: the model's definition work is derived once per model.
-    let catalog = model
-        .type_catalog()
-        .with_governing_laws(model.law_artifacts())
-        .with_action_rules(&admitted.rules)
-        .with_transition_guards(&admitted.guards);
-    let now = turn_clock(&mut cell, now)?;
-    let kernel_call = norn_kernel::ActionCall {
+    // APPROVAL-REVISION-1 & STEP-PIN-1: derive the catalog, bind the action
+    // digest, and verify any parked flow step pin inside this definitions + cell hold.
+    let (catalog, action_digest) = crate::step_pin::prepare_verified_catalog(
+        host,
+        &cell,
+        installed_version,
+        &admitted,
+        artifact,
         action,
-        action_artifact_id: &artifact.artifact_id,
-        action_version: &artifact.version,
-        scope: BTreeMap::from([
-            ("orgId".into(), host.scope().org_id.clone()),
-            ("environmentId".into(), host.scope().environment_id.clone()),
-        ]),
-        actor: actor.to_owned(),
-        approved_intent: None,
-        input: input.clone(),
-        idempotency_key: request.idempotency_key.clone(),
-        object_type: None,
-        turn: DecisionTurn {
-            id: format!("{action_id}/{}", request.idempotency_key),
-            now,
-            // L5 (Fable S2): the turn's world is the store's pin, never assumed.
-            world: cell.store().world(),
-            consumes: None,
-        },
+        active_pin,
+    )?;
+    let now = turn_clock(&mut cell, now)?;
+    let kernel_call = crate::step_pin::build_kernel_call(
+        host,
+        &cell,
+        artifact,
+        action,
+        actor,
+        input,
+        &request.idempotency_key,
+        now,
         trace,
-    };
-    // APPROVAL-REVISION-1 & STEP-PIN-1: bind the action digest and verify any
-    // parked flow step pin inside this same definitions + cell hold.
-    let action_digest =
-        crate::action_admission::effective_digest(&admitted, action, &model, &catalog)?;
-    if let Some(pin) = active_pin {
-        crate::step_pin::verify_step_pin(
-            host,
-            &cell,
-            installed_version,
-            artifact,
-            action,
-            &action_digest,
-            pin,
-        )?;
-    }
+    );
     let outcome = match through_gate(
         host,
         &mut cell,
@@ -532,15 +498,40 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     )? {
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
         Gated::Replayed(outcome) => *outcome,
-        Gated::Commit(approval) => {
-            let approval = approval.as_deref();
-            commit_call(host, &mut cell, &catalog, &kernel_call, approval, attempt)?
-        }
+        Gated::Commit(approval) => commit_call(
+            host,
+            &mut cell,
+            &catalog,
+            &kernel_call,
+            approval.as_deref(),
+            attempt,
+        )?,
     };
     crate::step_pin::require_owned(cell.store(), action_id, &request.idempotency_key, attempt)?;
     let store = cell.store();
     let raw_hash = world_values(host, disclosure, store, actor);
     caller_receipt(store, action_id, request, outcome, raw_hash, key).map(ActionAnswer::Receipt)
+}
+
+fn authorize_action_call<E: SqlEngine>(
+    host: &DevHost<E>,
+    query: &ActionQuery,
+    actor: &str,
+    action_id: &str,
+) -> Result<std::sync::RwLockReadGuard<'_, ()>, Refusal> {
+    let epoch = host.definition_read();
+    let authorized = host.authorizer.authorize(&AccessRequest {
+        scope: host.scope(),
+        actor: Some(actor),
+        operation: Operation::CallAction(action_id.to_owned()),
+    });
+    let scoped = host
+        .scope()
+        .admit(query.org_id.as_deref(), query.environment_id.as_deref());
+    if authorized.is_err() || scoped.is_err() {
+        return Err(action_denied());
+    }
+    epoch
 }
 
 /// Commit a call past its gate, as the caller gets it: under an approval,
