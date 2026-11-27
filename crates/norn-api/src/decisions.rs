@@ -1475,6 +1475,7 @@ fn run_approved<E: SqlEngine>(
                 // S5a: the step attempt the call was parked for, as the
                 // trusted flow dispatch recorded it; none for a direct call.
                 attempt: held.call.attempt.as_ref(),
+                step_pin: None,
                 action_id: &held.call.action,
                 request: &request,
                 now,

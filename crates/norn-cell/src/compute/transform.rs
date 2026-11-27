@@ -335,7 +335,7 @@ impl<E: SqlEngine> CellStore<E> {
                     }
                     RowAccess::Read => {}
                 }
-                if let Some(finding) = reader.question_findings(world, &record, None)?.first() {
+                if let Some(finding) = reader.question_findings(world, &record)?.first() {
                     exclusions.insert(format!("{alias}/{}", record.id), finding.id.clone());
                     continue;
                 }
