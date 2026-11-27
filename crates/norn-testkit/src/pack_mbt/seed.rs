@@ -275,10 +275,9 @@ fn sync_post_stamp_fields<H: PackHost>(
         commands: Vec::new(),
         timers: Vec::new(),
     };
-    Ok((
-        norn_kernel::commit_decision(host, catalog, &slice, &turn, &output).map(|_| ()),
-        true,
-    ))
+    let res = norn_kernel::commit_decision(host, catalog, &slice, &turn, &output).map(|_| ());
+    let committed = res.is_ok();
+    Ok((res, committed))
 }
 
 /// Arguments for [`try_fire_receipt_transition_action`].
