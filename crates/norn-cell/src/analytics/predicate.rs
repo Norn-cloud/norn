@@ -33,6 +33,7 @@ pub(crate) fn zen_timestamp_key(text: &str) -> Option<(i64, u32)> {
 }
 
 /// Order-isomorphic total nanoseconds since the Unix epoch for `t in i64, 0 <= n < 10^9`.
+#[cfg(feature = "duckdb")]
 #[must_use]
 pub(crate) fn instant_nanos(secs: i64, nanos: u32) -> i128 {
     i128::from(secs)
@@ -130,6 +131,7 @@ impl RowPredicate {
 
     /// Like [`Self::kind`], allowing `null` at the root (for subexpressions
     /// already typed in a nullable position such as LHS of `??`).
+    #[cfg(feature = "datafusion")]
     #[must_use]
     pub(crate) fn kind_nullable(&self, table: &TableSchema) -> Option<PredicateKind> {
         self.kind_in(table, true, 0)

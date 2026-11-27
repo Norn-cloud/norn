@@ -207,7 +207,24 @@ impl Typed<'_> {
             }
             P::Equal(a, b) | P::NotEqual(a, b) => {
                 let equal = matches!(node, P::Equal(..));
-                let same = match (self.eval(a, cells)?, self.eval(b, cells)?) {
+                let left = self.eval(a, cells)?;
+                let right = self.eval(b, cells)?;
+                // Match DuckDB's `widen_decimal_pair` coercion on dynamically
+                // null mixed-scale equality (`DECIMAL(38, max(s_a, s_b))`): an
+                // overflowing non-null decimal enters residue even if its peer
+                // evaluates to `null`.
+                if let (Some(sa), Some(sb)) = (self.scale_of(a), self.scale_of(b))
+                    && sa != sb
+                {
+                    let to = sa.max(sb);
+                    if let Val::Num(value) = left {
+                        value.rescale(to).filter(Dec::in_storage)?;
+                    }
+                    if let Val::Num(value) = right {
+                        value.rescale(to).filter(Dec::in_storage)?;
+                    }
+                }
+                let same = match (left, right) {
                     (Val::Null, Val::Null) => true,
                     (Val::Null, _) | (_, Val::Null) => false,
                     (Val::Num(left), Val::Num(right)) => {

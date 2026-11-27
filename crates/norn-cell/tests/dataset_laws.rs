@@ -1772,10 +1772,10 @@ fn excepted_row_tree_law_handles_over_124k_rows_with_zero_residue() {
     assert_eq!(row_held, BTreeSet::from([3, 5]));
     assert_eq!(row_trusted, BTreeSet::from([1, 2, 4]));
 
-    const TOTAL_ROWS: usize = 125_000;
-    let mut csv_bytes = String::with_capacity(TOTAL_ROWS * 64);
+    let total_rows = 125_000usize;
+    let mut csv_bytes = String::with_capacity(total_rows * 64);
     csv_bytes.push_str(&format!("{}\n", FIELDS.join(",")));
-    for index in 0..TOTAL_ROWS {
+    for index in 0..total_rows {
         let line = &sample[index % sample.len()];
         writeln!(
             csv_bytes,
@@ -2396,9 +2396,9 @@ fn multibyte_utf8_byte_fuel_and_char_length_preserve_contracts() {
         .expect_err("per-row ZEN evaluator exhausts fuel on the 500KB UTF-8 row");
 
     // Part B: `minLength: 3, maxLength: 3` counts Unicode chars, NOT UTF-8 bytes!
-    const LEN_TYPE: &str = "bench.CharBound";
+    let len_type = "bench.CharBound";
     let (mut artifacts, base) = support::artifacts(
-        LEN_TYPE,
+        len_type,
         &[
             Field {
                 id: "id",
@@ -2424,8 +2424,8 @@ fn multibyte_utf8_byte_fuel_and_char_length_preserve_contracts() {
         json!({"id": "c-3", "code": "😀😀😀😀"}), // 4 chars, 16 bytes -> too_long
     ];
     let len_csv = "id,code\nc-1,😀😀😀\nc-2,😀😀\nc-3,😀😀😀😀\n";
-    let (row_findings, row_held, row_trusted) = per_row_custom(&mut len_cell, LEN_TYPE, &rows);
-    let bulk = set_based_custom(&len_cell, LEN_TYPE, len_csv);
+    let (row_findings, row_held, row_trusted) = per_row_custom(&mut len_cell, len_type, &rows);
+    let bulk = set_based_custom(&len_cell, len_type, len_csv);
     assert_eq!(bulk.findings, row_findings);
     assert_eq!(bulk.held, row_held);
     assert_eq!(bulk.data, row_trusted);
@@ -2639,15 +2639,16 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
         })
         .expect("Per-Row == DuckDB == DataFusion across all batches");
 
-    // Sol 6.2 R1/R2 (Blocker 1 & Medium 2):
-    // 1. Mixed-scale `COALESCE` (`DECIMAL(38,0)` + `0.000000000001`) must cast
-    //    explicitly to `DECIMAL(38,12)` so `id == 'null'` evaluates `0.000000000001 == 0`
-    //    as FALSE (never rounded to 0!) with zero residue, while `10^26` overflows
+    // Sol 6.2 R1/R2/R3:
+    // 1. Mixed-scale `COALESCE` (`DECIMAL(38,0)` + `0.000000000001`) casts
+    //    explicitly to `DECIMAL(38,12)` so `id == 'null'` evaluates `0.000000000001 != 0`
+    //    as TRUE (never rounded to 0!) with zero residue, while `10^26` overflows
     //    `DECIMAL(38,12)` into residue in BOTH DuckDB and DataFusion.
-    // 2. Mixed-scale comparison coercion (`((id=='null' ? null : large) ?? 0) > small`
-    //    with `large = 10^26` scale 0 and `small = 0.000000000001` scale 12) must also
-    //    produce identical residue sets on DuckDB and DataFusion.
-    const BIG_TYPE: &str = "bench.BigDecimalBranch";
+    // 2. Mixed-scale comparison coercion (`((id=='null' ? null : large) ?? 0) > small`)
+    //    and nullable mixed-scale equality (`large != (id=='null-big' ? null : small)`)
+    //    produce identical residue sets on DuckDB and DataFusion even when the peer
+    //    branch dynamically evaluates to `null`.
+    let big_type = "bench.BigDecimalBranch";
     let big_fields = vec![
         Field {
             id: "id",
@@ -2668,7 +2669,7 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
         },
     ];
     let (_big_dir, big_cell) = support::cell(
-        BIG_TYPE,
+        big_type,
         &big_fields,
         &[
             (
@@ -2686,22 +2687,31 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
                 "error",
                 "((self.id == 'null' ? null : self.large) ?? 0) > self.small",
             ),
+            (
+                "nullable_mixed_eq",
+                "error",
+                "self.large != (self.id == 'null-big' ? null : self.small)",
+            ),
         ],
     );
     let ten_26 = "100000000000000000000000000";
-    // Row 1 (`b-1`): `10^26` overflows `DECIMAL(38,12)` in both branch & compare -> residue.
-    // Row 2 (`null`): `COALESCE(NULL, 0.000000000001)`:
-    //   - `wide_coalesce`: `0.000000000001 > 0` -> TRUE (pass, proves no round-to-0!)
-    //   - `no_silent_round_to_zero`: `0.000000000001 != 0` -> TRUE (pass, proves no round-to-0!)
-    //   - `wide_compare`: `0 > 0.000000000001` -> FALSE (held in SQL, 0 residue!)
-    // Row 3 (`b-3`): `5` -> all 3 pass in SQL with 0 residue.
+    // Row 1 (`b-1`): `10^26` overflows `DECIMAL(38,12)` across all 4 rules -> residue.
+    // Row 2 (`null`): `COALESCE(NULL, 0.000000000001)` passes `wide_coalesce`,
+    //   `no_silent_round_to_zero`, and `nullable_mixed_eq`, and fails ONLY `wide_compare` in SQL.
+    // Row 3 (`null-big`): `10^26 != (true ? null : small)` overflows `DECIMAL(38,12)`
+    //   even though RHS is dynamically `null` -> residue on BOTH DuckDB and DataFusion!
+    // Row 4 (`b-4`): `5` -> all 4 pass in SQL with 0 residue.
     let big_csv = format!(
-        "id,large,small\nb-1,{ten_26},0.000000000001\nnull,5,0.000000000001\nb-3,5,0.000000000001\n"
+        "id,large,small\n\
+         b-1,{ten_26},0.000000000001\n\
+         null,5,0.000000000001\n\
+         null-big,{ten_26},0.000000000001\n\
+         b-4,5,0.000000000001\n"
     );
     let big_store = big_cell.store();
-    let big_table = big_store.analytics_table(BIG_TYPE).expect("table");
+    let big_table = big_store.analytics_table(big_type).expect("table");
     let big_checks = big_store
-        .dataset_checks(BIG_TYPE, &big_table)
+        .dataset_checks(big_type, &big_table)
         .expect("checks");
     let big_req_base = LandRequest {
         load: LoadRequest {
@@ -2717,7 +2727,7 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
             headers: BTreeMap::new(),
         },
         pins: big_store
-            .dataset_pins(BIG_TYPE, &BTreeMap::new(), "bench.dataset.mapping@test")
+            .dataset_pins(big_type, &BTreeMap::new(), "bench.dataset.mapping@test")
             .expect("pins"),
         landing: "landing-big".into(),
         attempt: String::new(),
@@ -2751,17 +2761,18 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
         })
         .expect("df land");
     assert_eq!(
-        duck_big_landed.residue_total, 1,
-        "DuckDB sends only the 10^26 overflow row to residue across all 3 rules"
+        duck_big_landed.residue_total, 2,
+        "DuckDB sends both 10^26 overflow rows (including dynamically null RHS equality) to residue"
     );
     assert_eq!(
-        df_big_landed.residue_total, 1,
-        "DataFusion matches DuckDB's DECIMAL(38, s) storage bound on both branch & comparison coercion"
+        df_big_landed.residue_total, 2,
+        "DataFusion matches DuckDB's DECIMAL(38, s) storage bound on branch, comparison, and nullable equality"
     );
     assert_eq!(duck_big_landed.residue, df_big_landed.residue);
-    assert_eq!(duck_big_landed.residue[0].rules.len(), 3);
+    assert_eq!(duck_big_landed.residue[0].rules.len(), 4);
+    assert_eq!(duck_big_landed.residue[1].rules.len(), 4);
     // Row 2 (`null`) must be held ONLY by `wide_compare` (`0 > 0.000000000001`),
-    // NOT by `wide_coalesce` or `no_silent_round_to_zero`.
+    // NOT by `wide_coalesce`, `no_silent_round_to_zero`, or `nullable_mixed_eq`.
     assert_eq!(duck_big_landed.held_by_rules, 1);
     assert_eq!(df_big_landed.held_by_rules, 1);
     assert_eq!(duck_big_landed.rules, df_big_landed.rules);
@@ -2772,7 +2783,7 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
     );
     assert_eq!(
         big_store
-            .residue_findings(BIG_TYPE, &big_req_base.load.table, &duck_big_landed.residue)
+            .residue_findings(big_type, &big_req_base.load.table, &duck_big_landed.residue)
             .expect("per-row settles 10^26 cleanly"),
         Vec::new()
     );
