@@ -46,6 +46,14 @@
           },
           "id": "cost_record",
           "target": "supply.UnitCost"
+        },
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "one"
+          },
+          "id": "source_evidence",
+          "target": "supply.PosSaleEvidence"
         }
       ],
       "name": "supply.PosSale",
@@ -184,6 +192,15 @@
             "nullable": true
           },
           "id": "costed_ref",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "source_evidence_id",
           "type": {
             "kind": "text"
           }

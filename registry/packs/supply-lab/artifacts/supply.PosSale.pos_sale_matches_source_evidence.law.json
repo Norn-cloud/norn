@@ -1,0 +1,51 @@
+{
+  "artifactId": "supply.PosSale.pos_sale_matches_source_evidence.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.PosSale.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A POS sale promoted from POS evidence must preserve that evidence's exact line identity, store, SKU, unit, and currency, and link 1-to-1 so no source line can be promoted twice.",
+  "namespace": "supply",
+  "payload": {
+    "condition": "self.source_evidence != null",
+    "id": "supply.PosSale.pos_sale_matches_source_evidence",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "A POS sale promoted from POS evidence must preserve that evidence's exact line identity, store, SKU, unit, and currency, and link 1-to-1 so no source line can be promoted twice.",
+    "response": {
+      "expression": "(((((self.source_evidence_id ?? '') == self.source_evidence.pos_line_id) and (self.store_id == self.source_evidence.store_code)) and (self.sku_id == self.source_evidence.sku_code)) and (self.unit == self.source_evidence.unit)) and (self.currency == self.source_evidence.currency)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.PosSale"
+      ],
+      "root": {
+        "id": "supply.PosSale",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.PosSale"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.PosSale.pos_sale_matches_source_evidence.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -12,6 +12,16 @@
       "version": "0.1.0"
     },
     "actionId": "supply.legal_entity.register",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "maxItems": 10,
+        "name": "existing_books",
+        "objectType": "supply.LegalEntity"
+      }
+    ],
     "effectProgram": {
       "entityArtifactId": "supply.LegalEntity.entity",
       "entityArtifactVersion": "0.1.0",
@@ -74,6 +84,9 @@
       ],
       "type": "object"
     },
+    "preconditions": [
+      "aggregates.existing_books == 0"
+    ],
     "scopeRequired": [
       "orgId",
       "environmentId"

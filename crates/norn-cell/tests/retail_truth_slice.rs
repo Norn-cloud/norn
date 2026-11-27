@@ -1250,7 +1250,9 @@ fn s1_two_entity_non_commingling_and_custody_separation() -> Result<(), String> 
             "mall_code": "MALL-CFC", "currency": "USD"
         }),
     )?;
-    sole.ok(
+    // D02 single-book-per-cell: registering a second LegalEntity in an occupied cell is
+    // refused structurally at the write path (`existing_books === 0`).
+    let (code, msg) = sole.refused(
         "supply.legal_entity.register",
         "eng:dina",
         json!({
@@ -1258,12 +1260,13 @@ fn s1_two_entity_non_commingling_and_custody_separation() -> Result<(), String> 
             "entity_kind": "corporation", "book_code": "BOOK-OTHER-EGP", "functional_currency": "EGP"
         }),
     )?;
+    assert_eq!(code, "core.action.precondition", "{msg}");
     sole.refused(
         "supply.stock_lot.record",
         "clerk:hana",
         json!({
             "lot_id": "LOT-WRONG-OWNER", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "owner_entity_id": "LE-OTHER-EGP", "custodian_id": "CUST-MALL-CFC-OPS",
+            "owner_entity_id": "LE-PARTNER", "custodian_id": "CUST-MALL-CFC-OPS",
             "received_qty": "10", "remaining_qty": "10", "unit": "each",
             "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-08-01T09:00:00Z",
             "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
@@ -1896,15 +1899,14 @@ fn check_position_counts(
                     },
                 });
             }
-            if let Some(oh) = on_hand_qty
-                && *a_qty > oh
-            {
+            let ceiling = on_hand_qty.unwrap_or(derived);
+            if *a_qty > ceiling {
                 findings.push(CountCoverageFinding {
                     store_id: store_id.to_owned(),
                     sku_id: sku_id.to_owned(),
                     kind: CountCoverageKind::AvailableExceedsOnHand {
                         available_qty: a_qty.canonical(),
-                        on_hand_qty: oh.canonical(),
+                        on_hand_qty: ceiling.canonical(),
                     },
                 });
             }
@@ -2137,6 +2139,66 @@ fn verify_transform_withholding(
     Ok(())
 }
 
+fn verify_retail_kpi_ratios(
+    sole: &EntityBook,
+    (s1_on_hand, s1_stock_val, s1_margin): (Decimal, Decimal, Decimal),
+    (s1_total_received, s1_sold, s1_sales_weeks): (Decimal, Decimal, usize),
+) -> Result<(), String> {
+    // Aligned KPIs from complete cohorts & real 4-week sales cadence:
+    // - Sell-through over complete received cohort (including depleted W2): 40 / 100 = 0.400000
+    assert_eq!(
+        ratio(
+            decimal_to_scaled_i128(s1_sold)?,
+            decimal_to_scaled_i128(s1_total_received)?
+        ),
+        Some(400_000)
+    );
+    // - WOS from 4 real weekly sales buckets: 40 / 4 = 10/wk -> 60 / 10 = 6.000000 weeks
+    let weeks_i128 = i128::try_from(s1_sales_weeks).map_err(|_| "weeks overflow")?;
+    let weekly_sales = ratio(
+        decimal_to_scaled_i128(s1_sold)?,
+        weeks_i128.saturating_mul(FACTOR),
+    )
+    .ok_or("weekly")?;
+    assert_eq!(
+        ratio(decimal_to_scaled_i128(s1_on_hand)?, weekly_sales),
+        Some(6_000_000)
+    );
+    // - Average-inventory GMROI derived from cell's governed UnitCost (opening 100*100=10000,
+    //   closing 6000 -> avg 8000): 5000 / 8000 = 0.625000
+    let dress_cost = sole
+        .cell()?
+        .store()
+        .read()
+        .object("main", "supply.UnitCost", "SKU-DRESS")
+        .map_err(|e| format!("{e}"))?
+        .and_then(|o| match o.values.get("unit_cost") {
+            Some(RuntimeValue::Number(d)) => Some(*d),
+            _ => None,
+        })
+        .ok_or("missing SKU-DRESS UnitCost")?;
+    let opening_val = s1_total_received
+        .checked_mul(dress_cost)
+        .ok_or("opening val overflow")?;
+    let avg_inventory = decimal_to_scaled_i128(opening_val)?
+        .checked_add(decimal_to_scaled_i128(s1_stock_val)?)
+        .and_then(|s| s.checked_div(2))
+        .ok_or("avg inventory overflow")?;
+    assert_eq!(
+        ratio(decimal_to_scaled_i128(s1_margin)?, avg_inventory),
+        Some(625_000)
+    );
+    // - Closing-valuation GMROI: 5000 / 6000 = 0.833333
+    assert_eq!(
+        ratio(
+            decimal_to_scaled_i128(s1_margin)?,
+            decimal_to_scaled_i128(s1_stock_val)?
+        ),
+        Some(833_333)
+    );
+    Ok(())
+}
+
 fn verify_retail_transforms_and_kpis(
     sole: &EntityBook,
     (s1_on_hand, s1_stock_val): (Decimal, Decimal),
@@ -2161,8 +2223,8 @@ fn verify_retail_transforms_and_kpis(
     };
     assert_eq!(s1_margin.canonical(), "5000");
 
-    // Active lot aging (`remaining_qty > 0`): depleted W2 lot (`2026-07-15`) drops out,
-    // leaving only active W1 (50) + W5 (40) = 90 received / 60 remaining.
+    // Active lot aging (`remaining_qty > 0`): depleted W2 lot (`2026-07-15`, ISO week `2026-07-13`)
+    // drops out, leaving only active W1 (`2026-07-06`, 50) + W5 (`2026-08-03`, 40) = 90 received.
     let aging_tf =
         sole.evaluate_transform("supply.retail.store_lot_aging", |_| Ok(RowAccess::Read))?;
     assert!(
@@ -2170,61 +2232,75 @@ fn verify_retail_transforms_and_kpis(
             r.values
                 .get("received_at")
                 .map(scalar)
-                .is_some_and(|ts| ts.starts_with("2026-07-15"))
+                .is_some_and(|wk| wk.starts_with("2026-07-13"))
+                || r.values
+                    .get("oldest_received_at")
+                    .map(scalar)
+                    .is_some_and(|ts| ts.starts_with("2026-07-15"))
         }),
         "fully depleted W2 lot must not appear in active lot aging cohorts"
     );
-    let mut s1_active_remaining = Decimal::from(0_i64);
+    let mut s1_active_received = Decimal::from(0_i64);
+    let mut s1_active_weeks = BTreeSet::new();
     for row in aging_tf
         .rows
         .iter()
         .filter(|r| r.values.get("store_id").map(scalar).as_deref() == Some("ST-SOLE-CFC-1"))
     {
-        if let Some(RuntimeValue::Number(qty)) = row.values.get("remaining_qty") {
-            s1_active_remaining = s1_active_remaining
+        if let Some(wk) = row.values.get("received_at").map(scalar) {
+            s1_active_weeks.insert(wk);
+        }
+        if let Some(RuntimeValue::Number(qty)) = row.values.get("received_qty") {
+            s1_active_received = s1_active_received
                 .checked_add(*qty)
-                .ok_or("remaining sum")?;
+                .ok_or("active received sum")?;
         }
     }
-    assert_eq!(s1_active_remaining, s1_on_hand);
+    assert_eq!(s1_active_received.canonical(), "90");
+    assert!(s1_active_weeks.iter().any(|w| w.starts_with("2026-07-06")));
+    assert!(s1_active_weeks.iter().any(|w| w.starts_with("2026-08-03")));
 
-    // Aligned KPIs from complete cohorts & real 4-week sales cadence:
-    // - Sell-through over complete received cohort (including depleted W2): 40 / 100 = 0.400000
-    assert_eq!(
-        ratio(
-            decimal_to_scaled_i128(s1_sold)?,
-            decimal_to_scaled_i128(s1_total_received)?
-        ),
-        Some(400_000)
-    );
-    // - WOS from 4 real weekly sales buckets: 40 / 4 = 10/wk -> 60 / 10 = 6.000000 weeks
-    let weeks_i128 = i128::try_from(s1_sales_weeks).map_err(|_| "weeks overflow")?;
-    let weekly_sales = ratio(
-        decimal_to_scaled_i128(s1_sold)?,
-        weeks_i128.saturating_mul(FACTOR),
-    )
-    .ok_or("weekly")?;
-    assert_eq!(
-        ratio(decimal_to_scaled_i128(s1_on_hand)?, weekly_sales),
-        Some(6_000_000)
-    );
-    // - Average-inventory GMROI (opening 10000, closing 6000 -> avg 8000): 5000 / 8000 = 0.625000
-    let opening_val = Decimal::from(10_000_i64);
-    let avg_inventory =
-        (decimal_to_scaled_i128(opening_val)? + decimal_to_scaled_i128(s1_stock_val)?) / 2;
-    assert_eq!(
-        ratio(decimal_to_scaled_i128(s1_margin)?, avg_inventory),
-        Some(625_000)
-    );
-    // - Closing-valuation GMROI: 5000 / 6000 = 0.833333
-    assert_eq!(
-        ratio(
-            decimal_to_scaled_i128(s1_margin)?,
-            decimal_to_scaled_i128(s1_stock_val)?
-        ),
-        Some(833_333)
-    );
+    verify_retail_kpi_ratios(
+        sole,
+        (s1_on_hand, s1_stock_val, s1_margin),
+        (s1_total_received, s1_sold, s1_sales_weeks),
+    )?;
     verify_transform_withholding(sole, &sales_tf, &aging_tf)
+}
+
+fn verify_phantom_availability_refused(sole: &mut EntityBook) -> Result<(), String> {
+    sole.ok(
+        "supply.store.register",
+        "eng:dina",
+        json!({
+            "store_id": "ST-SOLE-PHANTOM", "name": "Phantom Avail Branch", "entity_id": "LE-SOLE",
+            "custodian_id": "CUST-BRANCH-ZAM", "location_kind": "standalone",
+            "mall_code": null, "currency": "EGP"
+        }),
+    )?;
+    sole.ok(
+        "supply.store_count.record",
+        "clerk:hana",
+        json!({
+            "store_count_id": "ST-SOLE-PHANTOM/SKU-DRESS/available",
+            "store_id": "ST-SOLE-PHANTOM", "sku_id": "SKU-DRESS", "on_hand_qty": "5",
+            "unit": "each", "quantity_basis": "available", "as_of": "2026-09-06T10:00:00Z",
+            "count_source": "pos_cycle_count", "count_ref": "CC-PHANTOM"
+        }),
+    )?;
+    let report = evaluate_count_coverage(sole, CLOCK_MS, MAX_COUNT_AGE_MS)?;
+    assert!(report.availability_issue_stores.contains("ST-SOLE-PHANTOM"));
+    assert!(report.findings.iter().any(|f| {
+        f.store_id == "ST-SOLE-PHANTOM"
+            && matches!(
+                &f.kind,
+                CountCoverageKind::AvailableExceedsOnHand {
+                    available_qty,
+                    on_hand_qty
+                } if available_qty == "5" && on_hand_qty == "0"
+            )
+    }));
+    Ok(())
 }
 
 fn verify_count_coverage_cases(sole: &mut EntityBook) -> Result<(), String> {
@@ -2293,7 +2369,7 @@ fn verify_count_coverage_cases(sole: &mut EntityBook) -> Result<(), String> {
         f.store_id == "ST-SOLE-NO-AVAIL"
             && matches!(f.kind, CountCoverageKind::MissingAvailableCount)
     }));
-    Ok(())
+    verify_phantom_availability_refused(sole)
 }
 
 #[test]
@@ -2340,9 +2416,12 @@ struct EntityFrontierSnapshot {
     scope: String,
     world: String,
     revision: u64,
+    ledger_seq: u64,
     ledger_hash: String,
     definition_version: u64,
     definition_pin: String,
+    source_cursors: Frontier,
+    watermarks: BTreeMap<String, BTreeMap<String, Watermark>>,
     complete: bool,
     open_feed_findings: usize,
     pending_inbox_quarantined: usize,
@@ -2540,10 +2619,11 @@ fn promote_verified_pos_evidence(
         )
     };
     book.ok(
-        "supply.pos_sale.record",
+        "supply.pos_sale.promote_from_evidence",
         "clerk:hana",
         json!({
-            "sale_id": sale_id, "store_id": store_id, "sku_id": sku_id,
+            "sale_id": sale_id, "source_evidence_id": pos_line_id,
+            "store_id": store_id, "sku_id": sku_id,
             "sold_qty": sold_qty, "unit": unit, "net_revenue": net_revenue,
             "applied_unit_cost": unit_cost, "cogs_amount": "0",
             "gross_margin": "0", "gross_margin_rate": "0",
@@ -2758,6 +2838,14 @@ fn project_entity_frontier(
     eval_question: &mut dyn FnMut(&str) -> Result<QueryResult, String>,
 ) -> Result<EntityFrontierSnapshot, String> {
     let pin = read_entity_pin(book, legal_entity_id)?;
+    let pending_before = book
+        .cell()?
+        .store()
+        .read()
+        .pending_observations()
+        .map_err(|e| format!("pending_before: {e}"))?
+        .len();
+    let expected_def_pin = book.pack.receipt_sha256.as_str();
     let lots = book.evaluate_transform("supply.retail.store_lot_aging", |_| Ok(RowAccess::Read))?;
     let rev_q = eval_question("supply.retail.store_revenue_weekly")?;
     let gm_q = eval_question("supply.retail.store_gross_margin_weekly")?;
@@ -2766,15 +2854,18 @@ fn project_entity_frontier(
     let (open_feed_findings, pending_inbox_quarantined) = count_open_feed_issues(book)?;
     let count_report = evaluate_count_coverage(book, CLOCK_MS, MAX_COUNT_AGE_MS)?;
     let head_after = book.head()?;
-    let def_pin = rev_q.definition_pin.clone();
 
-    if head_after != pin.head || lots.revision != pin.head {
+    if head_after != pin.head
+        || lots.revision != pin.head
+        || lots.definition_pin != expected_def_pin
+        || pending_inbox_quarantined != pending_before
+    {
         return Err(format!(
-            "frontier moved during projection of {legal_entity_id}"
+            "frontier or definition cut moved during projection of {legal_entity_id}"
         ));
     }
     for q in [&rev_q, &gm_q, &gm_rate_q, &pos_feed_q] {
-        verify_query_cut(book, &pin.head, &def_pin, q)?;
+        verify_query_cut(book, &pin.head, expected_def_pin, q)?;
     }
 
     let missing_feed_coverage = check_feed_coverage(
@@ -2814,9 +2905,12 @@ fn project_entity_frontier(
         scope: book.scope.clone(),
         world: pin.world,
         revision: pin.head.commits,
+        ledger_seq: pin.head.seq,
         ledger_hash: pin.head.hash,
         definition_version: pin.definition_version,
-        definition_pin: def_pin,
+        definition_pin: expected_def_pin.to_owned(),
+        source_cursors: book.source_cursors.clone(),
+        watermarks: book.watermarks.clone(),
         complete: on_hand_ok && avail_ok && cost_complete,
         open_feed_findings,
         pending_inbox_quarantined,
@@ -2834,6 +2928,90 @@ fn project_entity_frontier(
 }
 
 #[cfg(all(feature = "duckdb", feature = "native"))]
+const COMBINED_VIEW_QUESTIONS: [&str; 4] = [
+    "supply.retail.store_revenue_weekly",
+    "supply.retail.store_gross_margin_weekly",
+    "supply.retail.store_gross_margin_rate_weekly",
+    "supply.retail.pos_feed_revenue_weekly",
+];
+
+#[cfg(all(feature = "duckdb", feature = "native"))]
+fn assert_query_result_parity(
+    label: &str,
+    cell_q: &QueryResult,
+    duck_q: &QueryResult,
+) -> Result<(), String> {
+    assert_eq!(duck_q.query_pin, cell_q.query_pin, "{label}: query_pin");
+    assert_eq!(
+        duck_q.definition_pin, cell_q.definition_pin,
+        "{label}: definition_pin"
+    );
+    assert_eq!(duck_q.revision, cell_q.revision, "{label}: revision");
+    assert_eq!(
+        duck_q.known_as_of, cell_q.known_as_of,
+        "{label}: known_as_of"
+    );
+    assert_eq!(duck_q.grain, cell_q.grain, "{label}: grain");
+    assert_eq!(duck_q.complete, cell_q.complete, "{label}: complete");
+    assert_eq!(duck_q.freshness, cell_q.freshness, "{label}: freshness");
+    assert_eq!(duck_q.exclusions, cell_q.exclusions, "{label}: exclusions");
+    assert_eq!(duck_q.unlinked, cell_q.unlinked, "{label}: unlinked");
+    assert_eq!(
+        duck_q.rows.len(),
+        cell_q.rows.len(),
+        "{label}: row count mismatch"
+    );
+    for (key, cell_row) in &cell_q.rows {
+        let duck_row = duck_q
+            .rows
+            .get(key)
+            .ok_or_else(|| format!("{label}: missing DuckDB bucket {key}"))?;
+        assert_eq!(duck_row.bucket, cell_row.bucket, "{label}/{key}: bucket");
+        assert_eq!(duck_row.totals, cell_row.totals, "{label}/{key}: totals");
+        assert_eq!(duck_row.value, cell_row.value, "{label}/{key}: value");
+        assert_eq!(
+            duck_row.suppressed, cell_row.suppressed,
+            "{label}/{key}: suppressed"
+        );
+        assert_eq!(
+            duck_row.null_counts, cell_row.null_counts,
+            "{label}/{key}: null_counts"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(all(feature = "duckdb", feature = "native"))]
+fn sync_duckdb_tenant(
+    duck: &norn_cell::analytics::engine::Engine,
+    book: &EntityBook,
+) -> Result<norn_cell::analytics::TenantId, String> {
+    let store = book.cell()?.store();
+    let tenant = norn_cell::analytics::TenantId::of_scope(&book.scope);
+    let mut frontier = duck
+        .frontier(
+            &store
+                .analytics_frontier(&tenant, "main")
+                .map_err(|e| format!("frontier: {e}"))?,
+        )
+        .map_err(|e| format!("{}: {}", e.code, e.detail))?
+        .frontier;
+    loop {
+        let batch = store
+            .analytics_delta(&tenant, "main", frontier, 64)
+            .map_err(|e| format!("delta: {e}"))?;
+        frontier = duck
+            .sync(&batch.request)
+            .map_err(|e| format!("{}: {}", e.code, e.detail))?
+            .frontier;
+        if batch.complete {
+            break;
+        }
+    }
+    Ok(tenant)
+}
+
+#[cfg(all(feature = "duckdb", feature = "native"))]
 fn verify_duckdb_combined_view_parity(
     sole: &EntityBook,
     partner: &EntityBook,
@@ -2848,34 +3026,8 @@ fn verify_duckdb_combined_view_parity(
     })
     .map_err(|e| format!("duckdb: {e}"))?;
 
-    let sync_tenant = |book: &EntityBook| -> Result<TenantId, String> {
-        let store = book.cell()?.store();
-        let tenant = TenantId::of_scope(&book.scope);
-        let mut frontier = duck
-            .frontier(
-                &store
-                    .analytics_frontier(&tenant, "main")
-                    .map_err(|e| format!("frontier: {e}"))?,
-            )
-            .map_err(|e| format!("{}: {}", e.code, e.detail))?
-            .frontier;
-        loop {
-            let batch = store
-                .analytics_delta(&tenant, "main", frontier, 64)
-                .map_err(|e| format!("delta: {e}"))?;
-            frontier = duck
-                .sync(&batch.request)
-                .map_err(|e| format!("{}: {}", e.code, e.detail))?
-                .frontier;
-            if batch.complete {
-                break;
-            }
-        }
-        Ok(tenant)
-    };
-
-    let sole_tenant = sync_tenant(sole)?;
-    let partner_tenant = sync_tenant(partner)?;
+    let sole_tenant = sync_duckdb_tenant(&duck, sole)?;
+    let partner_tenant = sync_duckdb_tenant(&duck, partner)?;
     let duck_eval =
         |book: &EntityBook, tenant: &TenantId, q_name: &str| -> Result<QueryResult, String> {
             let plan = book.pack.retail_question(q_name)?;
@@ -2893,6 +3045,16 @@ fn verify_duckdb_combined_view_parity(
                 .map_err(|e| format!("answer {q_name}: {e}"))
         };
 
+    for q_name in COMBINED_VIEW_QUESTIONS {
+        let sole_cell_q = sole.answer(q_name)?;
+        let sole_duck_q = duck_eval(sole, &sole_tenant, q_name)?;
+        assert_query_result_parity(&format!("sole/{q_name}"), &sole_cell_q, &sole_duck_q)?;
+
+        let part_cell_q = partner.answer(q_name)?;
+        let part_duck_q = duck_eval(partner, &partner_tenant, q_name)?;
+        assert_query_result_parity(&format!("partner/{q_name}"), &part_cell_q, &part_duck_q)?;
+    }
+
     let duck_view = CombinedManagementView {
         view_kind: "combined_management_view",
         is_consolidated_financial_statement: false,
@@ -2909,6 +3071,33 @@ fn verify_duckdb_combined_view_parity(
         "DuckDB combined management view must match Cell combined management view exactly"
     );
     Ok(())
+}
+
+/// Entrypoint invoked by `suites::analytics_engine` so CI's DuckDB phase always
+/// executes S1's full Cell-vs-DuckDB combined-view & per-question parity proof.
+#[cfg(all(feature = "duckdb", feature = "native"))]
+pub(crate) fn run_s1_duckdb_combined_view_parity() -> Result<(), String> {
+    let mut sole = EntityBook::open(SOLE_CELL_ID, "org_family_sole_prop", "prod", "sole.sqlite")?;
+    let mut partner = EntityBook::open(
+        PARTNER_CELL_ID,
+        "org_family_partnership",
+        "prod",
+        "partner.sqlite",
+    )?;
+    seed_sole_prop(&mut sole)?;
+    seed_partnership(&mut partner)?;
+    seed_retail_operations(&mut sole, &mut partner)?;
+    ingest_baseline_entity_feeds(&mut sole, &mut partner)?;
+    let cell_view = CombinedManagementView {
+        view_kind: "combined_management_view",
+        is_consolidated_financial_statement: false,
+        read_only: true,
+        entities: vec![
+            project_entity_frontier(&sole, "LE-SOLE", &mut |q| sole.answer(q))?,
+            project_entity_frontier(&partner, "LE-PARTNER", &mut |q| partner.answer(q))?,
+        ],
+    };
+    verify_duckdb_combined_view_parity(&sole, &partner, &cell_view)
 }
 
 fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> Result<(), String> {
@@ -2937,6 +3126,27 @@ fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> R
         payload: r#"{"pos_line_id":"POS-SOLE-BAD","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":4,"uom":"PCS","net_amount":800,"ccy":"EGP","sold_at":"2026-09-02T14:05:00Z"}"#,
     })?;
     promote_verified_pos_evidence(sole, "POS-SOLE-BAD", "SALE-PROMOTED-POS-SOLE-BAD")?;
+    // 1-to-1 `source_evidence` link cardinality structurally blocks promoting the same
+    // PosSaleEvidence line a second time under any new sale_id or action key.
+    assert!(
+        promote_verified_pos_evidence(sole, "POS-SOLE-BAD", "SALE-PROMOTED-DUP").is_err(),
+        "second promotion of POS-SOLE-BAD under a different sale_id must refuse"
+    );
+    let promoted = sole
+        .cell()?
+        .store()
+        .read()
+        .object("main", "supply.PosSale", "SALE-PROMOTED-POS-SOLE-BAD")
+        .map_err(|e| format!("{e}"))?
+        .ok_or("missing promoted PosSale")?;
+    assert_eq!(
+        promoted
+            .values
+            .get("source_evidence_id")
+            .map(scalar)
+            .as_deref(),
+        Some("POS-SOLE-BAD")
+    );
     let recovered = project_entity_frontier(sole, "LE-SOLE", &mut |q| sole.answer(q))?;
     assert_eq!(recovered.open_feed_findings, 0);
     assert_eq!(recovered.entity_pos_feed_revenue.as_deref(), Some("6800"));
@@ -2956,7 +3166,9 @@ fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> R
     assert_eq!(map_refused.pending_inbox_quarantined, 1);
     assert_eq!(map_refused.entity_net_revenue, None);
 
-    sole.ok(
+    // D02 single-book-per-cell: registering a second LegalEntity in an occupied cell
+    // refuses structurally at the write boundary (`existing_books === 0`).
+    let (code, msg) = sole.refused(
         "supply.legal_entity.register",
         "eng:dina",
         json!({
@@ -2964,7 +3176,7 @@ fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> R
             "entity_kind": "corporation", "book_code": "BOOK-ROGUE-EGP", "functional_currency": "EGP"
         }),
     )?;
-    assert!(project_entity_frontier(sole, "LE-SOLE", &mut |q| sole.answer(q)).is_err());
+    assert_eq!(code, "core.action.precondition", "{msg}");
     Ok(())
 }
 
@@ -2978,14 +3190,12 @@ fn verify_degraded_stale_and_quarantined_view(sole: &mut EntityBook) -> Result<(
         sole.watermarks.insert("supply.pos_sales".to_owned(), wm);
     }
 
+    let stale_hb = sole.now().as_millis().saturating_sub(120_000);
     let prev_hb = sole
         .watermarks
         .get_mut("supply.pos_sales")
         .and_then(|m| m.get_mut(FEED_PARTITION))
-        .and_then(|wm| {
-            wm.heartbeat_ms
-                .replace(sole.now().as_millis().saturating_sub(120_000))
-        });
+        .and_then(|wm| wm.heartbeat_ms.replace(stale_hb));
     let stale_q = sole.answer("supply.retail.store_revenue_weekly")?;
     assert_eq!(stale_q.freshness, Freshness::Stale);
     let stale_view = project_entity_frontier(sole, "LE-SOLE", &mut |q| sole.answer(q))?;

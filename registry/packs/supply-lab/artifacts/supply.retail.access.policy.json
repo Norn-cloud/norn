@@ -171,7 +171,8 @@
       {
         "actions": [
           "supply.pos_sale.record",
-          "supply.pos_sale.record_uncosted"
+          "supply.pos_sale.record_uncosted",
+          "supply.pos_sale.promote_from_evidence"
         ],
         "allOf": [
           {

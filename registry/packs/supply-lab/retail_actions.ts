@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 import { Sku } from "./supply.ts"
-import { LegalEntity, PosSale, StockLot, Store, StoreCount, UnitCost } from "./retail.ts"
+import { LegalEntity, PosSale, PosSaleEvidence, StockLot, Store, StoreCount, UnitCost } from "./retail.ts"
 
 const Scope = ["orgId", "environmentId"] as const
 const Unit = Schema.Literals(["each", "kg", "l"])
@@ -26,6 +26,17 @@ export const RegisterLegalEntity = Norn.action({
   label: { en: "Register legal entity", ar: "تسجيل كيان قانوني" },
   input: LegalEntityInput, output: LegalEntityRef,
   scopeRequired: Scope, idempotent: true, ledgered: true, access: RetailAccessRef,
+  aggregates: [{
+    name: "existing_books",
+    type: LegalEntity,
+    aggregate: { kind: "count" },
+    maxItems: 10,
+  }],
+  preconditions: [Norn.expression(
+    Schema.Struct({ aggregates: Schema.Struct({ existing_books: Schema.Int }) }),
+    (ctx) => ctx.aggregates.existing_books === 0,
+    { root: "context" },
+  )],
   writes: [{ type: LegalEntity, change: "created" }],
   effect: { kind: "upsert_input_object", type: LegalEntity, objectIdField: "entity_id", writeMode: { kind: "create_only" } },
 })
@@ -477,6 +488,81 @@ export const RecordUncostedPosSale = Norn.action({
   effect: { kind: "upsert_input_object", type: PosSale, objectIdField: "sale_id", writeMode: { kind: "create_only" } },
 })
 
+const PromotedPosSaleInput = Schema.Struct({
+  sale_id: Schema.String,
+  source_evidence_id: Schema.String,
+  store_id: Schema.String,
+  sku_id: Schema.String,
+  sold_qty: Norn.decimal(6),
+  unit: Unit,
+  net_revenue: Norn.decimal(6),
+  applied_unit_cost: Norn.decimal(4),
+  cogs_amount: Norn.decimal(6),
+  gross_margin: Norn.decimal(6),
+  gross_margin_rate: Norn.decimal(6),
+  cost_status: CostStatus,
+  costed_ref: Schema.String,
+  currency: Currency,
+  sold_at: Norn.timestamp("utc"),
+})
+
+/**
+ * Promote a verified `PosSaleEvidence` row into a governed costed `PosSale` with
+ * a 1-to-1 `source_evidence` link, structurally preventing double-promotion of
+ * the same POS feed line under any sale ID or action key.
+ */
+export const PromotePosSaleFromEvidence = Norn.action({
+  id: "supply.pos_sale.promote_from_evidence", title: "Promote verified POS evidence to governed sale", version: "0.1.0",
+  label: { en: "Promote POS sale evidence", ar: "ترقية بيانات مبيعات نقطة البيع" },
+  input: PromotedPosSaleInput, output: PosSaleRef,
+  scopeRequired: Scope, idempotent: true, ledgered: true, access: RetailAccessRef,
+  slice: [
+    { name: "evidence", type: PosSaleEvidence, key: { property: { from: "input", property: "source_evidence_id" } } },
+    { name: "store", type: Store, key: { property: { from: "input", property: "store_id" } } },
+    { name: "sku", type: Sku, key: { property: { from: "input", property: "sku_id" } } },
+    { name: "cost", type: UnitCost, key: { property: { from: "input", property: "sku_id" } } },
+  ],
+  derive: [
+    { field: "cogs_amount", inputRequired: false, expression: Norn.expression(PromotedPosSaleInput, (x) => x.sold_qty * x.applied_unit_cost) },
+    {
+      field: "gross_margin", inputRequired: false,
+      expression: Norn.expression(PromotedPosSaleInput, (x) => x.net_revenue - (x.sold_qty * x.applied_unit_cost)),
+    },
+    { field: "gross_margin_rate", inputRequired: false, expression: Norn.expression(PromotedPosSaleInput, () => 0) },
+  ],
+  preconditions: [Norn.expression(
+    Schema.Struct({
+      input: PromotedPosSaleInput,
+      slice: Schema.Struct({
+        evidence: Schema.Struct({ store_code: Schema.String, sku_code: Schema.String, unit: Schema.String, currency: Schema.String }),
+        store: Schema.Struct({ status: Schema.String, currency: Schema.String }),
+        sku: Schema.Struct({ unit_of_measure: Schema.String }),
+        cost: Schema.Struct({ currency: Schema.String, cost_ref: Schema.String, unit_cost: Norn.decimal(4) }),
+      }),
+    }),
+    (ctx) => ctx.slice.store.status === "active"
+      && ctx.input.cost_status === "costed"
+      && ctx.input.store_id === ctx.slice.evidence.store_code
+      && ctx.input.sku_id === ctx.slice.evidence.sku_code
+      && ctx.input.unit === ctx.slice.evidence.unit
+      && ctx.input.currency === ctx.slice.evidence.currency
+      && ctx.input.unit === ctx.slice.sku.unit_of_measure
+      && ctx.input.currency === ctx.slice.store.currency
+      && ctx.input.currency === ctx.slice.cost.currency
+      && ctx.input.costed_ref === ctx.slice.cost.cost_ref
+      && ctx.input.applied_unit_cost === ctx.slice.cost.unit_cost,
+    { root: "context" },
+  )],
+  createLinks: [
+    { link: "store", targetType: Store, targetIdField: "store_id" },
+    { link: "sku", targetType: Sku, targetIdField: "sku_id" },
+    { link: "cost_record", targetType: UnitCost, targetIdField: "sku_id" },
+    { link: "source_evidence", targetType: PosSaleEvidence, targetIdField: "source_evidence_id" },
+  ],
+  writes: [{ type: PosSale, change: "created" }],
+  effect: { kind: "upsert_input_object", type: PosSale, objectIdField: "sale_id", writeMode: { kind: "create_only" } },
+})
+
 // ------------------------------------------------------------------- access
 
 const org = { dimensions: ["org", "environment"] } as const
@@ -490,6 +576,6 @@ export const RetailAccess = Norn.access({
     { ruleId: "catalog_unit_cost", actions: [RecordUnitCost], resourceType: UnitCost, scope: org, allOf: [{ role: { anyOf: ["data_engineer", "planner"] } }] },
     { ruleId: "stock_lot", actions: [RecordStockLot, RecordUncostedStockLot, UpdateStockLotBalance], resourceType: StockLot, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
     { ruleId: "store_count", actions: [RecordStoreCount, RecountStore], resourceType: StoreCount, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
-    { ruleId: "pos_sale", actions: [RecordPosSale, RecordUncostedPosSale], resourceType: PosSale, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
+    { ruleId: "pos_sale", actions: [RecordPosSale, RecordUncostedPosSale, PromotePosSaleFromEvidence], resourceType: PosSale, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
   ],
 })

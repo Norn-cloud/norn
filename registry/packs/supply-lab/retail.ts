@@ -357,6 +357,8 @@ const PosSaleProps = Schema.Struct({
   cost_status: CostStatus,
   // Non-null reference to the verified `UnitCost.cost_ref` when `cost_status === "costed"`; null when missing cost.
   costed_ref: Schema.NullOr(Schema.String),
+  // Optional 1-to-1 reference to the originating `PosSaleEvidence.pos_line_id` when promoted from POS feed.
+  source_evidence_id: Schema.NullOr(Schema.String),
   currency: Currency,
   sold_at: Norn.timestamp("utc"),
 })
@@ -423,6 +425,25 @@ export const UnitCostMatchesEntityCurrency = Norn.law("unit_cost_matches_entity_
   because: "A governed unit cost record must be denominated in its owning legal entity's functional currency.",
 })
 
+/** Raw POS export line captured as evidence before governed promotion. */
+export const PosSaleEvidence = Norn.type({
+  name: "supply.PosSaleEvidence", title: "POS sale feed row", version: "0.1.0",
+  label: { en: "POS sale row", ar: "سطر مبيعات نقطة البيع" },
+  implements: [SaleEvidence],
+  properties: Schema.Struct({
+    pos_line_id: Schema.String,
+    store_code: Schema.String,
+    sku_code: Schema.String,
+    sold_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
+    unit: Unit,
+    net_revenue: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }),
+    currency: Currency,
+    sold_at: Norn.timestamp("utc"),
+  }),
+  needsReview: ["ar"],
+  identity: [{ name: "primary", properties: ["pos_line_id"] }],
+})
+
 /** Governed POS sale line bound to one store and SKU in the store's currency, with optional link to verified `UnitCost`. */
 export const PosSale = Norn.type({
   name: "supply.PosSale", title: "POS sale line", version: "0.1.0",
@@ -436,6 +457,7 @@ export const PosSale = Norn.type({
     { id: "store", target: Store, cardinality: { to: "one", from: "many", required: true } },
     { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
     { id: "cost_record", target: UnitCost, cardinality: { to: "one", from: "many" } },
+    { id: "source_evidence", target: PosSaleEvidence, cardinality: { to: "one", from: "one" } },
   ],
 })
 
@@ -451,7 +473,7 @@ export const PosSaleCostedHolds = Norn.example("a costed POS sale holds", {
   given: {
     sale_id: "SALE-1", store_id: "ST-1", sku_id: "SKU-1", sold_qty: 2, unit: "each",
     net_revenue: 300, applied_unit_cost: 90, cogs_amount: 180, gross_margin: 120, gross_margin_rate: 0,
-    cost_status: "costed", costed_ref: "COST-1", currency: "EGP", sold_at: "2026-08-10T14:00:00Z",
+    cost_status: "costed", costed_ref: "COST-1", source_evidence_id: null, currency: "EGP", sold_at: "2026-08-10T14:00:00Z",
   },
   expect: "holds",
 })
@@ -460,7 +482,7 @@ export const PosSaleMissingCostHolds = Norn.example("an explicitly uncosted POS 
   given: {
     sale_id: "SALE-2", store_id: "ST-1", sku_id: "SKU-1", sold_qty: 1, unit: "each",
     net_revenue: 150, applied_unit_cost: null, cogs_amount: 0, gross_margin: 0, gross_margin_rate: 0,
-    cost_status: "missing_cost", costed_ref: null, currency: "EGP", sold_at: "2026-08-10T14:00:00Z",
+    cost_status: "missing_cost", costed_ref: null, source_evidence_id: null, currency: "EGP", sold_at: "2026-08-10T14:00:00Z",
   },
   expect: "holds",
 })
@@ -469,7 +491,7 @@ export const PosSaleUncostedWithCogsViolated = Norn.example("missing_cost sale w
   given: {
     sale_id: "SALE-3", store_id: "ST-1", sku_id: "SKU-1", sold_qty: 1, unit: "each",
     net_revenue: 150, applied_unit_cost: null, cogs_amount: 50, gross_margin: 100, gross_margin_rate: 0,
-    cost_status: "missing_cost", costed_ref: null, currency: "EGP", sold_at: "2026-08-10T14:00:00Z",
+    cost_status: "missing_cost", costed_ref: null, source_evidence_id: null, currency: "EGP", sold_at: "2026-08-10T14:00:00Z",
   },
   expect: "violated",
 })
@@ -501,26 +523,19 @@ export const PosSaleMatchesCostRecord = Norn.law("pos_sale_matches_cost_record",
   because: "A POS sale linked to a UnitCost record must be costed, match that UnitCost record's SKU, currency, reference, and unit cost, and occur on or after its effective date.",
 })
 
-// ------------------------------------------------- messy feed evidence types
-
-/** Raw POS export line captured as evidence before governed promotion. */
-export const PosSaleEvidence = Norn.type({
-  name: "supply.PosSaleEvidence", title: "POS sale feed row", version: "0.1.0",
-  label: { en: "POS sale row", ar: "سطر مبيعات نقطة البيع" },
-  implements: [SaleEvidence],
-  properties: Schema.Struct({
-    pos_line_id: Schema.String,
-    store_code: Schema.String,
-    sku_code: Schema.String,
-    sold_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
-    unit: Unit,
-    net_revenue: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }),
-    currency: Currency,
-    sold_at: Norn.timestamp("utc"),
-  }),
-  needsReview: ["ar"],
-  identity: [{ name: "primary", properties: ["pos_line_id"] }],
+export const PosSaleMatchesSourceEvidence = Norn.law("pos_sale_matches_source_evidence", {
+  on: PosSale,
+  when: (self): self is typeof self & { readonly source_evidence: NonNullable<typeof self.source_evidence> } => self.source_evidence !== null,
+  must: (self) =>
+    (self.source_evidence_id ?? "") === self.source_evidence.pos_line_id
+    && self.store_id === self.source_evidence.store_code
+    && self.sku_id === self.source_evidence.sku_code
+    && self.unit === self.source_evidence.unit
+    && self.currency === self.source_evidence.currency,
+  because: "A POS sale promoted from POS evidence must preserve that evidence's exact line identity, store, SKU, unit, and currency, and link 1-to-1 so no source line can be promoted twice.",
 })
+
+// ------------------------------------------------- messy feed evidence types
 
 /** Raw store physical count scan row captured as evidence before governed promotion. */
 export const StoreCountEvidence = Norn.type({
