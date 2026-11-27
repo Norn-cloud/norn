@@ -166,7 +166,7 @@ pub fn runtime_semantics_supported(law: &LawIR) -> bool {
 /// Classify one decoded [`LawIR`] across runtime execution, dataset row
 /// lowering, and finite-state proof support without catalog link metadata.
 ///
-/// Callers with a [`TypeCatalog`] or link-read analysis should call
+/// Callers with a `TypeCatalog` or link-read analysis should call
 /// [`classify_law_support_with_links`] so link-reading laws accurately report
 /// `LawRowLoweringSupport::Unavailable` and `LawProofSupport::RuntimeOnly`.
 #[must_use]

@@ -4385,7 +4385,7 @@ fn law_with_exceptions_fails_closed_on_malformed_tree_broken_expr_invariant_and_
 
 #[test]
 fn law_exception_audit_attribution_records_applied_exception_ids() {
-    let types = vec![amount_type()];
+    let types = vec![quality_item_type()];
     let mut nested = serde_json::to_value(direct_amount_law()).unwrap();
     nested["payload"]["exceptions"] = json!([
         law_exception("vip", "amount_bounded", "self.item_id == 'vip'"),
@@ -4473,6 +4473,9 @@ fn law_exception_audit_attribution_records_applied_exception_ids() {
         fn object_values(&self, _: &FactKey) -> Result<Option<JsonObject>, Self::Error> {
             Ok(None)
         }
+        fn pending(&self, _: &Consumed) -> Result<bool, Self::Error> {
+            Ok(false)
+        }
     }
     let model = norn_kernel::CommitModel::new(&nested_catalog);
     let commit = CellCommit::<FactEvent, JsonObject, JsonObject> {
@@ -4485,9 +4488,8 @@ fn law_exception_audit_attribution_records_applied_exception_ids() {
         }],
         ..CellCommit::empty()
     };
-    let audit =
-        norn_kernel::commit_check::check_commit_with_audit(&commit, &model, &EmptyCommitView)
-            .expect("excepted commit admits with audit attribution");
+    let audit = norn_kernel::check_commit_with_audit(&commit, &model, &EmptyCommitView)
+        .expect("excepted commit admits with audit attribution");
     assert_eq!(audit.applied_exceptions.len(), 1);
     assert_eq!(
         audit.applied_exceptions[0].subject,

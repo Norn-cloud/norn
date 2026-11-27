@@ -1948,7 +1948,31 @@ pub fn prepare_observed_snapshot(
             ));
         }
     }
-    let facts = property_changes(key, &original_for_changes, values);
+    let mut seen = std::collections::BTreeSet::new();
+    for snapshot in lifecycles {
+        if snapshot.provenance.source != provenance.source
+            || snapshot.provenance.mapping_version != provenance.mapping_version
+            || snapshot.provenance.observed_at != provenance.observed_at
+        {
+            return Err(invalid(
+                &snapshot.property,
+                "lifecycle evidence must cite the same source snapshot",
+            ));
+        }
+        if !seen.insert(snapshot.property.clone()) {
+            return Err(invalid(
+                &snapshot.property,
+                "the snapshot repeats a lifecycle property",
+            ));
+        }
+    }
+    let initial_values =
+        seed_initial_lifecycle_states(catalog, key, &original_for_changes, values, lifecycles);
+    let facts = property_changes(
+        key,
+        &original_for_changes,
+        initial_values.as_ref().unwrap_or(values),
+    );
     let ordinary = prepare_observed_properties::<Infallible>(catalog, slice, turn, &facts)
         .map_err(|error| ObservationRefusal::Properties(Box::new(error)))?;
     let mut current = effective_original.clone().unwrap_or_default();
@@ -1969,23 +1993,7 @@ pub fn prepare_observed_snapshot(
             provenance: provenance.clone(),
         })
         .collect();
-    let mut seen = std::collections::BTreeSet::new();
     for snapshot in lifecycles {
-        if snapshot.provenance.source != provenance.source
-            || snapshot.provenance.mapping_version != provenance.mapping_version
-            || snapshot.provenance.observed_at != provenance.observed_at
-        {
-            return Err(invalid(
-                &snapshot.property,
-                "lifecycle evidence must cite the same source snapshot",
-            ));
-        }
-        if !seen.insert(snapshot.property.clone()) {
-            return Err(invalid(
-                &snapshot.property,
-                "the snapshot repeats a lifecycle property",
-            ));
-        }
         reconcile(catalog, key, &mut current, snapshot, &turn.id, &mut events)?;
         check_observation_event_limit(events.len())?;
     }
@@ -2484,6 +2492,45 @@ fn tombstone_values(
         ),
         ("provenance".to_owned(), encoded),
     ]))
+}
+
+/// When creating a new object whose lifecycle property declares no default value,
+/// seed that property from the observed lifecycle snapshot if the observed state
+/// is itself a declared initial state of the effective lifecycle.
+fn seed_initial_lifecycle_states(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    original: &FactState,
+    values: &JsonObject,
+    lifecycles: &[ObservedLifecycleSnapshot],
+) -> Option<JsonObject> {
+    if original.values.is_some() || lifecycles.is_empty() {
+        return None;
+    }
+    let effective = catalog.effective_type(&key.object_type)?;
+    let mut seeded: Option<JsonObject> = None;
+    for snapshot in lifecycles {
+        let has_default = effective
+            .property(snapshot.property.as_str())
+            .is_some_and(|prop| prop.default_value().ok().flatten().is_some());
+        if has_default {
+            continue;
+        }
+        let Some(lifecycle) = catalog.lifecycle(&key.object_type, &snapshot.property) else {
+            continue;
+        };
+        if lifecycle
+            .initial
+            .iter()
+            .any(|state| state == &snapshot.state)
+        {
+            seeded.get_or_insert_with(|| values.clone()).insert(
+                snapshot.property.as_str().to_owned(),
+                JsonValue::String(snapshot.state.clone()),
+            );
+        }
+    }
+    seeded
 }
 
 fn property_changes(key: &FactKey, original: &FactState, values: &JsonObject) -> Vec<FactChange> {

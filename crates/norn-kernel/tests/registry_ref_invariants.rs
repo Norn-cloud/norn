@@ -535,13 +535,15 @@ fn transitioned(key: &FactKey, transition: &str, from: &str, to: &str) -> FactEv
 }
 
 fn violated_law_id<T, E>(result: &Result<T, CommitError<E>>) -> Option<&str> {
-    match result {
-        Err(CommitError::Law {
-            reason: norn_kernel::governing_laws::LawEvaluationError::Violated(failure),
-            ..
-        }) => Some(failure.law_id.as_str()),
-        _ => None,
+    if let Err(CommitError::Law {
+        reason: norn_kernel::governing_laws::LawEvaluationError::Violated(failure),
+        ..
+    }) = result
+        && let norn_ir::DataQualityRuleRef::Law { law_id, .. } = &failure.rule_ref
+    {
+        return Some(law_id.as_str());
     }
+    None
 }
 
 #[test]
