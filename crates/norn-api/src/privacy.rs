@@ -21,6 +21,16 @@
 //! the caller may reveal it; the reveal itself is a governed action with a
 //! ledger receipt ([`reveal`](crate::privacy::reveal)). Nothing here trusts the client.
 
+pub mod disclosure;
+
+pub use disclosure::{
+    DisclosedAnswer, DisclosedDocument, DisclosedObject, DisclosedObjectFindings,
+    DisclosedObjectHistory, DisclosedObjectLinks, DisclosedObjectPage, DisclosedObjectQueryPage,
+    DisclosedObjectVersion, DisclosedQuarantinedPage, DisclosedQueriedObject,
+    DisclosedSourceLineage, DisclosedTrace, DisclosedTransformLineage, DisclosedTransformPage,
+    serialize_disclosed,
+};
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -142,7 +152,7 @@ impl PseudonymKey {
 ///
 /// # Errors
 /// The ids would need a key the host lacks (403).
-pub(crate) fn row_ids<E: SqlEngine>(
+fn row_ids<E: SqlEngine>(
     host: &DevHost<E>,
     catalog: &MarkingCatalog,
     grain_marked: bool,
@@ -262,7 +272,7 @@ fn row_version_markings<E: SqlEngine>(
 ///
 /// # Errors
 /// A store failure.
-pub(crate) fn discloses_source<E: SqlEngine>(
+fn discloses_source<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     catalog: &MarkingCatalog,
     row: &ObjectRecord,
@@ -376,7 +386,7 @@ pub(crate) fn apply(
 
 /// Project `row`'s values for `actor` in place, from its effective
 /// `markings` (`None`: unavailable, so every property is refused).
-pub(crate) fn project<E: SqlEngine>(
+fn project<E: SqlEngine>(
     host: &DevHost<E>,
     actor: &str,
     catalog: &MarkingCatalog,
@@ -425,7 +435,7 @@ pub(crate) fn project<E: SqlEngine>(
 /// Project the marked columns of one derived row (a transform's) in place:
 /// each column holds the strongest projection of its lineage markings, and a
 /// refused column is left out. A derived row is never revealable.
-pub(crate) fn project_columns<E: SqlEngine>(
+fn project_columns<E: SqlEngine>(
     host: &DevHost<E>,
     catalog: &MarkingCatalog,
     columns: &[(String, Vec<String>)],
@@ -662,7 +672,7 @@ pub(crate) fn record_reveal<E: SqlEngine>(
 
 /// Population decides membership; a member without Values is recorded so its
 /// bucket's amounts are withheld (DATA-VALUES-1).
-pub(crate) fn withhold_values(
+fn withhold_values(
     result: &mut norn_cell::compute::QueryResult,
     withheld: &std::collections::BTreeSet<String>,
     min_disclosed: usize,
@@ -676,7 +686,7 @@ pub(crate) fn withhold_values(
 /// raw snapshot digests of marked versions, or source provenance for marked
 /// versions. Returns `true` if any contribution carried markings (or lacked a
 /// marking snapshot) so raw ledger and receipt hashes are also withheld.
-pub(crate) fn redact_trace_contributions<E: SqlEngine>(
+fn redact_trace_contributions<E: SqlEngine>(
     host: &DevHost<E>,
     (actor, world): (&str, &str),
     reader: &StoreReader<'_, E>,
@@ -792,7 +802,7 @@ fn refuse_dynamic_filter_order_markings<E: SqlEngine>(
 }
 
 /// Whether any grain column carries static or dynamic effective markings.
-pub(crate) fn grain_marked(marked: &[(String, Vec<String>)], grain: &[String]) -> bool {
+fn grain_marked(marked: &[(String, Vec<String>)], grain: &[String]) -> bool {
     marked
         .iter()
         .any(|(name, markings)| !markings.is_empty() && grain.contains(name))

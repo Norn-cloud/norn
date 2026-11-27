@@ -465,13 +465,20 @@ pub fn export_objects<E: SqlEngine>(
     // PRIVACY-1: an export carries stored values, so a cell that declares
     // markings exports nothing; a marked value leaves only through a reveal.
     // The decision and the frontier the engine exports are read at one cell
-    // version (S3, #1547), and the engine exports the rows live at it.
-    let (leave, source, snapshot, _version) = decided_source(host, store, object_type, |reader| {
-        stored_values_leave(host, reader, object_type)
-    })?;
-    if !leave {
-        return Err(crate::authz::read_denied());
-    }
+    // version (S3, #1547), sealed inside a non-cloneable export permit.
+    let permit = crate::privacy::disclosure::admit_export(
+        host,
+        store,
+        object_type,
+        |host, store, object_type| {
+            let (leave, source, snapshot, _version) =
+                decided_source(host, store, object_type, |reader| {
+                    stored_values_leave(host, reader, object_type)
+                })?;
+            Ok((leave, source, snapshot))
+        },
+    )?;
+    let (source, snapshot) = permit.into_parts();
     let table = store.analytics_table(object_type).map_err(engine_failure)?;
     let mut named = std::collections::BTreeSet::new();
     for column in &columns {
@@ -1720,9 +1727,9 @@ pub fn page_objects<E: SqlEngine>(
     params: &crate::object_query::ObjectQueryParams,
     access: &dyn ObjectAccess,
     transport: &dyn Transport,
-) -> Result<crate::objects::NornObjectQueryPage, Refusal> {
+) -> Result<crate::privacy::DisclosedObjectQueryPage, Refusal> {
     use crate::object_query::{self, Cursor};
-    use crate::objects::{NornAppliedQuery, NornObjectQueryPage, NornQueryTotal};
+    use crate::objects::{NornAppliedQuery, NornQueryTotal};
     use norn_cell::analytics::{PageRequest, PageResponse};
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let actor = actor.unwrap_or_default();
@@ -1804,20 +1811,20 @@ pub fn page_objects<E: SqlEngine>(
         .into_iter()
         .map(|row| queried(object_type, &scope_key, row, values, &marks))
         .collect::<Result<Vec<_>, Refusal>>()?;
-    Ok(NornObjectQueryPage {
-        object_type: object_type.to_owned(),
+    Ok(crate::privacy::disclosure::project_object_query_page(
+        object_type.to_owned(),
         records,
-        quarantine_count: quarantined,
-        query: NornAppliedQuery {
+        quarantined,
+        NornAppliedQuery {
             sort: query.sort_document(),
             filter: query.filter_document(),
         },
         next,
-        total: Some(NornQueryTotal {
+        Some(NornQueryTotal {
             count: page.total,
             approximate: false,
         }),
-    })
+    ))
 }
 
 /// A parsed grid query's clauses and keys as the engine takes them.
@@ -1954,50 +1961,16 @@ fn queried(
     row: norn_cell::analytics::PageRow,
     values: bool,
     marks: &DatasetMarks,
-) -> Result<crate::objects::NornQueriedRecord, Refusal> {
-    let mut masked = BTreeMap::new();
-    let mut withheld_properties = Vec::new();
-    let read = if values {
-        let mut read = row
-            .values
-            .iter()
-            .map(|(id, value)| Ok((id.clone(), norn_cell::analytics::runtime_value(value)?)))
-            .collect::<Result<BTreeMap<_, _>, norn_ir::RuntimeValueError>>()
-            .map_err(Refusal::host)?;
-        for (column, ids) in &marks.columns {
-            let mask = crate::privacy::strongest(&marks.catalog, ids)
-                .unwrap_or(norn_ir::MaskPolicy::Refuse {});
-            let Some(value) = read.get_mut(column) else {
-                continue;
-            };
-            let mode = crate::privacy::apply(&mask, marks.key.as_ref(), value);
-            if mode == crate::privacy::NornMaskMode::Refuse {
-                read.remove(column);
-                withheld_properties.push(column.clone());
-            }
-            masked.insert(
-                column.clone(),
-                crate::privacy::NornMaskedProperty {
-                    mode,
-                    markings: ids.clone(),
-                    revealable: false,
-                },
-            );
-        }
-        Some(read)
-    } else {
-        None
-    };
-    Ok(crate::objects::NornQueriedRecord {
-        object_type: object_type.to_owned(),
-        id: row.id,
-        scope: scope_key.to_owned(),
-        version: read.as_ref().map(|_| row.version),
-        withheld: read.is_none(),
-        values: read,
-        withheld_properties,
-        masked,
-    })
+) -> Result<crate::privacy::DisclosedQueriedObject, Refusal> {
+    crate::privacy::disclosure::project_dataset_queried_object(
+        object_type,
+        scope_key,
+        row,
+        values,
+        &marks.catalog,
+        &marks.columns,
+        marks.key.as_ref(),
+    )
 }
 
 /// HOST-READ-3 over a loaded dataset: one row by identity, as
@@ -2013,7 +1986,7 @@ pub fn record_object<E: SqlEngine>(
     (object_type, id): (&str, &str),
     access: &dyn ObjectAccess,
     transport: &dyn Transport,
-) -> Result<crate::objects::NornQueriedRecord, Refusal> {
+) -> Result<crate::privacy::DisclosedQueriedObject, Refusal> {
     use norn_cell::analytics::{PageRequest, PageResponse};
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let guard = host.cell()?;

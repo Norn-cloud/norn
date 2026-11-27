@@ -172,7 +172,7 @@ fn query(
     host: &DevHost<NativeEngine>,
     actor: &str,
     params: &ObjectQueryParams,
-) -> Result<NornObjectQueryPage, Refusal> {
+) -> Result<norn_api::privacy::DisclosedObjectQueryPage, Refusal> {
     get_object_query(host, &scope(), Some(actor), TYPE, params, &Mapping)
 }
 
@@ -181,7 +181,7 @@ fn pages(
     host: &DevHost<NativeEngine>,
     actor: &str,
     params: &ObjectQueryParams,
-) -> Vec<NornObjectQueryPage> {
+) -> Vec<norn_api::privacy::DisclosedObjectQueryPage> {
     let mut all = Vec::new();
     let mut params = params.clone();
     loop {

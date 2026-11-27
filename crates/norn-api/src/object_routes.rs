@@ -19,11 +19,15 @@ use crate::{
     },
     host::DevHost,
     object_query::{self, Cursor, ObjectQueryParams},
-    objects::{
-        NornAppliedQuery, NornObjectPage, NornObjectQueryPage, NornObjectRecord, NornQueriedRecord,
-        NornQueryTotal,
+    objects::{NornAppliedQuery, NornQueryTotal},
+    privacy::{
+        self, DisclosedObject, DisclosedObjectPage, DisclosedObjectQueryPage,
+        DisclosedQueriedObject,
+        disclosure::{
+            DisclosedListed, project_listed_row, project_object, project_object_page,
+            project_object_query_page, project_queried_object,
+        },
     },
-    privacy,
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
 };
@@ -265,17 +269,14 @@ pub fn get_object_page<E: SqlEngine>(
     after: Option<&str>,
     limit: usize,
     access: &dyn ObjectAccess,
-) -> Result<NornObjectPage, Refusal> {
+) -> Result<DisclosedObjectPage, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     if limit == 0 || limit > MAX_PAGE {
         return Err(Refusal::invalid(format!("limit must be 1..={MAX_PAGE}")));
     }
-    let mut page = NornObjectPage {
-        object_type: object_type.to_owned(),
-        records: Vec::new(),
-        quarantine_count: 0,
-        scanned_through: None,
-    };
+    let mut records = Vec::new();
+    let mut quarantine_count: u64 = 0;
+    let mut scanned_through = None;
     // The cell lock is held per batch, never for the whole scan, and row
     // authorization runs without it. Each locked section reads the cell's
     // version before and after its reads, and both must equal the version the
@@ -304,30 +305,42 @@ pub fn get_object_page<E: SqlEngine>(
         let (quarantined, catalog, marked) = locked(host, access, &mut snapshot, |reader| {
             held_and_marked(host, reader, visible.iter().map(|(seen, row)| (*seen, row)))
         })?;
-        for (((seen, mut row), quarantined), markings) in
+        for (((seen, row), quarantined), markings) in
             visible.into_iter().zip(quarantined).zip(marked)
         {
             cursor = Some(row.id.clone());
             if !seen {
                 continue;
             }
-            page.scanned_through = Some(row.id.clone());
+            scanned_through = Some(row.id.clone());
             if quarantined {
-                page.quarantine_count = page.quarantine_count.saturating_add(1);
+                quarantine_count = quarantine_count.saturating_add(1);
             } else {
-                let projected =
-                    privacy::project(host, &actor, &catalog, markings.as_ref(), &mut row);
-                page.records
-                    .push(NornObjectRecord::projected(row, projected));
+                records.push(project_object(
+                    host,
+                    &actor,
+                    &catalog,
+                    markings.as_ref(),
+                    row,
+                ));
             }
-            if page.records.len() == limit {
-                return Ok(page);
+            if records.len() == limit {
+                return Ok(project_object_page(
+                    object_type.to_owned(),
+                    records,
+                    quarantine_count,
+                    scanned_through,
+                ));
             }
         }
         if exhausted {
             // Nothing visible remains: no cursor, so none names an unseen row.
-            page.scanned_through = None;
-            return Ok(page);
+            return Ok(project_object_page(
+                object_type.to_owned(),
+                records,
+                quarantine_count,
+                None,
+            ));
         }
     }
 }
@@ -364,7 +377,7 @@ pub fn get_object<E: SqlEngine>(
     object_type: &str,
     id: &str,
     access: &dyn ObjectAccess,
-) -> Result<NornObjectRecord, Refusal> {
+) -> Result<DisclosedObject, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let cell = host.cell()?;
     let reader = cell.store().read();
@@ -384,9 +397,13 @@ pub fn get_object<E: SqlEngine>(
     }
     let catalog = host.marking_catalog(&reader)?;
     let markings = privacy::row_markings(&reader, &catalog, &row)?;
-    let mut row = row;
-    let projected = privacy::project(host, &actor, &catalog, markings.as_ref(), &mut row);
-    Ok(NornObjectRecord::projected(row, projected))
+    Ok(project_object(
+        host,
+        &actor,
+        &catalog,
+        markings.as_ref(),
+        row,
+    ))
 }
 
 /// Visible rows one grid query reads at most. A sort or filter needs every
@@ -395,18 +412,10 @@ pub fn get_object<E: SqlEngine>(
 /// counts approximately. Rows the caller may not see never count toward it.
 pub const MAX_QUERY_SCAN: usize = 10_000;
 
-/// One row a grid query lists: Population held; `readable` when Values is too.
-pub(crate) struct Listed {
-    pub(crate) row: ObjectRecord,
-    pub(crate) readable: bool,
-    /// How the row's marked properties were projected (readable rows only).
-    pub(crate) projected: privacy::Projected,
-}
-
 /// The rows one snapshot holds after `after`, up to the visible bound, with what the
 /// caller may see of each.
 pub(crate) struct Scan {
-    pub(crate) listed: Vec<Listed>,
+    pub(crate) listed: Vec<DisclosedListed>,
     pub(crate) quarantined: u64,
     pub(crate) exhausted: bool,
     version: (u64, Option<(u64, u64)>),
@@ -508,31 +517,30 @@ pub(crate) fn scan_listed<E: SqlEngine>(
         if let Some(last) = batch.last() {
             cursor = Some(last.id.clone());
         }
-        let seen: Vec<Listed> = batch
+        let seen: Vec<(bool, ObjectRecord)> = batch
             .into_iter()
             .filter(|row| permitted(host, access, actor, row, Population))
-            .map(|row| Listed {
-                readable: permitted(host, access, actor, &row, Values),
-                row,
-                projected: privacy::Projected::default(),
-            })
+            .map(|row| (permitted(host, access, actor, &row, Values), row))
             .collect();
         let (held, catalog, marked) = locked(host, access, &mut start, |reader| {
             held_and_marked(
                 host,
                 reader,
-                seen.iter().map(|listed| (listed.readable, &listed.row)),
+                seen.iter().map(|(readable, row)| (*readable, row)),
             )
         })?;
-        for ((mut listed, quarantined), markings) in seen.into_iter().zip(held).zip(marked) {
+        for (((readable, row), quarantined), markings) in seen.into_iter().zip(held).zip(marked) {
             if quarantined {
                 scan.quarantined = scan.quarantined.saturating_add(1);
             } else {
-                if listed.readable {
-                    listed.projected =
-                        privacy::project(host, actor, &catalog, markings.as_ref(), &mut listed.row);
-                }
-                scan.listed.push(listed);
+                scan.listed.push(project_listed_row(
+                    host,
+                    actor,
+                    readable,
+                    Some(&catalog),
+                    markings.as_ref(),
+                    row,
+                ));
             }
         }
         scan.version = start.unwrap_or_default();
@@ -556,22 +564,8 @@ pub(crate) fn scan_listed<E: SqlEngine>(
 }
 
 /// The values a query may compare: none for a withheld row.
-fn values(listed: &Listed) -> object_query::RowValues<'_> {
-    listed.readable.then_some(&listed.row.values)
-}
-
-/// A listed row as the grid shows it: values only when readable.
-fn queried(listed: &Listed) -> NornQueriedRecord {
-    NornQueriedRecord {
-        object_type: listed.row.object_type.clone(),
-        id: listed.row.id.clone(),
-        scope: listed.row.scope.clone(),
-        version: listed.readable.then_some(listed.row.version),
-        values: listed.readable.then(|| listed.row.values.clone()),
-        withheld: !listed.readable,
-        withheld_properties: listed.projected.withheld.clone(),
-        masked: listed.projected.masked.clone(),
-    }
+const fn values(listed: &DisclosedListed) -> object_query::RowValues<'_> {
+    listed.comparable_values()
 }
 
 /// The 413 for a sort or filter over more visible rows than one scan reads.
@@ -611,7 +605,7 @@ pub fn get_object_query<E: SqlEngine>(
     object_type: &str,
     params: &ObjectQueryParams,
     access: &dyn ObjectAccess,
-) -> Result<NornObjectQueryPage, Refusal> {
+) -> Result<DisclosedObjectQueryPage, Refusal> {
     get_object_query_within(
         host,
         (scope, actor),
@@ -636,7 +630,7 @@ pub fn get_object_query_within<E: SqlEngine>(
     params: &ObjectQueryParams,
     access: &dyn ObjectAccess,
     max_scan: usize,
-) -> Result<NornObjectQueryPage, Refusal> {
+) -> Result<DisclosedObjectQueryPage, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let properties = effective_properties(host, object_type)?.ok_or_else(not_found)?;
     let query = object_query::parse(params, &properties)?;
@@ -665,25 +659,25 @@ pub fn get_object_query_within<E: SqlEngine>(
     if full && !scan.exhausted {
         return Err(scan_bound_exceeded());
     }
-    let mut matched: Vec<&Listed> = scan
+    let mut matched: Vec<&DisclosedListed> = scan
         .listed
         .iter()
         .filter(|listed| object_query::matches(&query.filter, values(listed)))
         .collect();
     if !query.sort.is_empty() {
         matched.sort_by(|a, b| {
-            object_query::compare(&query.sort, (&a.row.id, values(a)), (&b.row.id, values(b)))
+            object_query::compare(&query.sort, (a.id(), values(a)), (b.id(), values(b)))
         });
     }
     let begin = match (&cursor, full) {
         (Some(cursor), true) => matched
             .iter()
-            .position(|listed| Cursor::row_digest(&listed.row.id) == cursor.p)
+            .position(|listed| Cursor::row_digest(listed.id()) == cursor.p)
             .map(|at| at.saturating_add(1))
             .ok_or_else(object_query::cursor_invalid)?,
         _ => 0,
     };
-    let page: Vec<&Listed> = matched
+    let page: Vec<&DisclosedListed> = matched
         .iter()
         .skip(begin)
         .take(query.limit)
@@ -700,9 +694,9 @@ pub fn get_object_query_within<E: SqlEngine>(
                 c: scan.version.0,
                 r: scan.version.1,
                 p: if full {
-                    Cursor::row_digest(&last.row.id)
+                    Cursor::row_digest(last.id())
                 } else {
-                    last.row.id.clone()
+                    last.id().to_owned()
                 },
             }
             .encode(),
@@ -713,17 +707,17 @@ pub fn get_object_query_within<E: SqlEngine>(
         count: u64::try_from(matched.len()).unwrap_or(u64::MAX),
         approximate: !scan.exhausted,
     });
-    Ok(NornObjectQueryPage {
-        object_type: object_type.to_owned(),
-        records: page.into_iter().map(queried).collect(),
-        quarantine_count: scan.quarantined,
-        query: NornAppliedQuery {
+    Ok(project_object_query_page(
+        object_type.to_owned(),
+        page.into_iter().map(DisclosedListed::to_queried).collect(),
+        scan.quarantined,
+        NornAppliedQuery {
             sort: query.sort_document(),
             filter: query.filter_document(),
         },
         next,
         total,
-    })
+    ))
 }
 
 /// HOST-READ-3: one object as a grid shows it (D67): withheld under
@@ -742,7 +736,7 @@ pub fn get_queried_object<E: SqlEngine>(
     object_type: &str,
     id: &str,
     access: &dyn ObjectAccess,
-) -> Result<NornQueriedRecord, Refusal> {
+) -> Result<DisclosedQueriedObject, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let mut start = None;
     let row = locked(host, access, &mut start, |reader| {
@@ -779,14 +773,12 @@ pub fn get_queried_object<E: SqlEngine>(
     if quarantined {
         return Err(not_found());
     }
-    let mut row = row;
-    let projected = match &catalog {
-        Some(catalog) => privacy::project(host, &actor, catalog, markings.as_ref(), &mut row),
-        None => privacy::Projected::default(),
-    };
-    Ok(queried(&Listed {
-        row,
+    Ok(project_queried_object(
+        host,
+        &actor,
         readable,
-        projected,
-    }))
+        catalog.as_ref(),
+        markings.as_ref(),
+        row,
+    ))
 }

@@ -149,7 +149,7 @@ fn links(
     actor: &str,
     id: &str,
     params: &ObjectLinkParams,
-) -> Result<NornObjectLinkPage, Refusal> {
+) -> Result<norn_api::privacy::DisclosedObjectLinks, Refusal> {
     get_object_links(host, &scope(), Some(actor), TYPE, id, params, &Mapping)
 }
 
@@ -158,7 +158,7 @@ fn pages(
     host: &DevHost<NativeEngine>,
     actor: &str,
     params: &ObjectLinkParams,
-) -> Vec<NornObjectLinkPage> {
+) -> Vec<norn_api::privacy::DisclosedObjectLinks> {
     let mut all = Vec::new();
     let mut params = params.clone();
     loop {
