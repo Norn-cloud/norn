@@ -252,11 +252,16 @@ fn mapping_datasets_for_plan(
     required
 }
 
-fn assemble_required(
+/// Required `(source_id -> (expected_mapping_id, datasets))` bindings for one
+/// plan, keeping each connection bound to the mapping it is required to serve
+/// so a rebound connection cannot satisfy a new mapping with an old report.
+type RequiredBindings = BTreeMap<String, (String, BTreeSet<String>)>;
+
+fn assemble_required_bindings(
     mapping_datasets: BTreeMap<String, BTreeSet<String>>,
     connections: &[ObjectRecord],
     configured: &BTreeMap<String, String>,
-) -> RequiredSources {
+) -> RequiredBindings {
     let mut by_mapping: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (conn_id, mapping_id) in configured {
         by_mapping
@@ -265,6 +270,9 @@ fn assemble_required(
             .insert(conn_id.clone());
     }
     for conn in connections {
+        if configured.contains_key(&conn.id) {
+            continue;
+        }
         if let Some(mapping_id) = conn.values.get("mapping_id").and_then(RuntimeValue::as_str) {
             by_mapping
                 .entry(mapping_id.to_owned())
@@ -272,20 +280,34 @@ fn assemble_required(
                 .insert(conn.id.clone());
         }
     }
-    let mut required: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut required: RequiredBindings = BTreeMap::new();
     for (mapping_id, datasets) in mapping_datasets {
         if let Some(conn_ids) = by_mapping.get(&mapping_id) {
             for conn_id in conn_ids {
                 required
                     .entry(conn_id.clone())
-                    .or_default()
+                    .or_insert_with(|| (mapping_id.clone(), BTreeSet::new()))
+                    .1
                     .extend(datasets.iter().cloned());
             }
         } else {
-            required.entry(mapping_id).or_default().extend(datasets);
+            required
+                .entry(mapping_id.clone())
+                .or_insert_with(|| (mapping_id, BTreeSet::new()))
+                .1
+                .extend(datasets);
         }
     }
-    RequiredSources(required)
+    required
+}
+
+fn bindings_to_required(bindings: RequiredBindings) -> RequiredSources {
+    RequiredSources(
+        bindings
+            .into_iter()
+            .map(|(source, (_, datasets))| (source, datasets))
+            .collect(),
+    )
 }
 
 impl<E: SqlEngine> CellStore<E> {
@@ -404,6 +426,30 @@ impl<E: SqlEngine> CellStore<E> {
         self.required_sources_for_plan_at(world, plan, None, 0, &BTreeMap::new())
     }
 
+    fn required_bindings_at(
+        &self,
+        world: &str,
+        plan: &QuestionPlan,
+        cutoff: Option<KnowledgeCutoff>,
+        now_ms: u64,
+        configured: &BTreeMap<String, String>,
+    ) -> Result<(RequiredBindings, Vec<ObjectRecord>), CellError> {
+        let Some(active) = self.definitions_at(cutoff)? else {
+            return Ok((BTreeMap::new(), Vec::new()));
+        };
+        let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&active.canonical_set)?;
+        let mapping_datasets = mapping_datasets_for_plan(self.model(), &artifacts, plan);
+        if mapping_datasets.is_empty() {
+            return Ok((BTreeMap::new(), Vec::new()));
+        }
+        let connections = match cutoff {
+            Some(point) => self.historical_connection_objects(world, point, now_ms)?,
+            None => self.live_connection_objects(world)?,
+        };
+        let bindings = assemble_required_bindings(mapping_datasets, &connections, configured);
+        Ok((bindings, connections))
+    }
+
     /// Derive required external `(source, dataset)` pairs at either live state
     /// (`cutoff == None`) or an authenticated historical cutoff (`cutoff == Some`),
     /// unioned with any host-configured `(connection_id -> mapping_id)` bindings.
@@ -418,23 +464,8 @@ impl<E: SqlEngine> CellStore<E> {
         now_ms: u64,
         configured: &BTreeMap<String, String>,
     ) -> Result<RequiredSources, CellError> {
-        let Some(active) = self.definitions_at(cutoff)? else {
-            return Ok(RequiredSources::default());
-        };
-        let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&active.canonical_set)?;
-        let mapping_datasets = mapping_datasets_for_plan(self.model(), &artifacts, plan);
-        if mapping_datasets.is_empty() {
-            return Ok(RequiredSources::default());
-        }
-        let connections = match cutoff {
-            Some(point) => self.historical_connection_objects(world, point, now_ms)?,
-            None => self.live_connection_objects(world)?,
-        };
-        Ok(assemble_required(
-            mapping_datasets,
-            &connections,
-            configured,
-        ))
+        let (bindings, _) = self.required_bindings_at(world, plan, cutoff, now_ms, configured)?;
+        Ok(bindings_to_required(bindings))
     }
 
     /// Build the live connector frontier (`source_cursors` and `watermarks`)
@@ -463,16 +494,15 @@ impl<E: SqlEngine> CellStore<E> {
         plan: &QuestionPlan,
         configured: &BTreeMap<String, String>,
     ) -> Result<SourceFreshnessSnapshot, CellError> {
-        let required = self.required_sources_for_plan_at(world, plan, None, 0, configured)?;
-        if required.is_empty() {
+        let (bindings, conn_list) = self.required_bindings_at(world, plan, None, 0, configured)?;
+        if bindings.is_empty() {
             return Ok(SourceFreshnessSnapshot::default());
         }
-        let connections: BTreeMap<String, ObjectRecord> = self
-            .live_connection_objects(world)?
+        let connections: BTreeMap<String, ObjectRecord> = conn_list
             .into_iter()
             .map(|record| (record.id.clone(), record))
             .collect();
-        self.build_live_snapshot(&required, &connections)
+        self.build_live_snapshot(&bindings, &connections)
     }
 
     /// Reconstruct the connector frontier (`source_cursors` and `watermarks`)
@@ -494,18 +524,17 @@ impl<E: SqlEngine> CellStore<E> {
             frontier,
             recorded_at: LogicalTime::from_millis(now_ms),
         };
-        let required =
-            self.required_sources_for_plan_at(world, plan, Some(cutoff), now_ms, configured)?;
-        if required.is_empty() {
+        let (bindings, conn_list) =
+            self.required_bindings_at(world, plan, Some(cutoff), now_ms, configured)?;
+        if bindings.is_empty() {
             return Ok(SourceFreshnessSnapshot::default());
         }
-        let connections: BTreeMap<String, ObjectRecord> = self
-            .historical_connection_objects(world, cutoff, now_ms)?
+        let connections: BTreeMap<String, ObjectRecord> = conn_list
             .into_iter()
             .map(|record| (record.id.clone(), record))
             .collect();
         let mut snapshot = SourceFreshnessSnapshot::default();
-        for (source_id, datasets) in &required.0 {
+        for (source_id, (expected_mapping, datasets)) in &bindings {
             snapshot
                 .source_cursors
                 .entry(source_id.clone())
@@ -513,8 +542,10 @@ impl<E: SqlEngine> CellStore<E> {
             let Some(conn) = connections.get(source_id) else {
                 continue;
             };
-            let conn_healthy =
-                conn.values.get("status").and_then(RuntimeValue::as_str) == Some("ok");
+            let mapping_matches = conn.values.get("mapping_id").and_then(RuntimeValue::as_str)
+                == Some(expected_mapping.as_str());
+            let conn_healthy = mapping_matches
+                && conn.values.get("status").and_then(RuntimeValue::as_str) == Some("ok");
             let heartbeat_ms = conn
                 .values
                 .get("last_sync_ended_at")
@@ -552,32 +583,33 @@ impl<E: SqlEngine> CellStore<E> {
 
     fn build_live_snapshot(
         &self,
-        required: &RequiredSources,
+        bindings: &RequiredBindings,
         connections: &BTreeMap<String, ObjectRecord>,
     ) -> Result<SourceFreshnessSnapshot, CellError> {
         let reader = self.read();
         let mut snapshot = SourceFreshnessSnapshot::default();
-        for (source_id, datasets) in &required.0 {
+        for (source_id, (expected_mapping, datasets)) in bindings {
             snapshot
                 .source_cursors
                 .entry(source_id.clone())
                 .or_default();
             let conn = connections.get(source_id);
-            let conn_healthy = conn
-                .and_then(|c| c.values.get("status"))
+            let mapping_matches = conn
+                .and_then(|c| c.values.get("mapping_id"))
                 .and_then(RuntimeValue::as_str)
-                == Some("ok");
+                == Some(expected_mapping.as_str());
+            let conn_healthy = mapping_matches
+                && conn
+                    .and_then(|c| c.values.get("status"))
+                    .and_then(RuntimeValue::as_str)
+                    == Some("ok");
             let conn_heartbeat_ms = conn
                 .and_then(|c| c.values.get("last_sync_ended_at"))
                 .and_then(RuntimeValue::as_str)
                 .and_then(parse_rfc3339_ms);
             let cursors = reader.source_cursors(source_id)?;
-            let conn_cursors = conn.map(strict_connection_cursors).unwrap_or_default();
-            let pending: BTreeSet<String> = reader
-                .pending_source_captures(source_id)?
-                .into_iter()
-                .map(|item| item.dataset)
-                .collect();
+            let conn_cursors = conn.map_or_else(BTreeMap::new, strict_connection_cursors);
+            let pending = reader.pending_source_datasets(source_id)?;
             for dataset in datasets {
                 let Some(cursor_json) = cursors
                     .get(dataset)
@@ -593,9 +625,10 @@ impl<E: SqlEngine> CellStore<E> {
                 };
                 // A live answer reports `complete` (and thus may become `Exact`
                 // and traceable) only when the durable `source.Connection` report
-                // at the current frontier agrees with the validated cursor and
-                // records a valid `last_sync_ended_at` heartbeat, so pinned
-                // historical `:trace` reconstructs the exact same frontier.
+                // at the current frontier matches the expected mapping and
+                // validated cursor and records a valid `last_sync_ended_at`
+                // heartbeat, so pinned historical `:trace` reconstructs the exact
+                // same frontier.
                 let report_matches = conn_cursors.get(dataset) == Some(&cursor_json);
                 let heartbeat_ms = conn_heartbeat_ms;
                 let complete = conn_healthy

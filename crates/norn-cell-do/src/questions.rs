@@ -210,6 +210,15 @@ impl DerivedRuntime<'_> {
         self
     }
 
+    /// Merge optional per-request scoped `(connection_id -> mapping_id)` bindings.
+    #[must_use]
+    pub fn with_configured(mut self, connections: Option<BTreeMap<String, String>>) -> Self {
+        if let Some(connections) = connections {
+            self.configured_override.extend(connections);
+        }
+        self
+    }
+
     fn effective_configured(&self) -> BTreeMap<String, String> {
         let mut combined = self.metrics.configured_connections.clone();
         combined.extend(
@@ -317,9 +326,18 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
         let Some((frontier, now)) = answered else {
             return self.snapshot(store, plan, actor);
         };
-        let configured = self.effective_configured();
+        // Pinned `:trace` reconstructs strictly against the historical
+        // definitions and `source.Connection` reports in force at `frontier`
+        // (never current live `NORN_SOURCES`), so adding a new connection
+        // later cannot invalidate an earlier exact answer without a ledger change.
         let freshness = store
-            .source_freshness_snapshot_at(norn_cell::MAIN_WORLD, plan, frontier, now, &configured)
+            .source_freshness_snapshot_at(
+                norn_cell::MAIN_WORLD,
+                plan,
+                frontier,
+                now,
+                &BTreeMap::new(),
+            )
             .map_err(Refusal::from_compute)?;
         Ok(QuestionSnapshot {
             context: QueryContext {

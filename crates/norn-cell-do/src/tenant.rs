@@ -859,7 +859,7 @@ impl<E: SqlEngine> Tenant<E> {
                     .as_ref()
                     .filter(|_| serving.questions.is_none())
                     .and_then(|d| d.questions_at(&serving.host, clock_ms).ok())
-                    .map(|rt| configured.map_or(rt, |c| rt.with_configured_connections(c)))
+                    .map(|rt| rt.with_configured(configured))
                     .filter(|r| !AdHocQuestions::<E>::definitions(r).is_empty());
                 let questions = serving
                     .questions

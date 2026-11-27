@@ -789,6 +789,27 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(out)
     }
 
+    /// Distinct datasets for `connection_id` that still have unprocessed
+    /// (`processed = 0`) captured source pages, without decoding page payloads.
+    ///
+    /// # Errors
+    /// Store errors.
+    pub fn pending_source_datasets(
+        &self,
+        connection_id: &str,
+    ) -> Result<std::collections::BTreeSet<String>, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                "SELECT DISTINCT \"dataset\" FROM \"{SOURCE_PENDING}\" \
+                 WHERE \"connection_id\" = ?1 AND \"processed\" = 0"
+            ),
+            params![connection_id],
+        )?;
+        rows.into_iter()
+            .map(|values| SqlRow(values).get::<String>(0))
+            .collect()
+    }
+
     /// Whether `_norn_inbox` holds `observation_id` (pending or already consumed).
     ///
     /// # Errors

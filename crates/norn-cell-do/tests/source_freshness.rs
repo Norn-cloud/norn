@@ -4,6 +4,9 @@
 //! historical/pinned `:trace` frontier reconstruction, production `Tenant::serve`
 //! multi-connection coverage, and strict cursor validation.
 
+#[path = "../../norn-cell/tests/support/governed.rs"]
+mod governed;
+
 #[allow(
     clippy::expect_used,
     clippy::indexing_slicing,
@@ -13,7 +16,9 @@
 )]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+
+    use super::governed::GovernedCommit as _;
 
     use norn_api::host::DevHost;
     use norn_api::pull::PullProfile;
@@ -106,7 +111,10 @@ mod tests {
         set
     }
 
-    fn open_store(systems: &[&str]) -> (CellStore<NativeEngine>, CellScope) {
+    fn open_store_at(
+        systems: &[&str],
+        path: Option<&Path>,
+    ) -> (CellStore<NativeEngine>, CellScope) {
         let artifacts = catalog_artifacts(systems);
         let (base, candidate): (Vec<_>, Vec<_>) = artifacts
             .iter()
@@ -175,11 +183,18 @@ mod tests {
             installed_at: 1,
             layout: None,
         };
-        let mut store = CellStore::open_in_memory(model.clone()).expect("store");
+        let mut store = match path {
+            Some(db) => CellStore::open(db, model.clone(), StoreOptions::default()).expect("disk"),
+            None => CellStore::open_in_memory(model.clone()).expect("store"),
+        };
         store
             .install_definitions(model, input, Some(0), &scope.key())
             .expect("install");
         (store, scope)
+    }
+
+    fn open_store(systems: &[&str]) -> (CellStore<NativeEngine>, CellScope) {
+        open_store_at(systems, None)
     }
 
     fn wrap_host(
@@ -716,7 +731,13 @@ mod tests {
             Some(first_cursor.as_str())
         );
 
-        let runtime2 = derived.questions(&host).expect("runtime2");
+        // Pinned `:trace` remains valid even after a second sync advances live
+        // cursors AND even if a new connection is later added to config!
+        let derived_later = derived.with_configured_connections(BTreeMap::from([
+            ("erpnext.rest".into(), "erpnext.rest.mapping".into()),
+            ("erpnext.added_later".into(), "erpnext.rest.mapping".into()),
+        ]));
+        let runtime2 = derived_later.questions(&host).expect("runtime2");
         let pinned_trace = call_http(
             &host,
             &principals,
@@ -773,31 +794,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).expect("mkdir");
         let db = dir.join("cell.sqlite");
-        let (mem_store, scope2) = open_store(&["erpnext"]);
-        let active = mem_store
-            .read()
-            .installed_definitions(None)
-            .expect("defs")
-            .expect("active");
-        let model = mem_store.model().clone();
-        let mut disk =
-            CellStore::open(&db, model.clone(), StoreOptions::default()).expect("disk store");
-        disk.install_definitions(
-            model,
-            InstalledDefinitionInput {
-                canonical_set: active.canonical_set,
-                registry: active.registry,
-                receipt_sha256: active.receipt_sha256,
-                admission_receipt: active.admission_receipt,
-                readmission: active.readmission,
-                diff: active.diff,
-                installed_at: active.installed_at,
-                layout: active.layout,
-            },
-            Some(0),
-            &scope2.key(),
-        )
-        .expect("install on disk");
+        let (disk, scope2) = open_store_at(&["erpnext"], Some(&db));
         let (seed_host, seed_principals, _) = wrap_host(disk, scope2.clone());
         sync_erpnext(&seed_host, &scope2, T0);
         let seed_derived = DerivedQuestions::new([7; 32], scope2.clone());
@@ -861,7 +858,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    fn commit_connection(store: &mut CellStore<NativeEngine>, scope: &CellScope, watermark: &str) {
+    fn commit_connection(
+        store: &mut CellStore<NativeEngine>,
+        scope: &CellScope,
+        mapping_id: &str,
+        watermark: &str,
+    ) {
         let values = BTreeMap::from([
             ("id".into(), RuntimeValue::from("erpnext.legacy")),
             ("system".into(), RuntimeValue::from("erpnext")),
@@ -894,10 +896,7 @@ mod tests {
                 "source_schema_id".into(),
                 RuntimeValue::from("erpnext.rest.source"),
             ),
-            (
-                "mapping_id".into(),
-                RuntimeValue::from("erpnext.rest.mapping"),
-            ),
+            ("mapping_id".into(), RuntimeValue::from(mapping_id)),
         ]);
         store
             .commit(&CommitBatch {
@@ -916,14 +915,25 @@ mod tests {
 
     #[test]
     fn corrupt_or_object_id_legacy_watermark_is_rejected_as_incomplete() {
-        for bad_watermark in [
-            r#"{"Sales Order Item": null}"#,
-            r#"{"Sales Order Item": {"version": "2026-11-12", "id": {"nested": 1}}}"#,
+        for (mapping_id, bad_watermark) in [
+            ("erpnext.rest.mapping", r#"{"Sales Order Item": null}"#),
+            (
+                "erpnext.rest.mapping",
+                r#"{"Sales Order Item": {"version": "2026-11-12", "id": {"nested": 1}}}"#,
+            ),
+            // Connection report stamped for a different mapping cannot satisfy
+            // a rebound mapping even if the dataset name and cursor shape match.
+            (
+                "other.old.mapping",
+                r#"{"Sales Order Item": {"version": "2026-11-12", "id": "SO-1"}}"#,
+            ),
         ] {
             let (mut store, scope) = open_store(&["erpnext"]);
-            commit_connection(&mut store, &scope, bad_watermark);
+            commit_connection(&mut store, &scope, mapping_id, bad_watermark);
             let (host, principals, scope) = wrap_host(store, scope);
-            let derived = DerivedQuestions::new([7; 32], scope);
+            let derived = DerivedQuestions::new([7; 32], scope).with_configured_connections(
+                BTreeMap::from([("erpnext.legacy".into(), "erpnext.rest.mapping".into())]),
+            );
             let runtime = derived.questions(&host).expect("runtime");
             let metric =
                 metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");

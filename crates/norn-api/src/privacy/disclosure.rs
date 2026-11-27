@@ -16,8 +16,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 
 use norn_cell::compute::lineage::{
-    ContributionSource, NumericTrace, keyed_cursor_handle, keyed_finding_handle,
-    keyed_lineage_handle, keyed_receipt_handle, keyed_revision_handle,
+    NumericTrace, keyed_cursor_handle, keyed_finding_handle, keyed_lineage_handle,
+    keyed_receipt_handle, keyed_revision_handle,
 };
 use norn_cell::compute::{HistoricalQuestionResult, QueryResult};
 use norn_cell::reactive::DecodeBudget;
@@ -538,11 +538,11 @@ fn withhold_source_cursors(result: &mut QueryResult, key: &[u8], sources_granted
 pub(crate) fn project_answer<E: SqlEngine>(
     (host, runtime, store): (&DevHost<E>, &dyn QuestionRuntime<E>, &CellStore<E>),
     (actor, key, plan): (&str, &[u8], &QuestionPlan),
-    withheld: &BTreeSet<String>,
+    (withheld, withheld_sources): (&BTreeSet<String>, bool),
     mut answer: QuestionAnswer,
 ) -> Result<DisclosedAnswer, Refusal> {
     let world = withheld.is_empty() && world_values(host, runtime, store, actor);
-    let sources_granted = plan_sources(host, runtime, store, actor, plan);
+    let sources_granted = !withheld_sources && plan_sources(host, runtime, store, actor, plan);
     let result = match &mut answer {
         QuestionAnswer::Live(result) => result,
         QuestionAnswer::Historical(historical) => {
@@ -565,7 +565,7 @@ pub(crate) fn project_trace<E: SqlEngine>(
     (host, runtime, store): (&DevHost<E>, &dyn QuestionRuntime<E>, &CellStore<E>),
     (actor, world_name, plan): (&str, &str, &QuestionPlan),
     (key, lineage): (&[u8], &str),
-    withheld: &BTreeSet<String>,
+    (withheld, withheld_sources): (&BTreeSet<String>, bool),
     mut trace: NumericTrace,
 ) -> Result<DisclosedTrace, Refusal> {
     let any_marked = redact_trace_contributions(
@@ -575,11 +575,7 @@ pub(crate) fn project_trace<E: SqlEngine>(
         &mut trace.contributions,
     )?;
     let world = !any_marked && withheld.is_empty() && world_values(host, runtime, store, actor);
-    let sources_granted = plan_sources(host, runtime, store, actor, plan)
-        && !trace
-            .contributions
-            .iter()
-            .any(|c| matches!(c.source, ContributionSource::Restricted));
+    let sources_granted = !withheld_sources && plan_sources(host, runtime, store, actor, plan);
     withhold_ledger_head(&mut trace.result, key, world);
     withhold_exclusions(&mut trace.result, key, world);
     withhold_source_cursors(&mut trace.result, key, sources_granted);
