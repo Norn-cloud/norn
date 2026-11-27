@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { canonicalJson } from "../src/canonical.ts"
 import * as C from "../src/builder/connector.ts"
@@ -74,4 +76,66 @@ test("direct data builders reject undeclared credential members through aliases"
   const result = C.lowerConnector(C.connector({ id: "private.source", title: "Source", version: "0.1.0", auth, resources: [], mappings: [] }), options)
   expect(result.ok).toBe(false)
   expect(JSON.stringify(result)).not.toContain("must-never-survive")
+})
+
+test("Norn.connector compiles pull mode, versionKind, idDecimal, and null initial id", () => {
+  const dir = mkdtempSync(join(tmpdir(), "norn-connector-pull-"))
+  try {
+    const file = join(dir, "pull.source.ts")
+    writeFileSync(file, `
+      import { Norn } from "@norn/authoring"
+      export const conn = Norn.connector({
+        id: "private.erp", title: "ERP", version: "0.1.0",
+        auth: { kind: "none" }, resources: [], mappings: [],
+        pull: {
+          source: "erp", pipeline: "erp/1",
+          feeds: [
+            {
+              dataset: "Stock", request: { method: "GET", path: "/stock" },
+              itemsPath: "/data", paging: { kind: "keyset", size: 50 },
+              idPath: "/id", versionPath: "/seq", fields: { id: "/id" },
+              initial: { version: "0", idDecimal: "9007199254740992.1" },
+              mode: "patch", versionKind: "uint64",
+            },
+            {
+              dataset: "Party", request: { method: "GET", path: "/party" },
+              itemsPath: "/data", paging: { kind: "keyset", size: 50 },
+              idPath: "/id", versionPath: "/seq", fields: { id: "/id" },
+              initial: { version: "0", id: null },
+              mode: "full_snapshot", versionKind: "int64",
+            },
+          ],
+        },
+      })
+    `)
+    const ok = compileDefinitions(file, options)
+    if (!ok.ok) throw new Error(JSON.stringify(ok.diagnostics))
+    const built = C.lowerConnector(C.connector({
+      id: "private.erp", title: "ERP", version: "0.1.0",
+      auth: { kind: "none" }, resources: [], mappings: [],
+      pull: {
+        source: "erp", pipeline: "erp/1",
+        feeds: [
+          {
+            dataset: "Stock", request: { method: "GET", path: "/stock" },
+            itemsPath: "/data", paging: { kind: "keyset", size: 50 },
+            idPath: "/id", versionPath: "/seq", fields: { id: "/id" },
+            initial: { version: "0", idDecimal: "9007199254740992.1" },
+            mode: "patch", versionKind: "uint64",
+          },
+          {
+            dataset: "Party", request: { method: "GET", path: "/party" },
+            itemsPath: "/data", paging: { kind: "keyset", size: 50 },
+            idPath: "/id", versionPath: "/seq", fields: { id: "/id" },
+            initial: { version: "0", id: null },
+            mode: "full_snapshot", versionKind: "int64",
+          },
+        ],
+      },
+    }), options)
+    if (!built.ok) throw new Error(JSON.stringify(built.diagnostics))
+    expect(canonicalJson(ok.artifacts[0])).toBe(canonicalJson(built.artifact))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

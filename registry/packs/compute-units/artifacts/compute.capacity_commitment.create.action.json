@@ -1,0 +1,142 @@
+{
+  "artifactId": "compute.capacity_commitment.create.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Request a compute capacity commitment",
+  "namespace": "compute",
+  "payload": {
+    "actionId": "compute.capacity_commitment.create",
+    "createLinks": [
+      {
+        "link": "provider",
+        "targetIdField": "provider_id",
+        "targetType": "compute.Agent"
+      },
+      {
+        "link": "receiver",
+        "targetIdField": "receiver_id",
+        "targetType": "compute.Agent"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "compute.CapacityCommitment.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "compute.CapacityCommitment",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "due_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "plan_kind": {
+          "enum": [
+            "reserved_gpu_hours",
+            "monthly_token_plan",
+            "storage_tier"
+          ],
+          "type": "string"
+        },
+        "provider_id": {
+          "type": "string"
+        },
+        "quantity": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "receiver_id": {
+          "type": "string"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "provider_id",
+        "receiver_id",
+        "due_at",
+        "quantity",
+        "unit",
+        "currency",
+        "plan_kind"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "provider_id"
+          }
+        },
+        "name": "provider",
+        "objectType": "compute.Agent"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "receiver_id"
+          }
+        },
+        "name": "receiver",
+        "objectType": "compute.Agent"
+      }
+    ],
+    "title": "Request a compute capacity commitment",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "compute.CapacityCommitment"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/compute.capacity_commitment.create.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
