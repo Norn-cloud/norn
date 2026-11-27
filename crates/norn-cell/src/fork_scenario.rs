@@ -385,7 +385,7 @@ impl<E, C, I, S: SqlEngine> ForkScenario<E, C, I, S> {
         let effective_ts = millis_to_utc_timestamp(self.context.clock.effective.as_millis())?;
         let effective_plan = plan
             .with_effective_end(effective_ts)
-            .map_err(CellError::ComputeRefused)?;
+            .ok_or(CellError::ComputeRefused("core.compute.stale_input"))?;
         self.cell
             .store()
             .evaluate_question_in_fork(&effective_plan, context, visible)
