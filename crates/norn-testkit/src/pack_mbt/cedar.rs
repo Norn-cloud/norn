@@ -392,7 +392,7 @@ where
     let authorizer = if rc.cedar.has_read_policies {
         let read_tpl = Arc::clone(&template);
         let read_type_tpl = Arc::clone(&template);
-        base_authorizer.with_read_pdp(
+        base_authorizer.with_read_authorizers(
             move |read_req| {
                 Ok(read_tpl.build(
                     read_req.actor,
@@ -437,6 +437,7 @@ where
 
     let outcome = commit_action(&mut host, rc.cedar.catalog, &call, &authorizer);
     let explanation = authorizer.last_explanation();
+    let read_explanation = authorizer.last_read_explanation();
     check_action_attempt_outcome(
         rc,
         &host,
@@ -444,10 +445,15 @@ where
         attempt,
         ledger_before,
         explanation.as_ref(),
+        read_explanation.as_ref(),
         outcome,
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal test-matrix outcome verifier"
+)]
 fn check_action_attempt_outcome<H: PackHost>(
     rc: &RuleActionCtx<'_>,
     host: &H,
@@ -455,6 +461,7 @@ fn check_action_attempt_outcome<H: PackHost>(
     attempt: &ActionAttempt<'_>,
     ledger_before: usize,
     explanation: Option<&PdpExplanation>,
+    read_explanation: Option<&PdpExplanation>,
     outcome: Result<norn_kernel::ActionOutcome, ActionRefusal<H::Error>>,
 ) -> Result<(), String> {
     if attempt.expect_allow {
@@ -479,6 +486,14 @@ fn check_action_attempt_outcome<H: PackHost>(
                         attempt.label, rc.hint.policy_id, rc.hint.rule_id
                     ));
                 }
+                if let Some(read_exp) = read_explanation
+                    && read_exp.decision != PdpDecision::Allow
+                {
+                    return Err(format!(
+                        "Cedar matrix ({}): authorized control for '{action_id}' recorded non-allow read explanation: {read_exp:?}",
+                        attempt.label
+                    ));
+                }
                 host.verify_ledger()
             }
             Err(err) => Err(format!(
@@ -501,11 +516,11 @@ fn check_action_attempt_outcome<H: PackHost>(
                 host.verify_ledger()
             }
             Err(ActionRefusal::TargetNotFound) if rc.cedar.has_read_policies => {
-                let denied_by_access_policy = explanation
+                let denied_by_read_policy = read_explanation
                     .is_some_and(|exp| exp.decision == PdpDecision::Deny(DenyReason::Access));
-                if !denied_by_access_policy {
+                if !denied_by_read_policy {
                     return Err(format!(
-                        "Cedar matrix ({}): expected read-policy DenyReason::Access for {}/{} action '{action_id}', got explanation={explanation:?}",
+                        "Cedar matrix ({}): expected read-policy DenyReason::Access for {}/{} action '{action_id}', got read_explanation={read_explanation:?}",
                         attempt.label, rc.hint.policy_id, rc.hint.rule_id
                     ));
                 }

@@ -565,10 +565,17 @@ fn build_mixed_policy_slice_pack(read_roles: &[&str]) -> Result<AdmittedPack, St
 #[test]
 fn cedar_matrix_enforces_declared_read_policies_in_mixed_policy_packs() -> Result<(), String> {
     let denied_pack = build_mixed_policy_slice_pack(&["reader"])?;
-    let denied_run = run_pack_mbt(&denied_pack, |_| Ok(MemoryPackHost::open()));
+    let Err(denied_err) = run_pack_mbt(&denied_pack, |_| Ok(MemoryPackHost::open())) else {
+        return Err(
+            "Cedar matrix must not bypass declared norn.read policies when editor lacks read access"
+                .to_owned(),
+        );
+    };
     assert!(
-        denied_run.is_err(),
-        "Cedar matrix must not bypass declared norn.read policies when editor lacks read access"
+        denied_err.contains("authorized control")
+            && denied_err.contains("sec.note.create")
+            && denied_err.contains("the target object was not found"),
+        "expected read-policy invisibility refusal on sec.note.create authorized control, got: {denied_err}"
     );
 
     let allowed_pack = build_mixed_policy_slice_pack(&["reader", "editor"])?;

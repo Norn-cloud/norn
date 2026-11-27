@@ -664,6 +664,16 @@ fn action_reverses_type(action: &ActionRoot, object_type: &str) -> bool {
             && (!action.writes.is_empty() || action.effect_program.is_some()))
 }
 
+const REVERSAL_KEYWORDS: [&str; 7] = [
+    "reverse",
+    "reversal",
+    "void",
+    "compensat",
+    "refund",
+    "credit_note",
+    "storno",
+];
+
 fn classify_reversal_coverage(pack: &AdmittedPack, object_type: &str) -> ReversalCoverage {
     let mut heuristic_candidate = None;
     for action in &pack.actions {
@@ -683,15 +693,6 @@ fn classify_reversal_coverage(pack: &AdmittedPack, object_type: &str) -> Reversa
             };
         }
         let lower_id = action.root.action_id.to_ascii_lowercase();
-        const REVERSAL_KEYWORDS: [&str; 7] = [
-            "reverse",
-            "reversal",
-            "void",
-            "compensat",
-            "refund",
-            "credit_note",
-            "storno",
-        ];
         if heuristic_candidate.is_none() && REVERSAL_KEYWORDS.iter().any(|kw| lower_id.contains(kw))
         {
             heuristic_candidate = Some(action.root.action_id.clone());

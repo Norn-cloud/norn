@@ -476,6 +476,7 @@ pub struct ObservedPdpAuthorizer<F> {
     coverage: Arc<Mutex<DomainCoverage>>,
     deny_rule_hint: Option<PolicyRuleTarget>,
     last_explanation: Mutex<Option<PdpExplanation>>,
+    last_read_explanation: Mutex<Option<PdpExplanation>>,
     read_mode: ReadAuthzMode,
 }
 
@@ -499,6 +500,7 @@ where
             coverage,
             deny_rule_hint,
             last_explanation: Mutex::new(None),
+            last_read_explanation: Mutex::new(None),
             read_mode: ReadAuthzMode::DenyByDefault,
         }
     }
@@ -534,10 +536,20 @@ where
         self
     }
 
-    /// Returns the most recent [`PdpExplanation`] produced by this authorizer.
+    /// Returns the most recent action [`PdpExplanation`] produced by this authorizer.
     #[must_use]
     pub fn last_explanation(&self) -> Option<PdpExplanation> {
         let guard = match self.last_explanation.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.clone()
+    }
+
+    /// Returns the most recent slice-read [`PdpExplanation`] produced by this authorizer.
+    #[must_use]
+    pub fn last_read_explanation(&self) -> Option<PdpExplanation> {
+        let guard = match self.last_read_explanation.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
@@ -549,10 +561,16 @@ where
         access_request: &AccessRequest,
         deny_hint: Option<&PolicyRuleTarget>,
         fallback_action: &str,
+        is_read: bool,
     ) -> PdpDecision {
         let explanation = self.pdp.explain(access_request);
         {
-            let mut last = match self.last_explanation.lock() {
+            let slot = if is_read {
+                &self.last_read_explanation
+            } else {
+                &self.last_explanation
+            };
+            let mut last = match slot.lock() {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
             };
@@ -596,6 +614,7 @@ where
             &access_request,
             self.deny_rule_hint.as_ref(),
             &request.action.action_id,
+            false,
         ) {
             PdpDecision::Allow => Ok(()),
             PdpDecision::Deny(reason) => Err(ActionDenial::Forbidden {
@@ -611,7 +630,7 @@ where
             ReadAuthzMode::Pdp { build_read, .. } => {
                 let access_request = build_read(request)?;
                 // Never attribute slice-read denials to the action rule's hint.
-                match self.evaluate_pdp(&access_request, None, access_request.action_id()) {
+                match self.evaluate_pdp(&access_request, None, access_request.action_id(), true) {
                     PdpDecision::Allow => Ok(()),
                     PdpDecision::Deny(_) => Err(ActionDenial::Invisible),
                 }
@@ -631,7 +650,7 @@ where
             } => {
                 let access_request = build_read_type(request)?;
                 // Never attribute collection-read denials to the action rule's hint.
-                match self.evaluate_pdp(&access_request, None, access_request.action_id()) {
+                match self.evaluate_pdp(&access_request, None, access_request.action_id(), true) {
                     PdpDecision::Allow => Ok(()),
                     PdpDecision::Deny(_) => Err(ActionDenial::Invisible),
                 }
