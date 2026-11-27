@@ -876,13 +876,17 @@ mod tests {
             ),
             vec![("a".to_owned(), "b".to_owned())]
         );
-        assert!(extract_self_equality_pairs("self.a == (self.b ?? ')') + 1").is_empty());
-        assert!(extract_self_equality_pairs("self.a == (self.b + 1)").is_empty());
-        assert!(extract_self_equality_pairs("self.a == (self.b ?? 0) + 1").is_empty());
-        assert!(extract_self_equality_pairs("self.a == self.b + 1").is_empty());
-        assert!(extract_self_equality_pairs("1 + self.a == self.b").is_empty());
-        assert!(extract_self_equality_pairs("(self.a + 1) == self.b").is_empty());
-        assert!(extract_self_equality_pairs("self.a !== (self.b ?? '')").is_empty());
-        assert!(extract_self_equality_pairs("self.a == (self.b ?? f(1)) + 1").is_empty());
+        for expr in [
+            "self.a == (self.b ?? ')') + 1",
+            "self.a == (self.b + 1)",
+            "self.a == (self.b ?? 0) + 1",
+            "self.a == self.b + 1",
+            "1 + self.a == self.b",
+            "(self.a + 1) == self.b",
+            "self.a !== (self.b ?? '')",
+            "self.a == (self.b ?? f(1)) + 1",
+        ] {
+            assert_eq!(extract_self_equality_pairs(expr), Vec::new(), "{expr}");
+        }
     }
 }
