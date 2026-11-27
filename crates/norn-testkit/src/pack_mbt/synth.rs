@@ -260,9 +260,8 @@ pub fn synthesize_object(
     seed: u64,
 ) -> JsonObject {
     let shared = shared_property_map(pack);
-    let initial_by_prop: BTreeMap<&str, &str> = object_type
-        .lifecycles
-        .iter()
+    let initial_by_prop: BTreeMap<&str, &str> = effective_lifecycles(pack, object_type)
+        .into_iter()
         .filter_map(|lc| {
             lc.initial
                 .first()
@@ -274,8 +273,9 @@ pub fn synthesize_object(
         .first()
         .map_or_default(|spec| spec.properties.iter().map(PropertyId::as_str).collect());
 
+    let props = effective_properties(pack, object_type);
     let mut values = JsonObject::new();
-    for prop in effective_properties(pack, object_type) {
+    for prop in &props {
         if prop.is_read_only() {
             continue;
         }
@@ -289,15 +289,100 @@ pub fn synthesize_object(
             continue;
         }
         if let Some(default) = prop.default
-            && let Some(converted) = json_default_to_runtime(default, &prop, &shared)
+            && let Some(converted) = json_default_to_runtime(default, prop, &shared)
         {
             values.insert(id.to_owned(), converted);
             continue;
         }
-        let synthesized = synthesize_property_value(&prop, &shared, key, seed);
+        let synthesized = synthesize_property_value(prop, &shared, key, seed);
         values.insert(id.to_owned(), synthesized);
     }
+    satisfy_effective_invariants(
+        pack,
+        object_type,
+        &props,
+        &initial_by_prop,
+        &key_props,
+        &mut values,
+    );
     values
+}
+
+fn effective_invariants(pack: &AdmittedPack, object_type: &ObjectTypeDef) -> Vec<ZenExpression> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    let chain = super::object_type_ancestors(pack, object_type);
+    for def in &chain {
+        for inv in &def.invariants {
+            if seen.insert(inv.id.as_str()) {
+                out.push(inv.expression.clone());
+            }
+        }
+    }
+    for owner in super::object_type_interfaces(pack, &chain) {
+        for inv in &owner.invariants {
+            if seen.insert(inv.id.as_str()) {
+                out.push(inv.expression.clone());
+            }
+        }
+    }
+    out
+}
+
+fn satisfy_effective_invariants(
+    pack: &AdmittedPack,
+    object_type: &ObjectTypeDef,
+    props: &[EffectiveProp<'_>],
+    initial_by_prop: &BTreeMap<&str, &str>,
+    key_props: &BTreeSet<&str>,
+    values: &mut JsonObject,
+) {
+    let invariants = effective_invariants(pack, object_type);
+    if invariants.is_empty() {
+        return;
+    }
+    let compiled = compile_guards(&invariants).ok();
+    let holds = |candidate: &JsonObject| match compiled.as_deref() {
+        Some(exprs) => evaluate_compiled_guards(exprs, candidate) == GuardEval::True,
+        None => guards_hold(&invariants, candidate),
+    };
+    if holds(values) {
+        return;
+    }
+    let nullable_props: Vec<&str> = props
+        .iter()
+        .filter(|prop| {
+            prop.nullable
+                && !prop.is_read_only()
+                && !initial_by_prop.contains_key(prop.id.as_str())
+                && !key_props.contains(prop.id.as_str())
+        })
+        .map(|prop| prop.id.as_str())
+        .take(6)
+        .collect();
+    if nullable_props.is_empty() {
+        return;
+    }
+    let combos = 1usize
+        .checked_shl(u32::try_from(nullable_props.len()).unwrap_or(0))
+        .unwrap_or(1);
+    for null_count in 1..=nullable_props.len() {
+        for mask in 1..combos {
+            if usize::try_from(mask.count_ones()).unwrap_or(usize::MAX) != null_count {
+                continue;
+            }
+            let mut candidate = values.clone();
+            for (idx, prop_id) in nullable_props.iter().enumerate() {
+                if (mask >> idx) & 1 == 1 {
+                    candidate.insert((*prop_id).to_owned(), JsonValue::Null);
+                }
+            }
+            if holds(&candidate) {
+                *values = candidate;
+                return;
+            }
+        }
+    }
 }
 
 /// Synthesizes an object that satisfies all declared `guards` for `lifecycle`
@@ -377,7 +462,7 @@ pub fn synthesize_guard_violating_at_state(
     if eval(&base) == GuardEval::False {
         return Some((base, None));
     }
-    let lifecycle_props = lifecycle_property_names(object_type, lifecycle);
+    let lifecycle_props = lifecycle_property_names(pack, object_type, lifecycle);
     for prop in effective_properties(pack, object_type) {
         let id = prop.id.as_str();
         if prop.is_read_only() || lifecycle_props.contains(id) {
@@ -450,9 +535,8 @@ pub fn pick_non_lifecycle_mutation(
     nonce: u64,
 ) -> Option<(String, JsonValue)> {
     let shared = shared_property_map(pack);
-    let lifecycle_props: BTreeSet<&str> = object_type
-        .lifecycles
-        .iter()
+    let lifecycle_props: BTreeSet<&str> = effective_lifecycles(pack, object_type)
+        .into_iter()
         .map(|lc| lc.property.as_str())
         .collect();
     let key_props: BTreeSet<&str> = object_type
@@ -579,7 +663,7 @@ fn apply_guard_positive_heuristics(
     guards: &[ZenExpression],
 ) {
     let shared = shared_property_map(pack);
-    let lifecycle_props = lifecycle_property_names(object_type, lifecycle);
+    let lifecycle_props = lifecycle_property_names(pack, object_type, lifecycle);
     for prop in effective_properties(pack, object_type) {
         let id = prop.id.as_str();
         if prop.is_read_only() || lifecycle_props.contains(id) {
@@ -650,13 +734,37 @@ fn shared_property_map(pack: &AdmittedPack) -> BTreeMap<&str, &PropertyTypeDef> 
         .collect()
 }
 
+fn effective_lifecycles<'a>(
+    pack: &'a AdmittedPack,
+    object_type: &'a ObjectTypeDef,
+) -> Vec<&'a Lifecycle> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    let chain = super::object_type_ancestors(pack, object_type);
+    for def in &chain {
+        for lc in &def.lifecycles {
+            if seen.insert(lc.property.as_str()) {
+                out.push(lc);
+            }
+        }
+    }
+    for owner in super::object_type_interfaces(pack, &chain) {
+        for lc in &owner.lifecycles {
+            if seen.insert(lc.property.as_str()) {
+                out.push(lc);
+            }
+        }
+    }
+    out
+}
+
 fn lifecycle_property_names<'a>(
+    pack: &'a AdmittedPack,
     object_type: &'a ObjectTypeDef,
     lifecycle: &'a Lifecycle,
 ) -> BTreeSet<&'a str> {
-    object_type
-        .lifecycles
-        .iter()
+    effective_lifecycles(pack, object_type)
+        .into_iter()
         .map(|lc| lc.property.as_str())
         .chain(std::iter::once(lifecycle.property.as_str()))
         .collect()
@@ -667,6 +775,7 @@ struct EffectiveProp<'a> {
     property_type: &'a PropertyType,
     read_only: bool,
     protected: bool,
+    nullable: bool,
     default: Option<&'a IrJsonValue>,
 }
 
@@ -691,6 +800,7 @@ fn effective_properties<'a>(
                     property_type: &prop.property_type,
                     read_only: prop.is_read_only(),
                     protected: prop.protected,
+                    nullable: prop.constraints.nullable,
                     default: prop.default.as_ref().map(|d| &d.0),
                 });
             }
@@ -704,6 +814,7 @@ fn effective_properties<'a>(
                     property_type: &prop.property_type,
                     read_only: false,
                     protected: false,
+                    nullable: prop.constraints.nullable,
                     default: None,
                 });
             }
@@ -863,7 +974,13 @@ fn synthesize_type_value_depth(
             }
         }
         PropertyType::Duration {} => JsonValue::String("PT1H".to_owned()),
-        PropertyType::Timestamp { .. } => JsonValue::String("2026-01-15T12:00:00Z".to_owned()),
+        PropertyType::Timestamp { .. } => {
+            if id.contains("end") || id.contains("to") {
+                JsonValue::String("2026-12-31T12:00:00Z".to_owned())
+            } else {
+                JsonValue::String("2026-01-15T12:00:00Z".to_owned())
+            }
+        }
         PropertyType::Record { members } => {
             let mut obj = JsonObject::new();
             if depth >= MAX_RECORD_SYNTH_DEPTH {

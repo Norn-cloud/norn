@@ -582,4 +582,57 @@ mod tests {
         assert!(plan.transitions.is_empty());
         assert_eq!(plan.immutable_targets.len(), 1);
     }
+
+    #[test]
+    fn synthesize_object_satisfies_interface_invariants_and_skips_inherited_lifecycle() {
+        let iface: InterfaceDef = serde_json::from_value(json!({
+            "name": "t.MeasuredCommitment",
+            "properties": [
+                { "id": "status", "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "requested" }, { "value": "fulfilled" }] } },
+                { "id": "unit", "constraints": { "nullable": true }, "type": { "kind": "text" } },
+                { "id": "currency", "constraints": { "nullable": true }, "type": { "kind": "text" } }
+            ],
+            "invariants": [{
+                "id": "single_measure",
+                "expression": "((self.unit != null) and (self.currency == null)) or ((self.unit == null) and (self.currency != null))",
+                "message": "either unit or currency"
+            }],
+            "lifecycles": [{
+                "property": "status",
+                "initial": ["requested"],
+                "terminal": ["fulfilled"],
+                "immutable": ["fulfilled"],
+                "transitions": [{ "id": "fulfil", "from": ["requested"], "to": "fulfilled" }]
+            }]
+        }))
+        .expect("interface decodes");
+        let obj: ObjectTypeDef = serde_json::from_value(json!({
+            "name": "t.Line",
+            "implements": ["t.MeasuredCommitment"],
+            "properties": [
+                { "id": "status", "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "requested" }, { "value": "fulfilled" }] } },
+                { "id": "note", "type": { "kind": "text" } },
+                { "id": "unit", "constraints": { "nullable": true }, "type": { "kind": "text" } },
+                { "id": "currency", "constraints": { "nullable": true }, "type": { "kind": "text" } }
+            ]
+        }))
+        .expect("object decodes");
+        let pack = AdmittedPack {
+            name: "inv".to_owned(),
+            object_types: vec![obj],
+            interfaces: vec![iface],
+            ..AdmittedPack::default()
+        };
+        let line = pack.object_types.first().expect("line type");
+        let values = synth::synthesize_object(&pack, line, "l1", 1);
+        assert_eq!(
+            values.get("status").and_then(JsonValue::as_str),
+            Some("requested")
+        );
+        let unit_null = matches!(values.get("unit"), Some(JsonValue::Null));
+        let currency_null = matches!(values.get("currency"), Some(JsonValue::Null));
+        assert_ne!(unit_null, currency_null);
+        let mutation = synth::pick_non_lifecycle_mutation(&pack, line, &values, 2);
+        assert_eq!(mutation.as_ref().map(|(id, _)| id.as_str()), Some("note"));
+    }
 }
