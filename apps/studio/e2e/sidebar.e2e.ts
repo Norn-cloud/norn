@@ -652,11 +652,22 @@ test("notifications say honestly that the cell sends none yet, and point to the 
 test("Home and Inbox show a local persisted Recent list for opened records, runs and views with Clear (#1774, DESIGN.md 18)", async ({ page }) => {
   test.skip(Boolean(process.env.E2E_BASE), "uses stand-in routes")
   await recorded(page)
+  const recordedVisit = (id: string) =>
+    expect.poll(() =>
+      page.evaluate((needle) =>
+        Object.entries(localStorage).some(([key, value]) => key.startsWith("norn.studio.recent:") && value.includes(needle)),
+      id),
+    ).toBe(true)
   await page.goto("/runs/run_demo_99")
+  await expect(rail(page)).toBeVisible()
   await settled(page)
+  await recordedVisit("run_demo_99")
   await page.goto("/views/view_demo_1")
+  await expect(rail(page)).toBeVisible()
   await settled(page)
+  await recordedVisit("view_demo_1")
   await page.goto("/")
+  await expect(rail(page)).toBeVisible()
   await settled(page)
   const homeMenu = menu(page, "Home")
   const recent = homeMenu.locator('[data-slot="recent-section"]')
@@ -665,6 +676,7 @@ test("Home and Inbox show a local persisted Recent list for opened records, runs
   await expect(recent).toContainText("run_demo_99")
   // Persists across reload and also appears on Inbox.
   await page.reload()
+  await expect(rail(page)).toBeVisible()
   await settled(page)
   await expect(recent).toBeVisible()
   await rail(page).getByRole("link", { name: /^Inbox/ }).click()
@@ -673,6 +685,7 @@ test("Home and Inbox show a local persisted Recent list for opened records, runs
   await menu(page, "Inbox").getByRole("button", { name: "Clear", exact: true }).click()
   await expect(menu(page, "Inbox").locator('[data-slot="recent-section"]')).toHaveCount(0)
   await page.reload()
+  await expect(rail(page)).toBeVisible()
   await settled(page)
   await expect(menu(page, "Inbox").locator('[data-slot="recent-section"]')).toHaveCount(0)
 })
