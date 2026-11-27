@@ -486,7 +486,7 @@ fn malformed_bodies_and_unknown_routes_are_refused_before_routing() {
     ] {
         assert_eq!(daemon.by(&host, &a, op, &body), uniform, "{op} {body}");
     }
-    // Any method but POST, whatever the credential.
+    // Any method but POST, whatever the credential without a matching scoped body.
     let get = |authorization: Option<&str>| daemon.send("GET", "frontier", authorization, "");
     assert_eq!(get(None), uniform);
     assert_eq!(
@@ -494,7 +494,15 @@ fn malformed_bodies_and_unknown_routes_are_refused_before_routing() {
         uniform
     );
     // Only the cell's own credential for that exact request and tenant gets
-    // past the scope to the router and the typed parse.
+    // past the scope to the router and the typed parse; non-POST still gets 404
+    // and opens no tenant database.
+    let signed_frontier = frontier(&a);
+    let signed_auth = format!("Bearer {}", mint(&host, &a, "frontier", &signed_frontier));
+    assert_eq!(
+        status(&daemon.send("PUT", "frontier", Some(&signed_auth), &signed_frontier)),
+        "404"
+    );
+    assert!(!daemon.database_exists(&a));
     let unknown = daemon.by(&host, &a, "nosuch", &frontier(&a));
     assert_eq!(status(&unknown), "404");
     let untyped = json!({ "tenant": &a, "world": WORLD }).to_string();
@@ -693,15 +701,7 @@ fn concurrent_landings_of_the_same_load_never_share_bytes() {
     let host = issuer("k1", 7);
     let daemon = daemon(&[&host]);
     let (a, b) = (tenant("org_a/prod"), tenant("org_b/prod"));
-    let csv = |prefix: &str, rows: usize| {
-        use std::fmt::Write as _;
-        let mut text = String::from("n\n");
-        for i in 0..rows {
-            writeln!(text, "{prefix}{i:06}").unwrap();
-        }
-        text.into_bytes()
-    };
-    let (bytes_a, bytes_b) = (csv("a", 4000), csv("b", 6000));
+    let (bytes_a, bytes_b) = (rows_csv("a", 4000), rows_csv("b", 6000));
     let store = overlapping_store(vec![
         ("/a.csv".to_owned(), bytes_a.clone()),
         ("/b.csv".to_owned(), bytes_b.clone()),

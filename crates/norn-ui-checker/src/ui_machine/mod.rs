@@ -137,13 +137,6 @@ pub(super) struct Finding {
 /// that decide it are the server's to evaluate, not this pass's.
 const INFO: [&str; 1] = [COMPLETION_UNKNOWN];
 
-/// Check the declared machine of every page in one widget's UX contract, without the declared
-/// error codes of its actions (a code-specific handler is then not judged).
-#[must_use]
-pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> {
-    check_with_codes(owner, ux, None)
-}
-
 /// Check the declared machine of every page in one widget's UX contract against the error codes
 /// its action bindings' actions declare.
 #[must_use]
@@ -156,14 +149,9 @@ pub(crate) fn check_with_codes(
     for (index, page) in ux.pages.iter().enumerate() {
         if let Some(machine) = &page.machine {
             let base = format!("/payload/ux/pages/{index}/machine");
-            let checker = MachineChecker {
-                ux,
-                codes,
-                in_catalog: false,
-                machine,
-                base: &base,
-                findings: Vec::new(),
-            };
+            let mut held = BTreeMap::new();
+            collect_held(&page.root, &[], &mut held);
+            let checker = MachineChecker::new(ux, codes, false, machine, held, &base);
             findings.extend(checker.run(Some(page)));
         }
     }
@@ -172,17 +160,35 @@ pub(crate) fn check_with_codes(
     for (index, entry) in ux.catalog.iter().enumerate() {
         if let Some(machine) = &entry.machine {
             let base = format!("/payload/ux/catalog/{index}/machine");
-            let checker = MachineChecker {
-                ux,
-                codes,
-                in_catalog: true,
-                machine,
-                base: &base,
-                findings: Vec::new(),
-            };
+            let checker = MachineChecker::new(ux, codes, true, machine, BTreeMap::new(), &base);
             findings.extend(checker.run(None));
         }
     }
+    to_diagnostics(owner, findings)
+}
+
+/// Check only the declared machines of catalog entries in `entry_ids`.
+#[must_use]
+pub(crate) fn check_catalog_entries(
+    owner: &ArtifactEnvelope,
+    ux: &WidgetUx,
+    entry_ids: &BTreeSet<String>,
+) -> Vec<Diagnostic> {
+    let mut findings = Vec::new();
+    for (index, entry) in ux.catalog.iter().enumerate() {
+        if !entry_ids.contains(&entry.entry_id) {
+            continue;
+        }
+        if let Some(machine) = &entry.machine {
+            let base = format!("/payload/ux/catalog/{index}/machine");
+            let checker = MachineChecker::new(ux, None, true, machine, BTreeMap::new(), &base);
+            findings.extend(checker.run(None));
+        }
+    }
+    to_diagnostics(owner, findings)
+}
+
+fn to_diagnostics(owner: &ArtifactEnvelope, findings: Vec<Finding>) -> Vec<Diagnostic> {
     findings
         .into_iter()
         .map(|finding| Diagnostic {
@@ -393,6 +399,31 @@ fn initial_fits(value: &JsonValue, value_type: WidgetValueType, required: bool) 
     }
 }
 
+/// Each node of `node`'s tree to the `heldIn` lists of it and of the catalog nodes above it: the
+/// renderer draws a node in a state only when every one of them names that state, so only there
+/// can a person raise its events. It mirrors the renderer's catalog paths (`nodes.tsx`): a layer
+/// (a UI SDK primitive a person dismisses) draws through `Layer`, open only in the states its
+/// `heldIn` names, so one held in no state is drawn in none; any other primitive or island held
+/// in no state is drawn in all of them.
+pub(super) fn collect_held<'n>(
+    node: &'n WidgetNode,
+    above: &[&'n [String]],
+    out: &mut BTreeMap<&'n str, Vec<&'n [String]>>,
+) {
+    let mut lists = above.to_vec();
+    if let WidgetComponent::Catalog { held_in, .. } = &node.component
+        && (!held_in.is_empty()
+            || crate::ui_sdk::primitive_of(node)
+                .is_some_and(|(_, primitive)| !primitive.dismiss_attempts.is_empty()))
+    {
+        lists.push(held_in);
+    }
+    for child in &node.children {
+        collect_held(child, &lists, out);
+    }
+    out.insert(node.node_id.as_str(), lists);
+}
+
 pub(super) fn collect_nodes<'n>(
     node: &'n WidgetNode,
     out: &mut BTreeMap<&'n str, &'n WidgetComponent>,
@@ -427,18 +458,22 @@ pub(crate) fn machine_env(env: Env<'_>) -> Result<ZenTypeEnv, String> {
 /// a guard (the page's or a catalog component's) decides it, or when it handles one refusal code. Transitions that name an undeclared
 /// state or event, or leave a terminal state, are reported by the laws and left out.
 pub(crate) fn page_net(machine: &WidgetMachine) -> Net {
-    let index = |id: &str| machine.states.iter().position(|state| state.state_id == id);
+    let mut state_index = BTreeMap::new();
+    for (index, state) in machine.states.iter().enumerate() {
+        state_index.entry(state.state_id.as_str()).or_insert(index);
+    }
+    let mut event_index = BTreeMap::new();
+    for event in &machine.events {
+        event_index.entry(event.event_id.as_str()).or_insert(event);
+    }
     let edges = machine
         .transitions
         .iter()
         .enumerate()
         .filter_map(|(label, transition)| {
-            let from = index(&transition.from)?;
-            let to = index(&transition.target)?;
-            let event = machine
-                .events
-                .iter()
-                .find(|event| event.event_id == transition.on)?;
+            let from = *state_index.get(transition.from.as_str())?;
+            let to = *state_index.get(transition.target.as_str())?;
+            let event = *event_index.get(transition.on.as_str())?;
             if machine.states.get(from)?.role == WidgetStateRole::Terminal {
                 return None;
             }
@@ -458,7 +493,11 @@ pub(crate) fn page_net(machine: &WidgetMachine) -> Net {
         .collect();
     Net {
         states: machine.states.len(),
-        initial: index(&machine.initial_state_id).into_iter().collect(),
+        initial: state_index
+            .get(machine.initial_state_id.as_str())
+            .copied()
+            .into_iter()
+            .collect(),
         endings: machine
             .states
             .iter()
@@ -476,12 +515,17 @@ pub(crate) fn page_net(machine: &WidgetMachine) -> Net {
 pub(super) struct Facts<'m> {
     /// States with an unguarded exit a person drives (Retry or Close).
     pub(super) recovers: BTreeSet<&'m str>,
+    /// Transitions on a user event whose source node is not drawn in the state they leave: no
+    /// person can take them, so they are no edge of the page's net.
+    pub(super) held_out: BTreeSet<usize>,
     /// `(state, refusal code)` to the code-specific transitions that handle it.
     pub(super) coded: BTreeMap<(&'m str, &'m str), Vec<usize>>,
     /// States a failure outcome enters, with the transition that enters each.
     pub(super) failures: BTreeMap<&'m str, usize>,
     /// Pending states that offer a cancel.
     pub(super) cancellable: BTreeSet<&'m str>,
+    /// `(transition_index, from_state)` pairs handling `WidgetCallOutcome::Cancelled`.
+    pub(super) cancelled_transitions: Vec<(usize, &'m str)>,
     /// `(state, event)` to unguarded transition indexes, for non-outcome events.
     pub(super) unguarded: BTreeMap<(&'m str, &'m str), Vec<usize>>,
     /// `state` to outcome value to unguarded transitions: `(index, specific)`, where `specific`
@@ -497,11 +541,46 @@ pub(super) struct MachineChecker<'m> {
     /// Checking a catalog entry's own machine (component guards allowed).
     pub(super) in_catalog: bool,
     pub(super) machine: &'m WidgetMachine,
+    /// Each node of the page's tree to the `heldIn` lists that decide where it is drawn
+    /// ([`collect_held`]); empty for a catalog entry's machine, whose nodes the contract does
+    /// not enumerate.
+    pub(super) held: BTreeMap<&'m str, Vec<&'m [String]>>,
+    pub(super) state_index: BTreeMap<&'m str, &'m WidgetMachineState>,
+    pub(super) event_index: BTreeMap<&'m str, &'m WidgetMachineEvent>,
     pub(super) base: &'m str,
     pub(super) findings: Vec<Finding>,
 }
 
 impl<'m> MachineChecker<'m> {
+    fn new(
+        ux: &'m WidgetUx,
+        codes: Option<&'m DeclaredCodes>,
+        in_catalog: bool,
+        machine: &'m WidgetMachine,
+        held: BTreeMap<&'m str, Vec<&'m [String]>>,
+        base: &'m str,
+    ) -> Self {
+        let mut state_index = BTreeMap::new();
+        for state in &machine.states {
+            state_index.entry(state.state_id.as_str()).or_insert(state);
+        }
+        let mut event_index = BTreeMap::new();
+        for event in &machine.events {
+            event_index.entry(event.event_id.as_str()).or_insert(event);
+        }
+        Self {
+            ux,
+            codes,
+            in_catalog,
+            machine,
+            held,
+            state_index,
+            event_index,
+            base,
+            findings: Vec::new(),
+        }
+    }
+
     pub(super) fn push(&mut self, code: &'static str, pointer: String, message: String) {
         self.findings.push(Finding {
             code,
@@ -529,17 +608,11 @@ impl<'m> MachineChecker<'m> {
     }
 
     pub(super) fn state(&self, id: &str) -> Option<&'m WidgetMachineState> {
-        self.machine
-            .states
-            .iter()
-            .find(|state| state.state_id == id)
+        self.state_index.get(id).copied()
     }
 
     pub(super) fn event(&self, id: &str) -> Option<&'m WidgetMachineEvent> {
-        self.machine
-            .events
-            .iter()
-            .find(|event| event.event_id == id)
+        self.event_index.get(id).copied()
     }
 
     pub(super) fn check_call(&mut self, call: &WidgetMachineCall, pointer: &str) {
@@ -549,11 +622,17 @@ impl<'m> MachineChecker<'m> {
                 .action_bindings
                 .iter()
                 .any(|binding| &binding.binding_id == binding_id),
-            WidgetMachineCall::Read { binding_id } => self
-                .ux
-                .data_bindings
-                .iter()
-                .any(|binding| &binding.binding_id == binding_id),
+            WidgetMachineCall::Read { binding_id } => {
+                self.ux
+                    .data_bindings
+                    .iter()
+                    .any(|binding| &binding.binding_id == binding_id)
+                    || self
+                        .ux
+                        .context_reads
+                        .iter()
+                        .any(|read| &read.binding_id == binding_id)
+            }
             WidgetMachineCall::Operation { operation_id } => {
                 !operation_id.is_empty()
                     && operation_id
@@ -607,14 +686,14 @@ impl<'m> MachineChecker<'m> {
         }
     }
 
-    pub(super) fn check_expression(
+    pub(super) fn check_expression_with_env(
         &mut self,
         source: &str,
-        env: Env<'_>,
+        env: &Result<ZenTypeEnv, String>,
         expected: &Type,
         pointer: String,
     ) {
-        let env = match machine_env(env) {
+        let env = match env {
             Ok(env) => env,
             Err(error) => {
                 self.push(
@@ -636,7 +715,7 @@ impl<'m> MachineChecker<'m> {
                 return;
             }
         };
-        if let Err(errors) = check_expression(&expression, &env, expected) {
+        if let Err(errors) = check_expression(&expression, env, expected) {
             for error in errors {
                 self.push(
                     INVALID_EXPRESSION,

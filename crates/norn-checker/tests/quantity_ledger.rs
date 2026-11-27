@@ -823,3 +823,88 @@ fn pack_diagnostics_keep_first_findings_and_refuse_at_count_or_json_byte_budget(
         assert_eq!(validate_ledger_pack(&candidate), refusal);
     }
 }
+
+#[test]
+fn cons_linear_auto_lowering_certifies_sealed_pack_without_altering_digests() {
+    use norn_checker::obligations::conservation::{
+        Failure, InstalledActions, certify_ledger_pack, certify_ledger_pack_ir,
+        certify_ledger_pack_seal, certify_quantity_actions,
+    };
+    use norn_ir::{
+        ActionQuantityEffect, ActionQuantityOperation, ActionQuantityParameter, ActionRoot,
+        WholeNumber,
+    };
+
+    let pack = symbolic_pack("1");
+    let pack_digest_before = ledger_pack_sha256(&pack);
+    let seal = seal_ledger_pack(&pack).expect("balanced pack seals");
+    let cert =
+        certify_ledger_pack(seal.compiled()).expect("sealed pack certifies via CONS-LINEAR-1");
+    assert_eq!(cert.pack_id, "pack.symbolic");
+    assert_eq!(cert.pack_sha256, None);
+    assert_eq!(cert.templates_checked, 1);
+    assert_eq!(cert.coordinates_checked, 2);
+    assert_eq!(cert.partitions_checked, 1);
+    assert_eq!(seal.compiled().certify_conservation(), Ok(cert));
+    let seal_cert = certify_ledger_pack_seal(&seal).expect("seal certifies with pack digest");
+    assert_eq!(seal_cert.pack_sha256.as_deref(), Some(seal.pack_sha256()));
+    assert_eq!(certify_ledger_pack_ir(&pack), Ok(seal_cert));
+    assert_eq!(ledger_pack_sha256(&pack), pack_digest_before);
+
+    // Unbalanced symbolic pack produces an algebraic Unbalanced witness from CONS-LINEAR-1.
+    let unbalanced = symbolic_pack("2");
+    assert!(matches!(
+        certify_ledger_pack_ir(&unbalanced),
+        Err(Failure::Unbalanced { ref writer, column: 0, .. }) if writer == "move"
+    ));
+
+    // ActionQuantityEffect Reserve + PostReservation certify cleanly against the sealed pack.
+    let ledgers = BTreeMap::from([("stock".to_string(), seal.compiled().clone())]);
+    let mut reserve: ActionRoot = serde_json::from_value(serde_json::json!({
+        "actionId": "stock.reserve_move",
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": false,
+        "ledgered": true,
+        "inputSchema": {"type": "object"},
+        "outputSchema": {"type": "object"}
+    }))
+    .expect("reserve action");
+    reserve.quantity_effect = Some(ActionQuantityEffect {
+        ledger_id: "stock".to_string(),
+        balance_versions_field: "balanceVersions".to_string(),
+        operation: ActionQuantityOperation::Reserve {
+            reservation_id_field: "reservationId".to_string(),
+            template_id: "move".to_string(),
+            parameters: BTreeMap::from([(
+                "quantity".to_string(),
+                ActionQuantityParameter {
+                    field: "qty".to_string(),
+                    scale: WholeNumber(2),
+                },
+            )]),
+            ttl_ms: WholeNumber(30_000),
+        },
+    });
+    let mut post: ActionRoot = serde_json::from_value(serde_json::json!({
+        "actionId": "stock.post_move",
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": false,
+        "ledgered": true,
+        "inputSchema": {"type": "object"},
+        "outputSchema": {"type": "object"}
+    }))
+    .expect("post action");
+    post.quantity_effect = Some(ActionQuantityEffect {
+        ledger_id: "stock".to_string(),
+        balance_versions_field: "balanceVersions".to_string(),
+        operation: ActionQuantityOperation::PostReservation {
+            reservation_id_field: "reservationId".to_string(),
+            posting_id_field: "postingId".to_string(),
+        },
+    });
+    let actions_cert =
+        certify_quantity_actions(&[reserve, post], &ledgers, &InstalledActions::none())
+            .expect("quantity actions certify");
+    assert_eq!(actions_cert.actions_checked, 2);
+    assert_eq!(actions_cert.templates_checked, 2);
+}

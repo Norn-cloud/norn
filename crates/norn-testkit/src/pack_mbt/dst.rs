@@ -199,13 +199,12 @@ where
     let targets: Vec<TargetSpec<'_>> = pack
         .object_types
         .iter()
-        .filter_map(|ty| {
+        .flat_map(|ty| {
             catalog
                 .lifecycles(&ty.name)
                 .into_values()
-                .next()
                 .filter(|lc| !lc.initial.is_empty() && !lc.transitions.is_empty())
-                .map(|lifecycle| TargetSpec {
+                .map(move |lifecycle| TargetSpec {
                     object_type: ty,
                     lifecycle,
                 })
@@ -411,10 +410,12 @@ impl<H: PackHost> DstCaseState<'_, H> {
         values.insert(prop.to_owned(), JsonValue::String(init_state.clone()));
         let key = FactKey::new(ty_name, &id);
         let (pack, catalog, ty) = (self.pack, self.catalog, target.object_type);
-        let mut graph = collect_required_link_graph(pack, ty, &key, nonce)?;
-        stamp_link_targets(self.host, pack, catalog, &mut graph.setup_writes, nonce)?;
-        let before = self.host.ledger_len();
         let already_exists = self.model.contains_key(&(type_idx, slot));
+        let mut graph = collect_required_link_graph(pack, ty, &key, nonce)?;
+        if !already_exists {
+            stamp_link_targets(self.host, pack, catalog, &mut graph.setup_writes, nonce)?;
+        }
+        let before = self.host.ledger_len();
         let meta = CreateStepOutcome {
             id_pair: (type_idx, slot),
             ty_name,
@@ -425,13 +426,14 @@ impl<H: PackHost> DstCaseState<'_, H> {
             already_exists,
             before,
         };
-        if let Some(res) = seed_stamped(self.host, pack, catalog, ty, &id, &values, nonce)? {
-            // The governed create seeds its slice targets first; only its own commit is the step's.
-            let before = self
-                .host
-                .ledger_len()
-                .saturating_sub(usize::from(res.is_ok()));
-            return self.finish_create_step(CreateStepOutcome { before, ..meta }, res);
+        if let Some(outcome) = seed_stamped(self.host, pack, catalog, ty, &id, &values, nonce)? {
+            return self.finish_create_step(
+                CreateStepOutcome {
+                    before: outcome.before_commit,
+                    ..meta
+                },
+                outcome.result,
+            );
         } else if graph.direct_links.is_empty() {
             let res = self.commit_single_fact(
                 &key,

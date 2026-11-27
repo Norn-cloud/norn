@@ -32,11 +32,9 @@
 //! Evaluation reads no clock for its result, does no IO, and builds for
 //! `wasm32-unknown-unknown`.
 //!
-//! Still to come: per-node expression type checking against the declared
-//! slice at admission (T3-DEC-3 #2671, T1-EXPR-5 #2523), which is also what
-//! rules out ambient-time builtins; the T1-EXPR-6 profile corpus (#2766); the
-//! DMN TCK subset (T6-DMN-1 #2688). The kernel commits the output
-//! (`norn_kernel::commit_decision`, #2535).
+//! The kernel commits validated decision outputs (`norn_kernel::commit_decision`),
+//! while `norn-checker` owns admission-time expression type checking, the profile
+//! corpus, and static table checks.
 //!
 //! ```
 //! # use std::collections::BTreeMap;

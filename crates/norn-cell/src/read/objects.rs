@@ -753,7 +753,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     }
 
     /// Whether any object type in the active model declares a property marking.
-    fn model_declares_markings(&self) -> bool {
+    pub(super) fn model_declares_markings(&self) -> bool {
         self.model.object_types().any(|definition| {
             self.model
                 .effective_property_markings(definition.name.as_str())
@@ -765,7 +765,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// catalog (independently of `Model` property declarations). Strictly
     /// decodes every retained entity payload so malformed marking catalogs fail
     /// closed rather than falling through to the fast path.
-    fn has_retained_marking_catalog(&self) -> Result<bool, CellError> {
+    pub(super) fn has_retained_marking_catalog(&self) -> Result<bool, CellError> {
         let version = self.active_definitions_version()?;
         let Some(set) = self.installed_definitions(version)? else {
             return Ok(false);
@@ -808,9 +808,12 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// Whether any non-tombstone historical version of `object_type` (or a
     /// subtype) in `world` lacks an immutable marking snapshot or a property
     /// marking row for `property` (fail closed when historical classification
-    /// evidence is missing or the indexed root range exceeds
-    /// [`MAX_HISTORY_COMPLETENESS_SCAN`], #1559 S2c).
-    fn property_history_unclassified(
+    /// evidence is missing or the indexed root range exceeds the history
+    /// completeness scan bound, #1559 S2c).
+    ///
+    /// # Errors
+    /// Unknown type or a SQL-engine error.
+    pub fn property_history_unclassified(
         &self,
         world: &str,
         object_type: &str,
@@ -906,92 +909,5 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             }
         }
         Ok(false)
-    }
-
-    /// PRIVACY-4 / S2 (#1547, #1559): verify that no grouped or filtered path
-    /// of `plan` (including every lowered sum's metric default filters) reads
-    /// marked or unclassified values in `world`. When `historical` is true,
-    /// any current, past or deleted version of a referenced property that holds
-    /// a label or lacks immutable classification evidence is refused.
-    ///
-    /// Pass `has_marking_catalog = true` when the caller already knows the
-    /// active definition catalog declares markings; when `false`, the guard
-    /// still resolves the retained definition catalog, model property markings,
-    /// and stored markings (`Self::stores_markings`) before taking the fast
-    /// path.
-    ///
-    /// # Errors
-    /// Unknown type, malformed retained definitions, or a SQL-engine error.
-    pub fn check_question_markings(
-        &self,
-        plan: &norn_checker::metric::compute::QuestionPlan,
-        world: &str,
-        historical: bool,
-        has_marking_catalog: bool,
-    ) -> Result<Option<MarkedQuestionPath>, CellError> {
-        self.check_live()?;
-        let question = plan.question();
-        if question.dimensions.is_empty()
-            && question.filters.is_empty()
-            && plan.sums().iter().all(|sum| sum.filters.is_empty())
-        {
-            return Ok(None);
-        }
-        if !has_marking_catalog
-            && !self.model_declares_markings()
-            && !self.stores_markings()?
-            && !self.has_retained_marking_catalog()?
-        {
-            return Ok(None);
-        }
-        let paths = question
-            .dimensions
-            .iter()
-            .enumerate()
-            .map(|(index, dimension)| (format!("/question/groupBy/{index}"), &dimension.path))
-            .chain(
-                question
-                    .filters
-                    .iter()
-                    .enumerate()
-                    .map(|(index, filter)| (format!("/question/filter/{index}"), &filter.path)),
-            )
-            .chain(plan.sums().iter().flat_map(|sum| {
-                sum.filters.iter().enumerate().map(move |(index, filter)| {
-                    (
-                        format!("/metric/{}/norn/defaultFilters/{index}", sum.name),
-                        &filter.path,
-                    )
-                })
-            }));
-        for (pointer, path) in paths {
-            let property = path.property.as_str();
-            let types: Vec<String> = if path.links.is_empty() {
-                vec![plan.grain().as_str().to_owned()]
-            } else {
-                self.model
-                    .object_types()
-                    .map(|definition| definition.name.as_str().to_owned())
-                    .filter(|name| {
-                        self.model
-                            .effective_property_types(name)
-                            .is_ok_and(|properties| properties.iter().any(|(id, _)| id == property))
-                    })
-                    .collect()
-            };
-            for object_type in types {
-                if historical
-                    && (self.property_history_marked(world, &object_type, property)?
-                        || self.property_history_unclassified(world, &object_type, property)?)
-                {
-                    return Ok(Some(MarkedQuestionPath::History { pointer }));
-                }
-                let labels = self.property_marking_summary(world, &object_type, property)?;
-                if !labels.is_some_and(|labels| labels.is_empty()) {
-                    return Ok(Some(MarkedQuestionPath::Live { pointer }));
-                }
-            }
-        }
-        Ok(None)
     }
 }
