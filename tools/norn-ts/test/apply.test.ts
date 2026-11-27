@@ -1,6 +1,16 @@
 import { expect, test } from "bun:test"
 import { resolve } from "node:path"
-import { APPLY_PATH, PLAN_PATH, change, credentialsAllowed } from "../src/apply.ts"
+import {
+  APPLY_PATH,
+  PLAN_PATH,
+  change,
+  credentialsAllowed,
+  extractCookieHeader,
+  normalizeTargetUrl,
+  parseCookieDate,
+  post,
+  readBoundedText,
+} from "../src/apply.ts"
 
 // HOST-INSTALL-1 client: `norn apply` plans first, applies against the planned
 // revision, and stops at the cell's refusal. The cell itself is pinned by
@@ -125,6 +135,292 @@ test("credentials go only over HTTPS or to loopback", () => {
   expect(credentialsAllowed("http://127.0.0.1:8787")).toBe(true)
   expect(credentialsAllowed("http://studio.example/api/host")).toBe(false)
   expect(credentialsAllowed("http://localhost.example")).toBe(false)
+  expect(credentialsAllowed("https://studio.example/api/host?extra=1")).toBe(false)
+  expect(credentialsAllowed("https://studio.example/api/host#frag")).toBe(false)
+  expect(credentialsAllowed("https://studio.example/api/host?")).toBe(false)
+  expect(credentialsAllowed("https://studio.example/api/host#")).toBe(false)
+  expect(credentialsAllowed("https://user:pass@studio.example/api/host")).toBe(false)
+})
+
+test("normalizeTargetUrl rejects query strings, fragments, userinfo, and non-HTTP schemes", () => {
+  expect(normalizeTargetUrl("https://studio.example/api/host///")).toBe("https://studio.example/api/host")
+  expect(normalizeTargetUrl("http://127.0.0.1:8787/")).toBe("http://127.0.0.1:8787")
+  for (const bad of [
+    "https://studio.example/api/host?foo=bar",
+    "https://studio.example/api/host?",
+    "https://studio.example/api/host#section",
+    "https://studio.example/api/host#",
+    "https://alice:secret@studio.example/api/host",
+    "ftp://studio.example/api/host",
+    "not-a-url",
+  ]) {
+    expect(() => normalizeTargetUrl(bad)).toThrow()
+  }
+
+  let redactedError = ""
+  try {
+    normalizeTargetUrl("https://alice:pwsecret@studio.example/api/host?token=querysecret#fragsecret")
+  } catch (error) {
+    redactedError = error instanceof Error ? error.message : String(error)
+  }
+  expect(redactedError).toContain("?<redacted>#<redacted>")
+  expect(redactedError).not.toContain("pwsecret")
+  expect(redactedError).not.toContain("querysecret")
+  expect(redactedError).not.toContain("fragsecret")
+})
+
+test("extractCookieHeader deduplicates cookies last-write-wins and honors Max-Age/Expires deletions", () => {
+  const now = Date.parse("2026-11-26T21:00:00Z")
+  expect(
+    extractCookieHeader(
+      [
+        "session=old; Path=/; HttpOnly",
+        "csrf=tok1; Path=/",
+        "session=new; Path=/; Secure",
+      ],
+      now,
+    ),
+  ).toBe("session=new; csrf=tok1")
+
+  // Max-Age=0 deletes an earlier cookie.
+  expect(
+    extractCookieHeader(
+      [
+        "session=old; Path=/",
+        "session=; Max-Age=0; Path=/",
+        "theme=dark; Path=/",
+      ],
+      now,
+    ),
+  ).toBe("theme=dark")
+
+  // Max-Age takes precedence over Expires per RFC 6265 §5.3.
+  expect(
+    extractCookieHeader(
+      [
+        "session=alive; Max-Age=3600; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/",
+        "gone=1; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/",
+      ],
+      now,
+    ),
+  ).toBe("session=alive")
+
+  // Duplicate Expires attributes: the last valid RFC 6265 cookie-date wins;
+  // invalid values like "0" or "not-a-date" are ignored (RFC 6265 §5.1.1).
+  expect(parseCookieDate("0")).toBeUndefined()
+  expect(parseCookieDate("not-a-date")).toBeUndefined()
+  expect(parseCookieDate("Feb 30 2027 00:00:00 GMT")).toBeUndefined()
+  expect(parseCookieDate("01 Jan☃ 2027 00:00:00 GMT")).toBeUndefined()
+  expect(parseCookieDate("01x\ny Jan 2027 00:00:00 GMT")).toBe(Date.UTC(2027, 0, 1, 0, 0, 0))
+  expect(parseCookieDate("Thu, 01 Jan 1970 00:00:00 GMT")).toBe(0)
+  expect(
+    extractCookieHeader(
+      [
+        "revived=ok; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Expires=Fri, 01 Jan 2027 00:00:00 GMT",
+        "expired=no; Expires=Fri, 01 Jan 2027 00:00:00 GMT; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+        "past_then_invalid=no; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Expires=not-a-date",
+        "future_then_zero=ok; Expires=Fri, 01 Jan 2027 00:00:00 GMT; Expires=0",
+        "kept=yes; Expires=Fri, 01 Jan 2027 00:00:00 GMT; Expires=not-a-date",
+      ],
+      now,
+    ),
+  ).toBe("revived=ok; future_then_zero=ok; kept=yes")
+
+  // Malformed or CRLF-containing cookies are skipped.
+  expect(
+    extractCookieHeader(["noequals", "=noname", "bad=a\r\nb", "ok=1=2; Path=/"], now),
+  ).toBe("ok=1=2")
+})
+
+test("readBoundedText decodes split multi-byte UTF-8 chunks and does not hang on stalled stream cancellation", async () => {
+  // Split 3-byte "€" (e2 82 ac) and 4-byte "🚀" (f0 9f 9a 80) across chunk boundaries.
+  const full = new TextEncoder().encode("{\"currency\":\"€\",\"rocket\":\"🚀\"}")
+  const splitA = full.indexOf(0x82)
+  const splitB = full.indexOf(0x9a)
+  const utf8Stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(full.subarray(0, splitA))
+      controller.enqueue(full.subarray(splitA, splitB))
+      controller.enqueue(full.subarray(splitB))
+      controller.close()
+    },
+  })
+  const decoded = await readBoundedText(new Response(utf8Stream), 1024, "utf8", Date.now() + 5_000)
+  expect(JSON.parse(decoded)).toEqual({ currency: "€", rocket: "🚀" })
+
+  // Stalled cancellation after chunk 1 was read must still reject promptly at deadline.
+  let pulledCount = 0
+  let cancelCalled = false
+  const stalledStream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulledCount++
+      if (pulledCount === 1) {
+        controller.enqueue(new TextEncoder().encode("{\"partial\":"))
+        return
+      }
+      return new Promise(() => {})
+    },
+    cancel() {
+      cancelCalled = true
+      return new Promise(() => {})
+    },
+  })
+  const startedAt = Date.now()
+  await expect(
+    readBoundedText(new Response(stalledStream), 1024, PLAN_PATH, startedAt + 50),
+  ).rejects.toThrow(`${PLAN_PATH} timed out reading response`)
+  expect(pulledCount).toBeGreaterThanOrEqual(2)
+  expect(cancelCalled).toBe(true)
+  expect(Date.now() - startedAt).toBeLessThan(1_000)
+
+  // Stalled cancellation on Content-Length limit refusal must also return promptly.
+  let clCancelCalled = false
+  const clStream = new ReadableStream<Uint8Array>({
+    cancel() {
+      clCancelCalled = true
+      return new Promise(() => {})
+    },
+  })
+  await expect(
+    readBoundedText(
+      new Response(clStream, { headers: { "content-length": "99999" } }),
+      256,
+      PLAN_PATH,
+      Date.now() + 5_000,
+    ),
+  ).rejects.toThrow(`${PLAN_PATH} response exceeds size limit (256 bytes)`)
+  expect(clCancelCalled).toBe(true)
+})
+
+test("post enforces response byte bounds, HTTP timeouts, redirects, and target URL validation", async () => {
+  let streamSlowChunkSent = false
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const url = new URL(request.url)
+      if (url.pathname === "/redirect/v1/cell/definitions:plan") {
+        return new Response(null, { status: 302, headers: { location: "https://evil.example/" } })
+      }
+      if (url.pathname === "/large/v1/cell/definitions:plan") {
+        return new Response(JSON.stringify({ pad: "x".repeat(4096) }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url.pathname === "/stream-large/v1/cell/definitions:plan") {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("{\"a\":\""))
+              controller.enqueue(new TextEncoder().encode("y".repeat(2048)))
+              controller.enqueue(new TextEncoder().encode("\"}"))
+              controller.close()
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )
+      }
+      if (url.pathname === "/slow/v1/cell/definitions:plan") {
+        await Bun.sleep(500)
+        return Response.json({ ok: true })
+      }
+      if (url.pathname === "/stream-slow/v1/cell/definitions:plan") {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(new TextEncoder().encode("{\"ok\":"))
+              streamSlowChunkSent = true
+              await Bun.sleep(500)
+              try {
+                controller.enqueue(new TextEncoder().encode("true}"))
+                controller.close()
+              } catch {
+                // Stream already cancelled on timeout.
+              }
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )
+      }
+      return Response.json({ ok: true })
+    },
+  })
+  try {
+    await expect(
+      post({ url: `http://127.0.0.1:${server.port}/api?inject=1`, org: "o", env: "e", headers: {} }, PLAN_PATH, {}),
+    ).rejects.toThrow("query or fragment")
+
+    await expect(
+      post({ url: `http://127.0.0.1:${server.port}/redirect`, org: "o", env: "e", headers: {} }, PLAN_PATH, {}),
+    ).rejects.toThrow("unexpected redirect (302)")
+
+    await expect(
+      post(
+        { url: `http://127.0.0.1:${server.port}/large`, org: "o", env: "e", headers: {}, maxResponseBytes: 256 },
+        PLAN_PATH,
+        {},
+      ),
+    ).rejects.toThrow("exceeds size limit")
+
+    await expect(
+      post(
+        { url: `http://127.0.0.1:${server.port}/stream-large`, org: "o", env: "e", headers: {}, maxResponseBytes: 256 },
+        PLAN_PATH,
+        {},
+      ),
+    ).rejects.toThrow("exceeds size limit")
+
+    let slowError: unknown
+    try {
+      await post(
+        { url: `http://127.0.0.1:${server.port}/slow`, org: "o", env: "e", headers: {}, timeoutMs: 50 },
+        PLAN_PATH,
+        {},
+      )
+    } catch (error) {
+      slowError = error
+    }
+    expect(slowError).toBeInstanceOf(Error)
+    expect((slowError as Error).name).toBe("TimeoutError")
+
+    // Observe the first chunk on the client side before the body read times out.
+    let clientObservedFirstChunk = ""
+    let sawAbortSignal = false
+    const tappedFetch = async (input: string, init?: RequestInit): Promise<Response> => {
+      sawAbortSignal = init?.signal instanceof AbortSignal
+      const { signal: _signal, ...rest } = init ?? {}
+      const upstream = await fetch(input, rest)
+      if (!upstream.body) return upstream
+      const tapped = upstream.body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            clientObservedFirstChunk += new TextDecoder().decode(chunk)
+            controller.enqueue(chunk)
+          },
+        }),
+      )
+      return new Response(tapped, { status: upstream.status, headers: upstream.headers })
+    }
+    await expect(
+      post(
+        {
+          url: `http://127.0.0.1:${server.port}/stream-slow`,
+          org: "o",
+          env: "e",
+          headers: {},
+          timeoutMs: 120,
+          fetchImpl: tappedFetch,
+        },
+        PLAN_PATH,
+        {},
+      ),
+    ).rejects.toThrow(`${PLAN_PATH} timed out reading response`)
+    expect(sawAbortSignal).toBe(true)
+    expect(streamSlowChunkSent).toBe(true)
+    expect(clientObservedFirstChunk).toBe("{\"ok\":")
+  } finally {
+    server.stop(true)
+  }
 })
 
 // #1469 S8: `norn apply <project-root>` reads the project through the shared
@@ -225,6 +521,15 @@ test("apply CLI rejects non-integer --expected-version and worker rejects escapi
 
     for (const bad of [["--expected-version", "abc"], ["--expected-version", "--json"], ["--expected-version", "-1"]]) {
       const code = await main("apply", [projectDir, "--url", "http://127.0.0.1:1", "--org", "o1", "--env", "e1", ...bad])
+      expect(code).toBe(2)
+    }
+
+    for (const badUrl of [
+      "https://studio.example/api/host?extra=1",
+      "https://studio.example/api/host#frag",
+      "https://user:secret@studio.example/api/host",
+    ]) {
+      const code = await main("plan", [projectDir, "--url", badUrl, "--org", "o1", "--env", "e1"])
       expect(code).toBe(2)
     }
 
