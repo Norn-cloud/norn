@@ -9,7 +9,7 @@
   },
   "scripts": {
     "generate": "openapi-typescript ../../sdks/openapi/norn-api.openapi.json -o src/generated/norn-api.ts",
-    "typecheck": "tsrs --fast -p tsconfig.json",
+    "typecheck": "tsrs -p tsconfig.json",
     "test": "bun test"
   },
   "devDependencies": {

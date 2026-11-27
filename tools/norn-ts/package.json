@@ -18,7 +18,7 @@
   "type": "module",
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsrs --fast -p tsconfig.json",
+    "typecheck": "tsrs -p tsconfig.json",
     "check": "bun src/cli.ts",
     "norn": "bun src/cli.ts"
   },

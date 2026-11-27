@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "checker": "bash ../../crates/norn-checker-wasm/scripts/build-pkg.sh src/checker && NORN_WASM_ENGINE=1 bash ../../crates/norn-checker-wasm/scripts/build-pkg.sh src/engine",
-    "typecheck": "tsrs --fast -p tsconfig.json && tsrs --fast -p worker/tsconfig.json",
+    "typecheck": "tsrs -p tsconfig.json && tsrs -p worker/tsconfig.json",
     "test": "bun test",
     "deploy": "bun run checker && NODE_ENV=production vite build && bun ./alchemy.run.ts",
     "e2e": "playwright test",

@@ -4,6 +4,6 @@
   "license": "Apache-2.0",
   "type": "module",
   "exports": { "./elements/decision-sheet": "./src/elements/decision-sheet.ts", "./elements/lifecycle-view": "./src/elements/lifecycle-view.ts", "./catalog-host": "./src/catalog-host/host.ts", "./catalog-host/foldkit": "./src/catalog-host/foldkit.ts" },
-  "scripts": { "test": "bun test", "typecheck": "tsrs --fast -p tsconfig.json" },
+  "scripts": { "test": "bun test", "typecheck": "tsrs -p tsconfig.json" },
   "devDependencies": { "@effect/platform-browser": "4.1.0", "@types/bun": "1.4.2", "effect": "4.1.0", "foldkit": "0.170.0", "parse5": "8.0.0", "tsrs": "7.1.0-beta.tsrs5" }
 }
