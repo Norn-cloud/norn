@@ -112,11 +112,35 @@ impl Model {
     }
 }
 
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
+/// Post-merge single-bundle R2 cache warming phases (`core.sh plan --cache-warm`, #1951).
+/// Each runs with `BuildGroup::None`, so `execute` prunes `target/` between every boundary.
+const CACHE_WARM_PHASES: [&str; 8] = [
+    "cache-warm-test",
+    "cache-warm-guard",
+    "cache-warm-clippy",
+    "cache-warm-doc",
+    "cache-warm-wasm",
+    "cache-warm-wasm-pkg",
+    "cache-warm-duckdb",
+    "cache-warm-rivet",
+];
+const CACHE_WARM_TASKS: [&str; 8] = [
+    "phase/cache-warm-test",
+    "phase/cache-warm-guard",
+    "phase/cache-warm-clippy",
+    "phase/cache-warm-doc",
+    "phase/cache-warm-wasm",
+    "phase/cache-warm-wasm-pkg",
+    "phase/cache-warm-duckdb",
+    "phase/cache-warm-rivet",
+];
+
+#[derive(Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 enum Mode {
     Full,
     Affected,
+    CacheWarm,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -208,6 +232,18 @@ impl Bin {
 }
 
 fn pack(plan: &Plan) -> Result<Vec<Bundle>, String> {
+    if plan.mode == Mode::CacheWarm {
+        if !plan.shard.is_empty()
+            || plan.phase != CACHE_WARM_PHASES
+            || !plan.packages.as_deref().is_none_or(str::is_empty)
+        {
+            return Err("cache-warm plan must contain only the cache-warm phases".into());
+        }
+        return Ok(vec![Bundle {
+            id: "b0".into(),
+            tasks: CACHE_WARM_TASKS.into_iter().map(str::to_owned).collect(),
+        }]);
+    }
     let model = Model::load()?;
     let known = &model.tasks;
     let mut seen = BTreeSet::new();
@@ -517,12 +553,18 @@ fn execute(
     let model = Model::load()?;
     let mut tasks = Vec::new();
     for name in &bundle.tasks {
-        tasks.push(
+        let task = if let Some(&warm) = CACHE_WARM_TASKS.iter().find(|&&task| task == name) {
+            Task {
+                name: warm,
+                weight: 0,
+            }
+        } else {
             *model
                 .tasks
                 .get(name.as_str())
-                .ok_or("unknown bundle task")?,
-        );
+                .ok_or("unknown bundle task")?
+        };
+        tasks.push(task);
     }
     tasks.sort_by_key(|task| task.build_group(all_packages));
     let mut previous_group = None;
@@ -679,6 +721,10 @@ mod tests {
         ),
         concat!(
             r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "doc", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["test/rest-2", "phase/doc"]}, {"id": "b1", "tasks": ["test/rest-3", "test/heavy-5"]}, {"id": "b2", "tasks": ["phase/duckdb", "phase/provenance"]}, {"id": "b3", "tasks": ["test/rest-1", "test/heavy-6", "test/heavy-4"]}, {"id": "b4", "tasks": ["phase/guards", "phase/clippy"]}, {"id": "b5", "tasks": ["test/heavy-2", "phase/rivet", "test/heavy-3"]}]}"#,
+            "\n"
+        ),
+        concat!(
+            r#"{"mode": "cache-warm", "shard": [], "phase": ["cache-warm-test", "cache-warm-guard", "cache-warm-clippy", "cache-warm-doc", "cache-warm-wasm", "cache-warm-wasm-pkg", "cache-warm-duckdb", "cache-warm-rivet"], "packages": "", "rest_shards": 1, "reason": "main push cache warm", "bundle": [{"id": "b0", "tasks": ["phase/cache-warm-test", "phase/cache-warm-guard", "phase/cache-warm-clippy", "phase/cache-warm-doc", "phase/cache-warm-wasm", "phase/cache-warm-wasm-pkg", "phase/cache-warm-duckdb", "phase/cache-warm-rivet"]}]}"#,
             "\n"
         ),
     ];
@@ -851,6 +897,12 @@ mod tests {
             r#"{"mode":"affected","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":[]}]}"#,
             r#"{"mode":"affected","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":["phase/doc","phase/doc"]}]}"#,
             r#"{"mode":"affected","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":["phase/doc"]},{"id":"b0","tasks":["phase/doc"]}]}"#,
+            r#"{"mode":"cache-warm","shard":["rest-1"],"phase":["cache-warm-test","cache-warm-guard","cache-warm-clippy","cache-warm-doc","cache-warm-wasm","cache-warm-wasm-pkg","cache-warm-duckdb","cache-warm-rivet"],"bundle":[{"id":"b0","tasks":["phase/cache-warm-test","phase/cache-warm-guard","phase/cache-warm-clippy","phase/cache-warm-doc","phase/cache-warm-wasm","phase/cache-warm-wasm-pkg","phase/cache-warm-duckdb","phase/cache-warm-rivet"]}]}"#,
+            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm-test"],"bundle":[{"id":"b0","tasks":["phase/cache-warm-test"]}]}"#,
+            r#"{"mode":"cache-warm","shard":[],"phase":["doc"],"bundle":[{"id":"b0","tasks":["phase/doc"]}]}"#,
+            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm-test","cache-warm-guard","cache-warm-clippy","cache-warm-doc","cache-warm-wasm","cache-warm-wasm-pkg","cache-warm-duckdb","cache-warm-rivet"],"packages":"norn-cell","bundle":[{"id":"b0","tasks":["phase/cache-warm-test","phase/cache-warm-guard","phase/cache-warm-clippy","phase/cache-warm-doc","phase/cache-warm-wasm","phase/cache-warm-wasm-pkg","phase/cache-warm-duckdb","phase/cache-warm-rivet"]}]}"#,
+            r#"{"mode":"cache-warm","shard":[],"phase":["cache-warm-test","cache-warm-guard","cache-warm-clippy","cache-warm-doc","cache-warm-wasm","cache-warm-wasm-pkg","cache-warm-duckdb","cache-warm-rivet"],"bundle":[{"id":"b1","tasks":["phase/cache-warm-test","phase/cache-warm-guard","phase/cache-warm-clippy","phase/cache-warm-doc","phase/cache-warm-wasm","phase/cache-warm-wasm-pkg","phase/cache-warm-duckdb","phase/cache-warm-rivet"]}]}"#,
+            r#"{"mode":"affected","shard":[],"phase":["cache-warm-test"],"bundle":[{"id":"b0","tasks":["phase/cache-warm-test"]}]}"#,
         ] {
             assert!(checked(raw).is_err(), "{raw}");
         }
@@ -926,6 +978,30 @@ mod tests {
         .expect_err("failed phase aborts");
         assert_eq!(failure.message, "phase failed");
         assert_eq!(calls, ["test/rest-2"]);
+
+        let warm_bundle = Bundle {
+            id: "b0".into(),
+            tasks: CACHE_WARM_TASKS.into_iter().map(str::to_owned).collect(),
+        };
+        let mut warm_calls = Vec::new();
+        execute(&warm_bundle, true, |task, prune| {
+            warm_calls.push((task.name, prune));
+            Ok(())
+        })
+        .expect("execute cache-warm");
+        assert_eq!(
+            warm_calls,
+            [
+                ("phase/cache-warm-test", false),
+                ("phase/cache-warm-guard", true),
+                ("phase/cache-warm-clippy", true),
+                ("phase/cache-warm-doc", true),
+                ("phase/cache-warm-wasm", true),
+                ("phase/cache-warm-wasm-pkg", true),
+                ("phase/cache-warm-duckdb", true),
+                ("phase/cache-warm-rivet", true),
+            ]
+        );
     }
 
     #[cfg(unix)]
