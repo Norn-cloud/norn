@@ -220,3 +220,113 @@ fn odoo_moves_give_rise_to_transactions_and_draft_reset_is_non_conforming() {
             .contains("norn.odoo.account.move.button.draft")
     );
 }
+
+#[test]
+fn supply_lab_link_accounts_for_every_term() {
+    let coverage = coverage("norn.link.supply-lab.canon");
+    assert_eq!(coverage.active_terms, 20);
+    assert_eq!(coverage.mapped.len(), 10);
+    assert_eq!(coverage.residual.len(), 2);
+    assert_eq!(coverage.canon_gaps.len(), 8);
+    assert!(coverage.non_conforming.is_empty());
+    let targets = |term: &str| -> Vec<String> {
+        coverage.mapped[term]
+            .iter()
+            .flat_map(|(_, to)| to.iter().cloned())
+            .collect()
+    };
+    assert_eq!(targets("norn.supply.sku"), ["norn.core.resource.type"]);
+    assert_eq!(
+        targets("norn.supply.purchase.order"),
+        ["norn.core.commitment"]
+    );
+    assert_eq!(
+        targets("norn.supply.shipment.receipt"),
+        ["norn.core.event.transfer"]
+    );
+    assert!(
+        coverage
+            .canon_gaps
+            .contains("norn.supply.inventory.snapshot")
+    );
+}
+
+#[test]
+fn supply_lab_interfaces_enforce_disjointness_and_order_lifecycle() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let load = |rel: &str| -> ArtifactEnvelope {
+        let text = fs::read_to_string(root.join(rel)).expect("artifact readable");
+        serde_json::from_str(&text).expect("artifact envelope")
+    };
+    let base = vec![
+        load("registry/core/artifacts/core.value_types.entity.json"),
+        load("registry/core/artifacts/std.value_types.entity.json"),
+        load("registry/core/artifacts/core.units.json"),
+        load("registry/core/artifacts/core.time.json"),
+    ];
+    let count = load("registry/packs/supply-lab/artifacts/supply.CountEvidence.interface.json");
+    let order_lc = load("registry/packs/supply-lab/artifacts/supply.OrderLifecycle.interface.json");
+    let receipt = load("registry/packs/supply-lab/artifacts/supply.ReceiptEvidence.interface.json");
+    let po = load("registry/packs/supply-lab/artifacts/supply.PurchaseOrder.entity.json");
+    let registry = std::collections::BTreeSet::new();
+    let ctx = norn_checker::EntityArtifactSetContext {
+        registry: &registry,
+        base: &base,
+        tenant: None,
+    };
+
+    // Valid Supply Lab interfaces + PurchaseOrder admit cleanly.
+    let admitted = norn_checker::check_artifact_set(
+        &[count.clone(), order_lc.clone(), receipt.clone(), po.clone()],
+        &ctx,
+    );
+    let errors: Vec<_> = admitted.into_iter().filter(|d| d.is_error()).collect();
+    assert!(
+        errors.is_empty(),
+        "valid supply-lab interfaces must admit: {errors:#?}"
+    );
+
+    // INTERFACE-DISJOINT-1: a type implementing mutually disjoint Supply Lab
+    // interfaces (`OrderLifecycle` + `CountEvidence`, or `OrderLifecycle` +
+    // `ReceiptEvidence`) must refuse with `interface.validation.disjoint_violation`.
+    for pair in [
+        ["supply.OrderLifecycle", "supply.CountEvidence"],
+        ["supply.OrderLifecycle", "supply.ReceiptEvidence"],
+    ] {
+        let mut mixed_po = serde_json::to_value(&po).expect("po json");
+        mixed_po["payload"]["objectType"]["implements"] = serde_json::json!(pair);
+        let mixed_po: ArtifactEnvelope = serde_json::from_value(mixed_po).expect("mixed po");
+        let disjoint_findings = norn_checker::check_artifact_set(
+            &[count.clone(), order_lc.clone(), receipt.clone(), mixed_po],
+            &ctx,
+        );
+        assert!(
+            disjoint_findings
+                .iter()
+                .any(|d| d.code == "interface.validation.disjoint_violation"),
+            "implementing disjoint pair {pair:?} must refuse: {disjoint_findings:#?}"
+        );
+    }
+
+    // INTERFACE-LIFECYCLE-1: widening `supply.OrderLifecycle` with an extra
+    // locally valid transition (`submitted -> draft`) on `PurchaseOrder` must
+    // refuse with `lifecycle.validation.widens_transition`.
+    let mut widened_po = serde_json::to_value(&po).expect("po json");
+    widened_po["payload"]["objectType"]["lifecycles"][0]["transitions"]
+        .as_array_mut()
+        .expect("transitions array")
+        .push(serde_json::json!({
+            "id": "reopen",
+            "from": ["submitted"],
+            "to": "draft"
+        }));
+    let widened_po: ArtifactEnvelope = serde_json::from_value(widened_po).expect("widened po");
+    let lifecycle_findings =
+        norn_checker::check_artifact_set(&[count, order_lc, receipt, widened_po], &ctx);
+    assert!(
+        lifecycle_findings
+            .iter()
+            .any(|d| d.code == "lifecycle.validation.widens_transition"),
+        "widening OrderLifecycle with `submitted -> draft` must refuse: {lifecycle_findings:#?}"
+    );
+}

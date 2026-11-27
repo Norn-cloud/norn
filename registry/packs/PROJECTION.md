@@ -11,6 +11,7 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 | `norn.link.frappe-hrms.workforce` | 34 | 34 | 0 | 0 | 0 |
 | `norn.link.odoo.canon` | 42 | 27 | 3 | 11 | 1 |
 | `norn.link.shopify.canon` | 35 | 14 | 5 | 16 | 0 |
+| `norn.link.supply-lab.canon` | 20 | 10 | 2 | 8 | 0 |
 
 ## `norn.link.erpnext.canon`
 
@@ -246,6 +247,43 @@ None.
 - `norn.shopify.refund.create`
 - `norn.shopify.transaction`
 - `norn.shopify.transaction.amount`
+
+### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
+
+None.
+
+## `norn.link.supply-lab.canon`
+
+`norn.ontology-pack.supply-lab` → `norn.ontology-pack.canon`
+
+### Maps
+
+- `norn.supply.guard.currency.mismatch` subsumed_by `norn.finance.guard.currency.mismatch`
+- `norn.supply.guard.movement.nonpositive` subsumed_by `norn.finance.guard.amount.nonpositive`
+- `norn.supply.order.line` subsumed_by `norn.core.commitment`
+- `norn.supply.purchase.order` subsumed_by `norn.core.commitment`
+- `norn.supply.shipment.receipt` subsumed_by `norn.core.event.transfer`
+- `norn.supply.shipment.receipt.order.line` subsumed_by `norn.core.event.fulfils`
+- `norn.supply.shipment.receipt.received.qty` subsumed_by `norn.core.resource.quantity`
+- `norn.supply.sku` subsumed_by `norn.core.resource.type`
+- `norn.supply.stock.movement` subsumed_by `norn.core.event`
+- `norn.supply.stock.movement.qty` subsumed_by `norn.core.resource.quantity`
+
+### Residual (system-specific)
+
+- `norn.supply.supplier.receipt.line`
+- `norn.supply.wms.count`
+
+### Missing from the canon
+
+- `norn.supply.demand.forecast`
+- `norn.supply.demand.observation`
+- `norn.supply.guard.unit.mismatch`
+- `norn.supply.inspection`
+- `norn.supply.inventory.snapshot`
+- `norn.supply.inventory.snapshot.quantity.basis`
+- `norn.supply.purchase.order.supplier`
+- `norn.supply.warehouse`
 
 ### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
 

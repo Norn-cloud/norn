@@ -1,0 +1,232 @@
+{
+  "artifactId": "norn.link.supply-lab.canon",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "Supply Lab to the Norn canon",
+  "namespace": "norn.ontology",
+  "payload": {
+    "correspondences": [
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.supply.sku",
+        "evidenceRefs": [
+          "source.supply-lab"
+        ],
+        "fromTermId": "norn.supply.sku",
+        "justification": "A SKU is a catalog good kind; canon resource types also cover services.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "toTermIds": [
+          "norn.core.resource.type"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.supply.stock.movement",
+        "evidenceRefs": [
+          "source.supply-lab"
+        ],
+        "fromTermId": "norn.supply.stock.movement",
+        "justification": "Stock movements cover receipts, issues, transfers, and adjustments, so the economic event superclass holds.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "toTermIds": [
+          "norn.core.event"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.supply.stock.movement.qty",
+        "evidenceRefs": [
+          "source.supply-lab"
+        ],
+        "fromTermId": "norn.supply.stock.movement.qty",
+        "justification": "The quantity moved by a stock movement in its SKU unit of measure.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "toTermIds": [
+          "norn.core.resource.quantity"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.supply.purchase.order",
+        "evidenceRefs": [
+          "source.supply-lab"
+        ],
+        "fromTermId": "norn.supply.purchase.order",
+        "justification": "A purchase order is an inbound purchasing commitment; canon `norn.commerce.order` covers sales orders only.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "toTermIds": [
+          "norn.core.commitment"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.supply.order.line",
+        "evidenceRefs": [
+          "source.supply-lab"
+        ],
+        "fromTermId": "norn.supply.order.line",
+        "justification": "Each order line is a SKU-level delivery commitment within a purchase order.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "toTermIds": [
+          "norn.core.commitment"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.supply.shipment.receipt",
+        "evidenceRefs": [
+          "source.supply-lab"
+        ],
+        "fromTermId": "norn.supply.shipment.receipt",
+        "justification": "A shipment receipt records physical transfer of goods into a warehouse.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "toTermIds": [
+          "norn.core.event.transfer"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.supply.shipment.receipt.received.qty",
+        "evidenceRefs": [
+          "source.supply-lab"
+        ],
+        "fromTermId": "norn.supply.shipment.receipt.received.qty",
+        "justification": "The additive quantity received on a delivery transfer event.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "toTermIds": [
+          "norn.core.resource.quantity"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.supply.shipment.receipt.order.line",
+        "evidenceRefs": [
+          "source.supply-lab"
+        ],
+        "fromTermId": "norn.supply.shipment.receipt.order.line",
+        "justification": "Links a shipment receipt to the purchase order line commitment it fulfils.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "toTermIds": [
+          "norn.core.event.fulfils"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.supply.guard.movement.nonpositive",
+        "evidenceRefs": [
+          "source.supply-lab"
+        ],
+        "fromTermId": "norn.supply.guard.movement.nonpositive",
+        "justification": "Non-adjustment stock movements must carry a strictly positive quantity.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.guard.amount.nonpositive"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.supply.guard.currency.mismatch",
+        "evidenceRefs": [
+          "source.supply-lab"
+        ],
+        "fromTermId": "norn.supply.guard.currency.mismatch",
+        "justification": "An order line must match its parent purchase order currency.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-27T00:00:00Z",
+        "reviewedBy": "lane-a5 (agent, proposed)",
+        "toTermIds": [
+          "norn.finance.guard.currency.mismatch"
+        ]
+      }
+    ],
+    "fromPack": {
+      "packId": "norn.ontology-pack.supply-lab",
+      "version": "0.1.0"
+    },
+    "packId": "norn.link.supply-lab.canon",
+    "packKind": "link",
+    "packVersion": "0.1",
+    "residuals": [
+      {
+        "note": "The canon ontology pack has no physical warehouse or storage-site class yet.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.warehouse"
+      },
+      {
+        "note": "The canon ontology pack has no semi-additive stock-position snapshot term yet (executable `canon.Holding` lives in `canon/records.ts`).",
+        "reason": "canon_gap",
+        "termId": "norn.supply.inventory.snapshot"
+      },
+      {
+        "note": "The canon ontology pack has no `on_hand` / `available` / `reserved` quantity-basis partition term yet.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.inventory.snapshot.quantity.basis"
+      },
+      {
+        "note": "Canon `norn.commerce.order.party` models sales customers; purchase-commitment counterparty is not yet in the canon pack.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.purchase.order.supplier"
+      },
+      {
+        "note": "The canon ontology pack has no quality-inspection evidence class yet.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.inspection"
+      },
+      {
+        "note": "The canon ontology pack has no weekly demand-observation analytical input class.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.demand.observation"
+      },
+      {
+        "note": "The canon ontology pack has no contract-checked ML demand-forecast prediction class.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.demand.forecast"
+      },
+      {
+        "note": "The canon ontology pack has a currency-mismatch guard but no unit-of-measure mismatch guard term yet.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.guard.unit.mismatch"
+      },
+      {
+        "note": "Raw WMS scan feed evidence staging record kept separate from governed stock positions.",
+        "reason": "system_specific",
+        "termId": "norn.supply.wms.count"
+      },
+      {
+        "note": "Raw ERP supplier-feed line evidence kept separate from governed shipment receipts.",
+        "reason": "system_specific",
+        "termId": "norn.supply.supplier.receipt.line"
+      }
+    ],
+    "toPack": {
+      "packId": "norn.ontology-pack.canon",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/norn.link.supply-lab.canon.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
