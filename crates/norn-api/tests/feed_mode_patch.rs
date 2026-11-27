@@ -1091,43 +1091,58 @@ mod tests {
             matches!(second, MappingOutcome::Quarantined(_)),
             "same event_id/payload with different feed_mode must conflict and quarantine: {second:?}"
         );
+    }
 
-        // Equivalent typed version spellings (`"99"` vs `"099"` under Uint64)
-        // share one canonical event_id so differing payloads trigger FEED-CONFLICT.
+    #[test]
+    fn uint64_equivalent_version_replay_is_idempotent_and_conflict_quarantines() {
+        let host = open_host(&erpnext_artifacts());
+        seed_full_erpnext_snapshot(&host);
         let mut uint_profile = holding_profile(FeedMode::FullSnapshot, VersionKind::Uint64);
         uint_profile.feeds[0].version_path = "/seq".into();
+        let key = "demo/holding/conflict-canon-ver";
         let row_99 = json!({
             "name": "WLB-CANON-1", "seq": "99",
             "modified": "2026-11-12 21:00:00.000000",
-            "custom_norn_ref": "demo/holding/conflict-canon-ver",
+            "custom_norn_ref": key,
             "resource_code": "GOLD", "quantity": 10.0, "unit": "g", "location": "north",
             "item_ref": "demo/item/gold", "owner_ref": "demo/party/owner",
             "custodian_ref": "demo/party/custodian", "stock_cost": 100.0,
             "cost_currency": "USD", "valuation_method": "moving_average"
         });
         assert_eq!(
-            ingest_patch_row(&host, &uint_profile, &row_99, T0.saturating_add(3)),
+            ingest_patch_row(&host, &uint_profile, &row_99, T0.saturating_add(1)),
             MappingOutcome::Landed
         );
-        // Replaying the identical payload with equivalent spelling `"099"` is
-        // idempotent and must NOT quarantine.
-        let mut row_099_same = row_99.clone();
+        let mut row_100 = row_99.clone();
+        row_100["seq"] = json!("100");
+        row_100["quantity"] = json!(11.0);
+        assert_eq!(
+            ingest_patch_row(&host, &uint_profile, &row_100, T0.saturating_add(2)),
+            MappingOutcome::Landed
+        );
+        // Replaying version 99 spelled as `"099"` with identical payload is a true
+        // idempotent replay: it reuses the existing bundle ID and must NOT overwrite
+        // version 100's quantity (11) back to 10.
+        let mut row_099_same = row_99;
         row_099_same["seq"] = json!("099");
         assert_eq!(
-            ingest_patch_row(&host, &uint_profile, &row_099_same, T0.saturating_add(4)),
+            ingest_patch_row(&host, &uint_profile, &row_099_same, T0.saturating_add(3)),
             MappingOutcome::Landed,
             "equivalent Uint64 spelling 099 with identical payload must replay idempotently"
         );
-        let row_099_diff = json!({
-            "name": "WLB-CANON-1", "seq": "099",
-            "modified": "2026-11-12 21:00:00.000000",
-            "custom_norn_ref": "demo/holding/conflict-canon-ver",
-            "resource_code": "GOLD", "quantity": 99.0, "unit": "g", "location": "north",
-            "item_ref": "demo/item/gold", "owner_ref": "demo/party/owner",
-            "custodian_ref": "demo/party/custodian", "stock_cost": 100.0,
-            "cost_currency": "USD", "valuation_method": "moving_average"
-        });
-        let clash = ingest_patch_row(&host, &uint_profile, &row_099_diff, T0.saturating_add(5));
+        let after_replay = host
+            .host_object("canon.Holding", key)
+            .expect("read")
+            .expect("holding");
+        assert_eq!(
+            after_replay.get("quantity"),
+            Some(&RuntimeValue::from_json_text("11").expect("11")),
+            "equivalent replay of version 99 as 099 must never overwrite version 100"
+        );
+        // Equivalent spelling `"099"` with differing payload triggers FEED-CONFLICT.
+        let mut row_099_diff = row_099_same;
+        row_099_diff["quantity"] = json!(99.0);
+        let clash = ingest_patch_row(&host, &uint_profile, &row_099_diff, T0.saturating_add(4));
         assert!(
             matches!(clash, MappingOutcome::Quarantined(_)),
             "equivalent Uint64 spellings 99 vs 099 with differing payloads must conflict: {clash:?}"
