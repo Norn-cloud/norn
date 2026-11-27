@@ -5,6 +5,66 @@ use super::{
     prepare_quantity, to_i64,
 };
 
+use serde::{Deserialize, Serialize};
+
+impl<T> std::ops::Deref for crate::store::QuantityBatch<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        &self.0
+    }
+}
+
+impl<T> From<T> for crate::store::QuantityBatch<T> {
+    fn from(value: T) -> Self {
+        Self(vec![value])
+    }
+}
+
+impl<T: Serialize> Serialize for crate::store::QuantityBatch<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0.as_slice() {
+            [one] => one.serialize(serializer),
+            many => many.serialize(serializer),
+        }
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for crate::store::QuantityBatch<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Shape<T> {
+            One(T),
+            Many(Vec<T>),
+        }
+        Ok(Self(match Shape::deserialize(deserializer)? {
+            Shape::One(one) => vec![one],
+            Shape::Many(many) => many,
+        }))
+    }
+}
+
+impl crate::store::ReceiptBody {
+    pub(crate) fn quantity_requests(&self) -> &[norn_ir::quantity_ledger::QuantityRequest] {
+        self.quantity.as_ref().map_or(&[], |requests| &requests.0)
+    }
+
+    pub(crate) fn quantity_result(
+        &self,
+        ledger: &str,
+    ) -> Option<&norn_kernel::quantity::QuantityResult> {
+        let requests = self.quantity.as_ref()?;
+        let results = self.quantity_result.as_ref()?;
+        if requests.len() != results.len() {
+            return None;
+        }
+        requests
+            .iter()
+            .zip(results.iter())
+            .find_map(|(request, result)| (request.ledger_id == ledger).then_some(result))
+    }
+}
+
 #[derive(Default, Clone)]
 struct Ledger {
     state: QuantityState,

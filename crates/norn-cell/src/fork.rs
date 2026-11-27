@@ -198,6 +198,53 @@ fn clear_promoting_head<E: SqlEngine>(conn: &E) -> Result<(), CellError> {
     Ok(())
 }
 
+pub(crate) fn read_pin_unvalidated_state<E: SqlEngine>(
+    conn: &E,
+) -> Result<Option<ForkPin>, CellError> {
+    let rows = conn.query(
+        &format!("SELECT \"key\", \"value\" FROM \"{META}\" WHERE \"key\" IN (?1, ?2, ?3, ?4)"),
+        params![WORLD_KEY, PARENT_KEY, BASE_KEY, HORIZON_KEY],
+    )?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let (mut world, mut parent, mut base, mut main_horizon) = (None, None, None, None);
+    for values in rows {
+        let row = SqlRow(values);
+        let key: String = row.get(0)?;
+        let value: String = row.get(1)?;
+        match key.as_str() {
+            WORLD_KEY => world = Some(value),
+            PARENT_KEY => parent = Some(value),
+            BASE_KEY => base = Some(value),
+            HORIZON_KEY => main_horizon = Some(value),
+            _ => {}
+        }
+    }
+    let (Some(world), Some(parent), Some(base), Some(main_horizon)) =
+        (world, parent, base, main_horizon)
+    else {
+        return Err(CellError::Encoding("incomplete fork pin".to_owned()));
+    };
+    let base = serde_json::from_str(&base)
+        .map_err(|error| CellError::Encoding(format!("fork base: {error}")))?;
+    let main_horizon = main_horizon
+        .parse()
+        .map_err(|error| CellError::Encoding(format!("fork main horizon: {error}")))?;
+    let pin = ForkPin {
+        world,
+        parent,
+        base,
+        main_horizon,
+    };
+    if pin.main_horizon > pin.base.commits {
+        return Err(CellError::Encoding(
+            "fork pin: the main horizon is past the base".to_owned(),
+        ));
+    }
+    Ok(Some(pin))
+}
+
 pub(crate) fn load_pin<E: SqlEngine>(conn: &E) -> Result<Option<ForkPin>, CellError> {
     let meta = |key: &str| {
         conn.query_optional(
@@ -972,6 +1019,153 @@ mod tests {
                     if world == name && state == expected_state
             ));
         }
+        Ok(())
+    }
+
+    /// FORK-EVIDENCE-1 (Unit 2b, storage v11): pin-bound depth-1 and depth-2
+    /// fork files reopen and verify their ledgers cleanly, while injecting a
+    /// fork-bound receipt into a `main` file refuses `ForkEvidenceForbidden`
+    /// on open.
+    #[test]
+    fn pin_bound_fork_files_reopen_and_main_refuses_injected_fork_receipt() -> Result<(), CellError>
+    {
+        let model = Model::new(&SqliteDdlInput {
+            object_types: &[],
+            property_types: &[],
+        })?;
+        let empty = || CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: "s".to_owned(),
+            ..CommitBatch::default()
+        };
+        let mut main = CellStore::open_in_memory(model.clone())?;
+        main.commit(&empty())?;
+        let id = main
+            .cell_id()?
+            .ok_or_else(|| CellError::Engine("main is bound".to_owned()))?;
+        let d1_base = main.verified_head()?;
+        let mut d1 = main.fork("decision-1", &d1_base)?;
+        let d1_receipt = d1.commit(&empty())?.receipt().clone();
+        assert_eq!(d1_receipt.body.fork_pin, d1.fork_pin().cloned());
+
+        let s1_base = d1.verified_head()?;
+        let mut s1 = d1.fork("scenario-1", &s1_base)?;
+        let s1_receipt = s1.commit(&empty())?.receipt().clone();
+        assert_eq!(s1_receipt.body.fork_pin, s1.fork_pin().cloned());
+
+        let dir = tempfile::tempdir().map_err(|error| CellError::Engine(error.to_string()))?;
+        let s1_path = dir.path().join("s1.sqlite");
+        s1.conn.backup_to_file(&s1_path)?;
+        drop(s1);
+
+        let reopened =
+            CellStore::open_bound(&s1_path, model.clone(), StoreOptions::default(), &id)?;
+        assert_eq!(reopened.verified_head()?.commits, 3);
+        let receipts = reopened.read().receipts()?;
+        assert_eq!(
+            receipts.first().and_then(|r| r.body.fork_pin.as_ref()),
+            None
+        );
+        assert_eq!(
+            receipts.get(1).and_then(|r| r.body.fork_pin.as_ref()),
+            d1.fork_pin()
+        );
+        assert_eq!(
+            receipts.get(2).and_then(|r| r.body.fork_pin.as_ref()),
+            reopened.fork_pin()
+        );
+        drop(reopened);
+
+        // Removing the fork pin metadata turns the file into a `main` candidate
+        // holding fork-bound receipts; opening it must refuse Lemma L6.
+        let tampered_path = dir.path().join("tampered_main.sqlite");
+        std::fs::copy(&s1_path, &tampered_path)
+            .map_err(|error| CellError::Engine(error.to_string()))?;
+        let raw = NativeEngine::open(&tampered_path, StoreOptions::default())?;
+        raw.execute(
+            &format!(
+                "DELETE FROM \"{}\" WHERE \"key\" LIKE 'fork:%'",
+                crate::system::META
+            ),
+            &[],
+        )?;
+        drop(raw);
+        assert!(matches!(
+            CellStore::open(&tampered_path, model, StoreOptions::default()),
+            Err(CellError::ForkEvidenceForbidden)
+        ));
+        Ok(())
+    }
+
+    /// FORK-EVIDENCE-1 + OPEN-CHECKPOINT-1: a keyed fork that completes a scrub
+    /// records a fork-pin-bound checkpoint MAC. Stripping `fork:*` metadata to
+    /// open that file as `main` with the same key must reject the checkpoint
+    /// and refuse `ForkEvidenceForbidden` during genesis verification.
+    #[test]
+    fn keyed_fork_checkpoint_cannot_admit_tampered_main() -> Result<(), CellError> {
+        let model = Model::new(&SqliteDdlInput {
+            object_types: &[],
+            property_types: &[],
+        })?;
+        let key = crate::open_checkpoint::CheckpointKey::from_bytes([7_u8; 32]);
+        let opts = || StoreOptions {
+            checkpoint_key: Some(key),
+            ..StoreOptions::default()
+        };
+        let empty = || CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: "s".to_owned(),
+            ..CommitBatch::default()
+        };
+        let dir = tempfile::tempdir().map_err(|error| CellError::Engine(error.to_string()))?;
+        let main_path = dir.path().join("main.sqlite");
+        let mut main = CellStore::open(&main_path, model.clone(), opts())?;
+        main.commit(&empty())?;
+        let id = main
+            .cell_id()?
+            .ok_or_else(|| CellError::Engine("main is bound".to_owned()))?;
+        let base = main.verified_head()?;
+        let mut fork = main.fork("decision-1", &base)?;
+        fork.commit(&empty())?;
+        let fork_path = dir.path().join("fork.sqlite");
+        fork.conn.backup_to_file(&fork_path)?;
+        drop(fork);
+
+        // Reopen keyed fork and scrub to completion so it writes `_norn_open_checkpoint`.
+        let reopened_fork = CellStore::open_bound(&fork_path, model.clone(), opts(), &id)?;
+        for _ in 0..64 {
+            match reopened_fork.scrub_step() {
+                crate::scrub::ScrubStatus::Idle => break,
+                crate::scrub::ScrubStatus::Verifying { .. } => {}
+                crate::scrub::ScrubStatus::Fenced { finding } => {
+                    return Err(CellError::Fenced(finding));
+                }
+            }
+        }
+        assert!(matches!(
+            crate::open_checkpoint::load(&reopened_fork.conn)?,
+            crate::open_checkpoint::Loaded::Authentic(_)
+        ));
+        drop(reopened_fork);
+
+        // Strip `fork:*` metadata and attempt keyed `main` open: MAC fails,
+        // genesis verification runs, and Lemma L6 refuses ForkEvidenceForbidden.
+        let tampered_path = dir.path().join("tampered_keyed_main.sqlite");
+        std::fs::copy(&fork_path, &tampered_path)
+            .map_err(|error| CellError::Engine(error.to_string()))?;
+        let raw = NativeEngine::open(&tampered_path, opts())?;
+        raw.execute(
+            &format!(
+                "DELETE FROM \"{}\" WHERE \"key\" LIKE 'fork:%'",
+                crate::system::META
+            ),
+            &[],
+        )?;
+        drop(raw);
+        assert!(matches!(
+            CellStore::open_bound(&tampered_path, model, opts(), &id),
+            Err(CellError::ForkEvidenceForbidden)
+        ));
         Ok(())
     }
 }

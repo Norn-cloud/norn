@@ -38,8 +38,13 @@ pub struct LedgerEntry {
     pub event: Value,
     /// The previous entry's hash ([`GENESIS_HASH`] for the first).
     pub prev_hash: String,
-    /// Norn1 hash of `{seq, commitSeq, world, event, prev}`.
+    /// Norn1 hash of `{seq, commitSeq, world, event, prev}` (plus `forkPin` for
+    /// fork-minted entries under Unit 2b, storage version 11).
     pub hash: String,
+    /// FORK-EVIDENCE-1 (Unit 2b, storage version 11): durable fork pin bound
+    /// into fork-minted ledger entries (`None` on `main`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_pin: Option<crate::fork::ForkPin>,
 }
 
 impl LedgerEntry {
@@ -257,6 +262,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 key: key.to_owned(),
                 version,
                 snapshot_sha256: None,
+                fork_world: None,
             });
         }
         if written.is_empty() {
@@ -393,17 +399,38 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let page_limit_sql = i64::try_from(limit).unwrap_or(MAX_SAFE_INTEGER);
         let length_rows = self.conn.query(
             &format!(
-                "SELECT \"seq\", COALESCE(octet_length(\"world\"), 0), COALESCE({EVENT_BYTES}, 0), COALESCE(octet_length(\"prev_hash\"), 0), COALESCE(octet_length(\"hash\"), 0) FROM \"{LEDGER}\" WHERE \"seq\" > ?1 ORDER BY \"seq\" LIMIT ?2"
+                "SELECT \"seq\", COALESCE(octet_length(\"world\"), 0), COALESCE({EVENT_BYTES}, 0), COALESCE(octet_length(\"prev_hash\"), 0), COALESCE(octet_length(\"hash\"), 0), \"commit_seq\" FROM \"{LEDGER}\" WHERE \"seq\" > ?1 ORDER BY \"seq\" LIMIT ?2"
             ),
             params![to_i64(after, "seq")?, page_limit_sql],
         )?;
+        let store_pin = if length_rows.is_empty() {
+            None
+        } else {
+            crate::fork::read_pin_unvalidated_state(self.conn)?
+        };
         let mut bytes = 0_u64;
+        let mut charged_receipt_commits = BTreeSet::new();
         for values in &length_rows {
             let row = SqlRow(values.clone());
             bytes = bytes.saturating_add(64);
             for index in 1..5 {
                 bytes =
                     bytes.saturating_add(to_u64(row.get::<i64>(index)?, "ledger field length")?);
+            }
+            let commit_seq = to_u64(row.get::<i64>(5)?, "commit_seq")?;
+            if store_pin
+                .as_ref()
+                .is_some_and(|pin| commit_seq > pin.main_horizon)
+                && charged_receipt_commits.insert(commit_seq)
+            {
+                let receipt_bytes: Option<i64> = self.conn.query_optional(
+                    &format!("SELECT COALESCE(octet_length(\"receipt\"), 0) FROM \"{RECEIPT}\" WHERE \"commit_seq\" = ?1 LIMIT 1"),
+                    params![to_i64(commit_seq, "commit_seq")?],
+                    |r| r.get(0),
+                )?;
+                bytes = bytes
+                    .saturating_add(64)
+                    .saturating_add(to_u64(receipt_bytes.unwrap_or(0), "receipt field length")?);
             }
         }
         if length_rows.len() > budget.remaining_rows() || !budget.charge(bytes) {
@@ -420,6 +447,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         from: u64,
         limit: usize,
+        expected_fork_pin: Option<&crate::fork::ForkPin>,
         budget: &mut crate::scrub::RowBudget,
     ) -> Result<Vec<LedgerEntry>, CellError> {
         let limit = i64::try_from(limit)
@@ -444,7 +472,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let decoded = crate::payload_storage::decode_event_budgeted(
                 self.conn, seq, &world, &event, budget,
             )?;
-            if entry_hash(seq, commit_seq, &world, &decoded, &prev_hash)? != hash {
+            if crate::read::entry_hash_with_pin(
+                seq,
+                commit_seq,
+                &world,
+                &decoded,
+                &prev_hash,
+                expected_fork_pin,
+            )? != hash
+            {
                 return Err(CellError::LedgerCorrupt {
                     seq,
                     reason: "entry hash does not verify".to_owned(),
@@ -457,9 +493,92 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 event: decoded,
                 prev_hash,
                 hash,
+                fork_pin: expected_fork_pin.cloned(),
             });
         }
         Ok(out)
+    }
+
+    fn receipt_fork_pin(&self, commit_seq: u64) -> Result<Option<crate::fork::ForkPin>, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                "SELECT \"commit_seq\", \"world\", \"idempotency_key\", \"request_hash\", \"receipt\", \"receipt_hash\" FROM \"{RECEIPT}\" WHERE \"commit_seq\" = ?1 LIMIT 1"
+            ),
+            params![to_i64(commit_seq, "commit_seq")?],
+        )?;
+        Ok(decode_receipts(rows)?
+            .into_iter()
+            .next()
+            .and_then(|receipt| receipt.body.fork_pin))
+    }
+
+    fn cached_receipt_fork_pin(
+        &self,
+        store_pin: Option<&crate::fork::ForkPin>,
+        commit_seq: u64,
+        cache: &mut Option<(u64, Option<crate::fork::ForkPin>)>,
+    ) -> Result<Option<crate::fork::ForkPin>, CellError> {
+        if !store_pin.is_some_and(|pin| commit_seq > pin.main_horizon) {
+            return Ok(None);
+        }
+        if let Some((cached_seq, cached)) = cache.as_ref()
+            && *cached_seq == commit_seq
+        {
+            return Ok(cached.clone());
+        }
+        let pin = self.receipt_fork_pin(commit_seq)?;
+        *cache = Some((commit_seq, pin.clone()));
+        Ok(pin)
+    }
+
+    fn ledger_entry_with_pin(
+        &self,
+        from: u64,
+        expected_fork_pin: Option<&crate::fork::ForkPin>,
+    ) -> Result<Option<LedgerEntry>, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                "SELECT \"seq\", \"commit_seq\", \"world\", \"event\", \"prev_hash\", \"hash\" FROM \"{LEDGER}\" WHERE \"seq\" >= ?1 ORDER BY \"seq\" LIMIT 1"
+            ),
+            params![to_i64(from, "seq")?],
+        )?;
+        let Some(values) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        let row = SqlRow(values);
+        let seq = to_u64(row.get(0)?, "seq")?;
+        let commit_seq = to_u64(row.get(1)?, "commit_seq")?;
+        let world: String = row.get(2)?;
+        let event_raw: String = row.get(3)?;
+        let prev_hash: String = row.get(4)?;
+        let hash: String = row.get(5)?;
+        let event = crate::payload_storage::decode_event(self.conn, seq, &world, &event_raw)?;
+        if crate::read::entry_hash_with_pin(
+            seq,
+            commit_seq,
+            &world,
+            &event,
+            &prev_hash,
+            expected_fork_pin,
+        )? != hash
+        {
+            return Err(CellError::LedgerCorrupt {
+                seq,
+                reason: "entry hash does not verify".to_owned(),
+            });
+        }
+        let entry = LedgerEntry {
+            seq,
+            commit_seq,
+            world,
+            event,
+            prev_hash,
+            hash,
+            fork_pin: expected_fork_pin.cloned(),
+        };
+        self.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)
+            .map_err(|error| unproven_at(&entry, error))?;
+        Ok(Some(entry))
     }
 
     fn ledger_range(&self, from: u64, limit: Option<usize>) -> Result<Vec<LedgerEntry>, CellError> {
@@ -485,11 +604,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             ),
             params![to_i64(from, "seq")?, limit],
         )?;
+        let store_pin = if rows.is_empty() {
+            None
+        } else {
+            crate::fork::read_pin_unvalidated_state(self.conn)?
+        };
+        let mut pin_cache: Option<(u64, Option<crate::fork::ForkPin>)> = None;
         let mut out = Vec::new();
         for values in rows {
             let row = SqlRow(values);
             let event: String = row.get(3)?;
-            let entry = LedgerEntry {
+            let mut entry = LedgerEntry {
                 seq: to_u64(row.get(0)?, "seq")?,
                 commit_seq: to_u64(row.get(1)?, "commit_seq")?,
                 world: row.get(2)?,
@@ -501,26 +626,41 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 )?,
                 prev_hash: row.get(4)?,
                 hash: row.get(5)?,
+                fork_pin: None,
             };
+            let expected_pin =
+                self.cached_receipt_fork_pin(store_pin.as_ref(), entry.commit_seq, &mut pin_cache)?;
             // Every served entry still hashes to its stored digest, so an
             // event changed in place is never served, also one before an
             // open checkpoint that no open re-reads (#1551 round 2). Result
             // placeholders must never escape when their encoding index is
             // missing or changed; a diagnosis read (`verify` off) checks them
             // alone. Valid legacy lookalikes retain their own hash.
-            if (verify || entry.event.get("type").and_then(Value::as_str) == Some("command.result"))
-                && entry_hash(
+            if verify || entry.event.get("type").and_then(Value::as_str) == Some("command.result") {
+                if crate::read::entry_hash_with_pin(
                     entry.seq,
                     entry.commit_seq,
                     &entry.world,
                     &entry.event,
                     &entry.prev_hash,
+                    expected_pin.as_ref(),
                 )? != entry.hash
+                {
+                    return Err(CellError::LedgerCorrupt {
+                        seq: entry.seq,
+                        reason: "entry hash does not verify".to_owned(),
+                    });
+                }
+                entry.fork_pin = expected_pin;
+            } else if entry_hash(
+                entry.seq,
+                entry.commit_seq,
+                &entry.world,
+                &entry.event,
+                &entry.prev_hash,
+            )? != entry.hash
             {
-                return Err(CellError::LedgerCorrupt {
-                    seq: entry.seq,
-                    reason: "entry hash does not verify".to_owned(),
-                });
+                entry.fork_pin = expected_pin;
             }
             if verify {
                 self.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)
@@ -863,6 +1003,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 return Err(anchor_corrupt());
             }
         }
+        let store_pin = crate::fork::read_pin_unvalidated_state(self.conn)?;
         // S1 (#1551 round 2): logical time never goes back across receipts,
         // checked here, in the one verifier every open and checkpoint write
         // shares, from the anchor receipt's own time (0 from genesis).
@@ -872,6 +1013,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             time_floor = anchor
                 .first()
                 .map_or(0, |receipt| receipt.body.logical_time);
+            if let Some(receipt) = anchor.first() {
+                crate::fork_evidence::verify_receipt_fork_binding(
+                    store_pin.as_ref(),
+                    &receipt.body,
+                )?;
+            }
             if !anchor.first().is_some_and(|receipt| {
                 receipt.body.commit_seq == checkpoint.commits
                     && receipt.body.ledger_head == checkpoint.hash
@@ -915,6 +1062,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             if receipt.body.commit_seq != expected_commit {
                 return Err(corrupt("commit sequence gap"));
             }
+            crate::fork_evidence::verify_receipt_fork_binding(store_pin.as_ref(), &receipt.body)?;
             if receipt.body.logical_time < time_floor {
                 return Err(corrupt("receipt logical time goes back"));
             }
@@ -944,16 +1092,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 .ok_or_else(|| corrupt("event span out of range"))?;
             for seq in receipt.body.first_event_seq..end {
                 let entry = self
-                    .ledger_range(
+                    .ledger_entry_with_pin(
                         if expected_seq == 0 {
                             0
                         } else {
                             next(expected_seq, "seq")?
                         },
-                        Some(1),
+                        receipt.body.fork_pin.as_ref(),
                     )?
-                    .into_iter()
-                    .next()
                     .ok_or_else(|| corrupt("receipt names events past the ledger head"))?;
                 let event_corrupt = |reason: &str| CellError::LedgerCorrupt {
                     seq: entry.seq,
@@ -965,7 +1111,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 if entry.prev_hash != prev {
                     return Err(event_corrupt("previous hash does not chain"));
                 }
-                if entry.commit_seq != receipt.body.commit_seq || entry.world != receipt.body.world
+                if entry.commit_seq != receipt.body.commit_seq
+                    || entry.world != receipt.body.world
+                    || entry.fork_pin != receipt.body.fork_pin
                 {
                     return Err(corrupt("an event does not belong to its receipt"));
                 }
@@ -1038,19 +1186,20 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             hash: prev,
             commits: expected_commit,
         };
-        if let Some(entry) = self
-            .ledger_range(
-                if expected_seq == 0 {
-                    0
-                } else {
-                    next(expected_seq, "seq")?
-                },
-                Some(1),
-            )?
-            .first()
-        {
+        let trailing_from = if expected_seq == 0 {
+            0
+        } else {
+            next(expected_seq, "seq")?
+        };
+        if let Some(trailing_seq) = self.conn.query_optional(
+            &format!(
+                "SELECT \"seq\" FROM \"{LEDGER}\" WHERE \"seq\" >= ?1 ORDER BY \"seq\" LIMIT 1"
+            ),
+            params![to_i64(trailing_from, "seq")?],
+            |row| row.get::<i64>(0),
+        )? {
             return Err(CellError::LedgerCorrupt {
-                seq: entry.seq,
+                seq: to_u64(trailing_seq, "seq")?,
                 reason: "ledger events without a receipt".to_owned(),
             });
         }

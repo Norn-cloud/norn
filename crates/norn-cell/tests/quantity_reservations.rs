@@ -75,6 +75,7 @@ fn append_pre_pr_event(path: &std::path::Path, event: &serde_json::Value) -> nor
             request_hash: hash(&original_batch), quantity: None, quantity_result: None, quantity_intent: None, consumed: None, written: vec![], linked: vec![],
             first_event_seq: u64::try_from(seq).expect("sequence"), event_count: 1,
             ledger_head: head.clone(), enqueued: vec![], scheduled: vec![],
+            fork_pin: None,
         };
         engine.execute(r#"INSERT INTO "_norn_ledger" ("seq","commit_seq","world","event","prev_hash","hash") VALUES (?1,?2,?3,?4,?5,?6)"#, &[seq.into(), commit_seq.into(), "main".into(), text(event).into(), prev.into(), head.into()])?;
         let receipt_hash = hash(&body);

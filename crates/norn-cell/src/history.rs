@@ -1506,13 +1506,8 @@ impl<'c, E: SqlEngine> StoreReader<'c, E> {
         if stored.world != entry.world
             || stored.commit_seq != entry.commit_seq
             || stored.hash != entry.hash
-            || crate::read::entry_hash(
-                stored.seq,
-                stored.commit_seq,
-                &stored.world,
-                &stored.event,
-                &stored.prev_hash,
-            )? != stored.hash
+            || stored.fork_pin != entry.fork_pin
+            || !crate::fork_evidence::entry_hash_matches(&stored)?
         {
             return Ok(None);
         }
@@ -2212,6 +2207,7 @@ impl<E: SqlEngine> CellStore<E> {
             .ok_or_else(refused)?;
         let mut previous = GENESIS_HASH.to_owned();
         for (index, record) in records.iter().enumerate() {
+            crate::fork_evidence::verify_main_export_record(record)?;
             if record.format != crate::export::EXPORT_FORMAT
                 || record.store_format != STORE_FORMAT
                 || record.receipt.body.commit_seq

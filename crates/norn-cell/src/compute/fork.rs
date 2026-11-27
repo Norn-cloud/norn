@@ -333,6 +333,41 @@ fn compare_world_questions(
     })
 }
 
+pub(crate) fn verify_fork_result_lineage(fork: &ForkQuestionResult) -> Result<(), CellError> {
+    validate_fork_result(fork)?;
+    let evidence = FindingEvidence {
+        context: &fork.result.context,
+        exclusions: &fork.result.exclusions,
+    };
+    let expected = crate::codec::hash_json(&(
+        &fork.fork_query_pin,
+        &fork.result.revision,
+        evidence,
+        &fork.result.rows,
+        FORK_LINEAGE_DOMAIN,
+    ))?;
+    if fork.result.lineage_ref != expected {
+        return Err(CellError::ForkInvalidWorld);
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_main_result_lineage(main: &QueryResult) -> Result<(), CellError> {
+    if main.context.world != MAIN_WORLD {
+        return Err(CellError::ForkInvalidWorld);
+    }
+    let evidence = FindingEvidence {
+        context: &main.context,
+        exclusions: &main.exclusions,
+    };
+    let expected =
+        crate::codec::hash_json(&(&main.query_pin, &main.revision, evidence, &main.rows))?;
+    if main.lineage_ref != expected {
+        return Err(CellError::ForkInvalidWorld);
+    }
+    Ok(())
+}
+
 fn validate_fork_result(fork: &ForkQuestionResult) -> Result<(), CellError> {
     let valid_world = matches!(
         &fork.world,
