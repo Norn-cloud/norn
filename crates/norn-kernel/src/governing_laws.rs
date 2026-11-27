@@ -597,7 +597,11 @@ pub fn law_rule(
             norn_checker::law_support::LawRuntimeSupport::Invalid(_) => {
                 LawEvaluationError::Invalid(format!("{}: {reason}", law.id))
             }
-            _ => LawEvaluationError::Unsupported(format!("{}: {reason}", law.id)),
+            norn_checker::law_support::LawRuntimeSupport::Executable
+            | norn_checker::law_support::LawRuntimeSupport::UnsupportedScope(_)
+            | norn_checker::law_support::LawRuntimeSupport::UnsupportedSemantics(_) => {
+                LawEvaluationError::Unsupported(format!("{}: {reason}", law.id))
+            }
         });
     }
     invariant_binding(catalog, subject, law)?;

@@ -162,7 +162,7 @@
           },
           {
             "artifactId": "core.Commitment.interface",
-            "sha256": "549799c81d777f0f22dc1a6877fc157600896ecfdd40cc283c0d74cbac94c0b2",
+            "sha256": "875932e4996c9c9c29381d21269ac13335ba231a59e2d11b0426caeb7263453a",
             "version": "0.2.0"
           },
           {
@@ -176,13 +176,33 @@
             "version": "0.2.0"
           },
           {
+            "artifactId": "core.EconomicEvent.reversal_matches_original.law",
+            "sha256": "32966d5684c0b591041d6a673b89e44051905f60dc2a5334b0cd8cdf1c460e39",
+            "version": "0.2.0"
+          },
+          {
             "artifactId": "core.Exchange.interface",
             "sha256": "fc8f74263366d82aeaf57df780657dd5f303358fa53398a081a7c3295bc1cd72",
             "version": "0.1.0"
           },
           {
             "artifactId": "core.Hold.interface",
-            "sha256": "e837ddc970305273a0f21ba7e123b19b36362d571ce5f51c88b8afd19110688b",
+            "sha256": "6cb06eaf6c3a6e253f2a1a7c604d8c680c724738294de14aa7e14d9dadeb00b7",
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.Hold.measure_matches_resource.law",
+            "sha256": "3859a43dd63889f03b5427007b0e2297f627d5e68e629a2eec49503c8c1fc804",
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.HoldableResource.interface",
+            "sha256": "15e39c121eb2f183572fcaf8d9b83f4c08c0bb9abe5f367d09c4d0d3fa3f15f4",
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.HoldableResource.open_holds_within_quantity.law",
+            "sha256": "9836d3bc12dd84acc2907acfd470692fdbbcea58c0e98abf5973c1d15c0200ea",
             "version": "0.2.0"
           },
           {
@@ -201,9 +221,44 @@
             "version": "0.2.0"
           },
           {
+            "artifactId": "core.ReversibleEvent.interface",
+            "sha256": "6533de01ddc6520a0c2aee0125eb6cffcd8f8672127af3c97d17255be32bcc0d",
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.ReversibleEvent.no_reversal_of_reversal.law",
+            "sha256": "a70baa0bb094264cef52486ea89f85d785841d82a70d467ecd726ba8867ad0f0",
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.ReversibleEvent.reversal_flag_requires_link.law",
+            "sha256": "ae354e4e9051e1fa9ae82e11c23f3c06eee8a669072a80956631ee81e0f6a981",
+            "version": "0.2.0"
+          },
+          {
             "artifactId": "core.TimeInterval.interface",
             "sha256": "362d2292fe82ba28096266763817f94b0827d4edb61642065ef6bc047f5a53af",
             "version": "0.1.0"
+          },
+          {
+            "artifactId": "core.ValuedEvent.effects_balance.law",
+            "sha256": "e400ec62f630981711ee5eab36879631f2d078562bb0fb05a566c9e425a8efab",
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.ValuedEvent.interface",
+            "sha256": "52fe9595469ab4eb1f1acce9ae66685a21944f04663cb409bb853f32a902b133",
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.ValuedLedgerEffect.currency_matches_event.law",
+            "sha256": "b988750e8f499de1b45973fb27908a6a36847e68565f0c5079086f073183889a",
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.ValuedLedgerEffect.interface",
+            "sha256": "25abf55569631b7d4d8b965c07da440f3e213623a424b6da0271c0a7e5ae5fad",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.analytics.Restatement.entity",
@@ -256,7 +311,7 @@
             "version": "0.2.0"
           }
         ],
-        "sha256": "67ae76c4fe93484013a1f1df8022a57ae3fc097193666574a2c85304ff33c947"
+        "sha256": "508edb205eea11d6ef736ae6c8b611e8f08630f25a8d2bb30cd7c26df96bb00b"
       },
       "checker": {
         "name": "norn-checker",
@@ -281,7 +336,7 @@
         "version": 3
       }
     },
-    "receiptSha256": "07103cc23599cfcd972860aba56de1e227013224d9efaf1e0308e1a5dc01f723",
+    "receiptSha256": "a84843ed1bab8ad5dff0e2b3a0d049d5de0c59804b754afb212359e8f6647ec5",
     "diagnostics": null,
     "registry": [],
     "baseArtifactIds": [
@@ -291,12 +346,23 @@
       "core.Commitment.interface",
       "core.Conversion.interface",
       "core.EconomicEvent.interface",
+      "core.EconomicEvent.reversal_matches_original.law",
       "core.Exchange.interface",
       "core.Hold.interface",
+      "core.Hold.measure_matches_resource.law",
+      "core.HoldableResource.interface",
+      "core.HoldableResource.open_holds_within_quantity.law",
       "core.LedgerEffect.interface",
       "core.Process.interface",
       "core.Resource.interface",
+      "core.ReversibleEvent.interface",
+      "core.ReversibleEvent.no_reversal_of_reversal.law",
+      "core.ReversibleEvent.reversal_flag_requires_link.law",
       "core.TimeInterval.interface",
+      "core.ValuedEvent.effects_balance.law",
+      "core.ValuedEvent.interface",
+      "core.ValuedLedgerEffect.currency_matches_event.law",
+      "core.ValuedLedgerEffect.interface",
       "core.analytics.Restatement.entity",
       "core.analytics.RestatementEvidence.interface",
       "core.analytics.restatement.access.policy",
@@ -587,6 +653,71 @@
                 "message": "A commitment must carry either a unit or a currency, never both or neither."
               }
             ],
+            "lifecycles": [
+              {
+                "endings": [
+                  {
+                    "outcome": "completed",
+                    "state": "fulfilled"
+                  },
+                  {
+                    "outcome": "cancelled",
+                    "state": "cancelled"
+                  },
+                  {
+                    "outcome": "breached_visible",
+                    "state": "breached"
+                  }
+                ],
+                "immutable": [
+                  "fulfilled",
+                  "cancelled",
+                  "breached"
+                ],
+                "initial": [
+                  "requested",
+                  "promised"
+                ],
+                "property": "status",
+                "terminal": [
+                  "fulfilled",
+                  "cancelled",
+                  "breached"
+                ],
+                "transitions": [
+                  {
+                    "from": [
+                      "requested"
+                    ],
+                    "id": "promise",
+                    "to": "promised"
+                  },
+                  {
+                    "from": [
+                      "promised"
+                    ],
+                    "id": "fulfil",
+                    "to": "fulfilled"
+                  },
+                  {
+                    "from": [
+                      "requested",
+                      "promised"
+                    ],
+                    "id": "cancel",
+                    "to": "cancelled"
+                  },
+                  {
+                    "from": [
+                      "requested",
+                      "promised"
+                    ],
+                    "id": "breach",
+                    "to": "breached"
+                  }
+                ]
+              }
+            ],
             "links": [
               {
                 "cardinality": {
@@ -868,6 +999,57 @@
         "version": "0.2.0"
       },
       {
+        "artifactId": "core.EconomicEvent.reversal_matches_original.law",
+        "dependencies": [
+          {
+            "artifactId": "core.EconomicEvent.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
+        "irVersion": "0.1",
+        "kind": "law",
+        "lifecycle": "active",
+        "name": "A reversing economic event matches its original's quantity, measure, and action",
+        "namespace": "core",
+        "payload": {
+          "condition": "self.reverses != null",
+          "id": "core.EconomicEvent.reversal_matches_original",
+          "lawVersion": "0.1",
+          "modality": {
+            "kind": "always"
+          },
+          "owner": "core",
+          "provenance": {
+            "source": "authoring_sdk",
+            "sourcePath": "registry/core/src/rea.ts"
+          },
+          "rationale": "1-hop LAW-LINK-1 reversal parity: a linked reversal matches the quantity, unit, currency, and action of the posted event it reverses (same-resource / per-account cancellation remains enforced by the kernel reversal primitive).",
+          "response": {
+            "expression": "self.quantity == self.reverses.quantity and ((self.unit == null) == (self.reverses.unit == null)) and ((self.unit ?? '') == (self.reverses.unit ?? '')) and ((self.currency == null) == (self.reverses.currency == null)) and ((self.currency ?? '') == (self.reverses.currency ?? '')) and self.action == self.reverses.action",
+            "kind": "predicate"
+          },
+          "scope": {
+            "objectTypes": [
+              "core.EconomicEvent"
+            ],
+            "root": {
+              "id": "core.EconomicEvent",
+              "kind": "entity"
+            }
+          },
+          "severity": "error",
+          "subject": "core.EconomicEvent"
+        },
+        "provenance": {
+          "source": "system",
+          "sourcePath": "registry/core/artifacts/core.EconomicEvent.reversal_matches_original.law.json"
+        },
+        "scope": {},
+        "version": "0.2.0"
+      },
+      {
         "artifactId": "core.Exchange.interface",
         "dependencies": [],
         "irVersion": "0.1",
@@ -927,6 +1109,61 @@
                 "expression": "((self.unit != null) and (self.currency == null)) or ((self.unit == null) and (self.currency != null))",
                 "id": "single_measure",
                 "message": "A hold must carry either a unit or a currency, never both or neither."
+              }
+            ],
+            "lifecycles": [
+              {
+                "endings": [
+                  {
+                    "outcome": "completed",
+                    "state": "consumed"
+                  },
+                  {
+                    "outcome": "compensated",
+                    "state": "released"
+                  },
+                  {
+                    "outcome": "cancelled",
+                    "state": "expired"
+                  }
+                ],
+                "immutable": [
+                  "released",
+                  "consumed",
+                  "expired"
+                ],
+                "initial": [
+                  "open"
+                ],
+                "property": "status",
+                "terminal": [
+                  "released",
+                  "consumed",
+                  "expired"
+                ],
+                "transitions": [
+                  {
+                    "from": [
+                      "open"
+                    ],
+                    "id": "consume",
+                    "to": "consumed"
+                  },
+                  {
+                    "from": [
+                      "open"
+                    ],
+                    "id": "release",
+                    "to": "released"
+                  },
+                  {
+                    "from": [
+                      "open"
+                    ],
+                    "id": "expire",
+                    "to": "expired"
+                  }
+                ]
               }
             ],
             "links": [
@@ -1026,6 +1263,169 @@
         "provenance": {
           "source": "system",
           "sourcePath": "registry/core/artifacts/core.Hold.interface.json"
+        },
+        "scope": {},
+        "version": "0.2.0"
+      },
+      {
+        "artifactId": "core.Hold.measure_matches_resource.law",
+        "dependencies": [
+          {
+            "artifactId": "core.Hold.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.Resource.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
+        "irVersion": "0.1",
+        "kind": "law",
+        "lifecycle": "active",
+        "name": "A hold's unit and currency match its target resource",
+        "namespace": "core",
+        "payload": {
+          "id": "core.Hold.measure_matches_resource",
+          "lawVersion": "0.1",
+          "modality": {
+            "kind": "always"
+          },
+          "owner": "core",
+          "provenance": {
+            "source": "authoring_sdk",
+            "sourcePath": "registry/core/src/rea.ts"
+          },
+          "rationale": "A hold or reservation must carry the exact unit or currency of the resource balance it locks.",
+          "response": {
+            "expression": "((self.unit == null) == (self.resource.unit == null)) and ((self.unit ?? '') == (self.resource.unit ?? '')) and ((self.currency == null) == (self.resource.currency == null)) and ((self.currency ?? '') == (self.resource.currency ?? ''))",
+            "kind": "predicate"
+          },
+          "scope": {
+            "objectTypes": [
+              "core.Hold"
+            ],
+            "root": {
+              "id": "core.Hold",
+              "kind": "entity"
+            }
+          },
+          "severity": "error",
+          "subject": "core.Hold"
+        },
+        "provenance": {
+          "source": "system",
+          "sourcePath": "registry/core/artifacts/core.Hold.measure_matches_resource.law.json"
+        },
+        "scope": {},
+        "version": "0.2.0"
+      },
+      {
+        "artifactId": "core.HoldableResource.interface",
+        "dependencies": [
+          {
+            "artifactId": "core.Resource.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.Hold.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
+        "irVersion": "0.1",
+        "kind": "entity",
+        "lifecycle": "active",
+        "name": "Holdable resource",
+        "namespace": "core",
+        "payload": {
+          "entityVersion": "2.0",
+          "interface": {
+            "description": "A conserved resource that supports open holds/escrows/reservations through inverse link `holds` and enforces core.law.escrow_non_negative at commit.",
+            "extends": [
+              "core.Resource"
+            ],
+            "links": [
+              {
+                "cardinality": {
+                  "from": "one",
+                  "to": "many"
+                },
+                "description": "Holds placed against this resource (inverse of core.Hold.resource).",
+                "id": "holds",
+                "target": "core.Hold"
+              }
+            ],
+            "name": "core.HoldableResource",
+            "role": "thing"
+          }
+        },
+        "provenance": {
+          "source": "system",
+          "sourcePath": "registry/core/artifacts/core.HoldableResource.interface.json"
+        },
+        "scope": {},
+        "version": "0.2.0"
+      },
+      {
+        "artifactId": "core.HoldableResource.open_holds_within_quantity.law",
+        "dependencies": [
+          {
+            "artifactId": "core.HoldableResource.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.Hold.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
+        "irVersion": "0.1",
+        "kind": "law",
+        "lifecycle": "active",
+        "name": "Open holds against a resource never exceed its available quantity",
+        "namespace": "core",
+        "payload": {
+          "condition": "len(self.holds) > 0",
+          "id": "core.HoldableResource.open_holds_within_quantity",
+          "lawVersion": "0.1",
+          "modality": {
+            "kind": "always"
+          },
+          "owner": "core",
+          "provenance": {
+            "source": "authoring_sdk",
+            "sourcePath": "registry/core/src/rea.ts"
+          },
+          "rationale": "The sum of open hold quantities against a holdable resource may never exceed the resource's quantity (core.law.escrow_non_negative).",
+          "response": {
+            "expression": "sum(map(self.holds, #.status == 'open' ? #.quantity : 0)) <= self.quantity",
+            "kind": "predicate"
+          },
+          "scope": {
+            "objectTypes": [
+              "core.HoldableResource"
+            ],
+            "root": {
+              "id": "core.HoldableResource",
+              "kind": "entity"
+            }
+          },
+          "severity": "error",
+          "subject": "core.HoldableResource"
+        },
+        "provenance": {
+          "source": "system",
+          "sourcePath": "registry/core/artifacts/core.HoldableResource.open_holds_within_quantity.law.json"
         },
         "scope": {},
         "version": "0.2.0"
@@ -1246,6 +1646,160 @@
         "version": "0.2.0"
       },
       {
+        "artifactId": "core.ReversibleEvent.interface",
+        "dependencies": [
+          {
+            "artifactId": "core.EconomicEvent.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
+        "irVersion": "0.1",
+        "kind": "entity",
+        "lifecycle": "active",
+        "name": "Reversible economic event",
+        "namespace": "core",
+        "payload": {
+          "entityVersion": "2.0",
+          "interface": {
+            "description": "An economic event that tracks `is_reversal` explicitly and narrows `reverses` to `core.ReversibleEvent` so one-hop LAW-LINK-1 enforcement prevents reversing a reversal (core.law.correction_is_linked_reversal).",
+            "extends": [
+              "core.EconomicEvent"
+            ],
+            "links": [
+              {
+                "cardinality": {
+                  "from": "one",
+                  "to": "one"
+                },
+                "description": "The posted reversible event this event exactly reverses.",
+                "id": "reverses",
+                "target": "core.ReversibleEvent"
+              }
+            ],
+            "name": "core.ReversibleEvent",
+            "properties": [
+              {
+                "id": "is_reversal",
+                "type": {
+                  "kind": "boolean"
+                }
+              }
+            ],
+            "role": "happening"
+          }
+        },
+        "provenance": {
+          "source": "system",
+          "sourcePath": "registry/core/artifacts/core.ReversibleEvent.interface.json"
+        },
+        "scope": {},
+        "version": "0.2.0"
+      },
+      {
+        "artifactId": "core.ReversibleEvent.no_reversal_of_reversal.law",
+        "dependencies": [
+          {
+            "artifactId": "core.ReversibleEvent.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
+        "irVersion": "0.1",
+        "kind": "law",
+        "lifecycle": "active",
+        "name": "A linked reversal marks itself as a reversal and never reverses another reversal",
+        "namespace": "core",
+        "payload": {
+          "condition": "self.reverses != null",
+          "id": "core.ReversibleEvent.no_reversal_of_reversal",
+          "lawVersion": "0.1",
+          "modality": {
+            "kind": "always"
+          },
+          "owner": "core",
+          "provenance": {
+            "source": "authoring_sdk",
+            "sourcePath": "registry/core/src/rea.ts"
+          },
+          "rationale": "A linked reversal must carry `is_reversal == true` and may only reverse an original event (`self.reverses.is_reversal == false`).",
+          "response": {
+            "expression": "self.is_reversal == true and self.reverses.is_reversal == false",
+            "kind": "predicate"
+          },
+          "scope": {
+            "objectTypes": [
+              "core.ReversibleEvent"
+            ],
+            "root": {
+              "id": "core.ReversibleEvent",
+              "kind": "entity"
+            }
+          },
+          "severity": "error",
+          "subject": "core.ReversibleEvent"
+        },
+        "provenance": {
+          "source": "system",
+          "sourcePath": "registry/core/artifacts/core.ReversibleEvent.no_reversal_of_reversal.law.json"
+        },
+        "scope": {},
+        "version": "0.2.0"
+      },
+      {
+        "artifactId": "core.ReversibleEvent.reversal_flag_requires_link.law",
+        "dependencies": [
+          {
+            "artifactId": "core.ReversibleEvent.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
+        "irVersion": "0.1",
+        "kind": "law",
+        "lifecycle": "active",
+        "name": "An event marked as a reversal must link to its original",
+        "namespace": "core",
+        "payload": {
+          "condition": "self.is_reversal == true",
+          "id": "core.ReversibleEvent.reversal_flag_requires_link",
+          "lawVersion": "0.1",
+          "modality": {
+            "kind": "always"
+          },
+          "owner": "core",
+          "provenance": {
+            "source": "authoring_sdk",
+            "sourcePath": "registry/core/src/rea.ts"
+          },
+          "rationale": "Setting `is_reversal == true` requires an explicit `reverses` link to the posted original event.",
+          "response": {
+            "expression": "self.reverses != null",
+            "kind": "predicate"
+          },
+          "scope": {
+            "objectTypes": [
+              "core.ReversibleEvent"
+            ],
+            "root": {
+              "id": "core.ReversibleEvent",
+              "kind": "entity"
+            }
+          },
+          "severity": "error",
+          "subject": "core.ReversibleEvent"
+        },
+        "provenance": {
+          "source": "system",
+          "sourcePath": "registry/core/artifacts/core.ReversibleEvent.reversal_flag_requires_link.law.json"
+        },
+        "scope": {},
+        "version": "0.2.0"
+      },
+      {
         "artifactId": "core.TimeInterval.interface",
         "dependencies": [],
         "irVersion": "0.1",
@@ -1300,6 +1854,235 @@
         },
         "scope": {},
         "version": "0.1.0"
+      },
+      {
+        "artifactId": "core.ValuedEvent.effects_balance.law",
+        "dependencies": [
+          {
+            "artifactId": "core.ValuedEvent.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.ValuedLedgerEffect.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
+        "irVersion": "0.1",
+        "kind": "law",
+        "lifecycle": "active",
+        "name": "Signed ledger effects valuing an economic event net to zero",
+        "namespace": "core",
+        "payload": {
+          "condition": "len(self.effects) > 0",
+          "id": "core.ValuedEvent.effects_balance",
+          "lawVersion": "0.1",
+          "modality": {
+            "kind": "always"
+          },
+          "owner": "core",
+          "provenance": {
+            "source": "authoring_sdk",
+            "sourcePath": "registry/core/src/rea.ts"
+          },
+          "rationale": "Every valued economic event whose ledger effects are posted together must balance to zero (core.law.value_conservation); per-leg currency uniformity is enforced by core.ValuedLedgerEffect.currency_matches_event.",
+          "response": {
+            "expression": "sum(map(self.effects, #.amount)) == 0",
+            "kind": "predicate"
+          },
+          "scope": {
+            "objectTypes": [
+              "core.ValuedEvent"
+            ],
+            "root": {
+              "id": "core.ValuedEvent",
+              "kind": "entity"
+            }
+          },
+          "severity": "error",
+          "subject": "core.ValuedEvent"
+        },
+        "provenance": {
+          "source": "system",
+          "sourcePath": "registry/core/artifacts/core.ValuedEvent.effects_balance.law.json"
+        },
+        "scope": {},
+        "version": "0.2.0"
+      },
+      {
+        "artifactId": "core.ValuedEvent.interface",
+        "dependencies": [
+          {
+            "artifactId": "core.EconomicEvent.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.LedgerEffect.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
+        "irVersion": "0.1",
+        "kind": "entity",
+        "lifecycle": "active",
+        "name": "Valued economic event",
+        "namespace": "core",
+        "payload": {
+          "entityVersion": "2.0",
+          "interface": {
+            "description": "A posted economic event whose accounting legs are linked through inverse role `effects` and must net to zero in `valuation_currency` (core.law.value_conservation).",
+            "extends": [
+              "core.EconomicEvent"
+            ],
+            "links": [
+              {
+                "cardinality": {
+                  "from": "one",
+                  "to": "many"
+                },
+                "description": "Signed ledger effects valuing this economic event (inverse of core.ValuedLedgerEffect.event).",
+                "id": "effects",
+                "target": "core.ValuedLedgerEffect"
+              }
+            ],
+            "name": "core.ValuedEvent",
+            "properties": [
+              {
+                "id": "valuation_currency",
+                "type": {
+                  "kind": "ref",
+                  "name": "core.code"
+                }
+              }
+            ],
+            "role": "happening"
+          }
+        },
+        "provenance": {
+          "source": "system",
+          "sourcePath": "registry/core/artifacts/core.ValuedEvent.interface.json"
+        },
+        "scope": {},
+        "version": "0.2.0"
+      },
+      {
+        "artifactId": "core.ValuedLedgerEffect.currency_matches_event.law",
+        "dependencies": [
+          {
+            "artifactId": "core.ValuedLedgerEffect.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.ValuedEvent.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
+        "irVersion": "0.1",
+        "kind": "law",
+        "lifecycle": "active",
+        "name": "A valued ledger effect carries the valuation currency of its economic event",
+        "namespace": "core",
+        "payload": {
+          "id": "core.ValuedLedgerEffect.currency_matches_event",
+          "lawVersion": "0.1",
+          "modality": {
+            "kind": "always"
+          },
+          "owner": "core",
+          "provenance": {
+            "source": "authoring_sdk",
+            "sourcePath": "registry/core/src/rea.ts"
+          },
+          "rationale": "Every ledger leg of a valued economic event must use the event's declared valuation_currency so mixed currencies are never netted (core.law.value_conservation).",
+          "response": {
+            "expression": "self.currency == self.event.valuation_currency",
+            "kind": "predicate"
+          },
+          "scope": {
+            "objectTypes": [
+              "core.ValuedLedgerEffect"
+            ],
+            "root": {
+              "id": "core.ValuedLedgerEffect",
+              "kind": "entity"
+            }
+          },
+          "severity": "error",
+          "subject": "core.ValuedLedgerEffect"
+        },
+        "provenance": {
+          "source": "system",
+          "sourcePath": "registry/core/artifacts/core.ValuedLedgerEffect.currency_matches_event.law.json"
+        },
+        "scope": {},
+        "version": "0.2.0"
+      },
+      {
+        "artifactId": "core.ValuedLedgerEffect.interface",
+        "dependencies": [
+          {
+            "artifactId": "core.LedgerEffect.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "core.ValuedEvent.interface",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
+        "irVersion": "0.1",
+        "kind": "entity",
+        "lifecycle": "active",
+        "name": "Valued ledger effect",
+        "namespace": "core",
+        "payload": {
+          "entityVersion": "2.0",
+          "interface": {
+            "description": "A signed ledger effect bound to a `core.ValuedEvent` whose currency must match the event's `valuation_currency` so `core.ValuedEvent.effects_balance` never nets unlike currencies.",
+            "extends": [
+              "core.LedgerEffect"
+            ],
+            "links": [
+              {
+                "cardinality": {
+                  "from": "many",
+                  "required": true,
+                  "to": "one"
+                },
+                "description": "The valued economic event this ledger effect belongs to.",
+                "id": "event",
+                "target": "core.ValuedEvent"
+              }
+            ],
+            "name": "core.ValuedLedgerEffect",
+            "role": "happening"
+          }
+        },
+        "provenance": {
+          "source": "system",
+          "sourcePath": "registry/core/artifacts/core.ValuedLedgerEffect.interface.json"
+        },
+        "scope": {},
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.analytics.Restatement.entity",
