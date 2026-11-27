@@ -202,17 +202,17 @@ fn feed_declaration_defaults_and_roundtrip() {
         json!({})
     );
 
-    let ext = BTreeMap::from([(
-        FEED_EXTENSION_KEY.to_owned(),
-        json!({
+    let ext: norn_ir::rule::JsonObject = serde_json::from_value(json!({
+        FEED_EXTENSION_KEY: {
             "feeds": {
                 "Warehouse Lot Balance": {
                     "mode": "patch",
                     "versionKind": "rfc3339"
                 }
             }
-        }),
-    )]);
+        }
+    }))
+    .expect("json object");
     let decl = FeedDeclaration::from_extensions(Some(&ext))
         .expect("parse")
         .expect("present");

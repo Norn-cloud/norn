@@ -88,13 +88,22 @@ fn touches(claim: &ObservedLinkClaim, scope: &ClaimScope) -> bool {
             .is_some_and(|t| scope.targets.contains(&t.key))
 }
 
-fn source_version(bundle: &MappingBundle) -> Result<&str, CellError> {
-    bundle
+fn source_version(bundle: &MappingBundle) -> Result<norn_ir::SourceVersion, CellError> {
+    let raw_version = bundle
         .raw
         .get("source_version")
         .and_then(RuntimeValue::as_str)
         .filter(|v| !v.trim().is_empty())
-        .ok_or(CellError::MappingBundleMismatch)
+        .ok_or(CellError::MappingBundleMismatch)?;
+    let kind = match bundle.raw.get("version_kind") {
+        None => norn_ir::VersionKind::Lexicographical,
+        Some(value) => value
+            .as_str()
+            .and_then(norn_ir::VersionKind::parse_wire)
+            .ok_or(CellError::MappingBundleMismatch)?,
+    };
+    norn_ir::SourceVersion::parse(kind, raw_version)
+        .map_err(|_err| CellError::MappingBundleMismatch)
 }
 
 /// OBS-LINK-CONTRIBUTION-1, mirroring the kernel's final-set rule: only a
@@ -279,20 +288,26 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         for bundle in current {
             bundles.push((bundle.clone(), true, false));
         }
-        let mut history = BTreeMap::<String, Vec<(String, String)>>::new();
+        let mut history = BTreeMap::<String, Vec<(norn_ir::SourceVersion, String)>>::new();
         let mut entries = Vec::new();
         for (bundle, fresh, disputed) in &bundles {
             let version = source_version(bundle)?;
             let mut recorded = Vec::new();
             for mut claim in bundle.link_claims()? {
                 let contribution = claim.contribution_id()?;
-                claim.supersedes = history
-                    .get(&contribution)
-                    .into_iter()
-                    .flatten()
-                    .filter(|(earlier, _)| earlier.as_str() < version)
-                    .map(|(_, id)| id.clone())
-                    .collect();
+                let mut supersedes = BTreeSet::new();
+                if let Some(prior) = history.get(&contribution) {
+                    for (earlier, id) in prior {
+                        if earlier
+                            .try_cmp(&version)
+                            .map_err(|_err| CellError::MappingBundleMismatch)?
+                            == std::cmp::Ordering::Less
+                        {
+                            supersedes.insert(id.clone());
+                        }
+                    }
+                }
+                claim.supersedes = supersedes;
                 let id = claim.id()?;
                 recorded.push((contribution.clone(), id.clone()));
                 entries.push(Entry {
@@ -307,7 +322,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 history
                     .entry(contribution)
                     .or_default()
-                    .push((version.to_owned(), id));
+                    .push((version.clone(), id));
             }
         }
         if entries.len() > MAX_CLAIMS {

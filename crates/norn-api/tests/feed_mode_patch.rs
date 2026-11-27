@@ -289,7 +289,10 @@ mod tests {
             Some("2026-11-12T08:30:00Z"),
             "08:30Z is later than 10:00+02:00 (=08:00Z)"
         );
+    }
 
+    #[test]
+    fn pull_typed_version_refuses_opaque_regression_and_bad_patch_text() {
         // Opaque refuses validation on ordered feeds.
         let mut opaque_profile = holding_profile(FeedMode::Patch, VersionKind::Opaque);
         opaque_profile.feeds[0].initial.version = "tok-0".into();
@@ -298,24 +301,52 @@ mod tests {
             Err(PullError::Profile(_))
         ));
 
-        // Keyset version moving backward refuses with PullError::Bound.
+        // Keyset version moving backward (either against saved watermark or
+        // intra-page `[101, 100]` after `99`) refuses with PullError::Bound.
         let keyset_uint = holding_profile(FeedMode::Patch, VersionKind::Uint64);
         let initial_wm = BTreeMap::from([(
             "Warehouse Lot Balance".to_owned(),
             Watermark {
-                version: "200".into(),
-                id: Value::from("WLB-1"),
+                version: "99".into(),
+                id: Value::from("WLB-0"),
             },
         )]);
-        let mut reg_pull = Pull::new(keyset_uint, initial_wm, Limits::default());
+        let mut reg_pull = Pull::new(keyset_uint.clone(), initial_wm.clone(), Limits::default());
         let _req = reg_pull.next_request().expect("req");
         let reg_body = json!({
-            "data": [{"name": "WLB-1", "modified": "150", "custom_norn_ref": "demo/h/1"}]
+            "data": [
+                {"name": "WLB-1", "modified": "101", "custom_norn_ref": "demo/h/1"},
+                {"name": "WLB-2", "modified": "100", "custom_norn_ref": "demo/h/2"}
+            ]
         });
         assert!(matches!(
             reg_pull.accept(200, reg_body.to_string().as_bytes()),
             Err(PullError::Bound { .. })
         ));
+
+        // Patch `text:` projection refuses non-null non-text values (empty string,
+        // bool, object) instead of converting them into explicit null clears.
+        let mut text_profile = keyset_uint;
+        text_profile.feeds[0]
+            .fields
+            .insert("valuation_method".into(), "text:/valuation_method".into());
+        for bad_val in [json!(""), json!(true), json!({"nested": 1})] {
+            let mut p = Pull::new(text_profile.clone(), initial_wm.clone(), Limits::default());
+            let _req = p.next_request().expect("req");
+            let bad_body = json!({
+                "data": [{
+                    "name": "WLB-1", "modified": "100",
+                    "custom_norn_ref": "demo/h/1", "valuation_method": bad_val
+                }]
+            });
+            assert!(
+                matches!(
+                    p.accept(200, bad_body.to_string().as_bytes()),
+                    Err(PullError::Shape { .. })
+                ),
+                "non-null non-text value {bad_val} must refuse under text: in Patch mode"
+            );
+        }
     }
 
     fn seed_full_erpnext_snapshot(host: &DevHost<NativeEngine>) {
@@ -535,6 +566,86 @@ mod tests {
         assert!(
             result.is_err(),
             "patch supplying only one operand of multi-field expression must fail closed"
+        );
+    }
+
+    #[test]
+    fn uint64_version_100_patch_supersedes_version_99_link_claim_and_clears_link() {
+        let host = open_host(&erpnext_artifacts());
+        seed_full_erpnext_snapshot(&host);
+        let uint_full = holding_profile(FeedMode::FullSnapshot, VersionKind::Uint64);
+        let uint_patch = holding_profile(FeedMode::Patch, VersionKind::Uint64);
+        let key = "demo/holding/uint-link-test";
+        let v99 = json!({
+            "name": "WLB-UINT-1", "modified": "99", "custom_norn_ref": key,
+            "resource_code": "GOLD", "quantity": 10.0, "unit": "g", "location": "north",
+            "item_ref": "demo/item/gold", "owner_ref": "demo/party/owner",
+            "custodian_ref": "demo/party/custodian", "stock_cost": 100.0,
+            "cost_currency": "USD", "valuation_method": "moving_average"
+        });
+        assert_eq!(
+            ingest_patch_row(&host, &uint_full, &v99, T0.saturating_add(1)),
+            MappingOutcome::Landed
+        );
+        let v100_clear = json!({
+            "name": "WLB-UINT-1", "modified": "100",
+            "custom_norn_ref": key, "owner_ref": null
+        });
+        assert_eq!(
+            ingest_patch_row(&host, &uint_patch, &v100_clear, T0.saturating_add(2)),
+            MappingOutcome::Landed
+        );
+        let cell = host.cell().expect("cell");
+        let owners = cell
+            .store()
+            .read()
+            .links_from(MAIN_WORLD, "canon.Holding", "owner", key)
+            .expect("owner links");
+        assert!(
+            owners.is_empty(),
+            "uint64 version 100 clear must supersede version 99 link claim: {owners:?}"
+        );
+    }
+
+    #[test]
+    fn patch_omitting_nullable_guard_input_fails_closed() {
+        let artifacts = erpnext_artifacts();
+        let source =
+            load_artifact("fixtures/packs/erpnext-rest/artifacts/erpnext.rest.source.json");
+        let mut mapping_doc = serde_json::to_value(load_artifact(
+            "fixtures/packs/erpnext-rest/artifacts/erpnext.rest.mapping.json",
+        ))
+        .expect("mapping json");
+        let maps = mapping_doc["payload"]["maps"].as_array_mut().expect("maps");
+        let holding_map = maps
+            .iter_mut()
+            .find(|m| m["source"]["dataset"] == "Warehouse Lot Balance")
+            .expect("holding map");
+        // Guard reads nullable `valuation_method`; omitting it on a Patch must
+        // refuse rather than evaluating `input.valuation_method == null` as true.
+        holding_map["when"] = json!("input.valuation_method == null");
+        let mapping: ArtifactEnvelope = serde_json::from_value(mapping_doc).expect("mapping");
+        let compiled =
+            compile_mapping_artifact(&mapping, &source, &artifacts).expect("compile guarded map");
+        let omitted_guard_doc = SourceDocument::from_json(
+            "Warehouse Lot Balance",
+            &json!({
+                "name": "WLB-00001",
+                "custom_norn_ref": "demo/holding/owner/north/gold",
+                "quantity": 10.0
+            })
+            .to_string(),
+            None,
+        )
+        .expect("doc")
+        .with_mode(FeedMode::Patch);
+        let result = compiled.apply(
+            &[omitted_guard_doc],
+            &norn_ir::provenance::UtcTimestamp(RECORDED_AT.into()),
+        );
+        assert!(
+            result.is_err(),
+            "patch omitting a nullable guard field must fail closed instead of defaulting to null"
         );
     }
 

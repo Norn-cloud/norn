@@ -136,6 +136,19 @@ impl VersionKind {
             Self::Opaque => "opaque",
         }
     }
+
+    /// Parse a wire name, failing closed on unknown values.
+    #[must_use]
+    pub fn parse_wire(text: &str) -> Option<Self> {
+        match text {
+            "lexicographical" => Some(Self::Lexicographical),
+            "rfc3339" => Some(Self::Rfc3339),
+            "uint64" => Some(Self::Uint64),
+            "int64" => Some(Self::Int64),
+            "opaque" => Some(Self::Opaque),
+            _ => None,
+        }
+    }
 }
 
 /// Declared feed contract for one source dataset.
@@ -185,7 +198,9 @@ impl FeedDeclaration {
         let Some(value) = extensions.and_then(|ext| ext.get(FEED_EXTENSION_KEY)) else {
             return Ok(None);
         };
-        serde_json::from_value(value.clone())
+        let json = serde_json::to_value(value)
+            .map_err(|error| format!("invalid {FEED_EXTENSION_KEY} extension: {error}"))?;
+        serde_json::from_value(json)
             .map(Some)
             .map_err(|error| format!("invalid {FEED_EXTENSION_KEY} extension: {error}"))
     }

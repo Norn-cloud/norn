@@ -568,13 +568,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         {
             return Err(mismatch());
         }
-        let feed_mode = match raw.get("feed_mode") {
-            None => norn_ir::FeedMode::FullSnapshot,
-            Some(value) => value
-                .as_str()
-                .and_then(norn_ir::FeedMode::parse_wire)
-                .ok_or_else(mismatch)?,
-        };
+        let feed_mode = parse_raw_feed_mode(raw, field("source_version")?)?;
         let source_document =
             SourceDocument::from_json(&input.dataset, &payload_text, None)?.with_mode(feed_mode);
         let (records, diagnostics) = if field("kind")? == "upsert" {
@@ -853,6 +847,29 @@ fn explained(refusal: &norn_checker::mapping::RowRefusal) -> serde_json::Value {
         }
     }
     value
+}
+
+/// Parse optional `feed_mode` and validate optional `version_kind` against
+/// `source_version` on a raw observation envelope (`FEED-MODE-1`).
+fn parse_raw_feed_mode(
+    raw: &RuntimeValue,
+    source_version: &str,
+) -> Result<norn_ir::FeedMode, CellError> {
+    let feed_mode = match raw.get("feed_mode") {
+        None => norn_ir::FeedMode::FullSnapshot,
+        Some(value) => value
+            .as_str()
+            .and_then(norn_ir::FeedMode::parse_wire)
+            .ok_or_else(mismatch)?,
+    };
+    if let Some(vk) = raw.get("version_kind") {
+        let kind = vk
+            .as_str()
+            .and_then(norn_ir::VersionKind::parse_wire)
+            .ok_or_else(mismatch)?;
+        norn_ir::SourceVersion::parse(kind, source_version).map_err(|_err| mismatch())?;
+    }
+    Ok(feed_mode)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

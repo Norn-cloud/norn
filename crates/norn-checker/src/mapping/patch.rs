@@ -125,7 +125,21 @@ fn build_row_input(
         let raw = row.get(field);
         if raw.is_some() {
             present_fields.insert(field.clone());
-        } else if mode == FeedMode::Patch && !map.identity_fields.iter().any(|id| id == field) {
+        } else if mode == FeedMode::Patch {
+            if map.identity_fields.iter().any(|id| id == field) {
+                let reason =
+                    "is required on patch records (identity/guard input omitted)".to_owned();
+                return Err(Refused {
+                    code: codes::INVALID_RECORD,
+                    reason: format!("field {field:?} {reason}"),
+                    field: Some(Box::new(FieldRefusal {
+                        field: field.clone(),
+                        value: None,
+                        expected: type_name(ty),
+                        reason,
+                    })),
+                });
+            }
             continue;
         }
         let value = conform(raw, ty, derivation).map_err(|reason| Refused {

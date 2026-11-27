@@ -100,26 +100,20 @@ pub struct Feed {
     /// The position before the first sync.
     pub initial: Watermark,
     /// Snapshot vs partial-patch delivery semantics (`full_snapshot` by default).
-    #[serde(default, skip_serializing_if = "is_default_feed_mode")]
+    #[serde(default, skip_serializing_if = "is_default_mode")]
     pub mode: FeedMode,
     /// Typed source-version parser and comparator (`lexicographical` by default).
-    #[serde(default, skip_serializing_if = "is_default_version_kind")]
+    #[serde(default, skip_serializing_if = "is_default_version")]
     pub version_kind: VersionKind,
 }
 
-#[allow(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "serde skip_serializing_if requires &T"
-)]
-const fn is_default_feed_mode(mode: &FeedMode) -> bool {
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_default_mode(mode: &FeedMode) -> bool {
     mode.is_default()
 }
 
-#[allow(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "serde skip_serializing_if requires &T"
-)]
-const fn is_default_version_kind(kind: &VersionKind) -> bool {
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_default_version(kind: &VersionKind) -> bool {
     kind.is_default()
 }
 
@@ -418,6 +412,15 @@ impl PullProfile {
             .find(|feed| feed.dataset == dataset)
             .map_or(FeedMode::FullSnapshot, |feed| feed.mode)
     }
+
+    /// Declared [`VersionKind`] for `dataset`, defaulting to [`VersionKind::Lexicographical`].
+    #[must_use]
+    pub fn version_kind(&self, dataset: &str) -> VersionKind {
+        self.feeds
+            .iter()
+            .find(|feed| feed.dataset == dataset)
+            .map_or(VersionKind::Lexicographical, |feed| feed.version_kind)
+    }
 }
 
 /// One pull over a profile: plan a request, accept its response, repeat.
@@ -572,7 +575,7 @@ impl Pull {
                             reason: "the keyset position did not advance".into(),
                         });
                     }
-                    check_keyset_order(feed.version_kind, &self.position, &next, &dataset)?;
+                    check_keyset_order(feed.version_kind, &self.position, &rows, &dataset)?;
                     self.position = next;
                 }
                 items.len() < usize::try_from(*size).unwrap_or(usize::MAX)
@@ -657,13 +660,20 @@ pub fn observation(
         "payload" => row.payload.clone(),
         "payload_digest" => digest,
     };
-    if profile.feed_mode(&row.dataset) == FeedMode::Patch
-        && let RuntimeValue::Object(map) = &mut input
-    {
-        map.insert(
-            "feed_mode".to_owned(),
-            RuntimeValue::String(FeedMode::Patch.as_str().to_owned()),
-        );
+    if let RuntimeValue::Object(map) = &mut input {
+        if profile.feed_mode(&row.dataset) == FeedMode::Patch {
+            map.insert(
+                "feed_mode".to_owned(),
+                RuntimeValue::String(FeedMode::Patch.as_str().to_owned()),
+            );
+        }
+        let version_kind = profile.version_kind(&row.dataset);
+        if version_kind != VersionKind::Lexicographical {
+            map.insert(
+                "version_kind".to_owned(),
+                RuntimeValue::String(version_kind.as_str().to_owned()),
+            );
+        }
     }
     Ok(norn_kernel::Observed {
         id: norn_kernel::ObservationId(format!(
@@ -690,21 +700,15 @@ fn update_greatest_version(
         .as_deref()
         .map(|raw| SourceVersion::parse(kind, raw))
         .transpose()
-        .map_err(|error| shape(error.to_string()))?;
+        .map_err(|e| shape(e.to_string()))?;
     for row in rows {
-        let candidate =
-            SourceVersion::parse(kind, &row.version).map_err(|error| shape(error.to_string()))?;
-        let replace = match &best {
+        let cand = SourceVersion::parse(kind, &row.version).map_err(|e| shape(e.to_string()))?;
+        let gt = match &best {
             None => true,
-            Some(current) => {
-                candidate
-                    .try_cmp(current)
-                    .map_err(|error| shape(error.to_string()))?
-                    == Ordering::Greater
-            }
+            Some(cur) => cand.try_cmp(cur).map_err(|e| shape(e.to_string()))? == Ordering::Greater,
         };
-        if replace {
-            best = Some(candidate);
+        if gt {
+            best = Some(cand);
         }
     }
     if let Some(best) = best {
@@ -716,33 +720,24 @@ fn update_greatest_version(
 fn check_keyset_order(
     kind: VersionKind,
     current: &Watermark,
-    next: &Watermark,
+    rows: &[Row],
     dataset: &impl Fn() -> String,
 ) -> Result<(), PullError> {
     if kind == VersionKind::Lexicographical {
         return Ok(());
     }
-    let cur_ver =
-        SourceVersion::parse(kind, &current.version).map_err(|error| PullError::Bound {
-            dataset: dataset(),
-            reason: error.to_string(),
-        })?;
-    let next_ver = SourceVersion::parse(kind, &next.version).map_err(|error| PullError::Bound {
+    let bound = |reason: String| PullError::Bound {
         dataset: dataset(),
-        reason: error.to_string(),
-    })?;
-    if next_ver
-        .try_cmp(&cur_ver)
-        .map_err(|error| PullError::Bound {
-            dataset: dataset(),
-            reason: error.to_string(),
-        })?
-        == Ordering::Less
-    {
-        return Err(PullError::Bound {
-            dataset: dataset(),
-            reason: "the keyset version moved backward".into(),
-        });
+        reason,
+    };
+    let mut prev =
+        SourceVersion::parse(kind, &current.version).map_err(|e| bound(e.to_string()))?;
+    for row in rows {
+        let next = SourceVersion::parse(kind, &row.version).map_err(|e| bound(e.to_string()))?;
+        if next.try_cmp(&prev).map_err(|e| bound(e.to_string()))? == Ordering::Less {
+            return Err(bound("the keyset version moved backward".into()));
+        }
+        prev = next;
     }
     Ok(())
 }
@@ -776,7 +771,7 @@ fn project_page(feed: &Feed, items: &[RuntimeValue]) -> Result<Page, PullError> 
                     payload.insert(field.clone(), project(item, pointer));
                 }
                 FeedMode::Patch => {
-                    if let Some(value) = project_patch(item, pointer) {
+                    if let Some(value) = project_patch(item, field, pointer, &shape)? {
                         payload.insert(field.clone(), value);
                     }
                 }
@@ -824,16 +819,32 @@ fn project(item: &RuntimeValue, pointer: &str) -> RuntimeValue {
     }
 }
 
-/// Patch-mode projection (`FEED-MODE-1`): absent JSON pointers return `None`
-/// (preserving omitted keys), while explicit JSON `null` returns
-/// `Some(RuntimeValue::Null)`.
-fn project_patch(item: &RuntimeValue, pointer: &str) -> Option<RuntimeValue> {
-    match pointer.strip_prefix("text:") {
-        Some(pointer) => item
-            .pointer(pointer)
-            .map(|value| scalar_text(value).map_or(RuntimeValue::Null, RuntimeValue::String)),
-        None => item.pointer(pointer).cloned(),
+/// Patch-mode projection (`FEED-MODE-1`): absent JSON pointers return `None`,
+/// explicit JSON `null` returns `Some(Null)`, and non-null non-scalar values
+/// under `text:` fail closed instead of fabricating an explicit clear.
+fn project_patch(
+    item: &RuntimeValue,
+    field: &str,
+    pointer: &str,
+    shape: &impl Fn(String) -> PullError,
+) -> Result<Option<RuntimeValue>, PullError> {
+    let Some(ptr) = pointer.strip_prefix("text:") else {
+        return Ok(item.pointer(pointer).cloned());
+    };
+    let Some(value) = item.pointer(ptr) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(Some(RuntimeValue::Null));
     }
+    scalar_text(value)
+        .map(RuntimeValue::String)
+        .map(Some)
+        .ok_or_else(|| {
+            shape(format!(
+                "patch text: field {field:?} at {ptr} must be non-empty text, number, or null"
+            ))
+        })
 }
 
 /// A scalar's text: a string as is, a number as its exact decimal.
