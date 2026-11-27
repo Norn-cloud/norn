@@ -287,9 +287,11 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
     </section>`
 }
 
+const formatLocale = (locale: Locale): string => (locale === "ar" ? "ar-EG-u-nu-latn" : locale)
 const record = (value: unknown): Readonly<Record<string, unknown>> => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {})
 const text = (value: unknown): string | null => (typeof value === "string" ? value : null)
-const time = (ms: number, locale: Locale) => new Date(ms).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })
+export const formatDecisionTime = (ms: number, locale: Locale): string => new Date(ms).toLocaleTimeString(formatLocale(locale), { hour: "2-digit", minute: "2-digit" })
+export const formatDecisionRecordedAt = (ms: number, locale: Locale): string => new Date(ms).toLocaleString(formatLocale(locale), { dateStyle: "medium", timeStyle: "medium" })
 const ownLaw = (laws: Readonly<Record<string, SheetLawInfo>> | undefined, key: string | null): SheetLawInfo | undefined =>
   laws !== undefined && key !== null && Object.hasOwn(laws, key) ? laws[key] : undefined
 
@@ -361,7 +363,7 @@ export function refusalPanelMarkup(
   const shownTime = cellTime ?? context.receivedAt
   const timeIso = cellTime !== null ? decidedAt! : shownTime.toISOString()
   const timeLabel = cellTime !== null ? w.resDecidedAt : w.resReceivedAt
-  const formattedTime = shownTime.toLocaleString(context.locale, { dateStyle: "medium", timeStyle: "short" })
+  const formattedTime = shownTime.toLocaleString(formatLocale(context.locale), { dateStyle: "medium", timeStyle: "short" })
 
   const reqRows: [string, string][] = [
     [w.reqDecision, context.decision.question],
@@ -550,7 +552,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
       const rows: [string, string][] = [
         [w.receipt, text(receipt.receiptHash) ?? ""],
         [w.commit, String(receipt.commitSeq ?? "")],
-        [w.recorded, typeof receipt.recordedAtMs === "number" ? new Date(receipt.recordedAtMs).toLocaleString(locale, { dateStyle: "medium", timeStyle: "medium" }) : ""],
+        [w.recorded, typeof receipt.recordedAtMs === "number" ? formatDecisionRecordedAt(receipt.recordedAtMs, locale) : ""],
         [w.decision, decision.id],
       ]
       const dl = details.querySelector("dl")
@@ -563,7 +565,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
       details.hidden = false
     } else if (state === "resolved") {
       const resolution = record(doc.resolution)
-      const at = typeof resolution.atMs === "number" ? time(resolution.atMs, locale) : ""
+      const at = typeof resolution.atMs === "number" ? formatDecisionTime(resolution.atMs, locale) : ""
       if (resolution.resolution === "withdrawn") [heading, words] = [say("withdrawn", at), w.withdrawnBody]
       else if (resolution.resolution === "expired") [heading, words] = [say("expiredAt", at), w.expiredBody]
       else {

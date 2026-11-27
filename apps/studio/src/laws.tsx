@@ -129,7 +129,7 @@ function LawRow({ law, held, scanLimit }: { readonly law: Law; readonly held: Gr
           {law.inheritedFrom && <SourceTag mono={false} title="Declared on a kind of record this one is">from {conceptTitle(law.inheritedFrom)}</SourceTag>}
           {held && <HeldCountChip held={held} scanLimit={scanLimit} />}
           {held && held.records.length === 0 && (
-            <RouteLink to={held.target} className="text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline max-sm:inline-flex max-sm:min-h-[44px] max-sm:items-center">
+            <RouteLink to={held.target} className="ms-1 text-meta text-muted-foreground underline decoration-line underline-offset-4 hover:text-foreground hover:decoration-foreground max-sm:inline-flex max-sm:min-h-[44px] max-sm:items-center">
               Review {heldCountText(held.count, held.approximate)}
             </RouteLink>
           )}
@@ -162,7 +162,7 @@ export function HeldRuleRow({ held, scanLimit }: { readonly held: Group; readonl
           {held.ruleRef.kind === "invariant" && <SourceTag mono={false}>Invariant</SourceTag>}
           <HeldCountChip held={held} scanLimit={scanLimit} />
           {held.records.length === 0 && (
-            <RouteLink to={held.target} className="text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline max-sm:inline-flex max-sm:min-h-[44px] max-sm:items-center">
+            <RouteLink to={held.target} className="ms-1 text-meta text-muted-foreground underline decoration-line underline-offset-4 hover:text-foreground hover:decoration-foreground max-sm:inline-flex max-sm:min-h-[44px] max-sm:items-center">
               Review {heldCountText(held.count, held.approximate)}
             </RouteLink>
           )}
