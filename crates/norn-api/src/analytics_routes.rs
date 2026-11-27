@@ -330,14 +330,14 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
     ) -> Result<norn_cell::compute::HistoricalQuestionResult, CellError> {
         let grain = plan.grain().as_str().to_owned();
         let admitted = visible(&gate_record(&grain, ALL_MEMBERS, &context.scope))?;
-        let prepared = store
-            .analytics_prepare_known_at(plan, context, &self.tenant, cutoff)?
-            .expecting(self.transport.capabilities().engine);
         let mut answer = if admitted {
+            let prepared = store
+                .analytics_prepare_known_at(plan, context, &self.tenant, cutoff)?
+                .expecting(self.transport.capabilities().engine);
             let response = evaluate_on(store, self.transport, &self.tenant, prepared.request())?;
             store.analytics_answer_known_at(prepared, response)?
         } else {
-            store.analytics_empty_authorized_answer_known_at(prepared)?
+            store.analytics_empty_known_at(plan, context, &self.tenant, cutoff)?
         };
         finish_answer(store, plan, &mut answer.result, Some(cutoff), visible)?;
         Ok(answer)
