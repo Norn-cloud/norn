@@ -1983,6 +1983,16 @@ mod tests {
                     ],
                 )
                 .expect("rewrite to v2 digest");
+            engine
+                .execute(
+                    "DELETE FROM \"_norn_source_pending\" \
+                     WHERE \"connection_id\" = ?1 AND \"dataset\" = ?2",
+                    &[
+                        SqlValue::Text("erpnext.rest".into()),
+                        SqlValue::Text(dataset.clone()),
+                    ],
+                )
+                .expect("clear post-complete v3 pending row");
         }
         let reopened = reopen_native_host(&artifacts, db.path());
         let norn_api::host::SourceCapturePlan::Captured(replayed) = reopened

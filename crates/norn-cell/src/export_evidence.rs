@@ -223,7 +223,7 @@ pub(crate) fn read_late_source_evidence<E: SqlEngine>(
     if commit_seq == 0 {
         return Ok((Vec::new(), Vec::new()));
     }
-    let prev_seq = to_i64(commit_seq - 1, "source evidence commit_seq")?;
+    let prev_seq = to_i64(commit_seq.saturating_sub(1), "source evidence commit_seq")?;
     let current_seq = to_i64(commit_seq, "commit_seq")?;
     let table = crate::source_cursor::SOURCE_EVIDENCE;
     let inbox = crate::system::INBOX;
@@ -419,7 +419,7 @@ pub(crate) fn restore_late_source_evidence<E: SqlEngine>(
     if commit_seq == 0 {
         return Err(mismatch());
     }
-    let prev_seq = to_i64(commit_seq - 1, "source evidence commit_seq")?;
+    let prev_seq = to_i64(commit_seq.saturating_sub(1), "source evidence commit_seq")?;
     let current_seq = to_i64(commit_seq, "commit_seq")?;
     let newly_restored =
         restore_pending_observations(reader, prev_seq, pending, entries, &mismatch)?;
@@ -562,7 +562,7 @@ pub(crate) fn restore_source_evidence<E: SqlEngine>(
     if entries.is_empty() {
         return Ok(existing.is_empty());
     }
-    let prev_seq = to_i64(commit_seq - 1, "source evidence commit_seq")?;
+    let prev_seq = to_i64(commit_seq.saturating_sub(1), "source evidence commit_seq")?;
     let mut prev_key: Option<(&str, &str)> = None;
     let mut seen_existing = 0_usize;
     for entry in entries {

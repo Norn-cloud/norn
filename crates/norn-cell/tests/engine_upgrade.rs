@@ -444,24 +444,39 @@ fn add_source_cursor_schema(schema: &mut Vec<Value>) {
 }
 
 fn add_source_cursor_indexes(schema: &mut Vec<Value>) {
-    for (name, sql) in [
+    for (table, name, sql) in [
         (
+            "_norn_source_evidence",
+            "_norn_source_evidence/captured",
+            "CREATE INDEX \"_norn_source_evidence/captured\" ON \"_norn_source_evidence\" (\"captured_commit_seq\", \"observation_id\", \"connection_id\")",
+        ),
+        (
+            "_norn_inbox",
+            "_norn_inbox/conflict_accepted",
+            "CREATE INDEX \"_norn_inbox/conflict_accepted\" ON \"_norn_inbox\" (json_extract(\"observed\", '$.input.acceptedBundleId'), \"observation_id\") WHERE substr(\"observation_id\", 1, 17) = 'mapping-conflict:'",
+        ),
+        (
+            "_norn_fact_values",
             "_norn_fact_values/root_first_version",
             "CREATE INDEX \"_norn_fact_values/root_first_version\" ON \"_norn_fact_values\" (\"world\", \"root_type\", \"commit_seq\", \"id\") WHERE \"version\" = 1",
         ),
         (
+            "_norn_fact_values",
             "_norn_fact_values/connection_commit",
             "CREATE INDEX \"_norn_fact_values/connection_commit\" ON \"_norn_fact_values\" (\"world\", \"id\", \"commit_seq\", \"version\") WHERE \"root_type\" = 'source.Connection'",
         ),
         (
+            "_norn_fact_values",
             "_norn_fact_values/connection_mapping",
             "CREATE INDEX \"_norn_fact_values/connection_mapping\" ON \"_norn_fact_values\" (\"world\", \"id\", COALESCE(json_extract(\"snapshot\", '$.values.mapping_id'), ''), \"version\") WHERE \"root_type\" = 'source.Connection'",
         ),
         (
+            "_norn_fact_values",
             "_norn_fact_values/connection_nonfailed",
             "CREATE INDEX \"_norn_fact_values/connection_nonfailed\" ON \"_norn_fact_values\" (\"world\", \"id\", \"version\") WHERE \"root_type\" = 'source.Connection' AND COALESCE(json_extract(\"snapshot\", '$.values.status'), '') != 'failed'",
         ),
         (
+            "_norn_fact_values",
             "_norn_fact_values/connection_watermark",
             "CREATE INDEX \"_norn_fact_values/connection_watermark\" ON \"_norn_fact_values\" (\"world\", \"id\", COALESCE(json_extract(\"snapshot\", '$.values.watermark'), ''), \"version\") WHERE \"root_type\" = 'source.Connection' AND COALESCE(json_extract(\"snapshot\", '$.values.status'), '') != 'failed'",
         ),
@@ -469,7 +484,7 @@ fn add_source_cursor_indexes(schema: &mut Vec<Value>) {
         schema.push(serde_json::json!({
             "type": "index",
             "name": name,
-            "table": "_norn_fact_values",
+            "table": table,
             "sql": sql,
         }));
     }

@@ -2146,16 +2146,24 @@ fn a_mid_page_ingest_failure_does_not_advance_the_durable_watermark() {
         panic!("ingest failure must terminate the run");
     };
     assert_eq!(summary.outcome, "failed");
-    // The durable `source.Connection` end watermark persisted on `failing_host`
-    // must remain empty (`"{}"`) rather than advancing past uncaptured rows.
-    let recorded_conn = failing_host
+    // The durable `source.Connection` watermark on `good_host` must remain
+    // empty (`"{}"`) rather than advancing past uncaptured rows, and
+    // `failing_host` (holding neither the lease nor mapping) must stay fenced.
+    let recorded_conn = good_host
         .host_object("source.Connection", "odoo.rest")
         .expect("read connection")
-        .expect("end run recorded");
+        .expect("start run recorded");
     assert_eq!(
         recorded_conn.get("watermark"),
         Some(&RuntimeValue::String("{}".into())),
-        "persisted end watermark must not advance on mid-page ingest failure: {recorded_conn:?}"
+        "persisted watermark must not advance on mid-page ingest failure: {recorded_conn:?}"
+    );
+    assert!(
+        failing_host
+            .host_object("source.Connection", "odoo.rest")
+            .expect("read failing host connection")
+            .is_none(),
+        "fenced host without lease must not record an end report"
     );
 
     // Restarting with fresh `Sources` state against the same `failing_host`

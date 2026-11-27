@@ -1150,13 +1150,17 @@ fn report<E: SqlEngine>(
     );
     let profile = connect_profile();
     let now = ended_ms.unwrap_or(run.started_ms);
+    let version = match &run.lease {
+        Some(lease) => format!("{}/g{}/{phase}", run.id, lease.generation),
+        None => format!("{}/{phase}", run.id),
+    };
     let batch: Vec<_> = rows
         .into_iter()
         .filter_map(|(dataset, source_id, payload)| {
             let row = crate::pull::Row {
                 dataset: dataset.to_owned(),
                 source_id,
-                version: format!("{}/{phase}", run.id),
+                version: version.clone(),
                 payload,
             };
             observation(&profile, &row, now).ok().map(|raw| {

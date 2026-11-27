@@ -1589,7 +1589,7 @@ mod tests {
             source: "order-poll-1".into(),
             target: target.into(),
             values: BTreeMap::new(),
-            target_type: None,
+            target_type: Some("canon.Party".into()),
         };
         store
             .commit(&CommitBatch {
@@ -1610,6 +1610,7 @@ mod tests {
                                 RuntimeValue::Number("5".parse::<Decimal>().unwrap()),
                             ),
                             ("unit".into(), RuntimeValue::from("g")),
+                            ("currency".into(), RuntimeValue::Null),
                         ]),
                     },
                 ],
