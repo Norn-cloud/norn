@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useParams } from "@tanstack/react-router"
 import { Database, Plus, Search, Shapes } from "lucide-react"
@@ -20,6 +21,7 @@ import { SourceConnections } from "./source-connections.tsx"
 import { ModelGraph } from "./model-graph.tsx"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DecidedRecordsGrid } from "./grid/records-grid.tsx"
+import { retryWorkspace } from "./lib/live-transport.ts"
 import { useCatalog } from "./lib/use-catalog.ts"
 import { useWorkspace } from "./lib/workspace.tsx"
 import { Iso } from "@/components/iso"
@@ -67,7 +69,8 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
                     description={system.schema ? <span className="block truncate">{[system.schema.instance && `instance ${system.schema.instance}`, system.schema.version && `schema ${system.schema.version}`, system.schema.observedAt && `observed ${system.schema.observedAt}`].filter(Boolean).join(" · ")}</span> : undefined}
                     end={(
                       <span className="text-meta" title={`${system.datasets.length} kinds of record · feeds ${system.feeds.length} object types`}>
-                        {system.datasets.length} kinds of record <span aria-hidden>→</span> {system.feeds.length} object types
+                        <span className="max-sm:hidden">{system.datasets.length} kinds of record <span aria-hidden className="inline-block rtl:rotate-180">→</span> {system.feeds.length} object types</span>
+                        <span className="sm:hidden">{system.datasets.length} <span aria-hidden className="inline-block rtl:rotate-180">→</span> {system.feeds.length}</span>
                       </span>
                     )} />
                 </li>
@@ -264,6 +267,7 @@ function ObjectTypeDetail({ catalog, concept, recorded }: { readonly catalog: Ca
 /** One object type's page: its definition, then its records; the submenu lists the others. */
 export function ObjectTypePage() {
   const { concept: type = "" } = useParams({ strict: false })
+  const queries = useQueryClient()
   const { read, catalog } = useCatalog()
   const concept = catalog?.byName.get(type)
   // The records are bound to the workspace the page's mode decided (DecidedRecordsGrid, #1740, #1745, #1754).
@@ -274,9 +278,9 @@ export function ObjectTypePage() {
         data={catalog}
         error={read.error}
         isFetching={read.isFetching}
-        // A refusal's Retry reads again; Workspace unavailable owns its own Retry, which decides the
-        // mode again as the shell's would (`WorkspaceUnavailable`).
-        onRetry={() => void read.refetch()}
+        // Route pending/refusal Retry through retryWorkspace so a wedged mode probe or unavailable
+        // cell recovers in one click without refetching against a dead cell (#1774).
+        onRetry={() => void retryWorkspace(queries).then((ok) => { if (ok) void read.refetch({ cancelRefetch: false }) })}
         skeleton="detail"
         loadingLabel="Reading type definition"
       >
@@ -306,6 +310,7 @@ export { menuCount, useRecordsMenu, useSourcesMenu } from "./lib/nav-menus.ts"
 export { useCatalog }
 
 export function SourcesPage() {
+  const queries = useQueryClient()
   const { read, catalog } = useCatalog()
   const workspace = useWorkspace()
   const [search, setSearch] = useState("")
@@ -323,9 +328,9 @@ export function SourcesPage() {
         data={catalog}
         error={read.error}
         isFetching={read.isFetching}
-        // A refusal's Retry reads the catalog again; Workspace unavailable owns its own Retry, which
-        // decides the mode again as the shell's would (`WorkspaceUnavailable`).
-        onRetry={() => void read.refetch()}
+        // Route pending/refusal Retry through retryWorkspace so a wedged mode probe or unavailable
+        // cell recovers in one click without refetching against a dead cell (#1774).
+        onRetry={() => void retryWorkspace(queries).then((ok) => { if (ok) void read.refetch({ cancelRefetch: false }) })}
         bone="sources-overview"
         skeleton="table"
         loadingLabel="Reading sources and types"
@@ -357,9 +362,17 @@ export function SourcesPage() {
                     <div key={label} className="space-y-2">
                       <h3 className="text-meta text-muted-foreground">{label} <span className="font-normal tabular-nums">{shown.length}</span></h3>
                       {shown.length > 0
-                        ? <DenseTable head={<TableRow><TableHead>Name</TableHead><TableHead>What it is</TableHead><TableHead className="text-end">Facts</TableHead><TableHead className="text-end">Links</TableHead><TableHead>Fed by</TableHead></TableRow>}>
-                            {shown.map((concept) => <ConceptRow key={concept.name} concept={concept} />)}
-                          </DenseTable>
+                        ? (
+                          <Panel>
+                            <Well>
+                              <ScrollX label={label}>
+                                <DenseTable className="w-max min-w-full" head={<TableRow><TableHead>Name</TableHead><TableHead>What it is</TableHead><TableHead className="text-end">Facts</TableHead><TableHead className="text-end">Links</TableHead><TableHead>Fed by</TableHead></TableRow>}>
+                                  {shown.map((concept) => <ConceptRow key={concept.name} concept={concept} />)}
+                                </DenseTable>
+                              </ScrollX>
+                            </Well>
+                          </Panel>
+                        )
                         : <div className="rounded-lg border"><EmptyState icon={Search}>Nothing here matches “{search.trim()}”.</EmptyState></div>}
                     </div>
                   )

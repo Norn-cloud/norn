@@ -8,7 +8,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { parseFragment } from "parse5"
 
-import { type SheetDecision, type SheetDocument, decideRequest, directCall, needsConfirm, refusalPanelMarkup, sheetMarkup } from "../src/elements/decision-sheet.ts"
+import { type SheetDecision, type SheetDocument, decideRequest, directCall, formatDecisionRecordedAt, formatDecisionTime, needsConfirm, refusalPanelMarkup, remaining, sheetMarkup } from "../src/elements/decision-sheet.ts"
 import { type Evaluate, type Snapshot, enabled, init, update, walks, wasmEvaluate } from "../../norn-react/src/machine/index.ts"
 import { sheetPayloads } from "./support/sheet-payloads.ts"
 
@@ -63,6 +63,36 @@ describe("sheetMarkup", () => {
     expect(ar).toContain('dir="rtl"')
     expect(ar).toContain("قرّر")
     expect(ar).toContain("عرض الحلقة")
+  })
+  test("Arabic timestamps and countdowns use Western (latn) digits with zero Eastern Arabic-Indic digits", () => {
+    const atMs = Date.parse("2027-01-15T08:45:12Z")
+    const arTime = formatDecisionTime(atMs, "ar")
+    const arRecorded = formatDecisionRecordedAt(atMs, "ar")
+    const arLeft = remaining(atMs + 2 * 86_400_000 + 3 * 3_600_000, atMs, "ar")
+    expect(arTime).toMatch(/[0-9]/)
+    expect(arTime).not.toMatch(/[٠-٩]/)
+    expect(arRecorded).toMatch(/[0-9]/)
+    expect(arRecorded).not.toMatch(/[٠-٩]/)
+    expect(arLeft).toBe("2 يومان 3 س")
+    expect(arLeft).not.toMatch(/[٠-٩]/)
+
+    const arRefusal = refusalPanelMarkup(
+      {
+        code: "core.laws.violated",
+        message: "a declared precondition does not hold",
+        decidedAt: "2027-01-15T08:45:00Z",
+        reason: {
+          law: "canon.refund.limit",
+          subject: "canon.Refund/ref-1",
+          values: { amount: "1240.00" },
+        },
+      },
+      { decision, choiceLabel: "موافقة", note: "", locale: "ar", technical: false, caller: "user:sara", laws: undefined, receivedAt: new Date(atMs) },
+    )
+    const timeMatch = /<time[^>]*>([^<]+)<\/time>/.exec(arRefusal.html)
+    expect(timeMatch).not.toBeNull()
+    expect(timeMatch![1]).toMatch(/[0-9]/)
+    expect(arRefusal.html).not.toMatch(/[٠-٩]/)
   })
   test("outcome markup reserves a hidden See episode link for when the cell supplies episodeId", () => {
     const episodeLinks = tree.filter((n) => n.nodeName === "a" && attr(n, "data-region") === "outcome-episode")

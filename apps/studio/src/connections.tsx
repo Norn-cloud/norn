@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Cable, Plug, TriangleAlert } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { PropRow, Props } from "@/components/system/props"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -106,16 +107,20 @@ function AccountRow({ app, requirement, label, scope }: { readonly app: string; 
         </form>
       )}
       {open && account !== null && (
-        <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 px-4 pb-3 text-meta">
-          {detail.isPending ? <dd className="col-span-2 text-muted-foreground">Loading…</dd> : detail.isError ? <dd className="col-span-2"><ConnectorProblem error={detail.error} scope={effectiveScope} /></dd> : (
-            <>
-              <dt className="text-muted-foreground">Provider</dt><dd>{detail.data.provider}</dd>
-              <dt className="text-muted-foreground">Used by</dt><dd>{detail.data.apps.join(", ") || "—"}</dd>
-              <dt className="text-muted-foreground">Health</dt><dd>{detail.data.health ?? "not checked"}</dd>
-              <dt className="text-muted-foreground">Account id</dt><dd className="font-mono"><bdi dir="ltr">{detail.data.id}</bdi></dd>
-            </>
-          )}
-        </dl>
+        <div className="px-4 pb-3">
+          {detail.isPending
+            ? <p className="text-meta text-muted-foreground">Loading…</p>
+            : detail.isError
+              ? <ConnectorProblem error={detail.error} scope={effectiveScope} />
+              : (
+                <Props>
+                  <PropRow label="Provider">{detail.data.provider}</PropRow>
+                  <PropRow label="Used by">{detail.data.apps.join(", ") || "—"}</PropRow>
+                  <PropRow label="Health">{detail.data.health ?? "not checked"}</PropRow>
+                  <PropRow label="Account id" mono>{detail.data.id}</PropRow>
+                </Props>
+              )}
+        </div>
       )}
       {error && <ConnectorProblem error={error} scope={effectiveScope} />}
     </div>

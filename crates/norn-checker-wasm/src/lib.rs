@@ -28,6 +28,10 @@
 //! two builds to the same answers.
 
 #[cfg(feature = "checker")]
+mod analysis;
+#[cfg(feature = "checker")]
+pub use analysis::{analyze_red_team_json, law_honesty_json};
+#[cfg(feature = "checker")]
 mod checker;
 #[cfg(feature = "checker")]
 pub use checker::*;

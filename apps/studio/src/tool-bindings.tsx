@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link2, Play, Wrench } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { PropRow, Props } from "@/components/system/props"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -156,17 +157,16 @@ function BindingRow({ binding, manage, scope }: { readonly binding: Binding; rea
         {manage && <Button size="sm" variant="outline" disabled={remove.isPending} onClick={() => { if (window.confirm(`Remove ${binding.label}? It can no longer run from Norn.`)) remove.mutate() }}>Remove</Button>}
       </div>
       {mode === "view" && (
-        <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 px-4 pb-3 text-meta">
-          <dt className="text-muted-foreground">Fixed inputs</dt>
-          <dd>{Object.keys(binding.inputMapping).length === 0 ? "none" : Object.entries(binding.inputMapping).map(([name, { fixed }]) => `${name} = ${show(fixed)}`).join(", ")}</dd>
-          <dt className="text-muted-foreground">Connector</dt><dd className="font-mono"><bdi dir="ltr">{binding.connectorRef}</bdi></dd>
-          <dt className="text-muted-foreground">In the cell</dt>
-          <dd>{binding.definition === null ? "Kept by Studio until this deployment's cell stores bindings" : <span className="font-mono"><bdi dir="ltr">{binding.definition.id} · v{binding.definition.version}</bdi></span>}</dd>
-          <dt className="text-muted-foreground">Manifest</dt><dd className="truncate font-mono" title={binding.manifestDigest}><bdi dir="ltr">{binding.manifestDigest}</bdi></dd>
-          <dt className="text-muted-foreground">Last changed</dt><dd>{new Date(binding.updatedAt).toLocaleString()}</dd>
-          <dt className="text-muted-foreground">Input schema</dt>
-          <dd><pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-meta">{tools.isPending ? "Loading…" : JSON.stringify(tool?.inputSchema ?? null, null, 2)}</pre></dd>
-        </dl>
+        <div className="px-4 pb-3">
+          <Props>
+            <PropRow label="Fixed inputs">{Object.keys(binding.inputMapping).length === 0 ? "none" : Object.entries(binding.inputMapping).map(([name, { fixed }]) => `${name} = ${show(fixed)}`).join(", ")}</PropRow>
+            <PropRow label="Connector" mono>{binding.connectorRef}</PropRow>
+            <PropRow label="In the cell">{binding.definition === null ? "Kept by Studio until this deployment's cell stores bindings" : <span className="font-mono"><bdi dir="ltr">{binding.definition.id} · v{binding.definition.version}</bdi></span>}</PropRow>
+            <PropRow label="Manifest" mono><span className="block truncate" title={binding.manifestDigest}>{binding.manifestDigest}</span></PropRow>
+            <PropRow label="Last changed">{new Date(binding.updatedAt).toLocaleString()}</PropRow>
+            <PropRow label="Input schema"><pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-meta">{tools.isPending ? "Loading…" : JSON.stringify(tool?.inputSchema ?? null, null, 2)}</pre></PropRow>
+          </Props>
+        </div>
       )}
       {mode !== null && mode !== "view" && tools.isPending && <p className="border-t px-4 py-3 text-body text-muted-foreground">Loading the tool…</p>}
       {mode !== null && mode !== "view" && tools.isError && <ConnectorProblem error={tools.error} scope={scope} />}

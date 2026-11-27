@@ -234,7 +234,11 @@ test("submenu island: a long list shows 8 rows and Show all; Show all and Show f
   await more.click()
   await expect.poll(() => records.count()).toBe(all)
   await expect(more).toHaveText("Show fewer")
-  // By keyboard: the row is a tree item; Enter toggles it back.
+  // Show all persists per browser across reload (DESIGN.md 18).
+  await page.reload()
+  await expect(more).toHaveText("Show fewer")
+  await expect.poll(() => records.count()).toBe(all)
+  // By keyboard: the row is a tree item; Enter toggles it back, and that persists too.
   await data.locator("[data-more]").focus()
   await page.keyboard.press("Enter")
   await expect(more).toHaveText(`Show all ${all}`)
@@ -332,7 +336,13 @@ test("submenu island: a heading collapses and reopens by pointer and by Left/Rig
   await builder.locator('[data-section-path="/map"] > [data-slot="tree-label"]').click()
   await expect(page).toHaveURL(/\/map$/)
   await expect(logic).toHaveAttribute("aria-expanded", "false")
-  // The choice lasts while Studio is open (DESIGN.md 18): a fresh load starts from the defaults.
+  // Persisted per browser across reload (DESIGN.md 18).
+  await page.reload()
+  await settled(page)
+  await expect(logic).toHaveAttribute("aria-expanded", "false")
+  await expect(canvas).toBeHidden()
+  // Clearing stored menu choices restores the open defaults.
+  await page.evaluate(() => localStorage.removeItem("norn.studio.menu"))
   await page.reload()
   await settled(page)
   await expect(logic).toHaveAttribute("aria-expanded", "true")
@@ -539,6 +549,31 @@ test("islands under reduced transparency and forced colours: the glass skin fall
 })
 
 test("Workspace unavailable shows once: the page's full state, or a one-line status; one Retry and one incident id, and below 640px the server's words and the incident sit behind a 44px Details beside a 44px Retry", async ({ page }) => {
+  await page.addInitScript(() => {
+    const state = window as unknown as { __sawUnavailableBanner?: boolean }
+    state.__sawUnavailableBanner = false
+    const check = () => {
+      if (document.querySelector('[data-connection="unavailable"]') !== null) {
+        state.__sawUnavailableBanner = true
+      }
+    }
+    const observer = new MutationObserver(() => {
+      check()
+      requestAnimationFrame(check)
+    })
+    observer.observe(document, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-connection"],
+    })
+    check()
+    const tick = () => {
+      check()
+      requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
   await session(page)
   await page.route("**/api/host/v1/**", (route) => {
     const path = new URL(route.request().url()).pathname
@@ -562,6 +597,11 @@ test("Workspace unavailable shows once: the page's full state, or a one-line sta
       await page.goto(path)
       await expect(full ? state : banner, at).toBeVisible()
       await expect(full ? banner : state, at).toHaveCount(0)
+      if (full) {
+        // Synchronous layout-effect suppression means the shell banner never flashes before a full page state mounts.
+        const flashed = await page.evaluate(() => (window as unknown as { __sawUnavailableBanner?: boolean }).__sawUnavailableBanner)
+        expect(flashed, `${at}: shell banner must not flash when page renders its own unavailable state`).toBe(false)
+      }
       const retries = page.getByRole("button", { name: "Retry", exact: true }).filter({ visible: true })
       await expect(retries, at).toHaveCount(1)
       if (width === 390) expect((await retries.boundingBox())!.height, `${at}: Retry`).toBeGreaterThanOrEqual(44)
@@ -607,6 +647,77 @@ test("notifications say honestly that the cell sends none yet, and point to the 
   await expect(note).not.toContainText("Nothing yet")
   await note.getByRole("link", { name: "Inbox" }).click()
   await expect(page).toHaveURL(/\/decisions$/)
+})
+
+test("Home and Inbox show a local persisted Recent list for opened records, runs and views with Clear (#1774, DESIGN.md 18)", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "uses stand-in routes")
+  await recorded(page)
+  const recordedVisit = (id: string) =>
+    expect.poll(() =>
+      page.evaluate((needle) =>
+        Object.entries(localStorage).some(([key, value]) => key.startsWith("norn.studio.recent:") && value.includes(needle)),
+      id),
+    ).toBe(true)
+  await page.goto("/runs/run_demo_99")
+  await expect(rail(page)).toBeVisible()
+  await settled(page)
+  await recordedVisit("run_demo_99")
+  await page.goto("/views/view_demo_1")
+  await expect(rail(page)).toBeVisible()
+  await settled(page)
+  await recordedVisit("view_demo_1")
+  await page.goto("/")
+  await expect(rail(page)).toBeVisible()
+  await settled(page)
+  const homeMenu = menu(page, "Home")
+  const recent = homeMenu.locator('[data-slot="recent-section"]')
+  await expect(recent).toBeVisible()
+  await expect(recent).toContainText("view_demo_1")
+  await expect(recent).toContainText("run_demo_99")
+  // Persists across reload and also appears on Inbox.
+  await page.reload()
+  await expect(rail(page)).toBeVisible()
+  await settled(page)
+  await expect(recent).toBeVisible()
+  await rail(page).getByRole("link", { name: /^Inbox/ }).click()
+  await expect(menu(page, "Inbox").locator('[data-slot="recent-section"]')).toContainText("view_demo_1")
+  // Clear removes the list immediately and across reload.
+  await menu(page, "Inbox").getByRole("button", { name: "Clear", exact: true }).click()
+  await expect(menu(page, "Inbox").locator('[data-slot="recent-section"]')).toHaveCount(0)
+  await page.reload()
+  await expect(rail(page)).toBeVisible()
+  await settled(page)
+  await expect(menu(page, "Inbox").locator('[data-slot="recent-section"]')).toHaveCount(0)
+})
+
+test("navigation nits (#1774): clicking the open row does not push a duplicate history entry, command palette preserves applet state on current URL, and dock links carry applet state", async ({ page }) => {
+  await recorded(page)
+  await page.goto("/")
+  await settled(page)
+  await rail(page).getByRole("link", { name: "Builder" }).click()
+  await expect(page).toHaveURL(/\/sources$/)
+  const lengthBefore = await page.evaluate(() => window.history.length)
+  // Clicking the already-open Sources row must not push a duplicate history entry.
+  await menu(page, "Builder").getByRole("link", { name: "Sources", exact: true }).click()
+  await expect(page).toHaveURL(/\/sources$/)
+  expect(await page.evaluate(() => window.history.length)).toBe(lengthBefore)
+  // Command palette navigating to current URL keeps applet state intact.
+  await page.keyboard.press("Control+k")
+  const input = page.getByRole("combobox", { name: /Search pages/ })
+  await input.fill("Sources")
+  await page.keyboard.press("Enter")
+  await expect(page).toHaveURL(/\/sources$/)
+  await expect(current(page)).toHaveAttribute("data-applet", "builder")
+  expect(await page.evaluate(() => window.history.length)).toBe(lengthBefore)
+  // Dock links carry applet state so switching back to three-island or navigating preserves applet.
+  await page.evaluate(() => localStorage.setItem("norn.studio.shell", "dock"))
+  await page.reload()
+  await settled(page)
+  const dock = page.locator('[data-slot="floating-dock"]')
+  await expect(dock).toBeVisible()
+  await dock.getByRole("link", { name: "Home", exact: true }).click()
+  await expect(page).toHaveURL(/\/$/)
+  expect(await page.evaluate(() => (window.history.state as { applet?: string } | null)?.applet)).toBe("/")
 })
 
 /** The shell's surfaces in light and dark, at 1440 and 390 (only with SHOTS): home, a record type with the Data menu, a record, views, the canvas, the phone nav. */
