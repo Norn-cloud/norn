@@ -315,6 +315,93 @@ impl Tokens<'_> {
     }
 }
 
+/// Whether `decimal` survives an IEEE-754 binary64 (`f64`) round-trip without
+/// precision loss (the numeric precision of Norn IR [`norn_ir::ArtifactEnvelope`]).
+#[must_use]
+pub(crate) fn is_binary64_exact(decimal: norn_ir::Decimal) -> bool {
+    decimal
+        .canonical()
+        .parse::<f64>()
+        .ok()
+        .and_then(|f| norn_ir::Decimal::from_f64_shortest(f).ok())
+        .is_some_and(|rt| rt == decimal)
+}
+
+/// Deserialize a connector feed's `initial` watermark.
+///
+/// Accepts either `{ "version": ..., "id": ... }` (refusing JSON numbers that
+/// lose precision in IEEE-754 binary64 IR storage) or `{ "version": ...,
+/// "idDecimal": "..." }` for exact >53-bit decimal initial IDs that survive
+/// IR admission, receipt hashing, and diffing without rounding.
+pub(crate) fn deserialize_initial_watermark<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<crate::pull::Watermark, D::Error> {
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct RawInitial {
+        version: String,
+        #[serde(default)]
+        id: Option<RuntimeValue>,
+        #[serde(default)]
+        id_decimal: Option<String>,
+    }
+    let raw = RawInitial::deserialize(deserializer)?;
+    let id = match (raw.id, raw.id_decimal) {
+        (Some(_), Some(_)) => {
+            return Err(serde::de::Error::custom(
+                "initial watermark cannot set both id and idDecimal",
+            ));
+        }
+        (None, None) => {
+            return Err(serde::de::Error::custom(
+                "initial watermark must set id or idDecimal",
+            ));
+        }
+        (None, Some(text)) => {
+            let decimal: norn_ir::Decimal = text
+                .parse()
+                .map_err(|e| serde::de::Error::custom(format!("invalid initial.idDecimal: {e}")))?;
+            RuntimeValue::Number(decimal)
+        }
+        (Some(RuntimeValue::Number(decimal)), None) if !is_binary64_exact(decimal) => {
+            return Err(serde::de::Error::custom(format!(
+                "initial.id {decimal} exceeds IEEE-754 binary64 IR precision; use initial.idDecimal"
+            )));
+        }
+        (Some(id), None) => id,
+    };
+    Ok(crate::pull::Watermark {
+        version: raw.version,
+        id,
+    })
+}
+
+/// Serialize a connector feed's `initial` watermark, using `idDecimal` when
+/// `id` is a decimal that would lose precision in IEEE-754 binary64 IR storage.
+pub(crate) fn serialize_initial_watermark<S: serde::Serializer>(
+    watermark: &crate::pull::Watermark,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    use serde::Serialize;
+    match &watermark.id {
+        RuntimeValue::Number(decimal) if !is_binary64_exact(*decimal) => {
+            #[derive(Serialize)]
+            #[serde(rename_all = "camelCase")]
+            struct DecimalInitial<'a> {
+                version: &'a str,
+                id_decimal: String,
+            }
+            DecimalInitial {
+                version: &watermark.version,
+                id_decimal: decimal.canonical(),
+            }
+            .serialize(serializer)
+        }
+        _ => watermark.serialize(serializer),
+    }
+}
+
 /// `application/x-www-form-urlencoded` query text, in declared key order.
 pub(crate) fn form_urlencoded_pairs(
     query: &BTreeMap<String, String>,

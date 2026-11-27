@@ -293,6 +293,7 @@ fn submission<E: SqlEngine>(
             "a definitions change is at most 1 MiB",
         ));
     }
+    kernel_set::reject_lossy_ir_numbers(body).map_err(Refusal::invalid)?;
     let request: DefinitionsChangeRequest = serde_json::from_str(body).map_err(|error| {
         Refusal::invalid(format!(
             "the request body is not a definitions change: {error}"
@@ -366,12 +367,10 @@ fn candidate<E: SqlEngine>(
             "provision the cell with POST /v1/cell:provision first".to_owned(),
         )
     })?;
-    let exact_tenant = kernel_set::extract_artifacts_json(body, tenant.len());
-    let admitted = kernel_set::admit_over_with_values(
+    let admitted = kernel_set::admit_over(
         &active.canonical_set,
         active.admission_receipt.as_deref(),
         &tenant,
-        exact_tenant.as_deref(),
     )
     .map_err(|refusal| match refusal {
         KernelRefusal::Refused(findings) => refused(crate::provision::placed(&findings, &tenant)),

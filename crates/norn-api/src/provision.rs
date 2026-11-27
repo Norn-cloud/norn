@@ -396,6 +396,7 @@ pub fn admit_submission(
             "a provisioning body is at most 1 MiB",
         ));
     }
+    kernel_set::reject_lossy_ir_numbers(body).map_err(Refusal::invalid)?;
     let request: ProvisionRequest = serde_json::from_str(body).map_err(|error| {
         Refusal::invalid(format!(
             "the request body is not a provisioning submission: {error}"
@@ -433,39 +434,10 @@ pub fn admit_submission(
     if !base_outside.is_empty() {
         return Err(refused(base_outside));
     }
-    admit_submission_set(base, &tenant, body)
-}
-
-fn admit_submission_set(
-    base: &TrustedBase,
-    tenant: &[ArtifactEnvelope],
-    body: &str,
-) -> Result<AdmittedSet, Refusal> {
     let mut artifacts = base.artifacts.clone();
     artifacts.extend(tenant.iter().cloned());
-    // Preserve exact decimal tokens from the raw provisioning submission body
-    // so connector extension numbers (>53-bit decimals) never round via f64.
-    let admitted =
-        if let Some(tenant_values) = kernel_set::extract_artifacts_json(body, tenant.len()) {
-            let mut exact_values: Vec<norn_ir::RuntimeValue> = base
-                .artifacts
-                .iter()
-                .map(|a| {
-                    serde_json::to_string(a)
-                        .map_err(|e| unservable(e.to_string()))
-                        .and_then(|s| {
-                            norn_ir::RuntimeValue::from_json_text(&s)
-                                .map_err(|e| unservable(e.to_string()))
-                        })
-                })
-                .collect::<Result<_, _>>()?;
-            exact_values.extend(tenant_values);
-            kernel_set::admit_kernel_set_with_base_and_values(&artifacts, &exact_values, &base.ids)
-        } else {
-            kernel_set::admit_kernel_set_with_base(&artifacts, &base.ids)
-        };
-    admitted.map_err(|refusal| match refusal {
-        KernelRefusal::Refused(findings) => refused(placed(&findings, tenant)),
+    kernel_set::admit_kernel_set_with_base(&artifacts, &base.ids).map_err(|refusal| match refusal {
+        KernelRefusal::Refused(findings) => refused(placed(&findings, &tenant)),
         KernelRefusal::Invalid(detail) => unservable(detail),
     })
 }

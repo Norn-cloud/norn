@@ -101,7 +101,12 @@ pub struct Feed {
     pub version_path: String,
     /// Dataset field name to its pointer inside an item.
     pub fields: BTreeMap<String, String>,
-    /// The position before the first sync.
+    /// The position before the first sync (`id`, or `idDecimal` for exact
+    /// >53-bit decimal initial IDs).
+    #[serde(
+        deserialize_with = "crate::pull_feed::deserialize_initial_watermark",
+        serialize_with = "crate::pull_feed::serialize_initial_watermark"
+    )]
     pub initial: Watermark,
     /// Snapshot vs partial-patch delivery semantics (`None` adopts the mapping's
     /// `norn.feed/1` mode or defaults to `full_snapshot`; `Some` refuses

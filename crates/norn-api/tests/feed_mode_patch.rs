@@ -30,6 +30,8 @@ mod tests {
 
     use super::hosted_read::Mapping;
     use norn_api::authz::{AccessRequest, Authorizer, ReadRequest};
+    use norn_api::cell_definitions::plan_definitions;
+    use norn_api::definition_routes::DefinitionKinds;
     use norn_api::host::DevHost;
     use norn_api::kernel_set::admit_kernel_set_json;
     use norn_api::object_links::{ObjectLinkParams, get_object_links};
@@ -917,9 +919,17 @@ mod tests {
             RuntimeValue::from_json_text("9007199254740992.2").expect("exact")
         );
 
-        // Raw connector JSON loading preserves exact >53-bit decimal `initial.id`.
-        let raw_conn = r#"{"extensions":{"norn.pull/1":{"source":"s","pipeline":"p/1","feeds":[{"dataset":"D","request":{"method":"GET","path":"/d"},"itemsPath":"/data","paging":{"kind":"keyset","size":10},"idPath":"/id","versionPath":"/v","fields":{"id":"/id"},"initial":{"version":"0","id":9007199254740992.1}}]}}}"#;
-        let loaded = PullProfile::from_connector_json(raw_conn)
+        // Bare >53-bit JSON number `initial.id` refuses fail-closed; exact >53-bit
+        // initial IDs use `initial.idDecimal` (and setting both refuses).
+        let lossy_conn = r#"{"extensions":{"norn.pull/1":{"source":"s","pipeline":"p/1","feeds":[{"dataset":"D","request":{"method":"GET","path":"/d"},"itemsPath":"/data","paging":{"kind":"keyset","size":10},"idPath":"/id","versionPath":"/v","fields":{"id":"/id"},"initial":{"version":"0","id":9007199254740992.1}}]}}}"#;
+        assert!(
+            PullProfile::from_connector_json(lossy_conn).is_err(),
+            "lossy binary64 bare initial.id must refuse fail-closed"
+        );
+        let both_conn = r#"{"extensions":{"norn.pull/1":{"source":"s","pipeline":"p/1","feeds":[{"dataset":"D","request":{"method":"GET","path":"/d"},"itemsPath":"/data","paging":{"kind":"keyset","size":10},"idPath":"/id","versionPath":"/v","fields":{"id":"/id"},"initial":{"version":"0","id":1,"idDecimal":"9007199254740992.1"}}]}}}"#;
+        assert!(PullProfile::from_connector_json(both_conn).is_err());
+        let exact_conn = r#"{"extensions":{"norn.pull/1":{"source":"s","pipeline":"p/1","feeds":[{"dataset":"D","request":{"method":"GET","path":"/d"},"itemsPath":"/data","paging":{"kind":"keyset","size":10},"idPath":"/id","versionPath":"/v","fields":{"id":"/id"},"initial":{"version":"0","idDecimal":"9007199254740992.1"}}]}}}"#;
+        let loaded = PullProfile::from_connector_json(exact_conn)
             .expect("valid")
             .expect("profile");
         assert_eq!(
@@ -1124,49 +1134,10 @@ mod tests {
         (base_json, tenant_json)
     }
 
-    #[test]
-    fn installed_connector_preserves_exact_decimal_initial_id_in_first_request() {
-        let connector_raw = std::fs::read_to_string(
-            root().join("fixtures/packs/erpnext-rest/artifacts/erpnext.rest.connector.json"),
-        )
-        .expect("connector json")
-        .replacen(r#""id": """#, r#""id": 9007199254740992.1"#, 1);
-        assert!(
-            connector_raw.contains("9007199254740992.1"),
-            "connector fixture must carry exact >53-bit initial.id"
-        );
-        let (base_json, tenant_json) = erpnext_with_sources_raw_json(&connector_raw);
-        let all_json = format!(
-            "[{}]",
-            base_json
-                .iter()
-                .chain(tenant_json.iter())
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(",")
-        );
-        let scope = CellScope {
-            org_id: "org_demo".into(),
-            environment_id: "dev".into(),
-        };
-
-        // 1. Provisioning submission path preserves exact decimal token.
-        let base_refs: Vec<&str> = base_json.iter().map(String::as_str).collect();
-        let trusted_base = TrustedBase::from_sources(&base_refs).expect("trusted base");
-        let submission = format!(
-            r#"{{"baseSha256":"{}","artifacts":[{}]}}"#,
-            trusted_base.sha256(),
-            tenant_json.join(",")
-        );
-        let provisioned = admit_submission(&trusted_base, &scope, &submission).expect("provision");
-        assert!(
-            provisioned.canonical_set.contains("9007199254740992.1"),
-            "provisioned canonical_set must retain exact initial.id"
-        );
-
-        // 2. Full installation -> admit_over -> Sources::step first HTTP request preserves it.
-        let admitted = admit_kernel_set_json(&all_json).expect("admit json");
-        assert!(admitted.canonical_set.contains("9007199254740992.1"));
+    fn install_admitted(
+        admitted: norn_api::kernel_set::AdmittedSet,
+        scope: &CellScope,
+    ) -> DevHost<NativeEngine> {
         let input = InstalledDefinitionInput {
             canonical_set: admitted.canonical_set,
             registry: vec![],
@@ -1181,28 +1152,119 @@ mod tests {
         store
             .install_definitions(admitted.model, input, Some(0), &scope.key())
             .expect("install");
-        let host = DevHost::from_store(store, scope.clone(), |_| BTreeMap::new())
+        DevHost::from_store(store, scope.clone(), |_| BTreeMap::new())
             .expect("host")
-            .with_authorizer(AllowAll);
-        host.install_artifacts(&[], T0)
-            .expect("admit_over re-install must preserve exact decimal token");
+            .with_authorizer(AllowAll)
+    }
+
+    fn assert_first_pull_url_contains(
+        host: &DevHost<NativeEngine>,
+        scope: &CellScope,
+        needle: &str,
+    ) {
         let config = r#"[{"id":"erpnext.rest","system":"erpnext","label":"ERPNext REST","connector":"erpnext.rest.connector","mapping":"erpnext.rest.mapping","instance":"sandbox","baseUrl":"http://erpnext-rest:8000","orgId":"org_demo","environmentId":"dev","secretRefs":["erpnext_rest_token"],"headers":{"X-Frappe-Site-Name":"frontend"}}]"#;
         let secrets = BTreeMap::from([(
             "NORN_SECRET_ERPNEXT_REST_TOKEN".to_owned(),
             "key:secret".to_owned(),
         )]);
         let mut sources =
-            Sources::with_allowed_hosts(&scope, config, &secrets, "erpnext-rest").expect("sources");
+            Sources::with_allowed_hosts(scope, config, &secrets, "erpnext-rest").expect("sources");
         sources
             .claim("erpnext.rest", Trigger::Manual, "user:owner@demo", T0)
             .expect("claim");
-        let Step::Request(first_req) = sources.step(&host, "erpnext.rest", None, T0) else {
+        let Step::Request(first_req) = sources.step(host, "erpnext.rest", None, T0) else {
             panic!("expected first pull HTTP request");
         };
         assert!(
-            first_req.url.contains("9007199254740992.1"),
-            "first HTTP request must carry exact unrounded initial.id: {}",
+            first_req.url.contains(needle),
+            "first HTTP request must carry {needle}: {}",
             first_req.url
         );
+    }
+
+    #[test]
+    fn installed_connector_preserves_exact_decimal_initial_id_in_first_request() {
+        let base_connector = std::fs::read_to_string(
+            root().join("fixtures/packs/erpnext-rest/artifacts/erpnext.rest.connector.json"),
+        )
+        .expect("connector json");
+        let lossy_connector =
+            base_connector.replacen(r#""id": """#, r#""id": 9007199254740992.1"#, 1);
+        let conn_v1 =
+            base_connector.replacen(r#""id": """#, r#""idDecimal": "9007199254740992""#, 1);
+        let conn_v2 =
+            base_connector.replacen(r#""id": """#, r#""idDecimal": "9007199254740992.1""#, 1);
+        let scope = CellScope {
+            org_id: "org_demo".into(),
+            environment_id: "dev".into(),
+        };
+        let join_all = |b: &[String], t: &[String]| {
+            format!(
+                "[{}]",
+                b.iter().chain(t).cloned().collect::<Vec<_>>().join(",")
+            )
+        };
+
+        // 1. Bare >53-bit JSON number is refused at both kernel-set and provisioning boundaries.
+        let (base_json, lossy_tenant) = erpnext_with_sources_raw_json(&lossy_connector);
+        assert!(admit_kernel_set_json(&join_all(&base_json, &lossy_tenant)).is_err());
+        let base_refs: Vec<&str> = base_json.iter().map(String::as_str).collect();
+        let trusted_base = TrustedBase::from_sources(&base_refs).expect("trusted base");
+        let lossy_sub = format!(
+            r#"{{"baseSha256":"{}","artifacts":[{}]}}"#,
+            trusted_base.sha256(),
+            lossy_tenant.join(",")
+        );
+        assert!(admit_submission(&trusted_base, &scope, &lossy_sub).is_err());
+
+        // 2. Two versions differing only in `idDecimal` get distinct receipts and plan diffs.
+        let (_, tenant_v1) = erpnext_with_sources_raw_json(&conn_v1);
+        let (_, tenant_v2) = erpnext_with_sources_raw_json(&conn_v2);
+        let admitted_v1 = admit_kernel_set_json(&join_all(&base_json, &tenant_v1)).expect("v1");
+        let sub_v2 = format!(
+            r#"{{"baseSha256":"{}","artifacts":[{}]}}"#,
+            trusted_base.sha256(),
+            tenant_v2.join(",")
+        );
+        let admitted_v2 = admit_submission(&trusted_base, &scope, &sub_v2).expect("v2 provision");
+        assert_ne!(
+            admitted_v1.receipt_sha256, admitted_v2.receipt_sha256,
+            "receipt_sha256 must distinguish 9007199254740992 from 9007199254740992.1"
+        );
+        assert_ne!(admitted_v1.canonical_set, admitted_v2.canonical_set);
+
+        let host_v1 = install_admitted(admitted_v1.clone(), &scope);
+        let plan_body = format!(r#"{{"artifacts":[{conn_v2}]}}"#);
+        let plan = plan_definitions(
+            &host_v1,
+            &scope_query(),
+            Some("admin"),
+            &DefinitionKinds::default(),
+            &plan_body,
+        )
+        .expect("plan v1 -> v2");
+        assert!(!plan.unchanged, "v1 -> v2 must not report unchanged");
+        assert_eq!(plan.changed.len(), 1);
+        assert_eq!(plan.changed[0].artifact_id, "erpnext.rest.connector");
+        assert!(plan.same.is_empty());
+        assert_ne!(plan.receipt_sha256, admitted_v1.receipt_sha256);
+        let lossy_plan_body = format!(r#"{{"artifacts":[{lossy_connector}]}}"#);
+        assert!(
+            plan_definitions(
+                &host_v1,
+                &scope_query(),
+                Some("admin"),
+                &DefinitionKinds::default(),
+                &lossy_plan_body,
+            )
+            .is_err(),
+            "definitions:plan must also refuse bare lossy binary64 numbers"
+        );
+
+        // 3. Installed v2 -> admit_over -> Sources::step emits exact 9007199254740992.1 in first request.
+        let host = install_admitted(admitted_v2, &scope);
+        host.install_artifacts(&[], T0)
+            .expect("admit_over re-install must preserve idDecimal");
+        assert_first_pull_url_contains(&host, &scope, "9007199254740992.1");
     }
 }
