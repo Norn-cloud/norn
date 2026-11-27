@@ -14,6 +14,7 @@ import { TOOL_ROOT } from "../src/profile.ts"
 const PACK = join(TOOL_ROOT, "../../registry/packs/supply-lab")
 const DIR = join(PACK, "questions")
 const SOURCE = join(PACK, "questions.ts")
+const RETAIL_SOURCE = join(PACK, "retail_questions.ts")
 const update = process.env.NORN_PACKS_UPDATE === "1"
 
 function golden(name: string, value: unknown): void {
@@ -30,6 +31,21 @@ test("supply-lab questions lower to their committed QuestionIR", () => {
     "supply.inspected_by_receipt_week",
   ])
   golden("supply.questions.json", result.questions)
+})
+
+test("supply-lab retail truth slice questions lower to their committed QuestionIR", () => {
+  const result = compileQuestions(RETAIL_SOURCE)
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.questions.map(q => (q as { name: string }).name)).toEqual([
+    "supply.retail.store_availability_weekly",
+    "supply.retail.store_on_hand_weekly",
+    "supply.retail.store_stock_value_weekly",
+    "supply.retail.lot_received_aging_weekly",
+    "supply.retail.store_sales_weekly",
+    "supply.retail.store_revenue_weekly",
+    "supply.retail.store_gross_margin_rate_weekly",
+  ])
+  golden("retail.questions.json", result.questions)
 })
 
 test("supply-lab dashboard lowers its five tiles", () => {

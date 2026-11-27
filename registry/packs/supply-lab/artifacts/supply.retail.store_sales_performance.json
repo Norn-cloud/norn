@@ -1,0 +1,196 @@
+{
+  "artifactId": "supply.retail.store_sales_performance",
+  "dependencies": [
+    {
+      "artifactId": "supply.PosSale.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.Store.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Store sales and gross margin",
+  "namespace": "supply",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "joined": {
+          "kind": "inner",
+          "left": "per_store_sku",
+          "on": {
+            "key": {
+              "left": [
+                "store_id"
+              ],
+              "right": "primary"
+            }
+          },
+          "op": "join",
+          "prefix": "st_",
+          "right": "store"
+        },
+        "per_store_sku": {
+          "groupBy": [
+            {
+              "column": "store_id"
+            },
+            {
+              "column": "sku_id"
+            },
+            {
+              "column": "unit"
+            },
+            {
+              "column": "currency"
+            }
+          ],
+          "input": "sale",
+          "measures": [
+            {
+              "column": "sold_qty",
+              "fn": "sum",
+              "label": "Units sold",
+              "name": "sold_qty"
+            },
+            {
+              "column": "net_revenue",
+              "fn": "sum",
+              "label": "Net revenue",
+              "name": "net_revenue"
+            },
+            {
+              "column": "cogs_amount",
+              "fn": "sum",
+              "label": "COGS",
+              "name": "cogs_amount"
+            },
+            {
+              "column": "gross_margin",
+              "fn": "sum",
+              "label": "Gross margin",
+              "name": "gross_margin"
+            },
+            {
+              "fn": "count",
+              "name": "sale_lines"
+            },
+            {
+              "column": "costed_ref",
+              "fn": "count",
+              "name": "costed_lines"
+            }
+          ],
+          "op": "aggregate"
+        },
+        "sale": {
+          "input": "sale",
+          "op": "scan"
+        },
+        "store": {
+          "input": "store",
+          "op": "scan"
+        },
+        "summary": {
+          "columns": [
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.st_entity_id",
+              "name": "entity_id"
+            },
+            {
+              "expression": "input.st_custodian_id",
+              "name": "custodian_id"
+            },
+            {
+              "expression": "input.st_mall_code",
+              "name": "mall_code"
+            },
+            {
+              "expression": "input.sku_id",
+              "name": "sku_id"
+            },
+            {
+              "expression": "input.unit",
+              "name": "unit"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.sold_qty",
+              "name": "sold_qty"
+            },
+            {
+              "expression": "input.net_revenue",
+              "name": "net_revenue"
+            },
+            {
+              "expression": "input.sale_lines",
+              "name": "sale_lines"
+            },
+            {
+              "expression": "input.costed_lines",
+              "name": "costed_lines"
+            },
+            {
+              "expression": "input.costed_lines == input.sale_lines",
+              "name": "cost_complete"
+            },
+            {
+              "expression": "input.costed_lines == input.sale_lines ? input.cogs_amount : null",
+              "name": "effective_cogs"
+            },
+            {
+              "expression": "input.costed_lines == input.sale_lines ? input.gross_margin : null",
+              "name": "effective_gross_margin"
+            },
+            {
+              "expression": "(input.costed_lines == input.sale_lines and input.net_revenue > 0) ? input.gross_margin / input.net_revenue : null",
+              "name": "gross_margin_rate"
+            }
+          ],
+          "input": "joined",
+          "op": "project"
+        }
+      },
+      "output": "summary"
+    },
+    "inputs": [
+      {
+        "alias": "sale",
+        "artifactId": "supply.PosSale.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "store",
+        "artifactId": "supply.Store.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "supply.retail.store_sales_performance",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.retail.store_sales_performance.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

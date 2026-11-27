@@ -1,0 +1,66 @@
+{
+  "artifactId": "supply.CostEvidence.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Unit cost evidence",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "disjointWith": [
+        "supply.CountEvidence",
+        "supply.ReceiptEvidence",
+        "supply.SaleEvidence"
+      ],
+      "name": "supply.CostEvidence",
+      "properties": [
+        {
+          "id": "unit_cost",
+          "type": {
+            "additivity": {
+              "kind": "non_additive"
+            },
+            "currencySource": {
+              "links": [],
+              "property": "currency"
+            },
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        },
+        {
+          "id": "effective_from",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.CostEvidence.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

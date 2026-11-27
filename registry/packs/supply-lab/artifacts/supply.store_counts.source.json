@@ -1,0 +1,129 @@
+{
+  "artifactId": "supply.store_counts.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "Synthetic store physical count feed",
+  "namespace": "supply",
+  "payload": {
+    "adapter": {
+      "name": "synthetic-feed-replay",
+      "version": "0.1.0"
+    },
+    "constraints": [
+      {
+        "dataset": "store_count",
+        "fields": [
+          "count_id"
+        ],
+        "id": "store_count_identity",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "store_count",
+        "kind": "table",
+        "nativeName": "Handheld store cycle count"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "store_count",
+        "name": "count_id",
+        "nativeType": "VARCHAR",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "store_count",
+        "name": "store_code",
+        "nativeType": "VARCHAR",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "store_count",
+        "name": "sku_code",
+        "nativeType": "VARCHAR",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "store_count",
+        "name": "counted_qty",
+        "nativeType": "NUMERIC",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "store_count",
+        "name": "uom",
+        "nativeType": "VARCHAR",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "store_count",
+        "name": "basis",
+        "nativeType": "VARCHAR",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "store_count",
+        "name": "counted_at",
+        "nativeType": "TIMESTAMP",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-10-26T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b",
+      "uri": "evidence://supply-lab/store-counts-v1"
+    },
+    "source": {
+      "instance": "retail-lab",
+      "system": "synthetic-store-count",
+      "version": "store-counts-v1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.store_counts.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

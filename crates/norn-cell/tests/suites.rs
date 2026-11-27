@@ -76,6 +76,8 @@ mod rea_inventory;
 mod read_envelope;
 #[path = "receipt_consume.rs"]
 mod receipt_consume;
+#[path = "retail_truth_slice.rs"]
+mod retail_truth_slice;
 #[path = "retained_definitions.rs"]
 mod retained_definitions;
 #[path = "source_agreement.rs"]

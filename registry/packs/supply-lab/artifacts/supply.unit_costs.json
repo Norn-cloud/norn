@@ -1,0 +1,64 @@
+{
+  "artifactId": "supply.unit_costs",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "connector",
+  "lifecycle": "active",
+  "name": "Supplier unit cost feed",
+  "namespace": "supply",
+  "payload": {
+    "auth": {
+      "authId": "costs",
+      "kind": "api_key",
+      "name": "X-Cost-Key",
+      "placement": "header",
+      "secretRef": "SUPPLY_COST_READ_KEY"
+    },
+    "connectorVersion": "0.1",
+    "cursor": {
+      "cursorId": "unit_costs",
+      "resourceId": "unit_costs",
+      "storageKey": "supply.unit.costs"
+    },
+    "deadLetterPolicy": {
+      "maxFailures": 5,
+      "route": "ledger"
+    },
+    "extensions": {
+      "norn.poll/1": {
+        "feeds": [
+          {
+            "recordKeyPath": "/cost_id",
+            "resourceId": "unit_costs"
+          }
+        ]
+      }
+    },
+    "mappings": [
+      {
+        "externalSource": "synthetic-cost",
+        "kind": "external_id",
+        "resourceId": "unit_costs",
+        "sourcePath": "/cost_id",
+        "targetObjectKind": "supply.UnitCostEvidence"
+      }
+    ],
+    "resources": [
+      {
+        "cursorParam": "after",
+        "endpoint": "/v1/unit-costs",
+        "itemsPath": "/costs",
+        "kind": "cursor",
+        "missingItemsIsEmpty": true,
+        "nextCursorPath": "/next",
+        "resourceId": "unit_costs"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.unit_costs.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

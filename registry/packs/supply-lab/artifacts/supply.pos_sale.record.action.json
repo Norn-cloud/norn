@@ -1,0 +1,203 @@
+{
+  "artifactId": "supply.pos_sale.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a POS sale line",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.retail.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.pos_sale.record",
+    "createLinks": [
+      {
+        "link": "store",
+        "targetIdField": "store_id",
+        "targetType": "supply.Store"
+      },
+      {
+        "link": "sku",
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "input.net_revenue - input.cogs_amount",
+        "field": "gross_margin",
+        "inputRequired": false
+      },
+      {
+        "expression": "(input.net_revenue > 0) ? ((input.net_revenue - input.cogs_amount) / input.net_revenue) : 0",
+        "field": "gross_margin_rate",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.PosSale.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "sale_id",
+      "objectKind": "supply.PosSale",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cogs_amount": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "cost_status": {
+          "enum": [
+            "costed",
+            "missing_cost"
+          ],
+          "type": "string"
+        },
+        "costed_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "gross_margin": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "gross_margin_rate": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "net_revenue": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sale_id": {
+          "type": "string"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "sold_at": {
+          "type": "string"
+        },
+        "sold_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "sale_id",
+        "store_id",
+        "sku_id",
+        "sold_qty",
+        "unit",
+        "net_revenue",
+        "cogs_amount",
+        "gross_margin",
+        "gross_margin_rate",
+        "cost_status",
+        "costed_ref",
+        "currency",
+        "sold_at"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "sale_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sale_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((slice.store.status == 'active') and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      }
+    ],
+    "title": "Record a POS sale line",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.PosSale"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.pos_sale.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

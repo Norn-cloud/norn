@@ -1,0 +1,177 @@
+{
+  "artifactId": "supply.retail.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Supply lab retail slice",
+  "namespace": "supply",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "supply.retail.access",
+    "rules": [
+      {
+        "actions": [
+          "supply.legal_entity.register"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.LegalEntity",
+        "ruleId": "catalog_legal_entity",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.legal_entity.close"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "ops_manager"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.LegalEntity",
+        "ruleId": "close_legal_entity",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.store.register"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.Store",
+        "ruleId": "catalog_store",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.store.close"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "ops_manager"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.Store",
+        "ruleId": "close_store",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.stock_lot.record",
+          "supply.stock_lot.update_balance"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.StockLot",
+        "ruleId": "stock_lot",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.store_count.record",
+          "supply.store_count.recount"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.StoreCount",
+        "ruleId": "store_count",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.pos_sale.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.PosSale",
+        "ruleId": "pos_sale",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.retail.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

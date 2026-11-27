@@ -1,0 +1,118 @@
+{
+  "artifactId": "supply.unit_costs.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "Synthetic supplier unit cost feed",
+  "namespace": "supply",
+  "payload": {
+    "adapter": {
+      "name": "synthetic-feed-replay",
+      "version": "0.1.0"
+    },
+    "constraints": [
+      {
+        "dataset": "unit_cost",
+        "fields": [
+          "cost_id"
+        ],
+        "id": "unit_cost_identity",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "unit_cost",
+        "kind": "table",
+        "nativeName": "Supplier unit cost sheet"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "unit_cost",
+        "name": "cost_id",
+        "nativeType": "VARCHAR",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "unit_cost",
+        "name": "sku_code",
+        "nativeType": "VARCHAR",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "unit_cost",
+        "name": "vendor_code",
+        "nativeType": "VARCHAR",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "unit_cost",
+        "name": "unit_cost",
+        "nativeType": "NUMERIC",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "unit_cost",
+        "name": "ccy",
+        "nativeType": "VARCHAR",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "unit_cost",
+        "name": "effective_from",
+        "nativeType": "TIMESTAMP",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-10-26T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+      "uri": "evidence://supply-lab/unit-costs-v1"
+    },
+    "source": {
+      "instance": "retail-lab",
+      "system": "synthetic-cost",
+      "version": "unit-costs-v1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.unit_costs.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
