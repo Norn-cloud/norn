@@ -353,110 +353,11 @@ export function referencesRecordVersion(expression: string): boolean {
     const isPunct = (token: ZenToken | undefined, value: string): boolean => token?.kind === "punct" && token.value === value
     const isIdent = (token: ZenToken | undefined, value: string): boolean => token?.kind === "ident" && token.value === value
 
-    const parseExpr = (): TaintValue => parseTernary()
-
-    const parseTernary = (): TaintValue => {
-      const cond = parseOr()
-      if (isPunct(peek(), "?")) {
-        eat()
-        const consequent = parseExpr()
-        if (isPunct(peek(), ":")) {
-          eat()
-          const alternate = parseExpr()
-          return unionTaint(consequent, alternate)
-        }
-        return consequent
-      }
-      return cond
-    }
-
-    // Precedence matches vendor/zen parser/constants.rs:
-    // 10 or/||, 15 and/&&, 20 comparisons/in, 30 +/-, 50 unary !/not,
-    // 60 * / %, 70 ** (right-assoc), 80 ??, 200 unary +/-.
-    const parseOr = (): TaintValue => {
-      let left = parseAnd()
-      while (true) {
-        const t0 = peek()
-        const t1 = peek(1)
-        if (isPunct(t0, "|") && isPunct(t1, "|")) {
-          eat()
-          eat()
-          left = unionTaint(left, parseAnd())
-        } else if (isIdent(t0, "or")) {
-          eat()
-          left = unionTaint(left, parseAnd())
-        } else {
-          break
-        }
-      }
-      return left
-    }
-
-    const parseAnd = (): TaintValue => {
-      let left = parseComparison()
-      while (true) {
-        const t0 = peek()
-        const t1 = peek(1)
-        if (isPunct(t0, "&") && isPunct(t1, "&")) {
-          eat()
-          eat()
-          left = unionTaint(left, parseComparison())
-        } else if (isIdent(t0, "and")) {
-          eat()
-          left = unionTaint(left, parseComparison())
-        } else {
-          break
-        }
-      }
-      return left
-    }
-
-    const parseComparison = (): TaintValue => {
-      let left = parseRange()
-      while (true) {
-        const t0 = peek()
-        const t1 = peek(1)
-        if (
-          (isPunct(t0, "=") && isPunct(t1, "=")) ||
-          (isPunct(t0, "!") && isPunct(t1, "=")) ||
-          (isPunct(t0, "<") && isPunct(t1, "=")) ||
-          (isPunct(t0, ">") && isPunct(t1, "="))
-        ) {
-          eat()
-          eat()
-          if (isPunct(peek(), "=")) eat()
-          parseRange()
-          left = OTHER
-        } else if (isPunct(t0, "<") || isPunct(t0, ">") || isIdent(t0, "in")) {
-          eat()
-          parseRange()
-          left = OTHER
-        } else if (isIdent(t0, "not") && isIdent(t1, "in")) {
-          eat()
-          eat()
-          parseRange()
-          left = OTHER
-        } else {
-          break
-        }
-      }
-      return left
-    }
-
-    const parseRange = (): TaintValue => {
-      let left = parseAdditive()
-      if (isPunct(peek(), "..")) {
-        eat()
-        parseAdditive()
-        left = OTHER
-      }
-      return left
-    }
-
     const decimalScale = (raw: string): number => {
-      const dot = raw.indexOf(".")
-      if (dot < 0 || raw.includes("e") || raw.includes("E")) return -1
-      return raw.length - dot - 1
+      const cleaned = raw.replace(/_/g, "")
+      if (cleaned.includes("e") || cleaned.includes("E")) return -1
+      const dot = cleaned.indexOf(".")
+      return dot < 0 ? 0 : cleaned.length - dot - 1
     }
 
     const formatNumberResult = (n: number, scale: number): TaintValue => {
@@ -467,93 +368,100 @@ export function referencesRecordVersion(expression: string): boolean {
       return { kind: "number", raw: String(n), num: n }
     }
 
-    const parseAdditive = (): TaintValue => {
-      let left = parseNot()
-      while (isPunct(peek(), "+") || isPunct(peek(), "-")) {
-        const op = eat()!
-        const opChar = op.kind === "punct" ? op.value : ""
-        const right = parseNot()
-        if (opChar === "+" && left.kind === "string" && right.kind === "string") {
-          left = { kind: "string", value: left.value + right.value }
-        } else if (left.kind === "number" && right.kind === "number") {
-          const n = opChar === "+" ? left.num + right.num : left.num - right.num
+    // Exact port of vendor/zen/core/expression/src/parser/{standard.rs,constants.rs}:
+    // 10 or/||, 15 and/&&, 20 comparisons/in/not in, 25 .. range, 30 +/-, 60 */ / %, 70 ** (right), 80 ??.
+    type BinOp = { readonly kind: string; readonly prec: number; readonly assoc: "left" | "right"; readonly consume: number }
+
+    const peekBinaryOp = (): BinOp | null => {
+      const t0 = peek()
+      const t1 = peek(1)
+      const t2 = peek(2)
+      if (isPunct(t0, "|") && isPunct(t1, "|")) return { kind: "or", prec: 10, assoc: "left", consume: 2 }
+      if (isIdent(t0, "or")) return { kind: "or", prec: 10, assoc: "left", consume: 1 }
+      if (isPunct(t0, "&") && isPunct(t1, "&")) return { kind: "and", prec: 15, assoc: "left", consume: 2 }
+      if (isIdent(t0, "and")) return { kind: "and", prec: 15, assoc: "left", consume: 1 }
+      if ((isPunct(t0, "=") && isPunct(t1, "=")) || (isPunct(t0, "!") && isPunct(t1, "="))) {
+        return { kind: "cmp", prec: 20, assoc: "left", consume: isPunct(t2, "=") ? 3 : 2 }
+      }
+      if ((isPunct(t0, "<") && isPunct(t1, "=")) || (isPunct(t0, ">") && isPunct(t1, "="))) {
+        return { kind: "cmp", prec: 20, assoc: "left", consume: 2 }
+      }
+      if (isPunct(t0, "<") || isPunct(t0, ">") || isIdent(t0, "in")) return { kind: "cmp", prec: 20, assoc: "left", consume: 1 }
+      if (isIdent(t0, "not") && isIdent(t1, "in")) return { kind: "cmp", prec: 20, assoc: "left", consume: 2 }
+      if (isPunct(t0, "..")) return { kind: "range", prec: 25, assoc: "left", consume: 1 }
+      if (isPunct(t0, "+")) return { kind: "+", prec: 30, assoc: "left", consume: 1 }
+      if (isPunct(t0, "-")) return { kind: "-", prec: 30, assoc: "left", consume: 1 }
+      if (isPunct(t0, "*")) return { kind: "*", prec: 60, assoc: "left", consume: 1 }
+      if (isPunct(t0, "/")) return { kind: "/", prec: 60, assoc: "left", consume: 1 }
+      if (isPunct(t0, "%")) return { kind: "%", prec: 60, assoc: "left", consume: 1 }
+      if (isPunct(t0, "**")) return { kind: "**", prec: 70, assoc: "right", consume: 1 }
+      if (isPunct(t0, "?") && isPunct(t1, "?")) return { kind: "??", prec: 80, assoc: "left", consume: 2 }
+      return null
+    }
+
+    const evalBinary = (op: string, left: TaintValue, right: TaintValue): TaintValue => {
+      if (op === "or" || op === "and" || op === "??") return unionTaint(left, right)
+      if (op === "+" && left.kind === "string" && right.kind === "string") {
+        return { kind: "string", value: left.value + right.value }
+      }
+      if (left.kind === "number" && right.kind === "number") {
+        if (op === "+" || op === "-") {
+          const n = op === "+" ? left.num + right.num : left.num - right.num
           const s1 = decimalScale(left.raw)
           const s2 = decimalScale(right.raw)
-          const scale = s1 >= 0 && s2 >= 0 ? Math.max(s1, s2) : -1
-          left = formatNumberResult(n, scale)
-        } else {
-          left = OTHER
+          return formatNumberResult(n, s1 >= 0 && s2 >= 0 ? Math.max(s1, s2) : -1)
         }
+        if (op === "*") {
+          const s1 = decimalScale(left.raw)
+          const s2 = decimalScale(right.raw)
+          return formatNumberResult(left.num * right.num, s1 >= 0 && s2 >= 0 ? s1 + s2 : -1)
+        }
+        if (op === "/") return formatNumberResult(left.num / right.num, -1)
+        if (op === "%") return formatNumberResult(left.num % right.num, -1)
+        if (op === "**") {
+          const s1 = decimalScale(left.raw)
+          const scale = s1 === 0 && Number.isInteger(right.num) && right.num >= 0 ? 0 : -1
+          return formatNumberResult(left.num ** right.num, scale)
+        }
+      }
+      return OTHER
+    }
+
+    const parseExpr = (): TaintValue => parseBinary(0)
+
+    const parseBinary = (minPrec: number): TaintValue => {
+      let left = parseUnary()
+      while (pos < tokens.length) {
+        const op = peekBinaryOp()
+        if (op === null || op.prec < minPrec) break
+        for (let k = 0; k < op.consume; k += 1) eat()
+        const right = parseBinary(op.assoc === "left" ? op.prec + 1 : op.prec)
+        left = evalBinary(op.kind, left, right)
+      }
+      if (minPrec === 0 && isPunct(peek(), "?")) {
+        eat()
+        const consequent = parseBinary(0)
+        if (isPunct(peek(), ":")) {
+          eat()
+          const alternate = parseBinary(0)
+          return unionTaint(consequent, alternate)
+        }
+        return consequent
       }
       return left
     }
 
-    const parseNot = (): TaintValue => {
+    const parseUnary = (): TaintValue => {
       const t0 = peek()
       if (isPunct(t0, "!") || isIdent(t0, "not")) {
         eat()
-        parseNot()
+        parseBinary(50)
         return OTHER
       }
-      return parseMultiplicative()
-    }
-
-    const parseMultiplicative = (): TaintValue => {
-      let left = parseExponent()
-      while (isPunct(peek(), "*") || isPunct(peek(), "/") || isPunct(peek(), "%")) {
-        const op = eat()!
-        const opChar = op.kind === "punct" ? op.value : ""
-        const right = parseExponent()
-        if (left.kind === "number" && right.kind === "number") {
-          const n =
-            opChar === "*"
-              ? left.num * right.num
-              : opChar === "/"
-                ? left.num / right.num
-                : left.num % right.num
-          const s1 = decimalScale(left.raw)
-          const s2 = decimalScale(right.raw)
-          const scale = opChar === "*" && s1 >= 0 && s2 >= 0 ? s1 + s2 : -1
-          left = formatNumberResult(n, scale)
-        } else {
-          left = OTHER
-        }
-      }
-      return left
-    }
-
-    const parseExponent = (): TaintValue => {
-      const base = parseNullish()
-      if (isPunct(peek(), "**")) {
-        eat()
-        const exp = parseExponent()
-        if (base.kind === "number" && exp.kind === "number") {
-          const n = base.num ** exp.num
-          const s1 = decimalScale(base.raw)
-          const scale = s1 === 0 && Number.isInteger(exp.num) && exp.num >= 0 ? 0 : -1
-          return formatNumberResult(n, scale)
-        }
-        return OTHER
-      }
-      return base
-    }
-
-    const parseNullish = (): TaintValue => {
-      let left = parseUnarySign()
-      while (isPunct(peek(), "?") && isPunct(peek(1), "?")) {
-        eat()
-        eat()
-        left = unionTaint(left, parseUnarySign())
-      }
-      return left
-    }
-
-    const parseUnarySign = (): TaintValue => {
-      const t0 = peek()
       if (isPunct(t0, "-") || isPunct(t0, "+")) {
         const op = eat()!
         const opChar = op.kind === "punct" ? op.value : ""
-        const operand = parseUnarySign()
+        const operand = parseBinary(200)
         if (operand.kind === "number") {
           const n = opChar === "-" ? -operand.num : operand.num
           const raw = opChar === "-" ? (operand.raw.startsWith("-") ? operand.raw.slice(1) : `-${operand.raw}`) : operand.raw
