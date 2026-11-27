@@ -2373,6 +2373,12 @@ pub(crate) fn restore_input<E: SqlEngine>(
                 "UPDATE \"_norn_outbox\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3",
                 params![encoded_result, command.command_id, to_i64(command.generation, "generation")?],
             )?;
+            crate::outbox_ledger::restore_consumed_runs(
+                &store.conn,
+                &command.command_id,
+                command.generation,
+                &runs,
+            )?;
         }
     }
     // This compares the kind, consumption reference, full payload, order and

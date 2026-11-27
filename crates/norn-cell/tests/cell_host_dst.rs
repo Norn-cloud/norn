@@ -1153,6 +1153,17 @@ impl NativeDstHarness {
     ) -> DstResult<()> {
         if head.command.generation.0 == 0 && self.rng.coin(1, 2) {
             let next_gen = Generation(head.command.generation.0.saturating_add(1));
+            self.cell
+                .reconcile_outbox(
+                    &head.command.id,
+                    head.command.generation,
+                    norn_kernel::world::outbox_ledger::ReconciliationDecision::AuthorizeReissue {
+                        next_generation: next_gen.0,
+                    },
+                    None,
+                )
+                .ctx(self.seed, step, "reconcile reissue")?;
+            self.model.head = head_of(&self.cell, self.seed, step)?;
             let retry = Command {
                 id: head.command.id.clone(),
                 generation: next_gen,

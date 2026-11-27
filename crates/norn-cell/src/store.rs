@@ -1350,6 +1350,29 @@ pub enum EffectRow {
         /// The generation being dispatched.
         generation: u64,
     },
+    /// Durably record an outbox reconciliation decision for `(command_id, generation)` (`D1`).
+    ReconcileOutbox {
+        /// The command id being reconciled.
+        command_id: String,
+        /// The generation being reconciled.
+        generation: u64,
+        /// The durable reconciliation decision (`ConfirmedOutcome`,
+        /// `AuthorizeReissue`, or `RequireCompensation`).
+        decision: norn_kernel::world::outbox_ledger::ReconciliationDecision,
+        /// Optional confirmed outcome payload when `decision` is
+        /// `ConfirmedOutcome`; its canonical digest must match `outcome_digest`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        confirmed_outcome: Option<Value>,
+    },
+    /// Durably record the result of a compensation attempt for `(command_id, generation)` (`D1`).
+    RecordCompensation {
+        /// The command id being compensated.
+        command_id: String,
+        /// The generation being compensated.
+        generation: u64,
+        /// Whether compensation completed.
+        ok: bool,
+    },
     /// Insert or replace a timer by id; its incarnation is this commit.
     Schedule {
         /// The timer.
@@ -3130,11 +3153,14 @@ impl<E: SqlEngine> CellStore<E> {
         // A fenced cell commits nothing (#1551 round 4).
         self.persist_pending_fence();
         self.scrub.borrow().refuse_fenced()?;
-        if batch
-            .effects
-            .iter()
-            .any(|effect| matches!(effect, EffectRow::ClaimPerform { .. }))
-        {
+        if batch.effects.iter().any(|effect| {
+            matches!(
+                effect,
+                EffectRow::ClaimPerform { .. }
+                    | EffectRow::ReconcileOutbox { .. }
+                    | EffectRow::RecordCompensation { .. }
+            )
+        }) {
             self.refuse_perform_in_fork()?;
         }
         let admitted_boundary = Cell::new(self.quantity_boundary.get());
@@ -3504,6 +3530,8 @@ impl<E: SqlEngine> CellStore<E> {
                     .filter_map(|effect| match effect {
                         EffectRow::Enqueue { command } => Some(command.command_id.clone()),
                         EffectRow::ClaimPerform { .. }
+                        | EffectRow::ReconcileOutbox { .. }
+                        | EffectRow::RecordCompensation { .. }
                         | EffectRow::Schedule { .. }
                         | EffectRow::CancelTimer { .. } => None,
                     })
@@ -3515,6 +3543,8 @@ impl<E: SqlEngine> CellStore<E> {
                         EffectRow::Schedule { timer } => Some(timer.timer_id.clone()),
                         EffectRow::Enqueue { .. }
                         | EffectRow::ClaimPerform { .. }
+                        | EffectRow::ReconcileOutbox { .. }
+                        | EffectRow::RecordCompensation { .. }
                         | EffectRow::CancelTimer { .. } => None,
                     })
                     .collect(),
@@ -3581,9 +3611,13 @@ impl<E: SqlEngine> CellStore<E> {
 
     /// Record the result of performing the outbox head command `command_id`
     /// at `generation`, in its own transaction, so a crash before the result
-    /// is consumed never executes the command again. Returns `false` (and
-    /// writes nothing) when that command is not the head or already has a
-    /// recorded result.
+    /// is consumed never executes the command again.
+    ///
+    /// Returns `true` when it settled the active unperformed head. If
+    /// `(command_id, generation)` is a superseded prior generation that was
+    /// durably claimed, attaches the late evidence immutably to that original
+    /// generation via its [`norn_kernel::world::outbox_ledger::DispatchProof`]
+    /// without altering the active head, and returns `false`.
     ///
     /// # Errors
     ///
@@ -3599,7 +3633,107 @@ impl<E: SqlEngine> CellStore<E> {
         self.record_head_result(command_id, generation, outcome)
     }
 
-    /// Record `outcome` as the head command's result when it has none.
+    /// Explicitly attach an external outcome verified by `proof` to its
+    /// original generation (`D1`).
+    ///
+    /// Fails closed with [`CellError::OutboxLedgerRefused`] on an invalid
+    /// [`norn_kernel::world::outbox_ledger::DispatchProof`] or conflicting
+    /// outcome. A late outcome for a prior generation attaches only to that
+    /// generation and never mutates the active outbox head.
+    ///
+    /// # Errors
+    ///
+    /// `core.world.perform_forbidden` in a fork; [`CellError::OutboxLedgerRefused`]
+    /// on proof/state refusal; SQL engine or encoding errors.
+    pub fn record_late_outcome(
+        &mut self,
+        command_id: &str,
+        proof: norn_kernel::world::outbox_ledger::DispatchProof,
+        ok: bool,
+        outcome: &Value,
+    ) -> Result<norn_kernel::world::outbox_ledger::ApplyStatus, CellError> {
+        self.refuse_perform_in_fork()?;
+        self.write_tx(|| {
+            let (status, is_active) = crate::outbox_ledger::record_outcome_with_proof(
+                &self.conn, command_id, proof, ok, outcome,
+            )?;
+            if status == norn_kernel::world::outbox_ledger::ApplyStatus::Applied && is_active {
+                let pending = StoreReader::new(&self.conn, &self.model)
+                    .with_source_disputes(&self.source_disputes)
+                    .pending_command(command_id)?
+                    .filter(|row| {
+                        row.command.generation == proof.generation && row.result.is_none()
+                    });
+                if let Some(pending) = pending {
+                    self.project_result(&pending, command_id, proof.generation, outcome)?;
+                }
+            }
+            Ok(status)
+        })
+    }
+
+    /// Durably record an outbox reconciliation decision for `(command_id, generation)` (`D1`).
+    ///
+    /// Commits a zero-event [`SystemWrite::ReconcileOutbox`] recorded in the
+    /// export journal and replayed across restores.
+    ///
+    /// # Errors
+    ///
+    /// `core.world.perform_forbidden` in a fork; [`CellError::OutboxLedgerRefused`]
+    /// if the decision does not apply; store or SQL errors.
+    pub fn reconcile_outbox(
+        &mut self,
+        scope: &str,
+        logical_time: u64,
+        command_id: &str,
+        generation: u64,
+        decision: norn_kernel::world::outbox_ledger::ReconciliationDecision,
+        confirmed_outcome: Option<&Value>,
+    ) -> Result<CommitOutcome, CellError> {
+        let write = SystemWrite::ReconcileOutbox {
+            command_id: command_id.to_owned(),
+            generation,
+            decision,
+            confirmed_outcome: confirmed_outcome.cloned(),
+        };
+        let place = At {
+            world: MAIN_WORLD,
+            scope,
+            logical_time,
+        };
+        self.apply_system(&place, write)
+    }
+
+    /// Durably record a compensation attempt outcome for `(command_id, generation)` (`D1`).
+    ///
+    /// # Errors
+    ///
+    /// `core.world.perform_forbidden` in a fork; [`CellError::OutboxLedgerRefused`]
+    /// if compensation is not pending; store or SQL errors.
+    pub fn record_outbox_compensation(
+        &mut self,
+        scope: &str,
+        logical_time: u64,
+        command_id: &str,
+        generation: u64,
+        ok: bool,
+    ) -> Result<CommitOutcome, CellError> {
+        let write = SystemWrite::RecordCompensation {
+            command_id: command_id.to_owned(),
+            generation,
+            ok,
+        };
+        let place = At {
+            world: MAIN_WORLD,
+            scope,
+            logical_time,
+        };
+        self.apply_system(&place, write)
+    }
+
+    /// Record `outcome` as the head command's result when it has none; if
+    /// `(command_id, generation)` is a prior dispatched generation, attach its
+    /// late evidence immutably without modifying the active head.
     pub(crate) fn record_head_result(
         &self,
         command_id: &str,
@@ -3616,6 +3750,11 @@ impl<E: SqlEngine> CellStore<E> {
                     && head.result.is_none()
             });
             if !is_head {
+                if self.fork.is_none() {
+                    let _attached = crate::outbox_ledger::try_attach_late_outcome(
+                        &self.conn, command_id, generation, outcome,
+                    )?;
+                }
                 return Ok(false);
             }
             let head = head.ok_or_else(|| {
@@ -3671,7 +3810,7 @@ impl<E: SqlEngine> CellStore<E> {
         self.store_result(&parked, command_id, generation, outcome)
     }
 
-    /// Record `outcome` as `head`'s result, with its run attempt.
+    /// Record `outcome` in `_norn_outbox_record` and project it onto `_norn_outbox` and `_norn_run`.
     fn store_result(
         &self,
         head: &crate::read::PendingCommand,
@@ -3679,6 +3818,21 @@ impl<E: SqlEngine> CellStore<E> {
         generation: u64,
         outcome: &Value,
     ) -> Result<bool, CellError> {
+        let _status = crate::outbox_ledger::record_active_outcome(
+            &self.conn, command_id, generation, outcome,
+        )?;
+        self.project_result(head, command_id, generation, outcome)?;
+        Ok(true)
+    }
+
+    /// Project an already-admitted active-head `outcome` onto `_norn_outbox` and `_norn_run`.
+    fn project_result(
+        &self,
+        head: &crate::read::PendingCommand,
+        command_id: &str,
+        generation: u64,
+        outcome: &Value,
+    ) -> Result<(), CellError> {
         crate::payload_storage::remember_command(
             &self.conn,
             command_id,
@@ -3717,7 +3871,7 @@ impl<E: SqlEngine> CellStore<E> {
             ),
             params![command_id, generation, to_i64(attempt, "attempt")?, outcome],
         )?;
-        Ok(true)
+        Ok(())
     }
 
     /// Ingest one external observation into the inbox, in its own

@@ -117,6 +117,27 @@ pub(crate) enum SystemWrite {
         /// Its generation.
         generation: u64,
     },
+    /// Durably record an outbox reconciliation decision (D1).
+    ReconcileOutbox {
+        /// The command being reconciled.
+        command_id: String,
+        /// The generation being reconciled.
+        generation: u64,
+        /// The durable reconciliation decision.
+        decision: norn_kernel::world::outbox_ledger::ReconciliationDecision,
+        /// Optional confirmed outcome payload when `decision` is
+        /// `ConfirmedOutcome`.
+        confirmed_outcome: Option<Value>,
+    },
+    /// Durably record a compensation attempt outcome for an outbox operation (D1).
+    RecordCompensation {
+        /// The command being compensated.
+        command_id: String,
+        /// The generation being compensated.
+        generation: u64,
+        /// Whether compensation completed.
+        ok: bool,
+    },
     /// Fixed provisioning rows (the demo canon, recorded K1 conversions).
     Provision {
         /// The retry key, for a load that runs once.
@@ -186,6 +207,30 @@ impl SystemWrite {
                 batch.effects = vec![EffectRow::ClaimPerform {
                     command_id,
                     generation,
+                }];
+            }
+            Self::ReconcileOutbox {
+                command_id,
+                generation,
+                decision,
+                confirmed_outcome,
+            } => {
+                batch.effects = vec![EffectRow::ReconcileOutbox {
+                    command_id,
+                    generation,
+                    decision,
+                    confirmed_outcome,
+                }];
+            }
+            Self::RecordCompensation {
+                command_id,
+                generation,
+                ok,
+            } => {
+                batch.effects = vec![EffectRow::RecordCompensation {
+                    command_id,
+                    generation,
+                    ok,
                 }];
             }
             Self::Provision {

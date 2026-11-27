@@ -313,12 +313,8 @@ async fn wipe_restore_preserves_all_tables_receipts_links_and_export_continuatio
         store.bind("scope", "org_demo/dev").expect("binding");
         let first = initial_batch();
         store.commit(&first).expect("first");
-        // An older generation can have a recorded outcome that was not consumed.
         let exact =
             Value::from_json_text(r#"{"amount":9007199254740993.123456789}"#).expect("exact");
-        store
-            .record_performed("command", 0, &exact)
-            .expect("old outcome");
         store
             .commit(&CommitBatch {
                 effects: vec![EffectRow::Enqueue {
@@ -695,14 +691,21 @@ async fn unknown_external_outcomes_are_fenced_across_reopen_and_generation_repla
         assert_eq!(restored.read().pending_observations().expect("inbox"), []);
         assert_eq!(restored.read().runs("command").expect("runs"), []);
         if replace {
-            restored
-                .commit(&CommitBatch {
-                    effects: vec![EffectRow::Enqueue {
-                        command: command(1),
-                    }],
-                    ..batch(2)
-                })
-                .expect("replace");
+            // D1: reissuing over a restore fence without durable reconciliation
+            // fails closed.
+            let refused = restored.commit(&CommitBatch {
+                effects: vec![EffectRow::Enqueue {
+                    command: command(1),
+                }],
+                ..batch(2)
+            });
+            assert!(
+                matches!(
+                    refused,
+                    Err(CellError::OutboxReissueRefused { generation: 1, .. })
+                ),
+                "{refused:?}"
+            );
         }
         let mut cell = norn_cell::SqliteCell::<Value, Value, Value>::new(
             restored,

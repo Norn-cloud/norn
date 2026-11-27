@@ -62,6 +62,9 @@ mod mapping_links;
 mod model_interfaces;
 #[path = "ontology_lending.rs"]
 mod ontology_lending;
+#[cfg(feature = "native")]
+#[path = "outbox_generations.rs"]
+mod outbox_generations;
 #[path = "parent_rows.rs"]
 mod parent_rows;
 #[path = "principal_inputs.rs"]

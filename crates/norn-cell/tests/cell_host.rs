@@ -978,6 +978,24 @@ impl<const REOPEN: bool, S: LawEngine, const NETWORK: bool> SimulatedCell
             .map_err(|error| error.to_string())
     }
 
+    fn sim_authorize_reissue(
+        &mut self,
+        command: &CommandId,
+        from_generation: Generation,
+        next_generation: Generation,
+    ) -> Result<(), String> {
+        let authorized = self.cell.reconcile_outbox(
+            command,
+            from_generation,
+            norn_kernel::world::outbox_ledger::ReconciliationDecision::AuthorizeReissue {
+                next_generation: next_generation.0,
+            },
+            None,
+        );
+        self.after_write();
+        authorized.map(|_| ()).map_err(|error| error.to_string())
+    }
+
     fn sim_advance_to(&mut self, now: LogicalTime) {
         self.cell.advance_to(now);
     }
@@ -1334,6 +1352,16 @@ impl<const BUG: u8> SimulatedCell for ResponderMutant<BUG> {
             }
             Some(_) | None => Ok(false),
         }
+    }
+
+    fn sim_authorize_reissue(
+        &mut self,
+        command: &CommandId,
+        from_generation: Generation,
+        next_generation: Generation,
+    ) -> Result<(), String> {
+        self.inner
+            .sim_authorize_reissue(command, from_generation, next_generation)
     }
 
     fn sim_advance_to(&mut self, now: LogicalTime) {
@@ -2110,6 +2138,31 @@ fn a_late_completion_never_writes_a_replacement_generation() {
     let mut replacement = old.clone();
     replacement.generation = Generation(1);
     replacement.idempotency_key = IdempotencyKey("charge/O-1/1".to_owned());
+    // D1: reissuing over an ambiguous dispatch without durable reconciliation
+    // fails closed.
+    let refused = cell.commit(CellCommit {
+        effects: vec![Effect::Perform(replacement.clone())],
+        ..CellCommit::empty()
+    });
+    assert!(
+        matches!(
+            refused,
+            Err(CommitError::Host(CellError::OutboxReissueRefused {
+                generation: 1,
+                ..
+            }))
+        ),
+        "{refused:?}"
+    );
+    cell.reconcile_outbox(
+        &old.id,
+        old.generation,
+        norn_kernel::world::outbox_ledger::ReconciliationDecision::AuthorizeReissue {
+            next_generation: 1,
+        },
+        None,
+    )
+    .expect("reconciles reissue");
     cell.commit(CellCommit {
         effects: vec![Effect::Perform(replacement.clone())],
         ..CellCommit::empty()
@@ -2124,9 +2177,17 @@ fn a_late_completion_never_writes_a_replacement_generation() {
                 ok: true,
             },
         )
-        .expect("stale completion is ignored"),
+        .expect("stale completion attaches only to prior generation"),
         None
     );
+    let ledger = cell
+        .store()
+        .read()
+        .outbox_ledger(&old.id.0)
+        .expect("ledger reads")
+        .expect("ledger exists");
+    assert_eq!(ledger.active_generation(), 1);
+    assert_eq!(ledger.prior_confirmed_successes(), vec![0]);
     assert!(matches!(
         cell.claim_perform().expect("claims replacement"),
         ClaimOutcome::Fresh(found) if found == replacement

@@ -246,7 +246,10 @@ fn check_expiry_timer_effects(batch: &CommitBatch) -> Result<(), CellError> {
     if batch.effects.iter().any(|effect| match effect {
         crate::EffectRow::Schedule { timer } => timer.timer_id.starts_with(EXPIRY_TIMER_PREFIX),
         crate::EffectRow::CancelTimer { timer_id } => timer_id.starts_with(EXPIRY_TIMER_PREFIX),
-        crate::EffectRow::Enqueue { .. } | crate::EffectRow::ClaimPerform { .. } => false,
+        crate::EffectRow::Enqueue { .. }
+        | crate::EffectRow::ClaimPerform { .. }
+        | crate::EffectRow::ReconcileOutbox { .. }
+        | crate::EffectRow::RecordCompensation { .. } => false,
     }) {
         return Err(QuantityError::InvalidContract.into());
     }

@@ -711,6 +711,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 command_id,
                 generation,
             } => {
+                crate::outbox_ledger::record_consumed(
+                    self.conn,
+                    command_id,
+                    *generation,
+                    self.commit_seq,
+                )?;
                 let generation = to_i64(*generation, "generation")?;
                 self.conn.execute(
                     &format!(
@@ -3259,6 +3265,22 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     command_id,
                     generation,
                 } => self.claim_perform(command_id, *generation)?,
+                EffectRow::ReconcileOutbox {
+                    command_id,
+                    generation,
+                    decision,
+                    confirmed_outcome,
+                } => self.reconcile_outbox(
+                    command_id,
+                    *generation,
+                    *decision,
+                    confirmed_outcome.as_ref(),
+                )?,
+                EffectRow::RecordCompensation {
+                    command_id,
+                    generation,
+                    ok,
+                } => self.record_compensation(command_id, *generation, *ok)?,
                 EffectRow::Schedule { timer } => self.schedule(timer)?,
                 EffectRow::CancelTimer { timer_id } => {
                     self.conn.execute(
@@ -3311,12 +3333,115 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 generation,
             });
         }
+        let _proof = crate::outbox_ledger::record_dispatched(
+            self.conn,
+            command_id,
+            generation,
+            self.commit_seq,
+        )?;
         self.conn.execute(
             &format!(
                 "INSERT INTO \"{PERFORM_CLAIM}\" (\"command_id\", \"generation\", \"commit_seq\") VALUES (?1, ?2, ?3)"
             ),
             params![command_id, generation_sql, self.commit_seq_sql()?],
         )?;
+        Ok(())
+    }
+
+    fn reconcile_outbox(
+        &self,
+        command_id: &str,
+        generation: u64,
+        decision: norn_kernel::world::outbox_ledger::ReconciliationDecision,
+        confirmed_outcome: Option<&Value>,
+    ) -> Result<(), CellError> {
+        use norn_kernel::world::outbox_ledger::ReconciliationDecision;
+        if let ReconciliationDecision::ConfirmedOutcome { ok, outcome_digest } = decision
+            && let Some(outcome) = confirmed_outcome
+            && (crate::outbox_ledger::outcome_digest(outcome)? != outcome_digest
+                || crate::outbox_ledger::outcome_is_ok(outcome) != ok)
+        {
+            return Err(CellError::OutboxLedgerRefused {
+                command_id: command_id.to_owned(),
+                generation,
+                refusal: norn_kernel::world::outbox_ledger::OutboxLedgerRefusal::OutcomeDiverged,
+            });
+        }
+        let (_status, is_active, _head) = crate::outbox_ledger::record_reconciliation(
+            self.conn,
+            command_id,
+            generation,
+            decision,
+            self.commit_seq,
+        )?;
+        if is_active
+            && matches!(decision, ReconciliationDecision::ConfirmedOutcome { .. })
+            && let Some(outcome) = confirmed_outcome
+        {
+            let pending = StoreReader::new(self.conn, self.model)
+                .pending_command(command_id)?
+                .filter(|row| row.command.generation == generation && row.result.is_none());
+            if let Some(pending) = pending {
+                crate::payload_storage::remember_command(
+                    self.conn,
+                    command_id,
+                    generation,
+                    pending.commit_seq,
+                )?;
+                let encoded = crate::payload_storage::encode_result(
+                    self.conn,
+                    &self.batch.scope,
+                    self.world,
+                    outcome,
+                )?;
+                let generation_sql = to_i64(generation, "generation")?;
+                self.conn.execute(
+                    &format!(
+                        "UPDATE \"{OUTBOX}\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3"
+                    ),
+                    params![encoded, command_id, generation_sql],
+                )?;
+                let attempts: i64 = self.conn.query_row(
+                    &format!(
+                        "SELECT COUNT(*) FROM \"{RUN}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2"
+                    ),
+                    params![command_id, generation_sql],
+                    |row| row.get::<i64>(0),
+                )?;
+                if attempts == 0 {
+                    self.conn.execute(
+                        &format!(
+                            "INSERT INTO \"{RUN}\" (\"command_id\", \"generation\", \"attempt\", \"outcome\", \"consumed_commit_seq\") VALUES (?1, ?2, 1, ?3, NULL)"
+                        ),
+                        params![command_id, generation_sql, encoded],
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn record_compensation(
+        &self,
+        command_id: &str,
+        generation: u64,
+        ok: bool,
+    ) -> Result<(), CellError> {
+        let (_status, compensated) = crate::outbox_ledger::record_compensation(
+            self.conn,
+            command_id,
+            generation,
+            ok,
+            self.commit_seq,
+        )?;
+        if compensated {
+            self.conn.execute(
+                &format!(
+                    "UPDATE \"{OUTBOX}\" SET \"consumed_commit_seq\" = ?1 WHERE \"command_id\" = ?2 AND \"consumed_commit_seq\" IS NULL"
+                ),
+                params![self.commit_seq_sql()?, command_id],
+            )?;
+        }
         Ok(())
     }
 
@@ -3329,29 +3454,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             .transpose()?;
         let serialized = canonical_json(&command.command)?;
         let queue = crate::read::classify(&command.command);
-        // The stored payload is compared in SQL, never loaded.
-        let known: Option<(i64, Option<i64>, i64, String)> = self.conn.query_optional(
-            &format!(
-                "SELECT \"generation\", \"consumed_commit_seq\", \"command\" = ?2, \"queue\" FROM \"{OUTBOX}\" WHERE \"command_id\" = ?1"
-            ),
-            params![command.command_id, serialized],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )?;
-        let position = match known {
-            // A consumed row is terminal: a re-issue at its generation or an
-            // older one never re-executes.
-            Some((known, Some(_), ..)) if known >= generation => return Ok(()),
-            // D03 (#1699): a newer generation of a pending command replaces
-            // it in place; anything else the outbox step refuses or ignores.
-            Some((known, None, same, stored)) => {
-                let known = to_u64(known, "generation")?;
-                if !crate::read::reissue_replaces(command, known, same == 1, &stored, queue)? {
-                    return Ok(());
-                }
-                None
-            }
-            // New, or a newer generation of a consumed command: appended.
-            Some((_, Some(_), ..)) | None => {
+        let action =
+            crate::outbox_ledger::record_enqueue(self.conn, command, queue, self.commit_seq)?;
+        let position = match action {
+            crate::outbox_ledger::EnqueueAction::Noop => return Ok(()),
+            crate::outbox_ledger::EnqueueAction::ReplaceInPlace => None,
+            crate::outbox_ledger::EnqueueAction::InsertNew => {
                 let maximum = self.conn.query_row(
                     &format!("SELECT COALESCE(MAX(\"position\"), 0) FROM \"{OUTBOX}\""),
                     params![],

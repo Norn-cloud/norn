@@ -71,6 +71,7 @@ pub mod mining;
 mod observation_quality;
 mod open_checkpoint;
 pub use open_checkpoint::CheckpointKey;
+pub mod outbox_ledger;
 pub mod provision;
 pub use observation_quality::AuthoritativePage;
 mod identity;
