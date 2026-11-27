@@ -227,6 +227,7 @@ struct Run {
     /// Rows the current step mapped.
     mapped: usize,
     pull: Option<Pull>,
+    drain_only: bool,
     auth: Vec<(String, String)>,
     /// The first data request, held while an access token is fetched.
     held: Option<Request>,
@@ -389,6 +390,7 @@ impl Sources {
             step_rows: crate::host::PAGE_ROWS,
             mapped: 0,
             pull: None,
+            drain_only: false,
             auth: Vec::new(),
             held: None,
             pending_captures: std::collections::VecDeque::new(),
@@ -568,7 +570,7 @@ impl Sources {
         run.stepped_ms = now_ms;
         run.mapped = 0;
         let outcome = match response {
-            None if run.pull.is_some() => drain(host, run, now_ms),
+            None if run.pull.is_some() || run.drain_only => drain(host, run, now_ms),
             None => begin(host, &config, &self.secrets, run, watermarks_known, now_ms),
             Some((status, body)) => {
                 advance(host, &config, run, status, body, now_ms).and_then(|after| {
@@ -628,7 +630,9 @@ impl Sources {
             error,
         };
         if !superseded {
-            state.last_end_ms = Some(now_ms);
+            if !run.drain_only {
+                state.last_end_ms = Some(now_ms);
+            }
             let watermarks = if run.pull.is_some() || !run.committed_watermarks.is_empty() {
                 run.committed_watermarks.clone()
             } else {
@@ -695,6 +699,7 @@ fn begin<E: SqlEngine>(
         !pending.is_empty(),
         now_ms,
     )?;
+    run.drain_only = drain_only;
     run.watermark_from = watermark_text(&watermarks);
     run.committed_watermarks = watermarks.clone();
     run.committed_cursor_json = raw_cursors;
@@ -1057,6 +1062,7 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         step_rows: crate::host::PAGE_ROWS,
         mapped: 0,
         pull: None,
+        drain_only: false,
         auth: Vec::new(),
         held: None,
         pending_captures: std::collections::VecDeque::new(),
@@ -1132,10 +1138,11 @@ fn report<E: SqlEngine>(
         "api_key"
     };
     let mapping_id = capture::reported_mapping_id(host, config, run);
+    let conn_ended = capture::reported_connection_ended(host, config, run, ended.as_deref());
     let connection = norn_ir::runtime_object! {
         "id" => config.id.as_str(), "system" => config.system.as_str(), "label" => config.label.as_str(),
         "target" => config.base_url.as_str(), "auth" => auth, "status" => status,
-        "last_sync_started_at" => started.as_str(), "last_sync_ended_at" => ended,
+        "last_sync_started_at" => started.as_str(), "last_sync_ended_at" => conn_ended,
         "last_trigger" => run.trigger.as_str(), "watermark" => watermark,
         "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
         "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),

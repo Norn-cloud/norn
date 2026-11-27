@@ -132,9 +132,10 @@ fn parse_rfc3339_ms(text: &str) -> Option<u64> {
 }
 
 /// Strict validator for one connector cursor JSON value: only accepts
-/// `{"version": "<nonblank>", "id": <string|number>}` with no unknown fields,
+/// `{"version": "<string>", "id": <string|number>}` with no unknown fields,
 /// rejecting `null`, booleans, arrays, objects, or malformed entries while
-/// preserving exact raw numeric `id` tokens and matching `Watermark::cursor_json()`.
+/// allowing valid empty-feed initial cursors (e.g. `{"version":"","id":""}`)
+/// and preserving exact raw numeric `id` tokens matching `Watermark::cursor_json()`.
 fn validate_cursor_json(raw: &str) -> Option<String> {
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -144,9 +145,6 @@ fn validate_cursor_json(raw: &str) -> Option<String> {
         id: &'a serde_json::value::RawValue,
     }
     let wm = serde_json::from_str::<StoredWatermark<'_>>(raw).ok()?;
-    if wm.version.trim().is_empty() {
-        return None;
-    }
     let id_value: serde_json::Value = serde_json::from_str(wm.id.get()).ok()?;
     if !matches!(
         id_value,
@@ -326,7 +324,7 @@ fn assemble_required_bindings(
     required
 }
 
-fn bindings_to_required(bindings: RequiredBindings) -> RequiredSources {
+fn bindings_to_required(bindings: &RequiredBindings) -> RequiredSources {
     let mut out: BTreeMap<String, BTreeSet<String>> = bindings
         .connected
         .iter()
@@ -545,7 +543,7 @@ impl<E: SqlEngine> CellStore<E> {
         configured: &BTreeMap<String, String>,
     ) -> Result<RequiredSources, CellError> {
         let (bindings, _) = self.required_bindings_at(world, plan, cutoff, now_ms, configured)?;
-        Ok(bindings_to_required(bindings))
+        Ok(bindings_to_required(&bindings))
     }
 
     /// Build the live connector frontier (`source_cursors` and `watermarks`)

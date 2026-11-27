@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 
 use norn_cell::MappingOutcome;
 use norn_cell::engine::SqlEngine;
-use norn_cell::source_cursor::{CursorAdvanceSpec, PendingSourceCapture, SourceLease};
+use norn_cell::source_cursor::{
+    CursorAdvanceSpec, PendingSourceCapture, SourceCursorRecord, SourceLease,
+};
 use norn_ir::RuntimeValue;
 
 use super::{CONNECTION_TYPE, ConnectionConfig, Failure, RUN_LEASE_MS, fail, rfc3339};
@@ -110,7 +112,7 @@ pub(super) fn running_summary(run_id: &str) -> super::RunSummary {
 pub(super) type LoadedWatermarks = (BTreeMap<String, Watermark>, BTreeMap<String, String>, bool);
 
 fn decode_cursors(
-    cursors: BTreeMap<String, norn_cell::SourceCursorRecord>,
+    cursors: BTreeMap<String, SourceCursorRecord>,
 ) -> (BTreeMap<String, Watermark>, BTreeMap<String, String>) {
     let mut parsed = BTreeMap::new();
     let mut raw_cursors = BTreeMap::new();
@@ -226,6 +228,30 @@ pub(super) fn reported_mapping_id<E: SqlEngine>(
         return existing;
     }
     config.mapping.clone()
+}
+
+/// Heartbeat timestamp (`last_sync_ended_at`) to record on `source.Connection`:
+/// preserve the prior upstream heartbeat during a drain-only rebind run that
+/// never polled upstream, so draining old captures cannot refresh freshness.
+pub(super) fn reported_connection_ended<E: SqlEngine>(
+    host: &DevHost<E>,
+    config: &ConnectionConfig,
+    run: &super::Run,
+    ended: Option<&str>,
+) -> Option<String> {
+    if run.drain_only {
+        return host
+            .host_object(CONNECTION_TYPE, &config.id)
+            .ok()
+            .flatten()
+            .and_then(|object| {
+                object
+                    .get("last_sync_ended_at")
+                    .and_then(RuntimeValue::as_str)
+                    .map(str::to_owned)
+            });
+    }
+    ended.map(str::to_owned)
 }
 
 fn legacy_connection_watermarks<E: SqlEngine>(

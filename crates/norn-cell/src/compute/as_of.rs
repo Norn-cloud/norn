@@ -19,6 +19,10 @@ use crate::engine::SqlEngine;
 use crate::reactive::{BudgetedRead, DecodeBudget};
 use crate::{CellError, KnowledgeCutoff, LedgerHead, ObjectRecord, StoreReader};
 
+/// Hard cap on covering-index rows scanned when deduplicating distinct
+/// historical subject IDs.
+const MAX_DISTINCT_SCAN: usize = 65_536;
+
 /// Versioned snapshots of one subject committed on or before a cutoff.
 pub(crate) type HistoricalVersions = Vec<(u64, BTreeMap<String, RuntimeValue>)>;
 
@@ -105,7 +109,6 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
         if cap == 0 || budget.remaining_bytes() < 64 {
             return Ok((Vec::new(), false));
         }
-        const MAX_DISTINCT_SCAN: usize = 65_536;
         let scan_cap = cap.saturating_mul(64).min(MAX_DISTINCT_SCAN);
         let limit = i64::try_from(scan_cap.saturating_add(1))
             .map_err(|_n| refused("core.compute.bound_exceeded"))?;
