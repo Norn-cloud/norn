@@ -19,6 +19,9 @@ use crate::engine::SqlEngine;
 use crate::reactive::{BudgetedRead, DecodeBudget};
 use crate::{CellError, KnowledgeCutoff, LedgerHead, ObjectRecord, StoreReader};
 
+/// Versioned snapshots of one subject committed on or before a cutoff.
+pub(crate) type HistoricalVersions = Vec<(u64, BTreeMap<String, RuntimeValue>)>;
+
 /// Collected membership, exclusions, and contributions for one snapshot scan.
 #[derive(Default)]
 pub(crate) struct CollectedMembers {
@@ -127,7 +130,7 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
         kind: &str,
         id: &str,
         budget: &mut DecodeBudget,
-    ) -> Result<Option<Vec<(u64, BTreeMap<String, RuntimeValue>)>>, CellError> {
+    ) -> Result<Option<HistoricalVersions>, CellError> {
         let Some(versions) = self.reader.object_versions_with_budget(
             world,
             kind,

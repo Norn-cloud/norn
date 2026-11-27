@@ -296,7 +296,7 @@ mod asof_reader {
                     {"dataset": "Inspection", "name": "id", "ordinal": 0, "nativeType": "Text", "typeCandidate": {"type": "string", "origin": "declared"}, "required": true},
                     {"dataset": "Inspection", "name": "receipt_id", "ordinal": 1, "nativeType": "Text", "typeCandidate": {"type": "string", "origin": "declared"}, "required": true},
                     {"dataset": "Inspection", "name": "inspected_qty", "ordinal": 2, "nativeType": "Decimal", "typeCandidate": {"type": "decimal", "origin": "declared"}, "required": true},
-                    {"dataset": "Inspection", "name": "occurred_at", "ordinal": 3, "nativeType": "Timestamp", "typeCandidate": {"type": "timestamp", "origin": "declared"}, "required": true}
+                    {"dataset": "Inspection", "name": "occurred_at", "ordinal": 3, "nativeType": "Timestamp", "typeCandidate": {"type": "datetime", "origin": "declared"}, "required": true}
                 ],
                 "codeSets": [],
                 "constraints": [
@@ -569,7 +569,7 @@ mod asof_reader {
                 "fields": [
                     {"dataset": "Invoice", "name": "id", "ordinal": 0, "nativeType": "Text", "typeCandidate": {"type": "string", "origin": "declared"}, "required": true},
                     {"dataset": "Invoice", "name": "amount", "ordinal": 1, "nativeType": "Decimal", "typeCandidate": {"type": "decimal", "origin": "declared"}, "required": true},
-                    {"dataset": "Invoice", "name": "occurred_at", "ordinal": 2, "nativeType": "Timestamp", "typeCandidate": {"type": "timestamp", "origin": "declared"}, "required": true}
+                    {"dataset": "Invoice", "name": "occurred_at", "ordinal": 2, "nativeType": "Timestamp", "typeCandidate": {"type": "datetime", "origin": "declared"}, "required": true}
                 ],
                 "codeSets": [],
                 "constraints": [{"id": "pk_inv", "kind": "primary_key", "dataset": "Invoice", "fields": ["id"], "origin": "declared"}]
