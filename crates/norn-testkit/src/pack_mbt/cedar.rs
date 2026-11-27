@@ -305,6 +305,8 @@ where
     let roles = attempt.roles.to_vec();
     let caller_scope = attempt.caller_scope.clone();
     let resource_scope = attempt.resource_scope.clone();
+    // Action-only AccessIR rules do not declare `norn.read` policies, so opt in
+    // to slice reads here to ensure `commit_action` reaches the action PDP check.
     let authorizer = ObservedPdpAuthorizer::new(
         Arc::clone(target.pdp),
         Arc::clone(rc.cedar.coverage),
@@ -339,7 +341,8 @@ where
                 Binding::Unbound(UnboundProfile::HostedAction),
             ))
         },
-    );
+    )
+    .allow_action_only_slice_reads();
 
     let call = ActionCall {
         action: &target.admitted.root,

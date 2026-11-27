@@ -1,23 +1,14 @@
 //! Generic IR-driven Model-Based Testing (MBT) driver (#1656).
 //!
-//! Given *any* [`AdmittedPack`] and a [`PackHost`] factory (for example, a real
-//! `ObservedSqliteCell` on disk), executes:
-//! 1. **All-states & all-transitions lifecycle walk** (`exhaustive-finite` when
-//!    every transition and guard witness is covered, else `bounded`): reaches
-//!    every reachable state, executes every valid transition, and verifies
-//!    false guards refuse strictly with `DecisionRefusal::GuardFalse` + zero
-//!    ledger writes.
-//! 2. **Disallowed transitions & immutable state/entity refusals**
-//!    (`exhaustive-finite` when every immutable target is covered): asserts
-//!    `NotFromState`, `LifecyclePropertySet`, `ImmutableStateWrite`, and
-//!    `CommitError::ImmutableObject` with zero ledger writes.
-//! 3. **Full Cedar authorization & `SoD` matrix** (`exhaustive-finite` when
-//!    every rule is covered): runs authorized controls plus unauthorized-role,
+//! Executes four phases over any [`AdmittedPack`] and [`PackHost`] factory:
+//! 1. **Lifecycle walk** (`exhaustive-finite` / `bounded`): reachable states,
+//!    valid transitions, and `GuardFalse` refusals with zero ledger writes.
+//! 2. **Disallowed & immutable refusals**: `NotFromState`,
+//!    `LifecyclePropertySet`, `ImmutableStateWrite`, and `ImmutableObject`.
+//! 3. **Cedar & `SoD` matrix**: authorized controls plus unauthorized-role,
 //!    foreign-scope, and self-approver denials through real `commit_action`.
-//! 4. **`LAW-EXAMPLE-1` → real cell runtime parity** (`runtime-enforced`):
-//!    replays every `LawExampleCase` through both `norn_checker::law_examples`
-//!    and real `PackHost::commit`, matching exact law pin, subject, and
-//!    `DataQualityOutcome::NotSatisfied`.
+//! 4. **`LAW-EXAMPLE-1` runtime parity** (`runtime-enforced` when examples ran,
+//!    else `unknown`): checker vs. `PackHost::commit` parity.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -139,13 +130,19 @@ where
             EvidenceLevel::Bounded
         };
 
+    let law_evidence = if law_examples_checked == 0 {
+        EvidenceLevel::Unknown
+    } else {
+        EvidenceLevel::RuntimeEnforced
+    };
+
     Ok(PackMbtReport {
         pack_name: pack.name.clone(),
         evidence: vec![
             ("lifecycle_walks_and_refusals", lc_evidence),
             ("immutable_state_refusals", imm_evidence),
             ("cedar_and_sod_matrix", cedar_evidence),
-            ("law_example_runtime_parity", EvidenceLevel::RuntimeEnforced),
+            ("law_example_runtime_parity", law_evidence),
         ],
         valid_transitions_run: lc.valid,
         disallowed_transitions_checked: lc.disallowed,
@@ -649,7 +646,10 @@ fn check_direct_lifecycle_write<H: PackHost>(
         ty_name,
         id,
         prop,
-        JsonValue::String(state.to_owned()),
+        JsonValue::String(super::coverage::distinct_lifecycle_state(
+            ctx.lifecycle,
+            state,
+        )),
         seq.saturating_add(4000),
     );
     match direct {

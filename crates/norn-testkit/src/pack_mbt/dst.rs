@@ -2,12 +2,9 @@
 //!
 //! Generates seeded, shrinkable operation sequences (`Create`, `Transition`,
 //! `MutateNonLifecycle`, `AdvanceClock`, `CleanReopen`) via `proptest`, drives
-//! a real [`PackHost`] (such as file-backed `ObservedSqliteCell`), independently
-//! predicts guard, immutability, and governing-law outcomes, asserts complete
-//! persisted facts, versions, links, and absences after **every** step, asserts
-//! exact virtual-clock advancement, and runs `verify_ledger()` on clean reopen
-//! and at run end.
-//! Evidence level: [`EvidenceLevel::Sampled`].
+//! a real [`PackHost`], predicts guard/immutability/law outcomes, checks full
+//! facts/versions/links/clock after every step, and verifies the ledger on reopen.
+//! Evidence level: [`EvidenceLevel::Sampled`] (or [`EvidenceLevel::Unknown`] when empty).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -194,6 +191,9 @@ where
     H: PackHost,
     F: FnMut(u32) -> Result<H, String>,
 {
+    if config.cases == 0 {
+        return Err("pack DST requires config.cases >= 1".to_owned());
+    }
     let extra = [action_call_object_type()];
     let catalog = pack.type_catalog(&extra);
     let targets: Vec<TargetSpec<'_>> = pack
@@ -213,7 +213,7 @@ where
 
     if targets.is_empty() {
         return Ok(PackDstReport {
-            evidence: EvidenceLevel::Sampled,
+            evidence: EvidenceLevel::Unknown,
             cases_run: 0,
             steps_run: 0,
             reopens_verified: 0,

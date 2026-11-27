@@ -291,11 +291,11 @@ fn detect_lifecycle_gaps(
                     state: state.clone(),
                 });
             }
-            let has_outgoing = lifecycle
+            let has_exiting = lifecycle
                 .transitions
                 .iter()
-                .any(|tr| tr.from.iter().any(|src| src == state));
-            if !terminal.contains(state.as_str()) && !has_outgoing {
+                .any(|tr| tr.from.iter().any(|src| src == state) && tr.to != *state);
+            if !terminal.contains(state.as_str()) && !has_exiting {
                 out.push(StructuralGap::DeadEndNonTerminalState {
                     object_type: type_name.to_owned(),
                     lifecycle: prop.to_owned(),
@@ -631,6 +631,16 @@ fn action_touches_type(action: &ActionRoot, object_type: &str) -> bool {
             .is_some_and(|eff| eff.target().object_kind == object_type)
 }
 
+fn action_reverses_type(action: &ActionRoot, object_type: &str) -> bool {
+    action_touches_type(action, object_type)
+        || (action
+            .create_links
+            .iter()
+            .any(|link| link.target_type == object_type)
+            && (!action.writes.is_empty() || action.effect_program.is_some()))
+        || action.quantity_effect.is_some()
+}
+
 fn classify_reversal_coverage(pack: &AdmittedPack, object_type: &str) -> ReversalCoverage {
     let mut heuristic_candidate = None;
     for action in &pack.actions {
@@ -642,9 +652,7 @@ fn classify_reversal_coverage(pack: &AdmittedPack, object_type: &str) -> Reversa
                 .actions
                 .iter()
                 .find(|candidate| candidate.root.action_id == comp.action_id)
-            && (action_touches_type(&target_action.root, object_type)
-                || !target_action.root.writes.is_empty()
-                || target_action.root.effect_program.is_some())
+            && action_reverses_type(&target_action.root, object_type)
         {
             return ReversalCoverage::VerifiedCompensation;
         }
