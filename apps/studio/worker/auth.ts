@@ -1072,36 +1072,36 @@ export async function listWorkspaceApiKeys(
     ? ` and exists (select 1 from "session" s where s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})`
     : ""
   const params: SqlParam[] = hasSession
-    ? [input.organizationId, input.organizationId, input.userId, input.sessionToken!, input.userId]
-    : [input.organizationId, input.organizationId, input.userId]
+    ? [input.organizationId, input.userId, input.sessionToken!, input.userId]
+    : [input.organizationId, input.userId]
 
   type KeyRow = {
-    id: string
+    id: string | null
     name: string | null
     start: string | null
     prefix: string | null
-    referenceId: string
+    referenceId: string | null
     enabled: number | boolean | null
-    createdAt: string | number
-    updatedAt: string | number
+    createdAt: string | number | null
+    updatedAt: string | number | null
     expiresAt: string | number | null
     lastRequest: string | number | null
     metadata: string | null
   }
+  // Read authorization and key metadata in one SQL snapshot: the LEFT JOIN returns at least one
+  // sentinel row (`id = null`) whenever an authorized owner/admin lists an empty workspace, so
+  // `rows.length === 0` always means the caller was unauthorized at snapshot time.
   const rows = await dbAll<KeyRow>(
     db,
     `select k."id", k."name", k."start", k."prefix", k."referenceId", k."enabled",
             k."createdAt", k."updatedAt", k."expiresAt", k."lastRequest", k."metadata"
-     from "apikey" k
-     where k."referenceId" = ?
-       and exists (
-         select 1 from "member" m
-         join "organization" o on o."id" = m."organizationId"
-         where m."organizationId" = ? and m."userId" = ?
-           and ((',' || m."role" || ',') glob '*,owner,*'
-             or (',' || m."role" || ',') glob '*,admin,*')
-           and ${READY_ORG_SQL}
-       )${sessionGuard}
+     from "member" m
+     join "organization" o on o."id" = m."organizationId"
+     left join "apikey" k on k."referenceId" = o."id"
+     where m."organizationId" = ? and m."userId" = ?
+       and ((',' || m."role" || ',') glob '*,owner,*'
+         or (',' || m."role" || ',') glob '*,admin,*')
+       and ${READY_ORG_SQL}${sessionGuard}
      order by k."createdAt" desc, k."id" asc`,
     ...params,
   )
@@ -1109,11 +1109,12 @@ export async function listWorkspaceApiKeys(
   if (rows.length === 0) {
     const authz = await diagnoseWorkspaceApiKeyAuthFailure(db, { ...input, action: "list" })
     if (authz.kind === "refused") return authz
+    return { kind: "refused", status: 403, code: "FORBIDDEN", message: "You do not have permission to list API keys for this workspace." }
   }
 
   return {
     kind: "ok",
-    apiKeys: rows.map((row) => ({
+    apiKeys: rows.filter((row): row is KeyRow & { id: string; referenceId: string } => row.id !== null && row.referenceId !== null).map((row) => ({
       id: row.id,
       name: row.name,
       start: row.start,

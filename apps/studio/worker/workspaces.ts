@@ -252,11 +252,15 @@ export async function listWorkspaceApiKeysRoute(
   context: WorkspaceContext,
   organizationId: string,
 ): Promise<Response> {
-  const { headers: sessionHeaders, response: session } = await context.auth.api.getSession({ headers: request.headers, returnHeaders: true })
-  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.", sessionHeaders)
+  // Read-only GET: disable session refresh so listing API keys performs zero DB/cookie mutations.
+  const session = await context.auth.api.getSession({
+    headers: request.headers,
+    query: { disableCookieCache: true, disableRefresh: true },
+  })
+  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
   const expectedOrg = request.headers.get("x-norn-expected-org")?.trim() ?? ""
   if (expectedOrg !== "" && expectedOrg !== organizationId) {
-    return failure(409, "WORKSPACE_CHANGED", "Your active workspace changed. Reload the page before submitting.", sessionHeaders)
+    return failure(409, "WORKSPACE_CHANGED", "Your active workspace changed. Reload the page before submitting.")
   }
   const outcome = await listWorkspaceApiKeys(provisionDb(context.db), {
     userId: session.user.id,
@@ -264,10 +268,10 @@ export async function listWorkspaceApiKeysRoute(
     sessionToken: session.session.token,
   })
   if (outcome.kind === "refused") {
-    return failure(outcome.status, outcome.code, outcome.message, sessionHeaders)
+    return failure(outcome.status, outcome.code, outcome.message)
   }
   const document: WorkspaceApiKeysDocument = { apiKeys: outcome.apiKeys }
-  return json(document, 200, sessionHeaders)
+  return json(document, 200)
 }
 
 /** DELETE /api/workspaces/:orgId/api-keys/:keyId: atomic workspace-scoped API key revocation (#1859). */

@@ -956,4 +956,54 @@ test("GET /api/workspaces/:orgId/api-keys and DELETE /api/workspaces/:orgId/api-
   db.run(`update "session" set "expiresAt" = ? where "token" = ?`, [new Date(Date.now() - 10_000).toISOString(), aliceSession.token])
   expect((await listWorkspaceApiKeys(d1Wrapper, { userId: alice.userId, organizationId: alice.organizationId, sessionToken: aliceSession.token }))).toMatchObject({ kind: "refused", status: 401 })
   expect((await commitRevokeApiKey(d1Wrapper, { userId: alice.userId, organizationId: alice.organizationId, keyId: "ak_expired", sessionToken: aliceSession.token }))).toMatchObject({ kind: "refused", status: 401 })
+
+  // GET /api/workspaces/:orgId/api-keys disables session refresh (no DB mutation or Set-Cookie even when session is >24h old).
+  const bobSessionRow = db.query(`select "token", "updatedAt", "expiresAt" from "session" where "userId" = ?`).get(bob.userId) as { token: string; updatedAt: string; expiresAt: string }
+  const staleUpdatedAt = new Date(Date.now() - 48 * 3_600_000).toISOString()
+  const originalExpiry = new Date(Date.now() + 3 * 24 * 3_600_000).toISOString()
+  db.run(`update "session" set "updatedAt" = ?, "expiresAt" = ? where "token" = ?`, [staleUpdatedAt, originalExpiry, bobSessionRow.token])
+  const noRefreshRes = await call(env, `/api/workspaces/${bob.organizationId}/api-keys`, { headers: { cookie: bob.cookie } })
+  expect(noRefreshRes.status).toBe(200)
+  expect(noRefreshRes.headers.getSetCookie()).toEqual([])
+  expect(db.query(`select "updatedAt", "expiresAt" from "session" where "token" = ?`).get(bobSessionRow.token)).toEqual({
+    updatedAt: staleUpdatedAt,
+    expiresAt: originalExpiry,
+  })
+
+  // Role promotion between the LEFT JOIN snapshot and fallback check still refuses 403 (never returns a fake empty 200 []).
+  const memberSession = db.query(`select "token" from "session" where "userId" = ?`).get(memberUser.userId) as { token: string }
+  db.run(
+    `insert into "apikey" ("id", "configId", "name", "start", "referenceId", "prefix", "key", "enabled", "createdAt", "updatedAt")
+     values ('ak_race_visible', 'default', 'live-key', 'liv123', ?, null, 'hash_never_returned', 1, ?, ?)`,
+    [alice.organizationId, now, now],
+  )
+  let promotedBetweenQueries = false
+  const racingDb: ProvisionDb = {
+    prepare(sql: string) {
+      return {
+        bind(...params: (string | number | null)[]) {
+          return {
+            first: async <T>() => (db.query(sql).get(...params) as T | null) ?? null,
+            all: async <T>() => {
+              const results = db.query(sql).all(...params) as T[]
+              if (!promotedBetweenQueries && sql.includes(`left join "apikey"`)) {
+                promotedBetweenQueries = true
+                db.run(`update "member" set "role" = 'admin' where "organizationId" = ? and "userId" = ?`, [alice.organizationId, memberUser.userId])
+              }
+              return { results }
+            },
+            run: async () => { db.query(sql).run(...params); return { success: true } },
+          }
+        },
+      }
+    },
+    batch: async () => [],
+  }
+  const racedList = await listWorkspaceApiKeys(racingDb, {
+    userId: memberUser.userId,
+    organizationId: alice.organizationId,
+    sessionToken: memberSession.token,
+  })
+  expect(promotedBetweenQueries).toBe(true)
+  expect(racedList).toMatchObject({ kind: "refused", status: 403, code: "FORBIDDEN" })
 })
