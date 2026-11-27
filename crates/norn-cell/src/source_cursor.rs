@@ -36,7 +36,7 @@ pub(crate) const SOURCE_BINDING: &str = "_norn_source_binding";
 
 /// Additive DDL for source-sync leases, cursors, recovery, and mapping bindings.
 /// Older engines ignore these tables, so no storage version bump is required.
-pub(crate) const DDL: [&str; 4] = [
+pub(crate) const DDL: [&str; 5] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_source_lease" (
   "connection_id" TEXT NOT NULL PRIMARY KEY,
   "lease_id" TEXT NOT NULL,
@@ -71,6 +71,7 @@ pub(crate) const DDL: [&str; 4] = [
   "generation" INTEGER NOT NULL,
   "updated_at_ms" INTEGER NOT NULL
 )"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/root_first_version" ON "_norn_fact_values" ("world", "root_type", "commit_seq", "id") WHERE "version" = 1"#,
 ];
 
 /// An active durable lease for one connection's source sync.

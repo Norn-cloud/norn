@@ -66,6 +66,7 @@ pub struct DisputeFallbackState {
     rows: VecDeque<Observed<RuntimeValue>>,
     input: MappingInput,
     advance: CursorAdvanceSpec,
+    expected_binding: Option<(String, String)>,
     full_digest: String,
     next_index: usize,
     all_pages: Vec<String>,
@@ -471,6 +472,8 @@ impl<E: SqlEngine> DevHost<E> {
                         rows: delivered.into(),
                         input: input.clone(),
                         advance: advance.clone(),
+                        expected_binding: expected_binding
+                            .map(|(m, b)| (m.to_owned(), b.to_owned())),
                         full_digest,
                         next_index: 0,
                         all_pages: Vec::new(),
@@ -517,6 +520,15 @@ impl<E: SqlEngine> DevHost<E> {
     ) -> Result<Vec<Ingested>, SourceCaptureError> {
         let _epoch = self.definition_read()?;
         state.advance.now_ms = now_ms;
+        let binding_ref = state
+            .expected_binding
+            .as_ref()
+            .map(|(m, b)| (m.as_str(), b.as_str()));
+        let lease_tag = Some((
+            state.advance.connection_id.as_str(),
+            state.advance.lease_id.as_str(),
+            state.advance.generation,
+        ));
         let limit = max_rows.max(1);
         let mut step_out = Vec::new();
         while step_out.len() < limit
@@ -525,6 +537,7 @@ impl<E: SqlEngine> DevHost<E> {
             let pending_key = format!("{}:row:{}", state.full_digest, state.next_index);
             let captured = self
                 .observing_raw(|cell| {
+                    Self::verify_active_mapping_binding(cell, binding_ref, lease_tag)?;
                     cell.capture_source_dispute_row(
                         &raw,
                         &state.input,
@@ -565,6 +578,7 @@ impl<E: SqlEngine> DevHost<E> {
         }
         if state.rows.is_empty() && !state.cursor_committed {
             self.observing_raw(|cell| {
+                Self::verify_active_mapping_binding(cell, binding_ref, lease_tag)?;
                 cell.commit_source_page_cursor(
                     &state.advance,
                     &state.full_digest,

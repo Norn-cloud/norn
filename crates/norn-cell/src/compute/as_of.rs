@@ -88,11 +88,11 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
     }
 
     /// Distinct subject IDs of `kind` committed on or before the cutoff
-    /// frontier, read strictly from `version = 1` entries in the covering index
-    /// `_norn_fact_values/root_frontier` (`commit_seq <= head`). Every subject
-    /// in `_norn_fact_values` starts at `version = 1`, so each pre-cutoff ID
-    /// appears at most once with zero post-cutoff rows scanned, zero temporary
-    /// B-tree, and zero bound exhaustion from repeated report versions.
+    /// frontier, read strictly from the partial covering index
+    /// `_norn_fact_values/root_first_version` (`WHERE version = 1`). Every
+    /// subject starts at `version = 1`, so scanning is strictly bounded by
+    /// `cap + 1` distinct pre-cutoff IDs with zero post-cutoff rows, zero
+    /// later-version rows, and zero temporary B-tree.
     pub(crate) fn distinct_ids(
         &self,
         world: &str,
@@ -112,7 +112,7 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
         let limit = i64::try_from(cap.saturating_add(1))
             .map_err(|_n| refused("core.compute.bound_exceeded"))?;
         let rows = self.reader.conn.query(
-            "SELECT id FROM _norn_fact_values INDEXED BY \"_norn_fact_values/root_frontier\" \
+            "SELECT id FROM _norn_fact_values INDEXED BY \"_norn_fact_values/root_first_version\" \
              WHERE world=?1 AND root_type=?2 AND commit_seq<=?3 AND version=1 \
              ORDER BY commit_seq, id LIMIT ?4",
             params![world, root, head, limit],

@@ -24,7 +24,7 @@ mod restatement_state;
 /// VIEW-ROWS-1 / VIEW-ENGINE-1: admitted transforms over one authorized snapshot.
 pub mod transform;
 pub(crate) use as_of::{AsOfReader, CollectedMembers};
-pub use freshness::{RequiredSources, SourceFreshnessSnapshot};
+pub use freshness::{RequiredSources, SourceFreshnessSnapshot, mapping_binding_key};
 pub use historical::HistoricalQuestionResult;
 
 use crate::{

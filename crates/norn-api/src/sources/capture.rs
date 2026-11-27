@@ -83,7 +83,7 @@ pub(super) fn load_connector_profile<E: SqlEngine>(
             .map_err(|e| fail("source.profile_invalid", e.to_string()))?;
         crate::pull_feed::bind_mapping_feed_declaration(&mut profile, &mapping_payload)
             .map_err(|e| fail("source.profile_invalid", e.to_string()))?;
-        norn_cell::compute::freshness::mapping_binding_key(mapping)
+        norn_cell::compute::mapping_binding_key(mapping)
             .map_err(|e| fail("source.profile_invalid", e.to_string()))?
     } else {
         config.mapping.clone()
@@ -112,6 +112,13 @@ pub(super) fn running_summary(run_id: &str) -> super::RunSummary {
         rows_quarantined: 0,
         quarantine_reasons: BTreeMap::new(),
         error: None,
+    }
+}
+
+pub(super) fn mark_fenced(summary: &mut super::RunSummary, fenced: Failure) {
+    if summary.error.is_none() {
+        summary.outcome = "failed";
+        summary.error = Some(fenced);
     }
 }
 
@@ -267,38 +274,67 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     Ok((legacy, encoded, false))
 }
 
-/// Build the `source.Connection` observation payload for `sources::report`.
-pub(super) fn connection_report_object<E: SqlEngine>(
+/// Build the `source.Connection` and `source.SyncRun` observation rows for
+/// `sources::report`.
+pub(super) fn report_rows<E: SqlEngine>(
     host: &DevHost<E>,
     config: &ConnectionConfig,
     run: &super::Run,
     summary: &super::RunSummary,
-    (started, ended, watermark, reasons): (&str, Option<&str>, &str, &str),
-    (error_code, error_message): (Option<&str>, Option<&str>),
-) -> RuntimeValue {
-    let status = if ended.is_none() {
-        "syncing"
-    } else {
-        summary.outcome
-    };
-    let auth = if config.connector.is_empty() {
-        "presigned_upload"
-    } else {
-        "api_key"
-    };
-    let mapping_id = reported_mapping_id(host, config, run);
-    norn_ir::runtime_object! {
-        "id" => config.id.as_str(), "system" => config.system.as_str(), "label" => config.label.as_str(),
-        "target" => config.base_url.as_str(), "auth" => auth, "status" => status,
-        "last_sync_started_at" => started, "last_sync_ended_at" => ended,
-        "last_trigger" => run.trigger.as_str(), "watermark" => watermark,
-        "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
-        "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons,
-        "last_error_code" => error_code, "last_error_message" => error_message,
-        "connector_id" => config.connector.as_str(),
-        "source_schema_id" => super::source_schema_id(&mapping_id),
-        "mapping_id" => mapping_id.as_str(),
+    (started, ended, watermark): (&str, Option<&str>, &str),
+) -> Vec<(&'static str, String, RuntimeValue)> {
+    let reasons = summary
+        .quarantine_reasons
+        .iter()
+        .map(|(code, n)| format!("{code}={n}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let (error_code, error_message) = summary
+        .error
+        .as_ref()
+        .map_or((None, None), |(c, m)| (Some(c.as_str()), Some(m.as_str())));
+    let mut rows = Vec::new();
+    if !run.drain_only {
+        let status = if ended.is_none() {
+            "syncing"
+        } else {
+            summary.outcome
+        };
+        let auth = if config.connector.is_empty() {
+            "presigned_upload"
+        } else {
+            "api_key"
+        };
+        let mapping_id = reported_mapping_id(host, config, run);
+        let connection = norn_ir::runtime_object! {
+            "id" => config.id.as_str(), "system" => config.system.as_str(), "label" => config.label.as_str(),
+            "target" => config.base_url.as_str(), "auth" => auth, "status" => status,
+            "last_sync_started_at" => started, "last_sync_ended_at" => ended,
+            "last_trigger" => run.trigger.as_str(), "watermark" => watermark,
+            "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
+            "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
+            "last_error_code" => error_code, "last_error_message" => error_message,
+            "connector_id" => config.connector.as_str(),
+            "source_schema_id" => super::source_schema_id(&mapping_id),
+            "mapping_id" => mapping_id.as_str(),
+        };
+        rows.push(("connection", config.id.clone(), connection));
     }
+    if ended.is_some() {
+        rows.push((
+            "sync_run",
+            run.id.clone(),
+            norn_ir::runtime_object! {
+                "id" => run.id.as_str(), "connection_id" => config.id.as_str(), "trigger" => run.trigger.as_str(),
+                "run_by" => run.actor.as_str(), "started_at" => started, "ended_at" => ended,
+                "outcome" => summary.outcome, "watermark_from" => run.watermark_from.as_str(), "watermark_to" => watermark,
+                "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
+                "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
+                "error_code" => error_code, "error_message" => error_message,
+            },
+        ));
+    }
+    rows
 }
 
 /// Mapping ID to record on `source.Connection`: preserve the prior stored

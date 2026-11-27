@@ -360,6 +360,18 @@ fn add_source_cursor_tables(image: &mut Value) {
         "table": "_norn_source_pending",
         "sql": "CREATE TABLE \"_norn_source_pending\" (\n  \"connection_id\" TEXT NOT NULL,\n  \"dataset\" TEXT NOT NULL,\n  \"page_digest\" TEXT NOT NULL,\n  \"pages_json\" TEXT NOT NULL,\n  \"records_json\" TEXT NOT NULL,\n  \"captured_at_ms\" INTEGER NOT NULL,\n  \"processed\" INTEGER NOT NULL DEFAULT 0,\n  PRIMARY KEY (\"connection_id\", \"dataset\", \"page_digest\")\n)",
     }));
+    schema.push(serde_json::json!({
+        "type": "table",
+        "name": "_norn_source_binding",
+        "table": "_norn_source_binding",
+        "sql": "CREATE TABLE \"_norn_source_binding\" (\n  \"connection_id\" TEXT NOT NULL PRIMARY KEY,\n  \"mapping_id\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"updated_at_ms\" INTEGER NOT NULL\n)",
+    }));
+    schema.push(serde_json::json!({
+        "type": "index",
+        "name": "_norn_fact_values/root_first_version",
+        "table": "_norn_fact_values",
+        "sql": "CREATE INDEX \"_norn_fact_values/root_first_version\" ON \"_norn_fact_values\" (\"world\", \"root_type\", \"commit_seq\", \"id\") WHERE \"version\" = 1",
+    }));
     let tables = image["tables"].as_object_mut().expect("tables");
     tables.insert(
         "_norn_source_lease".to_owned(),
@@ -404,6 +416,19 @@ fn add_source_cursor_tables(image: &mut Value) {
                 "records_json",
                 "captured_at_ms",
                 "processed"
+            ],
+            "rows": [],
+        }),
+    );
+    tables.insert(
+        "_norn_source_binding".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "connection_id",
+                "mapping_id",
+                "generation",
+                "updated_at_ms"
             ],
             "rows": [],
         }),

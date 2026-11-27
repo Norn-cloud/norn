@@ -616,7 +616,7 @@ impl Sources {
         } else {
             "ok"
         };
-        let summary = RunSummary {
+        let mut summary = RunSummary {
             run: run.id.clone(),
             outcome,
             rows_read: run.read,
@@ -625,20 +625,31 @@ impl Sources {
             quarantine_reasons: run.reasons.clone(),
             error,
         };
-        if !superseded {
-            if !run.drain_only {
-                state.last_end_ms = Some(now_ms);
-            }
+        if superseded {
+            capture::mark_fenced(
+                &mut summary,
+                fail(
+                    "source.lease_fenced",
+                    "sync lease or mapping revision was superseded",
+                ),
+            );
+        } else {
             let watermarks = if run.pull.is_some() || !run.committed_watermarks.is_empty() {
                 run.committed_watermarks.clone()
             } else {
                 state.watermarks.clone().unwrap_or_default()
             };
-            state.watermarks = Some(watermarks.clone());
             let watermark = watermark_text(&watermarks);
-            // SOURCE-CAPTURE-1: report `source.Connection` while still holding
-            // the durable lease, then release the lease afterward.
-            report(host, config, &run, &summary, &watermark, Some(now_ms));
+            // SOURCE-CAPTURE-1: report while holding the lease, then update
+            // cached state only if the report was not fenced.
+            if let Some(fenced) = report(host, config, &run, &summary, &watermark, Some(now_ms)) {
+                capture::mark_fenced(&mut summary, fenced);
+            } else {
+                if !run.drain_only {
+                    state.last_end_ms = Some(now_ms);
+                }
+                state.watermarks = Some(watermarks);
+            }
         }
         if let Some(lease) = &run.lease {
             let _released =
@@ -710,14 +721,16 @@ fn begin<E: SqlEngine>(
             first
         })
         .flatten();
-    report(
+    if let Some(fenced) = report(
         host,
         config,
         run,
         &capture::running_summary(&run.id),
         &run.watermark_from,
         None,
-    );
+    ) {
+        return Err(fenced);
+    }
     let next_req = if drain_only {
         None
     } else if let Some(token) = token {
@@ -1114,49 +1127,20 @@ fn report<E: SqlEngine>(
     summary: &RunSummary,
     watermark: &str,
     ended_ms: Option<u64>,
-) {
+) -> Option<Failure> {
     if run.drain_only && ended_ms.is_none() {
-        return;
+        return None;
     }
     let started = rfc3339(run.started_ms);
     let ended = ended_ms.map(rfc3339);
-    let reasons = summary
-        .quarantine_reasons
-        .iter()
-        .map(|(code, n)| format!("{code}={n}"))
-        .collect::<Vec<_>>()
-        .join("; ");
-    let (error_code, error_message) = summary
-        .error
-        .clone()
-        .map_or((None, None), |(c, m)| (Some(c), Some(m)));
     let phase = if ended.is_some() { "end" } else { "start" };
-    let mut rows = Vec::new();
-    if !run.drain_only {
-        let connection = capture::connection_report_object(
-            host,
-            config,
-            run,
-            summary,
-            (&started, ended.as_deref(), watermark, &reasons),
-            (error_code.as_deref(), error_message.as_deref()),
-        );
-        rows.push(("connection", config.id.clone(), connection));
-    }
-    if ended.is_some() {
-        rows.push((
-            "sync_run",
-            run.id.clone(),
-            norn_ir::runtime_object! {
-                "id" => run.id.as_str(), "connection_id" => config.id.as_str(), "trigger" => run.trigger.as_str(),
-                "run_by" => run.actor.as_str(), "started_at" => started.as_str(), "ended_at" => ended,
-                "outcome" => summary.outcome, "watermark_from" => run.watermark_from.as_str(), "watermark_to" => watermark,
-                "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
-                "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
-                "error_code" => error_code, "error_message" => error_message,
-            },
-        ));
-    }
+    let rows = capture::report_rows(
+        host,
+        config,
+        run,
+        summary,
+        (&started, ended.as_deref(), watermark),
+    );
     let profile = connect_profile();
     let now = ended_ms.unwrap_or(run.started_ms);
     let batch: Vec<_> = rows
@@ -1197,7 +1181,12 @@ fn report<E: SqlEngine>(
         .mapping_binding
         .as_deref()
         .map(|binding| (config.mapping.as_str(), binding));
-    let _reported = host.ingest_source_report_checked(&batch, lease_check, expected_binding);
+    match host.ingest_source_report_checked(&batch, lease_check, expected_binding) {
+        Err(crate::host::SourceCaptureError::LeaseFenced(msg)) => {
+            Some(fail("source.lease_fenced", msg))
+        }
+        _ => None,
+    }
 }
 
 fn connect_profile() -> PullProfile {
