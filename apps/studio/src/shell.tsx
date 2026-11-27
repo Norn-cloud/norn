@@ -936,10 +936,7 @@ function useRecentItems(accountKey: string, fingerprint: string | null, pathname
     const { next, shouldRecord } = stepRecentTracker(trackerRef.current!, pathname, fingerprint, accountKey)
     trackerRef.current = next
     commitRecentTracker(next, accountKey)
-    if (
-      recordedVisitRef.current !== null
-      && (recordedVisitRef.current.pathname !== pathname || recordedVisitRef.current.fingerprint !== fingerprint)
-    ) {
+    if (recordedVisitRef.current !== null && recordedVisitRef.current.pathname !== pathname) {
       recordedVisitRef.current = null
     }
     if (!shouldRecord || fingerprint === null) return

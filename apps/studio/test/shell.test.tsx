@@ -12,10 +12,10 @@ import {
 import {
   MAX_RECENT, accountScopeIdentity, appendRecent, clearRecent, commitRecentTracker, createTabRecentGuard,
   enrichRecentItems, getOwn, initialRecentTracker, markRecentSignOut, readMenuState, readRecent,
-  recentForPath, recentScopeFingerprint, recordRecent, resumeRecentTracker, stepRecentTracker,
+  recentForPath, recentScopeFingerprint, recordRecent, resetRecentVisitGuard, resumeRecentTracker, stepRecentTracker,
   updateChosenBranches, writeMenuState, writeRecent,
 } from "../src/lib/nav-storage.ts"
-import type { Account } from "../src/lib/session.ts"
+import { accountQuery, type Account } from "../src/lib/session.ts"
 import { Shell, commandNavigation } from "../src/shell.tsx"
 import { appletBadge } from "../src/shell-nav.tsx"
 import { isEmptyWorkspace } from "../src/home.tsx"
@@ -447,7 +447,7 @@ test("Home and Inbox submenu islands show the local Recent list with Clear when 
   }
 })
 
-test("Recent fails closed across workspace switches, unconfirmed scopes, and role downgrades", () => {
+test("Recent fails closed across workspace switches, unconfirmed scopes, and role downgrades", async () => {
   const scopeA = { orgId: "org_a", environmentId: "env_a" }
   const scopeB = { orgId: "org_b", environmentId: "env_b" }
   const modeA: Mode = { kind: "live", scope: scopeA, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set(), builtins: [] }
@@ -497,6 +497,22 @@ test("Recent fails closed across workspace switches, unconfirmed scopes, and rol
   const remountedBAgain = resumeRecentTracker("/sources/canon.Holding/secret-signout", fpAdminB, accountScopeIdentity(adminB), tabGuard)
   expect(stepRecentTracker(remountedBAgain, "/sources/canon.Holding/secret-signout", fpAdminB, accountScopeIdentity(adminB)).shouldRecord).toBe(false)
   expect(stepRecentTracker(remountedBAgain, "/runs/run-b-fresh", fpAdminB, accountScopeIdentity(adminB)).shouldRecord).toBe(true)
+
+  // A 401 on /api/me also marks the tab guard signed out, so signing back in as the SAME account on the carried-over URL stays locked out.
+  resetRecentVisitGuard()
+  try {
+    const pendingSame = resumeRecentTracker("/sources/canon.Holding/secret-401", null, accountScopeIdentity(adminA))
+    const stepSame = stepRecentTracker(pendingSame, "/sources/canon.Holding/secret-401", null, accountScopeIdentity(adminA))
+    commitRecentTracker(stepSame.next, accountScopeIdentity(adminA))
+    const client = new QueryClient()
+    const expired = await client.fetchQuery(accountQuery(client, async () => new Response(null, { status: 401 })))
+    expect(expired).toBeNull()
+    const remountedSame = resumeRecentTracker("/sources/canon.Holding/secret-401", null, accountScopeIdentity(adminA))
+    expect(stepRecentTracker(remountedSame, "/sources/canon.Holding/secret-401", fpAdminA, accountScopeIdentity(adminA)).shouldRecord).toBe(false)
+    expect(stepRecentTracker(remountedSame, "/runs/run-after-401", fpAdminA, accountScopeIdentity(adminA)).shouldRecord).toBe(true)
+  } finally {
+    resetRecentVisitGuard()
+  }
 
   // Fresh page load on a detail route records once the initial scope settles for the same account.
   let tracker = initialRecentTracker("/sources/canon.Holding/secret-1", null, accountScopeIdentity(adminA))

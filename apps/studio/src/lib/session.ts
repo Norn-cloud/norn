@@ -17,6 +17,7 @@ import {
 } from "./definitions.ts"
 import { closeLiveClients } from "./live-reads.ts"
 import { refreshMode } from "./live-transport.ts"
+import { markRecentSignOut } from "./nav-storage.ts"
 
 /** Who is signed in, as the Worker reports it (/api/me). Display only: the server decides every permission. */
 export interface Account {
@@ -44,7 +45,10 @@ type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 /** Read who is signed in, bounded: a server that never answers is a failed check the root can retry, never a blank Studio. */
 async function readAccount(fetcher: Fetch, timeoutMs = CELL_FETCH_TIMEOUT_MS): Promise<Account | null> {
   const response = await fetchWithTimeout(fetcher, "/api/me", { headers: { accept: "application/json" } }, timeoutMs)
-  if (response.status === 401) return null
+  if (response.status === 401) {
+    markRecentSignOut()
+    return null
+  }
   if (!response.ok) throw new Error(`The session check failed (${response.status}).`)
   return (await response.json()) as Account
 }
@@ -217,6 +221,7 @@ export function useRefreshAccount() {
 export async function endSession(client: QueryClient, signOut: () => Promise<void> = authApi.signOut): Promise<void> {
   await signOut()
   if (signOut === authApi.signOut) setDisplayedWorkspaceScope(null)
+  markRecentSignOut()
   forgetDrafts()
   forgetParkedCalls()
   forgetReads(client)
