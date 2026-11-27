@@ -36,6 +36,8 @@ class Suite(unittest.TestCase):
             self.assertEqual(by_test(checks, "variance inflation factor", feature).status, "pass")
         self.assertEqual(by_test(checks, "condition number").status, "pass")
         self.assertAlmostEqual(plots["coefficients"]["x1"], 2.0, delta=0.1)
+        self.assertGreater(plots["r_squared"], 0.7)
+        self.assertLessEqual(plots["r_squared"], 1.0)
 
     def test_heteroscedastic_data_fails_breusch_pagan(self):
         frame = dataset(n=1500)

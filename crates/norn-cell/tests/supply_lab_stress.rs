@@ -208,9 +208,9 @@ enum Outcome {
 const FORECAST_EVALUATOR_EXECUTOR: &str = "pool.ml-evaluator";
 const FORECAST_EVALUATOR_AUTHORITY: &str = "svc:ml-evaluator";
 const FORECAST_EVALUATOR_MANIFEST_DIGEST: &str =
-    "sha256:68cdd2a91055b4836d0ebd503f87de810ec26fef55bf1d519762dabdfe325456";
+    "sha256:7cfe4234158e3c8f7d1001b08deb8e7b8e61f389d65752a3ed8f2e9310d041dd";
 const FORECAST_EVALUATOR_PROFILE_DIGEST: &str =
-    "sha256:eff90c0bb0c73db5c47dbb4602098edf50de3639d1e4c6970525c755e52946e8";
+    "sha256:a780163924782b48cc7ef188073bbc22d903bdd5a55825b7077c9e9eb9c7656e";
 
 struct EvaluatorReceiptContract;
 
@@ -1806,22 +1806,27 @@ fn forecast_evaluator_manifest_json() -> Value {
         "cache": "none",
         "capabilities": [],
         "dependencyClosure": {
-            "digest": "sha256:e67d37c99c4f4a7fb33e48c19119f96d2b3990919b105b6ed4f2a327b8287e29",
+            "digest": "sha256:6acf116e80714892b85ddbb3d35d6b455e995069ebe57ba1c10a493c879f2459",
             "entries": [
                 {
-                    "digest": "sha256:fa414e50b959cdea5f33867877d04e2f0f17b5aa6d5c87233867a6641778a2aa",
+                    "digest": "sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535",
                     "kind": "base_image",
-                    "name": "base-python-3.12-slim"
+                    "name": "base-python-3.11-slim"
                 },
                 {
-                    "digest": "sha256:d77e884ad6735780c73f4f11c3df7bc853978e6f4ef19d2cd3d862162d5a7788",
-                    "kind": "library",
-                    "name": "norn-regression-suite-v1"
+                    "digest": "sha256:48a768534f887b2272aaad42e884f9fb6c3ed20042b96cb1b0c58ff7c0adbbc6",
+                    "kind": "asset",
+                    "name": "norn-regression-dockerfile"
                 },
                 {
-                    "digest": "sha256:42edcc96705f84b4205325c117c4839a9b3cae0ba30c2d92a2aedd6aef344d30",
+                    "digest": "sha256:76f8b5d4d5fc10d508b3a372246548a6738fea83a652308da173b41f4f915adf",
                     "kind": "library",
-                    "name": "statsmodels-scipy-numpy-pandas"
+                    "name": "norn-regression-requirements"
+                },
+                {
+                    "digest": "sha256:15361cf814d137f03885fdca7d8e118f2dbc3a0fdae6d8911ca6c43269b5a491",
+                    "kind": "library",
+                    "name": "norn-regression-suite"
                 }
             ]
         },
@@ -1843,10 +1848,10 @@ fn forecast_evaluator_manifest_json() -> Value {
         },
         "functionId": "ml.forecast.evaluate",
         "implementation": {
-            "digest": "sha256:eea4f32d81b2a7daa93a5188e8ebc41390622c3527a6872f56a941c742a3c684",
+            "digest": "sha256:b57fe69c2ca9c75a146e07c67f6ebea9488f3058a42a3a18e6e3ad90d22f749b",
             "entryPoint": "norn_regression.receipt:evaluate_forecast_receipt",
             "format": "oci_image",
-            "locator": "ghcr.io/norn-cloud/norn-forecast-evaluator@sha256:eea4f32d81b2a7daa93a5188e8ebc41390622c3527a6872f56a941c742a3c684"
+            "locator": "ghcr.io/norn-cloud/norn-forecast-evaluator@sha256:b57fe69c2ca9c75a146e07c67f6ebea9488f3058a42a3a18e6e3ad90d22f749b"
         },
         "inputSchema": {
             "digest": "sha256:464c57a917b0f8eea37fba2ddeddcdea9087d2f0e62fdfe2bc49fa7e9e648d9a",
@@ -1861,9 +1866,9 @@ fn forecast_evaluator_manifest_json() -> Value {
         "platform": { "arch": "amd64", "os": "linux" },
         "retention": "ledger",
         "runtime": {
-            "digest": "sha256:dbdc69d7962f581fa81d5becbd643e4e231ab4c7cb7b892fb2f6fdd0ea59f4a1",
-            "id": "containerd",
-            "version": "1.7"
+            "digest": "sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535",
+            "id": "python-container",
+            "version": "3.11-slim"
         },
         "steps": [],
         "version": 1
@@ -1997,7 +2002,7 @@ fn build_evaluation_receipt(
             executor: FORECAST_EVALUATOR_EXECUTOR.to_owned(),
             placement: "ml-evaluator/node-1".to_owned(),
             runtime: Digest(
-                "sha256:dbdc69d7962f581fa81d5becbd643e4e231ab4c7cb7b892fb2f6fdd0ea59f4a1"
+                "sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535"
                     .to_owned(),
             ),
         },

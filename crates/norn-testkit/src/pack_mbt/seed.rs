@@ -271,6 +271,121 @@ fn sync_post_stamp_fields<H: PackHost>(
     Ok(norn_kernel::commit_decision(host, catalog, &slice, &turn, &output).map(|_| ()))
 }
 
+/// Arguments for [`try_fire_receipt_transition_action`].
+pub(crate) struct ReceiptTransitionSpec<'a> {
+    pub(crate) pack: &'a AdmittedPack,
+    pub(crate) catalog: &'a TypeCatalog<'a>,
+    pub(crate) object_type: &'a ObjectTypeDef,
+    pub(crate) prop: &'a str,
+    pub(crate) id: &'a str,
+    pub(crate) transition_id: &'a str,
+    pub(crate) turn_nonce: u64,
+}
+
+/// If `pack` declares a `fire_transition` action with `acceptReceipt` for
+/// `(object_type, prop, transition_id)` and `host` supports seeding an
+/// authenticated receipt, executes that transition through `commit_action`
+/// (exercising real `RECEIPT-CONSUME-1` resolution and consumption during
+/// lifecycle MBT) and returns the ledger length immediately before the action
+/// commit. Returns `Ok(None)` when the transition is not receipt-bound or the
+/// host declines receipt seeding.
+pub(crate) fn try_fire_receipt_transition_action<H: PackHost>(
+    host: &mut H,
+    spec: &ReceiptTransitionSpec<'_>,
+) -> Result<Option<usize>, String> {
+    let ReceiptTransitionSpec {
+        pack,
+        catalog,
+        object_type,
+        prop,
+        id,
+        transition_id,
+        turn_nonce,
+    } = *spec;
+    let ty_name = object_type.name.as_str();
+    let Some((admitted, object_id_field, binding)) = pack.actions.iter().find_map(|action| {
+        let Some(ActionEffectProgram::FireTransition {
+            object_id_field,
+            object_kind,
+            lifecycle,
+            transition,
+            accept_receipt: Some(binding),
+            ..
+        }) = &action.root.effect_program
+        else {
+            return None;
+        };
+        (object_kind == ty_name
+            && lifecycle.as_str() == prop
+            && transition.as_str() == transition_id)
+            .then_some((action, object_id_field.as_str(), binding))
+    }) else {
+        return Ok(None);
+    };
+    let stored = host
+        .load(&FactKey::new(ty_name, id))
+        .map_err(|err| format!("load {ty_name}/{id} before receipt transition: {err}"))?
+        .values;
+    let synthesized = synthesize_object(pack, object_type, id, turn_nonce);
+    let mut summary = JsonObject::new();
+    for (target_prop, member) in &binding.result_bindings {
+        let value = stored
+            .as_ref()
+            .and_then(|vals| vals.get(target_prop.as_str()))
+            .filter(|val| !matches!(val, JsonValue::Null))
+            .cloned()
+            .or_else(|| synthesized.get(target_prop.as_str()).cloned());
+        if let Some(value) = value {
+            summary.insert(member.as_str().to_owned(), value);
+        }
+    }
+    let Some(receipt_digest) =
+        host.seed_accepted_receipt(id, binding.manifest_digest.as_str(), summary)?
+    else {
+        return Ok(None);
+    };
+    let before = host.ledger_len();
+    let key = format!("mbt-receipt-tr-{id}-{transition_id}-{turn_nonce}-{before}");
+    let input = JsonObject::from([
+        (object_id_field.to_owned(), JsonValue::String(id.to_owned())),
+        (
+            binding.reference_field.clone(),
+            JsonValue::String(receipt_digest),
+        ),
+    ]);
+    let call = ActionCall {
+        action: &admitted.root,
+        action_artifact_id: &admitted.artifact_id,
+        action_version: &admitted.version,
+        scope: [("orgId", "mbt-org"), ("environmentId", "mbt-env")]
+            .into_iter()
+            .map(|(dimension, value)| (dimension.to_owned(), value.to_owned()))
+            .collect(),
+        actor: "mbt-receipt-actor".to_owned(),
+        approved_intent: None,
+        input,
+        idempotency_key: key.clone(),
+        object_type: None,
+        turn: DecisionTurn {
+            id: key,
+            now: host.logical_now(),
+            world: World::Main,
+            consumes: None,
+        },
+        trace: None,
+    };
+    match commit_action(host, catalog, &call, &Seeder) {
+        Ok(ActionOutcome::Committed { .. }) => Ok(Some(before)),
+        Ok(ActionOutcome::Replayed { .. }) => Err(format!(
+            "{ty_name}.{prop}.{transition_id}: receipt transition replayed a fresh key"
+        )),
+        Err(err) => Err(format!(
+            "{ty_name}.{prop}.{transition_id} via {}: {err}",
+            admitted.artifact_id
+        )),
+    }
+}
+
 pub(crate) fn fill_missing_action_input_fields(
     schema: &BTreeMap<String, IrJsonValue>,
     values: &mut JsonObject,

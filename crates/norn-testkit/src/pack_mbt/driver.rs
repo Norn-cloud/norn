@@ -17,8 +17,7 @@ use norn_kernel::cell_host::{
     FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue,
 };
 use norn_kernel::pack_mbt_support::{
-    DecisionOutput, FactChange, Lifecycle, ObjectTypeDef, ObjectTypeName, PropertyId, Transition,
-    TransitionId, ZenExpression,
+    DecisionOutput, FactChange, Lifecycle, ObjectTypeDef, Transition, ZenExpression,
 };
 use norn_kernel::{
     CellCommit, CommitError, DecisionRefusal, DecisionTurn, TypeCatalog, World, commit_decision,
@@ -32,7 +31,10 @@ use super::synth::{
     collect_required_link_graph, pick_non_lifecycle_mutation, synthesize_guard_satisfying,
     synthesize_guard_violating_at_state, synthesize_object,
 };
-use super::{AdmittedPack, EvidenceLevel, PackHost, action_call_object_type};
+use super::{
+    AdmittedPack, EvidenceLevel, PackHost, action_call_object_type, fire_transition_decision,
+    set_property_decision,
+};
 
 /// Summary of one full IR-driven MBT execution against a [`PackHost`].
 #[derive(Debug, Clone)]
@@ -875,17 +877,32 @@ fn fire_transition_expect_ok<H: PackHost>(
 ) -> Result<(), String> {
     let ty_name = ctx.object_type.name.as_str();
     let prop = ctx.lifecycle.property.as_str();
-    let before = host.ledger_len();
-    fire_transition_decision(
-        host,
-        ctx.catalog,
-        ty_name,
+    let receipt_spec = super::seed::ReceiptTransitionSpec {
+        pack: ctx.pack,
+        catalog: ctx.catalog,
+        object_type: ctx.object_type,
         prop,
         id,
         transition_id,
         turn_nonce,
-    )
-    .map_err(|err| format!("{ty_name}.{prop}.{transition_id} failed: {err}"))?;
+    };
+    let before = match super::seed::try_fire_receipt_transition_action(host, &receipt_spec)? {
+        Some(before) => before,
+        None => {
+            let before = host.ledger_len();
+            fire_transition_decision(
+                host,
+                ctx.catalog,
+                ty_name,
+                prop,
+                id,
+                transition_id,
+                turn_nonce,
+            )
+            .map_err(|err| format!("{ty_name}.{prop}.{transition_id} failed: {err}"))?;
+            before
+        }
+    };
     if host.ledger_len() != before.saturating_add(1) {
         return Err(format!(
             "{ty_name}.{prop}.{transition_id} did not append exactly 1 ledger entry"
@@ -905,68 +922,6 @@ fn fire_transition_expect_ok<H: PackHost>(
         ));
     }
     Ok(())
-}
-
-fn fire_transition_decision<H: PackHost>(
-    host: &mut H,
-    catalog: &TypeCatalog<'_>,
-    ty_name: &str,
-    prop: &str,
-    id: &str,
-    transition_id: &str,
-    turn_nonce: u64,
-) -> Result<(), DecisionRefusal<H::Error>> {
-    let key = FactKey::new(ty_name, id);
-    let slice = load_slice(host, [key]).map_err(DecisionRefusal::Host)?;
-    let output = DecisionOutput {
-        facts: vec![FactChange::Transition {
-            object_type: ObjectTypeName(ty_name.to_owned()),
-            key: id.to_owned(),
-            lifecycle: PropertyId(prop.to_owned()),
-            transition: TransitionId(transition_id.to_owned()),
-        }],
-        links: Vec::new(),
-        commands: Vec::new(),
-        timers: Vec::new(),
-    };
-    let turn = DecisionTurn {
-        id: format!("tr-{id}-{transition_id}-{turn_nonce}"),
-        now: host.logical_now(),
-        world: World::Main,
-        consumes: None,
-    };
-    commit_decision(host, catalog, &slice, &turn, &output).map(|_| ())
-}
-
-fn set_property_decision<H: PackHost>(
-    host: &mut H,
-    catalog: &TypeCatalog<'_>,
-    ty_name: &str,
-    id: &str,
-    prop: &str,
-    value: JsonValue,
-    turn_nonce: u64,
-) -> Result<(), DecisionRefusal<H::Error>> {
-    let key = FactKey::new(ty_name, id);
-    let slice = load_slice(host, [key]).map_err(DecisionRefusal::Host)?;
-    let output = DecisionOutput {
-        facts: vec![FactChange::Set {
-            object_type: ObjectTypeName(ty_name.to_owned()),
-            key: id.to_owned(),
-            property: PropertyId(prop.to_owned()),
-            value,
-        }],
-        links: Vec::new(),
-        commands: Vec::new(),
-        timers: Vec::new(),
-    };
-    let turn = DecisionTurn {
-        id: format!("set-{id}-{prop}-{turn_nonce}"),
-        now: host.logical_now(),
-        world: World::Main,
-        consumes: None,
-    };
-    commit_decision(host, catalog, &slice, &turn, &output).map(|_| ())
 }
 
 pub(crate) fn assert_zero_ledger_writes<H: PackHost>(

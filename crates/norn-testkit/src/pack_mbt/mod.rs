@@ -37,16 +37,17 @@ pub mod synth;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_kernel::cell_host::{JsonObject, JsonValue};
+use norn_kernel::cell_host::{FactKey, JsonObject, JsonValue};
 use norn_kernel::pack_mbt_support::MappingIr;
 use norn_kernel::pack_mbt_support::{
-    AccessIr, ActionRoot, ArtifactEnvelope, ArtifactPayload, EntityRoot, InterfaceDef,
-    LawExampleVerdict as Verdict, LawIR, ObjectTypeDef, ObjectTypeName, PolicyRoot, Property,
-    PropertyConstraints, PropertyId, PropertyType, PropertyTypeDef, ResourceStatus,
+    AccessIr, ActionRoot, ArtifactEnvelope, ArtifactPayload, DecisionOutput, EntityRoot,
+    FactChange, InterfaceDef, LawExampleVerdict as Verdict, LawIR, ObjectTypeDef, ObjectTypeName,
+    PolicyRoot, Property, PropertyConstraints, PropertyId, PropertyType, PropertyTypeDef,
+    ResourceStatus, TransitionId,
 };
 use norn_kernel::{
-    CellHost, DecisionRefusal, FactEvent, LogicalTime, TransitionGuard, TypeCatalog,
-    transition_guards,
+    CellHost, DecisionRefusal, DecisionTurn, FactEvent, LogicalTime, TransitionGuard, TypeCatalog,
+    World, commit_decision, load_slice, transition_guards,
 };
 
 /// Honest evidence classification for verification outputs (`AGENTS.md`, `#1656`).
@@ -548,6 +549,78 @@ pub(crate) fn resolve_property_type_chain<'a>(
         ty = &def.property_type;
     }
     ty
+}
+
+fn commit_fact_decision<H: PackHost>(
+    host: &mut H,
+    catalog: &TypeCatalog<'_>,
+    ty_name: &str,
+    id: &str,
+    change: FactChange,
+    turn_id: String,
+) -> Result<(), DecisionRefusal<H::Error>> {
+    let slice = load_slice(host, [FactKey::new(ty_name, id)]).map_err(DecisionRefusal::Host)?;
+    let output = DecisionOutput {
+        facts: vec![change],
+        links: Vec::new(),
+        commands: Vec::new(),
+        timers: Vec::new(),
+    };
+    let turn = DecisionTurn {
+        id: turn_id,
+        now: host.logical_now(),
+        world: World::Main,
+        consumes: None,
+    };
+    commit_decision(host, catalog, &slice, &turn, &output).map(|_| ())
+}
+
+pub(crate) fn fire_transition_decision<H: PackHost>(
+    host: &mut H,
+    catalog: &TypeCatalog<'_>,
+    ty_name: &str,
+    prop: &str,
+    id: &str,
+    transition_id: &str,
+    turn_nonce: u64,
+) -> Result<(), DecisionRefusal<H::Error>> {
+    commit_fact_decision(
+        host,
+        catalog,
+        ty_name,
+        id,
+        FactChange::Transition {
+            object_type: ObjectTypeName(ty_name.to_owned()),
+            key: id.to_owned(),
+            lifecycle: PropertyId(prop.to_owned()),
+            transition: TransitionId(transition_id.to_owned()),
+        },
+        format!("tr-{id}-{transition_id}-{turn_nonce}"),
+    )
+}
+
+pub(crate) fn set_property_decision<H: PackHost>(
+    host: &mut H,
+    catalog: &TypeCatalog<'_>,
+    ty_name: &str,
+    id: &str,
+    prop: &str,
+    value: JsonValue,
+    turn_nonce: u64,
+) -> Result<(), DecisionRefusal<H::Error>> {
+    commit_fact_decision(
+        host,
+        catalog,
+        ty_name,
+        id,
+        FactChange::Set {
+            object_type: ObjectTypeName(ty_name.to_owned()),
+            key: id.to_owned(),
+            property: PropertyId(prop.to_owned()),
+            value,
+        },
+        format!("set-{id}-{prop}-{turn_nonce}"),
+    )
 }
 
 #[cfg(test)]

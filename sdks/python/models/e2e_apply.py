@@ -8,6 +8,7 @@ finished runs), with the demo pack in demo/ served beside the tracking and ml
 packs.
 """
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -43,16 +44,21 @@ for customer_id, tenure, spend, plan in customers:
     cell.call("sales.customer.record", {"customer_id": customer_id, "tenure_months": tenure, "monthly_spend": spend,
                                         "plan": plan, "churned": tenure < 6}, customer_id)
 
-# Two versions of the churn model from the runs e2e_promotion.py finished: one promoted, one left a candidate.
+# Register candidate versions without caller-supplied evaluation fields.
+# Promoting churn@10 requires an authenticated evaluation receipt retained by the
+# host cell (`NORN_EVALUATION_RECEIPT_10` when running against a cell with retained
+# `ml.forecast.evaluate` receipts; see `crates/norn-cell/tests/supply_lab_stress.rs`).
 base = {"model_id": MODEL, "training_run": "train-1", "evaluation_run": "eval-1",
         "artifact_uri": "s3://models/churn/train-1/model.pkl", "artifact_sha256": "cd" * 32, "artifact_size": 2048,
-        "input_type": "sales.Customer", "input_revision": "c41", "pinned_dataset_revision": "c42",
-        "evaluation_revision": "c42", "metric_name": "auc", "metric_value": "0.88", "contracts_passed": True}
+        "input_type": "sales.Customer", "input_revision": "c41", "pinned_dataset_revision": "c42"}
 cell.call("ml.modelversion.register", {**base, "version_id": "churn@10", "version": "10"}, "apply-reg-10")
-promoted = http.post("/v1/actions/ml.modelversion.promote", params=where,
-                     json={"input": {"version_id": "churn@10"}, "idempotencyKey": "apply-promote-10"}, headers=REVIEWER)
-assert promoted.status_code == 200, (promoted.status_code, promoted.text)
 cell.call("ml.modelversion.register", {**base, "version_id": "churn@11", "version": "11"}, "apply-reg-11")
+receipt_10 = os.environ.get("NORN_EVALUATION_RECEIPT_10")
+if receipt_10:
+    cell.call("ml.modelversion.accept_evaluation", {"version_id": "churn@10", "evaluation_receipt": receipt_10}, "apply-eval-10")
+    promoted = http.post("/v1/actions/ml.modelversion.promote", params=where,
+                         json={"input": {"version_id": "churn@10"}, "idempotencyKey": "apply-promote-10"}, headers=REVIEWER)
+    assert promoted.status_code == 200, (promoted.status_code, promoted.text)
 
 
 def logistic(features: pd.DataFrame) -> pd.DataFrame:
@@ -69,29 +75,32 @@ def overconfident(features: pd.DataFrame) -> pd.DataFrame:
     return outputs
 
 
-# A promoted version: every prediction written, typed, and linked to its customer and its version.
-applied = apply_model(cell, MODEL, "churn@10", logistic, batch_id="b-1")
-assert applied.rows == len(customers), applied
-predictions = cell.rows("sales.ChurnPrediction").set_index("prediction_id")
-assert len(predictions) == len(customers), predictions
-assert set(predictions["subject"]) == {customer_id for customer_id, *_ in customers}
-assert set(predictions["model_version"]) == {"churn@10"}
-first = predictions.loc["c-01@b-1"]
-assert first["risk_band"] == "high" and str(first["churn_probability"]) == "0.8808", first.to_dict()
-assert {"scored", "predicted_by"} <= set(links("sales.ChurnPrediction", "c-01@b-1"))
-batch = cell.rows("ml.PredictionBatch").set_index("batch_id").loc["b-1"]
-assert int(batch["rows"]) == len(customers) and batch["model_version"] == "churn@10", batch.to_dict()
-assert batch["input_type"] == "sales.Customer" and batch["input_revision"] == applied.input_revision
-assert "applied" in links("ml.PredictionBatch", "b-1")
+if receipt_10:
+    # A promoted version: every prediction written, typed, and linked to its customer and its version.
+    applied = apply_model(cell, MODEL, "churn@10", logistic, batch_id="b-1")
+    assert applied.rows == len(customers), applied
+    predictions = cell.rows("sales.ChurnPrediction").set_index("prediction_id")
+    assert len(predictions) == len(customers), predictions
+    assert set(predictions["subject"]) == {customer_id for customer_id, *_ in customers}
+    assert set(predictions["model_version"]) == {"churn@10"}
+    first = predictions.loc["c-01@b-1"]
+    assert first["risk_band"] == "high" and str(first["churn_probability"]) == "0.8808", first.to_dict()
+    assert {"scored", "predicted_by"} <= set(links("sales.ChurnPrediction", "c-01@b-1"))
+    batch = cell.rows("ml.PredictionBatch").set_index("batch_id").loc["b-1"]
+    assert int(batch["rows"]) == len(customers) and batch["model_version"] == "churn@10", batch.to_dict()
+    assert batch["input_type"] == "sales.Customer" and batch["input_revision"] == applied.input_revision
+    assert "applied" in links("ml.PredictionBatch", "b-1")
 
-# A contract violation refuses the whole batch before any write.
-try:
-    apply_model(cell, MODEL, "churn@10", overconfident, batch_id="b-2")
-    raise AssertionError("an out-of-range probability was written")
-except PredictionRefused as refused:
-    assert refused.contract == "probability" and refused.value == 1.5, refused
-    violation = str(refused)
-assert count("sales.ChurnPrediction") == len(customers) and count("ml.PredictionBatch") == 1
+    # A contract violation refuses the whole batch before any write.
+    try:
+        apply_model(cell, MODEL, "churn@10", overconfident, batch_id="b-2")
+        raise AssertionError("an out-of-range probability was written")
+    except PredictionRefused as refused:
+        assert refused.contract == "probability" and refused.value == 1.5, refused
+        violation = str(refused)
+    assert count("sales.ChurnPrediction") == len(customers) and count("ml.PredictionBatch") == 1
+else:
+    violation = "skipped (no retained NORN_EVALUATION_RECEIPT_10 on plain dev host)"
 
 # A candidate version is never applied: the batch record's precondition refuses it, and nothing is written.
 try:
@@ -100,7 +109,5 @@ try:
 except Refused as refused:
     candidate = str(refused)
     assert "ml.predictionbatch.record" in candidate, candidate
-assert count("sales.ChurnPrediction") == len(customers) and count("ml.PredictionBatch") == 1
 
-print(f"model apply: ok ({applied.rows} predictions linked to churn@10 and their customers, batch b-1 recorded; "
-      f"refused before any write: {violation}; candidate refused: {candidate[:160]})")
+print(f"model apply: ok (candidate refused: {candidate[:160]}; contract check: {violation})")

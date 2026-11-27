@@ -6,8 +6,12 @@ evaluation run produces a verifiable `norn.function/v1` `FunctionReceipt`
 bound to:
 
 - the declared evaluator Function manifest (`FORECAST_EVALUATOR_MANIFEST`),
-- the exact model version and dataset revision evaluated,
-- the tenant/environment scope, and
+  whose `dependencyClosure`, `implementation.digest`, and `runtime.digest` pin
+  the actual on-disk `Dockerfile`, `requirements.txt`, `norn_regression/suite.py`,
+  and `python:3.11-slim@sha256:...` base image digest;
+- the exact content digest of the evaluated dataset snapshot (`blobs["dataset"]`)
+  as well as `model_id`, `version_id`, and `dataset_revision`;
+- the tenant/environment scope; and
 - the bounded typed evaluation summary (`evaluation_revision`, `metric_name`,
   `metric_value`, `contracts_passed`, `checks_passed`, `checks_failed`,
   `suite_version`).
@@ -20,9 +24,12 @@ without scientific-stack dependencies.
 from __future__ import annotations
 
 import hashlib
+import math
+import re
 import unicodedata
 from decimal import Decimal, InvalidOperation
-from typing import Any, Callable, Mapping
+from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence
 
 FUNCTION_ABI_V1 = "norn.function-abi/1"
 FORECAST_EVALUATOR_FUNCTION_ID = "ml.forecast.evaluate"
@@ -41,6 +48,21 @@ RESULT_IDENTITY_DOMAIN = b"norn.function/result/v1\0"
 RECEIPT_DOMAIN = b"norn.function/receipt/v1\0"
 
 MAX_RECEIPT_SUMMARY_BYTES = 32 * 1024
+# Mirrors `crates/norn-canonical/src/lib.rs`: per-number and per-document bounds.
+MAX_CANONICAL_NUMBER_BYTES = 1_048_576
+MAX_DOCUMENT_NUMBER_BYTES = 4 * MAX_CANONICAL_NUMBER_BYTES
+
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+# Real content digests of the evaluator build artifacts in `sdks/python/regression/`:
+# - `BASE_IMAGE_DIGEST`: pinned `FROM python:3.11-slim@sha256:...` in `Dockerfile`
+# - `DOCKERFILE_DIGEST`: SHA-256 of `sdks/python/regression/Dockerfile`
+# - `REQUIREMENTS_DIGEST`: SHA-256 of `sdks/python/regression/requirements.txt`
+# - `SUITE_SOURCE_DIGEST`: SHA-256 of `sdks/python/regression/norn_regression/suite.py`
+BASE_IMAGE_DIGEST = "sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535"
+DOCKERFILE_DIGEST = "sha256:48a768534f887b2272aaad42e884f9fb6c3ed20042b96cb1b0c58ff7c0adbbc6"
+REQUIREMENTS_DIGEST = "sha256:76f8b5d4d5fc10d508b3a372246548a6738fea83a652308da173b41f4f915adf"
+SUITE_SOURCE_DIGEST = "sha256:15361cf814d137f03885fdca7d8e118f2dbc3a0fdae6d8911ca6c43269b5a491"
 
 _CONTROL_ESCAPES = {
     '"': '\\"',
@@ -68,46 +90,80 @@ def _escape_string(value: str) -> str:
     return "".join(out)
 
 
-def _format_decimal(value: Decimal) -> str:
+def _exact_decimal_parts(value: Decimal) -> tuple[bool, str, int]:
+    """Return `(negative, stripped_significant_digits, adjusted_exponent)` without rounding.
+
+    Never calls `Decimal.normalize()`, which rounds to the active context's
+    precision (28 digits by default).
+    """
     if not value.is_finite():
         raise ValueError(f"non-finite decimal cannot be canonicalized: {value!r}")
-    if value == 0:
-        return "0"
-    normalized = value.normalize()
-    sign, digits, exponent = normalized.as_tuple()
+    sign, digits, exponent = value.as_tuple()
     assert isinstance(exponent, int)
-    prefix = "-" if sign else ""
-    significant = "".join(str(d) for d in digits).lstrip("0")
+    start = 0
+    while start < len(digits) and digits[start] == 0:
+        start += 1
+    if start == len(digits):
+        return False, "", 0
+    end = len(digits)
+    while end > start and digits[end - 1] == 0:
+        end -= 1
+        exponent += 1
+    significant = "".join(str(d) for d in digits[start:end])
+    return bool(sign), significant, exponent
+
+
+def _charge_number_bytes(output_len: int, budget: list[int]) -> None:
+    next_total = budget[0] + output_len
+    if output_len > MAX_CANONICAL_NUMBER_BYTES or next_total > MAX_DOCUMENT_NUMBER_BYTES:
+        raise ValueError(
+            f"canonical number expansion ({output_len} bytes, total {next_total}) exceeds Norn1 limit"
+        )
+    budget[0] = next_total
+
+
+def _format_decimal(value: Decimal, budget: list[int]) -> str:
+    negative, significant, exponent = _exact_decimal_parts(value)
     if not significant:
+        _charge_number_bytes(1, budget)
         return "0"
-    if exponent >= 0:
-        return f"{prefix}{significant}{'0' * exponent}"
     decimal_position = len(significant) + exponent
+    sign_len = 1 if negative else 0
     if decimal_position <= 0:
-        return f"{prefix}0.{'0' * (-decimal_position)}{significant}"
-    return f"{prefix}{significant[:decimal_position]}.{significant[decimal_position:]}"
+        zero_count = -decimal_position
+        output_len = sign_len + 2 + zero_count + len(significant)
+        _charge_number_bytes(output_len, budget)
+        prefix = "-" if negative else ""
+        return f"{prefix}0.{'0' * zero_count}{significant}"
+    if decimal_position < len(significant):
+        output_len = sign_len + len(significant) + 1
+        _charge_number_bytes(output_len, budget)
+        prefix = "-" if negative else ""
+        return f"{prefix}{significant[:decimal_position]}.{significant[decimal_position:]}"
+    zero_count = decimal_position - len(significant)
+    output_len = sign_len + decimal_position
+    _charge_number_bytes(output_len, budget)
+    prefix = "-" if negative else ""
+    return f"{prefix}{significant}{'0' * zero_count}"
 
 
-def canonical_json_str(value: Any) -> str:
-    """Serialize `value` to Norn1 canonical JSON text.
-
-    Rejects binary `float` values so no digest ever passes through IEEE-754
-    rounding; callers must pass `int` or `Decimal`.
-    """
+def _canonical_json_str(value: Any, budget: list[int]) -> str:
     if value is None:
         return "null"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):
-        return str(value)
+        text = str(value)
+        _charge_number_bytes(len(text), budget)
+        return text
     if isinstance(value, Decimal):
-        return _format_decimal(value)
+        return _format_decimal(value, budget)
     if isinstance(value, float):
         raise TypeError("binary float is forbidden in Norn1 canonical JSON; pass Decimal or int")
     if isinstance(value, str):
         return _escape_string(value)
     if isinstance(value, (list, tuple)):
-        return "[" + ",".join(canonical_json_str(item) for item in value) + "]"
+        return "[" + ",".join(_canonical_json_str(item, budget) for item in value) + "]"
     if isinstance(value, Mapping):
         entries: list[tuple[str, Any]] = []
         for key, item in value.items():
@@ -119,9 +175,18 @@ def canonical_json_str(value: Any) -> str:
             if entries[index - 1][0] == entries[index][0]:
                 raise ValueError(f"duplicate canonical object key: {entries[index][0]!r}")
         return "{" + ",".join(
-            f"{_escape_string(k)}:{canonical_json_str(v)}" for k, v in entries
+            f"{_escape_string(k)}:{_canonical_json_str(v, budget)}" for k, v in entries
         ) + "}"
     raise TypeError(f"unsupported Norn1 JSON value: {type(value).__name__}")
+
+
+def canonical_json_str(value: Any) -> str:
+    """Serialize `value` to Norn1 canonical JSON text.
+
+    Rejects binary `float` values so no digest ever passes through IEEE-754
+    rounding; callers must pass `int` or `Decimal`.
+    """
+    return _canonical_json_str(value, [0])
 
 
 def canonical_json(value: Any) -> bytes:
@@ -141,22 +206,31 @@ def domain_hash(domain: bytes, value: Any) -> str:
     return f"sha256:{digest}"
 
 
+def _require_digest(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not _DIGEST_RE.fullmatch(value):
+        raise ValueError(f"{label} must be a well-formed sha256 digest, got {value!r}")
+    return value
+
+
 def parse_exact_decimal(value: Decimal | int | str, *, max_scale: int = 9) -> Decimal:
-    """Parse an exact decimal value (rejecting floats, NaN, Inf, and excess scale)."""
+    """Parse an exact decimal value (rejecting floats, NaN, Inf, excess scale, or context rounding)."""
     if isinstance(value, bool) or isinstance(value, float):
         raise TypeError(f"metric_value must be Decimal, int, or decimal text; got {type(value).__name__}")
     try:
         dec = value if isinstance(value, Decimal) else Decimal(str(value).strip())
     except InvalidOperation as exc:
         raise ValueError(f"invalid decimal value: {value!r}") from exc
-    if not dec.is_finite():
-        raise ValueError(f"non-finite decimal value: {value!r}")
-    normalized = dec.normalize() if dec != 0 else Decimal(0)
-    exponent = normalized.as_tuple().exponent
-    assert isinstance(exponent, int)
-    if -exponent > max_scale:
-        raise ValueError(f"decimal scale {-exponent} exceeds max_scale={max_scale}: {value!r}")
-    return normalized
+    negative, significant, exponent = _exact_decimal_parts(dec)
+    if not significant:
+        return Decimal(0)
+    scale = max(0, -exponent)
+    if scale > max_scale:
+        raise ValueError(f"decimal scale {scale} exceeds max_scale={max_scale}: {value!r}")
+    # Validate Norn1 canonical expansion limit without mutating precision.
+    _format_decimal(dec, [0])
+    # Reconstruct exact reduced Decimal without context rounding.
+    sign_int = 1 if negative else 0
+    return Decimal((sign_int, tuple(int(ch) for ch in significant), exponent))
 
 
 def _schema_ref(schema_id: str, version: int, document: Mapping[str, Any]) -> dict[str, Any]:
@@ -165,10 +239,6 @@ def _schema_ref(schema_id: str, version: int, document: Mapping[str, Any]) -> di
         "version": version,
         "digest": norn1_json_digest(document),
     }
-
-
-def _digest_of_tag(label: str) -> str:
-    return f"sha256:{hashlib.sha256(label.encode('utf-8')).hexdigest()}"
 
 
 EVALUATION_INPUT_SCHEMA: dict[str, Any] = {
@@ -227,33 +297,67 @@ EVALUATION_ERROR_SCHEMA: dict[str, Any] = {
 }
 
 
+def verify_evaluator_artifact_pins(regression_dir: Path | None = None) -> None:
+    """Verify pinned digests match the actual `Dockerfile`, `requirements.txt`, and `suite.py` on disk."""
+    root = Path(__file__).resolve().parents[1] if regression_dir is None else Path(regression_dir)
+    dockerfile_bytes = (root / "Dockerfile").read_bytes()
+    actual_dockerfile = f"sha256:{hashlib.sha256(dockerfile_bytes).hexdigest()}"
+    if actual_dockerfile != DOCKERFILE_DIGEST:
+        raise ValueError(
+            f"Dockerfile digest drifted: expected {DOCKERFILE_DIGEST}, got {actual_dockerfile}"
+        )
+    if f"python:3.11-slim@{BASE_IMAGE_DIGEST}" not in dockerfile_bytes.decode("utf-8"):
+        raise ValueError(f"Dockerfile does not pin python:3.11-slim@{BASE_IMAGE_DIGEST}")
+    actual_reqs = f"sha256:{hashlib.sha256((root / 'requirements.txt').read_bytes()).hexdigest()}"
+    if actual_reqs != REQUIREMENTS_DIGEST:
+        raise ValueError(
+            f"requirements.txt digest drifted: expected {REQUIREMENTS_DIGEST}, got {actual_reqs}"
+        )
+    actual_suite = f"sha256:{hashlib.sha256((root / 'norn_regression' / 'suite.py').read_bytes()).hexdigest()}"
+    if actual_suite != SUITE_SOURCE_DIGEST:
+        raise ValueError(
+            f"suite.py digest drifted: expected {SUITE_SOURCE_DIGEST}, got {actual_suite}"
+        )
+
+
 def forecast_evaluator_manifest() -> dict[str, Any]:
     """Return the immutable `FunctionManifest` for `ml.forecast.evaluate` v1.
 
     Admitted by `norn_checker::function::admit_function_manifest` under the
     `hermetic_container` profile (`network: false`, `credentials: false`,
     `isolatedScratch: true`, `locale: "C.UTF-8"`, `timezone: "UTC"`,
-    `cache: "none"`, `retention: "ledger"`).
+    `cache: "none"`, `retention: "ledger"`). Every digest pins real build
+    artifacts (`Dockerfile`, `requirements.txt`, `norn_regression/suite.py`,
+    and the `python:3.11-slim@sha256:...` base image digest).
     """
-    implementation_digest = _digest_of_tag(
-        "norn.ml.forecast.evaluate/oci-image/norn_regression.suite/v1"
+    implementation_digest = norn1_json_digest(
+        {
+            "baseImage": BASE_IMAGE_DIGEST,
+            "dockerfile": DOCKERFILE_DIGEST,
+            "requirements": REQUIREMENTS_DIGEST,
+            "suiteSource": SUITE_SOURCE_DIGEST,
+        }
     )
-    runtime_digest = _digest_of_tag("norn.runtime/containerd/1.7/v1")
     closure_entries = [
         {
-            "name": "base-python-3.12-slim",
+            "name": "base-python-3.11-slim",
             "kind": "base_image",
-            "digest": _digest_of_tag("norn.dep/base-python-3.12-slim/v1"),
+            "digest": BASE_IMAGE_DIGEST,
         },
         {
-            "name": "norn-regression-suite-v1",
-            "kind": "library",
-            "digest": _digest_of_tag("norn.dep/norn-regression-suite/v1"),
+            "name": "norn-regression-dockerfile",
+            "kind": "asset",
+            "digest": DOCKERFILE_DIGEST,
         },
         {
-            "name": "statsmodels-scipy-numpy-pandas",
+            "name": "norn-regression-requirements",
             "kind": "library",
-            "digest": _digest_of_tag("norn.dep/statsmodels-scipy-numpy-pandas/v1"),
+            "digest": REQUIREMENTS_DIGEST,
+        },
+        {
+            "name": "norn-regression-suite",
+            "kind": "library",
+            "digest": SUITE_SOURCE_DIGEST,
         },
     ]
     return {
@@ -274,9 +378,9 @@ def forecast_evaluator_manifest() -> dict[str, Any]:
             "entries": closure_entries,
         },
         "runtime": {
-            "id": "containerd",
-            "version": "1.7",
-            "digest": runtime_digest,
+            "id": "python-container",
+            "version": "3.11-slim",
+            "digest": BASE_IMAGE_DIGEST,
         },
         "platform": {
             "os": "linux",
@@ -385,6 +489,67 @@ FORECAST_EVALUATOR_MANIFEST_DIGEST: str = manifest_digest(FORECAST_EVALUATOR_MAN
 FORECAST_EVALUATOR_PROFILE_DIGEST: str = execution_profile_digest(FORECAST_EVALUATOR_MANIFEST)
 
 
+def _normalize_cell_value(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, Decimal, str)):
+        return value
+    if isinstance(value, float):
+        if math.isnan(value):
+            return None
+        if not math.isfinite(value):
+            raise ValueError(f"non-finite float in evaluated dataset snapshot: {value!r}")
+        return Decimal(repr(value))
+    # Handle numpy scalar types without importing numpy.
+    if hasattr(value, "item") and callable(value.item):
+        return _normalize_cell_value(value.item())
+    return str(value)
+
+
+def dataset_snapshot_blob(
+    frame: Any,
+    columns: Sequence[str],
+    *,
+    dataset_revision: str | None = None,
+) -> dict[str, Any]:
+    """Compute a `BlobRef` content digest over the exact evaluated dataset rows.
+
+    Sorts rows by `id` when present (matching `suite.py`) so identical logical
+    snapshots in different row orders share one content digest while any value
+    difference produces a distinct `inputIdentity`.
+    """
+    if hasattr(frame, "columns") and hasattr(frame, "to_dict"):
+        frame_cols = list(frame.columns)
+        records: list[Mapping[str, Any]] = frame.to_dict(orient="records")
+    elif isinstance(frame, Sequence) and not isinstance(frame, (str, bytes)):
+        records = list(frame)
+        frame_cols = list(records[0].keys()) if records else []
+    else:
+        raise TypeError(f"unsupported frame type for snapshot pinning: {type(frame).__name__}")
+
+    ordered_cols: list[str] = []
+    if "id" in frame_cols:
+        ordered_cols.append("id")
+    for col in columns:
+        if col not in ordered_cols:
+            ordered_cols.append(col)
+
+    missing = [col for col in ordered_cols if col not in frame_cols]
+    if missing:
+        raise ValueError(f"evaluated dataset snapshot is missing required columns: {missing}")
+
+    rows: list[list[Any]] = []
+    for record in records:
+        rows.append([_normalize_cell_value(record[col]) for col in ordered_cols])
+    if "id" in ordered_cols:
+        rows.sort(key=lambda row: "" if row[0] is None else str(row[0]))
+
+    raw = canonical_json({"columns": ordered_cols, "rows": rows})
+    return {
+        "digest": f"sha256:{hashlib.sha256(raw).hexdigest()}",
+        "version": dataset_revision,
+        "sizeBytes": len(raw),
+    }
+
+
 def build_evaluation_invocation(
     *,
     tenant: str,
@@ -394,6 +559,7 @@ def build_evaluation_invocation(
     model_id: str,
     evaluation_run: str,
     dataset_revision: str,
+    dataset_blob: Mapping[str, Any],
     metric_name: str,
     target: str,
     features: list[str],
@@ -410,8 +576,18 @@ def build_evaluation_invocation(
     cancellation_generation: int = 0,
     manifest: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a schema-valid `FunctionInvocation` pinning evaluator, model, revision, and scope."""
+    """Build a schema-valid `FunctionInvocation` pinning evaluator, dataset snapshot, model, and scope."""
     resolved_manifest = FORECAST_EVALUATOR_MANIFEST if manifest is None else manifest
+    dataset_digest = _require_digest(dataset_blob.get("digest"), "dataset_blob.digest")
+    size_bytes = dataset_blob.get("sizeBytes")
+    if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes < 0:
+        raise ValueError(f"dataset_blob.sizeBytes must be a non-negative int, got {size_bytes!r}")
+    all_blobs: dict[str, dict[str, Any]] = {} if blobs is None else dict(blobs)
+    all_blobs["dataset"] = {
+        "digest": dataset_digest,
+        "version": dataset_blob.get("version", dataset_revision),
+        "sizeBytes": size_bytes,
+    }
     inputs: dict[str, Any] = {
         "dataset_revision": dataset_revision,
         "evaluation_run": evaluation_run,
@@ -432,7 +608,7 @@ def build_evaluation_invocation(
         "run": {"id": version_id, "generation": generation},
         "manifest": manifest_digest(resolved_manifest),
         "inputs": inputs,
-        "blobs": {} if blobs is None else dict(blobs),
+        "blobs": all_blobs,
         "provenanceCommit": provenance_commit,
         "dependency": {
             "facts": pins,
@@ -476,6 +652,9 @@ def build_evaluation_receipt(
         raise ValueError(
             f"invocation manifest {invocation['manifest']} does not match {expected_manifest_digest}"
         )
+    if "dataset" not in invocation.get("blobs", {}):
+        raise ValueError("invocation must pin blobs['dataset'] content digest")
+    _require_digest(invocation["blobs"]["dataset"].get("digest"), "invocation.blobs.dataset.digest")
     if not isinstance(contracts_passed, bool):
         raise TypeError("contracts_passed must be bool")
     exact_metric = parse_exact_decimal(metric_value, max_scale=9)
@@ -547,34 +726,71 @@ def evaluate_forecast_receipt(
     placement: str = "ml-evaluator/node-1",
     fact_pins: list[dict[str, Any]] | None = None,
     deadline_millis: int = 1_000_000,
+    expected_dataset_digest: str | None = None,
+    dispatched_invocation: Mapping[str, Any] | None = None,
+    suite_runner: Callable[..., tuple[list[Any], dict[str, Any]]] | None = None,
+    suite_version: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], list[Any], dict[str, Any]]:
-    """Run `assumption_suite` and bind its outcome to a `FunctionInvocation` + `FunctionReceipt`."""
-    from .suite import SUITE_VERSION, assumption_suite
+    """Run `assumption_suite` and bind its outcome to a snapshot-pinned `FunctionInvocation` + `FunctionReceipt`."""
+    columns = [target, *features] + ([order] if order is not None and order not in (target, *features) else [])
+    actual_blob = dataset_snapshot_blob(frame, columns, dataset_revision=dataset_revision)
+    if expected_dataset_digest is not None and actual_blob["digest"] != expected_dataset_digest:
+        raise ValueError(
+            f"evaluated dataset snapshot {actual_blob['digest']} does not match expected {expected_dataset_digest}"
+        )
+    if dispatched_invocation is not None:
+        if dispatched_invocation.get("manifest") != FORECAST_EVALUATOR_MANIFEST_DIGEST:
+            raise ValueError("dispatched invocation manifest does not match forecast evaluator")
+        pinned_blob = dispatched_invocation.get("blobs", {}).get("dataset")
+        if not isinstance(pinned_blob, Mapping) or pinned_blob.get("digest") != actual_blob["digest"]:
+            raise ValueError(
+                f"evaluated dataset snapshot {actual_blob['digest']} does not match dispatched blob pin {pinned_blob!r}"
+            )
+        if pinned_blob.get("sizeBytes") != actual_blob["sizeBytes"]:
+            raise ValueError("evaluated dataset snapshot size does not match dispatched blob pin")
+        if dispatched_invocation.get("inputs", {}).get("dataset_revision") != dataset_revision:
+            raise ValueError("dataset_revision does not match dispatched invocation")
+        invocation: dict[str, Any] = dict(dispatched_invocation)
+    else:
+        invocation = build_evaluation_invocation(
+            tenant=tenant,
+            authority_id=authority_id,
+            command_id=command_id,
+            version_id=version_id,
+            model_id=model_id,
+            evaluation_run=evaluation_run,
+            dataset_revision=dataset_revision,
+            dataset_blob=actual_blob,
+            metric_name=metric_name,
+            target=target,
+            features=features,
+            order=order,
+            fact_pins=fact_pins,
+            deadline_millis=deadline_millis,
+        )
 
-    checks, plots = assumption_suite(frame, target, features, order=order)
+    if suite_runner is None:
+        from .suite import SUITE_VERSION, assumption_suite
+
+        runner = assumption_suite
+        resolved_suite_version = SUITE_VERSION if suite_version is None else suite_version
+    else:
+        runner = suite_runner
+        resolved_suite_version = "1" if suite_version is None else suite_version
+
+    checks, plots = runner(frame, target, features, order=order)
     checks_failed = sum(1 for check in checks if check.status == "fail")
     checks_passed = sum(1 for check in checks if check.status == "pass")
     if metric_fn is not None:
         metric_val = parse_exact_decimal(metric_fn(plots), max_scale=9)
     else:
-        raw_r2 = plots["r_squared"]
-        metric_val = parse_exact_decimal(f"{float(raw_r2):.6f}", max_scale=9)
+        if "r_squared" not in plots:
+            raise ValueError("assumption_suite plots missing required 'r_squared' metric")
+        raw_r2 = float(plots["r_squared"])
+        if not math.isfinite(raw_r2):
+            raise ValueError(f"non-finite r_squared metric: {raw_r2!r}")
+        metric_val = parse_exact_decimal(f"{raw_r2:.6f}", max_scale=9)
     contracts_passed = bool(extra_contracts_passed) and checks_failed == 0
-    invocation = build_evaluation_invocation(
-        tenant=tenant,
-        authority_id=authority_id,
-        command_id=command_id,
-        version_id=version_id,
-        model_id=model_id,
-        evaluation_run=evaluation_run,
-        dataset_revision=dataset_revision,
-        metric_name=metric_name,
-        target=target,
-        features=features,
-        order=order,
-        fact_pins=fact_pins,
-        deadline_millis=deadline_millis,
-    )
     receipt = build_evaluation_receipt(
         invocation,
         evaluation_revision=dataset_revision,
@@ -583,7 +799,7 @@ def evaluate_forecast_receipt(
         contracts_passed=contracts_passed,
         checks_passed=checks_passed,
         checks_failed=checks_failed,
-        suite_version=SUITE_VERSION,
+        suite_version=resolved_suite_version,
         executor=executor,
         placement=placement,
     )
