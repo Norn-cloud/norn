@@ -276,7 +276,6 @@ pub fn get_object_page<E: SqlEngine>(
     }
     let mut records = Vec::new();
     let mut quarantine_count: u64 = 0;
-    let mut scanned_through = None;
     // The cell lock is held per batch, never for the whole scan, and row
     // authorization runs without it. Each locked section reads the cell's
     // version before and after its reads, and both must equal the version the
@@ -312,7 +311,7 @@ pub fn get_object_page<E: SqlEngine>(
             if !seen {
                 continue;
             }
-            scanned_through = Some(row.id.clone());
+            let last_seen = row.id.clone();
             if quarantined {
                 quarantine_count = quarantine_count.saturating_add(1);
             } else {
@@ -329,7 +328,7 @@ pub fn get_object_page<E: SqlEngine>(
                     object_type.to_owned(),
                     records,
                     quarantine_count,
-                    scanned_through,
+                    Some(last_seen),
                 ));
             }
         }

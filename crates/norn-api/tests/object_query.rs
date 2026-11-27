@@ -194,7 +194,7 @@ fn pages(
     }
 }
 
-fn ids(pages: &[NornObjectQueryPage]) -> Vec<String> {
+fn ids(pages: &[norn_api::privacy::DisclosedObjectQueryPage]) -> Vec<String> {
     pages
         .iter()
         .flat_map(|page| page.records.iter().map(|record| record.id.clone()))
@@ -406,7 +406,7 @@ fn a_cursor_binds_its_query_caller_and_snapshot() {
     let (host, dir) = host_of(writes([(Some("512"), Some("gold")), (Some("8"), None)]));
     let sorted = params(Some("2"), Some("input:desc"), None);
     let first = query(&host, "full", &sorted).unwrap();
-    let next = first.next.unwrap();
+    let next = first.next.clone().unwrap();
     let with = |base: &ObjectQueryParams, after: &str| ObjectQueryParams {
         after: Some(after.to_owned()),
         ..base.clone()
@@ -440,7 +440,7 @@ fn a_cursor_binds_its_query_caller_and_snapshot() {
         .is_ok()
     );
     let plain = query(&host, "full", &params(Some("2"), None, None)).unwrap();
-    let plain_next = plain.next.unwrap();
+    let plain_next = plain.next.clone().unwrap();
     let object = nullable_type();
     let model = norn_cell::Model::from_definitions(std::slice::from_ref(&object), &[]).unwrap();
     let mut store = CellStore::open(

@@ -63,7 +63,7 @@ use crate::object_review::SOURCE_EVIDENCE;
 use crate::object_routes::{
     ObjectAccess, SCAN_BATCH, collection, get_object_query_within, locked, permitted,
 };
-use crate::privacy::NornMaskedProperty;
+use crate::privacy::{NornMaskedProperty, disclosure::project_object};
 use crate::refusal::Refusal;
 use crate::scope::ScopeQuery;
 
@@ -893,13 +893,7 @@ fn record<E: SqlEngine>(
     let review = locked(host, access, start, |reader| {
         let catalog = host.marking_catalog(reader)?;
         let markings = crate::privacy::row_markings(reader, &catalog, row)?;
-        let projected = crate::privacy::disclosure::project_object(
-            host,
-            actor,
-            &catalog,
-            markings.as_ref(),
-            row.clone(),
-        );
+        let projected = project_object(host, actor, &catalog, markings.as_ref(), row.clone());
         let marked = markings.as_ref().map_or_default(|markings| {
             markings
                 .iter()
@@ -955,11 +949,7 @@ fn record<E: SqlEngine>(
             None => None,
         };
         Ok(Review {
-            values: projected
-                .values
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
+            values: projected.values.clone().into_iter().collect(),
             masked: projected.masked.clone(),
             marked,
             unavailable: markings.is_none(),

@@ -278,7 +278,7 @@ fn rows_page_with_lineage_under_the_installed_plan() {
         NOW,
     )
     .expect("first page");
-    let cursor = first.next_after.expect("more rows");
+    let cursor = first.next_after.as_deref().expect("more rows");
     let second = get_transform_rows(
         &host,
         &scope(),

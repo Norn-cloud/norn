@@ -171,7 +171,7 @@ fn pages(
     }
 }
 
-fn edges(pages: &[NornObjectLinkPage]) -> Vec<(String, String)> {
+fn edges(pages: &[norn_api::privacy::DisclosedObjectLinks]) -> Vec<(String, String)> {
     pages
         .iter()
         .flat_map(|page| {
@@ -233,7 +233,7 @@ fn a_first_page_counts_visible_links_by_type_and_direction() {
     for (actor, out, into) in [("full", 4, 3), ("few", 3, 2)] {
         for limit in ["1", "50"] {
             let first = links(&host, actor, "a", &params(None, Some(limit))).unwrap();
-            let counts = first.counts.expect("a first page counts");
+            let counts = first.counts.as_ref().expect("a first page counts");
             assert!(counts.complete, "{actor} {limit}");
             assert_eq!(counts.bound, LINK_COUNT_BOUND);
             assert_eq!(
@@ -283,7 +283,7 @@ fn counts_past_the_bound_are_lower_bounds() {
         .unwrap()
         .with_authorizer(Policy);
     let page = links(&host, "full", "a", &params(None, None)).unwrap();
-    let counts = page.counts.expect("a first page counts");
+    let counts = page.counts.as_ref().expect("a first page counts");
     assert!(!counts.complete);
     assert_eq!(
         counts.groups,
@@ -356,7 +356,7 @@ fn an_invalid_links_query_lists_every_violation() {
 fn a_links_cursor_binds_its_object_query_caller_and_snapshot() {
     let (host, dir) = host();
     let first = links(&host, "full", "a", &params(None, Some("1"))).unwrap();
-    let next = first.next.unwrap();
+    let next = first.next.clone().unwrap();
     let with = |base: ObjectLinkParams| ObjectLinkParams {
         after: Some(next.clone()),
         ..base

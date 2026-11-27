@@ -189,7 +189,7 @@ fn built_in_markings() -> impl Iterator<Item = (String, MarkingIr)> {
 
 /// Whether `catalog` holds a marking the cell's definitions declare, not
 /// only the kernel's own.
-pub(crate) fn declares(catalog: &MarkingCatalog) -> bool {
+fn declares(catalog: &MarkingCatalog) -> bool {
     let built_in = built_in_catalog();
     catalog.keys().any(|id| !built_in.contains_key(id))
 }

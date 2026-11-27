@@ -567,24 +567,84 @@ pub(crate) fn project_trace<E: SqlEngine>(
     Ok(DisclosedTrace { inner: trace })
 }
 
-/// Issue a sealed export permit only when `stored_values_leave` confirms at
-/// the exported snapshot that no declared, manifest, or dynamic `_norn_markings`
-/// label applies to `object_type`.
+/// Whether every live cell-stored row of `object_type` has a complete marking
+/// snapshot with no label on any of its properties. Fails closed on unknown
+/// types, incomplete snapshots, or unbounded summaries.
+pub(crate) fn mirror_unlabeled<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    object_type: &str,
+) -> bool {
+    let Ok(properties) = reader.model().effective_property_types(object_type) else {
+        return false;
+    };
+    properties.iter().all(|(property, _)| {
+        reader
+            .property_marking_summary(MAIN_WORLD, object_type, property)
+            .is_ok_and(|labels| labels.is_some_and(|labels| labels.is_empty()))
+    })
+}
+
+fn unlabeled<E: SqlEngine>(reader: &StoreReader<'_, E>, object_type: &str) -> bool {
+    match reader.dataset_manifest(MAIN_WORLD, object_type) {
+        Ok(Some(current)) => reader
+            .effective_dataset_markings(&current.manifest)
+            .is_ok_and(|markings| markings.is_empty()),
+        Ok(None) => mirror_unlabeled(reader, object_type),
+        Err(_) => false,
+    }
+}
+
+/// PRIVACY-1 / MANIFEST-MARK-1: whether `object_type`'s current stored values
+/// may leave unprojected at this reader's snapshot.
+fn stored_values_leave<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &StoreReader<'_, E>,
+    object_type: &str,
+) -> Result<bool, Refusal> {
+    if let Some(current) = reader
+        .dataset_manifest(MAIN_WORLD, object_type)
+        .map_err(Refusal::host)?
+        && !reader
+            .effective_dataset_markings(&current.manifest)
+            .map_err(Refusal::host)?
+            .is_empty()
+    {
+        return Ok(false);
+    }
+    let catalog = host.marking_catalog(reader)?;
+    Ok(catalog.is_empty() || (!super::declares(&catalog) && unlabeled(reader, object_type)))
+}
+
+/// Issue a sealed export permit only after bracketing `stored_values_leave`
+/// and `store.analytics_source` at one cell snapshot (S3, #1547). No caller
+/// can supply the decision or construct a permit directly.
 pub(crate) fn admit_export<E: SqlEngine>(
     host: &DevHost<E>,
     store: &CellStore<E>,
     object_type: &str,
-    decide_source: impl FnOnce(
-        &DevHost<E>,
-        &CellStore<E>,
-        &str,
-    ) -> Result<(bool, norn_cell::analytics::Source, String), Refusal>,
 ) -> Result<DisclosedExportPermit, Refusal> {
-    let (leave, source, snapshot) = decide_source(host, store, object_type)?;
-    if !leave {
-        return Err(crate::authz::read_denied());
+    let scope_key = host.scope().key();
+    for _attempt in 0..3 {
+        let reader = store.read();
+        let start = crate::object_routes::version_of(&reader)?;
+        let leave = stored_values_leave(host, &reader, object_type)?;
+        let (source, snapshot) = store
+            .analytics_source(MAIN_WORLD, &scope_key, object_type)
+            .map_err(|error| {
+                if matches!(error, CellError::ComputeRefused(_)) {
+                    Refusal::from_compute(error)
+                } else {
+                    Refusal::host(error)
+                }
+            })?;
+        if crate::object_routes::version_of(&reader)? == start {
+            if !leave {
+                return Err(crate::authz::read_denied());
+            }
+            return Ok(DisclosedExportPermit { source, snapshot });
+        }
     }
-    Ok(DisclosedExportPermit { source, snapshot })
+    Err(crate::object_routes::snapshot_moved())
 }
 
 /// Read and seal one object version's source lineage, unconditionally gating

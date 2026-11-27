@@ -7,8 +7,10 @@
 //!   `get_queried_object`, `get_object_query`)
 //! - Review & links (`get_object_history`, `get_object_links`,
 //!   `get_object_lineage`, `get_object_lineage_at`)
+//! - Dynamic `_norn_markings` on otherwise unmarked object types
+//! - Mapped source lineage (`discloses_source` gating on retained bundles)
 //! - Question answers & traces (D53 bucket suppression, keyed handles,
-//!   `fact_digest` & `source` redaction)
+//!   `fact_digest` & `source` redaction, null `receiptHash`)
 //! - Transforms (`get_transform_rows`, `get_transform_row_lineage`)
 //! - Exports (`export_objects` sealed `DisclosedExportPermit` fail-closed gate)
 
@@ -31,6 +33,8 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use super::governed::GovernedCommit as _;
+    use super::hosted_read::Mapping;
     use norn_api::analytics_routes::{
         EngineAnswer, EngineCall, ExportQuery, Transport, export_objects,
     };
@@ -53,19 +57,22 @@ mod tests {
     };
     use norn_cell::compute::QueryContext;
     use norn_cell::engine::NativeEngine;
-    use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, MAIN_WORLD};
-    use norn_checker::EffectiveCatalog;
-    use norn_checker::metric::compute::{QuestionPlan, admit};
-    use norn_ir::{MetricDefinition, ObjectTypeDef, QuestionIR, RuntimeValue as V};
-    use norn_kernel::LogicalTime;
+    use norn_cell::mapping_bundle::MappingInput;
+    use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, MAIN_WORLD, SqliteCell};
+    use norn_checker::entity_scopes::ScopedView;
+    use norn_checker::metric::compute::QuestionPlan;
+    use norn_checker::metric::derive::derive_metric_space;
+    use norn_ir::{
+        ArtifactEnvelope, InterfaceDef, LawRoot, ObjectTypeDef, QuestionIR, RuntimeObject,
+        RuntimeValue as V,
+    };
+    use norn_kernel::{LogicalTime, ObservationEvent, ObservationId, Observed, Provenance};
     use serde_json::{Value as Json, json};
-
-    use super::governed::GovernedCommit as _;
-    use super::hosted_read::Mapping;
 
     const SECRET_KEY: [u8; 32] = [0x5A; 32];
     const CLOCK: u64 = 1_793_702_400_000;
     const CUSTOMER: &str = "shop.Customer";
+    const NOTE: &str = "shop.Note";
     const ORDER: &str = "shop.Order";
     const TRANSFORM: &str = "shop.customer_summary";
     const QUESTION: &str = "shop.order_week";
@@ -434,43 +441,37 @@ mod tests {
     }
 
     #[test]
-    fn small_world_object_query_history_links_lineage_and_transform_noninterference() {
+    fn small_world_object_query_history_links_and_transform_noninterference() {
         let masks = [json!({"kind": "redacted"}), json!({"kind": "null"})];
-        let cases: [(&str, &str, Option<&str>, &[(&str, &str)], bool); 3] = [
+        // Equal commit count across worlds so transform `commits` stays aligned.
+        let cases: [(&str, &str, &[(&str, &str)], bool); 3] = [
             (
                 "alpha@secret.test",
                 "memo-1",
-                None,
-                &[("east", "w1@x.test")],
+                &[("east", "w1@x.test"), ("east", "w2@x.test")],
                 false,
             ),
             (
                 "omega-very-long-secret@corp.example",
                 "top-secret-memo-99999",
-                None,
-                &[
-                    ("west", "w1@x.test"),
-                    ("north", "w2@x.test"),
-                    ("south", "w3@x.test"),
-                ],
+                &[("west", "w3@x.test"), ("south", "w4@x.test")],
                 true,
             ),
             (
                 "z@q.io",
                 "another-classified-note",
-                None,
-                &[("central", "z@x.test"), ("central", "z2@x.test")],
+                &[("central", "z@x.test"), ("north", "z2@x.test")],
                 true,
             ),
         ];
         for mask in &masks {
             let mut baseline: Option<Vec<String>> = None;
-            for (email, note, note_v2, withheld_writes, hidden_link) in cases {
+            for (email, note, withheld_writes, hidden_link) in cases {
                 let (host, _dir) = open_object_world(&ObjectWorldSpec {
                     mask,
                     secret_email: email,
                     secret_note: note,
-                    secret_note_v2: note_v2,
+                    secret_note_v2: None,
                     withheld_updates: withheld_writes,
                     hidden_link,
                 });
@@ -497,33 +498,6 @@ mod tests {
                     .expect_err("hidden"),
                 );
                 assert_eq!(absent_refusal, hidden_refusal);
-                assert_eq!(
-                    refusal_json(
-                        &get_object_lineage(
-                            &host,
-                            &scope(),
-                            Some("viewer"),
-                            CUSTOMER,
-                            "c1",
-                            &Mapping
-                        )
-                        .expect_err("marked lineage refuses"),
-                    ),
-                    absent_refusal
-                );
-                assert_eq!(
-                    refusal_json(
-                        &get_object_lineage_at(
-                            &host,
-                            &scope(),
-                            Some("viewer"),
-                            (CUSTOMER, "c1", 1),
-                            &Mapping,
-                        )
-                        .expect_err("marked lineage_at refuses"),
-                    ),
-                    absent_refusal
-                );
                 let outputs = capture_object_world_outputs(&host);
                 for text in &outputs {
                     assert!(!text.contains(email), "leaked email {email} in {text}");
@@ -539,14 +513,14 @@ mod tests {
     }
 
     #[test]
-    fn hidden_only_marked_write_collapses_identically_in_sealed_object_history() {
+    fn withheld_row_version_count_and_hidden_only_history_writes_do_not_leak() {
         let mask = json!({"kind": "redacted"});
         let (w0, _d0) = open_object_world(&ObjectWorldSpec {
             mask: &mask,
             secret_email: "a@secret.test",
             secret_note: "secret-v1",
             secret_note_v2: None,
-            withheld_updates: &[],
+            withheld_updates: &[("east", "v1@x.test")],
             hidden_link: false,
         });
         let (w1, _d1) = open_object_world(&ObjectWorldSpec {
@@ -554,18 +528,438 @@ mod tests {
             secret_email: "a@secret.test",
             secret_note: "secret-v1",
             secret_note_v2: Some("secret-v2-only-refused-field-changed"),
-            withheld_updates: &[],
+            withheld_updates: &[
+                ("west", "v1@x.test"),
+                ("north", "v2@x.test"),
+                ("south", "v3@x.test"),
+            ],
             hidden_link: false,
         });
-        let h0 = json_of(
-            &get_object_history(&w0, &scope(), Some("viewer"), CUSTOMER, "c1", &Mapping)
-                .expect("history w0"),
+        assert_eq!(
+            json_of(
+                &get_queried_object(
+                    &w0,
+                    &scope(),
+                    Some("viewer"),
+                    CUSTOMER,
+                    "c-withheld",
+                    &Mapping
+                )
+                .expect("w0 withheld")
+            ),
+            json_of(
+                &get_queried_object(
+                    &w1,
+                    &scope(),
+                    Some("viewer"),
+                    CUSTOMER,
+                    "c-withheld",
+                    &Mapping
+                )
+                .expect("w1 withheld")
+            ),
+            "withheld row version count must not leak"
         );
-        let h1 = json_of(
-            &get_object_history(&w1, &scope(), Some("viewer"), CUSTOMER, "c1", &Mapping)
-                .expect("history w1"),
+        assert_eq!(
+            json_of(
+                &get_object_history(&w0, &scope(), Some("viewer"), CUSTOMER, "c1", &Mapping)
+                    .expect("w0 history")
+            ),
+            json_of(
+                &get_object_history(&w1, &scope(), Some("viewer"), CUSTOMER, "c1", &Mapping)
+                    .expect("w1 history")
+            ),
+            "hidden-only write must collapse identically"
         );
-        assert_eq!(h0, h1, "hidden-only write must collapse identically");
+    }
+
+    fn dynamic_marked_world(secret_text: &str) -> (DevHost<NativeEngine>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("dyn.sqlite");
+        // No static markings declared on any property of `shop.Note`.
+        let note: ObjectTypeDef = serde_json::from_value(json!({
+            "name": NOTE,
+            "properties": [
+                {"id": "title", "type": {"kind": "text"}},
+                {"id": "body", "type": {"kind": "text"}, "constraints": {"nullable": true}}
+            ]
+        }))
+        .expect("note type");
+        let model =
+            norn_cell::Model::from_definitions(std::slice::from_ref(&note), &[]).expect("model");
+        let artifacts = json!([
+            artifact(
+                "shop.Note.entity",
+                "entity",
+                json!([]),
+                json!({"entityVersion": "2.0", "objectType": note})
+            ),
+            artifact(
+                "shop.dyn_markings.entity",
+                "entity",
+                json!([]),
+                json!({
+                    "entityVersion": "2.0",
+                    "markings": [{"id": "pii.dynamic", "label": "Dynamic", "severity": "high", "category": "pii", "mask": {"kind": "refuse"}}]
+                })
+            )
+        ]);
+        let scope_key = physical().key();
+        {
+            let mut store =
+                CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default())
+                    .expect("store");
+            store
+                .install_definitions(
+                    model.clone(),
+                    norn_cell::InstalledDefinitionInput {
+                        canonical_set: serde_json::to_string(&artifacts).expect("defs"),
+                        registry: Vec::new(),
+                        receipt_sha256: "ni-dyn".into(),
+                        admission_receipt: None,
+                        readmission: None,
+                        diff: json!({}),
+                        installed_at: 1,
+                        layout: None,
+                    },
+                    Some(0),
+                    &scope_key,
+                )
+                .expect("install");
+            store
+                .commit(&CommitBatch {
+                    world: MAIN_WORLD.into(),
+                    scope: scope_key,
+                    logical_time: 10,
+                    writes: vec![FactWriteRow::Put {
+                        object_type: NOTE.into(),
+                        key: "n1".into(),
+                        values: BTreeMap::from([
+                            ("title".into(), V::from("Public title")),
+                            ("body".into(), V::from(secret_text)),
+                        ]),
+                    }],
+                    events: vec![
+                        V::from_json(json!({
+                            "type": "observation.recorded",
+                            "mapped": [{
+                                "objectType": NOTE,
+                                "key": "n1",
+                                "propertyProvenance": {"body": {"markings": ["pii.dynamic"]}}
+                            }]
+                        }))
+                        .expect("event"),
+                    ],
+                    ..CommitBatch::default()
+                })
+                .expect("dynamic marked write");
+        }
+        let store =
+            CellStore::open(&path, model, norn_cell::StoreOptions::default()).expect("open");
+        let host = DevHost::from_store(store, physical(), |cmd| cmd.payload.clone())
+            .expect("host")
+            .with_authorizer(WorldPolicy)
+            .with_pseudonym_secret(Some(&SECRET_KEY));
+        (host, dir)
+    }
+
+    #[test]
+    fn dynamic_norn_markings_noninterference_across_objects_history_and_export() {
+        let mut baseline: Option<Vec<String>> = None;
+        for secret in ["dyn-alpha", "dyn-beta-longer-secret", "dyn-gamma-99999"] {
+            let (host, _dir) = dynamic_marked_world(secret);
+            let q = json_of(
+                &get_queried_object(&host, &scope(), Some("viewer"), NOTE, "n1", &Mapping)
+                    .expect("queried"),
+            );
+            let g = json_of(
+                &get_object_query(
+                    &host,
+                    &scope(),
+                    Some("viewer"),
+                    NOTE,
+                    &ObjectQueryParams::default(),
+                    &Mapping,
+                )
+                .expect("grid"),
+            );
+            let h = json_of(
+                &get_object_history(&host, &scope(), Some("viewer"), NOTE, "n1", &Mapping)
+                    .expect("history"),
+            );
+            let transport = CountingTransport(AtomicUsize::new(0));
+            let query = ExportQuery {
+                org_id: Some("org_ni".into()),
+                environment_id: Some("dev".into()),
+                columns: "title".into(),
+                format: Some("jsonl".into()),
+            };
+            let export_err = refusal_json(
+                &export_objects(&host, &query, Some("viewer"), NOTE, &Mapping, &transport)
+                    .expect_err("dynamic marked export must refuse"),
+            );
+            let denied_err = refusal_json(
+                &export_objects(&host, &query, Some("denied"), NOTE, &Mapping, &transport)
+                    .expect_err("denied export"),
+            );
+            assert_eq!(export_err, denied_err);
+            assert_eq!(transport.0.load(Ordering::SeqCst), 0);
+            let outputs = vec![q, g, h, export_err];
+            for text in &outputs {
+                assert!(!text.contains(secret), "leaked dynamic secret in {text}");
+            }
+            if let Some(expected) = &baseline {
+                assert_eq!(&outputs, expected);
+            } else {
+                baseline = Some(outputs);
+            }
+        }
+    }
+
+    fn mapped_lineage_artifacts() -> Vec<ArtifactEnvelope> {
+        let iface: ArtifactEnvelope = serde_json::from_value(artifact(
+            "shop.Doc.interface",
+            "entity",
+            json!([]),
+            json!({"entityVersion": "2.0", "interface": {"name": "shop.Doc", "properties": [{"id": "id", "type": {"kind": "text"}}]}}),
+        ))
+        .expect("iface");
+        let pub_doc: ArtifactEnvelope = serde_json::from_value(artifact(
+            "shop.PublicDoc.entity",
+            "entity",
+            json!([]),
+            json!({"entityVersion": "2.0", "objectType": {"name": "shop.PublicDoc", "implements": ["shop.Doc"], "properties": [{"id": "id", "type": {"kind": "text"}}, {"id": "label", "type": {"kind": "text"}}]}}),
+        ))
+        .expect("pub_doc");
+        let sec_doc: ArtifactEnvelope = serde_json::from_value(artifact(
+            "shop.SecretDoc.entity",
+            "entity",
+            json!([]),
+            json!({"entityVersion": "2.0", "objectType": {"name": "shop.SecretDoc", "implements": ["shop.Doc"], "properties": [{"id": "id", "type": {"kind": "text"}}, {"id": "secret", "type": {"kind": "text"}, "markings": ["pii.secret"]}]}}),
+        ))
+        .expect("sec_doc");
+        let markings: ArtifactEnvelope = serde_json::from_value(artifact(
+            "shop.doc_markings.entity",
+            "entity",
+            json!([]),
+            json!({"entityVersion": "2.0", "markings": [{"id": "pii.secret", "label": "Secret", "severity": "high", "category": "pii", "mask": {"kind": "refuse"}}]}),
+        ))
+        .expect("markings");
+        let source: ArtifactEnvelope = serde_json::from_value(artifact(
+            "shop.doc.source",
+            "source_schema",
+            json!([]),
+            json!({
+                "format": "norn.source-schema/1",
+                "source": {"system": "synthetic-doc", "instance": "demo", "version": "doc/1"},
+                "observedAt": "2026-11-02T00:00:00Z",
+                "adapter": {"name": "synthetic-record-replay", "version": "0.1.0"},
+                "rawMetadata": {"uri": "synthetic://doc", "sha256": "cc".repeat(32)},
+                "datasets": [
+                    {"id": "PublicDoc", "nativeName": "PublicDoc", "kind": "document"},
+                    {"id": "SecretDoc", "nativeName": "SecretDoc", "kind": "document"}
+                ],
+                "fields": [
+                    {"dataset": "PublicDoc", "name": "id", "ordinal": 0, "nativeType": "Text", "typeCandidate": {"type": "string", "origin": "declared"}, "required": true},
+                    {"dataset": "PublicDoc", "name": "label", "ordinal": 1, "nativeType": "Text", "typeCandidate": {"type": "string", "origin": "declared"}, "required": true},
+                    {"dataset": "SecretDoc", "name": "id", "ordinal": 0, "nativeType": "Text", "typeCandidate": {"type": "string", "origin": "declared"}, "required": true},
+                    {"dataset": "SecretDoc", "name": "secret", "ordinal": 1, "nativeType": "Text", "typeCandidate": {"type": "string", "origin": "declared"}, "required": true}
+                ],
+                "codeSets": [],
+                "constraints": [
+                    {"id": "pk_p", "kind": "primary_key", "dataset": "PublicDoc", "fields": ["id"], "origin": "declared"},
+                    {"id": "pk_s", "kind": "primary_key", "dataset": "SecretDoc", "fields": ["id"], "origin": "declared"}
+                ]
+            }),
+        ))
+        .expect("source");
+        let pin = norn_checker::ArtifactRef::of(&source).expect("source pin");
+        let mapping: ArtifactEnvelope = serde_json::from_value(artifact(
+            "shop.doc.mapping",
+            "mapping",
+            json!([
+                {"artifactId": "shop.doc.source", "kind": "source_schema", "required": true, "version": "0.1.0"},
+                {"artifactId": "shop.Doc.interface", "kind": "entity", "required": true, "version": "0.1.0"},
+                {"artifactId": "shop.PublicDoc.entity", "kind": "entity", "required": true, "version": "0.1.0"},
+                {"artifactId": "shop.SecretDoc.entity", "kind": "entity", "required": true, "version": "0.1.0"}
+            ]),
+            json!({
+                "format": "norn.mapping/1",
+                "extensions": {"norn.mapping.generic/1.0.0": {"parity": "unqualified"}},
+                "source": {"schemaId": pin.artifact_id, "version": pin.version, "sha256": pin.sha256},
+                "interfaces": ["shop.Doc.interface"],
+                "maps": [
+                    {"id": "pub", "source": {"dataset": "PublicDoc"}, "target": {"entity": "shop.PublicDoc.entity", "interface": "shop.Doc.interface"}, "subject": "input.id", "sourceRecord": "'demo/PublicDoc/' + input.id", "properties": [{"property": "id", "value": "input.id"}, {"property": "label", "value": "input.label"}]},
+                    {"id": "sec", "source": {"dataset": "SecretDoc"}, "target": {"entity": "shop.SecretDoc.entity", "interface": "shop.Doc.interface"}, "subject": "input.id", "sourceRecord": "'demo/SecretDoc/' + input.id", "properties": [{"property": "id", "value": "input.id"}, {"property": "secret", "value": "input.secret"}]}
+                ]
+            }),
+        ))
+        .expect("mapping");
+        vec![iface, pub_doc, sec_doc, markings, source, mapping]
+    }
+
+    fn ingest_mapped(
+        cell: &mut SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject>,
+        dataset: &str,
+        source_id: &str,
+        record: &Json,
+    ) {
+        let payload = V::from_json(record.clone()).expect("payload");
+        let digest = norn_ir::canonical::HashProfile::Norn1
+            .hash_json(serde_json::to_string(&payload).expect("json"))
+            .expect("digest");
+        let raw = Observed {
+            id: ObservationId(format!("deliv-{dataset}-{source_id}")),
+            provenance: Provenance {
+                source: "synthetic-doc".into(),
+                source_id: source_id.into(),
+                mapping_version: "doc/1".into(),
+                observed_at: LogicalTime::from_millis(CLOCK),
+            },
+            input: norn_ir::runtime_object! {
+                "contract" => "norn.raw_observation/v1",
+                "source" => "synthetic-doc",
+                "source_id" => source_id,
+                "event_id" => "ev-1",
+                "source_version" => "1",
+                "pipeline_version" => "doc/1",
+                "kind" => "upsert",
+                "extracted_at" => CLOCK,
+                "payload" => payload,
+                "payload_digest" => digest,
+            },
+        };
+        let input = MappingInput {
+            mapping: "shop.doc.mapping".into(),
+            dataset: dataset.into(),
+            connector_instance: "demo".into(),
+            partition: "default".into(),
+            recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-03T00:00:00Z".into()),
+        };
+        let (id, _) = cell.inject_mapping_bundle(&raw, &input).expect("inject");
+        assert!(cell.process_mapping_bundle(&id).expect("process"));
+    }
+
+    fn open_mapped_lineage_host() -> (DevHost<NativeEngine>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("mapped.sqlite");
+        let artifacts = mapped_lineage_artifacts();
+        let mut objects: Vec<ObjectTypeDef> = Vec::new();
+        let mut interfaces: Vec<InterfaceDef> = Vec::new();
+        for env in &artifacts {
+            let payload = serde_json::to_value(env).expect("env")["payload"].clone();
+            if let Some(ot) = payload.get("objectType") {
+                objects.push(serde_json::from_value(ot.clone()).expect("ot"));
+            }
+            if let Some(iface) = payload.get("interface") {
+                interfaces.push(serde_json::from_value(iface.clone()).expect("iface"));
+            }
+        }
+        let model = norn_cell::Model::from_definitions_with_interfaces(&objects, &[], &interfaces)
+            .expect("model");
+        let scope_key = physical().key();
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).expect("db");
+        store.bind("scope", &scope_key).expect("bind");
+        store
+            .install_definitions(
+                model,
+                norn_cell::InstalledDefinitionInput {
+                    canonical_set: String::from_utf8(
+                        norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical"),
+                    )
+                    .expect("utf8"),
+                    registry: Vec::new(),
+                    receipt_sha256: "ni-mapped".into(),
+                    admission_receipt: None,
+                    readmission: None,
+                    diff: json!({}),
+                    installed_at: 1,
+                    layout: None,
+                },
+                None,
+                &scope_key,
+            )
+            .expect("install");
+        let mut cell: SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject> =
+            SqliteCell::new(store, &scope_key, |_| BTreeMap::new()).expect("cell");
+        ingest_mapped(
+            &mut cell,
+            "PublicDoc",
+            "p1",
+            &json!({"id": "p1", "label": "ok"}),
+        );
+        ingest_mapped(
+            &mut cell,
+            "SecretDoc",
+            "s1",
+            &json!({"id": "s1", "secret": "top-secret-mapped-value"}),
+        );
+        let host = DevHost::from_store(cell.into_store(), physical(), |cmd| cmd.payload.clone())
+            .expect("host")
+            .with_authorizer(WorldPolicy)
+            .with_pseudonym_secret(Some(&SECRET_KEY));
+        (host, dir)
+    }
+
+    #[test]
+    fn mapped_marked_lineage_refuses_identically_to_absent_while_unmarked_discloses() {
+        let (host, _dir) = open_mapped_lineage_host();
+        // Unmarked mapped object discloses its retained source provenance on both routes.
+        let pub_lin = get_object_lineage(
+            &host,
+            &scope(),
+            Some("viewer"),
+            "shop.PublicDoc",
+            "p1",
+            &Mapping,
+        )
+        .expect("unmarked mapped lineage discloses");
+        assert!(pub_lin.bundle_digest.is_some());
+        let pub_lin_at = get_object_lineage_at(
+            &host,
+            &scope(),
+            Some("viewer"),
+            ("shop.PublicDoc", "p1", 1),
+            &Mapping,
+        )
+        .expect("unmarked mapped lineage_at discloses");
+        assert_eq!(json_of(&pub_lin), json_of(&pub_lin_at));
+        // Marked mapped object WITH retained source bundle refuses identically to absent.
+        let absent = refusal_json(
+            &get_object_lineage(
+                &host,
+                &scope(),
+                Some("viewer"),
+                "shop.SecretDoc",
+                "absent",
+                &Mapping,
+            )
+            .expect_err("absent"),
+        );
+        let marked_lin = refusal_json(
+            &get_object_lineage(
+                &host,
+                &scope(),
+                Some("viewer"),
+                "shop.SecretDoc",
+                "s1",
+                &Mapping,
+            )
+            .expect_err("marked mapped lineage must refuse"),
+        );
+        let marked_lin_at = refusal_json(
+            &get_object_lineage_at(
+                &host,
+                &scope(),
+                Some("viewer"),
+                ("shop.SecretDoc", "s1", 1),
+                &Mapping,
+            )
+            .expect_err("marked mapped lineage_at must refuse"),
+        );
+        assert_eq!(marked_lin, absent);
+        assert_eq!(marked_lin_at, absent);
     }
 
     struct OrderRuntime {
@@ -649,7 +1043,7 @@ mod tests {
         }
     }
 
-    fn order_schema_and_plan() -> (ObjectTypeDef, norn_cell::Model, QuestionPlan) {
+    fn order_schema_and_plan() -> (Vec<ArtifactEnvelope>, norn_cell::Model, QuestionPlan) {
         let order: ObjectTypeDef = serde_json::from_value(json!({
             "name": ORDER,
             "properties": [
@@ -661,113 +1055,100 @@ mod tests {
         .expect("order type");
         let model =
             norn_cell::Model::from_definitions(std::slice::from_ref(&order), &[]).expect("model");
-        let metric: MetricDefinition = serde_json::from_value(json!({
-            "name": "order_sum", "label": "Order sum", "type": "simple",
-            "type_params": {"expr": "amount", "metric_aggregation_params": {
-                "semantic_model": ORDER, "agg": "sum", "agg_time_dimension": "occurred_at"
-            }},
-            "norn": {"additivity": {"kind": "additive"}, "timeDimension": {"links": [], "property": "occurred_at"}}
-        }))
-        .expect("metric");
+        let artifacts: Vec<ArtifactEnvelope> = serde_json::from_value(json!([
+            artifact("shop.Order.entity", "entity", json!([]), json!({"entityVersion": "2.0", "objectType": order})),
+            artifact("shop.markings.entity", "entity", json!([]), json!({
+                "entityVersion": "2.0",
+                "markings": [{"id": "pii.memo", "label": "Memo", "severity": "high", "category": "pii", "mask": {"kind": "redacted"}}]
+            }))
+        ]))
+        .expect("order artifacts");
+        let space = derive_metric_space(
+            &ScopedView::uniform(&artifacts, &BTreeSet::new()),
+            &LawRoot::Entity(ORDER.to_owned()),
+        )
+        .expect("metric space");
+        let metric = space
+            .candidates()
+            .iter()
+            .find(|c| c.definition.type_params.expr.as_deref() == Some("amount"))
+            .expect("amount sum metric");
         let question: QuestionIR = serde_json::from_value(json!({
             "irVersion": "0.1", "name": QUESTION, "objectSet": ORDER,
-            "aggregate": [{"metric": "order_sum"}],
+            "aggregate": [{"metric": metric.definition.name}],
             "groupBy": [{"path": {"links": [], "property": "occurred_at"}, "grain": "week"}],
             "window": {"start": "2026-10-26T00:00:00Z", "end": "2026-11-02T00:00:00Z"},
             "freshness": {"kind": "live", "maxAgeMs": 5000}
         }))
         .expect("question");
-        let catalog = EffectiveCatalog::from_definitions(
-            std::slice::from_ref(&order),
-            &[],
-            &[],
-            &BTreeSet::new(),
-        )
-        .expect("catalog");
-        let plan = admit(std::slice::from_ref(&metric), &question, &catalog, 100).expect("plan");
-        (order, model, plan)
+        let plan = space.admit(&question, 100).expect("admit plan");
+        (artifacts, model, plan)
     }
 
     fn order_world(
         secret_amount: &str,
         secret_memo: &str,
-    ) -> (DevHost<NativeEngine>, OrderRuntime, tempfile::TempDir) {
+    ) -> (
+        DevHost<NativeEngine>,
+        OrderRuntime,
+        String,
+        tempfile::TempDir,
+    ) {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("orders.sqlite");
-        let (order, model, plan) = order_schema_and_plan();
-        let artifacts = json!([
-            artifact(
-                "shop.Order.entity",
-                "entity",
-                json!([]),
-                json!({"entityVersion": "2.0", "objectType": order})
-            ),
-            artifact(
-                "shop.markings.entity",
-                "entity",
-                json!([]),
-                json!({
-                    "entityVersion": "2.0",
-                    "markings": [{"id": "pii.memo", "label": "Memo", "severity": "high", "category": "pii", "mask": {"kind": "redacted"}}]
-                })
-            )
-        ]);
+        let (artifacts, model, plan) = order_schema_and_plan();
         let scope_key = physical().key();
-        {
-            let mut store =
-                CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default())
-                    .expect("store");
-            store
-                .install_definitions(
-                    model.clone(),
-                    norn_cell::InstalledDefinitionInput {
-                        canonical_set: serde_json::to_string(&artifacts).expect("defs"),
-                        registry: Vec::new(),
-                        receipt_sha256: "ni-order-defs".into(),
-                        admission_receipt: None,
-                        readmission: None,
-                        diff: json!({}),
-                        installed_at: 1,
-                        layout: None,
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).expect("db");
+        store
+            .install_definitions(
+                model,
+                norn_cell::InstalledDefinitionInput {
+                    canonical_set: serde_json::to_string(&artifacts).expect("defs"),
+                    registry: Vec::new(),
+                    receipt_sha256: "ni-order-defs".into(),
+                    admission_receipt: None,
+                    readmission: None,
+                    diff: json!({}),
+                    installed_at: 1,
+                    layout: None,
+                },
+                Some(0),
+                &scope_key,
+            )
+            .expect("install");
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: scope_key,
+                logical_time: 10,
+                writes: vec![
+                    FactWriteRow::Put {
+                        object_type: ORDER.into(),
+                        key: "o-open".into(),
+                        values: BTreeMap::from([
+                            ("occurred_at".into(), V::from("2026-10-27T10:00:00Z")),
+                            ("amount".into(), V::from_json_text("100.00").expect("dec")),
+                            ("memo".into(), V::from(secret_memo)),
+                        ]),
                     },
-                    Some(0),
-                    &scope_key,
-                )
-                .expect("install");
-            store
-                .commit(&CommitBatch {
-                    world: MAIN_WORLD.into(),
-                    scope: scope_key,
-                    logical_time: 10,
-                    writes: vec![
-                        FactWriteRow::Put {
-                            object_type: ORDER.into(),
-                            key: "o-open".into(),
-                            values: BTreeMap::from([
-                                ("occurred_at".into(), V::from("2026-10-27T10:00:00Z")),
-                                ("amount".into(), V::from_json_text("100.00").expect("dec")),
-                                ("memo".into(), V::from(secret_memo)),
-                            ]),
-                        },
-                        FactWriteRow::Put {
-                            object_type: ORDER.into(),
-                            key: "o-secret".into(),
-                            values: BTreeMap::from([
-                                ("occurred_at".into(), V::from("2026-10-27T11:00:00Z")),
-                                (
-                                    "amount".into(),
-                                    V::from_json_text(secret_amount).expect("dec"),
-                                ),
-                                ("memo".into(), V::from(secret_memo)),
-                            ]),
-                        },
-                    ],
-                    ..CommitBatch::default()
-                })
-                .expect("seed orders");
-        }
-        let store =
-            CellStore::open(&path, model, norn_cell::StoreOptions::default()).expect("open");
+                    FactWriteRow::Put {
+                        object_type: ORDER.into(),
+                        key: "o-secret".into(),
+                        values: BTreeMap::from([
+                            ("occurred_at".into(), V::from("2026-10-27T11:00:00Z")),
+                            (
+                                "amount".into(),
+                                V::from_json_text(secret_amount).expect("dec"),
+                            ),
+                            ("memo".into(), V::from(secret_memo)),
+                        ]),
+                    },
+                ],
+                ..CommitBatch::default()
+            })
+            .expect("seed orders");
+        let raw_head = store.read().verified_head().expect("head").hash;
         let host = DevHost::from_store(store, physical(), |cmd| cmd.payload.clone())
             .expect("host")
             .with_authorizer(WorldPolicy)
@@ -778,6 +1159,7 @@ mod tests {
                 plan,
                 min_disclosed: 3,
             },
+            raw_head,
             dir,
         )
     }
@@ -785,27 +1167,19 @@ mod tests {
     #[test]
     fn small_world_d53_answer_and_trace_noninterference() {
         let mut baseline_rows: Option<String> = None;
-        let mut baseline_contribs: Option<Vec<Json>> = None;
+        let mut baseline_contribs: Option<String> = None;
         for (secret_amount, secret_memo) in [
             ("11.11", "classified-alpha"),
             ("4321.99", "classified-beta-longer"),
             ("987654.32", "classified-gamma-secret"),
         ] {
-            let (host, runtime, _dir) = order_world(secret_amount, secret_memo);
+            let (host, runtime, raw_head, _dir) = order_world(secret_amount, secret_memo);
             let answer =
                 get_answer(&host, &scope(), Some("viewer"), QUESTION, &runtime).expect("answer");
             let answer_text = json_of(&answer);
             assert!(!answer_text.contains(secret_amount));
             assert!(!answer_text.contains(secret_memo));
             let live = answer.live().expect("live");
-            let raw_head = host
-                .cell()
-                .expect("cell")
-                .store()
-                .read()
-                .verified_head()
-                .expect("head")
-                .hash;
             assert_ne!(live.revision.hash, raw_head);
             let rows_json = serde_json::to_string(&live.rows).expect("rows json");
             let bucket = &live.rows[WEEK];
@@ -833,27 +1207,20 @@ mod tests {
             let trace_text = json_of(&trace);
             assert!(!trace_text.contains(secret_amount));
             assert!(!trace_text.contains(secret_memo));
-            let normalized: Vec<Json> = trace
-                .contributions
-                .iter()
-                .map(|c| {
-                    assert!(c.fact_digest.is_none());
-                    assert!(matches!(
-                        c.source,
-                        norn_cell::compute::lineage::ContributionSource::Restricted
-                    ));
-                    assert!(c.amounts.is_none());
-                    let mut val = serde_json::to_value(c).expect("contrib json");
-                    if let Some(obj) = val.as_object_mut() {
-                        obj.remove("receiptHash");
-                    }
-                    val
-                })
-                .collect();
+            for c in &trace.contributions {
+                assert!(c.fact_digest.is_none());
+                assert!(c.receipt_hash.is_none());
+                assert!(c.amounts.is_none());
+                assert!(matches!(
+                    c.source,
+                    norn_cell::compute::lineage::ContributionSource::Restricted
+                ));
+            }
+            let contribs_json = serde_json::to_string(&trace.contributions).expect("contribs");
             if let Some(expected) = &baseline_contribs {
-                assert_eq!(&normalized, expected);
+                assert_eq!(&contribs_json, expected);
             } else {
-                baseline_contribs = Some(normalized);
+                baseline_contribs = Some(contribs_json);
             }
         }
     }
