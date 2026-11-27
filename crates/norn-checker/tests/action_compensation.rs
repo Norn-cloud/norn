@@ -257,7 +257,7 @@ fn admits_direct_multi_hop_cross_entity_and_base_compensations() {
     let restore = transition_action(&ActionSpec {
         artifact_id: "crm.contact.restore.action",
         action_id: "crm.contact.restore",
-        scope: org.clone(),
+        scope: org,
         scope_required: &["orgId"],
         ledgered: true,
         lifecycle: ArtifactLifecycle::Active,
