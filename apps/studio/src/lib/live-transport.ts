@@ -38,6 +38,8 @@ export type Mode =
      * capability metadata until the backend lane pins published question discovery on the catalog).
      */
     readonly publishedQuestions: ReadonlySet<string>
+    /** The built-in pages the cell serves beside its definitions (`builtins`): see {@link builtinsOf}. */
+    readonly builtins: readonly Envelope[]
   }
   | { readonly kind: "recorded" }
 
@@ -65,6 +67,20 @@ export function publishedQuestionsOf(document: unknown): ReadonlySet<string> {
   const raw = (document as { publishedQuestions?: unknown } | null)?.publishedQuestions
   if (!Array.isArray(raw)) return new Set()
   return new Set(raw.filter((name): name is string => typeof name === "string" && name !== ""))
+}
+
+/**
+ * The catalog's `builtins`: Studio's pages the cell serves built in, each only while the workspace
+ * installed no definition with its id (norn-api `builtin_pages`). The cell decides which it serves;
+ * Studio holds no page of its own.
+ */
+export function builtinsOf(document: unknown): readonly Envelope[] {
+  const raw = (document as { builtins?: unknown } | null)?.builtins
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((builtin: { artifact?: unknown } | null) => {
+    const artifact = builtin?.artifact
+    return artifact !== null && typeof artifact === "object" && !Array.isArray(artifact) ? [artifact as Envelope] : []
+  })
 }
 
 /**
@@ -184,6 +200,7 @@ async function readDefinitions(fetcher: Fetch, scope: StudioScope, signal?: Abor
     catalog: subRead(read, "/artifacts", read.document.artifacts),
     counts: countsOf(read.document),
     publishedQuestions: publishedQuestionsOf(read.document),
+    builtins: builtinsOf(read.document),
   }
 }
 
@@ -191,9 +208,10 @@ async function readDefinitions(fetcher: Fetch, scope: StudioScope, signal?: Abor
  * The live transport over one connected cell: the catalog and counts its mode read carried. It reads
  * nothing itself; records are read through the decided workspace's reader (`lib/workspace.tsx`).
  */
-export function liveTransport(catalog: Read<readonly Artifact[]>, counts: ObjectCounts = {}): Transport {
+export function liveTransport(catalog: Read<readonly Artifact[]>, counts: ObjectCounts = {}, builtins: readonly Envelope[] = []): Transport {
   return {
     catalog: async () => catalog,
+    builtins: async () => builtins,
     objectCounts: async () => counts,
     definitions: async () => catalog.document.map((artifact, index) => subRead(catalog, `/${index}`, artifact as Envelope)),
     questionBoard: async () => { throw new NotServed("Saved questions are") },

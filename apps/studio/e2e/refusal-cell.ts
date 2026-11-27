@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs"
 import type { Page } from "@playwright/test"
 import { session } from "./object-cell.ts"
+import { withRecordPage } from "./record-page-widget.ts"
 
 /**
  * A replay of the cell's own documents for one refused correction: the scanned invoice
@@ -52,7 +53,8 @@ export async function refusalCell(page: Page, reader: Reader): Promise<RefusalCe
   await session(page)
   await page.route("**/api/host/v1/definitions**", (route) => {
     const { body } = retained("definitions.json")
-    return route.fulfill({ json: body })
+    const served = body as { readonly artifacts: readonly unknown[] }
+    return route.fulfill({ json: { ...served, artifacts: withRecordPage(served.artifacts) } })
   })
   await page.route("**/api/host/v1/access**", (route) => {
     const typed = new URL(route.request().url()).searchParams.get("objectType")

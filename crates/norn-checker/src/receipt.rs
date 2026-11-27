@@ -27,6 +27,9 @@ use norn_ir::{
 use crate::entity_artifacts::{Decoded, EntityArtifactSetContext, Layer, decode_v2};
 use crate::{Diagnostic, DiagnosticCode, diagnostics_to_json};
 
+mod verified;
+pub use verified::{SetCheck, check_artifact_set_with_verified_receipt_by};
+
 /// Diagnostic codes emitted by [`check_artifact_set_with_receipt`].
 pub mod codes {
     /// The set checks clean, but its ZEN Expression type environment cannot
@@ -406,6 +409,7 @@ pub fn check_artifact_set_with_flow_source_map(
         identifier_profile: IDENTIFIER_ADMISSION_PROFILE,
         flow_source_map,
         retained: false,
+        check: crate::check_artifact_set,
     })
 }
 
@@ -423,21 +427,13 @@ pub fn check_artifact_set_with_verified_receipt(
     limits: &ResourceLimitProfile,
     version: &ReceiptVersion,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    if version.semantic_artifact_set != artifacts.identity {
-        return Err(invalid_receipt(
-            "verified receipt profile does not bind the supplied artifact set",
-        ));
-    }
-    let context = artifacts.validated_context(context)?;
-    check_artifact_set_with_profile(ReceiptCheckRequest {
-        artifacts: &artifacts.artifacts,
-        context: &context,
+    check_artifact_set_with_verified_receipt_by(
+        artifacts,
+        context,
         limits,
-        artifact_set: artifacts.identity.clone(),
-        identifier_profile: &version.identifier_profile,
-        flow_source_map: version.flow_source_map.as_ref(),
-        retained: true,
-    })
+        version,
+        crate::check_artifact_set,
+    )
 }
 
 /// Check an install candidate, reusing an active receipt's identifier profile
@@ -508,6 +504,8 @@ struct ReceiptCheckRequest<'a> {
     identifier_profile: &'a str,
     flow_source_map: Option<&'a FlowSourceMap>,
     retained: bool,
+    /// The set check the receipt is issued under.
+    check: SetCheck,
 }
 
 fn check_artifact_set_with_profile(
@@ -521,9 +519,10 @@ fn check_artifact_set_with_profile(
         identifier_profile,
         flow_source_map,
         retained,
+        check,
     } = request;
     let limit_profile = limits.reference()?;
-    let mut diagnostics = crate::check_artifact_set(artifacts, context);
+    let mut diagnostics = check(artifacts, context);
     if !retained {
         for artifact in artifacts {
             if matches!(&artifact.payload, norn_ir::ArtifactPayload::Setting(s) if s.setting_version.as_value() != Some(&norn_ir::JsonValue::String(CURRENT_SETTING_VERSION.into())))
@@ -857,6 +856,7 @@ pub fn recover_legacy_admission_receipt(
             identifier_profile,
             flow_source_map: None,
             retained,
+            check: crate::check_artifact_set,
         })
     };
     let checked = run_profile(IDENTIFIER_ADMISSION_PROFILE, false)?;
@@ -1933,6 +1933,7 @@ mod retained_setting_tests {
             identifier_profile: HISTORICAL_IDENTIFIER_PROFILE,
             flow_source_map: None,
             retained: true,
+            check: crate::check_artifact_set,
         })
         .expect("historical validation")
         .receipt;

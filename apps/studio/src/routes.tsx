@@ -15,7 +15,7 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/": HomePage,
   "/sources": lazyRouteComponent(() => import("./sources.tsx"), "SourcesPage"),
   "/sources/$concept": lazyRouteComponent(() => import("./sources.tsx"), "ObjectTypePage"),
-  "/sources/$concept/$": lazyRouteComponent(() => import("./objects.tsx"), "SourcesItemPage"),
+  "/sources/$concept/$": lazyRouteComponent(() => import("./record/record-page.tsx"), "SourcesItemPage"),
   "/objects/$type": lazyRouteComponent(() => import("./grid/records-page.tsx"), "RecordsPage"),
   "/transforms": lazyRouteComponent(() => import("./transforms.tsx"), "TransformsPage"),
   "/transforms/$id": lazyRouteComponent(() => import("./transforms.tsx"), "TransformPage"),

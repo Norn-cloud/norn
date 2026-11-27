@@ -938,11 +938,10 @@ fn case_distinct_records_never_share_a_sealed_token() -> Result<(), String> {
 /// alone stays unmarked.
 #[test]
 fn the_privacy_pack_admits_over_the_three_systems_set() {
-    use norn_checker::{
-        EntityArtifactSetContext,
-        receipt::{ReceiptSources, check_artifact_set_with_receipt},
-    };
+    // Both rings, as a cell admits the set: it carries a widget (#1762 C2).
+    use norn_checker::{EntityArtifactSetContext, receipt::ReceiptSources};
     use norn_ir::{ArtifactEnvelope, ResourceLimitProfile};
+    use norn_ui_checker::check_artifact_set_with_receipt;
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let read = |path: &str| -> ArtifactEnvelope {
         serde_json::from_str(&std::fs::read_to_string(root.join(path)).unwrap()).unwrap()
