@@ -508,26 +508,20 @@ fn next_indexed_text<E: SqlEngine>(
     index: &str,
     expr: &str,
     extra_where: &str,
-    (hist_world, conn_id, lower, upper, after): (&str, &str, i64, i64, Option<&str>),
+    (hist_world, conn_id, after): (&str, &str, Option<&str>),
 ) -> Result<Option<String>, CellError> {
     use crate::engine::SqlValue;
     let tail = if after.is_some() {
-        format!(" AND {expr} > ?5")
+        format!(" AND {expr} > ?3")
     } else {
         String::new()
     };
     let sql = format!(
         "SELECT {expr} AS val FROM _norn_fact_values INDEXED BY \"{index}\" \
-         WHERE world=?1 AND root_type='source.Connection' AND id=?2 \
-           AND version>?3 AND version<=?4{extra_where}{tail} \
+         WHERE world=?1 AND root_type='source.Connection' AND id=?2{extra_where}{tail} \
          ORDER BY val ASC LIMIT 1"
     );
-    let mut args = vec![
-        SqlValue::from(hist_world),
-        SqlValue::from(conn_id),
-        SqlValue::Integer(lower),
-        SqlValue::Integer(upper),
-    ];
+    let mut args = vec![SqlValue::from(hist_world), SqlValue::from(conn_id)];
     if let Some(prev) = after {
         args.push(SqlValue::from(prev));
     }
@@ -579,17 +573,14 @@ fn latest_foreign_connection_version<E: SqlEngine>(
             .map_or(ForeignBoundary::None, ForeignBoundary::At));
     }
     let mut cursor: Option<String> = None;
-    for _ in 0..super::freshness::MAX_HISTORICAL_CONNECTIONS {
-        let Some(mid) = next_indexed_text(
-            reader,
-            "_norn_fact_values/connection_mapping",
-            "COALESCE(json_extract(snapshot, '$.values.mapping_id'), '')",
-            "",
-            (hist_world, conn_id, after_seq, max_ver, cursor.as_deref()),
-        )?
-        else {
-            return Ok(boundary.map_or(ForeignBoundary::None, ForeignBoundary::At));
-        };
+    let mut in_range_seen = 0_usize;
+    while let Some(mid) = next_indexed_text(
+        reader,
+        "_norn_fact_values/connection_mapping",
+        "COALESCE(json_extract(snapshot, '$.values.mapping_id'), '')",
+        "",
+        (hist_world, conn_id, cursor.as_deref()),
+    )? {
         if mid != mapping_id {
             let ver: Option<i64> = reader.conn.query_optional(
                 "SELECT version FROM _norn_fact_values INDEXED BY \"_norn_fact_values/connection_mapping\" \
@@ -600,14 +591,17 @@ fn latest_foreign_connection_version<E: SqlEngine>(
                 params![hist_world, conn_id, mid.as_str(), after_seq, max_ver],
                 |row| row.get(0),
             )?;
-            boundary = match (boundary, ver) {
-                (Some(a), Some(b)) => Some(a.max(b)),
-                (a, b) => a.or(b),
-            };
+            if let Some(found) = ver {
+                in_range_seen = in_range_seen.saturating_add(1);
+                if in_range_seen > super::freshness::MAX_HISTORICAL_CONNECTIONS {
+                    return Ok(ForeignBoundary::Exceeded);
+                }
+                boundary = Some(boundary.map_or(found, |prev| prev.max(found)));
+            }
         }
         cursor = Some(mid);
     }
-    Ok(ForeignBoundary::Exceeded)
+    Ok(boundary.map_or(ForeignBoundary::None, ForeignBoundary::At))
 }
 
 /// Authenticate every skipped version in `(v_before, v_first)` and return the
@@ -728,23 +722,14 @@ fn prove_rewind_in_range<E: SqlEngine>(
         return Ok(active.is_empty());
     }
     let mut cursor: Option<String> = None;
-    for _ in 0..super::freshness::MAX_HISTORICAL_CONNECTIONS {
-        let Some(wm) = next_indexed_text(
-            reader,
-            "_norn_fact_values/connection_watermark",
-            "COALESCE(json_extract(snapshot, '$.values.watermark'), '')",
-            " AND COALESCE(json_extract(snapshot, '$.values.status'), '')!='failed'",
-            (
-                hist_world,
-                conn_id,
-                lower,
-                upper.saturating_sub(1),
-                cursor.as_deref(),
-            ),
-        )?
-        else {
-            return Ok(active.is_empty());
-        };
+    let mut in_range_seen = 0_usize;
+    while let Some(wm) = next_indexed_text(
+        reader,
+        "_norn_fact_values/connection_watermark",
+        "COALESCE(json_extract(snapshot, '$.values.watermark'), '')",
+        " AND COALESCE(json_extract(snapshot, '$.values.status'), '')!='failed'",
+        (hist_world, conn_id, cursor.as_deref()),
+    )? {
         if wm != initial_wm
             && let Some(witness_ver) = reader.conn.query_optional(
                 "SELECT version FROM _norn_fact_values \
@@ -757,14 +742,20 @@ fn prove_rewind_in_range<E: SqlEngine>(
                 params![hist_world, conn_id, wm.as_str(), lower, upper],
                 |row| row.get::<i64>(0),
             )?
-            && let Some(done) =
-                apply_rewind_witness(reader, hist_world, conn_id, witness_ver, binding, active)?
         {
-            return Ok(done);
+            in_range_seen = in_range_seen.saturating_add(1);
+            if in_range_seen > super::freshness::MAX_HISTORICAL_CONNECTIONS {
+                return Ok(false);
+            }
+            if let Some(done) =
+                apply_rewind_witness(reader, hist_world, conn_id, witness_ver, binding, active)?
+            {
+                return Ok(done);
+            }
         }
         cursor = Some(wm);
     }
-    Ok(false)
+    Ok(active.is_empty())
 }
 
 fn first_run_version_valid<E: SqlEngine>(
@@ -1002,17 +993,32 @@ mod tests {
     use crate::test_door::TestCommit as _;
 
     fn open_conn_store() -> (crate::CellStore<crate::engine::NativeEngine>, String) {
-        let def: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
+        let obj_json = serde_json::json!({
             "name": "source.Connection",
             "properties": [
                 {"id": "status", "type": {"kind": "text"}},
                 {"id": "mapping_id", "type": {"kind": "text"}},
                 {"id": "watermark", "type": {"kind": "text"}}
             ]
-        }))
-        .expect("connection type");
+        });
+        let def: norn_ir::ObjectTypeDef =
+            serde_json::from_value(obj_json.clone()).expect("connection type");
         let model = crate::Model::from_definitions(&[def], &[]).expect("model");
         let mut store = crate::CellStore::open_in_memory(model.clone()).expect("store");
+        let entity: norn_ir::ArtifactEnvelope = serde_json::from_value(serde_json::json!({
+            "irVersion": "0.1",
+            "artifactId": "source.Connection.entity",
+            "kind": "entity",
+            "name": "Connection",
+            "namespace": "source",
+            "version": "1.0.0",
+            "lifecycle": "active",
+            "dependencies": [],
+            "scope": {},
+            "provenance": {"source": "system", "sourcePath": "source.Connection.entity.json"},
+            "payload": {"entityVersion": "2.0", "objectType": obj_json}
+        }))
+        .expect("entity artifact");
         let mapping: norn_ir::ArtifactEnvelope = serde_json::from_value(serde_json::json!({
             "irVersion": "0.1",
             "artifactId": "m.mapping",
@@ -1028,7 +1034,7 @@ mod tests {
         }))
         .expect("mapping artifact");
         let binding = super::super::freshness::mapping_binding_key(&mapping).expect("binding");
-        let canonical_set = serde_json::to_string(&vec![mapping]).expect("canonical_set");
+        let canonical_set = serde_json::to_string(&vec![entity, mapping]).expect("canonical_set");
         let input = crate::InstalledDefinitionInput {
             canonical_set,
             registry: Vec::new(),
