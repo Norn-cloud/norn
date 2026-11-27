@@ -2668,6 +2668,14 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
             required: true,
         },
     ];
+    let deep_or_expr = format!(
+        "{} or (self.large != (self.id == 'null-big' ? null : self.small))",
+        (0..16)
+            .map(|i| format!("self.id == 'm{i}'"))
+            .chain(std::iter::once("self.id == 'null-big'".to_owned()))
+            .collect::<Vec<_>>()
+            .join(" or ")
+    );
     let (_big_dir, big_cell) = support::cell(
         big_type,
         &big_fields,
@@ -2702,15 +2710,16 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
                 "error",
                 "not (self.id != 'null-big' and (self.large == (self.id == 'null-big' ? null : self.small)))",
             ),
+            ("deep_short_circuit_or", "error", &deep_or_expr),
         ],
     );
     let ten_26 = "100000000000000000000000000";
-    // Row 1 (`b-1`): `10^26` overflows `DECIMAL(38,12)` across all 6 rules -> residue (6 rules).
-    // Row 2 (`null`): `COALESCE(NULL, 0.000000000001)` passes 5 rules and fails ONLY `wide_compare` in SQL.
-    // Row 3 (`null-big`): `short_circuit_or` and `short_circuit_and` both short-circuit on their
-    //   row-dependent LHS (`self.id == 'null-big'` / `self.id != 'null-big'`) with 0 residue in BOTH
-    //   DuckDB and DataFusion, while the other 4 rules overflow `DECIMAL(38,12)` -> residue (4 rules).
-    // Row 4 (`b-4`): `5` -> all 6 pass in SQL with 0 residue.
+    // Row 1 (`b-1`): `10^26` overflows `DECIMAL(38,12)` across all 7 rules -> residue (7 rules).
+    // Row 2 (`null`): `COALESCE(NULL, 0.000000000001)` passes 6 rules and fails ONLY `wide_compare` in SQL.
+    // Row 3 (`null-big`): `short_circuit_or`, `short_circuit_and`, and 17-term `deep_short_circuit_or`
+    //   all short-circuit on their row-dependent LHS with 0 residue in BOTH DuckDB and DataFusion,
+    //   while the other 4 rules overflow `DECIMAL(38,12)` -> residue (4 rules).
+    // Row 4 (`b-4`): `5` -> all 7 pass in SQL with 0 residue.
     let big_csv = format!(
         "id,large,small\n\
          b-1,{ten_26},0.000000000001\n\
@@ -2779,7 +2788,7 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
         "DataFusion matches DuckDB's DECIMAL(38, s) storage bound on branch, comparison, and short-circuit logicals"
     );
     assert_eq!(duck_big_landed.residue, df_big_landed.residue);
-    assert_eq!(duck_big_landed.residue[0].rules.len(), 6);
+    assert_eq!(duck_big_landed.residue[0].rules.len(), 7);
     assert_eq!(duck_big_landed.residue[1].rules.len(), 4);
     // Row 2 (`null`) must be held ONLY by `wide_compare` (`0 > 0.000000000001`),
     // NOT by `wide_coalesce`, `no_silent_round_to_zero`, or `nullable_mixed_eq`.

@@ -3750,25 +3750,65 @@ fn lower_conditional(
     })
 }
 
-/// Short-circuiting Boolean `AND` / `OR` via ordered `CASE`: `DuckDB` evaluates
-/// both sides of raw `AND` / `OR` eagerly in projections, whereas ZEN and
-/// `DataFusion` evaluate left to right.
+fn collect_logical<'a>(is_and: bool, node: &'a RowPredicate, out: &mut Vec<&'a RowPredicate>) {
+    if is_and {
+        if let RowPredicate::And(a, b) = node {
+            collect_logical(true, a, out);
+            collect_logical(true, b, out);
+            return;
+        }
+    } else if let RowPredicate::Or(a, b) = node {
+        collect_logical(false, a, out);
+        collect_logical(false, b, out);
+        return;
+    }
+    out.push(node);
+}
+
+/// Short-circuiting Boolean `AND` / `OR` referencing each operand once.
+///
+/// `DuckDB` evaluates both operands of raw `AND` / `OR` eagerly in projections,
+/// and its parser duplicates the operand of simple `CASE expr WHEN ...` across
+/// `WHEN` arms (exponential on left-associated chains like sibling `unless`
+/// clauses). Lowering an associative run through one N-ary `COALESCE` over
+/// `list_extract` encodes `NULL -> -1`, `FALSE -> 0`, `TRUE -> 1`: prefix terms
+/// map short-circuiting states to non-null (`-1` or `0`/`1`) and the continuing
+/// state (`TRUE` for `AND`, `FALSE` for `OR`) to `NULL`, so `COALESCE` stops at
+/// the first deciding or null operand without evaluating later operands, and the
+/// outer `list_extract` decodes back to `BOOLEAN`.
 fn lower_logical(
     is_and: bool,
     a: &RowPredicate,
     b: &RowPredicate,
     table: &TableSchema,
 ) -> Outcome<LoweredRule> {
-    let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
-    let mut guards = a.guards;
-    guards.extend(b.guards);
-    let template = if is_and {
-        "(CASE ({}) WHEN TRUE THEN {} WHEN FALSE THEN FALSE END)"
+    let mut terms = Vec::new();
+    collect_logical(is_and, a, &mut terms);
+    collect_logical(is_and, b, &mut terms);
+    let total = terms.len();
+    let mut guards = Vec::new();
+    let mut args = Vec::with_capacity(total);
+    let prefix_map = if is_and {
+        "list_extract([CAST(-1 AS BIGINT), CAST(0 AS BIGINT), CAST(NULL AS BIGINT)], COALESCE(CAST(({}) AS BIGINT), -1) + 2)"
     } else {
-        "(CASE ({}) WHEN TRUE THEN TRUE WHEN FALSE THEN {} END)"
+        "list_extract([CAST(-1 AS BIGINT), CAST(NULL AS BIGINT), CAST(1 AS BIGINT)], COALESCE(CAST(({}) AS BIGINT), -1) + 2)"
     };
+    for (idx, term) in terms.into_iter().enumerate() {
+        let lowered = lower_node(term, table)?;
+        guards.extend(lowered.guards);
+        let frag = if idx + 1 == total {
+            Frag::fmt("CAST(({}) AS BIGINT)", &[&lowered.sql])
+        } else {
+            Frag::fmt(prefix_map, &[&lowered.sql])
+        };
+        args.push(frag);
+    }
+    let joined = Frag::join(&args, ", ");
     Ok(LoweredRule {
-        sql: Frag::fmt(template, &[&a.sql, &b.sql]),
+        sql: Frag::fmt(
+            "list_extract([CAST(NULL AS BOOLEAN), FALSE, TRUE], COALESCE({}) + 2)",
+            &[&joined],
+        ),
         kind: PredicateKind::Bool,
         guards,
     })
@@ -4053,7 +4093,16 @@ fn check_rules(conn: &Connection, table: &TableSchema, request: &LandRequest) ->
         &format!("INSERT INTO \":outcome\" SELECT {{}} FROM {dataset}"),
         &[&Frag::join(&select, ", ")],
     );
-    db(conn.execute(&outcome.text, params_from_iter(outcome.params)))?;
+    // `DuckDB` 2.0.0's `common_subexpressions` optimizer does not treat
+    // `TRY(...)` as an exception boundary and can hoist a shared throwing
+    // subexpression (such as a mixed-scale `DECIMAL(38, s)` cast) above `TRY`,
+    // aborting the landing query instead of recording residue. Disable CSE for
+    // the outcome projection and always restore it before returning.
+    db(conn.execute_batch("SET disabled_optimizers = 'common_subexpressions';"))?;
+    let executed = conn.execute(&outcome.text, params_from_iter(outcome.params));
+    let reset = conn.execute_batch("RESET disabled_optimizers;");
+    db(executed)?;
+    db(reset)?;
     let held_into = finding_columns(table);
     let held = finding_values(table, "d.\":row\"");
     for (i, check) in request.checks.iter().enumerate() {
