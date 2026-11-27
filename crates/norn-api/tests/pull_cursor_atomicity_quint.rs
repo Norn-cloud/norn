@@ -552,7 +552,7 @@ mod tests {
                 self.oracle.expected_inbox_rows = after_inbox;
                 self.oracle
                     .captured_records
-                    .insert(target_page, captured.records.clone());
+                    .insert(target_page, captured.records);
                 stats.max_page_captured = stats.max_page_captured.max(target_page);
             }
         }
@@ -730,10 +730,10 @@ mod tests {
                 .expect("cursors")
                 .is_empty()
         );
-        assert!(
+        assert_eq!(
             host.pending_source_captures(CONNECTION_ID)
-                .expect("pending")
-                .is_empty()
+                .expect("pending"),
+            Vec::new()
         );
 
         // M3 (noIdempotentReplay): exact duplicate writes zero new _norn_inbox rows; tampered conflicts.
@@ -781,11 +781,11 @@ mod tests {
                 .expect("read canon.Party")
                 .is_some()
         );
-        assert!(
+        assert_eq!(
             reopened
                 .pending_source_captures(CONNECTION_ID)
-                .expect("pending cleared after landing")
-                .is_empty()
+                .expect("pending cleared after landing"),
+            Vec::new()
         );
     }
 }
