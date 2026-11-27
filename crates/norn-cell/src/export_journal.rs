@@ -11,7 +11,7 @@ use tokio::sync::Notify;
 
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
-use crate::export::{EXPORT_FORMAT, ExportRecord};
+use crate::export::{EXPORT_FORMAT, ExportRecord, SourceEvidenceEntry};
 use crate::model::Model;
 use crate::read::{LedgerEntry, StoreReader, to_i64, to_u64};
 use crate::store::{CellStore, CommitBatch, Consumption, DefinitionInstallRecord, Receipt};
@@ -78,6 +78,13 @@ pub(crate) fn consumed_input<E: SqlEngine>(
                     members.extend(reader.pending_observation(&id)?);
                 }
                 members
+            } else if observation_id.starts_with("mapping-bundle:") {
+                reprocessed_target(&pending.observed, observation_id)
+                    .map(|id| reader.pending_observation(id))
+                    .transpose()?
+                    .flatten()
+                    .into_iter()
+                    .collect()
             } else {
                 Vec::new()
             };
@@ -123,14 +130,175 @@ pub(crate) fn consumed_input<E: SqlEngine>(
     }
 }
 
-/// One `_norn_source_evidence` capture-attribution row preserved across export
-/// and replay so historical pinned `:trace` queries keep identical attribution.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct SourceEvidenceEntry {
-    pub(crate) observation_id: String,
-    pub(crate) connection_id: String,
-    pub(crate) captured_commit_seq: i64,
+fn reprocessed_target<'a>(observed: &'a Value, observation_id: &str) -> Option<&'a str> {
+    observed
+        .get("input")
+        .and_then(|input| input.get("reprocesses"))
+        .and_then(Value::as_str)
+        .filter(|target| !target.is_empty() && *target != observation_id)
+}
+
+fn members_valid(
+    observation_id: &str,
+    observed: &Value,
+    members: &[crate::PendingObservation],
+) -> bool {
+    if members
+        .iter()
+        .any(|member| member.position == 0 || member.observation_id == observation_id)
+    {
+        return false;
+    }
+    if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
+        crate::mapping_page::members(observed).is_ok_and(|ids| {
+            members
+                .iter()
+                .all(|member| ids.contains(&member.observation_id))
+        })
+    } else if observation_id.starts_with("mapping-bundle:") {
+        members.is_empty()
+            || (members.len() == 1
+                && members.first().map(|member| member.observation_id.as_str())
+                    == reprocessed_target(observed, observation_id))
+    } else {
+        members.is_empty()
+    }
+}
+
+/// Read late `_norn_source_evidence` rows recorded between commit `commit_seq - 1`
+/// and `commit_seq` for observations already consumed in earlier commits.
+pub(crate) fn read_late_source_evidence<E: SqlEngine>(
+    conn: &E,
+    commit_seq: u64,
+) -> Result<Vec<SourceEvidenceEntry>, CellError> {
+    if commit_seq <= 1 {
+        return Ok(Vec::new());
+    }
+    let prev_seq = to_i64(commit_seq - 1, "source evidence commit_seq")?;
+    let current_seq = to_i64(commit_seq, "commit_seq")?;
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    let inbox = crate::system::INBOX;
+    let rows = conn.query(
+        &format!(
+            "SELECT e.\"observation_id\", e.\"connection_id\", e.\"captured_commit_seq\" \
+             FROM \"{table}\" e \
+             JOIN \"{inbox}\" i ON i.\"observation_id\" = e.\"observation_id\" \
+             WHERE e.\"captured_commit_seq\" = ?1 \
+               AND i.\"consumed_commit_seq\" IS NOT NULL \
+               AND i.\"consumed_commit_seq\" < ?2 \
+             ORDER BY e.\"observation_id\", e.\"connection_id\""
+        ),
+        params![prev_seq, current_seq],
+    )?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    for values in rows {
+        let row = SqlRow(values);
+        out.push(SourceEvidenceEntry {
+            observation_id: row.get(0)?,
+            connection_id: row.get(1)?,
+            captured_commit_seq: row.get(2)?,
+        });
+    }
+    let mut legacy_obs: Vec<String> = out
+        .iter()
+        .map(|entry| entry.observation_id.clone())
+        .collect();
+    legacy_obs.dedup();
+    for obs_id in legacy_obs {
+        let legacy = conn.query_optional(
+            &format!(
+                "SELECT 1 FROM \"{table}\" \
+                 WHERE \"observation_id\" = ?1 AND \"connection_id\" = '' \
+                   AND \"captured_commit_seq\" = -1"
+            ),
+            params![obs_id.as_str()],
+            |_row| Ok(()),
+        )?;
+        if legacy.is_some() {
+            out.push(SourceEvidenceEntry {
+                observation_id: obs_id,
+                connection_id: String::new(),
+                captured_commit_seq: -1,
+            });
+        }
+    }
+    out.sort_by(|a, b| {
+        a.observation_id
+            .cmp(&b.observation_id)
+            .then_with(|| a.connection_id.cmp(&b.connection_id))
+            .then_with(|| a.captured_commit_seq.cmp(&b.captured_commit_seq))
+    });
+    out.dedup();
+    Ok(out)
+}
+
+/// Validate and restore late `_norn_source_evidence` rows carried by one
+/// [`ExportRecord`] before replaying commit `commit_seq`.
+pub(crate) fn restore_late_source_evidence<E: SqlEngine>(
+    conn: &E,
+    commit_seq: u64,
+    entries: &[SourceEvidenceEntry],
+) -> Result<(), CellError> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mismatch =
+        || CellError::HistoricalValueUnproven(format!("source evidence at commit {commit_seq}"));
+    if commit_seq <= 1 {
+        return Err(mismatch());
+    }
+    let prev_seq = to_i64(commit_seq - 1, "source evidence commit_seq")?;
+    let current_seq = to_i64(commit_seq, "commit_seq")?;
+    let inbox = crate::system::INBOX;
+    let mut prev_key: Option<(&str, &str)> = None;
+    for entry in entries {
+        let key = (entry.observation_id.as_str(), entry.connection_id.as_str());
+        if prev_key.is_some_and(|prior| key <= prior) {
+            return Err(mismatch());
+        }
+        prev_key = Some(key);
+        let valid_seq = entry.captured_commit_seq == prev_seq
+            || (entry.captured_commit_seq == -1
+                && entry.connection_id.is_empty()
+                && entries.iter().any(|other| {
+                    other.observation_id == entry.observation_id
+                        && other.captured_commit_seq == prev_seq
+                }));
+        if !valid_seq {
+            return Err(mismatch());
+        }
+        let consumed: Option<i64> = conn
+            .query_optional(
+                &format!(
+                    "SELECT \"consumed_commit_seq\" FROM \"{inbox}\" WHERE \"observation_id\" = ?1"
+                ),
+                params![entry.observation_id.as_str()],
+                |row| row.get(0),
+            )?
+            .flatten();
+        if !consumed.is_some_and(|seq| seq < current_seq) {
+            return Err(mismatch());
+        }
+    }
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    for entry in entries {
+        conn.execute(
+            &format!(
+                "INSERT OR IGNORE INTO \"{table}\" \
+                 (\"observation_id\", \"connection_id\", \"captured_commit_seq\") \
+                 VALUES (?1, ?2, ?3)"
+            ),
+            params![
+                entry.observation_id.as_str(),
+                entry.connection_id.as_str(),
+                entry.captured_commit_seq
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 fn read_source_evidence<E: SqlEngine>(
@@ -222,6 +390,7 @@ pub(crate) fn restore_observation_input<E: SqlEngine>(
             != Some(crate::Consumption::Observation {
                 observation_id: observation_id.to_owned(),
             })
+        || !members_valid(observation_id, observed, members)
     {
         return Err(mismatch());
     }
@@ -428,6 +597,7 @@ pub(crate) fn record<E: SqlEngine>(
         storage_version,
         automation_continuation: automation.continuation,
         automation_inline: automation.inline,
+        source_evidence: read_late_source_evidence(engine, commit_seq)?,
     };
     // The record's hash and its stored encoding both start from its canonical
     // text; canonicalize it once. A steady-state main-world record stores its

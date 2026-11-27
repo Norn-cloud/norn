@@ -2238,6 +2238,11 @@ impl<E: SqlEngine> CellStore<E> {
             for (key, value) in &record.bindings {
                 store.bind(key, value)?;
             }
+            crate::export_journal::restore_late_source_evidence(
+                &store.conn,
+                record.receipt.body.commit_seq,
+                &record.source_evidence,
+            )?;
             if let Some(install) = &record.definition_install {
                 let installed = store.install_retained_definitions(record)?;
                 if installed != install.installed {

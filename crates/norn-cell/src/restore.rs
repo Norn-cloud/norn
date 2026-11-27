@@ -159,6 +159,18 @@ impl CellStore<NativeEngine> {
                 store.bind(key, value)?;
             }
             let seq = record.receipt.body.commit_seq;
+            crate::export_journal::restore_late_source_evidence(
+                &store.conn,
+                seq,
+                &record.source_evidence,
+            )
+            .map_err(|error| {
+                if let CellError::HistoricalValueUnproven(_) = error {
+                    RestoreError::InputMismatch(seq)
+                } else {
+                    RestoreError::Cell(error)
+                }
+            })?;
             if let Some(install) = &record.definition_install {
                 let installed = store.install_retained_definitions(record)?;
                 if installed != install.installed {
