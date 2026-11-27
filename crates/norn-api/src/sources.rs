@@ -32,17 +32,21 @@
 //! connections and the secrets they bind, and a connector resolves no other.
 
 mod auth;
+mod capture;
 
 use std::collections::BTreeMap;
 
 use norn_cell::MappingOutcome;
 use norn_cell::engine::SqlEngine;
 use norn_cell::mapping_bundle::MappingInput;
+use norn_cell::source_cursor::SourceLease;
 use norn_ir::RuntimeValue;
 use serde::{Deserialize, Serialize};
 
 use crate::host::DevHost;
-use crate::pull::{Limits, Pull, PullError, PullProfile, Request, Watermark, observation};
+use crate::pull::{
+    CursorAdvance, Limits, Pull, PullError, PullProfile, Request, Watermark, observation,
+};
 use crate::scope::CellScope;
 pub use auth::secret_env;
 use auth::{auth_headers, client_credentials};
@@ -231,6 +235,10 @@ struct Run {
     /// Sealed rows of the last page not yet mapped, and what follows them.
     queue: std::collections::VecDeque<(norn_kernel::Observed<RuntimeValue>, MappingInput)>,
     after: Option<HttpRequest>,
+    /// Active durable fencing lease acquired from `_norn_source_lease`.
+    lease: Option<SourceLease>,
+    /// Ephemeral cursor advance for the currently draining page.
+    pending_advance: Option<CursorAdvance>,
     watermark_from: String,
     /// Last page's watermarks whose rows were fully drained/ingested.
     committed_watermarks: BTreeMap<String, Watermark>,
@@ -386,6 +394,8 @@ impl Sources {
             held: None,
             queue: std::collections::VecDeque::new(),
             after: None,
+            lease: None,
+            pending_advance: None,
             watermark_from: String::new(),
             committed_watermarks: BTreeMap::new(),
             read: 0,
@@ -559,12 +569,12 @@ impl Sources {
         run.stepped_ms = now_ms;
         run.mapped = 0;
         let outcome = match response {
-            None if run.pull.is_some() => drain(host, run),
-            None => begin(host, &config, &self.secrets, run, watermarks_known)
+            None if run.pull.is_some() => drain(host, &config, run, now_ms),
+            None => begin(host, &config, &self.secrets, run, watermarks_known, now_ms)
                 .map(|first| first.map_or(Next::Done, Next::Request)),
             Some((status, body)) => advance(&config, run, status, body, now_ms).and_then(|after| {
                 run.after = after;
-                drain(host, run)
+                drain(host, &config, run, now_ms)
             }),
         };
         let mapped = run.mapped;
@@ -595,6 +605,10 @@ impl Sources {
             ));
         };
         state.last_end_ms = Some(now_ms);
+        if let Some(lease) = &run.lease {
+            let _released =
+                host.release_source_lease(&config.id, &lease.lease_id, lease.generation);
+        }
         let watermarks = if run.pull.is_some() {
             run.committed_watermarks.clone()
         } else {
@@ -647,6 +661,7 @@ fn begin<E: SqlEngine>(
     secrets: &BTreeMap<String, String>,
     run: &mut Run,
     known: Option<BTreeMap<String, Watermark>>,
+    now_ms: u64,
 ) -> Result<Option<HttpRequest>, Failure> {
     let connector = host
         .installed_artifact(&config.connector)
@@ -680,18 +695,16 @@ fn begin<E: SqlEngine>(
     if token.is_none() {
         run.auth = auth_headers(&payload, secrets, config)?;
     }
-    let stored = host
-        .host_object(crate::sources::CONNECTION_TYPE, &config.id)
-        .ok()
-        .flatten()
-        .and_then(|object| {
-            object
-                .get("watermark")
-                .and_then(RuntimeValue::as_str)
-                .map(str::to_owned)
-        })
-        .and_then(|text| serde_json::from_str::<BTreeMap<String, Watermark>>(&text).ok());
-    let watermarks = stored.or(known).unwrap_or_default();
+    let lease = host
+        .acquire_source_lease(&config.id, &run.id, now_ms, RUN_LEASE_MS)
+        .map_err(|error| {
+            let (code, message) = error.code_and_message();
+            fail(code, message)
+        })?;
+    run.lease = Some(lease);
+    let watermarks = capture::durable_watermarks(host, &config.id)
+        .or(known)
+        .unwrap_or_default();
     run.watermark_from = watermark_text(&watermarks);
     run.committed_watermarks = watermarks.clone();
     let mut pull = Pull::new(profile, watermarks, Limits::default());
@@ -766,7 +779,7 @@ fn advance(
             .take()
             .map(|request| http(config, &run.auth, request)));
     }
-    let rows = pull.accept(status, body).map_err(|error| match &error {
+    let accepted = pull.accept(status, body).map_err(|error| match &error {
         PullError::Status { .. } => fail("source.http_status", error.to_string()),
         PullError::Shape { .. } => fail("source.response_shape", error.to_string()),
         PullError::Bound { .. } => fail("source.bound", error.to_string()),
@@ -776,7 +789,8 @@ fn advance(
     })?;
     let recorded_at = norn_ir::provenance::UtcTimestamp(rfc3339(now_ms));
     let profile = pull.profile().clone();
-    let batch = rows
+    let batch = accepted
+        .rows
         .iter()
         .map(|row| {
             observation(&profile, row, now_ms).map(|raw| {
@@ -796,17 +810,23 @@ fn advance(
         .map_err(|e| fail("source.seal", e))?;
     run.read = run
         .read
-        .saturating_add(u64::try_from(rows.len()).unwrap_or(u64::MAX));
+        .saturating_add(u64::try_from(accepted.rows.len()).unwrap_or(u64::MAX));
     run.queue.extend(batch);
+    run.pending_advance = Some(accepted.advance);
     Ok(pull
         .next_request()
         .map(|request| http(config, &run.auth, request)))
 }
 
-/// SYNC-YIELD-1: map the next page of queued rows (one mapping input, at
-/// most [`PAGE_ROWS`](crate::host::PAGE_ROWS), no source record twice);
-/// continue while rows remain, then send what follows them.
-fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure> {
+/// SYNC-YIELD-1 + SOURCE-CAPTURE-1: capture and map the next page chunk under
+/// the active durable lease; the final chunk (or an empty terminal page)
+/// atomically advances `_norn_source_cursor` in the same SQLite transaction.
+fn drain<E: SqlEngine>(
+    host: &DevHost<E>,
+    config: &ConnectionConfig,
+    run: &mut Run,
+    now_ms: u64,
+) -> Result<Next, Failure> {
     let mut seen = std::collections::BTreeSet::new();
     let first = run.queue.front().map(|(_, input)| input.clone());
     let take = run
@@ -819,25 +839,38 @@ fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure
         .count();
     let chunk: Vec<_> = run.queue.drain(..take).collect();
     run.mapped = chunk.len();
-    if !chunk.is_empty() {
-        let outcomes = host
-            .ingest(&chunk)
-            .map_err(|refusal| fail("source.ingest", refusal.message))?;
-        for ingested in outcomes {
-            crate::pull::tally_outcome(
-                &ingested.outcome,
-                &mut run.landed,
-                &mut run.quarantined,
-                &mut run.reasons,
-            );
-        }
+    let is_final_chunk = run.queue.is_empty();
+    if chunk.is_empty() && run.pending_advance.is_none() {
+        return Ok(run.after.take().map_or(Next::Done, Next::Request));
     }
-    if !run.queue.is_empty() {
+    let lease = run
+        .lease
+        .as_ref()
+        .ok_or_else(|| fail("source.lease_fenced", "no active durable sync lease"))?;
+    let pending = run
+        .pending_advance
+        .as_ref()
+        .ok_or_else(|| fail("source.not_running", "no accepted page pending capture"))?;
+    let spec = capture::cursor_advance_spec(config, lease, pending, now_ms, is_final_chunk)?;
+    let outcomes = host.ingest_source_page(&chunk, &spec).map_err(|error| {
+        let (code, message) = error.code_and_message();
+        fail(code, message)
+    })?;
+    for ingested in outcomes {
+        crate::pull::tally_outcome(
+            &ingested.outcome,
+            &mut run.landed,
+            &mut run.quarantined,
+            &mut run.reasons,
+        );
+    }
+    if !is_final_chunk {
         return Ok(Next::Continue);
     }
-    // PULL-WATERMARK-1: advance durable watermarks only after every row of the
-    // accepted page has been ingested cleanly.
-    if let Some(pull) = &run.pull {
+    // SOURCE-CAPTURE-1: confirm ephemeral Pull watermark only after the cell's
+    // atomic page-capture transaction committed.
+    if let (Some(pull), Some(advance)) = (run.pull.as_mut(), run.pending_advance.take()) {
+        pull.confirm(&advance);
         run.committed_watermarks = pull.watermarks().clone();
     }
     Ok(run.after.take().map_or(Next::Done, Next::Request))
@@ -1008,6 +1041,8 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         held: None,
         queue: std::collections::VecDeque::new(),
         after: None,
+        lease: None,
+        pending_advance: None,
         watermark_from: "{}".to_owned(),
         committed_watermarks: BTreeMap::new(),
         read,

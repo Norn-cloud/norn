@@ -227,6 +227,54 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         self.store.inject_mapping_page(raws, input)
     }
 
+    /// SOURCE-CAPTURE-1: acquire or take over an expired durable sync lease
+    /// with a monotonic fencing generation; see
+    /// [`CellStore::acquire_source_lease`].
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] if another lease is active, or store
+    /// errors.
+    pub fn acquire_source_lease(
+        &mut self,
+        connection_id: &str,
+        lease_id: &str,
+        now_ms: u64,
+        ttl_ms: u64,
+    ) -> Result<crate::source_cursor::SourceLease, CellError> {
+        self.store
+            .acquire_source_lease(connection_id, lease_id, now_ms, ttl_ms)
+    }
+
+    /// SOURCE-CAPTURE-1: release a durable sync lease if `(lease_id, generation)`
+    /// still owns it; see [`CellStore::release_source_lease`].
+    ///
+    /// # Errors
+    /// Store errors.
+    pub fn release_source_lease(
+        &mut self,
+        connection_id: &str,
+        lease_id: &str,
+        generation: u64,
+    ) -> Result<bool, CellError> {
+        self.store
+            .release_source_lease(connection_id, lease_id, generation)
+    }
+
+    /// SOURCE-CAPTURE-1: atomically validate lease + expected previous cursor,
+    /// capture a page (or empty terminal page), and advance `_norn_source_cursor`
+    /// in one SQLite transaction; see [`CellStore::capture_source_page`].
+    ///
+    /// # Errors
+    /// Lease fencing, cursor conflict, framing refusals, or store errors.
+    pub fn capture_source_page(
+        &mut self,
+        raws: &[Observed<Value>],
+        input: Option<&crate::mapping_bundle::MappingInput>,
+        advance: &crate::source_cursor::CursorAdvanceSpec,
+    ) -> Result<crate::mapping_page::CapturedPage, CellError> {
+        self.store.capture_source_page(raws, input, advance)
+    }
+
     /// Begin a private rebuild in this native host's world and tenant scope.
     /// # Errors
     /// Refuses foreign scope, stale slot versions or invalid rebuild declarations.

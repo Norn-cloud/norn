@@ -89,18 +89,11 @@ pub struct CapturedPage {
 }
 
 impl<E: SqlEngine> CellStore<E> {
-    /// Capture a page of raw source records read from one dataset. Framing
-    /// (record count, payload bytes, a repeated record identity) refuses the
-    /// whole page before anything is captured.
-    ///
-    /// # Errors
-    /// Framing refusals, invalid pins, or the durable inbox failure.
-    pub fn inject_mapping_page(
-        &mut self,
+    fn validate_page_framing(
         raws: &[Observed<RuntimeValue>],
         input: &MappingInput,
-    ) -> Result<CapturedPage, CellError> {
-        if raws.is_empty() || raws.len() > MAX_PAGE_RECORDS {
+    ) -> Result<(), CellError> {
+        if raws.len() > MAX_PAGE_RECORDS {
             return Err(CellError::OutOfRange("mapping page records"));
         }
         let mut bytes = 0_usize;
@@ -121,78 +114,144 @@ impl<E: SqlEngine> CellStore<E> {
         if bytes > MAX_PAGE_BYTES {
             return Err(CellError::OutOfRange("mapping page bytes"));
         }
+        Ok(())
+    }
+
+    fn capture_mapping_page_rows_in_tx(
+        &mut self,
+        raws: &[Observed<RuntimeValue>],
+        input: &MappingInput,
+        canonical: &CommitModel<'_>,
+    ) -> Result<CapturedPage, CellError> {
+        // Capture writes only inbox rows: a plan proven once holds for
+        // every record of the page (INGEST-DERIVE-ONCE-1).
+        let _pinned = crate::mapping_bundle::PinnedPlans::open(&self.mapping_plans);
+        let mut runs: Vec<(Vec<String>, BTreeSet<FactKey>, &Observed<RuntimeValue>)> = Vec::new();
+        let mut records = Vec::with_capacity(raws.len());
+        let mut split = false;
+        // Whether a record this page commits was captured yet.
+        let mut member = false;
+        for raw in raws {
+            let (id, new) = self.capture_mapping_bundle(raw, input)?;
+            records.push(id.clone());
+            if !id.starts_with("mapping-bundle:") {
+                // Conflict and identity findings stay pending, as one by
+                // one. OBS-LINK-DISPUTE-1: a new one after a member would
+                // exist at that member's commit, which one by one makes
+                // before capturing it; the transaction rolls back.
+                if new && member {
+                    return Err(CellError::MappingPageSpansDispute);
+                }
+                continue;
+            }
+            let bundle = self.read().inbox_bundle(&id)?;
+            if !bundle.diagnostics.is_empty() {
+                // INGEST-BATCH-1: a record the mapping refused is quarantined
+                // evidence before any commit, as one by one; it joins no
+                // page, so it never sends its page down the per-record path.
+                // It still ends the run: records on either side of it never
+                // share a commit they would not share one by one
+                // (OBS-PAGE-EQUIV).
+                split = true;
+                continue;
+            }
+            let keys: BTreeSet<FactKey> = bundle
+                .records
+                .iter()
+                .map(|r| canonical.canonical(&FactKey::new(r.object_type.as_str(), &r.key)))
+                .collect();
+            member = true;
+            match runs.last_mut() {
+                Some((ids, written, _)) if !split && written.is_disjoint(&keys) => {
+                    ids.push(id);
+                    written.extend(keys);
+                }
+                _ => runs.push((vec![id], keys, raw)),
+            }
+            split = false;
+        }
+        let mut pages = Vec::with_capacity(runs.len());
+        for (ids, _, first) in runs {
+            let digest = norn_ir::canonical::domain_hash_hex(b"norn.mapping.page.v1\0", &ids)?;
+            let id = format!("{PAGE_PREFIX}{digest}");
+            let observed = Observed {
+                id: ObservationId(id.clone()),
+                provenance: first.provenance.clone(),
+                input: norn_ir::runtime_object! {
+                    "contract" => PAGE_CONTRACT,
+                    "members" => RuntimeValue::Array(ids.into_iter().map(RuntimeValue::from).collect()),
+                },
+            };
+            let inserted = crate::store::inject_observation(
+                &self.conn,
+                &id,
+                &norn_ir::runtime::encode(&observed).map_err(CellError::Encoding)?,
+            )?;
+            pages.push((id, inserted));
+        }
+        Ok(CapturedPage { pages, records })
+    }
+
+    /// Capture a page of raw source records read from one dataset. Framing
+    /// (record count, payload bytes, a repeated record identity) refuses the
+    /// whole page before anything is captured.
+    ///
+    /// # Errors
+    /// Framing refusals, invalid pins, or the durable inbox failure.
+    pub fn inject_mapping_page(
+        &mut self,
+        raws: &[Observed<RuntimeValue>],
+        input: &MappingInput,
+    ) -> Result<CapturedPage, CellError> {
+        if raws.is_empty() {
+            return Err(CellError::OutOfRange("mapping page records"));
+        }
+        Self::validate_page_framing(raws, input)?;
+        let model = self.model().clone();
+        let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
+        let canonical = CommitModel::new(&catalog);
+        self.write_tx(|| self.capture_mapping_page_rows_in_tx(raws, input, &canonical))
+    }
+
+    /// SOURCE-CAPTURE-1: validate the active fencing lease and expected
+    /// previous cursor, capture every row (or quarantine evidence, or empty
+    /// terminal page when `raws` is empty), and advance `_norn_source_cursor`
+    /// atomically in one SQLite transaction.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`], [`CellError::SourceCursorConflict`],
+    /// framing refusals, invalid pins, or store failures (rolling back both
+    /// inbox capture and cursor advancement).
+    pub fn capture_source_page(
+        &mut self,
+        raws: &[Observed<RuntimeValue>],
+        input: Option<&MappingInput>,
+        advance: &crate::source_cursor::CursorAdvanceSpec,
+    ) -> Result<CapturedPage, CellError> {
+        let input = if raws.is_empty() {
+            None
+        } else {
+            let input = input.ok_or(CellError::MappingBundleMismatch)?;
+            Self::validate_page_framing(raws, input)?;
+            Some(input)
+        };
+        let obs_ids: Vec<&str> = raws.iter().map(|raw| raw.id.0.as_str()).collect();
+        let digest = crate::source_cursor::page_digest(advance, &obs_ids)?;
         let model = self.model().clone();
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
         self.write_tx(|| {
-            // Capture writes only inbox rows: a plan proven once holds for
-            // every record of the page (INGEST-DERIVE-ONCE-1).
-            let _pinned = crate::mapping_bundle::PinnedPlans::open(&self.mapping_plans);
-            let mut runs: Vec<(Vec<String>, BTreeSet<FactKey>, &Observed<RuntimeValue>)> =
-                Vec::new();
-            let mut records = Vec::with_capacity(raws.len());
-            let mut split = false;
-            // Whether a record this page commits was captured yet.
-            let mut member = false;
-            for raw in raws {
-                let (id, new) = self.capture_mapping_bundle(raw, input)?;
-                records.push(id.clone());
-                if !id.starts_with("mapping-bundle:") {
-                    // Conflict and identity findings stay pending, as one by
-                    // one. OBS-LINK-DISPUTE-1: a new one after a member would
-                    // exist at that member's commit, which one by one makes
-                    // before capturing it; the transaction rolls back.
-                    if new && member {
-                        return Err(CellError::MappingPageSpansDispute);
-                    }
-                    continue;
-                }
-                let bundle = self.read().inbox_bundle(&id)?;
-                if !bundle.diagnostics.is_empty() {
-                    // INGEST-BATCH-1: a record the mapping refused is quarantined
-                    // evidence before any commit, as one by one; it joins no
-                    // page, so it never sends its page down the per-record path.
-                    // It still ends the run: records on either side of it never
-                    // share a commit they would not share one by one
-                    // (OBS-PAGE-EQUIV).
-                    split = true;
-                    continue;
-                }
-                let keys: BTreeSet<FactKey> = bundle
-                    .records
-                    .iter()
-                    .map(|r| canonical.canonical(&FactKey::new(r.object_type.as_str(), &r.key)))
-                    .collect();
-                member = true;
-                match runs.last_mut() {
-                    Some((ids, written, _)) if !split && written.is_disjoint(&keys) => {
-                        ids.push(id);
-                        written.extend(keys);
-                    }
-                    _ => runs.push((vec![id], keys, raw)),
-                }
-                split = false;
-            }
-            let mut pages = Vec::with_capacity(runs.len());
-            for (ids, _, first) in runs {
-                let digest = norn_ir::canonical::domain_hash_hex(b"norn.mapping.page.v1\0", &ids)?;
-                let id = format!("{PAGE_PREFIX}{digest}");
-                let observed = Observed {
-                    id: ObservationId(id.clone()),
-                    provenance: first.provenance.clone(),
-                    input: norn_ir::runtime_object! {
-                        "contract" => PAGE_CONTRACT,
-                        "members" => RuntimeValue::Array(ids.into_iter().map(RuntimeValue::from).collect()),
-                    },
-                };
-                let inserted = crate::store::inject_observation(
-                    &self.conn,
-                    &id,
-                    &norn_ir::runtime::encode(&observed).map_err(CellError::Encoding)?,
-                )?;
-                pages.push((id, inserted));
-            }
-            Ok(CapturedPage { pages, records })
+            let precondition =
+                crate::source_cursor::check_capture_precondition(&self.conn, advance, &digest)?;
+            let captured = match input {
+                Some(input) => self.capture_mapping_page_rows_in_tx(raws, input, &canonical)?,
+                None => CapturedPage {
+                    pages: Vec::new(),
+                    records: Vec::new(),
+                },
+            };
+            crate::source_cursor::commit_cursor_in_tx(&self.conn, advance, &digest, &precondition)?;
+            Ok(captured)
         })
     }
 }
