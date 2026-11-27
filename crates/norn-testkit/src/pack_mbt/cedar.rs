@@ -299,12 +299,7 @@ where
 
     let ledger_before = host.ledger_len();
     let scope_map = scope_key_to_map(attempt.caller_scope);
-    let res_attrs_schema = rc
-        .cedar
-        .projected_attrs
-        .get(rc.rule.resource_type.as_str())
-        .cloned()
-        .unwrap_or_default();
+    let projected_attrs = rc.cedar.projected_attrs.clone();
     let prin_schema = rc.cedar.principal_attrs.clone();
     let rule_clone = rc.rule.clone();
     let roles = attempt.roles.to_vec();
@@ -315,8 +310,12 @@ where
         Arc::clone(rc.cedar.coverage),
         Some(rc.hint.clone()),
         move |auth_req| {
-            let res_attrs =
-                project_resource_attrs_from_values(auth_req.target_values, &res_attrs_schema);
+            let res_attrs = projected_attrs
+                .get(auth_req.target.object_type.as_str())
+                .or_else(|| projected_attrs.get(rule_clone.resource_type.as_str()))
+                .map_or_else(BTreeMap::new, |schema| {
+                    project_resource_attrs_from_values(auth_req.target_values, schema)
+                });
             let prin_attrs =
                 build_principal_attrs_for_actor(auth_req.actor, &rule_clone, &prin_schema);
             Ok(AccessRequest::new(

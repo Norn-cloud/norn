@@ -22,10 +22,11 @@ use norn_ir::{Diagnostic, DiagnosticRemediation, DiagnosticSeverity};
 mod boundary;
 mod decimal;
 mod expression;
+pub(crate) use boundary::normalize_ledger_pack_for_conservation;
 pub use boundary::{
-    LedgerPackSeal, classify_quantity_replay, conservation_certificate_sha256, ledger_pack_sha256,
-    ledger_unit_bindings_sha256, prepare_quantity_posting, seal_ledger_pack,
-    verify_conservation_certificate, verify_quantity_commit_observation,
+    LedgerPackSeal, classify_quantity_replay, compile_ledger_pack, conservation_certificate_sha256,
+    ledger_pack_sha256, ledger_unit_bindings_sha256, prepare_quantity_posting, seal_ledger_pack,
+    validate_ledger_pack, verify_conservation_certificate, verify_quantity_commit_observation,
 };
 use decimal::checked_pow10;
 pub use expression::lower_ledger_amount_expression;
@@ -285,29 +286,7 @@ struct NormalizedLinear {
     coefficients: BTreeMap<String, i128>,
 }
 
-/// Validates identifiers, exact numeric premises, bounded evaluation, and
-/// symbolic conservation for a ledger pack.
-#[must_use]
-pub fn validate_ledger_pack(pack: &LedgerPackIr) -> LedgerPackValidation {
-    check_ledger_pack(pack).0
-}
-
-/// Compiles a valid pack into the one normalized representation consumed at
-/// runtime. Invalid packs return deterministic first-N diagnostics and a typed refusal
-/// when the count or serialized-byte budget is exhausted.
-///
-/// # Errors
-///
-/// Returns the [`LedgerPackValidation`] report containing all collected
-/// diagnostics when the pack fails validation.
-pub fn compile_ledger_pack(
-    pack: &LedgerPackIr,
-) -> Result<CompiledLedgerPack, LedgerPackValidation> {
-    let (validation, compiled) = check_ledger_pack(pack);
-    compiled.ok_or(validation)
-}
-
-fn check_ledger_pack(pack: &LedgerPackIr) -> (LedgerPackValidation, Option<CompiledLedgerPack>) {
+fn check_ledger_pack_raw(pack: &LedgerPackIr) -> (LedgerPackValidation, CompiledLedgerPack, bool) {
     let mut diagnostics = LedgerDiagnostics::default();
     let artifact_id = nonempty(pack.pack_id.as_str()).then(|| pack.pack_id.clone());
     let pack_sha256 = ledger_pack_sha256(pack);
@@ -345,6 +324,7 @@ fn check_ledger_pack(pack: &LedgerPackIr) -> (LedgerPackValidation, Option<Compi
     }
 
     let ok = diagnostics.is_empty();
+    let truncated = diagnostics.truncated;
     if !ok {
         certificates.clear();
     }
@@ -353,11 +333,11 @@ fn check_ledger_pack(pack: &LedgerPackIr) -> (LedgerPackValidation, Option<Compi
         diagnostics: diagnostics.entries,
         certificates,
     };
-    let compiled = validation.ok.then(|| CompiledLedgerPack {
+    let compiled = CompiledLedgerPack {
         pack_id: pack.pack_id.clone(),
         templates: compiled_templates,
-    });
-    (validation, compiled)
+    };
+    (validation, compiled, truncated)
 }
 
 struct PackCheckContext<'a> {

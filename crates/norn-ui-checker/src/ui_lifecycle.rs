@@ -216,6 +216,18 @@ impl Page<'_> {
         let ui = crate::ui_machine::page_net(self.machine);
         let opening = ui.initial.first().copied();
         let backend_net = Self::opening(&backend, opening, &assumed);
+        if backend_net.initial.is_empty() {
+            Self::push(
+                findings,
+                ASSUMPTION_VIOLATED,
+                opening.map_or_else(
+                    || self.base.to_owned(),
+                    |state| self.assumption_pointer(state),
+                ),
+                "opening page state assumes no reachable lifecycle state".to_owned(),
+            );
+            return;
+        }
         let product = match compose::compose(&ui, &backend_net, &sync) {
             Ok(product) => product,
             Err(error) => {
@@ -500,6 +512,32 @@ impl Page<'_> {
                 usable = false;
                 continue;
             };
+            if assumed.contains_key(&state) {
+                Self::push(
+                    findings,
+                    UNKNOWN_REFERENCE,
+                    format!("{pointer}/stateId"),
+                    format!(
+                        "page state `{}` declares duplicate lifecycle assumptions",
+                        entry.state_id
+                    ),
+                );
+                usable = false;
+                continue;
+            }
+            if entry.lifecycle_states.is_empty() {
+                Self::push(
+                    findings,
+                    UNKNOWN_REFERENCE,
+                    format!("{pointer}/lifecycleStates"),
+                    format!(
+                        "assumption for page state `{}` must list at least one lifecycle state",
+                        entry.state_id
+                    ),
+                );
+                usable = false;
+                continue;
+            }
             let mut states = BTreeSet::new();
             for (position, name) in entry.lifecycle_states.iter().enumerate() {
                 if let Some(found) = backend.state(name) {

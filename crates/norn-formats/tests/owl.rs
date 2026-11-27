@@ -367,15 +367,20 @@ fn ratios(witnesses: WitnessPolicy) -> norn_formats::SchemaImport {
     import_ratios(RATIOS, witnesses)
 }
 
-/// Import `text` with the `ex-rt` namespace owned.
-fn import_ratios(text: &'static str, witnesses: WitnessPolicy) -> norn_formats::SchemaImport {
+fn ratios_config(bytes: &[u8], witnesses: WitnessPolicy) -> norn_formats::owl::OwlConfig {
     let mut config = config();
-    config.graph_sha256 = sha256_hex(text.as_bytes());
+    config.graph_sha256 = sha256_hex(bytes);
     config.namespaces = vec![OwlNamespace {
         iri: "https://example.org/onto/Ratios/".into(),
         prefix: "ex-rt".into(),
     }];
     config.witnesses = witnesses;
+    config
+}
+
+/// Import `text` with the `ex-rt` namespace owned.
+fn import_ratios(text: &str, witnesses: WitnessPolicy) -> norn_formats::SchemaImport {
+    let config = ratios_config(text.as_bytes(), witnesses);
     let graph = OwlGraph {
         path: "ratios.nt",
         bytes: text.as_bytes(),
@@ -728,4 +733,110 @@ fn owl_only_the_selected_annotation_is_mapped() {
         "{:?}",
         notes_definition.disposition
     );
+}
+
+#[test]
+fn owl_dag_blank_node_blowup_is_refused_within_budget() {
+    use std::fmt::Write as _;
+
+    let mut nt = String::from(
+        "<https://example.org/onto/Ratios/A> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n\
+         <https://example.org/onto/Ratios/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:b0 .\n",
+    );
+    for level in 0..24_u32 {
+        let next = level.saturating_add(1);
+        writeln!(
+            nt,
+            "_:b{level} <https://example.org/onto/Ratios/l> _:b{next} .\n\
+             _:b{level} <https://example.org/onto/Ratios/r> _:b{next} ."
+        )
+        .unwrap();
+    }
+    nt.push_str("_:b24 <https://example.org/onto/Ratios/leaf> \"x\" .\n");
+    let config = ratios_config(nt.as_bytes(), WitnessPolicy::Open);
+    let import = OwlReader.import(
+        OwlGraph {
+            path: "ratios.nt",
+            bytes: nt.as_bytes(),
+        },
+        &config,
+    );
+    assert!(
+        import
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("rendering size limit")),
+        "{:?}",
+        import.diagnostics
+    );
+}
+
+#[test]
+fn owl_accepts_long_rdf_lists_and_all_disjoint_classes_without_spurious_statements() {
+    use std::fmt::Write as _;
+
+    let mut nt = String::new();
+    nt.push_str(
+        "_:disj <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#AllDisjointClasses> .\n\
+         _:disj <http://www.w3.org/2002/07/owl#members> _:n0 .\n",
+    );
+    for i in 0..40_u32 {
+        writeln!(
+            nt,
+            "<https://example.org/onto/Ratios/C{i}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n\
+             _:n{i} <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://example.org/onto/Ratios/C{i}> ."
+        )
+        .unwrap();
+        let next = i.saturating_add(1);
+        if next < 40 {
+            writeln!(
+                nt,
+                "_:n{i} <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:n{next} ."
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                nt,
+                "_:n{i} <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> ."
+            )
+            .unwrap();
+        }
+    }
+    let import = import_ratios(&nt, WitnessPolicy::Open);
+    assert_eq!(import.diagnostics, [], "{:?}", import.diagnostics);
+    assert!(
+        !import
+            .loss_report
+            .entries
+            .iter()
+            .any(|e| matches!(&e.element, SourceElement::Definition { family, .. } if family == "owl.statement")),
+        "list cons-cells owned by owl:AllDisjointClasses must not leak as owl.statement entries"
+    );
+}
+
+#[test]
+fn owl_self_subclass_is_mapped_and_external_subclass_names_subclass() {
+    let nt = concat!(
+        "<https://example.org/onto/Ratios/Selfie> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n",
+        "<https://example.org/onto/Ratios/Selfie> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://example.org/onto/Ratios/Selfie> .\n",
+        "<https://external.example/Ext> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n",
+        "<https://external.example/Ext> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://example.org/onto/Ratios/Selfie> .\n",
+    );
+    let import = import_ratios(nt, WitnessPolicy::Open);
+    assert_eq!(import.diagnostics, [], "{:?}", import.diagnostics);
+    assert_eq!(
+        code_of(&import, "SubClassOf(ex-rt:Selfie ex-rt:Selfie)"),
+        "mapped"
+    );
+    let ext = import
+        .loss_report
+        .entry(&SourceElement::definition(
+            "owl.axiom",
+            "SubClassOf(<https://external.example/Ext> ex-rt:Selfie)",
+        ))
+        .expect("ext subclass entry");
+    let Disposition::Deferred { detail, .. } = &ext.disposition else {
+        panic!("{:?}", ext.disposition);
+    };
+    assert!(detail.contains("the subclass"), "{detail}");
 }

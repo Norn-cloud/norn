@@ -196,14 +196,10 @@ impl Lineage {
                 path: path.clone(),
             }));
         };
-        let Some((entity, object)) = self.types.get(object_type) else {
+        if !self.types.contains_key(object_type) {
             return carried;
-        };
+        }
         let member = format!("{object_type}.{property}");
-        push(
-            strings(object.get("markings")),
-            format!("{object_type} (every property of the type)"),
-        );
         let declared = |holder: &Value| {
             holder
                 .get("properties")
@@ -213,45 +209,110 @@ impl Lineage {
                 .find(|candidate| candidate.get("id").and_then(Value::as_str) == Some(property))
                 .cloned()
         };
-        for holder in
-            std::iter::once(object).chain(self.extensions.get(object_type).into_iter().flatten())
-        {
-            if let Some(own) = declared(holder) {
-                push(strings(own.get("markings")), member.clone());
-                if let Some(shared) = own
-                    .get("type")
-                    .filter(|kind| kind.get("kind").and_then(Value::as_str) == Some("ref"))
-                    .and_then(|kind| kind.get("name"))
-                    .and_then(Value::as_str)
+        let mut visited_types = BTreeSet::new();
+        let mut pending_interfaces = Vec::new();
+        let mut current = Some(object_type.to_owned());
+        while let Some(type_name) = current {
+            if !visited_types.insert(type_name.clone()) {
+                break;
+            }
+            let Some((entity, object)) = self.types.get(&type_name) else {
+                break;
+            };
+            let is_self = type_name == object_type;
+            let type_path = if is_self {
+                format!("{object_type} (every property of the type)")
+            } else {
+                format!("{member} ← supertype {type_name} (every property of the type)")
+            };
+            push(strings(object.get("markings")), type_path);
+            pending_interfaces.extend(strings(object.get("implements")));
+            for holder in
+                std::iter::once(object).chain(self.extensions.get(&type_name).into_iter().flatten())
+            {
+                if let Some(own) = declared(holder) {
+                    let prop_path = if is_self {
+                        member.clone()
+                    } else {
+                        format!("{member} ← supertype {type_name}.{property}")
+                    };
+                    push(strings(own.get("markings")), prop_path);
+                    if let Some(shared) = shared_property_type(&own)
+                        && let Some(markings) = self.property_types.get(shared)
+                    {
+                        push(
+                            markings.clone(),
+                            format!("{member} ← property type {shared}"),
+                        );
+                    }
+                }
+            }
+            for (markings, path) in self.mapped(entity, &member, property) {
+                push(markings, path);
+            }
+            current = object
+                .get("extends")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+        }
+        self.carried_from_interfaces(&member, property, pending_interfaces, &mut carried);
+        carried.sort();
+        carried.dedup();
+        carried
+    }
+
+    fn carried_from_interfaces(
+        &self,
+        member: &str,
+        property: &str,
+        mut pending_interfaces: Vec<String>,
+        carried: &mut Vec<Carried>,
+    ) {
+        let mut push = |markings: Vec<String>, path: String| {
+            carried.extend(markings.into_iter().map(|marking| Carried {
+                marking,
+                path: path.clone(),
+            }));
+        };
+        let mut visited_interfaces = BTreeSet::new();
+        while let Some(interface) = pending_interfaces.pop() {
+            if !visited_interfaces.insert(interface.clone()) {
+                continue;
+            }
+            let Some(declared_by) = self.interfaces.get(&interface) else {
+                continue;
+            };
+            push(
+                strings(declared_by.get("markings")),
+                format!("{member} ← interface {interface}"),
+            );
+            if let Some(own) = declared_by
+                .get("properties")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|candidate| candidate.get("id").and_then(Value::as_str) == Some(property))
+            {
+                push(
+                    strings(own.get("markings")),
+                    format!("{member} ← interface {interface}.{property}"),
+                );
+                if let Some(shared) = shared_property_type(own)
                     && let Some(markings) = self.property_types.get(shared)
                 {
                     push(
                         markings.clone(),
-                        format!("{member} ← property type {shared}"),
+                        format!(
+                            "{member} ← interface {interface}.{property} ← property type {shared}"
+                        ),
                     );
                 }
             }
-        }
-        for interface in strings(object.get("implements")) {
-            if let Some(declared_by) = self.interfaces.get(&interface) {
-                push(
-                    strings(declared_by.get("markings")),
-                    format!("{member} ← interface {interface}"),
-                );
-                if let Some(own) = declared(declared_by) {
-                    push(
-                        strings(own.get("markings")),
-                        format!("{member} ← interface {interface}.{property}"),
-                    );
-                }
+            pending_interfaces.extend(strings(declared_by.get("extends")));
+            if let Some(parent) = declared_by.get("extends").and_then(Value::as_str) {
+                pending_interfaces.push(parent.to_owned());
             }
         }
-        for (markings, path) in self.mapped(entity, &member, property) {
-            push(markings, path);
-        }
-        carried.sort();
-        carried.dedup();
-        carried
     }
 
     /// The markings mappings carry into `property` from classified source
@@ -279,6 +340,10 @@ impl Lineage {
                 else {
                     continue;
                 };
+                let when_read = map
+                    .get("when")
+                    .filter(|expr| !expr.is_null())
+                    .map(|expr| expr.as_str().map_or_else(whole_root_reads, input_reads));
                 for written in map
                     .get("properties")
                     .and_then(Value::as_array)
@@ -288,46 +353,116 @@ impl Lineage {
                         written.get("property").and_then(Value::as_str) == Some(property)
                     })
                 {
-                    let expression = written.get("value").and_then(Value::as_str).unwrap_or("");
-                    for field in input_fields(expression) {
-                        for (schema, markings) in self
-                            .source_fields
-                            .get(&(dataset.to_owned(), field.clone()))
-                            .into_iter()
-                            .flatten()
-                        {
-                            paths.push((
-                                markings.clone(),
-                                format!(
-                                    "{schema}: {dataset}.{field} → mapping {mapping} → {member}"
-                                ),
-                            ));
+                    if let Some(when_read) = &when_read {
+                        self.push_dataset_reads(dataset, when_read, mapping, member, &mut paths);
+                    }
+                    let value_read = written
+                        .get("value")
+                        .and_then(Value::as_str)
+                        .map_or_else(whole_root_reads, input_reads);
+                    if let Some(nested) = written.get("nested").filter(|value| !value.is_null()) {
+                        let parent_read = nested.get("field").and_then(Value::as_str).map_or_else(
+                            whole_root_reads,
+                            |field| norn_expr::ExpressionReads {
+                                fields: BTreeSet::from([field.to_owned()]),
+                                whole_root: false,
+                            },
+                        );
+                        self.push_dataset_reads(dataset, &parent_read, mapping, member, &mut paths);
+                        let where_read = nested
+                            .get("where")
+                            .and_then(Value::as_str)
+                            .map_or_else(whole_root_reads, input_reads);
+                        let mut child_read = value_read;
+                        child_read.whole_root |= where_read.whole_root;
+                        child_read.fields.extend(where_read.fields);
+                        if let Some(child_dataset) = nested.get("dataset").and_then(Value::as_str) {
+                            self.push_dataset_reads(
+                                child_dataset,
+                                &child_read,
+                                mapping,
+                                member,
+                                &mut paths,
+                            );
+                        } else {
+                            self.push_dataset_reads(
+                                dataset,
+                                &whole_root_reads(),
+                                mapping,
+                                member,
+                                &mut paths,
+                            );
                         }
+                    } else {
+                        self.push_dataset_reads(dataset, &value_read, mapping, member, &mut paths);
                     }
                 }
             }
         }
         paths
     }
+
+    fn push_dataset_reads(
+        &self,
+        dataset: &str,
+        read: &norn_expr::ExpressionReads,
+        mapping: &str,
+        member: &str,
+        paths: &mut Vec<(Vec<String>, String)>,
+    ) {
+        if read.whole_root {
+            for ((source_dataset, field), schemas) in &self.source_fields {
+                if source_dataset != dataset {
+                    continue;
+                }
+                for (schema, markings) in schemas {
+                    paths.push((
+                        markings.clone(),
+                        format!("{schema}: {dataset}.{field} → mapping {mapping} → {member}"),
+                    ));
+                }
+            }
+        } else {
+            for field in &read.fields {
+                for (schema, markings) in self
+                    .source_fields
+                    .get(&(dataset.to_owned(), field.clone()))
+                    .into_iter()
+                    .flatten()
+                {
+                    paths.push((
+                        markings.clone(),
+                        format!("{schema}: {dataset}.{field} → mapping {mapping} → {member}"),
+                    ));
+                }
+            }
+        }
+    }
 }
 
-/// The source fields an expression reads (`input.<field>`).
-fn input_fields(expression: &str) -> Vec<String> {
-    let mut fields = Vec::new();
-    let mut rest = expression;
-    while let Some(at) = rest.find("input.") {
-        let before = rest.get(..at).and_then(|text| text.chars().last());
-        let after = rest.get(at.saturating_add("input.".len())..).unwrap_or("");
-        let field: String = after
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-            .collect();
-        if !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') && !field.is_empty() {
-            fields.push(field.clone());
-        }
-        rest = after.get(field.len()..).unwrap_or("");
+fn whole_root_reads() -> norn_expr::ExpressionReads {
+    norn_expr::ExpressionReads {
+        fields: BTreeSet::new(),
+        whole_root: true,
     }
-    fields
+}
+
+fn shared_property_type(property: &Value) -> Option<&str> {
+    property
+        .get("type")
+        .filter(|kind| kind.get("kind").and_then(Value::as_str) == Some("ref"))
+        .and_then(|kind| kind.get("name"))
+        .and_then(Value::as_str)
+}
+
+/// The source fields an expression reads from `input`, failing closed to a
+/// whole-root read when the expression cannot be parsed or reads `input`
+/// dynamically (`input[k]`, `$root`, pass-through).
+fn input_reads(expression: &str) -> norn_expr::ExpressionReads {
+    norn_expr::expression_reads(expression, "input").unwrap_or(norn_expr::ExpressionReads {
+        fields: BTreeSet::new(),
+        whole_root: true,
+    })
 }
 
 /// Refuse each candidate model that trains on unpseudonymized personal data.
@@ -401,17 +536,190 @@ pub(crate) fn check(
     findings
 }
 
+/// Conservatively resolve the schema columns read by a transform expression.
+/// An empty dependency path (whole-row or unresolved alias read) maps to every
+/// column in `schema` so static and runtime marking guards never miss a read.
+pub(crate) fn expression_columns<'a>(
+    schema: &'a crate::transform::NodeSchema,
+    source: &str,
+) -> Result<Vec<&'a crate::transform::Column>, String> {
+    let paths = norn_expr::expression_read_paths(source, crate::transform::ROW_ROOT)
+        .map_err(|error| error.to_string())?;
+    if paths.iter().any(Vec::is_empty) {
+        return Ok(schema.columns.iter().collect());
+    }
+    Ok(paths
+        .iter()
+        .filter_map(|path| path.first())
+        .filter_map(|name| schema.column(name))
+        .collect())
+}
+
+impl crate::transform::TransformPlan {
+    fn push_column_origins(
+        &self,
+        out: &mut Vec<(String, String, String)>,
+        pointer: &str,
+        column: &crate::transform::Column,
+    ) {
+        for origin in &column.origins {
+            if let Some(scan) = self.inputs.get(&origin.alias) {
+                out.push((
+                    pointer.to_owned(),
+                    scan.object_type.clone(),
+                    origin.property.clone(),
+                ));
+            }
+        }
+    }
+
+    fn push_named_origin(
+        &self,
+        out: &mut Vec<(String, String, String)>,
+        pointer: &str,
+        schema: &crate::transform::NodeSchema,
+        col_name: &str,
+    ) {
+        if let Some(column) = schema.column(col_name) {
+            self.push_column_origins(out, pointer, column);
+        }
+    }
+
+    /// Every `(pointer, object_type, property)` origin read by a `Filter`
+    /// predicate or `Window`/`Dedupe` `partitionBy`/`key`/`orderBy` key, used
+    /// at runtime to refuse dynamic `_norn_markings` on filter, partition,
+    /// dedupe, or order columns.
+    #[must_use]
+    pub fn filter_and_order_origins(&self) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for (node_id, node) in &self.nodes {
+            match &node.step {
+                crate::transform::Step::Filter { input, predicate } => {
+                    if let Some(input_node) = self.nodes.get(input) {
+                        let pointer = format!("/nodes/{node_id}/predicate");
+                        let cols =
+                            expression_columns(&input_node.schema, predicate.expression.source())
+                                .unwrap_or_else(|_| input_node.schema.columns.iter().collect());
+                        for col in cols {
+                            self.push_column_origins(&mut out, &pointer, col);
+                        }
+                    }
+                }
+                crate::transform::Step::Window {
+                    input,
+                    partition_by,
+                    order_by,
+                    ..
+                } => {
+                    if let Some(input_node) = self.nodes.get(input) {
+                        for (index, col_name) in partition_by.iter().enumerate() {
+                            self.push_named_origin(
+                                &mut out,
+                                &format!("/nodes/{node_id}/partitionBy/{index}"),
+                                &input_node.schema,
+                                col_name,
+                            );
+                        }
+                        for (index, (col_name, _, _)) in order_by.iter().enumerate() {
+                            self.push_named_origin(
+                                &mut out,
+                                &format!("/nodes/{node_id}/orderBy/{index}"),
+                                &input_node.schema,
+                                col_name,
+                            );
+                        }
+                    }
+                }
+                crate::transform::Step::Dedupe {
+                    input,
+                    key,
+                    order_by,
+                    ..
+                } => {
+                    if let Some(input_node) = self.nodes.get(input) {
+                        for (index, col_name) in key.iter().enumerate() {
+                            self.push_named_origin(
+                                &mut out,
+                                &format!("/nodes/{node_id}/key/{index}"),
+                                &input_node.schema,
+                                col_name,
+                            );
+                        }
+                        for (index, (col_name, _, _)) in order_by.iter().enumerate() {
+                            self.push_named_origin(
+                                &mut out,
+                                &format!("/nodes/{node_id}/orderBy/{index}"),
+                                &input_node.schema,
+                                col_name,
+                            );
+                        }
+                    }
+                }
+                crate::transform::Step::Scan { .. }
+                | crate::transform::Step::Project { .. }
+                | crate::transform::Step::Join { .. }
+                | crate::transform::Step::Aggregate { .. }
+                | crate::transform::Step::Union { .. } => {}
+            }
+        }
+        out
+    }
+}
+
+/// The column type of a computed scalar in `ViewIR` transforms.
+pub(crate) fn transform_column_type(inferred: &norn_expr::InferredType) -> Option<norn_expr::Type> {
+    use norn_expr::{InferredType, Type};
+    if let InferredType::Optional(inner) = inferred {
+        return Some(Type::Optional(Box::new(transform_column_type(inner)?)));
+    }
+    if let InferredType::Enum(values) = inferred {
+        return Some(Type::enumeration(values.iter().cloned()));
+    }
+    if matches!(inferred, InferredType::Bool) {
+        Some(Type::Bool)
+    } else if matches!(inferred, InferredType::String | InferredType::Const(_)) {
+        Some(Type::text())
+    } else if matches!(inferred, InferredType::Date) {
+        Some(Type::Date)
+    } else if matches!(inferred, InferredType::Timestamp) {
+        Some(Type::Timestamp {
+            timezone: norn_ir::TimezonePolicy::Utc,
+        })
+    } else if matches!(inferred, InferredType::Number) {
+        Some(Type::Number)
+    } else {
+        // Null, lists and records are not column values.
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::input_fields;
+    use super::input_reads;
+    use std::collections::BTreeSet;
 
     #[test]
-    fn input_fields_are_the_fields_an_expression_reads() {
-        assert_eq!(input_fields("input.email"), ["email"]);
+    fn input_reads_covers_dot_bracket_dynamic_and_invalid_expressions() {
+        let simple = input_reads("input.email");
+        assert!(!simple.whole_root);
+        assert_eq!(simple.fields, BTreeSet::from(["email".to_owned()]));
+
+        let combined = input_reads("lower(input.first_name) + ' ' + input['last_name']");
+        assert!(!combined.whole_root);
         assert_eq!(
-            input_fields("lower(input.first_name) + ' ' + input.last_name"),
-            ["first_name", "last_name"]
+            combined.fields,
+            BTreeSet::from(["first_name".to_owned(), "last_name".to_owned()])
         );
-        assert_eq!(input_fields("myinput.email").len(), 0);
+
+        let unrelated = input_reads("myinput.email");
+        assert!(!unrelated.whole_root);
+        assert!(unrelated.fields.is_empty());
+
+        for fail_closed in ["input[k]", "$root.email", "input", "input.email +"] {
+            assert!(
+                input_reads(fail_closed).whole_root,
+                "expected whole_root fail-closed for {fail_closed:?}"
+            );
+        }
     }
 }

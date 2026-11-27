@@ -330,11 +330,13 @@ impl<'a> Index<'a> {
             }
         }
         for instance in &input.instances {
-            index
-                .provenance
-                .entry(&instance.fact)
-                .or_default()
-                .extend(instance.provenance.iter());
+            if !instance.provenance.is_empty() {
+                index
+                    .provenance
+                    .entry(&instance.fact)
+                    .or_default()
+                    .extend(instance.provenance.iter());
+            }
         }
         for object in &input.objects {
             let id = object.stable_id();
@@ -364,7 +366,7 @@ struct Walk<'a> {
     nodes: Vec<LineageNode>,
     seen: BTreeSet<String>,
     edges: Vec<LineageEdge>,
-    seen_edges: BTreeSet<(String, String, LineageEdgeKind)>,
+    seen_edges: BTreeSet<(String, String, LineageEdgeKind, Option<String>)>,
     queue: VecDeque<Pending<'a>>,
 }
 
@@ -385,7 +387,7 @@ impl<'a> Walk<'a> {
     fn edge(&mut self, from: &str, to: &str, kind: LineageEdgeKind, detail: Option<String>) {
         if self
             .seen_edges
-            .insert((from.to_owned(), to.to_owned(), kind.clone()))
+            .insert((from.to_owned(), to.to_owned(), kind.clone(), detail.clone()))
         {
             self.edges.push(LineageEdge {
                 from: from.to_owned(),
@@ -641,7 +643,13 @@ pub fn explain_latest(
         .commits
         .iter()
         .flat_map(|commit| commit.written.iter())
-        .chain(input.instances.iter().map(|instance| &instance.fact))
+        .chain(
+            input
+                .instances
+                .iter()
+                .filter(|instance| !instance.provenance.is_empty())
+                .map(|instance| &instance.fact),
+        )
         .filter(|fact| fact.object_type == *object_type && fact.key == key)
         .max_by_key(|fact| fact.version)
         .cloned()

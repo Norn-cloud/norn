@@ -1,11 +1,12 @@
 //! Thin remote client: the server's live MCP catalog supplies every tool.
-use super::cell::Endpoint;
+use super::cell::{Endpoint, read_bounded_response};
 use clap::{Args, Subcommand};
-use futures_util::StreamExt as _;
 use norn_ir::RuntimeValue;
 use serde_json::{Value, json};
-use std::io::Read as _;
+use std::io::{BufRead as _, Read as _};
 use std::time::Duration;
+
+const MAX_MCP_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Args)]
 pub(super) struct RemoteArgs {
@@ -122,7 +123,8 @@ pub(super) fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
         }
     }
     let body = request(&args.command, &input)?;
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+    let agent: ureq::Agent = endpoint
+        .configure(ureq::Agent::config_builder())
         .http_status_as_error(false)
         .max_redirects(0)
         .timeout_global(Some(Duration::from_secs(30)))
@@ -152,7 +154,7 @@ pub(super) fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
         .headers()
         .get("content-type")
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.split(';').next() == Some("text/event-stream"));
+        .is_some_and(is_event_stream_content_type);
     let text = response_text(response.body_mut().as_reader(), is_sse)?;
     let value: Value = serde_json::from_str(&text).map_err(|_e| {
         if http_failed {
@@ -173,42 +175,84 @@ pub(super) fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
     Ok((text, !failed))
 }
 
-fn response_text(reader: impl std::io::Read, is_sse: bool) -> Result<String, String> {
-    let mut reader = std::io::BufReader::new(reader.take(8 * 1024 * 1024));
-    if !is_sse {
-        let mut text = String::new();
-        reader
-            .read_to_string(&mut text)
-            .map_err(|_e| "MCP response could not be read")?;
-        return Ok(text);
+fn is_event_stream_content_type(header_value: &str) -> bool {
+    header_value
+        .split(';')
+        .next()
+        .is_some_and(|media_type| media_type.trim().eq_ignore_ascii_case("text/event-stream"))
+}
+
+fn dispatch_sse_event(data: &mut String, has_data: &mut bool) -> Option<String> {
+    if !*has_data {
+        return None;
     }
-    let chunks = std::iter::from_fn(move || {
-        let mut buffer = vec![0; 8192];
-        match reader.read(&mut buffer) {
-            Ok(0) => None,
-            Ok(size) => {
-                buffer.truncate(size);
-                Some(Ok(bytes::Bytes::from(buffer)))
-            }
-            Err(error) => Some(Err(error)),
+    *has_data = false;
+    let payload = std::mem::take(data);
+    if serde_json::from_str::<Value>(&payload).is_ok_and(|value| value.get("id") == Some(&json!(1)))
+    {
+        Some(payload)
+    } else {
+        None
+    }
+}
+
+fn feed_sse_line(line: &str, data: &mut String, has_data: &mut bool) -> Option<String> {
+    if line.is_empty() {
+        return dispatch_sse_event(data, has_data);
+    }
+    if line.starts_with(':') {
+        return None;
+    }
+    let (field, value) = line
+        .split_once(':')
+        .map_or((line, ""), |(f, v)| (f, v.strip_prefix(' ').unwrap_or(v)));
+    if field == "data" {
+        if *has_data {
+            data.push('\n');
         }
-    });
-    let events = sse_stream::SseStream::from_bytes_stream(futures_util::stream::iter(chunks));
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .map_err(|e| e.to_string())?
-        .block_on(async {
-            futures_util::pin_mut!(events);
-            while let Some(event) = events.next().await {
-                if let Some(data) = event.map_err(|e| e.to_string())?.data
-                    && serde_json::from_str::<Value>(&data)
-                        .is_ok_and(|value| value.get("id") == Some(&json!(1)))
-                {
-                    return Ok(data);
-                }
+        data.push_str(value);
+        *has_data = true;
+    }
+    None
+}
+
+fn response_text(reader: impl std::io::Read, is_sse: bool) -> Result<String, String> {
+    if !is_sse {
+        return read_bounded_response(reader, MAX_MCP_RESPONSE_BYTES, "MCP response");
+    }
+    let mut reader = std::io::BufReader::new(reader.take(MAX_MCP_RESPONSE_BYTES.saturating_add(1)));
+    let mut line_buf = Vec::new();
+    let mut total_bytes: u64 = 0;
+    let mut event_data = String::new();
+    let mut has_data = false;
+    loop {
+        line_buf.clear();
+        let read = reader
+            .read_until(b'\n', &mut line_buf)
+            .map_err(|_error| "MCP response could not be read".to_owned())?;
+        if read == 0 {
+            if let Some(payload) = dispatch_sse_event(&mut event_data, &mut has_data) {
+                return Ok(payload);
             }
-            Err("MCP stream ended before its response".into())
-        })
+            return Err("MCP stream ended before its response".into());
+        }
+        let read_u64 =
+            u64::try_from(read).map_err(|_error| "MCP response exceeds size limit".to_owned())?;
+        total_bytes = total_bytes.saturating_add(read_u64);
+        if total_bytes > MAX_MCP_RESPONSE_BYTES {
+            return Err("MCP response exceeds size limit".into());
+        }
+        let raw_line = std::str::from_utf8(&line_buf)
+            .map_err(|_error| "MCP stream is not valid UTF-8".to_owned())?;
+        let trimmed = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        let trimmed = trimmed.strip_suffix('\r').unwrap_or(trimmed);
+        // Handle bare CR line separators inside a chunk as well as CRLF/LF.
+        for segment in trimmed.split('\r') {
+            if let Some(payload) = feed_sse_line(segment, &mut event_data, &mut has_data) {
+                return Ok(payload);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -314,5 +358,28 @@ mod tests {
             };
             assert!(execute(&args).is_err(), "{url} must be refused");
         }
+    }
+
+    #[test]
+    fn sse_content_type_case_and_bounded_response_limits() -> Result<(), String> {
+        assert!(is_event_stream_content_type(
+            "TEXT/EVENT-STREAM ; charset=utf-8"
+        ));
+        assert!(is_event_stream_content_type(" text/event-stream"));
+        assert!(!is_event_stream_content_type("application/json"));
+
+        let response = r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#;
+        let multiline = format!(": keepalive\n\nevent: message\ndata: {response}\n\n");
+        assert_eq!(response_text(multiline.as_bytes(), true)?, response);
+
+        let oversized = vec![
+            b' ';
+            usize::try_from(MAX_MCP_RESPONSE_BYTES)
+                .map_err(|e| e.to_string())?
+                .saturating_add(8)
+        ];
+        assert!(response_text(oversized.as_slice(), false).is_err());
+        assert!(response_text(oversized.as_slice(), true).is_err());
+        Ok(())
     }
 }

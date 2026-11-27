@@ -53,6 +53,12 @@ export interface Transport {
   readonly restatement: () => Promise<Restatement>
   /** The admitted definitions the cell serves: concepts, relationships, laws and source mappings. */
   readonly catalog: () => Promise<Read<readonly Artifact[]>>
+  /**
+   * Studio's built-in pages the cell serves beside its definitions, each only while the workspace
+   * installed none with its id (`builtins` on `GET /v1/definitions`). The recording serves none: its
+   * catalog holds its pages.
+   */
+  readonly builtins: () => Promise<readonly Envelope[]>
   /** Each object type's record count for this caller, as the cell counted it: none for a type it may not list, and none recorded. */
   readonly objectCounts: () => Promise<ObjectCounts>
   /** The guarantees the model checker recorded for a law, one document per checked definition, keyed by recording name. */
@@ -72,7 +78,7 @@ const through = (pick: (transport: Transport) => (...args: never[]) => Promise<u
   async (...args: never[]) => {
     const active = await currentMode()
     const chosen = active.kind === "live"
-      ? liveTransport(active.catalog, active.counts)
+      ? liveTransport(active.catalog, active.counts, active.builtins)
       : await loadRecorded()
     return pick(chosen)(...args)
   }
@@ -86,6 +92,7 @@ export const transport: Transport = {
   definitions: through((t) => t.definitions) as Transport["definitions"],
   restatement: through((t) => t.restatement) as Transport["restatement"],
   catalog: through((t) => t.catalog) as Transport["catalog"],
+  builtins: through((t) => t.builtins) as Transport["builtins"],
   objectCounts: through((t) => t.objectCounts) as Transport["objectCounts"],
   guarantees: through((t) => t.guarantees) as Transport["guarantees"],
 }
