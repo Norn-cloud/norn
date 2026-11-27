@@ -1218,6 +1218,26 @@ mod tests {
         out
     }
 
+    fn party_obs(
+        profile: &PullProfile,
+        party_name: &str,
+        ver: &str,
+        payload: Value,
+        now_ms: u64,
+    ) -> norn_kernel::Observed<RuntimeValue> {
+        norn_api::pull::observation(
+            profile,
+            &norn_api::pull::Row {
+                dataset: "Party".into(),
+                source_id: party_name.to_owned(),
+                version: ver.to_owned(),
+                payload: RuntimeValue::from_json(payload).expect("rv"),
+            },
+            now_ms,
+        )
+        .expect("party obs")
+    }
+
     #[test]
     fn pinned_trace_unaffected_by_later_correction_replay_from_sibling() {
         let (host, principals, scope) = open_hosted(&["erpnext"]);
@@ -1227,25 +1247,21 @@ mod tests {
         sync_named_erpnext(&host, &scope, "erpnext.b", T0, pages.clone(), "ok");
 
         let party_row = pages["Party"].1["data"][0].clone();
-        let party_name = party_row["name"].as_str().unwrap().to_owned();
+        let name = party_row["name"].as_str().unwrap().to_owned();
         let mut bad_payload = party_row.clone();
         bad_payload["custom_norn_ref"] = Value::Null;
-        let bad_obs = norn_api::pull::observation(
+        let bad = party_obs(
             &profile,
-            &norn_api::pull::Row {
-                dataset: "Party".into(),
-                source_id: party_name.clone(),
-                version: "2026-11-12 20:00:00".into(),
-                payload: RuntimeValue::from_json(bad_payload).expect("rv"),
-            },
+            &name,
+            "2026-11-12 20:00:00",
+            bad_payload,
             T0 + 100,
-        )
-        .expect("bad obs");
+        );
         let out_q = ingest_party_row(
             &host,
             "erpnext.a",
-            bad_obs,
-            &party_name,
+            bad,
+            &name,
             "2026-11-12 20:00:00",
             T0 + 100,
         );
@@ -1255,22 +1271,12 @@ mod tests {
         ));
 
         // Sibling `erpnext.b` lands a strictly newer correction BEFORE A's answer.
-        let corr_obs = norn_api::pull::observation(
-            &profile,
-            &norn_api::pull::Row {
-                dataset: "Party".into(),
-                source_id: party_name.clone(),
-                version: "2099-01-01 00:00:00".into(),
-                payload: RuntimeValue::from_json(party_row).expect("rv"),
-            },
-            T0 + 110,
-        )
-        .expect("corr obs");
+        let corr = party_obs(&profile, &name, "2099-01-01 00:00:00", party_row, T0 + 110);
         let out_b = ingest_party_row(
             &host,
             "erpnext.b",
-            corr_obs.clone(),
-            &party_name,
+            corr.clone(),
+            &name,
             "2099-01-01 00:00:00",
             T0 + 110,
         );
@@ -1313,8 +1319,8 @@ mod tests {
         ingest_party_row(
             &host,
             "erpnext.a",
-            corr_obs,
-            &party_name,
+            corr,
+            &name,
             "2099-01-01 00:00:00",
             now_ms + 50,
         );
