@@ -1478,6 +1478,74 @@ fn a_question_cannot_group_or_filter_by_a_marked_field() {
     );
 }
 
+/// PRIVACY-4: a question cannot aggregate a marked measure property or window
+/// on a marked time dimension, even when `groupBy` and `filter` are empty.
+#[test]
+fn a_question_cannot_aggregate_or_window_a_marked_field() {
+    let metric: MetricDefinition = decode(&serde_json::from_str::<Value>(SALES).expect("metric"));
+    let mut base: Value = serde_json::from_str(SALES_QUESTION).expect("question");
+    base["groupBy"] = json!([]);
+    base["filter"] = json!([]);
+
+    let mark_prop = |object_name: &str, prop_id: &str| {
+        let mut artifacts: Vec<Value> = serde_json::from_str(ONTOLOGY).expect("ontology");
+        for artifact in &mut artifacts {
+            if artifact["payload"]["objectType"]["name"] == object_name {
+                for property in artifact["payload"]["objectType"]["properties"]
+                    .as_array_mut()
+                    .expect("properties")
+                {
+                    if property["id"] == prop_id {
+                        property["markings"] = json!(["pii.financial"]);
+                    }
+                }
+            }
+        }
+        let mut markings = artifacts[0].clone();
+        markings["artifactId"] = json!("erpnext.markings.entity");
+        markings["name"] = json!("Markings");
+        markings["payload"] = json!({
+            "entityVersion": "2.0",
+            "markings": [{
+                "id": "pii.financial", "label": "Financial", "severity": "high",
+                "category": "pii.financial", "mask": { "kind": "redacted" }
+            }]
+        });
+        artifacts.push(markings);
+        catalog_of(&artifacts)
+    };
+
+    let measure_findings = check_metrics_and_questions(
+        std::slice::from_ref(&metric),
+        &[decode::<QuestionIR>(&base)],
+        &mark_prop("erpnext.SalesInvoiceItem", "net_amount"),
+    );
+    assert_code(&measure_findings, codes::MARKED_FIELD);
+    assert!(
+        measure_findings
+            .iter()
+            .any(|d| d.code == codes::MARKED_FIELD
+                && d.span
+                    .as_ref()
+                    .is_some_and(|s| s.pointer == "/questions/0/aggregate")),
+        "{measure_findings:?}"
+    );
+
+    let time_findings = check_metrics_and_questions(
+        std::slice::from_ref(&metric),
+        &[decode::<QuestionIR>(&base)],
+        &mark_prop("erpnext.SalesInvoice", "posting_date"),
+    );
+    assert_code(&time_findings, codes::MARKED_FIELD);
+    assert!(
+        time_findings.iter().any(|d| d.code == codes::MARKED_FIELD
+            && d.span
+                .as_ref()
+                .is_some_and(|s| s.pointer == "/questions/0/window")),
+        "{time_findings:?}"
+    );
+}
+
 /// A path across a link is evaluated only as a linked time grouping. Grouping
 /// by a linked type's field (a sales item's customer name) or filtering across
 /// a link is refused by name, at the path, before any evaluation, so no answer

@@ -254,18 +254,19 @@ describe("one workspace's reads and calls stay in it", () => {
   const confirm = { kind: "user", eventId: "confirm" } as const
 
   test("a runtime for workspace B starts with nothing read or called, and maps only B's record into B's call", async () => {
+    // Use non-hex record IDs so the negative substring check cannot collide with a random UUID idempotency key (`...a-1...`).
     const callsA = calls()
-    const a = run({ ux: mapped, reader: reader([{ values: { id: "a-1" } }]), calls: callsA, engine: async () => pathEngine })
+    const a = run({ ux: mapped, reader: reader([{ values: { id: "workspace-a-record-1" } }]), calls: callsA, engine: async () => pathEngine })
     await flush()
-    expect(a.runtime.view().reads.get("records")).toMatchObject({ kind: "ok", document: { values: { id: "a-1" } } })
+    expect(a.runtime.view().reads.get("records")).toMatchObject({ kind: "ok", document: { values: { id: "workspace-a-record-1" } } })
     a.runtime.send(save)
     a.runtime.send(confirm)
     await flush()
-    expect(callsA.sent).toEqual([{ actionId: "canon.valuation_policy.set", input: { id: "a-1" } }])
+    expect(callsA.sent).toEqual([{ actionId: "canon.valuation_policy.set", input: { id: "workspace-a-record-1" } }])
     expect(a.runtime.view().calls.get("save")?.kind).toBe("committed")
     // The workspace moves to B: the page gets a new runtime, given B's reader and calls.
     a.runtime.dispose()
-    const readerB = reader([{ values: { id: "b-1" } }])
+    const readerB = reader([{ values: { id: "workspace-b-record-1" } }])
     const callsB = calls()
     const b = run({ ux: mapped, reader: readerB, calls: callsB, engine: async () => pathEngine })
     expect([b.views[0]!.reads.size, b.views[0]!.calls.size]).toEqual([0, 0])
@@ -273,10 +274,10 @@ describe("one workspace's reads and calls stay in it", () => {
     b.runtime.send(save)
     b.runtime.send(confirm)
     await flush()
-    expect(callsB.sent).toEqual([{ actionId: "canon.valuation_policy.set", input: { id: "b-1" } }])
+    expect(callsB.sent).toEqual([{ actionId: "canon.valuation_policy.set", input: { id: "workspace-b-record-1" } }])
     expect(callsA.sent).toHaveLength(1)
     // No view B drew ever held A's record or A's call.
-    expect(b.views.some((view) => JSON.stringify([...view.reads.values(), ...view.calls.values()]).includes("a-1"))).toBe(false)
+    expect(b.views.some((view) => JSON.stringify([...view.reads.values(), ...view.calls.values()]).includes("workspace-a-record-1"))).toBe(false)
     expect(readerB.asked).toHaveLength(1)
     b.runtime.dispose()
   })

@@ -48,8 +48,7 @@ pub(super) struct Head {
     pub(super) length: usize,
 }
 
-/// A request as received: its method, path and whole body (its credential
-/// was verified from its head before the body was read).
+/// A request as received: its method, path and whole body.
 pub(super) struct Request {
     pub(super) method: String,
     pub(super) path: String,
@@ -450,6 +449,13 @@ mod tests {
             (
                 "transfer-encoding: chunked\r\n",
                 "transfer-encoding is not accepted",
+            ),
+            ("Transfer-Encoding : chunked\r\n", "malformed header name"),
+            ("Content-Length : 3\r\n", "malformed header name"),
+            ("no-colon-line\r\n", "malformed header line"),
+            (
+                "Authorization: Bearer a\r\nAuthorization: Bearer b\r\n",
+                "authorization is repeated",
             ),
         ] {
             let (mut client, server) = pair();
