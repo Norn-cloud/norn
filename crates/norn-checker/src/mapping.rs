@@ -57,6 +57,7 @@
 mod compile;
 pub mod evidence;
 pub mod lens;
+mod patch;
 mod set;
 mod snapshot_lint;
 pub mod vendor;
@@ -232,6 +233,7 @@ fn check_mapping_with_source(
             Span::pointer("/extensions"),
         ));
     }
+    out.extend(patch::validate_feed_declaration(mapping, source));
     for (empty, member) in [
         (mapping.interfaces.is_empty(), "interfaces"),
         (mapping.maps.is_empty(), "maps"),
