@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{FactChange, ObjectTypeName, RuntimeValue as Value};
-use norn_kernel::world::outbox::Queue;
 use norn_kernel::{EffectiveValuesError, TypeCatalog};
 use norn_projections::PropertyColumn;
 use norn_projections::sqlite_ddl::{
@@ -26,10 +25,9 @@ use crate::store::{
 };
 use crate::system::{
     INBOX, LEDGER, LINK_CREATION, LINK_VERSIONS, MARKING_CURRENT, MARKING_OCCURRENCE,
-    MARKING_SNAPSHOT, MarkingSlot, MarkingTarget, OUTBOX, PENDING_LINK_INDEX, PERFORM_CLAIM,
-    RECEIPT, RUN, TIMER, VERSIONS, apply_sparse_declassification, ensure_marking_subject,
-    has_marking_snapshot, marking_subject, persist_sparse_marking_rows, query_marking_slot,
-    write_nonempty_marking_slot,
+    MARKING_SNAPSHOT, MarkingSlot, MarkingTarget, OUTBOX, PENDING_LINK_INDEX, RECEIPT, RUN, TIMER,
+    VERSIONS, apply_sparse_declassification, ensure_marking_subject, has_marking_snapshot,
+    marking_subject, persist_sparse_marking_rows, query_marking_slot, write_nonempty_marking_slot,
 };
 
 struct NamingCounterAttribution {
@@ -215,17 +213,19 @@ fn encode_row<'c>(
 }
 
 pub(crate) struct Writer<'a, E: SqlEngine> {
-    conn: &'a E,
-    model: &'a Model,
-    batch: &'a CommitBatch,
-    world: &'a str,
-    commit_seq: u64,
+    pub(crate) conn: &'a E,
+    pub(crate) model: &'a Model,
+    pub(crate) batch: &'a CommitBatch,
+    pub(crate) world: &'a str,
+    pub(crate) commit_seq: u64,
     batch_output_facts: Option<BTreeSet<(String, String, String, u64)>>,
     pending_snapshot_digests: crate::read::PendingDigests,
     /// The effective-values catalog, built once per commit: its effective
     /// model is derived on first use, so a catalog per write re-derived it.
     catalog: std::cell::OnceCell<TypeCatalog<'a>>,
     link_read_markings: BTreeSet<String>,
+    /// True only when replaying an already-committed pre-v11 export record.
+    legacy_outbox: bool,
 }
 
 impl<'a, E: SqlEngine> Writer<'a, E> {
@@ -245,7 +245,13 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             pending_snapshot_digests: BTreeMap::new(),
             catalog: std::cell::OnceCell::new(),
             link_read_markings: BTreeSet::new(),
+            legacy_outbox: false,
         }
+    }
+
+    pub(crate) const fn with_legacy_outbox(mut self, legacy_outbox: bool) -> Self {
+        self.legacy_outbox = legacy_outbox;
+        self
     }
 
     pub(crate) const fn reader(&self) -> StoreReader<'_, E> {
@@ -253,7 +259,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             .with_pending_digests(self.commit_seq, &self.pending_snapshot_digests)
     }
 
-    fn commit_seq_sql(&self) -> Result<i64, CellError> {
+    pub(crate) fn commit_seq_sql(&self) -> Result<i64, CellError> {
         to_i64(self.commit_seq, "commit_seq")
     }
 
@@ -711,6 +717,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 command_id,
                 generation,
             } => {
+                crate::outbox_ledger::record_consumed(
+                    self.conn,
+                    command_id,
+                    *generation,
+                    self.commit_seq,
+                )?;
                 let generation = to_i64(*generation, "generation")?;
                 self.conn.execute(
                     &format!(
@@ -3259,6 +3271,31 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     command_id,
                     generation,
                 } => self.claim_perform(command_id, *generation)?,
+                EffectRow::ReconcileOutbox {
+                    command_id,
+                    generation,
+                    decision,
+                    confirmed_outcome,
+                    fenced_at,
+                } => self.reconcile_outbox(
+                    command_id,
+                    *generation,
+                    *decision,
+                    confirmed_outcome.as_ref(),
+                    *fenced_at,
+                )?,
+                EffectRow::RecordCompensation {
+                    command_id,
+                    generation,
+                    ok,
+                    fenced_at,
+                } => self.record_compensation(command_id, *generation, *ok, *fenced_at)?,
+                EffectRow::RecordLateOutcome {
+                    command_id,
+                    proof,
+                    ok,
+                    outcome,
+                } => self.record_late_outcome(command_id, *proof, *ok, outcome)?,
                 EffectRow::Schedule { timer } => self.schedule(timer)?,
                 EffectRow::CancelTimer { timer_id } => {
                     self.conn.execute(
@@ -3271,55 +3308,6 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         Ok(())
     }
 
-    fn claim_perform(&self, command_id: &str, generation: u64) -> Result<(), CellError> {
-        let generation_sql = to_i64(generation, "generation")?;
-        let head = StoreReader::new(self.conn, self.model).head_command()?;
-        let is_head = head.is_some_and(|head| {
-            head.command.command_id == command_id
-                && head.command.generation == generation
-                && head.result.is_none()
-        });
-        if !is_head {
-            let parked = StoreReader::new(self.conn, self.model)
-                .pending_command(command_id)?
-                .is_some_and(|row| {
-                    row.queue == Queue::Parked && row.command.generation == generation
-                });
-            if parked {
-                return Err(CellError::ParkedClaimUnsupported {
-                    command_id: command_id.to_owned(),
-                    generation,
-                });
-            }
-            return Err(CellError::PerformClaimNotPending {
-                command_id: command_id.to_owned(),
-                generation,
-            });
-        }
-        let known: Option<i64> = self
-            .conn
-            .query_optional(
-                &format!(
-                    "SELECT 1 FROM \"{PERFORM_CLAIM}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2"
-                ),
-                params![command_id, generation_sql],
-                |row| row.get::<i64>(0),
-            )?;
-        if known.is_some() {
-            return Err(CellError::PerformAlreadyClaimed {
-                command_id: command_id.to_owned(),
-                generation,
-            });
-        }
-        self.conn.execute(
-            &format!(
-                "INSERT INTO \"{PERFORM_CLAIM}\" (\"command_id\", \"generation\", \"commit_seq\") VALUES (?1, ?2, ?3)"
-            ),
-            params![command_id, generation_sql, self.commit_seq_sql()?],
-        )?;
-        Ok(())
-    }
-
     fn enqueue(&self, command: &OutboxCommand) -> Result<(), CellError> {
         let commit_seq = self.commit_seq_sql()?;
         let generation = to_i64(command.generation, "generation")?;
@@ -3329,29 +3317,17 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             .transpose()?;
         let serialized = canonical_json(&command.command)?;
         let queue = crate::read::classify(&command.command);
-        // The stored payload is compared in SQL, never loaded.
-        let known: Option<(i64, Option<i64>, i64, String)> = self.conn.query_optional(
-            &format!(
-                "SELECT \"generation\", \"consumed_commit_seq\", \"command\" = ?2, \"queue\" FROM \"{OUTBOX}\" WHERE \"command_id\" = ?1"
-            ),
-            params![command.command_id, serialized],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        let action = crate::outbox_ledger::record_enqueue(
+            self.conn,
+            command,
+            queue,
+            self.commit_seq,
+            self.legacy_outbox,
         )?;
-        let position = match known {
-            // A consumed row is terminal: a re-issue at its generation or an
-            // older one never re-executes.
-            Some((known, Some(_), ..)) if known >= generation => return Ok(()),
-            // D03 (#1699): a newer generation of a pending command replaces
-            // it in place; anything else the outbox step refuses or ignores.
-            Some((known, None, same, stored)) => {
-                let known = to_u64(known, "generation")?;
-                if !crate::read::reissue_replaces(command, known, same == 1, &stored, queue)? {
-                    return Ok(());
-                }
-                None
-            }
-            // New, or a newer generation of a consumed command: appended.
-            Some((_, Some(_), ..)) | None => {
+        let position = match action {
+            crate::outbox_ledger::EnqueueAction::Noop => return Ok(()),
+            crate::outbox_ledger::EnqueueAction::ReplaceInPlace => None,
+            crate::outbox_ledger::EnqueueAction::InsertNew => {
                 let maximum = self.conn.query_row(
                     &format!("SELECT COALESCE(MAX(\"position\"), 0) FROM \"{OUTBOX}\""),
                     params![],

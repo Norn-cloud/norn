@@ -565,9 +565,19 @@ fn the_queue_is_stored_at_enqueue_and_a_reissue_never_moves_or_rewrites_it() {
     ];
     assert_eq!(queues(&cell), stored);
     reissue(&mut cell, command("notify", tool())).unwrap();
-    // The CellHost law keeps an equal-generation reissue a no-op, whatever
-    // its payload: the stored payload is unchanged (checked after reopen).
-    reissue(&mut cell, command("notify", perform("billing.notify", "2"))).unwrap();
+    // D1: an equal-generation reissue with a different payload fails closed
+    // (`PayloadDiverged`) and leaves the stored payload unchanged.
+    let diverged = reissue(&mut cell, command("notify", perform("billing.notify", "2")));
+    assert!(
+        matches!(
+            diverged,
+            Err(CommitError::Host(CellError::OutboxReissueRefused {
+                generation: 1,
+                ..
+            }))
+        ),
+        "{diverged:?}"
+    );
     let mut moved = command("notify", decision());
     moved.generation = Generation(2);
     let moved = reissue(&mut cell, moved);
@@ -643,6 +653,27 @@ fn a_fenced_head_is_not_an_empty_queue_and_only_its_reconciled_generation_is_cla
     ));
     let mut next = command("notify", tool());
     next.generation = Generation(2);
+    // D1: reissuing over an active restore fence requires durable reconciliation first.
+    let unfenced = reissue(&mut cell, next.clone());
+    assert!(
+        matches!(
+            unfenced,
+            Err(CommitError::Host(CellError::OutboxReissueRefused {
+                generation: 2,
+                ..
+            }))
+        ),
+        "{unfenced:?}"
+    );
+    cell.reconcile_outbox(
+        &notify,
+        Generation(1),
+        norn_kernel::world::outbox_ledger::ReconciliationDecision::AuthorizeReissue {
+            next_generation: 2,
+        },
+        None,
+    )
+    .unwrap();
     reissue(&mut cell, next.clone()).unwrap();
     assert_eq!(cell.claim_perform().unwrap(), fenced);
     assert_eq!(
