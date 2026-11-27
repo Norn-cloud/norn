@@ -1972,8 +1972,13 @@ pub fn prepare_observed_snapshot(
             ));
         }
     }
-    let initial_values =
-        seed_initial_lifecycle_states(catalog, key, &original_for_changes, values, lifecycles);
+    let initial_values = read_findings::seed_initial_lifecycle_states(
+        catalog,
+        key,
+        &original_for_changes,
+        values,
+        lifecycles,
+    );
     let facts = property_changes(
         key,
         &original_for_changes,
@@ -2498,45 +2503,6 @@ fn tombstone_values(
         ),
         ("provenance".to_owned(), encoded),
     ]))
-}
-
-/// When creating a new object whose lifecycle property declares no default value,
-/// seed that property from the observed lifecycle snapshot if the observed state
-/// is itself a declared initial state of the effective lifecycle.
-fn seed_initial_lifecycle_states(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    original: &FactState,
-    values: &JsonObject,
-    lifecycles: &[ObservedLifecycleSnapshot],
-) -> Option<JsonObject> {
-    if original.values.is_some() || lifecycles.is_empty() {
-        return None;
-    }
-    let effective = catalog.effective_type(&key.object_type)?;
-    let mut seeded: Option<JsonObject> = None;
-    for snapshot in lifecycles {
-        let has_default = effective
-            .property(snapshot.property.as_str())
-            .is_some_and(|prop| prop.default_value().ok().flatten().is_some());
-        if has_default {
-            continue;
-        }
-        let Some(lifecycle) = catalog.lifecycle(&key.object_type, &snapshot.property) else {
-            continue;
-        };
-        if lifecycle
-            .initial
-            .iter()
-            .any(|state| state == &snapshot.state)
-        {
-            seeded.get_or_insert_with(|| values.clone()).insert(
-                snapshot.property.as_str().to_owned(),
-                JsonValue::String(snapshot.state.clone()),
-            );
-        }
-    }
-    seeded
 }
 
 fn property_changes(key: &FactKey, original: &FactState, values: &JsonObject) -> Vec<FactChange> {

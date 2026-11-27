@@ -17,7 +17,10 @@ use norn_kernel::pack_mbt_support::{
     Property, PropertyId, PropertyType, PropertyTypeDef, ZenExpression,
 };
 
-use super::AdmittedPack;
+use super::{
+    AdmittedPack, effective_invariants, effective_lifecycles, format_decimal, format_zero_decimal,
+    resolve_concrete_link_target,
+};
 
 /// Three-valued guard evaluation outcome — never conflates evaluation errors
 /// with a genuine boolean `false`.
@@ -218,37 +221,6 @@ fn effective_required_links(
         .collect()
 }
 
-fn type_matches_target(pack: &AdmittedPack, candidate: &ObjectTypeDef, target_name: &str) -> bool {
-    let chain = super::object_type_ancestors(pack, candidate);
-    if chain.iter().any(|def| def.name.as_str() == target_name) {
-        return true;
-    }
-    if chain.iter().any(|def| {
-        def.implements
-            .iter()
-            .any(|name| name.as_str() == target_name)
-    }) {
-        return true;
-    }
-    super::object_type_interfaces(pack, &chain)
-        .into_iter()
-        .any(|owner| owner.name.as_str() == target_name)
-}
-
-fn resolve_concrete_link_target<'a>(
-    pack: &'a AdmittedPack,
-    target_name: &str,
-) -> Option<&'a ObjectTypeDef> {
-    pack.object_types
-        .iter()
-        .find(|ty| ty.name.as_str() == target_name)
-        .or_else(|| {
-            pack.object_types
-                .iter()
-                .find(|ty| type_matches_target(pack, ty, target_name))
-        })
-}
-
 /// Synthesizes a valid object instance for `object_type` with identity `key`
 /// and optional `seed` variation, choosing the first declared initial state for
 /// every lifecycle property and including inherited interface properties.
@@ -306,27 +278,6 @@ pub fn synthesize_object(
         &mut values,
     );
     values
-}
-
-fn effective_invariants(pack: &AdmittedPack, object_type: &ObjectTypeDef) -> Vec<ZenExpression> {
-    let mut seen = BTreeSet::new();
-    let mut out = Vec::new();
-    let chain = super::object_type_ancestors(pack, object_type);
-    for def in &chain {
-        for inv in &def.invariants {
-            if seen.insert(inv.id.as_str()) {
-                out.push(inv.expression.clone());
-            }
-        }
-    }
-    for owner in super::object_type_interfaces(pack, &chain) {
-        for inv in &owner.invariants {
-            if seen.insert(inv.id.as_str()) {
-                out.push(inv.expression.clone());
-            }
-        }
-    }
-    out
 }
 
 fn satisfy_effective_invariants(
@@ -719,30 +670,6 @@ fn shared_property_map(pack: &AdmittedPack) -> BTreeMap<&str, &PropertyTypeDef> 
         .collect()
 }
 
-fn effective_lifecycles<'a>(
-    pack: &'a AdmittedPack,
-    object_type: &'a ObjectTypeDef,
-) -> Vec<&'a Lifecycle> {
-    let mut seen = BTreeSet::new();
-    let mut out = Vec::new();
-    let chain = super::object_type_ancestors(pack, object_type);
-    for def in &chain {
-        for lc in &def.lifecycles {
-            if seen.insert(lc.property.as_str()) {
-                out.push(lc);
-            }
-        }
-    }
-    for owner in super::object_type_interfaces(pack, &chain) {
-        for lc in &owner.lifecycles {
-            if seen.insert(lc.property.as_str()) {
-                out.push(lc);
-            }
-        }
-    }
-    out
-}
-
 fn lifecycle_property_names<'a>(
     pack: &'a AdmittedPack,
     object_type: &'a ObjectTypeDef,
@@ -853,30 +780,6 @@ fn json_default_to_runtime(
             .map(JsonValue::Number),
         (_, IrJsonValue::Null | IrJsonValue::Array(_) | IrJsonValue::Object(_)) => None,
     }
-}
-
-fn format_zero_decimal(scale: u64) -> String {
-    if scale == 0 {
-        return "0".to_owned();
-    }
-    let digits = usize::try_from(scale.min(28)).unwrap_or(2);
-    format!("0.{}", "0".repeat(digits))
-}
-
-fn format_decimal(whole: i64, scale: u64, with_fraction: bool) -> String {
-    if scale == 0 {
-        return whole.to_string();
-    }
-    let digits = usize::try_from(scale.min(28)).unwrap_or(2);
-    if !with_fraction {
-        return format!("{whole}.{}", "0".repeat(digits));
-    }
-    let mut frac = String::with_capacity(digits);
-    frac.push('5');
-    for _ in 1..digits {
-        frac.push('0');
-    }
-    format!("{whole}.{frac}")
 }
 
 fn synthesize_property_value(

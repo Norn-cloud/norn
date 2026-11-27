@@ -1287,7 +1287,6 @@
     },
     "test-without-assertion": {
       "crates/norn-cell-do/tests/ingest_rate.rs": 1,
-      "crates/norn-cell/examples/catalog_demo.rs": 1,
       "crates/norn-cell/examples/constitution.rs": 1,
       "crates/norn-cell/tests/analytics_engine.rs": 2,
       "crates/norn-cell/tests/incremental_question.rs": 1,

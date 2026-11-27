@@ -372,47 +372,6 @@ impl<E: SqlEngine> norn_kernel::governing_laws::LinkTargets for CandidateLinks<'
     }
 }
 
-/// Check every candidate law artifact against the shared `LawSupport` rules
-/// upfront so unsupported scopes/semantics or malformed exception trees fail
-/// closed at install time even when the governed type has zero live rows yet.
-fn check_candidate_law_support(candidate: &Model) -> Vec<crate::error::DefinitionLawFinding> {
-    let mut findings = Vec::new();
-    for artifact in candidate.law_artifacts() {
-        let decoded = serde_json::to_value(artifact.payload.to_json_value())
-            .and_then(serde_json::from_value::<norn_ir::LawIR>);
-        match decoded {
-            Ok(law) => {
-                if let Some(reason) = norn_checker::law_support::classify_law_support(&law)
-                    .runtime
-                    .reason()
-                {
-                    findings.push(crate::error::DefinitionLawFinding {
-                        object_type: law.subject.clone(),
-                        id: artifact.artifact_id.clone(),
-                        law: Some(law.id.clone()),
-                        message: format!(
-                            "core.laws.unsupported_semantics: law {} cannot be installed: {reason}",
-                            law.id
-                        ),
-                        unchecked: true,
-                    });
-                }
-            }
-            Err(error) => findings.push(crate::error::DefinitionLawFinding {
-                object_type: artifact.name.clone(),
-                id: artifact.artifact_id.clone(),
-                law: None,
-                message: format!(
-                    "core.laws.unresolved_scope: law {} failed to decode: {error}",
-                    artifact.artifact_id
-                ),
-                unchecked: true,
-            }),
-        }
-    }
-    findings
-}
-
 /// HOST-INSTALL-LIVE-1: evaluate the candidate's governing laws on every
 /// live main-world object whose law inputs the candidate changes, on the
 /// migration candidate's view: the object's values and each linked object's
@@ -439,7 +398,7 @@ fn validate_candidate_laws<E: SqlEngine>(
     if candidate.law_artifacts().is_empty() {
         return Ok(0);
     }
-    let support_findings = check_candidate_law_support(candidate);
+    let support_findings = crate::admitted::check_candidate_law_support(candidate);
     if !support_findings.is_empty() {
         return Err(CellError::DefinitionLawRefused {
             findings: support_findings,
