@@ -406,7 +406,7 @@ fn refuses_candidate_to_base_compensation_cycle() {
     let cand_archive = transition_action(&ActionSpec {
         artifact_id: "crm.contact.archive.action",
         action_id: "crm.contact.archive",
-        scope: dev,
+        scope: dev.clone(),
         scope_required: &["orgId", "environmentId"],
         ledgered: true,
         lifecycle: ArtifactLifecycle::Active,
@@ -423,6 +423,37 @@ fn refuses_candidate_to_base_compensation_cycle() {
             Some("/payload/compensation/actionId".to_owned()),
         )),
         "{base_cycle_errors:?}"
+    );
+
+    // Direct candidate <-> base 2-cycle: candidate recurs via the base action's compensation.
+    let base_returning = transition_action(&ActionSpec {
+        artifact_id: "crm.contact.restore.action",
+        action_id: "crm.contact.restore",
+        scope: dev.clone(),
+        scope_required: &["orgId", "environmentId"],
+        ledgered: true,
+        lifecycle: ArtifactLifecycle::Active,
+        transition: Some("restore"),
+        compensation: Some("crm.contact.archive"),
+    });
+    let cand_returning = transition_action(&ActionSpec {
+        artifact_id: "crm.contact.archive.action",
+        action_id: "crm.contact.archive",
+        scope: dev,
+        scope_required: &["orgId", "environmentId"],
+        ledgered: true,
+        lifecycle: ArtifactLifecycle::Active,
+        transition: Some("archive"),
+        compensation: Some("crm.contact.restore"),
+    });
+    let mutual_base_errors =
+        check_with_base(&[cand_returning], &[contact_entity(), base_returning]);
+    assert!(
+        mutual_base_errors.contains(&(
+            codes::COMPENSATION_CYCLE.to_owned(),
+            Some("/payload/compensation/actionId".to_owned()),
+        )),
+        "{mutual_base_errors:?}"
     );
 }
 
