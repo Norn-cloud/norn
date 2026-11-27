@@ -21,7 +21,6 @@ use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::object_query::ObjectQueryParams;
 use norn_api::object_routes::{ObjectAccess, get_object_query, get_queried_object};
-use norn_api::objects::NornObjectQueryPage;
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
@@ -172,7 +171,7 @@ fn query(
     host: &DevHost<NativeEngine>,
     actor: &str,
     params: &ObjectQueryParams,
-) -> Result<NornObjectQueryPage, Refusal> {
+) -> Result<norn_api::privacy::DisclosedObjectQueryPage, Refusal> {
     get_object_query(host, &scope(), Some(actor), TYPE, params, &Mapping)
 }
 
@@ -181,7 +180,7 @@ fn pages(
     host: &DevHost<NativeEngine>,
     actor: &str,
     params: &ObjectQueryParams,
-) -> Vec<NornObjectQueryPage> {
+) -> Vec<norn_api::privacy::DisclosedObjectQueryPage> {
     let mut all = Vec::new();
     let mut params = params.clone();
     loop {
@@ -194,7 +193,7 @@ fn pages(
     }
 }
 
-fn ids(pages: &[NornObjectQueryPage]) -> Vec<String> {
+fn ids(pages: &[norn_api::privacy::DisclosedObjectQueryPage]) -> Vec<String> {
     pages
         .iter()
         .flat_map(|page| page.records.iter().map(|record| record.id.clone()))
@@ -406,7 +405,7 @@ fn a_cursor_binds_its_query_caller_and_snapshot() {
     let (host, dir) = host_of(writes([(Some("512"), Some("gold")), (Some("8"), None)]));
     let sorted = params(Some("2"), Some("input:desc"), None);
     let first = query(&host, "full", &sorted).unwrap();
-    let next = first.next.unwrap();
+    let next = first.next.clone().unwrap();
     let with = |base: &ObjectQueryParams, after: &str| ObjectQueryParams {
         after: Some(after.to_owned()),
         ..base.clone()
@@ -440,7 +439,7 @@ fn a_cursor_binds_its_query_caller_and_snapshot() {
         .is_ok()
     );
     let plain = query(&host, "full", &params(Some("2"), None, None)).unwrap();
-    let plain_next = plain.next.unwrap();
+    let plain_next = plain.next.clone().unwrap();
     let object = nullable_type();
     let model = norn_cell::Model::from_definitions(std::slice::from_ref(&object), &[]).unwrap();
     let mut store = CellStore::open(

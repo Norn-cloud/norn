@@ -444,7 +444,7 @@ pub fn get_object_profile<E: SqlEngine>(
     let readable: Vec<_> = scan
         .listed
         .iter()
-        .filter(|listed| listed.readable)
+        .filter(|listed| listed.readable())
         .collect();
     let withheld = scan.listed.len().saturating_sub(readable.len());
     Ok(NornObjectProfile {
@@ -462,9 +462,8 @@ pub fn get_object_profile<E: SqlEngine>(
                     .iter()
                     .map(|listed| {
                         listed
-                            .row
-                            .values
-                            .get(property)
+                            .comparable_values()
+                            .and_then(|values| values.get(property))
                             .filter(|value| **value != RuntimeValue::Null)
                     })
                     .collect();
@@ -473,18 +472,21 @@ pub fn get_object_profile<E: SqlEngine>(
                 if kind == "numeric" {
                     let rows: Vec<(&str, Decimal)> = readable
                         .iter()
-                        .filter_map(|listed| match listed.row.values.get(property) {
-                            Some(RuntimeValue::Number(number)) => {
-                                Some((listed.row.id.as_str(), *number))
+                        .filter_map(|listed| {
+                            match listed
+                                .comparable_values()
+                                .and_then(|values| values.get(property))
+                            {
+                                Some(RuntimeValue::Number(number)) => Some((listed.id(), *number)),
+                                Some(
+                                    RuntimeValue::Null
+                                    | RuntimeValue::Bool(_)
+                                    | RuntimeValue::String(_)
+                                    | RuntimeValue::Array(_)
+                                    | RuntimeValue::Object(_),
+                                )
+                                | None => None,
                             }
-                            Some(
-                                RuntimeValue::Null
-                                | RuntimeValue::Bool(_)
-                                | RuntimeValue::String(_)
-                                | RuntimeValue::Array(_)
-                                | RuntimeValue::Object(_),
-                            )
-                            | None => None,
                         })
                         .collect();
                     profile.outliers = outliers(&rows);
