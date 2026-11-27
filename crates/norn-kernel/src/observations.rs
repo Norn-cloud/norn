@@ -107,6 +107,102 @@ impl World {
     }
 }
 
+/// Core 08 (`WORLD-FORK`): explicit bitemporal scenario clock separating
+/// effective business time from recorded ledger/knowledge time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScenarioClock {
+    /// Effective business time observed by scenario evaluation and rules.
+    pub effective: LogicalTime,
+    /// Recorded ledger/knowledge time stamped on fork commits and timers.
+    pub recorded: LogicalTime,
+}
+
+impl ScenarioClock {
+    /// Constructs a scenario clock with independent effective and recorded instants.
+    #[must_use]
+    pub const fn new(effective: LogicalTime, recorded: LogicalTime) -> Self {
+        Self {
+            effective,
+            recorded,
+        }
+    }
+
+    /// Constructs a scenario clock where effective and recorded time start equal.
+    #[must_use]
+    pub const fn synchronized(now: LogicalTime) -> Self {
+        Self {
+            effective: now,
+            recorded: now,
+        }
+    }
+
+    /// Monotonically advances the effective clock to `effective`, returning
+    /// `None` if `effective` would move backward.
+    #[must_use]
+    pub const fn advance_effective_to(self, effective: LogicalTime) -> Option<Self> {
+        if effective.as_millis() < self.effective.as_millis() {
+            return None;
+        }
+        Some(Self {
+            effective,
+            recorded: self.recorded,
+        })
+    }
+
+    /// Monotonically advances the recorded clock to `recorded`, returning
+    /// `None` if `recorded` would move backward.
+    #[must_use]
+    pub const fn advance_recorded_to(self, recorded: LogicalTime) -> Option<Self> {
+        if recorded.as_millis() < self.recorded.as_millis() {
+            return None;
+        }
+        Some(Self {
+            effective: self.effective,
+            recorded,
+        })
+    }
+
+    /// Advances the effective clock by `delta_ms`, or `None` on overflow.
+    #[must_use]
+    pub const fn advance_effective_by(self, delta_ms: u64) -> Option<Self> {
+        match self.effective.checked_add_millis(delta_ms) {
+            Some(effective) => Some(Self {
+                effective,
+                recorded: self.recorded,
+            }),
+            None => None,
+        }
+    }
+
+    /// Advances the recorded clock by `delta_ms`, or `None` on overflow.
+    #[must_use]
+    pub const fn advance_recorded_by(self, delta_ms: u64) -> Option<Self> {
+        match self.recorded.checked_add_millis(delta_ms) {
+            Some(recorded) => Some(Self {
+                effective: self.effective,
+                recorded,
+            }),
+            None => None,
+        }
+    }
+
+    /// Advances both effective and recorded clocks by `delta_ms`, or `None` on overflow.
+    #[must_use]
+    pub const fn advance_both_by(self, delta_ms: u64) -> Option<Self> {
+        match (
+            self.effective.checked_add_millis(delta_ms),
+            self.recorded.checked_add_millis(delta_ms),
+        ) {
+            (Some(effective), Some(recorded)) => Some(Self {
+                effective,
+                recorded,
+            }),
+            _ => None,
+        }
+    }
+}
+
 /// Everything nondeterministic a turn may observe, supplied by the host.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -127,6 +223,54 @@ impl Observations {
             now,
             entropy,
             world: World::Main,
+        }
+    }
+
+    /// Observations for a turn in a simulated fork world under its virtual
+    /// recorded clock and recorded entropy (`WORLD-FORK`).
+    #[must_use]
+    pub const fn fork(id: WorldId, recorded: LogicalTime, entropy: Entropy) -> Self {
+        Self {
+            now: recorded,
+            entropy,
+            world: World::Fork { id },
+        }
+    }
+
+    /// Observations for a read-only historical evaluation pinned to `commit`.
+    #[must_use]
+    pub const fn historical(commit: CommitId, now: LogicalTime, entropy: Entropy) -> Self {
+        Self {
+            now,
+            entropy,
+            world: World::Historical { commit },
+        }
+    }
+}
+
+/// Core 08 (`WORLD-FORK`): replayable turn observations for a simulated fork
+/// world, carrying both virtual effective business time and virtual recorded
+/// ledger time alongside recorded entropy and world identity.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScenarioObservations {
+    /// Virtual effective business clock and virtual recorded ledger clock.
+    pub clock: ScenarioClock,
+    /// Deterministic recorded entropy for this turn.
+    pub entropy: Entropy,
+    /// Execution world (`World::Fork { id }`).
+    pub world: World,
+}
+
+impl ScenarioObservations {
+    /// Project into single-clock kernel [`Observations`] using the virtual
+    /// recorded clock for ledger stamping and timer evaluation.
+    #[must_use]
+    pub fn as_observations(&self) -> Observations {
+        Observations {
+            now: self.clock.recorded,
+            entropy: self.entropy,
+            world: self.world.clone(),
         }
     }
 }
