@@ -1,35 +1,81 @@
-//! SOURCE-CAPTURE-1 helpers for durable source cursors and page capture specs.
+//! SOURCE-CAPTURE-1 helpers for durable source cursors, legacy upgrade
+//! seeding, complete-page capture specs, and fenced-run report guards.
 
 use std::collections::BTreeMap;
 
+use norn_cell::MappingOutcome;
 use norn_cell::engine::SqlEngine;
-use norn_cell::source_cursor::{CursorAdvanceSpec, SourceLease};
+use norn_cell::source_cursor::{CursorAdvanceSpec, PendingSourceCapture, SourceLease};
 use norn_ir::RuntimeValue;
 
-use super::{CONNECTION_TYPE, ConnectionConfig, Failure, RUN_LEASE_MS, fail};
+use super::{CONNECTION_TYPE, ConnectionConfig, Failure, RUN_LEASE_MS, fail, rfc3339};
 use crate::host::DevHost;
-use crate::pull::{CursorAdvance, Watermark};
+use crate::pull::{AcceptedPage, CursorAdvance, PullProfile, Watermark, observation};
+use norn_cell::mapping_bundle::MappingInput;
 
-/// Read the connection's durably committed watermarks: `_norn_source_cursor`
-/// is authoritative; falls back to `source.Connection.watermark` only for cells
-/// whose prior syncs predated `_norn_source_cursor`.
-pub(super) fn durable_watermarks<E: SqlEngine>(
+/// One durably captured source page actively draining through paced post-capture
+/// processing (`advance` is `None` for pages recovered from `_norn_source_pending`
+/// after a prior crash).
+pub(super) struct ActiveCapture {
+    pub(super) pending: PendingSourceCapture,
+    pub(super) outcomes: BTreeMap<String, MappingOutcome>,
+    pub(super) advance: Option<CursorAdvance>,
+}
+
+/// Read the connection's durably committed watermarks. `_norn_source_cursor` is
+/// authoritative; when upgrading a populated legacy cell whose prior syncs only
+/// wrote `source.Connection.watermark`, seed each legacy dataset cursor into
+/// `_norn_source_cursor` under the active fencing lease before planning the
+/// first request.
+pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     host: &DevHost<E>,
     connection_id: &str,
-) -> Option<BTreeMap<String, Watermark>> {
-    if let Ok(cursors) = host.source_cursors(connection_id)
-        && !cursors.is_empty()
-    {
+    lease: &SourceLease,
+    known: Option<BTreeMap<String, Watermark>>,
+    now_ms: u64,
+) -> Result<BTreeMap<String, Watermark>, Failure> {
+    let cursors = host
+        .source_cursors(connection_id)
+        .map_err(|r| fail("source.ingest", r.message))?;
+    if !cursors.is_empty() {
         let mut parsed = BTreeMap::new();
         for (dataset, record) in cursors {
             if let Ok(watermark) = serde_json::from_str::<Watermark>(&record.cursor_json) {
                 parsed.insert(dataset, watermark);
             }
         }
-        if !parsed.is_empty() {
-            return Some(parsed);
-        }
+        return Ok(parsed);
     }
+    let legacy = legacy_connection_watermarks(host, connection_id)
+        .or(known)
+        .unwrap_or_default();
+    if !legacy.is_empty() {
+        let mut encoded = BTreeMap::new();
+        for (dataset, watermark) in &legacy {
+            let cursor_json = watermark
+                .cursor_json()
+                .map_err(|e| fail("source.ingest", e.to_string()))?;
+            encoded.insert(dataset.clone(), cursor_json);
+        }
+        host.seed_source_cursors(
+            connection_id,
+            &lease.lease_id,
+            lease.generation,
+            now_ms,
+            &encoded,
+        )
+        .map_err(|error| {
+            let (code, message) = error.code_and_message();
+            fail(code, message)
+        })?;
+    }
+    Ok(legacy)
+}
+
+fn legacy_connection_watermarks<E: SqlEngine>(
+    host: &DevHost<E>,
+    connection_id: &str,
+) -> Option<BTreeMap<String, Watermark>> {
     host.host_object(CONNECTION_TYPE, connection_id)
         .ok()
         .flatten()
@@ -42,15 +88,12 @@ pub(super) fn durable_watermarks<E: SqlEngine>(
         .and_then(|text| serde_json::from_str::<BTreeMap<String, Watermark>>(&text).ok())
 }
 
-/// Build the atomic [`CursorAdvanceSpec`] for one chunk of an accepted page.
-/// Non-final chunks omit `next_cursor` while still enforcing lease fencing and
-/// the cursor precondition.
+/// Build the atomic [`CursorAdvanceSpec`] for one complete accepted page.
 pub(super) fn cursor_advance_spec(
     config: &ConnectionConfig,
     lease: &SourceLease,
     pending: &CursorAdvance,
     now_ms: u64,
-    is_final_chunk: bool,
 ) -> Result<CursorAdvanceSpec, Failure> {
     let expected_previous_cursor = pending
         .expected_previous
@@ -58,16 +101,12 @@ pub(super) fn cursor_advance_spec(
         .map(Watermark::cursor_json)
         .transpose()
         .map_err(|e| fail("source.ingest", e.to_string()))?;
-    let next_cursor = if is_final_chunk {
-        pending
-            .next
-            .as_ref()
-            .map(Watermark::cursor_json)
-            .transpose()
-            .map_err(|e| fail("source.ingest", e.to_string()))?
-    } else {
-        None
-    };
+    let next_cursor = pending
+        .next
+        .as_ref()
+        .map(Watermark::cursor_json)
+        .transpose()
+        .map_err(|e| fail("source.ingest", e.to_string()))?;
     Ok(CursorAdvanceSpec {
         connection_id: config.id.clone(),
         dataset: pending.dataset.clone(),
@@ -78,4 +117,106 @@ pub(super) fn cursor_advance_spec(
         next_cursor,
         renew_ttl_ms: Some(RUN_LEASE_MS),
     })
+}
+
+/// Release the run's durable lease if it still holds it and report whether this
+/// run was fenced or superseded by another run's lease (so `finish` must not
+/// overwrite `source.Connection` or local schedule/watermark state).
+pub(super) fn release_and_check_superseded<E: SqlEngine>(
+    host: &DevHost<E>,
+    connection_id: &str,
+    lease: Option<&SourceLease>,
+    error: Option<&(String, String)>,
+) -> bool {
+    let mut superseded = error.is_some_and(|(code, _)| code == "source.lease_fenced");
+    if let Some(lease) = lease
+        && matches!(
+            host.release_source_lease(connection_id, &lease.lease_id, lease.generation),
+            Ok(false)
+        )
+        && host
+            .source_lease(connection_id)
+            .ok()
+            .flatten()
+            .is_some_and(|current| {
+                current.lease_id != lease.lease_id || current.generation > lease.generation
+            })
+    {
+        superseded = true;
+    }
+    superseded
+}
+
+/// Load any durably captured pages left behind in `_norn_source_pending` by an
+/// earlier crash or store error so the next sync processes them before pulling
+/// further pages.
+pub(super) fn load_pending_captures<E: SqlEngine>(
+    host: &DevHost<E>,
+    connection_id: &str,
+) -> Result<Vec<ActiveCapture>, Failure> {
+    let entries = host
+        .pending_source_captures(connection_id)
+        .map_err(|r| fail("source.ingest", r.message))?;
+    Ok(entries
+        .into_iter()
+        .map(|pending| ActiveCapture {
+            pending,
+            outcomes: BTreeMap::new(),
+            advance: None,
+        })
+        .collect())
+}
+
+/// Seal every row of an accepted HTTP page and atomically capture the complete
+/// page + `_norn_source_cursor` + `_norn_source_pending` in one SQLite
+/// transaction under `lease`. Returns `None` for empty terminal pages (whose
+/// cursor has already been persisted atomically).
+pub(super) fn capture_accepted_page<E: SqlEngine>(
+    host: &DevHost<E>,
+    config: &ConnectionConfig,
+    lease: &SourceLease,
+    profile: &PullProfile,
+    accepted: AcceptedPage,
+    step_rows: usize,
+    now_ms: u64,
+) -> Result<(Option<ActiveCapture>, CursorAdvance), Failure> {
+    let recorded_at = norn_ir::provenance::UtcTimestamp(rfc3339(now_ms));
+    let batch = accepted
+        .rows
+        .iter()
+        .map(|row| {
+            observation(profile, row, now_ms).map(|raw| {
+                (
+                    raw,
+                    MappingInput {
+                        mapping: config.mapping.clone(),
+                        dataset: row.dataset.clone(),
+                        connector_instance: config.instance.clone(),
+                        partition: row.dataset.clone(),
+                        recorded_at: recorded_at.clone(),
+                    },
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| fail("source.seal", e))?;
+    let spec = cursor_advance_spec(config, lease, &accepted.advance, now_ms)?;
+    let pending = host
+        .capture_source_page_atomic(&batch, &spec, step_rows.clamp(1, crate::host::PAGE_ROWS))
+        .map_err(|error| {
+            let (code, message) = error.code_and_message();
+            fail(code, message)
+        })?;
+    if pending.pages.is_empty() && pending.records.is_empty() {
+        return Ok((None, accepted.advance));
+    }
+    let advance = accepted.advance.clone();
+    Ok((
+        Some(ActiveCapture {
+            pending,
+            outcomes: BTreeMap::new(),
+            advance: Some(accepted.advance),
+        }),
+        advance,
+    ))
 }

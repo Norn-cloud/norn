@@ -261,8 +261,9 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
     }
 
     /// SOURCE-CAPTURE-1: atomically validate lease + expected previous cursor,
-    /// capture a page (or empty terminal page), and advance `_norn_source_cursor`
-    /// in one SQLite transaction; see [`CellStore::capture_source_page`].
+    /// capture a complete page (or empty terminal page), record pending
+    /// processing state, and advance `_norn_source_cursor` in one SQLite
+    /// transaction; see [`CellStore::capture_source_page`].
     ///
     /// # Errors
     /// Lease fencing, cursor conflict, framing refusals, or store errors.
@@ -271,8 +272,43 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         raws: &[Observed<Value>],
         input: Option<&crate::mapping_bundle::MappingInput>,
         advance: &crate::source_cursor::CursorAdvanceSpec,
-    ) -> Result<crate::mapping_page::CapturedPage, CellError> {
-        self.store.capture_source_page(raws, input, advance)
+        max_run_rows: usize,
+    ) -> Result<crate::mapping_page::CapturedSourcePage, CellError> {
+        self.store
+            .capture_source_page(raws, input, advance, max_run_rows)
+    }
+
+    /// SOURCE-CAPTURE-1: seed legacy dataset cursors under the active fencing
+    /// lease (`INSERT OR IGNORE`); see [`CellStore::seed_source_cursors`].
+    ///
+    /// # Errors
+    /// Lease fencing or store errors.
+    pub fn seed_source_cursors(
+        &mut self,
+        connection_id: &str,
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+        cursors: &BTreeMap<String, String>,
+    ) -> Result<(), CellError> {
+        self.store
+            .seed_source_cursors(connection_id, lease_id, generation, now_ms, cursors)
+    }
+
+    /// SOURCE-CAPTURE-1: remove a pending source capture entry after all its
+    /// captured inbox rows have been processed; see
+    /// [`CellStore::complete_source_pending`].
+    ///
+    /// # Errors
+    /// Store errors.
+    pub fn complete_source_pending(
+        &mut self,
+        connection_id: &str,
+        dataset: &str,
+        page_digest: &str,
+    ) -> Result<(), CellError> {
+        self.store
+            .complete_source_pending(connection_id, dataset, page_digest)
     }
 
     /// Begin a private rebuild in this native host's world and tenant scope.

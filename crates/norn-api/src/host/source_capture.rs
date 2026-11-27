@@ -1,26 +1,31 @@
-//! SOURCE-CAPTURE-1: host-side durable lease acquisition and atomic
-//! source-page capture over [`CellStore::capture_source_page`].
+//! SOURCE-CAPTURE-1: host-side durable lease acquisition, atomic complete-page
+//! source capture over [`CellStore::capture_source_page`], and post-capture
+//! inbox processing / crash recovery.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 
-use norn_cell::CellError;
 use norn_cell::engine::SqlEngine;
 use norn_cell::mapping_bundle::MappingInput;
-use norn_cell::mapping_page::{CapturedPage, PageAttempt};
-use norn_cell::source_cursor::{CursorAdvanceSpec, SourceCursorRecord, SourceLease};
+use norn_cell::mapping_page::PageAttempt;
+use norn_cell::source_cursor::{
+    CursorAdvanceSpec, PendingSourceCapture, SourceCursorRecord, SourceLease,
+};
+use norn_cell::{CellError, MappingOutcome};
 use norn_ir::RuntimeValue;
 use norn_kernel::Observed;
 
-use super::{DevHost, IngestReport, Ingested, Page, pages};
+use super::{DevHost, IngestReport, Ingested, PAGE_ROWS};
 use crate::refusal::Refusal;
 
-/// Typed failure returned by [`DevHost::acquire_source_lease`] and
-/// [`DevHost::ingest_source_page`].
+/// Typed failure returned by [`DevHost::acquire_source_lease`],
+/// [`DevHost::seed_source_cursors`], [`DevHost::capture_source_page_atomic`],
+/// and [`DevHost::ingest_source_page`].
 #[derive(Debug, Clone)]
 pub enum SourceCaptureError {
     /// The sync lease is missing, expired, or superseded by a newer generation.
     LeaseFenced(String),
-    /// The durable source cursor moved since this page was planned.
+    /// The durable source cursor moved since this page was planned, or a
+    /// duplicate delivery's content digest did not match the committed page.
     CursorConflict(String),
     /// Any other framing, mapping, or store failure.
     Refusal(Refusal),
@@ -99,6 +104,27 @@ impl<E: SqlEngine> DevHost<E> {
         self.observing(|cell| cell.release_source_lease(connection_id, lease_id, generation))
     }
 
+    /// Seed legacy dataset cursors (upgraded from `source.Connection.watermark`)
+    /// into `_norn_source_cursor` under the active fencing lease using
+    /// `INSERT OR IGNORE`.
+    ///
+    /// # Errors
+    /// [`SourceCaptureError::LeaseFenced`] or store failure.
+    pub fn seed_source_cursors(
+        &self,
+        connection_id: &str,
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+        cursors: &BTreeMap<String, String>,
+    ) -> Result<(), SourceCaptureError> {
+        let _epoch = self.definition_read()?;
+        self.observing_raw(|cell| {
+            cell.seed_source_cursors(connection_id, lease_id, generation, now_ms, cursors)
+        })?
+        .map_err(SourceCaptureError::from_cell)
+    }
+
     /// Read all durably committed dataset cursors for `connection_id`.
     ///
     /// # Errors
@@ -128,14 +154,159 @@ impl<E: SqlEngine> DevHost<E> {
             .map_err(Refusal::host)
     }
 
-    /// SOURCE-CAPTURE-1: capture a page of source rows (or an empty terminal
-    /// page) and atomically advance `_norn_source_cursor` in one SQLite
-    /// transaction under `advance`'s fencing lease, then process each captured
-    /// page row.
+    /// Read all durably captured source pages for `connection_id` whose
+    /// post-capture canonical processing has not yet completed.
     ///
-    /// If a large page must split due to byte bounds or `OBS-LINK-DISPUTE-1`,
-    /// non-final sub-pages verify the active lease without advancing the cursor
-    /// and only the final sub-page advances `_norn_source_cursor`.
+    /// # Errors
+    /// Host or store failure.
+    pub fn pending_source_captures(
+        &self,
+        connection_id: &str,
+    ) -> Result<Vec<PendingSourceCapture>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .pending_source_captures(connection_id)
+            .map_err(Refusal::host)
+    }
+
+    /// Remove a pending source capture entry after every captured inbox row has
+    /// been processed cleanly.
+    ///
+    /// # Errors
+    /// Host or store failure.
+    pub fn complete_source_pending(
+        &self,
+        connection_id: &str,
+        dataset: &str,
+        page_digest: &str,
+    ) -> Result<(), Refusal> {
+        let _epoch = self.definition_read()?;
+        self.observing(|cell| cell.complete_source_pending(connection_id, dataset, page_digest))
+    }
+
+    /// SOURCE-CAPTURE-1: capture a complete source page (or empty terminal page)
+    /// and atomically advance `_norn_source_cursor` + `_norn_source_pending` in
+    /// one SQLite transaction under `advance`'s active fencing lease.
+    ///
+    /// `max_run_rows` caps each internal `mapping-page:` run inside that single
+    /// transaction so post-capture processing can yield at `SYNC-YIELD-2` pace
+    /// without ever committing a partial capture prefix.
+    ///
+    /// # Errors
+    /// Lease fencing, cursor conflict, framing refusals, or store failures.
+    pub fn capture_source_page_atomic(
+        &self,
+        rows: &[(Observed<RuntimeValue>, MappingInput)],
+        advance: &CursorAdvanceSpec,
+        max_run_rows: usize,
+    ) -> Result<PendingSourceCapture, SourceCaptureError> {
+        let _epoch = self.definition_read()?;
+        let Some((_, input)) = rows.first() else {
+            let captured = self
+                .observing_raw(|cell| cell.capture_source_page(&[], None, advance, max_run_rows))?
+                .map_err(SourceCaptureError::from_cell)?;
+            return Ok(PendingSourceCapture {
+                connection_id: advance.connection_id.clone(),
+                dataset: advance.dataset.clone(),
+                page_digest: captured.page_digest,
+                pages: Vec::new(),
+                records: Vec::new(),
+                captured_at_ms: advance.now_ms,
+            });
+        };
+        if rows.iter().any(|(_, row_input)| row_input != input) {
+            return Err(SourceCaptureError::from_cell(
+                CellError::MappingBundleMismatch,
+            ));
+        }
+        let delivered: Vec<Observed<RuntimeValue>> =
+            rows.iter().map(|(raw, _)| raw.clone()).collect();
+        let captured = self
+            .observing_raw(|cell| {
+                cell.capture_source_page(&delivered, Some(input), advance, max_run_rows)
+            })?
+            .map_err(SourceCaptureError::from_cell)?;
+        Ok(PendingSourceCapture {
+            connection_id: advance.connection_id.clone(),
+            dataset: advance.dataset.clone(),
+            page_digest: captured.page_digest,
+            pages: captured
+                .captured
+                .pages
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect(),
+            records: captured.captured.records,
+            captured_at_ms: advance.now_ms,
+        })
+    }
+
+    /// Process up to one `mapping-page:` run (or `max_rows` standalone /
+    /// already-consumed records) of an already-captured [`PendingSourceCapture`].
+    ///
+    /// Fails closed if any expected captured observation id is absent from this
+    /// cell's `_norn_inbox`.
+    ///
+    /// # Errors
+    /// Store or missing-inbox failures; mapping/commit refusals are returned as
+    /// [`MappingOutcome::Quarantined`].
+    pub fn process_source_page_step(
+        &self,
+        pending: &mut PendingSourceCapture,
+        outcomes: &mut BTreeMap<String, MappingOutcome>,
+        max_rows: usize,
+    ) -> Result<Vec<Ingested>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let limit = max_rows.max(1);
+        let mut allow_consumed_drain = false;
+        while !pending.pages.is_empty() {
+            let page_id = pending.pages.remove(0);
+            if !self.inbox_observation_exists(&page_id)? {
+                return Err(Refusal::host(CellError::MappingBundleMismatch));
+            }
+            let consumed = self.process_one_mapping_page(&page_id, outcomes)?;
+            if consumed {
+                allow_consumed_drain = true;
+            }
+            if max_rows != usize::MAX {
+                break;
+            }
+        }
+        let mut processed = Vec::new();
+        while processed.len() < limit {
+            let Some(id) = pending.records.first() else {
+                break;
+            };
+            if let Some(outcome) = outcomes.remove(id) {
+                let id = pending.records.remove(0);
+                processed.push(Ingested {
+                    observation_id: id,
+                    outcome,
+                });
+                continue;
+            }
+            if !outcomes.is_empty() || pending.pages.is_empty() || allow_consumed_drain {
+                let id = pending.records.remove(0);
+                if !self.inbox_observation_exists(&id)? {
+                    return Err(Refusal::host(CellError::MappingBundleMismatch));
+                }
+                let outcome = self.observing(|cell| cell.process_mapping_outcome(&id))?;
+                processed.push(Ingested {
+                    observation_id: id,
+                    outcome,
+                });
+                continue;
+            }
+            break;
+        }
+        Ok(processed)
+    }
+
+    /// SOURCE-CAPTURE-1: capture a complete source page (or empty terminal page)
+    /// atomically with `_norn_source_cursor`, process all captured rows into
+    /// canonical tables, and clear `_norn_source_pending` once complete.
     ///
     /// # Errors
     /// Lease fencing, cursor conflict, framing refusals, or store failures.
@@ -144,99 +315,79 @@ impl<E: SqlEngine> DevHost<E> {
         rows: &[(Observed<RuntimeValue>, MappingInput)],
         advance: &CursorAdvanceSpec,
     ) -> Result<Vec<Ingested>, SourceCaptureError> {
-        let _epoch = self.definition_read()?;
-        if rows.is_empty() {
-            self.observing_raw(|cell| cell.capture_source_page(&[], None, advance))?
-                .map_err(SourceCaptureError::from_cell)?;
+        let mut pending = self.capture_source_page_atomic(rows, advance, PAGE_ROWS)?;
+        if pending.pages.is_empty() && pending.records.is_empty() {
             return Ok(Vec::new());
         }
-        let mut framed: VecDeque<Page<'_>> = pages(rows, false).into();
-        let mut out: Vec<(usize, Ingested)> = Vec::with_capacity(rows.len());
-        let mut report = IngestReport {
-            outcomes: Vec::new(),
-            next: None,
-            pages: 0,
-            commits: 0,
-            work_ms: 0,
-        };
-        while let Some((input, page)) = framed.pop_front() {
-            let step_advance = if framed.is_empty() {
-                advance.clone()
-            } else {
-                advance.without_cursor_advance()
-            };
-            let Some(captured) =
-                self.capture_source_subpage(input, page.clone(), &mut framed, &step_advance)?
-            else {
-                continue;
-            };
-            let processed = self.process_captured_source_page(&page, captured, &mut report)?;
-            out.extend(processed);
-        }
-        out.sort_by_key(|(at, _)| *at);
-        Ok(out.into_iter().map(|(_, ingested)| ingested).collect())
-    }
-
-    fn capture_source_subpage<'a>(
-        &self,
-        input: &'a MappingInput,
-        mut page: Vec<(usize, &'a Observed<RuntimeValue>)>,
-        framed: &mut VecDeque<Page<'a>>,
-        advance: &CursorAdvanceSpec,
-    ) -> Result<Option<CapturedPage>, SourceCaptureError> {
-        let delivered: Vec<Observed<RuntimeValue>> =
-            page.iter().map(|(_, raw)| (*raw).clone()).collect();
-        match self
-            .observing_raw(|cell| cell.capture_source_page(&delivered, Some(input), advance))?
-        {
-            Ok(captured) => Ok(Some(captured)),
-            Err(CellError::OutOfRange("mapping page bytes")) if page.len() > 1 => {
-                let rest = page.split_off(page.len() / 2);
-                framed.push_front((input, rest));
-                framed.push_front((input, page));
-                Ok(None)
-            }
-            Err(CellError::MappingPageSpansDispute) if page.len() > 1 => {
-                for row in page.into_iter().rev() {
-                    framed.push_front((input, vec![row]));
-                }
-                Ok(None)
-            }
-            Err(error) => Err(SourceCaptureError::from_cell(error)),
-        }
-    }
-
-    fn process_captured_source_page(
-        &self,
-        page: &[(usize, &Observed<RuntimeValue>)],
-        captured: CapturedPage,
-        report: &mut IngestReport,
-    ) -> Result<Vec<(usize, Ingested)>, Refusal> {
-        let CapturedPage {
-            pages: captured_pages,
-            records,
-        } = captured;
         let mut outcomes = BTreeMap::new();
-        for (page_id, _new) in &captured_pages {
-            let attempt = self.observing(|cell| cell.try_mapping_page(page_id))?;
-            let members = match attempt {
-                PageAttempt::Consumed => continue,
-                PageAttempt::Landed(landed) => {
-                    outcomes.extend(landed);
-                    Vec::new()
-                }
-                PageAttempt::Refused(members) => members,
-            };
-            if members.is_empty() {
-                continue;
-            }
-            for member in &members {
-                let outcome = self.observing(|cell| cell.process_mapping_outcome(member))?;
-                outcomes.insert(member.clone(), outcome);
-            }
-            let _ = self.observing(|cell| cell.finish_mapping_page(page_id))?;
+        let mut out = Vec::with_capacity(pending.records.len());
+        while !pending.pages.is_empty() || !pending.records.is_empty() {
+            out.extend(self.process_source_page_step(&mut pending, &mut outcomes, usize::MAX)?);
         }
-        let rows = page.iter().map(|(at, _)| *at).zip(records);
-        self.answer_page(rows, outcomes, report, 0)
+        self.complete_source_pending(
+            &pending.connection_id,
+            &pending.dataset,
+            &pending.page_digest,
+        )?;
+        Ok(out)
+    }
+
+    /// Recover and process every stranded post-capture pending source page for
+    /// `connection_id` left behind by an earlier crash or store error.
+    ///
+    /// # Errors
+    /// Store failures; mapping/commit refusals are returned as
+    /// [`MappingOutcome::Quarantined`].
+    pub fn recover_pending_source_pages(
+        &self,
+        connection_id: &str,
+    ) -> Result<Vec<Ingested>, Refusal> {
+        let mut recovered = Vec::new();
+        for mut pending in self.pending_source_captures(connection_id)? {
+            let mut outcomes = BTreeMap::new();
+            while !pending.pages.is_empty() || !pending.records.is_empty() {
+                recovered.extend(self.process_source_page_step(
+                    &mut pending,
+                    &mut outcomes,
+                    usize::MAX,
+                )?);
+            }
+            self.complete_source_pending(
+                &pending.connection_id,
+                &pending.dataset,
+                &pending.page_digest,
+            )?;
+        }
+        Ok(recovered)
+    }
+
+    fn inbox_observation_exists(&self, observation_id: &str) -> Result<bool, Refusal> {
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .inbox_observation_exists(observation_id)
+            .map_err(Refusal::host)
+    }
+
+    fn process_one_mapping_page(
+        &self,
+        page_id: &str,
+        outcomes: &mut BTreeMap<String, MappingOutcome>,
+    ) -> Result<bool, Refusal> {
+        let attempt = self.observing(|cell| cell.try_mapping_page(page_id))?;
+        let members = match attempt {
+            PageAttempt::Consumed => return Ok(true),
+            PageAttempt::Landed(landed) => {
+                outcomes.extend(landed);
+                return Ok(false);
+            }
+            PageAttempt::Refused(members) => members,
+        };
+        for member in &members {
+            let outcome = self.observing(|cell| cell.process_mapping_outcome(member))?;
+            outcomes.insert(member.clone(), outcome);
+        }
+        let _ = self.observing(|cell| cell.finish_mapping_page(page_id))?;
+        Ok(false)
     }
 }

@@ -1,14 +1,19 @@
-//! SOURCE-CAPTURE-1: durable source-sync leases and atomic page cursors.
+//! SOURCE-CAPTURE-1: durable source-sync leases, atomic page cursors, and
+//! post-capture pending-processing recovery records.
 //!
 //! Each source connection holds at most one active lease in `_norn_source_lease`
 //! with a strictly monotonic fencing `generation`. Page capture
 //! ([`crate::CellStore::capture_source_page`]) verifies the active lease, checks
 //! the expected previous cursor in `_norn_source_cursor` (admitting exact
-//! idempotent duplicate deliveries), captures every row or quarantine evidence,
-//! and advances `_norn_source_cursor` in one SQLite transaction.
+//! full-page idempotent duplicate deliveries bound to immutable row content),
+//! captures every row or quarantine evidence, records any unconsumed pages in
+//! `_norn_source_pending` for crash recovery, and advances `_norn_source_cursor`
+//! in one SQLite transaction.
 
 use std::collections::BTreeMap;
 
+use norn_ir::RuntimeValue;
+use norn_kernel::Observed;
 use serde::{Deserialize, Serialize};
 
 use crate::engine::{SqlEngine, SqlRow, params};
@@ -20,10 +25,12 @@ use crate::store::CellStore;
 pub(crate) const SOURCE_LEASE: &str = "_norn_source_lease";
 /// Durable source-sync cursor table (one row per `(connection_id, dataset)`).
 pub(crate) const SOURCE_CURSOR: &str = "_norn_source_cursor";
+/// Durable post-capture inbox recovery table (deleted once processed).
+pub(crate) const SOURCE_PENDING: &str = "_norn_source_pending";
 
-/// Additive DDL for source-sync leases and cursors. Older engines ignore these
-/// tables, so no storage version bump is required.
-pub(crate) const DDL: [&str; 2] = [
+/// Additive DDL for source-sync leases, cursors, and post-capture recovery.
+/// Older engines ignore these tables, so no storage version bump is required.
+pub(crate) const DDL: [&str; 3] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_source_lease" (
   "connection_id" TEXT NOT NULL PRIMARY KEY,
   "lease_id" TEXT NOT NULL,
@@ -39,6 +46,15 @@ pub(crate) const DDL: [&str; 2] = [
   "page_digest" TEXT NOT NULL,
   "updated_at_ms" INTEGER NOT NULL,
   PRIMARY KEY ("connection_id", "dataset")
+)"#,
+    r#"CREATE TABLE IF NOT EXISTS "_norn_source_pending" (
+  "connection_id" TEXT NOT NULL,
+  "dataset" TEXT NOT NULL,
+  "page_digest" TEXT NOT NULL,
+  "pages_json" TEXT NOT NULL,
+  "records_json" TEXT NOT NULL,
+  "captured_at_ms" INTEGER NOT NULL,
+  PRIMARY KEY ("connection_id", "dataset", "page_digest")
 )"#,
 ];
 
@@ -70,13 +86,32 @@ pub struct SourceCursorRecord {
     pub cursor_json: String,
     /// Lease generation that committed this cursor.
     pub generation: u64,
-    /// Content digest of the page that committed this cursor (for duplicate delivery).
+    /// Content digest of the complete page that committed this cursor.
     pub page_digest: String,
     /// Timestamp when this cursor was committed (milliseconds since epoch).
     pub updated_at_ms: u64,
 }
 
-/// Precondition and atomic cursor advancement carried by one captured page.
+/// One durably captured source page whose inbox rows have not yet completed
+/// post-capture canonical processing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingSourceCapture {
+    /// Configured connection id.
+    pub connection_id: String,
+    /// Dataset name within the connection's pull profile.
+    pub dataset: String,
+    /// Complete-page content digest matching `_norn_source_cursor.page_digest`.
+    pub page_digest: String,
+    /// `mapping-page:` inbox row ids captured for this page, in page order.
+    pub pages: Vec<String>,
+    /// Every row's inbox observation id captured for this page, in page order.
+    pub records: Vec<String>,
+    /// Capture timestamp (milliseconds since epoch).
+    pub captured_at_ms: u64,
+}
+
+/// Precondition and atomic cursor advancement carried by one complete captured page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CursorAdvanceSpec {
     /// Configured connection id.
@@ -95,24 +130,6 @@ pub struct CursorAdvanceSpec {
     pub next_cursor: Option<String>,
     /// Optional lease TTL extension in ms applied inside the same transaction.
     pub renew_ttl_ms: Option<u64>,
-}
-
-impl CursorAdvanceSpec {
-    /// Clone this spec with `next_cursor = None` for non-final sub-pages while
-    /// preserving lease fencing and cursor precondition checks.
-    #[must_use]
-    pub fn without_cursor_advance(&self) -> Self {
-        Self {
-            connection_id: self.connection_id.clone(),
-            dataset: self.dataset.clone(),
-            lease_id: self.lease_id.clone(),
-            generation: self.generation,
-            now_ms: self.now_ms,
-            expected_previous_cursor: self.expected_previous_cursor.clone(),
-            next_cursor: None,
-            renew_ttl_ms: self.renew_ttl_ms,
-        }
-    }
 }
 
 fn to_i64(value: u64, label: &'static str) -> Result<i64, CellError> {
@@ -144,27 +161,76 @@ fn decode_cursor(row: &SqlRow) -> Result<SourceCursorRecord, CellError> {
     })
 }
 
+fn decode_pending(row: &SqlRow) -> Result<PendingSourceCapture, CellError> {
+    let pages_json: String = row.get(3)?;
+    let records_json: String = row.get(4)?;
+    Ok(PendingSourceCapture {
+        connection_id: row.get(0)?,
+        dataset: row.get(1)?,
+        page_digest: row.get(2)?,
+        pages: serde_json::from_str(&pages_json)?,
+        records: serde_json::from_str(&records_json)?,
+        captured_at_ms: to_u64(row.get(5)?, "source pending captured_at_ms")?,
+    })
+}
+
+/// Content-bound complete-page digest over cursor transition and every row's
+/// immutable observation content (excluding wall-clock `extracted_at` /
+/// `observed_at` so exact duplicate deliveries hash identically while any
+/// payload or metadata mutation conflicts).
 pub(crate) fn page_digest(
     advance: &CursorAdvanceSpec,
-    observation_ids: &[&str],
+    raws: &[Observed<RuntimeValue>],
 ) -> Result<String, CellError> {
+    #[derive(Serialize)]
+    struct RowDigest<'a> {
+        observation_id: &'a str,
+        source: &'a str,
+        source_id: &'a str,
+        mapping_version: &'a str,
+        input_source: Option<&'a RuntimeValue>,
+        input_source_id: Option<&'a RuntimeValue>,
+        event_id: Option<&'a RuntimeValue>,
+        source_version: Option<&'a RuntimeValue>,
+        pipeline_version: Option<&'a RuntimeValue>,
+        kind: Option<&'a RuntimeValue>,
+        payload_digest: Option<&'a RuntimeValue>,
+        payload: Option<&'a RuntimeValue>,
+    }
     #[derive(Serialize)]
     struct DigestInput<'a> {
         connection_id: &'a str,
         dataset: &'a str,
-        observation_ids: &'a [&'a str],
+        rows: Vec<RowDigest<'a>>,
         expected_previous_cursor: Option<&'a str>,
         next_cursor: Option<&'a str>,
     }
+    let rows = raws
+        .iter()
+        .map(|raw| RowDigest {
+            observation_id: raw.id.0.as_str(),
+            source: raw.provenance.source.as_str(),
+            source_id: raw.provenance.source_id.as_str(),
+            mapping_version: raw.provenance.mapping_version.as_str(),
+            input_source: raw.input.get("source"),
+            input_source_id: raw.input.get("source_id"),
+            event_id: raw.input.get("event_id"),
+            source_version: raw.input.get("source_version"),
+            pipeline_version: raw.input.get("pipeline_version"),
+            kind: raw.input.get("kind"),
+            payload_digest: raw.input.get("payload_digest"),
+            payload: raw.input.get("payload"),
+        })
+        .collect();
     let input = DigestInput {
         connection_id: &advance.connection_id,
         dataset: &advance.dataset,
-        observation_ids,
+        rows,
         expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
         next_cursor: advance.next_cursor.as_deref(),
     };
     Ok(norn_ir::canonical::domain_hash_hex(
-        b"norn.source.page.v1\0",
+        b"norn.source.page.v2\0",
         &input,
     )?)
 }
@@ -198,6 +264,28 @@ fn read_cursor<E: SqlEngine>(
     )
 }
 
+fn verify_active_lease<E: SqlEngine>(
+    conn: &E,
+    connection_id: &str,
+    lease_id: &str,
+    generation: u64,
+    now_ms: u64,
+) -> Result<(), CellError> {
+    let fenced = || CellError::SourceLeaseFenced {
+        connection_id: connection_id.to_owned(),
+        lease_id: lease_id.to_owned(),
+        generation,
+    };
+    let Some(lease) = read_lease(conn, connection_id)? else {
+        return Err(fenced());
+    };
+    if lease.lease_id != lease_id || lease.generation != generation || now_ms >= lease.expires_at_ms
+    {
+        return Err(fenced());
+    }
+    Ok(())
+}
+
 /// Outcome of validating lease + cursor precondition inside the capture tx.
 pub(crate) enum Precondition {
     /// Normal forward capture (persist `next_cursor` if `Some`).
@@ -214,20 +302,13 @@ pub(crate) fn check_capture_precondition<E: SqlEngine>(
     advance: &CursorAdvanceSpec,
     digest: &str,
 ) -> Result<Precondition, CellError> {
-    let fenced = || CellError::SourceLeaseFenced {
-        connection_id: advance.connection_id.clone(),
-        lease_id: advance.lease_id.clone(),
-        generation: advance.generation,
-    };
-    let Some(lease) = read_lease(conn, &advance.connection_id)? else {
-        return Err(fenced());
-    };
-    if lease.lease_id != advance.lease_id
-        || lease.generation != advance.generation
-        || advance.now_ms >= lease.expires_at_ms
-    {
-        return Err(fenced());
-    }
+    verify_active_lease(
+        conn,
+        &advance.connection_id,
+        &advance.lease_id,
+        advance.generation,
+        advance.now_ms,
+    )?;
     let current = read_cursor(conn, &advance.connection_id, &advance.dataset)?;
     let current_json = current.as_ref().map(|record| record.cursor_json.as_str());
     if current_json == advance.expected_previous_cursor.as_deref() {
@@ -247,37 +328,59 @@ pub(crate) fn check_capture_precondition<E: SqlEngine>(
     })
 }
 
-/// Persist the advanced cursor and optional lease renewal inside the same SQLite
-/// transaction that captured the page's inbox rows.
+/// Persist the advanced cursor, optional post-capture pending record, and
+/// optional lease renewal inside the same SQLite transaction that captured the
+/// page's inbox rows.
 pub(crate) fn commit_cursor_in_tx<E: SqlEngine>(
     conn: &E,
     advance: &CursorAdvanceSpec,
     digest: &str,
     precondition: &Precondition,
+    pages: &[String],
+    records: &[String],
 ) -> Result<(), CellError> {
-    if matches!(precondition, Precondition::Advance)
-        && let Some(next_cursor) = &advance.next_cursor
-    {
-        conn.execute(
-            &format!(
-                "INSERT INTO \"{SOURCE_CURSOR}\" \
-                 (\"connection_id\", \"dataset\", \"cursor_json\", \"generation\", \"page_digest\", \"updated_at_ms\") \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
-                 ON CONFLICT(\"connection_id\", \"dataset\") DO UPDATE SET \
-                 \"cursor_json\" = excluded.\"cursor_json\", \
-                 \"generation\" = excluded.\"generation\", \
-                 \"page_digest\" = excluded.\"page_digest\", \
-                 \"updated_at_ms\" = excluded.\"updated_at_ms\""
-            ),
-            params![
-                advance.connection_id.as_str(),
-                advance.dataset.as_str(),
-                next_cursor.as_str(),
-                to_i64(advance.generation, "source cursor generation")?,
-                digest,
-                to_i64(advance.now_ms, "source cursor updated_at_ms")?,
-            ],
-        )?;
+    if matches!(precondition, Precondition::Advance) {
+        if !pages.is_empty() || !records.is_empty() {
+            let pages_json = serde_json::to_string(pages)?;
+            let records_json = serde_json::to_string(records)?;
+            conn.execute(
+                &format!(
+                    "INSERT OR REPLACE INTO \"{SOURCE_PENDING}\" \
+                     (\"connection_id\", \"dataset\", \"page_digest\", \"pages_json\", \"records_json\", \"captured_at_ms\") \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+                ),
+                params![
+                    advance.connection_id.as_str(),
+                    advance.dataset.as_str(),
+                    digest,
+                    pages_json.as_str(),
+                    records_json.as_str(),
+                    to_i64(advance.now_ms, "source pending captured_at_ms")?,
+                ],
+            )?;
+        }
+        if let Some(next_cursor) = &advance.next_cursor {
+            conn.execute(
+                &format!(
+                    "INSERT INTO \"{SOURCE_CURSOR}\" \
+                     (\"connection_id\", \"dataset\", \"cursor_json\", \"generation\", \"page_digest\", \"updated_at_ms\") \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                     ON CONFLICT(\"connection_id\", \"dataset\") DO UPDATE SET \
+                     \"cursor_json\" = excluded.\"cursor_json\", \
+                     \"generation\" = excluded.\"generation\", \
+                     \"page_digest\" = excluded.\"page_digest\", \
+                     \"updated_at_ms\" = excluded.\"updated_at_ms\""
+                ),
+                params![
+                    advance.connection_id.as_str(),
+                    advance.dataset.as_str(),
+                    next_cursor.as_str(),
+                    to_i64(advance.generation, "source cursor generation")?,
+                    digest,
+                    to_i64(advance.now_ms, "source cursor updated_at_ms")?,
+                ],
+            )?;
+        }
     }
     if let Some(ttl_ms) = advance.renew_ttl_ms {
         let expires_at = advance.now_ms.saturating_add(ttl_ms);
@@ -392,6 +495,69 @@ impl<E: SqlEngine> CellStore<E> {
             Ok(true)
         })
     }
+
+    /// Seed legacy dataset cursors (upgraded from `source.Connection.watermark`)
+    /// into `_norn_source_cursor` under the active fencing lease using
+    /// `INSERT OR IGNORE` so existing durable cursors are never overwritten.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] if the lease is no longer active, or
+    /// store errors.
+    pub fn seed_source_cursors(
+        &mut self,
+        connection_id: &str,
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+        cursors: &BTreeMap<String, String>,
+    ) -> Result<(), CellError> {
+        if cursors.is_empty() {
+            return Ok(());
+        }
+        self.write_tx(|| {
+            verify_active_lease(&self.conn, connection_id, lease_id, generation, now_ms)?;
+            for (dataset, cursor_json) in cursors {
+                self.conn.execute(
+                    &format!(
+                        "INSERT OR IGNORE INTO \"{SOURCE_CURSOR}\" \
+                         (\"connection_id\", \"dataset\", \"cursor_json\", \"generation\", \"page_digest\", \"updated_at_ms\") \
+                         VALUES (?1, ?2, ?3, ?4, 'legacy-seed', ?5)"
+                    ),
+                    params![
+                        connection_id,
+                        dataset.as_str(),
+                        cursor_json.as_str(),
+                        to_i64(generation, "source cursor generation")?,
+                        to_i64(now_ms, "source cursor updated_at_ms")?,
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Mark one post-capture pending source page complete once all of its inbox
+    /// rows have been processed (landed, already landed, or quarantined).
+    ///
+    /// # Errors
+    /// Store errors.
+    pub fn complete_source_pending(
+        &mut self,
+        connection_id: &str,
+        dataset: &str,
+        page_digest: &str,
+    ) -> Result<(), CellError> {
+        self.write_tx(|| {
+            self.conn.execute(
+                &format!(
+                    "DELETE FROM \"{SOURCE_PENDING}\" \
+                     WHERE \"connection_id\" = ?1 AND \"dataset\" = ?2 AND \"page_digest\" = ?3"
+                ),
+                params![connection_id, dataset, page_digest],
+            )?;
+            Ok(())
+        })
+    }
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
@@ -424,5 +590,45 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             out.insert(record.dataset.clone(), record);
         }
         Ok(out)
+    }
+
+    /// All durably captured source pages for `connection_id` whose post-capture
+    /// canonical processing has not yet completed, ordered by capture time.
+    ///
+    /// # Errors
+    /// Store errors.
+    pub fn pending_source_captures(
+        &self,
+        connection_id: &str,
+    ) -> Result<Vec<PendingSourceCapture>, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                "SELECT \"connection_id\", \"dataset\", \"page_digest\", \"pages_json\", \"records_json\", \"captured_at_ms\" \
+                 FROM \"{SOURCE_PENDING}\" WHERE \"connection_id\" = ?1 \
+                 ORDER BY \"captured_at_ms\", \"dataset\", \"page_digest\""
+            ),
+            params![connection_id],
+        )?;
+        let mut out = Vec::with_capacity(rows.len());
+        for values in rows {
+            out.push(decode_pending(&SqlRow(values))?);
+        }
+        Ok(out)
+    }
+
+    /// Whether `_norn_inbox` holds `observation_id` (pending or already consumed).
+    ///
+    /// # Errors
+    /// Store errors.
+    pub fn inbox_observation_exists(&self, observation_id: &str) -> Result<bool, CellError> {
+        let found = self.conn.query_optional(
+            &format!(
+                "SELECT 1 FROM \"{}\" WHERE \"observation_id\" = ?1",
+                crate::system::INBOX
+            ),
+            params![observation_id],
+            |_| Ok(()),
+        )?;
+        Ok(found.is_some())
     }
 }

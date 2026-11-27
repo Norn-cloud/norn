@@ -3,14 +3,24 @@
 //! 1. Pull capture failure immediately before `_norn_source_cursor` persistence
 //!    rolls back both inbox capture and cursor advancement atomically; retry
 //!    succeeds with zero lost rows.
-//! 2. Duplicate delivery of an already-captured page is idempotent with zero
-//!    double-capture or cursor corruption, while conflicting cursors refuse.
+//! 2. Duplicate delivery of an already-captured complete page (including multi-run
+//!    split pages and later `extracted_at` timestamps) is idempotent with zero
+//!    double-capture or cursor corruption, while tampered payloads (even with
+//!    identical observation IDs) and conflicting cursors refuse.
 //! 3. Empty terminal pages advance `_norn_source_cursor` atomically in SQLite.
-//! 4. Mid-page failures (intra-page framing failure and multi-chunk paced
-//!    failure) never advance `_norn_source_cursor`, while quarantined rows are
-//!    durably captured as evidence alongside cursor progress.
-//! 5. Expired leases racing a newer sync are fenced by monotonic generation
-//!    both on capture and on stale release.
+//! 4. Mid-page framing failure rolls back without advancing cursor, while an
+//!    unconditionally selected Odoo `product.product` mapping refusal is
+//!    captured durably as quarantined evidence alongside cursor advancement.
+//! 5. Expired leases racing a newer sync are fenced by monotonic generation on
+//!    capture and stale release, and a fenced run never overwrites
+//!    `source.Connection` written by the winning run.
+//! 6. Legacy cell upgrade: a cell with populated `source.Connection.watermark`
+//!    and empty `_norn_source_cursor` seeds legacy cursors under its active
+//!    lease and advances cleanly without cursor conflict.
+//! 7. Post-cursor-commit store fault + SQLite file reopen: rows stranded in
+//!    `_norn_inbox` / `_norn_source_pending` after cursor persistence are
+//!    recovered and landed into canonical tables on the next sync even when the
+//!    remote source returns empty pages.
 
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(
@@ -21,9 +31,9 @@
 )]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     use norn_api::host::{DevHost, SourceCaptureError};
     use norn_api::pull::{Limits, Pull, PullProfile, Watermark, observation};
@@ -32,7 +42,9 @@ mod tests {
     use norn_cell::engine::{NativeEngine, ReadIsolation, SqlEngine, SqlValue};
     use norn_cell::mapping_bundle::MappingInput;
     use norn_cell::source_cursor::CursorAdvanceSpec;
-    use norn_cell::{CellError, CellStore, InstalledDefinitionInput, MappingOutcome, Model};
+    use norn_cell::{
+        CellError, CellStore, InstalledDefinitionInput, MappingOutcome, Model, StoreOptions,
+    };
     use norn_checker::EntityArtifactSetContext;
     use norn_checker::receipt::{ReceiptSources, check_artifact_set_with_receipt};
     use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
@@ -42,20 +54,28 @@ mod tests {
     const T0: u64 = 1_794_484_800_000;
     const SANDBOX_HOSTS: &str = "erpnext-rest,odoo-rest,cursor-mock";
 
-    /// Wraps [`NativeEngine`] and deterministically faults the exact SQLite
-    /// statement that persists `_norn_source_cursor` inside `capture_source_page`'s
-    /// `write_tx`, after every row's inbox capture has already executed.
-    struct CursorFaultEngine {
+    /// Fault-injecting SQLite engine wrapper:
+    /// - `fail_cursor_write`: fails `_norn_source_cursor` writes inside
+    ///   `capture_source_page`'s `write_tx` (testing capture rollback).
+    /// - `fail_ledger_write`: fails `_norn_ledger` writes during post-capture
+    ///   canonical commit (testing post-cursor-commit recovery after reopen).
+    struct FaultEngine {
         inner: NativeEngine,
         fail_cursor_write: Arc<AtomicBool>,
+        fail_ledger_write: Arc<AtomicBool>,
     }
 
-    impl SqlEngine for CursorFaultEngine {
+    impl SqlEngine for FaultEngine {
         fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
             if self.fail_cursor_write.load(Ordering::Acquire) && sql.contains("_norn_source_cursor")
             {
                 return Err(CellError::Engine(
                     "injected fault immediately before cursor persistence".to_owned(),
+                ));
+            }
+            if self.fail_ledger_write.load(Ordering::Acquire) && sql.contains("_norn_ledger") {
+                return Err(CellError::Engine(
+                    "injected fault after cursor commit during canonical processing".to_owned(),
                 ));
             }
             self.inner.execute(sql, params)
@@ -78,6 +98,33 @@ mod tests {
 
         fn read_isolation(&self) -> ReadIsolation {
             self.inner.read_isolation()
+        }
+    }
+
+    struct TempDb(PathBuf);
+
+    impl TempDb {
+        fn new(label: &str) -> Self {
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "norn-b3-{label}-{}-{id}.sqlite",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&path);
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDb {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+            let _ = std::fs::remove_file(format!("{}-wal", self.0.display()));
+            let _ = std::fs::remove_file(format!("{}-shm", self.0.display()));
         }
     }
 
@@ -195,12 +242,19 @@ mod tests {
 
     fn open_faultable_host(
         artifacts: &[ArtifactEnvelope],
-    ) -> (DevHost<CursorFaultEngine>, Arc<AtomicBool>) {
+        path: Option<&Path>,
+    ) -> (DevHost<FaultEngine>, Arc<AtomicBool>, Arc<AtomicBool>) {
         let (model, input) = admit_and_model(artifacts);
         let fail_cursor_write = Arc::new(AtomicBool::new(false));
-        let engine = CursorFaultEngine {
-            inner: NativeEngine::open_in_memory().expect("sqlite"),
+        let fail_ledger_write = Arc::new(AtomicBool::new(false));
+        let inner = match path {
+            Some(path) => NativeEngine::open(path, StoreOptions::default()).expect("sqlite file"),
+            None => NativeEngine::open_in_memory().expect("sqlite"),
+        };
+        let engine = FaultEngine {
+            inner,
             fail_cursor_write: Arc::clone(&fail_cursor_write),
+            fail_ledger_write: Arc::clone(&fail_ledger_write),
         };
         let mut store = CellStore::from_engine(engine, model.clone()).expect("store");
         let scope = cell_scope();
@@ -208,7 +262,14 @@ mod tests {
             .install_definitions(model, input, Some(0), &scope.key())
             .expect("install");
         let host = DevHost::from_store(store, scope, |_| BTreeMap::new()).expect("host");
-        (host, fail_cursor_write)
+        (host, fail_cursor_write, fail_ledger_write)
+    }
+
+    fn reopen_native_host(artifacts: &[ArtifactEnvelope], path: &Path) -> DevHost<NativeEngine> {
+        let (model, _input) = admit_and_model(artifacts);
+        let engine = NativeEngine::open(path, StoreOptions::default()).expect("reopen sqlite");
+        let store = CellStore::from_engine(engine, model).expect("reopen store");
+        DevHost::from_store(store, cell_scope(), |_| BTreeMap::new()).expect("reopen host")
     }
 
     fn open_native_host(artifacts: &[ArtifactEnvelope]) -> DevHost<NativeEngine> {
@@ -302,18 +363,26 @@ mod tests {
        "orgId": "org_demo", "environmentId": "dev", "secretRefs": ["odoo_rest_api_key"]}
     ]"#;
 
-    fn sealed_first_page(
+    fn sealed_page_for(
         system: &str,
+        dataset: &str,
+        extracted_at_ms: u64,
     ) -> (
-        String,
         Vec<(norn_kernel::Observed<RuntimeValue>, MappingInput)>,
         Watermark,
     ) {
-        let profile = profile_of(system);
+        let mut profile = profile_of(system);
+        let feed = profile
+            .feeds
+            .iter()
+            .find(|f| f.dataset == dataset)
+            .cloned()
+            .expect("requested dataset feed");
+        profile.feeds = vec![feed];
         let mut pages = recorded_pages(system);
         let mut pull = Pull::new(profile.clone(), BTreeMap::new(), Limits::default());
-        let req = pull.next_request().expect("first request");
-        let (status, body) = pages.remove(&req.dataset).expect("first page");
+        let req = pull.next_request().expect("request");
+        let (status, body) = pages.remove(&req.dataset).expect("recorded page");
         let accepted = pull
             .accept(status, body.to_string().as_bytes())
             .expect("accepted");
@@ -322,7 +391,7 @@ mod tests {
             .rows
             .iter()
             .map(|row| {
-                let raw = observation(&profile, row, T0).expect("sealed");
+                let raw = observation(&profile, row, extracted_at_ms).expect("sealed");
                 (
                     raw,
                     MappingInput {
@@ -335,7 +404,7 @@ mod tests {
                 )
             })
             .collect();
-        (accepted.dataset, rows, next_wm)
+        (rows, next_wm)
     }
 
     fn run_erpnext_sync<E: SqlEngine>(
@@ -343,8 +412,8 @@ mod tests {
         sources: &mut Sources,
         profile: &PullProfile,
         now_ms: u64,
+        mut pages: BTreeMap<String, (u16, Value)>,
     ) -> norn_api::sources::RunSummary {
-        let mut pages = recorded_pages("erpnext");
         let mut step = sources.step(host, "erpnext.rest", None, now_ms);
         loop {
             match step {
@@ -376,7 +445,7 @@ mod tests {
     #[test]
     fn pull_capture_failure_immediately_before_cursor_persistence_rolls_back_and_recovers() {
         let artifacts = rest_artifacts(&[]);
-        let (host, fault) = open_faultable_host(&artifacts);
+        let (host, fail_cursor, _fail_ledger) = open_faultable_host(&artifacts, None);
         let profile = profile_of("erpnext");
         let mut sources = rest_sources(ERPNEXT_CONFIG);
         sources
@@ -395,7 +464,7 @@ mod tests {
             .expect("recorded page");
 
         // Arm fault immediately before `_norn_source_cursor` write inside `write_tx`.
-        fault.store(true, Ordering::Release);
+        fail_cursor.store(true, Ordering::Release);
         let Step::Done(failed) = sources.step(
             &host,
             "erpnext.rest",
@@ -415,6 +484,12 @@ mod tests {
                 .is_empty(),
             "cursor must not advance when persistence faults"
         );
+        assert!(
+            host.pending_source_captures("erpnext.rest")
+                .expect("pending")
+                .is_empty(),
+            "pending capture must roll back with cursor fault"
+        );
         let conn = host
             .host_object("source.Connection", "erpnext.rest")
             .expect("read")
@@ -425,13 +500,19 @@ mod tests {
         );
 
         // Clear fault and re-sync from scratch with a fresh `Sources` instance.
-        fault.store(false, Ordering::Release);
+        fail_cursor.store(false, Ordering::Release);
         let mut retry = rest_sources(ERPNEXT_CONFIG);
         let retry_t = T0.saturating_add(10);
         retry
             .claim("erpnext.rest", Trigger::Manual, "user:owner@demo", retry_t)
             .expect("re-claim");
-        let summary = run_erpnext_sync(&host, &mut retry, &profile, retry_t);
+        let summary = run_erpnext_sync(
+            &host,
+            &mut retry,
+            &profile,
+            retry_t,
+            recorded_pages("erpnext"),
+        );
         assert_eq!(summary.outcome, "ok", "{summary:#?}");
         assert!(summary.rows_read > 0);
         assert_eq!(summary.rows_landed, summary.rows_read);
@@ -441,13 +522,19 @@ mod tests {
         );
     }
 
-    /// Regression 2: duplicate delivery of an already-captured page is
-    /// idempotent with no double-land or cursor corruption; a conflicting
-    /// cursor from a stale expectation is rejected with `CursorConflict`.
+    /// Regression 2: exact duplicate delivery of a complete (multi-run) page is
+    /// idempotent even at a later `extracted_at` timestamp, while tampered row
+    /// payloads (keeping identical observation IDs) and conflicting cursors
+    /// refuse with `CursorConflict`.
     #[test]
-    fn duplicate_page_delivery_is_idempotent_and_conflicts_refuse() {
+    fn duplicate_page_delivery_is_idempotent_and_tampered_or_conflicting_refuse() {
         let host = open_native_host(&rest_artifacts(&[]));
-        let (dataset, rows, next_wm) = sealed_first_page("erpnext");
+        // ERPNext `Party` has 101 rows (> PAGE_ROWS=100), so it exercises
+        // multi-run atomic capture and complete-page replay in one shot.
+        let dataset = "Party".to_owned();
+        let (rows_t0, next_wm) = sealed_page_for("erpnext", &dataset, T0);
+        let (rows_later, _) = sealed_page_for("erpnext", &dataset, T0.saturating_add(5_000));
+        assert!(rows_t0.len() > 100, "need split multi-run page");
         let lease = host
             .acquire_source_lease("erpnext.rest", "run-1", T0, RUN_LEASE_MS)
             .expect("lease");
@@ -462,12 +549,13 @@ mod tests {
             renew_ttl_ms: Some(RUN_LEASE_MS),
         };
         let first = host
-            .ingest_source_page(&rows, &advance)
+            .ingest_source_page(&rows_t0, &advance)
             .expect("first delivery");
         assert!(first.iter().all(|o| o.outcome == MappingOutcome::Landed));
 
+        // Exact retry of the complete multi-run page at a later wall clock.
         let duplicate = host
-            .ingest_source_page(&rows, &advance)
+            .ingest_source_page(&rows_later, &advance)
             .expect("duplicate delivery");
         assert_eq!(duplicate.len(), first.len());
         assert!(
@@ -482,6 +570,24 @@ mod tests {
             next_wm.cursor_json().expect("json")
         );
 
+        // Tamper a single row's payload while keeping the exact same observation IDs.
+        let mut tampered = rows_t0.clone();
+        if let RuntimeValue::Object(obj) = &mut tampered[0].0.input
+            && let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload")
+        {
+            payload.insert(
+                "customer_name".into(),
+                RuntimeValue::String("Tampered Owner".into()),
+            );
+        }
+        assert!(
+            matches!(
+                host.ingest_source_page(&tampered, &advance),
+                Err(SourceCaptureError::CursorConflict(_))
+            ),
+            "tampered payload with identical observation IDs must fail content-bound digest"
+        );
+
         let conflicting = CursorAdvanceSpec {
             next_cursor: Some(
                 Watermark {
@@ -494,7 +600,7 @@ mod tests {
             ..advance
         };
         assert!(matches!(
-            host.ingest_source_page(&rows, &conflicting),
+            host.ingest_source_page(&rows_t0, &conflicting),
             Err(SourceCaptureError::CursorConflict(_))
         ));
     }
@@ -553,12 +659,15 @@ mod tests {
             .to_owned();
         first_body["pageInfo"] = json!({"hasNextPage": true, "endCursor": "cur-1"});
 
-        let step = sources.step(
+        let mut step = sources.step(
             &host,
             "erpnext.cursor",
             Some((200, first_body.to_string().as_bytes())),
             T0.saturating_add(1),
         );
+        while matches!(step, Step::Continue) {
+            step = sources.step(&host, "erpnext.cursor", None, T0.saturating_add(1));
+        }
         let Step::Request(page2_req) = step else {
             panic!("expected page 2 request, got {step:?}");
         };
@@ -587,13 +696,15 @@ mod tests {
     }
 
     /// Regression 4: intra-page framing failure rolls back without advancing
-    /// cursor, while a mapping-refused row is captured durably as quarantined
-    /// evidence alongside atomic cursor advancement.
+    /// cursor, while an unconditionally selected Odoo `product.product` mapping
+    /// refusal is captured durably as quarantined evidence alongside atomic
+    /// cursor advancement.
     #[test]
     fn mid_page_framing_failure_rolls_back_and_quarantined_rows_capture_with_cursor() {
         let host = open_native_host(&rest_artifacts(&[]));
-        let (dataset, mut rows, next_wm) = sealed_first_page("odoo");
-        assert!(rows.len() >= 2, "need multi-row page");
+        let dataset = "product.product".to_owned();
+        let (rows, next_wm) = sealed_page_for("odoo", &dataset, T0);
+        assert!(rows.len() >= 2, "need multi-row product.product page");
         let lease = host
             .acquire_source_lease("odoo.rest", "run-mid", T0, RUN_LEASE_MS)
             .expect("lease");
@@ -623,150 +734,320 @@ mod tests {
             "mid-page framing failure must not advance cursor"
         );
 
-        let mut bad_product = rows
-            .iter_mut()
-            .find(|(_, input)| input.dataset == "product.product")
-            .cloned();
-        if let Some((ref mut raw, ref input)) = bad_product {
-            if let RuntimeValue::Object(obj) = &mut raw.input {
-                if let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload") {
-                    payload.insert("x_norn_ref".into(), RuntimeValue::Null);
-                }
-                let digest = norn_ir::canonical::HashProfile::Norn1
-                    .hash_json(serde_json::to_string(&obj["payload"]).expect("json"))
-                    .expect("digest");
-                obj.insert("payload_digest".into(), RuntimeValue::String(digest));
-                obj.insert(
-                    "event_id".into(),
-                    RuntimeValue::String("quarantine-1".into()),
-                );
+        let mut quarantined_row = rows[0].clone();
+        if let RuntimeValue::Object(obj) = &mut quarantined_row.0.input {
+            if let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload") {
+                payload.insert("x_norn_ref".into(), RuntimeValue::Null);
             }
-            let q_advance = CursorAdvanceSpec {
-                dataset: input.dataset.clone(),
-                ..advance
-            };
-            let outcomes = host
-                .ingest_source_page(&[(raw.clone(), input.clone())], &q_advance)
-                .expect("quarantine captured");
-            assert!(matches!(
-                outcomes[0].outcome,
-                MappingOutcome::Quarantined(ref reasons) if !reasons.is_empty()
-            ));
-            assert!(
-                host.source_cursors("odoo.rest")
-                    .expect("cursors")
-                    .contains_key(&input.dataset)
-            );
-        } else {
-            let outcomes = host.ingest_source_page(&rows, &advance).expect("retry");
-            assert!(outcomes.iter().all(|o| o.outcome == MappingOutcome::Landed));
-            assert!(
-                host.source_cursors("odoo.rest")
-                    .expect("cursors")
-                    .contains_key(&dataset)
+            let digest = norn_ir::canonical::HashProfile::Norn1
+                .hash_json(serde_json::to_string(&obj["payload"]).expect("json"))
+                .expect("digest");
+            obj.insert("payload_digest".into(), RuntimeValue::String(digest));
+            obj.insert(
+                "event_id".into(),
+                RuntimeValue::String("quarantine-product-1".into()),
             );
         }
+        let outcomes = host
+            .ingest_source_page(&[quarantined_row], &advance)
+            .expect("quarantine captured");
+        assert!(
+            matches!(
+                outcomes[0].outcome,
+                MappingOutcome::Quarantined(ref reasons) if !reasons.is_empty()
+            ),
+            "expected quarantined outcome, got {:?}",
+            outcomes[0].outcome
+        );
+        assert!(
+            host.source_cursors("odoo.rest")
+                .expect("cursors")
+                .contains_key(&dataset),
+            "quarantined page must still advance durable cursor"
+        );
     }
 
     /// Regression 5: an expired lease racing a newer sync is fenced by
-    /// monotonic generation on both capture and stale release; the newer sync's
-    /// cursor wins.
+    /// monotonic generation on capture and stale release, and a fenced run
+    /// never overwrites `source.Connection` written by the winning run.
     #[test]
-    fn expired_lease_racing_a_newer_sync_is_fenced() {
+    fn expired_lease_racing_a_newer_sync_is_fenced_and_does_not_clobber_connection() {
         let host = open_native_host(&rest_artifacts(&[]));
-        let (dataset, rows, wm_a) = sealed_first_page("erpnext");
-        let wm_b = Watermark {
-            version: "2026-12-01 00:00:00".into(),
-            id: Value::from("WINNER-B"),
+        let profile = profile_of("erpnext");
+        let mut stale_sources = rest_sources(ERPNEXT_CONFIG);
+        stale_sources
+            .claim("erpnext.rest", Trigger::Manual, "user:stale@demo", T0)
+            .expect("claim A");
+        let Step::Request(req_a) = stale_sources.step(&host, "erpnext.rest", None, T0) else {
+            panic!("run A first request");
         };
-
         let lease_a = host
-            .acquire_source_lease("erpnext.rest", "run-A", T0, RUN_LEASE_MS)
-            .expect("lease A");
+            .source_lease("erpnext.rest")
+            .expect("lease")
+            .expect("run A lease");
         assert_eq!(lease_a.generation, 1);
         assert!(matches!(
             host.acquire_source_lease(
                 "erpnext.rest",
-                "run-B",
+                "run-early",
                 T0.saturating_add(1_000),
                 RUN_LEASE_MS
             ),
             Err(SourceCaptureError::LeaseFenced(_))
         ));
 
-        let expired_t = T0.saturating_add(RUN_LEASE_MS);
-        let stale_advance = CursorAdvanceSpec {
-            connection_id: "erpnext.rest".into(),
-            dataset: dataset.clone(),
-            lease_id: lease_a.lease_id.clone(),
-            generation: lease_a.generation,
-            now_ms: expired_t,
-            expected_previous_cursor: None,
-            next_cursor: Some(wm_a.cursor_json().expect("json")),
-            renew_ttl_ms: Some(RUN_LEASE_MS),
-        };
-        assert!(matches!(
-            host.ingest_source_page(&rows, &stale_advance),
-            Err(SourceCaptureError::LeaseFenced(_))
-        ));
+        // After lease A expires, worker B takes over (generation 2) and completes.
+        let t_b = T0.saturating_add(RUN_LEASE_MS);
+        let mut winner_sources = rest_sources(ERPNEXT_CONFIG);
+        winner_sources
+            .claim("erpnext.rest", Trigger::Manual, "user:winner@demo", t_b)
+            .expect("claim B");
+        let summary_b = run_erpnext_sync(
+            &host,
+            &mut winner_sources,
+            &profile,
+            t_b,
+            recorded_pages("erpnext"),
+        );
+        assert_eq!(summary_b.outcome, "ok", "{summary_b:#?}");
+        let conn_after_b = host
+            .host_object("source.Connection", "erpnext.rest")
+            .expect("read")
+            .expect("connection after B");
+        assert_eq!(
+            conn_after_b.get("status"),
+            Some(&RuntimeValue::String("ok".into()))
+        );
+        let wm_after_b = conn_after_b.get("watermark").cloned();
+        assert_ne!(wm_after_b, Some(RuntimeValue::String("{}".into())));
 
-        let lease_b = host
-            .acquire_source_lease("erpnext.rest", "run-B", expired_t, RUN_LEASE_MS)
-            .expect("lease B");
-        assert_eq!(lease_b.generation, 2);
-
-        let stale_clock = CursorAdvanceSpec {
-            now_ms: T0.saturating_add(5_000),
-            ..stale_advance
+        // Stale run A now receives its old HTTP response and must be fenced
+        // without clobbering worker B's `source.Connection` or cursors.
+        let feed = profile
+            .feeds
+            .iter()
+            .find(|f| req_a.url.contains(f.request.path.as_str()))
+            .expect("feed");
+        let (st, body) = recorded_pages("erpnext")
+            .remove(&feed.dataset)
+            .expect("page");
+        let Step::Done(summary_a) = stale_sources.step(
+            &host,
+            "erpnext.rest",
+            Some((st, body.to_string().as_bytes())),
+            t_b.saturating_add(50),
+        ) else {
+            panic!("stale run A must fail fenced");
         };
-        assert!(matches!(
-            host.ingest_source_page(&rows, &stale_clock),
-            Err(SourceCaptureError::LeaseFenced(_))
-        ));
-        assert!(
-            host.source_cursors("erpnext.rest")
-                .expect("cursors")
-                .is_empty()
+        assert_eq!(summary_a.outcome, "failed");
+        assert_eq!(
+            summary_a.error.as_ref().map(|(c, _)| c.as_str()),
+            Some("source.lease_fenced")
         );
         assert!(
             !host
                 .release_source_lease("erpnext.rest", &lease_a.lease_id, lease_a.generation)
                 .expect("stale release")
         );
-
-        let winner_advance = CursorAdvanceSpec {
-            connection_id: "erpnext.rest".into(),
-            dataset: dataset.clone(),
-            lease_id: lease_b.lease_id.clone(),
-            generation: lease_b.generation,
-            now_ms: expired_t.saturating_add(1),
-            expected_previous_cursor: None,
-            next_cursor: Some(wm_b.cursor_json().expect("json")),
-            renew_ttl_ms: Some(RUN_LEASE_MS),
-        };
-        let landed = host
-            .ingest_source_page(&rows, &winner_advance)
-            .expect("worker B captures");
-        assert!(landed.iter().all(|o| o.outcome == MappingOutcome::Landed));
-        let stored = host.source_cursors("erpnext.rest").expect("cursors");
-        assert_eq!(stored[&dataset].generation, 2);
+        let conn_after_a = host
+            .host_object("source.Connection", "erpnext.rest")
+            .expect("read")
+            .expect("connection after stale A");
         assert_eq!(
-            stored[&dataset].cursor_json,
-            wm_b.cursor_json().expect("json")
+            conn_after_a.get("status"),
+            Some(&RuntimeValue::String("ok".into())),
+            "fenced stale run must not overwrite winning connection status"
+        );
+        assert_eq!(
+            conn_after_a.get("watermark"),
+            wm_after_b,
+            "fenced stale run must not overwrite winning connection watermark"
+        );
+    }
+
+    /// Regression 6: upgrading from a populated legacy cell whose
+    /// `source.Connection.watermark` is populated while `_norn_source_cursor`
+    /// is empty seeds legacy cursors under the active lease and advances cleanly
+    /// without `source.cursor_conflict`.
+    #[test]
+    fn legacy_cell_watermark_seeds_source_cursor_without_conflict() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let profile = profile_of("erpnext");
+        let legacy_wm = BTreeMap::from([(
+            "Party".to_owned(),
+            Watermark {
+                version: "2026-01-01 00:00:00".into(),
+                id: Value::String("CUST-LEGACY".into()),
+            },
+        )]);
+        let legacy_json = serde_json::to_string(&legacy_wm).expect("json");
+        let connect_profile = PullProfile {
+            source: "norn-connect".into(),
+            pipeline: "norn-connect/1".into(),
+            feeds: Vec::new(),
+            token: None,
+        };
+        let legacy_conn_row = norn_api::pull::Row {
+            dataset: "connection".into(),
+            source_id: "erpnext.rest".into(),
+            version: "legacy/end".into(),
+            payload: norn_ir::runtime_object! {
+                "id" => "erpnext.rest", "system" => "erpnext", "label" => "ERPNext REST",
+                "target" => "http://erpnext-rest:8000", "auth" => "api_key", "status" => "ok",
+                "last_sync_started_at" => RECORDED_AT, "last_sync_ended_at" => RECORDED_AT,
+                "last_trigger" => "manual", "watermark" => legacy_json.as_str(),
+                "rows_read" => 1_u64, "rows_landed" => 1_u64, "rows_quarantined" => 0_u64,
+                "quarantine_reasons" => "", "last_error_code" => RuntimeValue::Null,
+                "last_error_message" => RuntimeValue::Null,
+                "connector_id" => "erpnext.rest.connector",
+                "source_schema_id" => "erpnext.rest.source",
+                "mapping_id" => "erpnext.rest.mapping",
+            },
+        };
+        let raw = observation(&connect_profile, &legacy_conn_row, T0).expect("raw");
+        host.ingest(&[(
+            raw,
+            MappingInput {
+                mapping: "norn.connect.mapping".into(),
+                dataset: "connection".into(),
+                connector_instance: "cell".into(),
+                partition: "connection".into(),
+                recorded_at: norn_ir::provenance::UtcTimestamp(RECORDED_AT.into()),
+            },
+        )])
+        .expect("seed legacy connection");
+        assert!(
+            host.source_cursors("erpnext.rest")
+                .expect("cursors")
+                .is_empty(),
+            "legacy cell must start with empty _norn_source_cursor"
         );
 
-        assert!(
-            host.release_source_lease("erpnext.rest", &lease_b.lease_id, lease_b.generation)
-                .expect("release B")
-        );
-        let lease_c = host
-            .acquire_source_lease(
+        let mut sources = rest_sources(ERPNEXT_CONFIG);
+        let upgrade_t = T0.saturating_add(1);
+        sources
+            .claim(
                 "erpnext.rest",
-                "run-C",
-                expired_t.saturating_add(2),
-                RUN_LEASE_MS,
+                Trigger::Manual,
+                "user:upgrade@demo",
+                upgrade_t,
             )
-            .expect("lease C");
-        assert_eq!(lease_c.generation, 3);
+            .expect("claim");
+        let summary = run_erpnext_sync(
+            &host,
+            &mut sources,
+            &profile,
+            upgrade_t,
+            recorded_pages("erpnext"),
+        );
+        assert_eq!(summary.outcome, "ok", "{summary:#?}");
+        assert!(summary.rows_landed > 0);
+        let cursors = host.source_cursors("erpnext.rest").expect("cursors");
+        assert_eq!(cursors.len(), profile.feeds.len());
+        let party_wm: Watermark = serde_json::from_str(&cursors["Party"].cursor_json).expect("wm");
+        assert_ne!(party_wm.version, "2026-01-01 00:00:00");
+    }
+
+    /// Regression 7: a store fault / crash AFTER `_norn_source_cursor` commits
+    /// (during post-capture canonical processing) leaves captured rows durable
+    /// in `_norn_inbox` + `_norn_source_pending`; reopening the SQLite file and
+    /// running the next sync (even with empty remote pages) lands every stranded
+    /// row into canonical tables and clears `_norn_source_pending`.
+    #[test]
+    fn post_cursor_commit_fault_recovers_stranded_inbox_rows_after_reopen() {
+        let artifacts = rest_artifacts(&[]);
+        let profile = profile_of("erpnext");
+        let db = TempDb::new("post-commit-recovery");
+
+        let captured_rows = {
+            let (host, _fail_cursor, fail_ledger) =
+                open_faultable_host(&artifacts, Some(db.path()));
+            let mut sources = rest_sources(ERPNEXT_CONFIG);
+            sources
+                .claim("erpnext.rest", Trigger::Manual, "user:owner@demo", T0)
+                .expect("claim");
+            let Step::Request(first_req) = sources.step(&host, "erpnext.rest", None, T0) else {
+                panic!("first request");
+            };
+            let feed = profile
+                .feeds
+                .iter()
+                .find(|f| first_req.url.contains(f.request.path.as_str()))
+                .expect("feed");
+            let (status, body) = recorded_pages("erpnext")
+                .remove(&feed.dataset)
+                .expect("recorded page");
+            let count = body["data"].as_array().expect("rows").len();
+
+            // Let `capture_source_page` commit `_norn_inbox` + `_norn_source_pending`
+            // + `_norn_source_cursor`, then fault canonical `_norn_ledger` commit.
+            fail_ledger.store(true, Ordering::Release);
+            let Step::Done(failed) = sources.step(
+                &host,
+                "erpnext.rest",
+                Some((status, body.to_string().as_bytes())),
+                T0.saturating_add(1),
+            ) else {
+                panic!("post-capture canonical commit fault must fail the run");
+            };
+            assert_eq!(failed.outcome, "failed");
+            assert!(
+                host.source_cursors("erpnext.rest")
+                    .expect("cursors")
+                    .contains_key(&feed.dataset),
+                "cursor already committed before post-capture fault"
+            );
+            assert!(
+                !host
+                    .pending_source_captures("erpnext.rest")
+                    .expect("pending")
+                    .is_empty(),
+                "stranded capture must remain durable in _norn_source_pending"
+            );
+            assert!(
+                host.host_object("canon.Party", "demo/party/owner")
+                    .expect("read")
+                    .is_none(),
+                "canonical object must not yet have landed"
+            );
+            u64::try_from(count).expect("u64")
+        };
+
+        // Reopen the SQLite file on disk with a fresh host and fresh Sources;
+        // serve EMPTY pages for every feed (keyset cursor already moved past them).
+        let reopened = reopen_native_host(&artifacts, db.path());
+        let mut recovery_sources = rest_sources(ERPNEXT_CONFIG);
+        let t_recover = T0.saturating_add(100);
+        recovery_sources
+            .claim(
+                "erpnext.rest",
+                Trigger::Manual,
+                "user:recover@demo",
+                t_recover,
+            )
+            .expect("claim recovery");
+        let summary = run_erpnext_sync(
+            &reopened,
+            &mut recovery_sources,
+            &profile,
+            t_recover,
+            BTreeMap::new(),
+        );
+        assert_eq!(summary.outcome, "ok", "{summary:#?}");
+        assert_eq!(summary.rows_landed, captured_rows);
+        assert!(
+            reopened
+                .pending_source_captures("erpnext.rest")
+                .expect("pending")
+                .is_empty(),
+            "recovery must drain _norn_source_pending"
+        );
+        assert!(
+            reopened
+                .host_object("canon.Party", "demo/party/owner")
+                .expect("read")
+                .is_some(),
+            "stranded inbox row must land in canonical table after reopen"
+        );
     }
 }

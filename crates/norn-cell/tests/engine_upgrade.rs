@@ -354,6 +354,12 @@ fn add_source_cursor_tables(image: &mut Value) {
         "table": "_norn_source_cursor",
         "sql": "CREATE TABLE \"_norn_source_cursor\" (\n  \"connection_id\" TEXT NOT NULL,\n  \"dataset\" TEXT NOT NULL,\n  \"cursor_json\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"page_digest\" TEXT NOT NULL,\n  \"updated_at_ms\" INTEGER NOT NULL,\n  PRIMARY KEY (\"connection_id\", \"dataset\")\n)",
     }));
+    schema.push(serde_json::json!({
+        "type": "table",
+        "name": "_norn_source_pending",
+        "table": "_norn_source_pending",
+        "sql": "CREATE TABLE \"_norn_source_pending\" (\n  \"connection_id\" TEXT NOT NULL,\n  \"dataset\" TEXT NOT NULL,\n  \"page_digest\" TEXT NOT NULL,\n  \"pages_json\" TEXT NOT NULL,\n  \"records_json\" TEXT NOT NULL,\n  \"captured_at_ms\" INTEGER NOT NULL,\n  PRIMARY KEY (\"connection_id\", \"dataset\", \"page_digest\")\n)",
+    }));
     let tables = image["tables"].as_object_mut().expect("tables");
     tables.insert(
         "_norn_source_lease".to_owned(),
@@ -380,6 +386,21 @@ fn add_source_cursor_tables(image: &mut Value) {
                 "generation",
                 "page_digest",
                 "updated_at_ms"
+            ],
+            "rows": [],
+        }),
+    );
+    tables.insert(
+        "_norn_source_pending".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "connection_id",
+                "dataset",
+                "page_digest",
+                "pages_json",
+                "records_json",
+                "captured_at_ms"
             ],
             "rows": [],
         }),

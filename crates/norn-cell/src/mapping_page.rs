@@ -88,10 +88,21 @@ pub struct CapturedPage {
     pub records: Vec<String>,
 }
 
+/// What capturing a source page atomically recorded, including its complete-page
+/// content digest for post-capture pending tracking and idempotent replay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedSourcePage {
+    /// Complete-page content digest persisted in `_norn_source_cursor` / `_norn_source_pending`.
+    pub page_digest: String,
+    /// Captured page rows and per-record inbox ids.
+    pub captured: CapturedPage,
+}
+
 impl<E: SqlEngine> CellStore<E> {
     fn validate_page_framing(
         raws: &[Observed<RuntimeValue>],
         input: &MappingInput,
+        allow_repeated_identity: bool,
     ) -> Result<(), CellError> {
         if raws.len() > MAX_PAGE_RECORDS {
             return Err(CellError::OutOfRange("mapping page records"));
@@ -106,7 +117,9 @@ impl<E: SqlEngine> CellStore<E> {
             bytes = bytes.saturating_add(serde_json::to_string(payload)?.len());
             let [connector, partition, source, source_id, _event] =
                 crate::mapping_identity::keys(&raw.input, input)?;
-            if !identities.insert((connector, partition, source, source_id)) {
+            if !allow_repeated_identity
+                && !identities.insert((connector, partition, source, source_id))
+            {
                 // The host splits a batch before a repeated identity (OBS-PAGE-1).
                 return Err(CellError::MappingBundleMismatch);
             }
@@ -121,17 +134,28 @@ impl<E: SqlEngine> CellStore<E> {
         &mut self,
         raws: &[Observed<RuntimeValue>],
         input: &MappingInput,
-        canonical: &CommitModel<'_>,
+        canonical: &CommitModel<'_, '_>,
+        max_run_rows: usize,
     ) -> Result<CapturedPage, CellError> {
         // Capture writes only inbox rows: a plan proven once holds for
         // every record of the page (INGEST-DERIVE-ONCE-1).
         let _pinned = crate::mapping_bundle::PinnedPlans::open(&self.mapping_plans);
-        let mut runs: Vec<(Vec<String>, BTreeSet<FactKey>, &Observed<RuntimeValue>)> = Vec::new();
+        let run_cap = max_run_rows.clamp(1, MAX_PAGE_RECORDS);
+        #[allow(clippy::type_complexity, reason = "in-tx run accumulator")]
+        let mut runs: Vec<(
+            Vec<String>,
+            BTreeSet<FactKey>,
+            BTreeSet<[String; 4]>,
+            &Observed<RuntimeValue>,
+        )> = Vec::new();
         let mut records = Vec::with_capacity(raws.len());
         let mut split = false;
         // Whether a record this page commits was captured yet.
         let mut member = false;
         for raw in raws {
+            let [connector, partition, source, source_id, _event] =
+                crate::mapping_identity::keys(&raw.input, input)?;
+            let identity = [connector, partition, source, source_id];
             let (id, new) = self.capture_mapping_bundle(raw, input)?;
             records.push(id.clone());
             if !id.starts_with("mapping-bundle:") {
@@ -162,16 +186,22 @@ impl<E: SqlEngine> CellStore<E> {
                 .collect();
             member = true;
             match runs.last_mut() {
-                Some((ids, written, _)) if !split && written.is_disjoint(&keys) => {
+                Some((ids, written, seen_ids, _))
+                    if !split
+                        && ids.len() < run_cap
+                        && written.is_disjoint(&keys)
+                        && !seen_ids.contains(&identity) =>
+                {
                     ids.push(id);
                     written.extend(keys);
+                    seen_ids.insert(identity);
                 }
-                _ => runs.push((vec![id], keys, raw)),
+                _ => runs.push((vec![id], keys, BTreeSet::from([identity]), raw)),
             }
             split = false;
         }
         let mut pages = Vec::with_capacity(runs.len());
-        for (ids, _, first) in runs {
+        for (ids, _, _, first) in runs {
             let digest = norn_ir::canonical::domain_hash_hex(b"norn.mapping.page.v1\0", &ids)?;
             let id = format!("{PAGE_PREFIX}{digest}");
             let observed = Observed {
@@ -206,37 +236,41 @@ impl<E: SqlEngine> CellStore<E> {
         if raws.is_empty() {
             return Err(CellError::OutOfRange("mapping page records"));
         }
-        Self::validate_page_framing(raws, input)?;
+        Self::validate_page_framing(raws, input, false)?;
         let model = self.model().clone();
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
-        self.write_tx(|| self.capture_mapping_page_rows_in_tx(raws, input, &canonical))
+        self.write_tx(|| {
+            self.capture_mapping_page_rows_in_tx(raws, input, &canonical, MAX_PAGE_RECORDS)
+        })
     }
 
     /// SOURCE-CAPTURE-1: validate the active fencing lease and expected
-    /// previous cursor, capture every row (or quarantine evidence, or empty
-    /// terminal page when `raws` is empty), and advance `_norn_source_cursor`
-    /// atomically in one SQLite transaction.
+    /// previous cursor, capture every row of the complete page (split into
+    /// `mapping-page:` runs of at most `max_run_rows` inside this single
+    /// transaction, or an empty terminal page when `raws` is empty), record
+    /// pending processing state in `_norn_source_pending`, and advance
+    /// `_norn_source_cursor` atomically in one SQLite transaction.
     ///
     /// # Errors
     /// [`CellError::SourceLeaseFenced`], [`CellError::SourceCursorConflict`],
-    /// framing refusals, invalid pins, or store failures (rolling back both
-    /// inbox capture and cursor advancement).
+    /// framing refusals, invalid pins, or store failures (rolling back inbox
+    /// capture, pending recovery record, and cursor advancement together).
     pub fn capture_source_page(
         &mut self,
         raws: &[Observed<RuntimeValue>],
         input: Option<&MappingInput>,
         advance: &crate::source_cursor::CursorAdvanceSpec,
-    ) -> Result<CapturedPage, CellError> {
+        max_run_rows: usize,
+    ) -> Result<CapturedSourcePage, CellError> {
         let input = if raws.is_empty() {
             None
         } else {
             let input = input.ok_or(CellError::MappingBundleMismatch)?;
-            Self::validate_page_framing(raws, input)?;
+            Self::validate_page_framing(raws, input, true)?;
             Some(input)
         };
-        let obs_ids: Vec<&str> = raws.iter().map(|raw| raw.id.0.as_str()).collect();
-        let digest = crate::source_cursor::page_digest(advance, &obs_ids)?;
+        let digest = crate::source_cursor::page_digest(advance, raws)?;
         let model = self.model().clone();
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
@@ -244,14 +278,27 @@ impl<E: SqlEngine> CellStore<E> {
             let precondition =
                 crate::source_cursor::check_capture_precondition(&self.conn, advance, &digest)?;
             let captured = match input {
-                Some(input) => self.capture_mapping_page_rows_in_tx(raws, input, &canonical)?,
+                Some(input) => {
+                    self.capture_mapping_page_rows_in_tx(raws, input, &canonical, max_run_rows)?
+                }
                 None => CapturedPage {
                     pages: Vec::new(),
                     records: Vec::new(),
                 },
             };
-            crate::source_cursor::commit_cursor_in_tx(&self.conn, advance, &digest, &precondition)?;
-            Ok(captured)
+            let page_ids: Vec<String> = captured.pages.iter().map(|(id, _)| id.clone()).collect();
+            crate::source_cursor::commit_cursor_in_tx(
+                &self.conn,
+                advance,
+                &digest,
+                &precondition,
+                &page_ids,
+                &captured.records,
+            )?;
+            Ok(CapturedSourcePage {
+                page_digest: digest,
+                captured,
+            })
         })
     }
 }
