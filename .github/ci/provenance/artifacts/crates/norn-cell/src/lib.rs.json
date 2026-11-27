@@ -1,17 +1,6 @@
 {
-  "sha256": "7b42029a9e23c21bae53ea6c72de2b0f8adde6848a36a7f2300c12d56de494f2",
   "origin": "authored",
-  "category": "code",
+  "category": "source",
   "license": "Apache-2.0",
-  "sources": [],
-  "analyzed_sources": [],
-  "parents": [],
-  "rights_evidence": [
-    {
-      "path": "NOTICE",
-      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
-    }
-  ],
-  "notices": [],
-  "connector": null
+  "sha256": "01c7edf70fee32a6c883146f5505085142849d1f7557523d40c1bca4dabe7c52"
 }

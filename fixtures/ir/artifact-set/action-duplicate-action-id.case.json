@@ -9,7 +9,8 @@
         "artifactId": "retail.reorder.action.copy"
       }
     },
-    "ir/retail-purchase-request.entity.json"
+    "ir/retail-purchase-request.entity.json",
+    "ir/retail-cancel-reorder.action.json"
   ],
   "expect": [
     [
