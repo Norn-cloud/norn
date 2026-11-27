@@ -1,0 +1,51 @@
+{
+  "artifactId": "units.compute.UnitDefinition.exact_time_factor.law",
+  "dependencies": [
+    {
+      "artifactId": "units.compute.UnitDefinition.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "UNITS-SCALE-1: sub-second time units (ms, us, ns) carry exact UCUM rational factors to s.",
+  "namespace": "units",
+  "payload": {
+    "condition": "self.dimension == 'time'",
+    "id": "units.compute.UnitDefinition.exact_time_factor",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "units.compute",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/compute-units/units.ts"
+    },
+    "rationale": "UNITS-SCALE-1: sub-second time units (ms, us, ns) carry exact UCUM rational factors to s.",
+    "response": {
+      "expression": "((self.base_code == 's') and (self.numerator == 1)) and ((((self.code == 'ms') and (self.denominator == 1000)) or ((self.code == 'us') and (self.denominator == 1000000))) or ((self.code == 'ns') and (self.denominator == 1000000000)))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "units.compute.UnitDefinition"
+      ],
+      "root": {
+        "id": "units.compute.UnitDefinition",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "units.compute.UnitDefinition"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/units.compute.UnitDefinition.exact_time_factor.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

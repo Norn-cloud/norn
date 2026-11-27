@@ -1,0 +1,138 @@
+{
+  "artifactId": "analytics.publication.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a study publication decision",
+  "namespace": "analytics",
+  "payload": {
+    "actionId": "analytics.publication.record",
+    "createLinks": [
+      {
+        "link": "study",
+        "targetIdField": "study_id",
+        "targetType": "analytics.Study"
+      },
+      {
+        "link": "reviewer",
+        "targetIdField": "reviewer_id",
+        "targetType": "analytics.Analyst"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "analytics.Publication.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "analytics.Publication",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "enum": [
+            "published",
+            "withheld"
+          ],
+          "type": "string"
+        },
+        "diagnostics_passed": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "population_digest": {
+          "type": "string"
+        },
+        "published_at": {
+          "type": "string"
+        },
+        "receipt_digest": {
+          "type": "string"
+        },
+        "reviewer_id": {
+          "type": "string"
+        },
+        "study_code": {
+          "type": "string"
+        },
+        "study_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "study_id",
+        "reviewer_id",
+        "study_code",
+        "receipt_digest",
+        "population_digest",
+        "published_at",
+        "diagnostics_passed",
+        "decision"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((slice.study.publication_status == input.decision) and (input.diagnostics_passed == slice.study.diagnostics_passed)) and (input.receipt_digest == slice.study.receipt_digest)) and (input.study_code == slice.study.study_code)) and (input.population_digest == slice.study.population_digest)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "study_id"
+          }
+        },
+        "name": "study",
+        "objectType": "analytics.Study"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "reviewer_id"
+          }
+        },
+        "name": "reviewer",
+        "objectType": "analytics.Analyst"
+      }
+    ],
+    "title": "Record a study publication decision",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "analytics.Publication"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/analytics.publication.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

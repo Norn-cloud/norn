@@ -1,0 +1,50 @@
+{
+  "artifactId": "units.physical.UnitDefinition.exact_rational_factor.law",
+  "dependencies": [
+    {
+      "artifactId": "units.physical.UnitDefinition.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "UNITS-SCALE-1: every physical, logistics, and energy unit must carry its exact ISO 80000 / UCUM rational conversion factor to its base unit.",
+  "namespace": "units",
+  "payload": {
+    "id": "units.physical.UnitDefinition.exact_rational_factor",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "units.physical",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/compute-units/units.ts"
+    },
+    "rationale": "UNITS-SCALE-1: every physical, logistics, and energy unit must carry its exact ISO 80000 / UCUM rational conversion factor to its base unit.",
+    "response": {
+      "expression": "((self.numerator > 0) and (self.denominator > 0)) and ((((((((((((((self.code == 'm') and (self.dimension == 'length')) and (self.base_code == 'm')) and (self.numerator == 1)) and (self.denominator == 1)) or (((((self.code == 'cm') and (self.dimension == 'length')) and (self.base_code == 'm')) and (self.numerator == 1)) and (self.denominator == 100))) or (((((self.code == 'mm') and (self.dimension == 'length')) and (self.base_code == 'm')) and (self.numerator == 1)) and (self.denominator == 1000))) or (((((self.code == 'km') and (self.dimension == 'length')) and (self.base_code == 'm')) and (self.numerator == 1000)) and (self.denominator == 1))) or (((((self.code == 'm2') and (self.dimension == 'area')) and (self.base_code == 'm2')) and (self.numerator == 1)) and (self.denominator == 1))) or (((((self.code == 'L') and (self.dimension == 'volume')) and (self.base_code == 'm3')) and (self.numerator == 1)) and (self.denominator == 1000))) or (((((self.code == 'mL') and (self.dimension == 'volume')) and (self.base_code == 'm3')) and (self.numerator == 1)) and (self.denominator == 1000000))) or (((((self.code == 'm3') and (self.dimension == 'volume')) and (self.base_code == 'm3')) and (self.numerator == 1)) and (self.denominator == 1))) or (((((self.code == 'J') and (self.dimension == 'energy')) and (self.base_code == 'J')) and (self.numerator == 1)) and (self.denominator == 1))) or (((((self.code == 'kW.h') and (self.dimension == 'energy')) and (self.base_code == 'J')) and (self.numerator == 3600000)) and (self.denominator == 1)))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "units.physical.UnitDefinition"
+      ],
+      "root": {
+        "id": "units.physical.UnitDefinition",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "units.physical.UnitDefinition"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/units.physical.UnitDefinition.exact_rational_factor.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,140 @@
+{
+  "artifactId": "bi.metric_slice.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record an observed metric slice",
+  "namespace": "bi",
+  "payload": {
+    "actionId": "bi.metric_slice.record",
+    "createLinks": [
+      {
+        "link": "metric",
+        "targetIdField": "metric_id",
+        "targetType": "bi.CertifiedMetric"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "bi.MetricSlice.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "bi.MetricSlice",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "additivity": {
+          "enum": [
+            "additive",
+            "semi_additive",
+            "non_additive"
+          ],
+          "type": "string"
+        },
+        "denominator": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "effective_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "known_at": {
+          "type": "string"
+        },
+        "metric_id": {
+          "type": "string"
+        },
+        "numerator": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "slice_key": {
+          "type": "string"
+        },
+        "unit_code": {
+          "type": "string"
+        },
+        "value": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "metric_id",
+        "slice_key",
+        "additivity",
+        "unit_code",
+        "effective_at",
+        "known_at",
+        "numerator",
+        "denominator",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((slice.metric.status == 'certified') and (input.additivity == slice.metric.additivity)) and (input.unit_code == slice.metric.unit_code)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "metric_id"
+          }
+        },
+        "name": "metric",
+        "objectType": "bi.CertifiedMetric"
+      }
+    ],
+    "title": "Record an observed metric slice",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "bi.MetricSlice"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/bi.metric_slice.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

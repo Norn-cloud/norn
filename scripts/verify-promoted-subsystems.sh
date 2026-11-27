@@ -419,6 +419,10 @@ run_gate fast owl-time-allen-lean \
   "lean -DwarningAsError=true verification/owl-time-v1/AllenIntervals.lean" \
   command \
   lean -DwarningAsError=true verification/owl-time-v1/AllenIntervals.lean
+run_gate fast bi-additivity-lean \
+  "lean -DwarningAsError=true verification/bi-additivity-v1/BiAdditivity.lean" \
+  command \
+  lean -DwarningAsError=true verification/bi-additivity-v1/BiAdditivity.lean
 run_gate fast data-lineage-lean \
   "lean -DwarningAsError=true verification/data-lineage-v1/DataLineage.lean" \
   command \
