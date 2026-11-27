@@ -17,9 +17,10 @@
           ]
         },
         {
-          "name": "store_week_grain",
+          "name": "store_sku_week_grain",
           "properties": [
             "store_id",
+            "sku_id",
             "period_week"
           ]
         }
@@ -50,6 +51,14 @@
           },
           "id": "on_hand_count",
           "target": "supply.StoreCount"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "opening_cut",
+          "target": "supply.StockValuationCut"
         },
         {
           "cardinality": {
@@ -153,6 +162,15 @@
             "nullable": true
           },
           "id": "on_hand_count_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "opening_cut_id",
           "type": {
             "kind": "text"
           }

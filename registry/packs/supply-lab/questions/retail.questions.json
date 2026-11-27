@@ -409,6 +409,11 @@
         }
       },
       {
+        "path": {
+          "property": "sku_id"
+        }
+      },
+      {
         "grain": "week",
         "path": {
           "property": "period_end"
@@ -443,6 +448,11 @@
       {
         "path": {
           "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "property": "sku_id"
         }
       },
       {

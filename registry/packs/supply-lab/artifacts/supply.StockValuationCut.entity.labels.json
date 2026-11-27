@@ -1,0 +1,63 @@
+{
+  "artifactId": "supply.StockValuationCut.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Stock valuation cut labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "لقطة تقييم المخزون",
+          "en": "Stock valuation cut"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.StockValuationCut"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسعّر بالتكلفة",
+          "en": "Costed"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StockValuationCut",
+          "property": "cost_status",
+          "value": "costed"
+        }
+      },
+      {
+        "label": {
+          "ar": "تكلفة مفقودة",
+          "en": "Missing cost"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StockValuationCut",
+          "property": "cost_status",
+          "value": "missing_cost"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StockValuationCut.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

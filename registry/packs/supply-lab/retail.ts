@@ -245,6 +245,12 @@ export const StockLotUnitCostPositive = Norn.law("lot_unit_cost_positive", {
   must: (self) => (self.unit_cost ?? 1) > 0,
   because: "When a holding lot carries a unit cost, that unit cost must be strictly positive.",
 })
+
+export const StockLotAsOfNotBeforeReceipt = Norn.law("lot_as_of_not_before_receipt", {
+  on: StockLot,
+  must: (self) => self.received_at <= self.as_of,
+  because: "A stock lot balance timestamp as_of cannot precede its receipt timestamp received_at.",
+})
 export const StockLotPositiveCostHolds = Norn.example("a lot with positive unit cost holds", {
   of: StockLotUnitCostPositive,
   given: {
@@ -556,6 +562,50 @@ export const PosSaleMatchesSourceEvidence = Norn.law("pos_sale_matches_source_ev
   because: "A POS sale promoted from POS evidence must preserve that evidence's exact line identity, store, SKU, quantity, unit, net revenue, currency, and timestamp, and link 1-to-1 so no source line can be promoted twice.",
 })
 
+// ------------------------------------ immutable opening valuation cut & KPIs
+
+const StockValuationCutProps = Schema.Struct({
+  cut_id: Schema.String,
+  store_id: Schema.String,
+  sku_id: Schema.String,
+  currency: Currency,
+  cost_status: CostStatus,
+  book_epoch: Norn.timestamp("utc"),
+  cut_at: Norn.timestamp("utc"),
+  stock_value: Norn.decimal(6, { additivity: { kind: "semi_additive" }, unitSource: ["currency"] }),
+})
+
+/**
+ * Immutable governed remaining-stock valuation snapshot captured at
+ * `cut_at` (`create_only`) for one `(store_id, sku_id, currency)` population.
+ * Anchors opening stock valuation for GMROI so mid-period receipts and
+ * pre-period depletions never distort opening stock value.
+ */
+export const StockValuationCut = Norn.type({
+  name: "supply.StockValuationCut", title: "Stock valuation cut", version: "0.1.0",
+  label: { en: "Stock valuation cut", ar: "لقطة تقييم المخزون" },
+  properties: StockValuationCutProps,
+  valueLabels: { cost_status: CostStatusLabels },
+  needsReview: ["ar"],
+  identity: [
+    { name: "primary", properties: ["cut_id"] },
+    { name: "store_sku_cut", properties: ["store_id", "sku_id", "cut_at"] },
+  ],
+  links: [
+    { id: "store", target: Store, cardinality: { to: "one", from: "many", required: true } },
+    { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
+  ],
+})
+
+export const StockValuationCutValid = Norn.law("stock_valuation_cut_valid", {
+  on: StockValuationCut,
+  must: (self) =>
+    self.cost_status === "costed"
+    && self.stock_value >= 0
+    && self.currency === self.store.currency,
+  because: "A stock valuation cut must be costed, non-negative, and denominated in its store functional currency.",
+})
+
 // ----------------------------------------- governed store commercial rollups
 
 const CountStatus = Schema.Literals(["verified", "unverified"])
@@ -564,13 +614,14 @@ const StoreCommercialRollupProps = Schema.Struct({
   rollup_id: Schema.String,
   store_id: Schema.String,
   sku_id: Schema.String,
-  // Canonical ISO week key (e.g. `"2026-08-31"`) enforcing one rollup per store-week.
+  // Canonical ISO week key (e.g. `"2026-08-31"`) enforcing one rollup per store-SKU-week.
   period_week: Schema.String,
   unit: Unit,
   currency: Currency,
   cost_status: CostStatus,
   count_status: CountStatus,
   on_hand_count_id: Schema.NullOr(Schema.String),
+  opening_cut_id: Schema.NullOr(Schema.String),
   count_ref: Schema.NullOr(Schema.String),
   count_as_of: Schema.NullOr(Norn.timestamp("utc")),
   costed_ref: Schema.NullOr(Schema.String),
@@ -591,10 +642,9 @@ const StoreCommercialRollupProps = Schema.Struct({
 })
 
 /**
- * Governed store-week commercial KPI rollup unique at `(store_id, period_week)`
- * grain so a store-week cannot publish both a verified partition and a withheld
- * partition; bound to governed `StoreCount` and `UnitCost` evidence while
- * keeping future recounts unblocked.
+ * Governed store-SKU-week commercial KPI rollup unique at `(store_id, sku_id, period_week)`
+ * grain so a store-SKU-week cannot publish both a verified partition and a withheld
+ * partition and multiple SKUs in the same store never collide or omit one another.
  */
 export const StoreCommercialRollup = Norn.type({
   name: "supply.StoreCommercialRollup", title: "Store commercial KPI rollup", version: "0.1.0",
@@ -608,12 +658,13 @@ export const StoreCommercialRollup = Norn.type({
   needsReview: ["ar"],
   identity: [
     { name: "primary", properties: ["rollup_id"] },
-    { name: "store_week_grain", properties: ["store_id", "period_week"] },
+    { name: "store_sku_week_grain", properties: ["store_id", "sku_id", "period_week"] },
   ],
   links: [
     { id: "store", target: Store, cardinality: { to: "one", from: "many", required: true } },
     { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
     { id: "on_hand_count", target: StoreCount, cardinality: { to: "one", from: "many" } },
+    { id: "opening_cut", target: StockValuationCut, cardinality: { to: "one", from: "many" } },
     { id: "cost_record", target: UnitCost, cardinality: { to: "one", from: "many" } },
   ],
 })
@@ -626,10 +677,10 @@ export const StoreCommercialRollupValid = Norn.law("store_commercial_rollup_vali
       || (self.count_status === "unverified" && self.on_hand_count_id === null && self.count_ref === null && self.count_as_of === null && self.on_hand_qty === 0 && self.avg_weekly_sales_qty === 0)
     )
     && (
-      (self.cost_status === "costed" && self.costed_ref !== null && self.opening_stock_value >= 0 && self.closing_stock_value >= 0 && self.average_inventory_value >= 0)
-      || (self.cost_status === "missing_cost" && self.costed_ref === null && self.period_gross_margin === 0 && self.opening_stock_value === 0 && self.closing_stock_value === 0 && self.average_inventory_value === 0)
+      (self.cost_status === "costed" && self.costed_ref !== null && self.opening_cut_id !== null && self.opening_stock_value >= 0 && self.closing_stock_value >= 0 && self.average_inventory_value >= 0)
+      || (self.cost_status === "missing_cost" && self.costed_ref === null && self.opening_cut_id === null && self.period_gross_margin === 0 && self.opening_stock_value === 0 && self.closing_stock_value === 0 && self.average_inventory_value === 0)
     ),
-  because: "A store-week KPI rollup zeroes WOS inputs when unverified and GMROI inputs when missing_cost so both ratios evaluate to null (withheld) directly on the read path.",
+  because: "A store-SKU-week KPI rollup zeroes WOS inputs when unverified and GMROI inputs when missing_cost so both ratios evaluate to null (withheld) directly on the read path.",
 })
 
 export const StoreCommercialRollupCountNotFuture = Norn.law("store_commercial_rollup_count_not_future", {
@@ -658,8 +709,21 @@ export const StoreCommercialRollupRequiresEvidenceLinks = Norn.law("store_commer
   on: StoreCommercialRollup,
   must: (self) =>
     ((self.count_status === "verified" && self.on_hand_count !== null) || (self.count_status === "unverified" && self.on_hand_count === null))
-    && ((self.cost_status === "costed" && self.cost_record !== null) || (self.cost_status === "missing_cost" && self.cost_record === null)),
-  because: "A verified commercial KPI rollup must link its governed on-hand StoreCount and a costed rollup must link its governed UnitCost.",
+    && ((self.cost_status === "costed" && self.cost_record !== null && self.opening_cut !== null) || (self.cost_status === "missing_cost" && self.cost_record === null && self.opening_cut === null)),
+  because: "A verified commercial KPI rollup must link its governed on-hand StoreCount and a costed rollup must link both its UnitCost and immutable opening InventoryValuationCut.",
+})
+
+export const StoreCommercialRollupMatchesOpeningCut = Norn.law("store_commercial_rollup_matches_opening_cut", {
+  on: StoreCommercialRollup,
+  when: (self): self is typeof self & { readonly opening_cut: NonNullable<typeof self.opening_cut> } => self.opening_cut !== null,
+  must: (self) =>
+    (self.opening_cut_id ?? "") === self.opening_cut.cut_id
+    && self.store_id === self.opening_cut.store_id
+    && self.sku_id === self.opening_cut.sku_id
+    && self.currency === self.opening_cut.currency
+    && self.opening_cut.cut_at === self.period_start
+    && self.opening_stock_value === self.opening_cut.stock_value,
+  because: "A costed commercial KPI rollup must bind opening_stock_value to the immutable remaining-inventory InventoryValuationCut at period_start for the same store, SKU, and currency.",
 })
 
 export const StoreCommercialRollupMatchesCount = Norn.law("store_commercial_rollup_matches_count", {

@@ -194,6 +194,29 @@
       },
       {
         "actions": [
+          "supply.stock_valuation_cut.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "warehouse_clerk"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.StockValuationCut",
+        "ruleId": "stock_valuation_cut",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
           "supply.store_kpi.record",
           "supply.store_kpi.record_withheld"
         ],

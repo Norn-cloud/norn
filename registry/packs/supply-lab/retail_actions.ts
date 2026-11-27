@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 import { Sku } from "./supply.ts"
-import { LegalEntity, PosSale, PosSaleEvidence, StockLot, Store, StoreCommercialRollup, StoreCount, UnitCost } from "./retail.ts"
+import { LegalEntity, PosSale, PosSaleEvidence, StockLot, StockValuationCut, Store, StoreCommercialRollup, StoreCount, UnitCost } from "./retail.ts"
 
 const Scope = ["orgId", "environmentId"] as const
 const Unit = Schema.Literals(["each", "kg", "l"])
@@ -586,6 +586,87 @@ export const PromotePosSaleFromEvidence = Norn.action({
   effect: { kind: "upsert_input_object", type: PosSale, objectIdField: "sale_id", writeMode: { kind: "create_only" } },
 })
 
+// ------------------------------- immutable opening stock valuation cuts
+
+const StockValuationCutInput = Schema.Struct({
+  cut_id: Schema.String,
+  store_id: Schema.String,
+  sku_id: Schema.String,
+  currency: Currency,
+  cost_status: CostStatus,
+  book_epoch: Norn.timestamp("utc"),
+  cut_at: Norn.timestamp("utc"),
+  stock_value: Norn.decimal(6),
+})
+const StockValuationCutRef = Schema.Struct({ cut_id: Schema.String })
+
+/**
+ * Capture an immutable (`create_only`) remaining-stock valuation cut at
+ * `cut_at` for one `(store_id, sku_id, currency)` population, proving every
+ * lot has `received_at <= as_of <= cut_at` and verified unit cost.
+ */
+export const RecordStockValuationCut = Norn.action({
+  id: "supply.stock_valuation_cut.record", title: "Record immutable stock valuation cut", version: "0.1.0",
+  label: { en: "Record stock valuation cut", ar: "تسجيل لقطة تقييم المخزون" },
+  input: StockValuationCutInput, output: StockValuationCutRef,
+  scopeRequired: Scope, idempotent: true, ledgered: true, access: RetailAccessRef,
+  slice: [
+    { name: "store", type: Store, key: { property: { from: "input", property: "store_id" } } },
+    { name: "sku", type: Sku, key: { property: { from: "input", property: "sku_id" } } },
+  ],
+  aggregates: [
+    {
+      name: "total_stock_value", type: StockLot,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
+      aggregate: { kind: "sum", property: "stock_value" }, maxItems: 100,
+    },
+    {
+      name: "all_lots_count", type: StockLot,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
+    {
+      name: "lots_as_of_by_cut", type: StockLot,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
+      window: { property: "as_of", start: "book_epoch", end: "cut_at", startInclusive: true, endInclusive: true },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
+    {
+      name: "costed_lots_count", type: StockLot,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency", cost_status: "cost_status" },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
+  ],
+  preconditions: [Norn.expression(
+    Schema.Struct({
+      input: StockValuationCutInput,
+      slice: Schema.Struct({
+        store: Schema.Struct({ status: Schema.String, currency: Schema.String }),
+      }),
+      aggregates: Schema.Struct({
+        total_stock_value: Norn.decimal(6),
+        all_lots_count: Schema.Int,
+        lots_as_of_by_cut: Schema.Int,
+        costed_lots_count: Schema.Int,
+      }),
+    }),
+    (ctx) => ctx.slice.store.status === "active"
+      && ctx.input.book_epoch === "1970-01-01T00:00:00Z"
+      && ctx.input.cost_status === "costed"
+      && ctx.input.currency === ctx.slice.store.currency
+      && ctx.input.stock_value === ctx.aggregates.total_stock_value
+      && ctx.aggregates.lots_as_of_by_cut === ctx.aggregates.all_lots_count
+      && ctx.aggregates.costed_lots_count === ctx.aggregates.all_lots_count,
+    { root: "context" },
+  )],
+  createLinks: [
+    { link: "store", targetType: Store, targetIdField: "store_id" },
+    { link: "sku", targetType: Sku, targetIdField: "sku_id" },
+  ],
+  writes: [{ type: StockValuationCut, change: "created" }],
+  effect: { kind: "upsert_input_object", type: StockValuationCut, objectIdField: "cut_id", writeMode: { kind: "create_only" } },
+})
+
 // ----------------------------------------- governed store commercial rollups
 
 const CountStatus = Schema.Literals(["verified", "unverified"])
@@ -600,6 +681,7 @@ const StoreCommercialRollupInput = Schema.Struct({
   cost_status: CostStatus,
   count_status: CountStatus,
   on_hand_count_id: Schema.String,
+  opening_cut_id: Schema.String,
   count_ref: Schema.String,
   count_as_of: Norn.timestamp("utc"),
   costed_ref: Schema.String,
@@ -640,12 +722,12 @@ const WithheldStoreCommercialRollupInput = Schema.Struct({
 const StoreCommercialRollupRef = Schema.Struct({ rollup_id: Schema.String })
 
 /**
- * Record a verified and costed store-week commercial KPI rollup bound at
+ * Record a verified and costed store-SKU-week commercial KPI rollup bound at
  * snapshot time to governed `(store_id, sku_id)` `on_hand` `StoreCount`,
- * `UnitCost`, and windowed `PosSale` + `StockLot` kernel aggregates (including
- * carried-in opening lots received at or before `period_end`, refusing any
- * post-cutoff lot balance updates `as_of > period_end`, deriving `sales_weeks`
- * strictly from `[period_start, period_week]`, and refusing missing-cost rows).
+ * immutable `InventoryValuationCut` at `period_start`, `UnitCost`, and windowed
+ * `PosSale` + `StockLot` kernel aggregates (refusing any post-cutoff lot balance
+ * updates `as_of > period_end`, deriving `sales_weeks` strictly from
+ * `[period_start, period_week]`, and refusing missing-cost rows).
  */
 export const RecordStoreCommercialRollup = Norn.action({
   id: "supply.store_kpi.record", title: "Record verified store commercial KPI rollup", version: "0.1.0",
@@ -656,6 +738,7 @@ export const RecordStoreCommercialRollup = Norn.action({
     { name: "store", type: Store, key: { property: { from: "input", property: "store_id" } } },
     { name: "sku", type: Sku, key: { property: { from: "input", property: "sku_id" } } },
     { name: "on_hand_count", type: StoreCount, key: { property: { from: "input", property: "on_hand_count_id" } } },
+    { name: "opening_cut", type: StockValuationCut, key: { property: { from: "input", property: "opening_cut_id" } } },
     { name: "cost", type: UnitCost, key: { property: { from: "input", property: "sku_id" } } },
   ],
   aggregates: [
@@ -682,12 +765,6 @@ export const RecordStoreCommercialRollup = Norn.action({
       filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency", cost_status: "cost_status" },
       window: { property: "sold_at", start: "period_start", end: "period_end", startInclusive: true, endInclusive: true },
       aggregate: { kind: "count" }, maxItems: 100,
-    },
-    {
-      name: "total_opening_stock_value", type: StockLot,
-      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
-      window: { property: "received_at", start: "book_epoch", end: "period_end", startInclusive: true, endInclusive: true },
-      aggregate: { kind: "sum", property: "opening_stock_value" }, maxItems: 100,
     },
     {
       name: "total_closing_stock_value", type: StockLot,
@@ -731,6 +808,11 @@ export const RecordStoreCommercialRollup = Norn.action({
           as_of: Norn.timestamp("utc"),
           count_ref: Schema.String, on_hand_qty: Norn.decimal(6),
         }),
+        opening_cut: Schema.Struct({
+          store_id: Schema.String, sku_id: Schema.String,
+          currency: Schema.String, cut_at: Norn.timestamp("utc"),
+          stock_value: Norn.decimal(6),
+        }),
         cost: Schema.Struct({ currency: Schema.String, cost_ref: Schema.String }),
       }),
       aggregates: Schema.Struct({
@@ -738,7 +820,6 @@ export const RecordStoreCommercialRollup = Norn.action({
         total_gross_margin: Norn.decimal(6),
         all_sales_count: Schema.Int,
         costed_sales_count: Schema.Int,
-        total_opening_stock_value: Norn.decimal(6),
         total_closing_stock_value: Norn.decimal(6),
         all_lots_count: Schema.Int,
         lots_as_of_by_period_end: Schema.Int,
@@ -761,12 +842,16 @@ export const RecordStoreCommercialRollup = Norn.action({
       && Norn.parseTimestamp(ctx.input.count_as_of) === Norn.parseTimestamp(ctx.slice.on_hand_count.as_of)
       && ctx.input.count_ref === ctx.slice.on_hand_count.count_ref
       && ctx.input.on_hand_qty === ctx.slice.on_hand_count.on_hand_qty
+      && ctx.input.store_id === ctx.slice.opening_cut.store_id
+      && ctx.input.sku_id === ctx.slice.opening_cut.sku_id
+      && ctx.input.currency === ctx.slice.opening_cut.currency
+      && Norn.parseTimestamp(ctx.input.period_start) === Norn.parseTimestamp(ctx.slice.opening_cut.cut_at)
+      && ctx.input.opening_stock_value === ctx.slice.opening_cut.stock_value
       && ctx.input.currency === ctx.slice.cost.currency
       && ctx.input.costed_ref === ctx.slice.cost.cost_ref
       && ctx.input.avg_weekly_sales_qty * ctx.input.sales_weeks === ctx.aggregates.total_sold_qty
       && ctx.input.period_gross_margin === ctx.aggregates.total_gross_margin
       && ctx.aggregates.costed_sales_count === ctx.aggregates.all_sales_count
-      && ctx.input.opening_stock_value === ctx.aggregates.total_opening_stock_value
       && ctx.input.closing_stock_value === ctx.aggregates.total_closing_stock_value
       && ctx.aggregates.lots_as_of_by_period_end === ctx.aggregates.all_lots_count
       && ctx.aggregates.costed_lots_count === ctx.aggregates.all_lots_count,
@@ -776,6 +861,7 @@ export const RecordStoreCommercialRollup = Norn.action({
     { link: "store", targetType: Store, targetIdField: "store_id" },
     { link: "sku", targetType: Sku, targetIdField: "sku_id" },
     { link: "on_hand_count", targetType: StoreCount, targetIdField: "on_hand_count_id" },
+    { link: "opening_cut", targetType: StockValuationCut, targetIdField: "opening_cut_id" },
     { link: "cost_record", targetType: UnitCost, targetIdField: "sku_id" },
   ],
   writes: [{ type: StoreCommercialRollup, change: "created" }],
@@ -843,6 +929,7 @@ export const RetailAccess = Norn.access({
     { ruleId: "stock_lot", actions: [RecordStockLot, RecordUncostedStockLot, UpdateStockLotBalance], resourceType: StockLot, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
     { ruleId: "store_count", actions: [RecordStoreCount, RecountStore], resourceType: StoreCount, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
     { ruleId: "pos_sale", actions: [RecordPosSale, RecordUncostedPosSale, PromotePosSaleFromEvidence], resourceType: PosSale, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
+    { ruleId: "stock_valuation_cut", actions: [RecordStockValuationCut], resourceType: StockValuationCut, scope: org, allOf: [{ role: { anyOf: ["planner", "warehouse_clerk"] } }] },
     { ruleId: "store_kpi", actions: [RecordStoreCommercialRollup, RecordWithheldStoreCommercialRollup], resourceType: StoreCommercialRollup, scope: org, allOf: [{ role: { anyOf: ["planner", "warehouse_clerk"] } }] },
   ],
 })
