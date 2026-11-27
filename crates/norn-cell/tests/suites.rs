@@ -48,6 +48,8 @@ mod definition_scope;
 mod dirty_data_wedge;
 #[path = "fork_questions.rs"]
 mod fork_questions;
+#[path = "fork_scenarios.rs"]
+mod fork_scenarios;
 #[path = "governed_create.rs"]
 mod governed_create;
 #[path = "jewelry_pricing.rs"]

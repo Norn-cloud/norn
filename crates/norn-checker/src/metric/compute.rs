@@ -133,6 +133,33 @@ impl QuestionPlan {
             FreshnessPolicy::Live { .. } | FreshnessPolicy::Delayed { .. } => None,
         }
     }
+
+    /// Core 08 (`WORLD-FORK`): narrow this admitted plan's exclusive effective
+    /// window end to `min(end, plan.question().time_window.end)`.
+    ///
+    /// Never widens a plan beyond its admitted upper bound.
+    ///
+    /// # Errors
+    /// `"core.compute.stale_input"` if `end` is malformed or not strictly after
+    /// `time_window.start`.
+    pub fn with_effective_end(&self, end: norn_ir::UtcTimestamp) -> Result<Self, &'static str> {
+        let start_key =
+            norn_expr::temporal::timestamp_ordering_key(self.question.time_window.start.as_str())
+                .map_err(|_| "core.compute.stale_input")?;
+        let declared_end_key =
+            norn_expr::temporal::timestamp_ordering_key(self.question.time_window.end.as_str())
+                .map_err(|_| "core.compute.stale_input")?;
+        let requested_end_key = norn_expr::temporal::timestamp_ordering_key(end.as_str())
+            .map_err(|_| "core.compute.stale_input")?;
+        if requested_end_key <= start_key {
+            return Err("core.compute.stale_input");
+        }
+        let mut narrowed = self.clone();
+        if requested_end_key < declared_end_key {
+            narrowed.question.time_window.end = end;
+        }
+        Ok(narrowed)
+    }
 }
 
 /// COMPUTE-DETERMINISTIC-1: lower the existing metric/question algebra to direct keyed sums or a ratio.
