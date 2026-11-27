@@ -4,7 +4,7 @@ use crate::{FactKey, TypeCatalog, cell_host::JsonObject};
 use norn_expr::{TurnFuel, Value};
 use norn_ir::{
     ArtifactEnvelope, DataQualityOutcome, DataQualityRuleRef, DataQualitySeverity, LawIR,
-    LawModality, LawResponse, LawRoot, LawSeverity, ObjectTypeName,
+    LawModality, LawResponse, LawSeverity, ObjectTypeName,
 };
 use serde::{Deserialize, de::IntoDeserializer};
 
@@ -72,6 +72,26 @@ pub struct LawFailure {
     /// DIAG-REASON-1: the stored values the law read, by path (`total`,
     /// `ledger_entry.amount`), so a refusal can say what was checked.
     pub values: std::collections::BTreeMap<String, norn_ir::RuntimeValue>,
+}
+
+/// §8.1 exception audit attribution: one governing law whose predicate was
+/// lifted by an admitted `unless` exception tree during evaluation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedLawException {
+    /// Exact governing law identity pin (`artifact_id`, `law_id`, `version`).
+    pub rule_ref: DataQualityRuleRef,
+    /// Sorted IDs of the un-overridden `unless` exceptions that lifted the law.
+    pub applied_exception_ids: Vec<String>,
+}
+
+/// Complete governing-law evaluation report for one subject: every violation
+/// plus explicit §8.1 audit attribution for any law lifted by `unless`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LawEvaluationReport {
+    /// Violated governing laws.
+    pub failures: Vec<LawFailure>,
+    /// Governing laws lifted by one or more `unless` exceptions.
+    pub applied_exceptions: Vec<AppliedLawException>,
 }
 
 /// LAW-LINK-1: one link target in the snapshot a law is checked against.
@@ -547,10 +567,7 @@ impl TypeCatalog<'_> {
             if !is_a(&law.subject) && !law.scope.object_types.iter().any(|ty| is_a(ty)) {
                 continue;
             }
-            if !is_a(&law.subject)
-                || !matches!(&law.scope.root, LawRoot::Entity(name) if *name == law.subject)
-                || law.scope.object_types != [law.subject.as_str()]
-            {
+            if !is_a(&law.subject) || !norn_checker::law_support::runtime_scope_supported(law) {
                 return Err(LawEvaluationError::UnsupportedUntilB2(law.id.clone()));
             }
             laws.push(*artifact);
@@ -571,19 +588,17 @@ pub fn law_rule(
     artifact: &ArtifactEnvelope,
 ) -> Result<(LawIR, norn_ir::DataQualityRuleRef), LawEvaluationError> {
     let law = decode(catalog, artifact)?;
-    if !supported(law) {
-        return Err(LawEvaluationError::Unsupported(law.id.clone()));
-    }
-    if !law.exceptions.is_empty() {
-        norn_checker::law_exceptions::check_tree(&law.id, &law.exceptions).map_err(|refusal| {
-            LawEvaluationError::Invalid(format!("{}: {}", law.id, refusal.code()))
-        })?;
-    }
-    if !law_link_reads(catalog, subject, law)?.is_empty() {
-        return Err(LawEvaluationError::Unsupported(format!(
-            "{}: a law that reads a link has no dataset semantics",
-            law.id
-        )));
+    let reads_links = !law_link_reads(catalog, subject, law)?.is_empty();
+    let support = norn_checker::law_support::classify_law_support_with_links(law, reads_links);
+    if let norn_checker::law_support::LawRowLoweringSupport::Unavailable(reason) =
+        support.row_lowering
+    {
+        return Err(match support.runtime {
+            norn_checker::law_support::LawRuntimeSupport::Invalid(_) => {
+                LawEvaluationError::Invalid(format!("{}: {reason}", law.id))
+            }
+            _ => LawEvaluationError::Unsupported(format!("{}: {reason}", law.id)),
+        });
     }
     invariant_binding(catalog, subject, law)?;
     Ok((law.clone(), pin(artifact, law)?))
@@ -599,21 +614,7 @@ pub fn law_row_tree(source: &str) -> Option<norn_expr::RowExpr> {
 }
 
 fn supported(law: &LawIR) -> bool {
-    law.timing.is_none()
-        && law.scope.lifecycle_states.is_empty()
-        && law.scope.commitments.is_empty()
-        && matches!(law.modality, LawModality::Always {} | LawModality::Never {})
-        && match law.response {
-            LawResponse::Predicate { .. } => true,
-            LawResponse::Invariant { .. } => {
-                law.exceptions.is_empty()
-                    && matches!(law.modality, LawModality::Always {})
-                    && law.condition.is_none()
-            }
-            LawResponse::Action { .. }
-            | LawResponse::Transition { .. }
-            | LawResponse::TranslationPreserves { .. } => false,
-        }
+    norn_checker::law_support::runtime_semantics_supported(law)
 }
 
 fn invariant_binding<'a>(
@@ -759,7 +760,21 @@ pub fn evaluate(
     values: &JsonObject,
     remaining: &mut TurnFuel,
 ) -> Result<Vec<LawFailure>, LawEvaluationError> {
-    evaluate_linked(catalog, key, values, &mut NoLinkTargets, remaining)
+    evaluate_with_audit(catalog, key, values, remaining).map(|report| report.failures)
+}
+
+/// LAW-COMMIT-1 / §8.1: as [`evaluate`], retaining explicit audit attribution
+/// for every governing law lifted by an admitted `unless` exception tree.
+///
+/// # Errors
+/// As [`evaluate`].
+pub fn evaluate_with_audit(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &JsonObject,
+    remaining: &mut TurnFuel,
+) -> Result<LawEvaluationReport, LawEvaluationError> {
+    evaluate_linked_with_audit(catalog, key, values, &mut NoLinkTargets, remaining)
 }
 
 /// The link reads one law evaluation bound: each read's pin, and the values
@@ -849,106 +864,177 @@ pub fn evaluate_linked(
     links: &mut dyn LinkTargets,
     remaining: &mut TurnFuel,
 ) -> Result<Vec<LawFailure>, LawEvaluationError> {
+    evaluate_linked_with_audit(catalog, key, values, links, remaining).map(|report| report.failures)
+}
+
+struct EvalSubject<'a> {
+    catalog: &'a TypeCatalog<'a>,
+    key: &'a FactKey,
+    values: &'a JsonObject,
+    subject: &'a std::collections::BTreeMap<String, Value>,
+}
+
+/// LAW-COMMIT-1 / LAW-LINK-1 / §8.1: as [`evaluate_linked`], returning both
+/// violated laws and explicit [`AppliedLawException`] audit records for every
+/// governing law lifted by an admitted `unless` exception tree.
+///
+/// # Errors
+/// As [`evaluate_linked`].
+pub fn evaluate_linked_with_audit(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &JsonObject,
+    links: &mut dyn LinkTargets,
+    remaining: &mut TurnFuel,
+) -> Result<LawEvaluationReport, LawEvaluationError> {
     let artifacts = catalog.governing_laws(&key.object_type)?;
     if artifacts.is_empty() {
-        return Ok(Vec::new());
+        return Ok(LawEvaluationReport::default());
     }
     let Value::Object(subject) = expr_object(values)? else {
         return Err(LawEvaluationError::Invalid("subject values".into()));
     };
-    let mut failures = Vec::new();
+    let eval = EvalSubject {
+        catalog,
+        key,
+        values,
+        subject: &subject,
+    };
+    let mut report = LawEvaluationReport::default();
     for artifact in artifacts {
-        let law = decode(catalog, artifact)?;
-        if !supported(law) {
-            return Err(LawEvaluationError::Unsupported(law.id.clone()));
-        }
-        if !law.exceptions.is_empty() {
-            norn_checker::law_exceptions::check_tree(&law.id, &law.exceptions).map_err(
-                |refusal| LawEvaluationError::Invalid(format!("{}: {}", law.id, refusal.code())),
-            )?;
-        }
-        let reads = law_link_reads(catalog, &key.object_type, law)?;
-        if !reads.is_empty() && links.defers() {
-            continue;
-        }
-        let mut object = subject.clone();
-        let bound = bind_links(key, reads, links, &mut object)?;
-        let context = Value::object([("self", Value::Object(object))]);
-        let invariant_id = invariant_binding(catalog, &key.object_type, law)?;
-        let mut invariant_failure = None;
-        let activation = match &law.condition {
-            Some(expr) => boolean(catalog, expr.as_str(), &context, remaining)?,
-            None => Ok(true),
-        };
-        let result = match activation {
-            Ok(false) => continue,
+        evaluate_one_law(&eval, artifact, links, remaining, &mut report)?;
+    }
+    Ok(report)
+}
+
+fn evaluate_one_law(
+    eval: &EvalSubject<'_>,
+    artifact: &ArtifactEnvelope,
+    links: &mut dyn LinkTargets,
+    remaining: &mut TurnFuel,
+    report: &mut LawEvaluationReport,
+) -> Result<(), LawEvaluationError> {
+    let law = decode(eval.catalog, artifact)?;
+    if !supported(law) {
+        return Err(LawEvaluationError::Unsupported(law.id.clone()));
+    }
+    if !law.exceptions.is_empty() {
+        norn_checker::law_exceptions::check_tree(&law.id, &law.exceptions).map_err(|refusal| {
+            LawEvaluationError::Invalid(format!("{}: {}", law.id, refusal.code()))
+        })?;
+    }
+    let reads = law_link_reads(eval.catalog, &eval.key.object_type, law)?;
+    if !reads.is_empty() && links.defers() {
+        return Ok(());
+    }
+    let mut object = eval.subject.clone();
+    let bound = bind_links(eval.key, reads, links, &mut object)?;
+    let context = Value::object([("self", Value::Object(object))]);
+    let invariant_id = invariant_binding(eval.catalog, &eval.key.object_type, law)?;
+    let mut invariant_failure = None;
+    let activation = match &law.condition {
+        Some(expr) => boolean(eval.catalog, expr.as_str(), &context, remaining)?,
+        None => Ok(true),
+    };
+    let result = match activation {
+        Ok(false) => return Ok(()),
+        Err(outcome) => Err(outcome),
+        Ok(true) => match exception_lifts(eval.catalog, law, &context, remaining)? {
+            Ok(Some(applied_exception_ids)) => {
+                report.applied_exceptions.push(AppliedLawException {
+                    rule_ref: pin(artifact, law)?,
+                    applied_exception_ids,
+                });
+                return Ok(());
+            }
             Err(outcome) => Err(outcome),
-            Ok(true) => match exception_lifts(catalog, law, &context, remaining)? {
-                Ok(true) => continue,
-                Err(outcome) => Err(outcome),
-                Ok(false) => match &law.response {
-                    LawResponse::Predicate { expression } => {
-                        boolean(catalog, expression.as_str(), &context, remaining)?.and_then(
-                            |value| {
-                                if value == matches!(law.modality, LawModality::Always {}) {
-                                    Ok(())
-                                } else {
-                                    Err(DataQualityOutcome::NotSatisfied)
-                                }
-                            },
-                        )
+            Ok(None) => evaluate_response(
+                eval,
+                law,
+                &context,
+                invariant_id,
+                remaining,
+                &mut invariant_failure,
+            )?,
+        },
+    };
+    if let Err(outcome) = result {
+        let mut failure = law_failure(artifact, law, outcome, invariant_failure)?;
+        failure.values = law_operands(law, eval.values, &bound.targets, &bound.sources);
+        failure.links = bound.pinned;
+        report.failures.push(failure);
+    }
+    Ok(())
+}
+
+fn evaluate_response(
+    eval: &EvalSubject<'_>,
+    law: &LawIR,
+    context: &Value,
+    invariant_id: Option<&str>,
+    remaining: &mut TurnFuel,
+    invariant_failure: &mut Option<Box<BoundInvariantFailure>>,
+) -> Result<Result<(), DataQualityOutcome>, LawEvaluationError> {
+    match &law.response {
+        LawResponse::Predicate { expression } => {
+            Ok(
+                boolean(eval.catalog, expression.as_str(), context, remaining)?.and_then(|value| {
+                    if value == matches!(law.modality, LawModality::Always {}) {
+                        Ok(())
+                    } else {
+                        Err(DataQualityOutcome::NotSatisfied)
                     }
-                    LawResponse::Invariant { .. } => {
-                        let id = invariant_id
-                            .ok_or_else(|| LawEvaluationError::Invalid(law.id.clone()))?;
-                        let failures = crate::commit_check::evaluate_named_invariant(
-                            catalog, key, values, remaining, id,
-                        )
-                        .map_err(|error| match error {
-                            crate::commit_check::InvariantEvaluationError::BudgetExceeded => {
-                                LawEvaluationError::BudgetExceeded
-                            }
-                            other @ (crate::commit_check::InvariantEvaluationError::InvalidEffectiveValues(_)
-                            | crate::commit_check::InvariantEvaluationError::MissingInterface(_)) => {
-                                LawEvaluationError::Invalid(format!("{other:?}"))
-                            }
-                        })?;
-                        if let Some(failure) = failures.into_iter().next() {
-                            let outcome = failure.outcome.clone();
-                            invariant_failure = Some(bind_invariant_failure(catalog, failure)?);
-                            Err(outcome)
-                        } else {
-                            Ok(())
-                        }
-                    }
-                    LawResponse::Action { .. }
-                    | LawResponse::Transition { .. }
-                    | LawResponse::TranslationPreserves { .. } => {
-                        return Err(LawEvaluationError::Unsupported(law.id.clone()));
-                    }
-                },
-            },
-        };
-        if let Err(outcome) = result {
-            let mut failure = law_failure(artifact, law, outcome, invariant_failure)?;
-            failure.values = law_operands(law, values, &bound.targets, &bound.sources);
-            failure.links = bound.pinned;
-            failures.push(failure);
+                }),
+            )
+        }
+        LawResponse::Invariant { .. } => {
+            let id = invariant_id.ok_or_else(|| LawEvaluationError::Invalid(law.id.clone()))?;
+            let failures = crate::commit_check::evaluate_named_invariant(
+                eval.catalog,
+                eval.key,
+                eval.values,
+                remaining,
+                id,
+            )
+            .map_err(|error| match error {
+                crate::commit_check::InvariantEvaluationError::BudgetExceeded => {
+                    LawEvaluationError::BudgetExceeded
+                }
+                other @ (crate::commit_check::InvariantEvaluationError::InvalidEffectiveValues(
+                    _,
+                )
+                | crate::commit_check::InvariantEvaluationError::MissingInterface(_)) => {
+                    LawEvaluationError::Invalid(format!("{other:?}"))
+                }
+            })?;
+            if let Some(failure) = failures.into_iter().next() {
+                let outcome = failure.outcome.clone();
+                *invariant_failure = Some(bind_invariant_failure(eval.catalog, failure)?);
+                Ok(Err(outcome))
+            } else {
+                Ok(Ok(()))
+            }
+        }
+        LawResponse::Action { .. }
+        | LawResponse::Transition { .. }
+        | LawResponse::TranslationPreserves { .. } => {
+            Err(LawEvaluationError::Unsupported(law.id.clone()))
         }
     }
-    Ok(failures)
 }
 
 /// Evaluate an admitted exception tree under `remaining` fuel and fold it with
 /// `norn_checker::law_exceptions::fold`; evaluation errors fail closed.
+/// Returns `Ok(Some(applied_ids))` (sorted) when the law is lifted, or
+/// `Ok(None)` when no exception lifts it.
 fn exception_lifts(
     catalog: &TypeCatalog<'_>,
     law: &LawIR,
     context: &Value,
     remaining: &mut TurnFuel,
-) -> Result<Result<bool, DataQualityOutcome>, LawEvaluationError> {
+) -> Result<Result<Option<Vec<String>>, DataQualityOutcome>, LawEvaluationError> {
     if law.exceptions.is_empty() {
-        return Ok(Ok(false));
+        return Ok(Ok(None));
     }
     let mut matched = Vec::with_capacity(law.exceptions.len());
     for exception in &law.exceptions {
@@ -957,8 +1043,12 @@ fn exception_lifts(
             Err(outcome) => return Ok(Err(outcome)),
         }
     }
-    let (lifted, _applied) = norn_checker::law_exceptions::fold(&law.id, &law.exceptions, &matched);
-    Ok(Ok(lifted))
+    let (lifted, applied) = norn_checker::law_exceptions::fold(&law.id, &law.exceptions, &matched);
+    if lifted {
+        Ok(Ok(Some(applied.into_iter().map(str::to_owned).collect())))
+    } else {
+        Ok(Ok(None))
+    }
 }
 fn boolean(
     catalog: &TypeCatalog<'_>,

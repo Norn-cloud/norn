@@ -1,0 +1,56 @@
+{
+  "artifactId": "core.Hold.measure_matches_resource.law",
+  "dependencies": [
+    {
+      "artifactId": "core.Hold.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "core.Resource.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A hold's unit and currency match its target resource",
+  "namespace": "core",
+  "payload": {
+    "id": "core.Hold.measure_matches_resource",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "core",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/core/src/rea.ts"
+    },
+    "rationale": "A hold or reservation must carry the exact unit or currency of the resource balance it locks.",
+    "response": {
+      "expression": "((self.unit == null) == (self.resource.unit == null)) and ((self.unit ?? '') == (self.resource.unit ?? '')) and ((self.currency == null) == (self.resource.currency == null)) and ((self.currency ?? '') == (self.resource.currency ?? ''))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "core.Hold"
+      ],
+      "root": {
+        "id": "core.Hold",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "core.Hold"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.Hold.measure_matches_resource.law.json"
+  },
+  "scope": {},
+  "version": "0.2.0"
+}

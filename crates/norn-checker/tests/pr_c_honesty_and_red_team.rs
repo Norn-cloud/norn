@@ -335,6 +335,27 @@ fn law_honesty_distinguishes_enforced_from_declared_only() {
             }]
         }),
     );
+    let invariant_with_exception = law_envelope(
+        "hr.Shift.inv_with_exception",
+        "hr.Shift",
+        "entity",
+        "hr.Shift",
+        "always",
+        &json!({
+            "response": {
+                "kind": "invariant",
+                "objectType": "hr.Shift",
+                "invariantId": "non_negative"
+            },
+            "exceptions": [{
+                "id": "ramadan",
+                "overrides": "hr.Shift.inv_with_exception",
+                "condition": "self.is_ramadan == true",
+                "rationale": "Seasonal rule",
+                "source": { "artifactId": "hr.Shift.inv_with_exception.law", "pointer": "/payload/exceptions/0" }
+            }]
+        }),
+    );
     let app_root = law_envelope(
         "hr.App.cross_entity",
         "hr.Payslip",
@@ -344,8 +365,14 @@ fn law_honesty_distinguishes_enforced_from_declared_only() {
         &json!({}),
     );
 
-    let statuses = classify_law_honesty(&[enforced, eventually, with_exception, app_root]);
-    assert_eq!(statuses.len(), 4);
+    let statuses = classify_law_honesty(&[
+        enforced,
+        eventually,
+        with_exception,
+        invariant_with_exception,
+        app_root,
+    ]);
+    assert_eq!(statuses.len(), 5);
     let by_id = |id: &str| statuses.iter().find(|s| s.law_id == id).expect("status");
 
     assert_eq!(
@@ -367,12 +394,20 @@ fn law_honesty_distinguishes_enforced_from_declared_only() {
             .contains("temporal")
     );
 
+    // Excepted predicate laws ARE folded and enforced on commit by `governing_laws.rs`.
     assert_eq!(
         by_id("hr.Shift.max_span").enforcement,
+        LawEnforcementStatus::Enforced
+    );
+    assert_eq!(by_id("hr.Shift.max_span").reason, None);
+
+    // Excepted invariant-reference laws remain declared-only (refused at runtime).
+    assert_eq!(
+        by_id("hr.Shift.inv_with_exception").enforcement,
         LawEnforcementStatus::DeclaredOnly
     );
     assert!(
-        by_id("hr.Shift.max_span")
+        by_id("hr.Shift.inv_with_exception")
             .reason
             .as_deref()
             .unwrap()

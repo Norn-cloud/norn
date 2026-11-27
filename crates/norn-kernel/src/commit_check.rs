@@ -408,6 +408,47 @@ pub fn check_commit<E: 'static, C, T, V: CommitView + ?Sized>(
     check_commit_inner(commit, *model, view, None, Trust::Plain)
 }
 
+/// Per-subject governing-law exception attribution recorded during commit admission (§8.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitLawAudit {
+    /// Subject object whose violated governing law was lifted by declared exception(s).
+    pub subject: FactKey,
+    /// Governing laws on `subject` lifted by declared exceptions, with sorted exception ids.
+    pub applied_exceptions: Vec<crate::governing_laws::AppliedLawException>,
+}
+
+/// Admitted commit versions together with governing-law exception audit records (§8.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitAudit {
+    /// Resulting object and link versions for the admitted commit.
+    pub versions: CommitVersions,
+    /// Non-empty per-subject exception attribution records from the commit's `Laws` stage.
+    pub applied_exceptions: Vec<CommitLawAudit>,
+}
+
+/// Shared commit admission check returning both admitted versions and §8.1
+/// governing-law exception attribution records.
+///
+/// # Errors
+///
+/// The first failed check, or [`CommitError::Host`] if a lookup failed.
+pub fn check_commit_with_audit<E: 'static, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: &CommitModel<'_, '_>,
+    view: &V,
+) -> Result<CommitAudit, CommitError<V::Error>> {
+    let profile = crate::execution_profile::ProfileView::new(view);
+    profile.validate_consumed(commit.consumes.as_ref())?;
+    let result =
+        crate::commit::check_commit_local_with_audit(commit, *model, &profile, None, Trust::Plain);
+    profile.validate_after_local(commit, *model, &result)?;
+    let (versions, applied_exceptions) = result?;
+    Ok(CommitAudit {
+        versions,
+        applied_exceptions,
+    })
+}
+
 /// Check the kernel-prepared atomic parent/owned-row commit. Only the
 /// in-process action planner can construct the one-use proof; serialized
 /// commits and portable ABI inputs always use [`check_commit`].

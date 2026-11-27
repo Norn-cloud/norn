@@ -5273,6 +5273,65 @@ fn law_interface_inherited_scope_governs_and_effective_scopes_refuse_until_b2() 
     ));
 }
 
+#[test]
+fn install_refuses_unsupported_law_scope_and_modality_even_with_zero_live_rows() {
+    let (base, base_input) = governing_law_input("self.name != 'bad'", 1);
+    let mut store = CellStore::open_in_memory(base.clone()).expect("store");
+    store
+        .install_definitions(base.clone(), base_input, Some(0), "org_demo/dev")
+        .expect("v1");
+
+    for (label, patch) in [
+        (
+            "app_root",
+            Box::new(|law: &mut serde_json::Value| {
+                law["payload"]["scope"]["root"] = json!({"kind": "app", "id": "defs"});
+            }) as Box<dyn Fn(&mut serde_json::Value)>,
+        ),
+        (
+            "eventually_modality",
+            Box::new(|law: &mut serde_json::Value| {
+                law["payload"]["modality"] = json!({"kind": "eventually"});
+            }) as Box<dyn Fn(&mut serde_json::Value)>,
+        ),
+    ] {
+        let (candidate, mut input) = governing_law_input("self.name != 'bad'", 2);
+        let mut artifacts: Vec<serde_json::Value> =
+            serde_json::from_str(&input.canonical_set).expect("artifacts");
+        let law = artifacts
+            .iter_mut()
+            .find(|a| a["kind"] == "law")
+            .expect("law");
+        patch(law);
+        let envelopes: Vec<norn_ir::ArtifactEnvelope> =
+            serde_json::from_value(serde_json::Value::Array(artifacts)).expect("envelopes");
+        input.canonical_set = String::from_utf8(
+            norn_ir::canonical::canonical_json_of(&envelopes).expect("canonical set"),
+        )
+        .expect("UTF8");
+        let patched_model = candidate
+            .with_governing_laws(&envelopes)
+            .expect("patched model");
+        let err = store
+            .install_definitions(patched_model, input, Some(1), "org_demo/dev")
+            .expect_err("unsupported candidate law must refuse upfront on empty cell");
+        let CellError::DefinitionLawRefused {
+            checked: 0,
+            findings,
+            ..
+        } = err
+        else {
+            panic!("{label}: expected upfront DefinitionLawRefused with checked=0, got {err:?}");
+        };
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.message.contains("core.laws.unsupported_semantics")),
+            "{label}: expected core.laws.unsupported_semantics in findings, got {findings:?}"
+        );
+    }
+}
+
 norn_testkit::proptest::proptest! {
     #[test]
     fn obs_evidence_snapshot_roundtrip_preserves_generated_governing_identity(name in "[a-z]{1,12}") {
