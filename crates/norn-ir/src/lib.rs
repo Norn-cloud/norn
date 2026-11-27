@@ -64,11 +64,6 @@ pub mod explain;
 pub mod fact_change;
 pub mod facts;
 pub mod feed;
-#[allow(
-    unreachable_pub,
-    reason = "standalone Charon/Aeneas extraction crate root; private to norn-ir public API"
-)]
-mod feed_patch_core;
 pub mod flow_source_map;
 pub mod function;
 pub mod i18n;

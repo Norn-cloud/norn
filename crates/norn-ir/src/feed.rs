@@ -13,12 +13,19 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::feed_patch_core::{
+#[allow(
+    unreachable_pub,
+    reason = "standalone Charon/Aeneas extraction crate root; private to norn-ir public API"
+)]
+#[path = "feed_patch_core.rs"]
+mod feed_patch_core;
+
+use crate::rule::JsonObject;
+use crate::{RuntimeObject, RuntimeValue};
+use feed_patch_core::{
     LinkOp, PatchOp, VersionCmp, compare_instant_core, compose_field_core, compose_link_core,
     reduce_field_core, reduce_link_core,
 };
-use crate::rule::JsonObject;
-use crate::{RuntimeObject, RuntimeValue};
 
 /// Mapping extension key declaring per-dataset feed mode and version ordering.
 pub const FEED_EXTENSION_KEY: &str = "norn.feed/1";
