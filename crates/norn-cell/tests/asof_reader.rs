@@ -34,8 +34,9 @@ mod asof_reader {
         ArtifactEnvelope, LawRoot, ObjectTypeDef, QuestionIR, RuntimeObject, RuntimeValue as V,
     };
     use norn_kernel::{
-        CellCommit, FactKey, FactMutation, FactVersion, FactWrite, LinkKey, LinkMutation,
-        LinkWrite, LogicalTime, ObservationEvent, ObservationId, Observed, Provenance,
+        CellCommit, CellHost as _, FactKey, FactMutation, FactVersion, FactWrite, LinkKey,
+        LinkMutation, LinkWrite, LogicalTime, ObservationEvent, ObservationId, Observed,
+        Provenance,
     };
     use serde_json::{Value, json};
 
@@ -715,6 +716,117 @@ mod asof_reader {
                 |_| Ok(true),
             )
             .expect("K1 after deletion and recreation");
+        assert_eq!(after.result, before.result);
+    }
+
+    fn mixed_law_artifacts() -> Vec<ArtifactEnvelope> {
+        let mut artifacts = linked_law_artifacts();
+        artifacts.push(envelope(
+            "demo.Inspection.non_negative.law",
+            "law",
+            "demo",
+            json!({
+                "lawVersion": "0.1", "id": "demo.Inspection.non_negative", "owner": "demo",
+                "subject": "demo.Inspection",
+                "scope": {"root": {"kind": "entity", "id": "demo.Inspection"}, "objectTypes": ["demo.Inspection"]},
+                "severity": "error", "modality": {"kind": "always"},
+                "response": {"kind": "predicate", "expression": "self.inspected_qty >= 0"},
+                "rationale": "Inspected quantity must be non-negative.",
+                "provenance": {"source": "authoring_sdk"}
+            }),
+            json!([{"artifactId": "demo.Inspection.entity", "kind": "entity", "required": true, "version": "0.1.0"}]),
+        ));
+        artifacts
+    }
+
+    #[test]
+    fn pure_property_finding_on_mixed_law_entity_recovers_at_cutoff() {
+        let artifacts = mixed_law_artifacts();
+        let plan = admit_weekly_sum(
+            &artifacts,
+            "demo.Inspection",
+            "inspected_qty",
+            "demo.inspected_mixed_week",
+        );
+        let (mut cell, _dir) = open_cell(&artifacts, "mixed_law_asof");
+        let r1 = json!({"id": "R1", "received_qty": "10.00"});
+        let bad = json!({"id": "I-NEG", "receipt_id": "R1", "inspected_qty": "-5.00", "occurred_at": "2026-07-07T10:00:00Z"});
+        let ok = json!({"id": "I-OK", "receipt_id": "R1", "inspected_qty": "8.00", "occurred_at": "2026-07-07T10:00:00Z"});
+        assert_eq!(
+            ingest(
+                &mut cell,
+                "demo.linked.mapping",
+                "Receipt",
+                "R1",
+                "ev-r1-1",
+                "1",
+                &r1
+            ),
+            MappingOutcome::Landed
+        );
+        // Violates ONLY `non_negative` (`-5.00 < 0`), while satisfying `within_receipt` (`-5 <= 10`).
+        assert_eq!(
+            ingest(
+                &mut cell,
+                "demo.linked.mapping",
+                "Inspection",
+                "I-NEG",
+                "ev-ineg-1",
+                "1",
+                &bad
+            ),
+            MappingOutcome::Landed
+        );
+        assert_eq!(
+            ingest(
+                &mut cell,
+                "demo.linked.mapping",
+                "Inspection",
+                "I-OK",
+                "ev-iok-1",
+                "1",
+                &ok
+            ),
+            MappingOutcome::Landed
+        );
+        let k1 = last_cutoff(&cell);
+        let before = cell
+            .store()
+            .evaluate_question_known_at(
+                &plan,
+                query_context(k1.recorded_at.as_millis()),
+                k1,
+                |_| Ok(true),
+            )
+            .expect("pure-property finding on mixed-law entity must not trip unrelated linked law");
+        assert!(before.result.exclusions.contains_key("I-NEG"));
+        assert_eq!(
+            before.result.rows.values().next().expect("bucket").totals[0].canonical(),
+            "8"
+        );
+        // K2 fix I-NEG -> live includes I-NEG (total 11), while K1 still reproduces 8.
+        let fixed = json!({"id": "I-NEG", "receipt_id": "R1", "inspected_qty": "3.00", "occurred_at": "2026-07-07T10:00:00Z"});
+        assert_eq!(
+            ingest(
+                &mut cell,
+                "demo.linked.mapping",
+                "Inspection",
+                "I-NEG",
+                "ev-ineg-2",
+                "2",
+                &fixed
+            ),
+            MappingOutcome::Landed
+        );
+        let after = cell
+            .store()
+            .evaluate_question_known_at(
+                &plan,
+                query_context(k1.recorded_at.as_millis()),
+                k1,
+                |_| Ok(true),
+            )
+            .expect("K1 remains reproducible after K2 fix");
         assert_eq!(after.result, before.result);
     }
 

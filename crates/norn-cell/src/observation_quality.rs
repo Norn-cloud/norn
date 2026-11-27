@@ -340,24 +340,32 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                             == norn_kernel::DataQualityRuleClassification::Integrity
                             || (class == norn_kernel::DataQualityRuleClassification::Builtin
                                 && finding.severity == norn_ir::DataQualitySeverity::Error);
-                        if let Some(record) = current
-                            && !self.finding_is_violated(
-                                &catalog,
+                        if let Some(record) = current {
+                            // Scope governing-law recovery to the finding's own rule so a
+                            // pure-property finding on a mixed-law entity never touches an
+                            // unrelated linked law at a historical frontier.
+                            let scoped_laws = scoped_finding_laws(model.law_artifacts(), &finding);
+                            let eval_catalog = TypeCatalog::new(model.object_types())
+                                .with_interfaces(model.interfaces())
+                                .with_property_types(model.property_types())
+                                .with_governing_laws(&scoped_laws);
+                            if !self.finding_is_violated(
+                                &eval_catalog,
                                 world,
                                 object_type,
                                 key,
                                 record,
                                 &finding,
                                 frontier,
-                            )?
-                        {
-                            finding.status = if class
-                                == norn_kernel::DataQualityRuleClassification::Unverified
-                            {
-                                DataQualityFindingStatus::Superseded
-                            } else {
-                                DataQualityFindingStatus::Resolved
-                            };
+                            )? {
+                                finding.status = if class
+                                    == norn_kernel::DataQualityRuleClassification::Unverified
+                                {
+                                    DataQualityFindingStatus::Superseded
+                                } else {
+                                    DataQualityFindingStatus::Resolved
+                                };
+                            }
                         }
                         findings.push((finding, quarantines));
                     }
@@ -432,6 +440,31 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Ok(None);
         };
         Ok(Some((event, receipt.body.definitions_version)))
+    }
+}
+
+/// Filter retained governing-law artifacts to the single law referenced by
+/// `finding`, or none when `finding` references a built-in or entity invariant.
+fn scoped_finding_laws(
+    laws: &[norn_ir::ArtifactEnvelope],
+    finding: &DataQualityFinding,
+) -> Vec<norn_ir::ArtifactEnvelope> {
+    match &finding.rule_ref {
+        norn_ir::DataQualityRuleRef::Law {
+            artifact_id,
+            law_id,
+            ..
+        } => laws
+            .iter()
+            .filter(|law| {
+                law.artifact_id == *artifact_id
+                    || law.payload.get("id").and_then(serde_json::Value::as_str)
+                        == Some(law_id.as_str())
+            })
+            .cloned()
+            .collect(),
+        norn_ir::DataQualityRuleRef::Invariant { .. }
+        | norn_ir::DataQualityRuleRef::Builtin { .. } => Vec::new(),
     }
 }
 

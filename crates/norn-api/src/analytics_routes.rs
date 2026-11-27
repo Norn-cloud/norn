@@ -331,7 +331,7 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
         let grain = plan.grain().as_str().to_owned();
         let admitted = visible(&gate_record(&grain, ALL_MEMBERS, &context.scope))?;
         let prepared = store
-            .analytics_prepare_known_at(plan, context, &self.tenant, cutoff)?
+            .analytics_prepare_known_at_gated(plan, context, &self.tenant, cutoff, admitted)?
             .expecting(self.transport.capabilities().engine);
         let mut answer = if admitted {
             let response = evaluate_on(store, self.transport, &self.tenant, prepared.request())?;

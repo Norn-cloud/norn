@@ -457,6 +457,7 @@ impl<E: SqlEngine> CellStore<E> {
         grain: &str,
         candidates: BTreeSet<String>,
         cutoff: crate::KnowledgeCutoff,
+        include_findings: bool,
     ) -> Result<BTreeMap<String, String>, CellError> {
         let reader = self.read();
         let mut budget = question_budget()?;
@@ -471,7 +472,7 @@ impl<E: SqlEngine> CellStore<E> {
                 BudgetedRead::Missing => continue,
                 BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
             };
-            if let Some(finding) = as_of.findings(world, &record)?.first() {
+            if include_findings && let Some(finding) = as_of.findings(world, &record)?.first() {
                 exclusions.insert(key, finding.id.clone());
             }
         }
@@ -502,6 +503,10 @@ impl<E: SqlEngine> CellStore<E> {
     /// rows are read as of `cutoff`, but it is pinned as the live answer was
     /// (no slice pin, no historical receipt), so it reproduces that answer's
     /// lineage pin exactly when nothing it read has changed since.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one snapshot: read, gate, project, pin, in order"
+    )]
     fn question_snapshot_at_with<T>(
         &self,
         plan: &QuestionPlan,
@@ -515,6 +520,8 @@ impl<E: SqlEngine> CellStore<E> {
             self.check_question_scope(&context.scope)?;
             check_question_cutoff(plan, cutoff)?;
             let max = self.check_question_plan(plan)?;
+            // Preserve full ledger-span integrity verification before any live or historical read.
+            let live_head = self.verified_head()?;
             let reader = self.read();
             // S7 (#1551): gate historical/as-of compute before population selection.
             if cutoff.is_some() || plan.as_of() {
@@ -530,10 +537,9 @@ impl<E: SqlEngine> CellStore<E> {
                 let collected = as_of.collect_members(plan, &context, max, visible, &mut budget)?;
                 (revision, historical_receipt, collected)
             } else {
-                let revision = self.verified_head()?;
                 let collected =
                     collect_live_members(&reader, plan, &context, max, visible, &mut budget)?;
-                (revision, None, collected)
+                (live_head, None, collected)
             };
             let (query_pin, definition_pin) =
                 self.question_pins(plan, cutoff.filter(|_| !answered))?;
