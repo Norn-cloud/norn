@@ -43,8 +43,8 @@ use norn_kernel::result_reconciliation::{
 };
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
-    ActionReadAuthzRequest, ActionReadTypeAuthzRequest, CellCommit, Command, DecisionTurn, Effect,
-    FactEvent, IdempotencyKey, LogicalTime, commit_action,
+    ActionReadAuthzRequest, ActionReadTypeAuthzRequest, CellCommit, Command, CommandId, Consumed,
+    DecisionTurn, Effect, FactEvent, Generation, IdempotencyKey, LogicalTime, commit_action,
 };
 use norn_testkit::pack_mbt::AdmittedPack;
 use serde_json::{Value, json};
@@ -2240,6 +2240,43 @@ fn accept_authenticated_evaluations(
         json!({"version_id": "v1", "evaluation_receipt": wrong_manifest_receipt}),
     )?;
     assert_eq!(wrong_manifest_code, "action.receipt_unknown");
+    // Consume the rejected wrong-manifest delivery so the FIFO outbox head advances.
+    stress
+        .cell
+        .commit(CellCommit {
+            consumes: Some(Consumed::Result {
+                command: CommandId("cmd-eval-wrong-manifest".to_owned()),
+                generation: Generation(1),
+            }),
+            ..CellCommit::empty()
+        })
+        .map_err(|e| format!("consume rejected wrong-manifest delivery: {e}"))?;
+
+    // Retain and accept one receipt at a time so each perform/accept cycle advances the FIFO outbox.
+    let r2 = retain_evaluation_receipt(
+        stress,
+        &EvalReceiptSpec {
+            cmd_id: "cmd-eval-v2",
+            version_id: "v2",
+            manifest_digest: FORECAST_EVALUATOR_MANIFEST_DIGEST,
+            evaluated_revision: k2,
+            artifact_sha256: &registered_sha,
+            artifact_size: 4096,
+            contracts_passed: true,
+        },
+    )?;
+    // RUN-BIND-1: a receipt dispatched for v2 cannot be accepted for v1.
+    let (run_mismatch_code, _) = stress.refused(
+        "ml.modelversion.accept_evaluation",
+        "eng:dina",
+        json!({"version_id": "v1", "evaluation_receipt": r2}),
+    )?;
+    assert_eq!(run_mismatch_code, "action.receipt_run_mismatch");
+    stress.ok(
+        "ml.modelversion.accept_evaluation",
+        "eng:dina",
+        json!({"version_id": "v2", "evaluation_receipt": &r2}),
+    )?;
 
     let r1 = retain_evaluation_receipt(
         stress,
@@ -2253,18 +2290,19 @@ fn accept_authenticated_evaluations(
             contracts_passed: true,
         },
     )?;
-    let r2 = retain_evaluation_receipt(
-        stress,
-        &EvalReceiptSpec {
-            cmd_id: "cmd-eval-v2",
-            version_id: "v2",
-            manifest_digest: FORECAST_EVALUATOR_MANIFEST_DIGEST,
-            evaluated_revision: k2,
-            artifact_sha256: &registered_sha,
-            artifact_size: 4096,
-            contracts_passed: true,
-        },
+    stress.ok(
+        "ml.modelversion.accept_evaluation",
+        "eng:dina",
+        json!({"version_id": "v1", "evaluation_receipt": &r1}),
     )?;
+    // Replaying an already-consumed evaluation receipt is refused.
+    let (replay_code, _) = stress.refused(
+        "ml.modelversion.accept_evaluation",
+        "eng:dina",
+        json!({"version_id": "v0", "evaluation_receipt": r1}),
+    )?;
+    assert_eq!(replay_code, "action.receipt_replayed");
+
     let r3 = retain_evaluation_receipt(
         stress,
         &EvalReceiptSpec {
@@ -2277,6 +2315,12 @@ fn accept_authenticated_evaluations(
             contracts_passed: false,
         },
     )?;
+    stress.ok(
+        "ml.modelversion.accept_evaluation",
+        "eng:dina",
+        json!({"version_id": "v3", "evaluation_receipt": &r3}),
+    )?;
+
     // Same-version receipt on K1 passing contracts, but scored on different model bytes.
     let r4 = retain_evaluation_receipt(
         stress,
@@ -2290,28 +2334,11 @@ fn accept_authenticated_evaluations(
             contracts_passed: true,
         },
     )?;
-    // RUN-BIND-1: a receipt dispatched for v2 cannot be accepted for v1.
-    let (run_mismatch_code, _) = stress.refused(
+    stress.ok(
         "ml.modelversion.accept_evaluation",
         "eng:dina",
-        json!({"version_id": "v1", "evaluation_receipt": r2}),
+        json!({"version_id": "v4", "evaluation_receipt": &r4}),
     )?;
-    assert_eq!(run_mismatch_code, "action.receipt_run_mismatch");
-
-    for (id, receipt_ref) in [("v1", &r1), ("v2", &r2), ("v3", &r3), ("v4", &r4)] {
-        stress.ok(
-            "ml.modelversion.accept_evaluation",
-            "eng:dina",
-            json!({"version_id": id, "evaluation_receipt": receipt_ref}),
-        )?;
-    }
-    // Replaying an already-consumed evaluation receipt is refused.
-    let (replay_code, _) = stress.refused(
-        "ml.modelversion.accept_evaluation",
-        "eng:dina",
-        json!({"version_id": "v0", "evaluation_receipt": r1}),
-    )?;
-    assert_eq!(replay_code, "action.receipt_replayed");
     Ok(r1)
 }
 

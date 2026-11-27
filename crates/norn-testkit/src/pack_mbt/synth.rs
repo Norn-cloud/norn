@@ -628,31 +628,49 @@ fn apply_guard_positive_heuristics(
     }
 }
 
+fn take_self_ident(s: &str) -> Option<(String, &str)> {
+    let rest = s.strip_prefix("self.")?;
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    (!name.is_empty()).then(|| (name.clone(), rest.get(name.len()..).unwrap_or_default()))
+}
+
+fn extract_lhs_self_prop(lhs_part: &str) -> Option<String> {
+    let trimmed = lhs_part.trim_end();
+    if let Some(inner) = trimmed.strip_suffix(')')
+        && let Some(open) = inner.rfind('(')
+        && let Some(group) = inner.get(open.saturating_add(1)..)
+        && let Some((name, tail)) = take_self_ident(group.trim())
+        && (tail.trim_start().is_empty() || tail.trim_start().starts_with("??"))
+    {
+        return Some(name);
+    }
+    let rev: String = trimmed
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    let name: String = rev.chars().rev().collect();
+    let prefix = trimmed.strip_suffix(name.as_str()).unwrap_or_default();
+    (prefix.ends_with("self.") && !name.is_empty()).then_some(name)
+}
+
 fn extract_self_equality_pairs(expr: &str) -> Vec<(String, String)> {
     let mut pairs = Vec::new();
     let mut offset = 0;
     while let Some(rel) = expr.get(offset..).and_then(|tail| tail.find("==")) {
         let eq_pos = offset.saturating_add(rel);
-        let lhs_part = expr.get(..eq_pos).unwrap_or_default().trim_end();
-        let rhs_part = expr
+        let lhs = expr.get(..eq_pos).unwrap_or_default();
+        let rhs = expr
             .get(eq_pos.saturating_add(2)..)
             .unwrap_or_default()
-            .trim_start();
-        if let Some(rhs_rest) = rhs_part.strip_prefix("self.") {
-            let rhs_name: String = rhs_rest
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
-            let lhs_rev: String = lhs_part
-                .chars()
-                .rev()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
-            let lhs_name: String = lhs_rev.chars().rev().collect();
-            let lhs_prefix = lhs_part.strip_suffix(lhs_name.as_str()).unwrap_or_default();
-            if lhs_prefix.ends_with("self.") && !lhs_name.is_empty() && !rhs_name.is_empty() {
-                pairs.push((lhs_name, rhs_name));
-            }
+            .trim_start_matches(|c: char| c.is_whitespace() || c == '(');
+        if let (Some(lhs_name), Some((rhs_name, _))) =
+            (extract_lhs_self_prop(lhs), take_self_ident(rhs))
+        {
+            pairs.push((lhs_name, rhs_name));
         }
         offset = eq_pos.saturating_add(2);
     }
