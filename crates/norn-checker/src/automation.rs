@@ -193,20 +193,43 @@ fn resolve_property_type<'a>(
 
 fn lifecycle_states(
     chain: &[&ObjectTypeDef],
+    interfaces: &[InterfaceDef],
     property_types: &[PropertyTypeDef],
     property: &str,
 ) -> Option<BTreeSet<String>> {
     let mut found_lifecycle = false;
     let mut states = BTreeSet::new();
+    let mut collect = |lifecycle: &norn_ir::Lifecycle| {
+        if lifecycle.property.as_str() == property {
+            found_lifecycle = true;
+            states.extend(lifecycle.initial.iter().cloned());
+            states.extend(lifecycle.terminal.iter().cloned());
+            for transition in &lifecycle.transitions {
+                states.extend(transition.from.iter().cloned());
+                states.insert(transition.to.clone());
+            }
+        }
+    };
     for def in chain {
         for lifecycle in &def.lifecycles {
-            if lifecycle.property.as_str() == property {
-                found_lifecycle = true;
-                states.extend(lifecycle.initial.iter().cloned());
-                states.extend(lifecycle.terminal.iter().cloned());
-                for transition in &lifecycle.transitions {
-                    states.extend(transition.from.iter().cloned());
-                    states.insert(transition.to.clone());
+            collect(lifecycle);
+        }
+    }
+    let iface_by_name: BTreeMap<&str, &InterfaceDef> = interfaces
+        .iter()
+        .map(|iface| (iface.name.as_str(), iface))
+        .collect();
+    let mut seen_ifaces = BTreeSet::new();
+    for def in chain {
+        for iface_name in &def.implements {
+            let Some(&iface) = iface_by_name.get(iface_name.as_str()) else {
+                continue;
+            };
+            for owner in iface.contract_owners(|name| iface_by_name.get(name.as_str()).copied()) {
+                if seen_ifaces.insert(owner.name.as_str()) {
+                    for lifecycle in &owner.lifecycles {
+                        collect(lifecycle);
+                    }
                 }
             }
         }
@@ -554,7 +577,7 @@ fn check_when_lifecycle(
         ));
     }
     if let (Some(property), Some((object_type, chain))) = (property, resolved_type) {
-        match lifecycle_states(chain, ctx.property_types, property) {
+        match lifecycle_states(chain, ctx.interfaces, ctx.property_types, property) {
             None => issues.push(issue(
                 AutomationIssueKind::LifecycleUnknown,
                 format!("property {property:?} has no declared lifecycle on {object_type:?}"),

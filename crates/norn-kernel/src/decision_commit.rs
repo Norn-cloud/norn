@@ -56,7 +56,8 @@ use norn_ir::{
     InterfaceDef, Invariant, InvariantId, InvariantOwner, Lifecycle, ObjectTypeDef,
     ObjectTypeExtension, ObjectTypeName, PropertyId, PropertyKind, PropertyType, PropertyTypeDef,
     RuntimeValue, RuntimeValueError, TIMER_AFTER_MILLIS_MEMBER, TIMER_ID_MEMBER, TransitionId,
-    declared_lifecycle_properties, effective_lifecycles, lifecycle_codes,
+    declared_lifecycle_properties_with_interfaces, effective_lifecycles_with_interfaces,
+    lifecycle_codes,
 };
 use serde::{Deserialize, Serialize};
 
@@ -1113,24 +1114,54 @@ impl<'a> TypeCatalog<'a> {
         })
     }
 
+    /// First interface referenced by `object_type`'s lineage (`implements` and
+    /// transitive interface `extends`) that is absent from this catalog.
+    pub(crate) fn missing_interface(
+        &self,
+        object_type: &ObjectTypeName,
+    ) -> Option<norn_ir::InterfaceName> {
+        for def in self.ancestry(object_type) {
+            for interface_name in &def.implements {
+                let Some(interface) = self.interfaces.get(interface_name.as_str()).copied() else {
+                    return Some(interface_name.clone());
+                };
+                if let Err(missing) = norn_expr::env::interface_lineage(interface, |name| {
+                    self.interfaces.get(name.as_str()).copied()
+                }) {
+                    return Some(missing);
+                }
+            }
+        }
+        None
+    }
+
     /// Every effective lifecycle of `object_type`, by property: the state
     /// machine `norn-checker` validates against
-    /// ([`norn_ir::effective_lifecycles`]: inherited lifecycles restricted to
-    /// the type's narrowed `enum`, redeclarations with conjoined guards).
+    /// ([`norn_ir::effective_lifecycles_with_interfaces`]: inherited supertype
+    /// and interface lifecycles restricted to the type's narrowed `enum`,
+    /// redeclarations with conjoined guards).
     #[must_use]
     pub fn lifecycles(&self, object_type: &ObjectTypeName) -> BTreeMap<PropertyId, Lifecycle> {
         let lookup = |name: &str| self.types.get(name).copied();
-        effective_lifecycles(&lookup, &self.extensions, object_type.as_str())
+        let interfaces = |name: &str| self.interfaces.get(name).copied();
+        effective_lifecycles_with_interfaces(
+            &lookup,
+            &interfaces,
+            &self.extensions,
+            object_type.as_str(),
+        )
     }
 
     /// Every property a lifecycle is declared over along `object_type`'s
-    /// lineage ([`norn_ir::declared_lifecycle_properties`]), resolved or not.
-    /// Such a property is never written directly, and one without an
+    /// lineage and implemented interfaces
+    /// ([`norn_ir::declared_lifecycle_properties_with_interfaces`]), resolved
+    /// or not. Such a property is never written directly, and one without an
     /// effective lifecycle refuses every create and transition (fail closed).
     #[must_use]
     pub fn lifecycle_properties(&self, object_type: &ObjectTypeName) -> BTreeSet<PropertyId> {
         let lookup = |name: &str| self.types.get(name).copied();
-        declared_lifecycle_properties(&lookup, object_type.as_str())
+        let interfaces = |name: &str| self.interfaces.get(name).copied();
+        declared_lifecycle_properties_with_interfaces(&lookup, &interfaces, object_type.as_str())
     }
 
     /// The effective lifecycle of `property` on `object_type`.
@@ -3132,6 +3163,13 @@ fn apply_change<X>(
     {
         return Err(DecisionRefusal::InvalidOutput {
             reason: format!("{key} is immutable"),
+        });
+    }
+    if !matches!(change, FactChange::Delete { .. })
+        && let Some(missing) = catalog.missing_interface(&key.object_type)
+    {
+        return Err(DecisionRefusal::InvalidOutput {
+            reason: format!("{key} references missing interface {}", missing.as_str()),
         });
     }
     let event = match change {

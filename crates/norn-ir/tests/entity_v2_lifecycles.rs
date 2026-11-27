@@ -12,7 +12,10 @@
 //! null-vs-omitted discipline, closed shapes, and the emitted JSON Schema.
 //! Every test name contains `lifecycle` (`cargo test -p norn-ir lifecycle`).
 
-use norn_ir::{JsonValue, ObjectTypeDef, ObjectTypeExtension, object_type_def_schema};
+use norn_ir::{
+    InterfaceDef, JsonValue, ObjectTypeDef, ObjectTypeExtension, interface_def_schema,
+    object_type_def_schema,
+};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/ir/entity-v2");
 
@@ -157,5 +160,68 @@ fn lifecycle_schema_publishes_closed_members() {
     assert_eq!(
         schema["$defs"]["Transition"]["required"],
         serde_json::json!(["id", "from", "to"])
+    );
+}
+
+#[test]
+fn interface_lifecycle_round_trips_and_publishes_closed_schema() {
+    let raw = serde_json::json!({
+        "name": "core.Commitment",
+        "properties": [{
+            "id": "status",
+            "type": {
+                "kind": "enum",
+                "values": [
+                    { "value": "open" },
+                    { "value": "fulfilled" },
+                    { "value": "cancelled" }
+                ]
+            }
+        }],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["open"],
+            "terminal": ["fulfilled", "cancelled"],
+            "immutable": ["fulfilled"],
+            "transitions": [
+                { "id": "fulfill", "from": ["open"], "to": "fulfilled" },
+                { "id": "cancel", "from": ["open"], "to": "cancelled" }
+            ],
+            "endings": [
+                { "state": "fulfilled", "outcome": "completed" },
+                { "state": "cancelled", "outcome": "cancelled" }
+            ]
+        }]
+    });
+    let iface: InterfaceDef = serde_json::from_value(raw.clone()).expect("interface decodes");
+    assert_eq!(iface.lifecycles.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&iface).expect("interface encodes"),
+        raw
+    );
+    let empty: InterfaceDef =
+        serde_json::from_value(serde_json::json!({ "name": "core.Empty", "lifecycles": [] }))
+            .expect("empty lifecycles decodes");
+    assert_eq!(
+        serde_json::to_value(&empty).expect("encodes"),
+        serde_json::json!({ "name": "core.Empty" }),
+        "empty interface lifecycles are omitted"
+    );
+    assert!(
+        !decodes::<InterfaceDef>(&serde_json::json!({
+            "name": "core.NullLifecycles",
+            "lifecycles": null
+        })),
+        "null interface lifecycles are rejected"
+    );
+    let schema = serde_json::to_value(interface_def_schema()).expect("interface schema encodes");
+    assert!(schema["properties"]["lifecycles"].is_object());
+    assert_eq!(
+        schema["$defs"]["Lifecycle"]["additionalProperties"], false,
+        "InterfaceDef Lifecycle $def is closed"
+    );
+    assert_eq!(
+        schema["$defs"]["Transition"]["additionalProperties"], false,
+        "InterfaceDef Transition $def is closed"
     );
 }

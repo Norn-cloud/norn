@@ -5146,6 +5146,13 @@
         "description": {
           "type": "string"
         },
+        "disjointWith": {
+          "description": "Interfaces mutually exclusive with this one; no interface or object type may inherit both. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InterfaceName"
+          }
+        },
         "extends": {
           "description": "Parent contracts. All members, constraints, markings and invariants apply.",
           "type": "array",
@@ -5158,6 +5165,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/Invariant"
+          }
+        },
+        "lifecycles": {
+          "description": "Lifecycles every implementing object type and child interface inherits with non-weakening narrowing. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Lifecycle"
           }
         },
         "links": {

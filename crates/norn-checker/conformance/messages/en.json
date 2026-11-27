@@ -617,6 +617,9 @@
     "identifier.validation.too_long": {
       "message": "{$identifier} is {$actualBytes} UTF-8 bytes; the admission limit is {$limitBytes}; rename it before installing updated definitions"
     },
+    "interface.validation.disjoint_violation": {
+      "message": "interface disjointness contract is malformed or violated"
+    },
     "interface.validation.duplicate_link_id": {
       "message": "required link id {$link} is already a required link or property id"
     },

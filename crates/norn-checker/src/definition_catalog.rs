@@ -2,7 +2,7 @@
 use crate::action_set::{AdmittedType, Model};
 use crate::entity_artifacts::{Decoded, decode_v2};
 use crate::entity_lowering::{EntityForm, entity_object_type};
-use crate::entity_scopes::{ScopedViews, scope_visible};
+use crate::entity_scopes::{ScopedView, ScopedViews, scope_visible};
 use crate::lifecycle_writes::{FactSchema, fact_decisions};
 use crate::receipt::ArtifactRef;
 /// Failure to compute a projected artifact's semantic identity.
@@ -19,6 +19,8 @@ use norn_ir::{
     Property, PropertyType, PropertyTypeDef, PropertyTypeName,
 };
 use std::collections::BTreeSet;
+
+mod interfaces;
 /// Project admitted candidates and installed artifacts into sorted catalog rows.
 ///
 /// Call only after `check_artifact_set` admits the set. This slice projects
@@ -71,24 +73,24 @@ pub fn project(
             .iter()
             .map(|(_, def)| def.clone())
             .collect();
-        rows.entity(artifact, view.catalog());
+        rows.entity(artifact, view);
         rows.depends_on(artifact, &all);
     }
     for artifact in &all {
-        let model = views.of(artifact).model();
+        let view = views.of(artifact);
         if matches!(artifact.payload, ArtifactPayload::Action(_)) {
-            rows.action(artifact, model);
+            rows.action(artifact, view);
         }
         if matches!(artifact.payload, ArtifactPayload::Mapping(_)) {
-            rows.mapping(artifact, model);
+            rows.mapping(artifact, view.model());
         }
         if matches!(artifact.payload, ArtifactPayload::Law(_)) {
-            rows.law(artifact, &all, model);
+            rows.law(artifact, &all, view);
         }
     }
     for (artifact, output) in fact_decisions(all.iter().copied()) {
         if let Some(schema) = FactSchema::of(&output) {
-            rows.fact_writes(artifact, &schema, views.of(artifact).model());
+            rows.fact_writes(artifact, &schema, views.of(artifact));
         }
     }
     Ok(rows.finish())
@@ -214,13 +216,20 @@ fn member_of(key: &ArtifactKey, member: Member) -> MemberRef {
 impl Rows {
     /// GRAPH-META-1: lifecycle metadata follows admission's local enum resolution.
     fn lifecycle(&self, property: &Property, lifecycles: &[Lifecycle]) -> Option<LifecycleStates> {
+        self.lifecycle_states(&property.id, &property.property_type, lifecycles)
+    }
+
+    fn lifecycle_states(
+        &self,
+        property_id: &norn_ir::PropertyId,
+        property_type: &PropertyType,
+        lifecycles: &[Lifecycle],
+    ) -> Option<LifecycleStates> {
         let lifecycle = lifecycles
             .iter()
-            .find(|lifecycle| lifecycle.property == property.id)?;
-        let PropertyType::Enum { values } = crate::property_types::resolved_property_type(
-            &property.property_type,
-            &self.property_types,
-        )?
+            .find(|lifecycle| lifecycle.property == *property_id)?;
+        let PropertyType::Enum { values } =
+            crate::property_types::resolved_property_type(property_type, &self.property_types)?
         else {
             return None;
         };
@@ -231,7 +240,8 @@ impl Rows {
         })
     }
 
-    fn entity(&mut self, artifact: &ArtifactEnvelope, effective: &crate::EffectiveCatalog) {
+    fn entity(&mut self, artifact: &ArtifactEnvelope, view: &ScopedView<'_>) {
+        let effective = view.catalog();
         let decoded = decode_v2(artifact);
         if let (Decoded::NotV2, ArtifactPayload::Entity(payload)) = (&decoded, &artifact.payload)
             && let Ok(Some(object)) = entity_object_type(payload)
@@ -245,37 +255,7 @@ impl Rows {
         };
         match *root {
             EntityRoot::V2(root) => self.object_type(artifact, &root.object_type, effective),
-            EntityRoot::V2Interface(root) => {
-                let def = &root.interface;
-                let name = def.name.as_str().to_owned();
-                self.types.insert(TypeRow {
-                    at: at(artifact, type_member(name.clone())),
-                    kind: TypeKind::Interface,
-                    role: self
-                        .roles
-                        .get(&key(artifact))
-                        .and_then(|roles| roles.get(&name))
-                        .copied()
-                        .unwrap_or(norn_ir::ConceptRole::Thing),
-                    extends: root
-                        .interface
-                        .extends
-                        .iter()
-                        .map(|n| n.as_str().to_owned())
-                        .collect(),
-                    implements: Vec::new(),
-                });
-                for property in &def.properties {
-                    self.properties.insert(PropertyRow {
-                        at: at(artifact, property_member(&name, property.id.as_str())),
-                        computed: false,
-                        lifecycle: None,
-                    });
-                }
-                for link in &def.links {
-                    self.link(artifact, &name, link.id.as_str(), link.target.as_str());
-                }
-            }
+            EntityRoot::V2Interface(root) => self.interface(artifact, &root.interface, view),
             EntityRoot::V2Extension(root) => {
                 let extension = root.object_type_extension;
                 let name = extension.target.as_str().to_owned();
@@ -495,7 +475,8 @@ impl Rows {
         }
     }
 
-    fn action(&mut self, artifact: &ArtifactEnvelope, admission: &Model<'_>) {
+    fn action(&mut self, artifact: &ArtifactEnvelope, view: &ScopedView<'_>) {
+        let admission = view.model();
         let Ok(action) = serde_json::from_value::<ActionRoot>(payload_json(artifact)) else {
             return;
         };
@@ -506,7 +487,7 @@ impl Rows {
         let Some(target) = admission.effect_target(program) else {
             return;
         };
-        let lineage = PinnedType::lineage(target, admission);
+        let transition_lineage = PinnedType::transition_lineage(target, view);
         let pinned = PinnedType::of(target);
         let mut writes: Vec<MemberRef> = Vec::new();
         let via = match program {
@@ -521,7 +502,7 @@ impl Rows {
                         lifecycle: lifecycle.as_str().to_owned(),
                         transition: transition.as_str().to_owned(),
                     },
-                    &lineage,
+                    &transition_lineage,
                 ));
                 WriteVia::FireTransition
             }
@@ -656,8 +637,9 @@ impl Rows {
         &mut self,
         artifact: &ArtifactEnvelope,
         schema: &FactSchema<'_>,
-        admission: &Model<'_>,
+        view: &ScopedView<'_>,
     ) {
+        let admission = view.model();
         let ops = schema.ops();
         let values = |name: &str| schema.values(name).unwrap_or_default();
         for type_name in values("objectType") {
@@ -665,6 +647,7 @@ impl Rows {
                 continue;
             };
             let lineage = PinnedType::lineage(admitted, admission);
+            let transition_lineage = PinnedType::transition_lineage(admitted, view);
             let owner = PinnedType::of(admitted);
             let mut candidates = Vec::new();
             if ops.contains(&FactChangeOp::Transition) {
@@ -676,7 +659,7 @@ impl Rows {
                                 lifecycle: lifecycle.to_owned(),
                                 transition: transition.to_owned(),
                             },
-                            &lineage,
+                            &transition_lineage,
                         ) {
                             candidates.push((declared, WriteVia::FactTransition));
                         }
@@ -801,8 +784,9 @@ impl Rows {
         &mut self,
         artifact: &ArtifactEnvelope,
         all: &[&ArtifactEnvelope],
-        admission: &Model<'_>,
+        view: &ScopedView<'_>,
     ) {
+        let admission = view.model();
         let Ok(law) = serde_json::from_value::<LawIR>(payload_json(artifact)) else {
             return;
         };
@@ -830,7 +814,7 @@ impl Rows {
                         lifecycle: property,
                         transition: transition_id,
                     },
-                    &PinnedType::lineage(admitted, admission),
+                    &PinnedType::transition_lineage(admitted, view),
                 ) else {
                     return;
                 };

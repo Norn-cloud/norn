@@ -959,21 +959,24 @@ class DefinitionCompiler {
 
   private interfaceType(call: ts.CallExpression): E.InterfaceDef {
     const members = this.meta(call, [
-      "name", "title", "version", "description", "role", "extends", "properties", "links", "invariants", "markings", "propertyMarkings", "dependencies",
+      "name", "title", "version", "description", "role", "extends", "disjointWith", "properties", "links", "invariants", "lifecycles", "markings", "propertyMarkings", "dependencies",
       ...LABEL_MEMBERS, ...MEMBER_LABEL_MEMBERS,
     ])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const invariantsNode = members.get("invariants")
     const linksNode = members.get("links")
+    const lifecyclesNode = members.get("lifecycles")
     return E.interfaceType({
       ...rest,
       ...this.localized(members),
       ...this.memberLabels(members, projected.map((p) => p.id)),
       extends: members.has("extends") ? this.list(members.get("extends")!).map((parent) => this.typeName(parent, INTERFACES)) : [],
+      disjointWith: members.has("disjointWith") ? this.list(members.get("disjointWith")!).map((target) => this.typeName(target, INTERFACES)) : [],
       properties: projected.map((p) => ({ id: p.id, ...(propertyMarkings.has(p.id) ? { markings: propertyMarkings.get(p.id)! } : {}), type: p.projection.type, ...(p.projection.nullable ? { nullable: true } : {}), at: this.at(p.node) })),
       links: linksNode ? this.list(linksNode).map((x) => this.interfaceLink(x)) : [],
       invariants: invariantsNode ? this.list(invariantsNode).map((x) => this.invariant(x)) : [],
+      ...(lifecyclesNode ? { lifecycles: this.list(lifecyclesNode).map((x) => this.lifecycle(x)) } : {}),
       at: this.at(call),
     })
   }

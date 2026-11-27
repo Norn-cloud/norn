@@ -22,6 +22,9 @@ use crate::property_types::{
 pub mod codes {
     /// A parent is repeated, missing, cyclic or has an incompatible contract.
     pub const INVALID_INHERITANCE: &str = "interface.validation.invalid_inheritance";
+    /// An interface disjointness declaration is malformed, or an interface or
+    /// object type inherits two mutually disjoint interfaces.
+    pub const DISJOINT_VIOLATION: &str = "interface.validation.disjoint_violation";
     /// An interface name is not `namespace.PascalName`.
     pub const INVALID_NAME: &str = "interface.validation.invalid_name";
     /// Two definitions in the model (interfaces or object types) share a name.

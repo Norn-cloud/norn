@@ -30,6 +30,7 @@ pub mod extension;
 pub mod interface;
 pub mod invariant;
 pub mod lifecycle;
+mod lifecycle_meet;
 pub mod link;
 pub mod naming_series;
 pub mod object;

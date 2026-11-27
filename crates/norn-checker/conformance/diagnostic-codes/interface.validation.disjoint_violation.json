@@ -1,0 +1,7 @@
+{
+  "code": "interface.validation.disjoint_violation",
+  "message": "interface disjointness contract is malformed or violated",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}
