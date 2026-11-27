@@ -941,7 +941,7 @@ fn discarded_and_expired_forks_refuse_read_commit_fork_simulate_and_scenario_ope
         ForkScenario::open(
             discarded,
             BTreeMap::new(),
-            ScenarioClock::aligned(LogicalTime::from_millis(
+            ScenarioClock::synchronized(LogicalTime::from_millis(
                 BASE_CLOCK_MS.saturating_add(20_000)
             )),
             Entropy::from_bytes([7_u8; 32]),
