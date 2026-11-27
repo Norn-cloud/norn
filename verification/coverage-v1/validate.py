@@ -623,7 +623,7 @@ await github.rest.repos.createCommitStatus({
         "test": 'bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"',
     }
     # The plan job computes the gate plan that the bundles and the verdict read.
-    plan_command = '''if [ -n "$BASE" ]; then plan=$(jq -cn '{mode: "affected", shard: [], phase: [], packages: "", rest_shards: 1, reason: "pull_request runs hosted core; merge_group runs full", bundle: []}'); else plan=$(bash scripts/ci/core.sh plan); fi
+    plan_command = '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
 plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
 echo "plan=$plan" >> "$GITHUB_OUTPUT"
 echo "$plan"'''
@@ -773,7 +773,8 @@ df -h /
     }, sort_keys=True), "plan: the gate plan must be the candidate checkout and the pinned planner only")
     job = jobs["test"]
     require(job.get("needs") == ["plan"] and job.get("strategy") == {
-        "fail-fast": False, "matrix": {"bundle": "${{ fromJSON(needs.plan.outputs.plan).bundle }}"}
+        "fail-fast": "${{ github.event_name == 'merge_group' }}",
+        "matrix": {"bundle": "${{ fromJSON(needs.plan.outputs.plan).bundle }}"}
     }, "test: matrix must execute the complete bundle plan without queued surplus jobs")
     require(job.get("name") == "bundle (${{ matrix.bundle.id }})" and job.get("timeout-minutes") == 110,
             "test: bundle identity and time budget must be pinned")
@@ -793,20 +794,18 @@ jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
   .base_sha == $base and .head_sha == $head and
   (.shard | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
   (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
-  (.bundle | type == "array" and length <= 6 and all(.[];
+  (.bundle | type == "array" and length >= 1 and length <= 6 and all(.[];
     type == "object" and (.id | type == "string" and length > 0) and
     (.tasks | type == "array" and length > 0 and all(.[]; type == "string"))) and
     (map(.id) | length) == (map(.id) | unique | length)) and
   ([.bundle[].tasks[]] | sort) == ([(.shard[] | "test/" + .), (.phase[] | "phase/" + .)] | sort)
 ' <<<"$PLAN" >/dev/null || { echo "Malformed or unbound gate plan"; exit 1; }
-# A job may be skipped only when the plan gave it nothing to run.
-ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
 [ "$CORE" = success ] || { echo "core $CORE"; exit 1; }
 mode=$(jq -er .mode <<<"$PLAN")
 # Only pull-request feedback is narrowed; the merge queue, main and manual runs run every shard
 # and phase, so nothing reaches main without the full suite (#1348).
 [ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
-ran "$TEST" "$(jq -er '.bundle | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
+[ "$TEST" = success ] || { echo "test ended $TEST"; exit 1; }
 echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"'''
     verdict_env = {
         "DRAFT": "${{ github.event.pull_request.draft || false }}",
