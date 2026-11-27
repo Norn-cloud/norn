@@ -205,6 +205,49 @@ pub struct Watermark {
     pub id: Value,
 }
 
+impl Watermark {
+    /// Deterministic JSON encoding used as the durable cursor value in
+    /// `_norn_source_cursor`.
+    ///
+    /// # Errors
+    /// Serialization failure.
+    pub fn cursor_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+}
+
+/// Ephemeral cursor advancement produced by [`Pull::accept`].
+///
+/// SOURCE-CAPTURE-1: accepting an HTTP page never mutates durable watermarks;
+/// the caller passes this advance into the cell's atomic page-capture
+/// transaction and calls [`Pull::confirm`] only after durable commit succeeds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CursorAdvance {
+    /// Dataset whose cursor is being advanced.
+    pub dataset: String,
+    /// Previously confirmed watermark for `dataset` (`None` if never committed).
+    pub expected_previous: Option<Watermark>,
+    /// Next durable watermark to commit atomically with this page (`None` for
+    /// non-terminal cursor-paged pages where the durable watermark only
+    /// advances once the feed completes).
+    pub next: Option<Watermark>,
+    /// Whether this page completed the dataset's feed (including empty terminal
+    /// pages).
+    pub terminal: bool,
+}
+
+/// One accepted HTTP page: its projected rows and ephemeral cursor advance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptedPage {
+    /// Dataset this page belongs to.
+    pub dataset: String,
+    /// Projected rows (may be empty on a terminal page).
+    pub rows: Vec<Row>,
+    /// Ephemeral cursor advance; not recorded in [`Pull::watermarks`] until
+    /// [`Pull::confirm`] is called after durable capture.
+    pub advance: CursorAdvance,
+}
+
 /// Bounds on one pull.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
@@ -434,10 +477,23 @@ impl Pull {
         &self.profile
     }
 
-    /// The watermark of every dataset, including those this pull advanced.
+    /// The durably confirmed watermark of every dataset.
+    ///
+    /// SOURCE-CAPTURE-1: [`Self::accept`] keeps fetched cursor progress
+    /// ephemeral and never mutates this map until the caller confirms durable
+    /// capture via [`Self::confirm`].
     #[must_use]
     pub const fn watermarks(&self) -> &BTreeMap<String, Watermark> {
         &self.watermarks
+    }
+
+    /// Confirm that a previously accepted page and its [`CursorAdvance`] were
+    /// durably captured by the cell, updating [`Self::watermarks`].
+    pub fn confirm(&mut self, advance: &CursorAdvance) {
+        if let Some(next) = &advance.next {
+            self.watermarks
+                .insert(advance.dataset.clone(), next.clone());
+        }
     }
 
     /// The next request to send, or `None` when every feed is done.
@@ -477,13 +533,15 @@ impl Pull {
         })
     }
 
-    /// Accept the response to the outstanding request: its rows, projected.
+    /// Accept the response to the outstanding request: its projected rows and
+    /// an ephemeral [`CursorAdvance`]. Durable [`Self::watermarks`] stays
+    /// unchanged until [`Self::confirm`] is called after atomic cell capture.
     ///
     /// # Errors
     /// A refused status, a response that is not the declared shape, or a
-    /// bound reached. The pull stops; its watermarks keep the last completed
-    /// page's position.
-    pub fn accept(&mut self, status: u16, body: &[u8]) -> Result<Vec<Row>, PullError> {
+    /// bound reached. The pull stops; its confirmed watermarks stay at the
+    /// last confirmed page's position.
+    pub fn accept(&mut self, status: u16, body: &[u8]) -> Result<AcceptedPage, PullError> {
         if !self.waiting {
             return Err(PullError::NotWaiting);
         }
@@ -491,14 +549,14 @@ impl Pull {
         let Some(feed) = self.profile.feeds.get(self.feed) else {
             return Err(PullError::NotWaiting);
         };
-        let dataset = || feed.dataset.clone();
+        let dataset_name = feed.dataset.clone();
         let shape = |reason: String| PullError::Shape {
-            dataset: dataset(),
+            dataset: dataset_name.clone(),
             reason,
         };
         if status != 200 {
             return Err(PullError::Status {
-                dataset: dataset(),
+                dataset: dataset_name,
                 status,
             });
         }
@@ -508,7 +566,7 @@ impl Pull {
         };
         if items.len() > self.limits.max_items {
             return Err(PullError::Bound {
-                dataset: dataset(),
+                dataset: dataset_name,
                 reason: format!("a page held more than {} items", self.limits.max_items),
             });
         }
@@ -519,19 +577,44 @@ impl Pull {
             self.greatest = Some(greatest.clone());
         }
         self.page = self.page.saturating_add(1);
-        let done = match &feed.paging {
+        let done = self.advance_paging(&response, last, items.len())?;
+        let expected_previous = self.watermarks.get(&dataset_name).cloned();
+        let next = self.next_watermark(done, &dataset_name)?;
+        Ok(AcceptedPage {
+            dataset: dataset_name.clone(),
+            rows,
+            advance: CursorAdvance {
+                dataset: dataset_name,
+                expected_previous,
+                next,
+                terminal: done,
+            },
+        })
+    }
+
+    fn advance_paging(
+        &mut self,
+        response: &RuntimeValue,
+        last: Option<(String, Value)>,
+        items_len: usize,
+    ) -> Result<bool, PullError> {
+        let Some(feed) = self.profile.feeds.get(self.feed) else {
+            return Err(PullError::NotWaiting);
+        };
+        let dataset_name = feed.dataset.clone();
+        match &feed.paging {
             Paging::Keyset { size } => {
                 if let Some((version, id)) = last {
                     let next = Watermark { version, id };
                     if next == self.position {
                         return Err(PullError::Bound {
-                            dataset: dataset(),
+                            dataset: dataset_name,
                             reason: "the keyset position did not advance".into(),
                         });
                     }
                     self.position = next;
                 }
-                items.len() < usize::try_from(*size).unwrap_or(usize::MAX)
+                Ok(items_len < usize::try_from(*size).unwrap_or(usize::MAX))
             }
             Paging::Cursor {
                 next_cursor_path,
@@ -546,17 +629,30 @@ impl Pull {
                     let next = response
                         .pointer(next_cursor_path)
                         .and_then(RuntimeValue::as_str)
-                        .ok_or_else(|| shape(format!("no next cursor at {next_cursor_path}")))?;
+                        .ok_or_else(|| PullError::Shape {
+                            dataset: dataset_name.clone(),
+                            reason: format!("no next cursor at {next_cursor_path}"),
+                        })?;
                     if self.cursor.as_str() == Some(next) {
                         return Err(PullError::Bound {
-                            dataset: dataset(),
+                            dataset: dataset_name,
                             reason: "the server cursor did not advance".into(),
                         });
                     }
                     self.cursor = Value::String(next.to_owned());
                 }
-                !more
+                Ok(!more)
             }
+        }
+    }
+
+    fn next_watermark(
+        &mut self,
+        done: bool,
+        dataset_name: &str,
+    ) -> Result<Option<Watermark>, PullError> {
+        let Some(feed) = self.profile.feeds.get(self.feed) else {
+            return Err(PullError::NotWaiting);
         };
         if done {
             let finished = match &feed.paging {
@@ -569,20 +665,21 @@ impl Pull {
                     id: self.position.id.clone(),
                 },
             };
-            self.watermarks.insert(feed.dataset.clone(), finished);
             self.feed = self.feed.saturating_add(1);
             self.enter_feed();
+            Ok(Some(finished))
         } else if self.page >= self.limits.max_pages {
-            return Err(PullError::Bound {
-                dataset: dataset(),
+            Err(PullError::Bound {
+                dataset: dataset_name.to_owned(),
                 reason: format!("more than {} pages", self.limits.max_pages),
-            });
+            })
         } else if matches!(feed.paging, Paging::Keyset { .. }) {
-            // A completed keyset page is durable progress, even if a later page fails.
-            self.watermarks
-                .insert(feed.dataset.clone(), self.position.clone());
+            // A completed keyset page yields a durable cursor advance once
+            // atomically captured by the cell.
+            Ok(Some(self.position.clone()))
+        } else {
+            Ok(None)
         }
-        Ok(rows)
     }
 }
 
@@ -932,9 +1029,10 @@ mod tests {
         let profile = keyset_profile(5);
         let mut pull = Pull::new(profile, BTreeMap::new(), Limits::default());
         let _request = pull.next_request().expect("request");
-        let rows = pull
+        let page = pull
             .accept(200, br#"{"data":[{"id":7,"v":"1","code":9000.10}]}"#)
-            .expect("rows");
+            .expect("page");
+        let rows = &page.rows;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].source_id, "7");
         assert_eq!(
@@ -950,6 +1048,9 @@ mod tests {
             RuntimeValue::String("7".into())
         );
         assert!(pull.next_request().is_none());
+        // SOURCE-CAPTURE-1: fetched cursor stays ephemeral until confirmed.
+        assert!(pull.watermarks().is_empty());
+        pull.confirm(&page.advance);
         assert_eq!(
             pull.watermarks()["Item"],
             Watermark {
@@ -980,17 +1081,22 @@ mod tests {
             body["variables"]["q"],
             "updated_at:>='1970-01-01T00:00:00Z'"
         );
-        let rows = pull
+        let page1 = pull
             .accept(200, br#"{"data":{"v":{"nodes":[{"id":"a","updatedAt":"2026-11-02T00:00:00Z"},{"id":"b","updatedAt":"2026-11-03T00:00:00Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"}}}}"#)
             .expect("page 1");
-        assert_eq!(rows.len(), 2);
+        assert_eq!(page1.rows.len(), 2);
+        assert!(page1.advance.next.is_none());
+        pull.confirm(&page1.advance);
         let second = pull.next_request().expect("second");
         let body: Value =
             serde_json::from_str(second.body.as_deref().expect("body")).expect("json");
         assert_eq!(body["variables"]["after"], "c1");
-        pull.accept(200, br#"{"data":{"v":{"nodes":[{"id":"c","updatedAt":"2026-11-01T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":"c2"}}}}"#)
+        let page2 = pull
+            .accept(200, br#"{"data":{"v":{"nodes":[{"id":"c","updatedAt":"2026-11-01T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":"c2"}}}}"#)
             .expect("page 2");
         assert!(pull.next_request().is_none());
+        assert!(pull.watermarks().is_empty());
+        pull.confirm(&page2.advance);
         assert_eq!(pull.watermarks()["Variant"].version, "2026-11-03T00:00:00Z");
     }
 
@@ -1024,9 +1130,11 @@ mod tests {
                 if page == after_page {
                     rows[moved].0 = "999".into();
                 }
-                for row in pull.accept(200, &serve(&rows, &request)).expect("page") {
-                    seen.insert((row.version.clone(), row.source_id));
+                let accepted = pull.accept(200, &serve(&rows, &request)).expect("page");
+                for row in &accepted.rows {
+                    seen.insert((row.version.clone(), row.source_id.clone()));
                 }
+                pull.confirm(&accepted.advance);
                 page += 1;
             }
             for (version, id) in &rows {
@@ -1034,7 +1142,7 @@ mod tests {
             }
             let mut again = Pull::new(profile, pull.watermarks().clone(), Limits::default());
             let request = again.next_request().expect("request");
-            prop_assert!(again.accept(200, &serve(&rows, &request)).expect("page").is_empty());
+            prop_assert!(again.accept(200, &serve(&rows, &request)).expect("page").rows.is_empty());
         }
     }
 }

@@ -163,6 +163,51 @@ impl<S: SqlEngine> LinkTargets for PinnedLinks<'_, '_, S> {
     }
 }
 
+/// ASOF-KNOWLEDGE-1: historical governing-law recovery must never fall back to
+/// live [`CurrentLinks`]. Until cutoff-indexed link history is qualified, any
+/// attempt to traverse a forward link or inverse role at a knowledge cutoff
+/// fails closed and records that a linked lookup was attempted.
+pub(crate) struct FailClosedAsOfLinks {
+    frontier: u64,
+    attempted: bool,
+}
+
+impl FailClosedAsOfLinks {
+    pub(crate) const fn new(frontier: u64) -> Self {
+        Self {
+            frontier,
+            attempted: false,
+        }
+    }
+
+    pub(crate) const fn attempted(&self) -> bool {
+        self.attempted
+    }
+}
+
+impl LinkTargets for FailClosedAsOfLinks {
+    fn target(&mut self, link: &str) -> Result<Option<LinkedTarget>, LawEvaluationError> {
+        self.attempted = true;
+        Err(LawEvaluationError::Unsupported(format!(
+            "ASOF-KNOWLEDGE-1: link `{link}` cannot be evaluated at knowledge frontier {} without cutoff-indexed link history",
+            self.frontier
+        )))
+    }
+
+    fn sources(
+        &mut self,
+        role: &str,
+        _source: &ObjectTypeName,
+        _link: &str,
+    ) -> Result<Vec<LinkedTarget>, LawEvaluationError> {
+        self.attempted = true;
+        Err(LawEvaluationError::Unsupported(format!(
+            "ASOF-KNOWLEDGE-1: inverse link role `{role}` cannot be evaluated at knowledge frontier {} without cutoff-indexed link history",
+            self.frontier
+        )))
+    }
+}
+
 /// The target versions a finding's outcome pinned (empty for a law that read
 /// no link, or whose links had no target).
 pub(crate) fn pinned_links(finding: &norn_ir::DataQualityFinding) -> BTreeMap<String, FactRef> {

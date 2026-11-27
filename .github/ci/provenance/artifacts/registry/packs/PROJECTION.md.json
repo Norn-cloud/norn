@@ -1,15 +1,16 @@
 {
-  "sha256": "fb49bdc022bde282eeac3b7be4c4b429dad0c875dd2b0214eb168456074b1244",
+  "sha256": "067d73a230e2bebbd1bdcdacb770634c632d016439917a489243729d106b0bf8",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
   "parents": [
+    "crates/norn-checker/tests/registry_packs.rs",
     "registry/packs/erpnext/artifacts/norn.link.erpnext.canon.json",
+    "registry/packs/frappe-hrms/artifacts/norn.link.frappe-hrms.workforce.json",
     "registry/packs/odoo/artifacts/norn.link.odoo.canon.json",
-    "registry/packs/shopify/artifacts/norn.link.shopify.canon.json",
-    "crates/norn-checker/tests/registry_packs.rs"
+    "registry/packs/shopify/artifacts/norn.link.shopify.canon.json"
   ],
   "rights_evidence": [
     {

@@ -326,9 +326,34 @@ fn retained_value(name: &str, value: &Value) {
         std::fs::write(&file, &text).unwrap();
     }
     let kept = std::fs::read_to_string(&file).expect("retained document; bless with NORN_BLESS=1");
+    let diff = if kept == text {
+        String::new()
+    } else {
+        kept.lines()
+            .zip(text.lines())
+            .enumerate()
+            .find(|(_, (a, b))| a != b)
+            .map_or_else(
+                || {
+                    format!(
+                        " (kept={} bytes/{} lines, actual={} bytes/{} lines)",
+                        kept.len(),
+                        kept.lines().count(),
+                        text.len(),
+                        text.lines().count()
+                    )
+                },
+                |(index, (expected, actual))| {
+                    format!(
+                        " (line {}: kept={expected:?}, actual={actual:?})",
+                        index + 1
+                    )
+                },
+            )
+    };
     assert!(
         kept == text,
-        "{name} differs from the cell's output; review it and rerun with NORN_BLESS=1"
+        "{name} differs from the cell's output{diff}; review it and rerun with NORN_BLESS=1"
     );
 }
 

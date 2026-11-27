@@ -13,7 +13,7 @@ import { NotServed, retryWorkspace, useMode } from "@/lib/live-transport"
 import { useLocale } from "@/lib/locale"
 import { explainError } from "@/lib/plain-words"
 import { useView } from "@/lib/view"
-import type { Workspace } from "@/lib/workspace"
+import { useRegisterWorkspaceUnavailable, type Workspace } from "@/lib/workspace"
 
 /** Wait before showing a quiet "Taking longer than usual…" hint beneath a skeleton. */
 export const SLOW_WAIT_MS = 4_000
@@ -107,6 +107,7 @@ export function WorkspaceUnavailable({ error, compact = false }: {
   readonly error: unknown
   readonly compact?: boolean
 }) {
+  useRegisterWorkspaceUnavailable()
   const queries = useQueryClient()
   const [retrying, setRetrying] = useState(false)
   const retry = () => {

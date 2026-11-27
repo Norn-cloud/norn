@@ -94,3 +94,95 @@ test.skipIf(!checker)("Rust admits an implementor only when it declares the inhe
   // TypeScript also accepts the key when `code` is only inherited; admission is the authority.
   expect(implementorAdmitted("site: Schema.String")).toBe(false)
 }, 60_000)
+
+test("Norn.interfaceType lowers flat and machine-shaped lifecycles and omits lifecycles when absent", () => {
+  const source = `import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+const CommitmentStatus = Schema.Literals(["proposed", "active", "fulfilled", "cancelled"])
+
+export const Commitment = Norn.interfaceType({
+  name: "contract.Commitment",
+  title: "Commitment",
+  version: "0.1.0",
+  properties: Schema.Struct({
+    code: Schema.String,
+    status: CommitmentStatus,
+  }),
+  lifecycles: [{
+    property: "status",
+    initial: "proposed",
+    states: {
+      proposed: {
+        on: {
+          activate: { to: "active", guards: [Norn.expression(Schema.Struct({ code: Schema.String }), (s) => s.code !== "")] },
+          cancel: "cancelled",
+        },
+      },
+      active: {
+        on: {
+          fulfill: { to: "fulfilled", mode: "fact" },
+          cancel: "cancelled",
+        },
+      },
+      fulfilled: { final: "completed", immutable: true },
+      cancelled: { final: "cancelled" },
+    },
+  }],
+})
+
+export const FlatContract = Norn.interfaceType({
+  name: "contract.FlatContract",
+  title: "Flat Contract",
+  version: "0.1.0",
+  properties: Schema.Struct({
+    status: Schema.Literals(["open", "closed"]),
+  }),
+  lifecycles: [{
+    property: "status",
+    initial: ["open"],
+    terminal: ["closed"],
+    immutable: ["closed"],
+    transitions: [{ id: "close", from: ["open"], to: "closed" }],
+  }],
+})
+
+export const Plain = Norn.interfaceType({
+  name: "contract.Plain",
+  title: "Plain",
+  version: "0.1.0",
+  properties: Schema.Struct({ id: Schema.String }),
+})
+`
+  withModule(source, (file) => {
+    const result = compileDefinitions(file, { ...options, sourcePath: "lifecycles.ts" })
+    if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+    const commitment = definition(result.artifacts, "contract.Commitment")
+    expect(commitment?.lifecycles).toEqual([{
+      property: "status",
+      initial: ["proposed"],
+      terminal: ["fulfilled", "cancelled"],
+      immutable: ["fulfilled"],
+      transitions: [
+        { id: "activate", from: ["proposed"], to: "active", guards: ["self.code != ''"] },
+        { id: "cancel", from: ["proposed", "active"], to: "cancelled" },
+        { id: "fulfill", from: ["active"], to: "fulfilled", mode: "fact" },
+      ],
+      endings: [
+        { state: "fulfilled", outcome: "completed" },
+        { state: "cancelled", outcome: "cancelled" },
+      ],
+    }])
+    const flat = definition(result.artifacts, "contract.FlatContract")
+    expect(flat?.lifecycles).toEqual([{
+      property: "status",
+      initial: ["open"],
+      terminal: ["closed"],
+      immutable: ["closed"],
+      transitions: [{ id: "close", from: ["open"], to: "closed" }],
+    }])
+    const plain = definition(result.artifacts, "contract.Plain")
+    expect(plain).toBeDefined()
+    expect(plain).not.toHaveProperty("lifecycles")
+  })
+}, 60_000)

@@ -1162,9 +1162,10 @@ Measured on `origin/main` at `ff0f95bd5e`, except the shell gaps, which were mea
 - [x] shadcn `Card` instead of ShellCard: `login.tsx`, `oauth.tsx`, `restatement.tsx`,
   `widget/views.tsx`.
   Closed in restyle 2 (Part of #1705): the `Card` primitive is the ShellCard shape for all four.
-- [ ] No shared `ListRow`, `StatusDot`, `SourceTag`, `Initials`, `Props`, `Section` primitives; lists
+- [x] No shared `ListRow`, `StatusDot`, `SourceTag`, `Initials`, `Props`, `Section` primitives; lists
   are built per screen.
-  Narrowed in restyle 2: `ListRow`, `RowList`, `StatusDot`, `SourceTag`, `Initials` and `TypeDisc` are shared (`components/system/`), and the builder lists (imports, semantic map, laws, transforms, sources, the canvas problems list, saved questions) and Home's checklist use them; `SheetSection` is the sheet's Section. A shared `Props` remains.
+  Narrowed in restyle 2: `ListRow`, `RowList`, `StatusDot`, `SourceTag`, `Initials` and `TypeDisc` are shared (`components/system/`), and the builder lists (imports, semantic map, laws, transforms, sources, the canvas problems list, saved questions) and Home's checklist use them; `SheetSection` is the sheet's Section.
+  Closed: shared `Props` and `PropRow` (`components/system/props.tsx`, gated by `test/system-primitives.test.tsx`, `test/system-boundary.test.ts` and `test/type-lock.test.ts`) adopted across record detail sheets, law refusals, runs, connections, tool bindings and technical lineage views.
 
 **Sheets**
 
@@ -1183,17 +1184,20 @@ superseded by the three-island shell (owner decision, 2026-11-25). Shell v2 clos
 "15 record types push everything below the fold" (Show all) and the duplicated Workspace unavailable
 banner (the connection line, section 9.1). What remains:
 
-- [ ] Show all and the headings a reader opened or closed are kept only while Studio is open; the
+- [x] Show all and the headings a reader opened or closed are kept only while Studio is open; the
   submenu island's own collapse is kept per browser.
-- [ ] Home and Inbox list only their own page in the submenu island. A "Recent" list of the records,
+  Closed: branch open/closed choices and "Show all" toggles persist per browser (`norn.studio.menu` in `lib/nav-storage.ts`, degrading gracefully when storage is blocked), verified in `test/shell.test.tsx` and across reload in `e2e/sidebar.e2e.ts`.
+- [x] Home and Inbox list only their own page in the submenu island. A "Recent" list of the records,
   runs and views the reader opened (local view state, kept per browser, with Clear) is TARGET.
+  Closed: per-scope browser-local Recent list (`norn.studio.recent:<scope>` in `lib/nav-storage.ts`) with Clear renders in the Home and Inbox submenu islands (`shell-nav.tsx`, `shell.tsx`), verified in `test/shell.test.tsx` and across reload in `e2e/sidebar.e2e.ts`.
 - [ ] Applets are declared per app in its model (`Section.applet` in `main.tsx`); `@norn/ui` has no
   applet primitive for generated apps yet (TARGET).
 - [ ] The rail shows each applet's label only as its name and tooltip; there is no
   label-under-icon variant for readers who want words on the rail.
-- [ ] The connection line learns that the page shows the full Workspace unavailable state by
+- [x] The connection line learns that the page shows the full Workspace unavailable state by
   watching the page for `[data-workspace-unavailable]`; TARGET: one owner of the workspace's state
   (`lib/workspace.tsx`) tells both.
+  Closed: `WorkspaceProvider` (`lib/workspace.tsx`) owns a synchronous layout-effect registry (`useRegisterWorkspaceUnavailable` / `usePageShowsWorkspaceUnavailable`) shared by `WorkspaceUnavailable` and `ConnectionBanner`, removing the DOM-sniffing `MutationObserver` and preventing the one-frame banner flash (`e2e/sidebar.e2e.ts`).
 - [ ] The glass is measured over the backdrop and its glows only. The page scrolls as a document
   inside the main island, so no page content passes under a translucent island today; a shell that
   scrolls content under an island must measure that too.

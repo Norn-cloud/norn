@@ -23,7 +23,9 @@
 //! guard, unknown transition, invalid output, stale slice (CAS), consumed
 //! delivery — has a stable code and commits nothing.
 
-use norn_ir::{DecisionOutput, ObjectTypeDef, ObjectTypeExtension, PropertyTypeDef, RuntimeValue};
+use norn_ir::{
+    DecisionOutput, InterfaceDef, ObjectTypeDef, ObjectTypeExtension, PropertyTypeDef, RuntimeValue,
+};
 use norn_kernel::cell_host::{JsonObject, JsonValue};
 use norn_kernel::{
     CellCommit, CellHost, Command, CommandId, Consumed, DecisionRefusal, DecisionTurn, Effect,
@@ -2874,4 +2876,167 @@ fn a_catalog_within_budget_has_an_effective_view() {
             )
             .is_ok()
     );
+}
+
+#[test]
+fn interface_declared_lifecycle_is_enforced_at_commit() {
+    let iface: InterfaceDef = serde_json::from_value(json!({
+        "name": "core.Commitment",
+        "properties": [
+            { "id": "order_no", "type": { "kind": "text" } },
+            { "id": "amount", "type": { "kind": "integer" } },
+            {
+                "id": "status",
+                "type": {
+                    "kind": "enum",
+                    "values": [
+                        { "value": "proposed" },
+                        { "value": "active" },
+                        { "value": "fulfilled" },
+                        { "value": "cancelled" }
+                    ]
+                }
+            }
+        ],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["proposed"],
+            "terminal": ["fulfilled", "cancelled"],
+            "immutable": ["active", "fulfilled"],
+            "transitions": [
+                { "id": "activate", "from": ["proposed"], "to": "active", "guards": ["self.amount > 0"] },
+                { "id": "fulfill", "from": ["active"], "to": "fulfilled", "mode": "fact" },
+                { "id": "cancel", "from": ["proposed", "active"], "to": "cancelled" }
+            ]
+        }]
+    }))
+    .unwrap();
+    // Object type declares NO lifecycles of its own; it inherits the contract from `core.Commitment`.
+    let impl_type: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "sales.SupplyCommitment",
+        "implements": ["core.Commitment"],
+        "properties": [
+            { "id": "order_no", "type": { "kind": "text" } },
+            { "id": "amount", "type": { "kind": "integer" } },
+            { "id": "approver", "type": { "kind": "text" } },
+            {
+                "id": "status",
+                "type": {
+                    "kind": "enum",
+                    "values": [
+                        { "value": "proposed" },
+                        { "value": "active" },
+                        { "value": "fulfilled" },
+                        { "value": "cancelled" }
+                    ]
+                },
+                "default": "proposed"
+            }
+        ]
+    }))
+    .unwrap();
+    const IMPL: &str = "sales.SupplyCommitment";
+    let types = [impl_type];
+    let interfaces = [iface];
+    let catalog = TypeCatalog::new(&types).with_interfaces(&interfaces);
+    let mut cell = cell();
+
+    // 1. Create with amount == 0 -> default initial state "proposed".
+    let k0 = key(IMPL, "CM-0");
+    decide(&mut cell, &catalog, "c0", &[], &[create(IMPL, "CM-0", 0.0)]).unwrap();
+    assert_eq!(
+        status(&cell, &k0),
+        Some(JsonValue::String("proposed".into()))
+    );
+
+    // 2. Guard refusal: activate requires `self.amount > 0`.
+    let guard_err = decide(
+        &mut cell,
+        &catalog,
+        "c1",
+        std::slice::from_ref(&k0),
+        &[transition(IMPL, "CM-0", "activate")],
+    )
+    .unwrap_err();
+    assert!(matches!(*guard_err, DecisionRefusal::GuardFalse { .. }));
+    assert_eq!(
+        status(&cell, &k0),
+        Some(JsonValue::String("proposed".into()))
+    );
+
+    // 3. Undeclared transition (wrong source state): fulfill requires `active`, not `proposed`.
+    let wrong_from = decide(
+        &mut cell,
+        &catalog,
+        "c2",
+        std::slice::from_ref(&k0),
+        &[transition(IMPL, "CM-0", "fulfill")],
+    )
+    .unwrap_err();
+    assert_eq!(wrong_from.code(), "lifecycle.validation.undeclared_write");
+
+    // 4. Direct write of interface lifecycle property is refused.
+    let direct_err = decide(
+        &mut cell,
+        &catalog,
+        "c3",
+        std::slice::from_ref(&k0),
+        &[set(IMPL, "CM-0", "status", &json!("active"))],
+    )
+    .unwrap_err();
+    assert_eq!(direct_err.code(), "artifact_set.lifecycle.direct_write");
+
+    // 5. Update amount while mutable ("proposed"), then activate succeeds.
+    decide(
+        &mut cell,
+        &catalog,
+        "c4",
+        std::slice::from_ref(&k0),
+        &[
+            set(IMPL, "CM-0", "amount", &json!(100)),
+            transition(IMPL, "CM-0", "activate"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(status(&cell, &k0), Some(JsonValue::String("active".into())));
+
+    // 6. Immutable state write refusal: "active" is immutable in `core.Commitment`.
+    let imm_err = decide(
+        &mut cell,
+        &catalog,
+        "c5",
+        std::slice::from_ref(&k0),
+        &[set(IMPL, "CM-0", "amount", &json!(200))],
+    )
+    .unwrap_err();
+    assert_eq!(imm_err.code(), "lifecycle.validation.immutable_state_write");
+
+    // 7. Declared transition out of immutable state ("active" -> "fulfilled") still succeeds.
+    decide(
+        &mut cell,
+        &catalog,
+        "c6",
+        std::slice::from_ref(&k0),
+        &[transition(IMPL, "CM-0", "fulfill")],
+    )
+    .unwrap();
+    assert_eq!(
+        status(&cell, &k0),
+        Some(JsonValue::String("fulfilled".into()))
+    );
+
+    // 8. Missing interface in TypeCatalog fails closed on prepare_decision (no silent bypass).
+    let incomplete_catalog = TypeCatalog::new(&types);
+    let missing_err = decide(
+        &mut cell,
+        &incomplete_catalog,
+        "c7",
+        std::slice::from_ref(&k0),
+        &[set(IMPL, "CM-0", "status", &json!("proposed"))],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        *missing_err,
+        DecisionRefusal::InvalidOutput { .. }
+    ));
 }

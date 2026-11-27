@@ -67,6 +67,7 @@ use crate::property_types::{
 };
 use crate::{Diagnostic, interfaces};
 
+mod interface_checks;
 mod lifecycles;
 mod links;
 
@@ -189,7 +190,7 @@ pub fn check_interface_local(def: &InterfaceDef) -> Vec<Diagnostic> {
         interfaces: std::slice::from_ref(def),
         ..EntityModel::EMPTY
     };
-    check_one_local(&model, "/interfaces/0", false)
+    check_one_local(&model, "/interfaces/0", !def.extends.is_empty())
 }
 
 /// Check one object type extension on its own: the per-definition (T2)
@@ -240,7 +241,8 @@ fn check_one_local(model: &EntityModel<'_>, prefix: &str, subtype: bool) -> Vec<
 
 /// Whether a finding of `code` on one definition, checked alone, may be an
 /// artifact of the missing context (see [`check_object_type_local`]);
-/// `subtype` when the definition is an object type that `extends` another.
+/// `subtype` when the definition is an object type or interface that `extends`
+/// another.
 fn depends_on_other_definitions(code: &str, subtype: bool) -> bool {
     // A stopped validation pass must never disappear through local/T3 filtering.
     if code == crate::inheritance::BUDGET_EXHAUSTED {
@@ -386,6 +388,9 @@ impl<'a, 'r> Checker<'a, 'r> {
             incoming: BTreeMap::new(),
             link_tables: BTreeMap::new(),
             machines: BTreeMap::new(),
+            machine_conflicts: BTreeMap::new(),
+            interface_machines: BTreeMap::new(),
+            interface_machine_conflicts: BTreeMap::new(),
             reported: BTreeSet::new(),
             out: Vec::new(),
         }
@@ -670,6 +675,12 @@ struct Checker<'a, 'r> {
     link_tables: BTreeMap<&'a ObjectTypeName, Rc<LinkTable<'a>>>,
     /// Effective lifecycle machines, memoized.
     machines: BTreeMap<&'a ObjectTypeName, Rc<crate::lifecycles::Machines<'a>>>,
+    /// Properties whose inherited lifecycle machines conflict on an object type.
+    machine_conflicts: BTreeMap<&'a ObjectTypeName, BTreeSet<&'a PropertyId>>,
+    /// Effective lifecycle machines of interfaces, memoized.
+    interface_machines: BTreeMap<&'a InterfaceName, Rc<crate::lifecycles::Machines<'a>>>,
+    /// Properties whose inherited lifecycle machines conflict on an interface.
+    interface_machine_conflicts: BTreeMap<&'a InterfaceName, BTreeSet<&'a PropertyId>>,
     /// `(code, pointer)` of member conflicts already reported: one conflict
     /// is seen from the table of every type it reaches.
     reported: BTreeSet<(String, String)>,
@@ -1201,6 +1212,7 @@ impl<'a> Checker<'a, '_> {
         let position = index.to_string();
         let base = pointer(self.roots.interfaces, &position);
         self.check_interface_parents(&base, def);
+        self.check_interface_disjoint(&base, def);
         let known = |name: &InterfaceName| self.interfaces.contains_key(name);
         let findings = check_status(
             &base,
@@ -1225,72 +1237,7 @@ impl<'a> Checker<'a, '_> {
         let findings = interfaces::check_link_requirements(&base, def, known);
         self.out.extend(findings);
         self.check_interface_invariants(&base, def);
-    }
-
-    fn check_interface_parents(&mut self, base: &[&str], def: &'a InterfaceDef) {
-        if def.extends.is_empty() {
-            return;
-        }
-        let mut seen = BTreeSet::new();
-        for (index, parent) in def.extends.iter().enumerate() {
-            if !seen.insert(parent) {
-                self.out.push(error(
-                    interfaces::codes::INVALID_INHERITANCE,
-                    format!("interface parent {:?} is listed twice", parent.as_str()),
-                    span_at(base, &["extends", &index.to_string()]),
-                ));
-            }
-        }
-        if let Err(name) = norn_expr::env::interface_lineage(def, |name| {
-            self.interfaces.get(name).map(|entry| entry.def)
-        }) {
-            self.out.push(error(
-                interfaces::codes::INVALID_INHERITANCE,
-                format!(
-                    "interface ancestry contains missing or cyclic parent {:?}",
-                    name.as_str()
-                ),
-                span_at(base, &["extends"]),
-            ));
-            return;
-        }
-        let requirements = self.requirements(def);
-        let group: Vec<_> = requirements
-            .iter()
-            .map(|requirement| (Some(0), requirement))
-            .collect();
-        let mut groups: BTreeMap<&PropertyId, Vec<_>> = BTreeMap::new();
-        for requirement in group {
-            groups
-                .entry(&requirement.1.property.id)
-                .or_default()
-                .push(requirement);
-        }
-        for group in groups.values() {
-            let conflict = requirement_conflict(group);
-            let widens = group.iter().any(|(_, child)| {
-                child.interface == &def.name
-                    && group.iter().any(|(_, parent)| {
-                        parent.interface != &def.name
-                            && matches!(
-                                narrowing(&child.shape(), &parent.shape()),
-                                Narrowing::TypeMismatch
-                                    | Narrowing::AdditivityNotRefined
-                                    | Narrowing::WidensNullability
-                            )
-                    })
-            });
-            if conflict.is_some() || widens {
-                self.out.push(error(
-                    interfaces::codes::INVALID_INHERITANCE,
-                    conflict.unwrap_or_else(|| {
-                        "interface redeclaration widens a parent member".to_owned()
-                    }),
-                    span_at(base, &["extends"]),
-                ));
-            }
-        }
-        self.check_interface_parent_links(base, def);
+        self.check_interface_lifecycles(&base, def);
     }
 
     // ----- object types ----------------------------------------------------
@@ -1396,7 +1343,7 @@ impl<'a> Checker<'a, '_> {
         self.check_owned_collections(&base, def, parent);
         self.check_link_requirements(&base, def, registered, &ancestors, &conflicted);
         self.check_invariants(&base, def, &ancestors);
-        self.check_lifecycles(&base, def, parent, &table);
+        self.check_lifecycles(&base, def, parent, &ancestors, &table);
         self.check_accounting_leg_declaration(&base, def, &ancestors, &table);
     }
 
@@ -1925,6 +1872,7 @@ impl<'a> Checker<'a, '_> {
             .filter_map(|ancestor| self.types.get(ancestor))
             .flat_map(|entry| entry.def.implements.iter())
             .collect();
+        self.check_object_disjoint(base, def, &direct, &ancestor_interfaces);
         let conflicted = self.report_conflicts(base, &all);
         // An id some interface requires as a link conflicts with a property
         // requirement; that is reported with the link requirements.

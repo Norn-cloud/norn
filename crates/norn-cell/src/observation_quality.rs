@@ -141,9 +141,29 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(findings)
     }
 
-    /// DATA-QUARANTINE: resolve real exclusion pins at the selected knowledge frontier.
-    /// The caller must supply a receipt-authenticated record at that frontier.
+    /// DATA-QUARANTINE: resolve live exclusion pins for `record`.
     pub(crate) fn question_findings(
+        &self,
+        world: &str,
+        record: &ObjectRecord,
+    ) -> Result<Vec<DataQualityFinding>, CellError> {
+        self.question_findings_inner(world, record, None)
+    }
+
+    /// DATA-QUARANTINE / ASOF-KNOWLEDGE-1: resolve exclusion pins at a specific
+    /// knowledge frontier. The caller must supply a receipt-authenticated
+    /// record at `frontier`; linked governing-law recovery fails closed rather
+    /// than reading live links.
+    pub(crate) fn question_findings_at_cutoff(
+        &self,
+        world: &str,
+        record: &ObjectRecord,
+        frontier: u64,
+    ) -> Result<Vec<DataQualityFinding>, CellError> {
+        self.question_findings_inner(world, record, Some(frontier))
+    }
+
+    fn question_findings_inner(
         &self,
         world: &str,
         record: &ObjectRecord,
@@ -377,20 +397,25 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                             || (class == norn_kernel::DataQualityRuleClassification::Builtin
                                 && finding.severity == norn_ir::DataQualitySeverity::Error);
                         if let Some(record) = current {
+                            // Scope governing-law recovery to the finding's own rule so a
+                            // pure-property finding on a mixed-law entity never touches an
+                            // unrelated linked law at a historical frontier, while preserving
+                            // subtype evaluation (`finding_eval_type`).
                             let eval_type = self.finding_eval_type(&model, record, &finding);
-                            if !norn_kernel::snapshot_observe::finding_rule_is_violated(
-                                &catalog,
-                                &FactKey::new(eval_type.as_str(), key),
-                                &record.values,
+                            let scoped_laws = scoped_finding_laws(model.law_artifacts(), &finding);
+                            let eval_catalog = TypeCatalog::new(model.object_types())
+                                .with_interfaces(model.interfaces())
+                                .with_property_types(model.property_types())
+                                .with_governing_laws(&scoped_laws);
+                            if !self.finding_is_violated(
+                                &eval_catalog,
+                                world,
+                                eval_type.as_str(),
+                                key,
+                                record,
                                 &finding,
-                                &mut crate::link_laws::CurrentLinks {
-                                    reader: self,
-                                    world,
-                                    subject: FactKey::new(record.object_type.as_str(), key),
-                                },
-                            )
-                            .map_err(|error| CellError::QualityEvaluation(Box::new(error)))?
-                            {
+                                frontier,
+                            )? {
                                 finding.status = if class
                                     == norn_kernel::DataQualityRuleClassification::Unverified
                                 {
@@ -406,6 +431,53 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
         }
         Ok(findings)
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "keeps finding recovery dispatch separate from ledger scan"
+    )]
+    fn finding_is_violated(
+        &self,
+        catalog: &TypeCatalog<'_>,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        record: &ObjectRecord,
+        finding: &DataQualityFinding,
+        frontier: Option<u64>,
+    ) -> Result<bool, CellError> {
+        let fact_key = FactKey::new(object_type, key);
+        match frontier {
+            None => norn_kernel::snapshot_observe::finding_rule_is_violated(
+                catalog,
+                &fact_key,
+                &record.values,
+                finding,
+                &mut crate::link_laws::CurrentLinks {
+                    reader: self,
+                    world,
+                    subject: FactKey::new(record.object_type.as_str(), key),
+                },
+            )
+            .map_err(|error| CellError::QualityEvaluation(Box::new(error))),
+            Some(cutoff_frontier) => {
+                let mut links = crate::link_laws::FailClosedAsOfLinks::new(cutoff_frontier);
+                match norn_kernel::snapshot_observe::finding_rule_is_violated(
+                    catalog,
+                    &fact_key,
+                    &record.values,
+                    finding,
+                    &mut links,
+                ) {
+                    Ok(violated) => Ok(violated),
+                    Err(_error) if links.attempted() => Err(CellError::ComputeRefused(
+                        norn_checker::metric::compute::UNSUPPORTED_ENGINE,
+                    )),
+                    Err(error) => Err(CellError::QualityEvaluation(Box::new(error))),
+                }
+            }
+        }
     }
 
     fn verified_finding_at(&self, seq: u64) -> Result<Option<(RuntimeValue, u64)>, CellError> {
@@ -426,6 +498,23 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Ok(None);
         };
         Ok(Some((event, receipt.body.definitions_version)))
+    }
+}
+
+/// Filter retained governing-law artifacts to the single law referenced by
+/// `finding`, or none when `finding` references a built-in or entity invariant.
+fn scoped_finding_laws(
+    laws: &[norn_ir::ArtifactEnvelope],
+    finding: &DataQualityFinding,
+) -> Vec<norn_ir::ArtifactEnvelope> {
+    match &finding.rule_ref {
+        norn_ir::DataQualityRuleRef::Law { artifact_id, .. } => laws
+            .iter()
+            .filter(|law| law.artifact_id == *artifact_id)
+            .cloned()
+            .collect(),
+        norn_ir::DataQualityRuleRef::Invariant { .. }
+        | norn_ir::DataQualityRuleRef::Builtin { .. } => Vec::new(),
     }
 }
 

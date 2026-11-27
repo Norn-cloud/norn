@@ -564,3 +564,72 @@ fn new_env_v3_receipts_distinguish_inherited_vs_redeclared_decimal_binding_owner
     }
     Ok(())
 }
+
+#[test]
+fn core_commitment_and_claim_disjointness_is_enforced_by_checker() -> TestResult {
+    let mut base = vec![value_types::core_pack()?, value_types::std_pack()?];
+    for raw in [
+        include_str!("../../../registry/core/artifacts/core.Agent.interface.json"),
+        include_str!("../../../registry/core/artifacts/core.Resource.interface.json"),
+        include_str!("../../../registry/core/artifacts/core.Commitment.interface.json"),
+        include_str!("../../../registry/core/artifacts/core.Claim.interface.json"),
+    ] {
+        base.push(serde_json::from_str(raw)?);
+    }
+
+    let promise_iface: ArtifactEnvelope = serde_json::from_value(json!({
+        "irVersion": "0.1",
+        "kind": "entity",
+        "artifactId": "test.Promise.interface",
+        "version": "0.1.0",
+        "namespace": "test",
+        "name": "Promise",
+        "lifecycle": "active",
+        "scope": {},
+        "dependencies": [],
+        "provenance": { "source": "system", "sourcePath": "tests/core_disjoint" },
+        "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+                "name": "test.Promise",
+                "extends": ["core.Commitment"]
+            }
+        }
+    }))?;
+    let impossible_iface: ArtifactEnvelope = serde_json::from_value(json!({
+        "irVersion": "0.1",
+        "kind": "entity",
+        "artifactId": "test.PromiseAndClaim.interface",
+        "version": "0.1.0",
+        "namespace": "test",
+        "name": "PromiseAndClaim",
+        "lifecycle": "active",
+        "scope": {},
+        "dependencies": [],
+        "provenance": { "source": "system", "sourcePath": "tests/core_disjoint" },
+        "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+                "name": "test.PromiseAndClaim",
+                "extends": ["test.Promise", "core.Claim"]
+            }
+        }
+    }))?;
+
+    let registry = BTreeSet::new();
+    let findings = check_artifact_set(
+        &[promise_iface, impossible_iface],
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &base,
+            tenant: None,
+        },
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.code.as_str() == norn_checker::interfaces::codes::DISJOINT_VIOLATION),
+        "Commitment ⊓ Claim = ∅ must be refused by norn-checker, got: {findings:?}"
+    );
+    Ok(())
+}

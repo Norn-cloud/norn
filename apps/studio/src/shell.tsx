@@ -16,8 +16,15 @@ import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from 
 import { AppearanceProvider, SCHEMES, SHELLS, SKINS, isScheme, isShellChrome, isSkin, useAppearance, type ShellChrome, type Skin } from "@/lib/appearance"
 import { TopBarExtras } from "@/top-bar-extras"
 import { DENSITY } from "@/lib/perspective"
-import { appletHome, appletMenu, appletOf, appletOfSection, appletsOf, claim, decoded, destinationIn, initials, shown, target, type Applet, type AppletMenu, type MenuEntry, type Menus, type Section } from "@/lib/nav-model"
+import { appletHome, appletMenu, appletOf, appletOfSection, appletsOf, claim, decoded, destinationIn, initials, placeOf, shown, target, type Applet, type AppletMenu, type MenuEntry, type Menus, type Section } from "@/lib/nav-model"
+import {
+  accountScopeIdentity, appendRecent, clearRecent, commitRecentTracker, enrichRecentItems, getOwn,
+  initialRecentTracker, isSafeRecordKey, markRecentSignOut, readMenuState, readRecent,
+  recentForPath, recentScopeFingerprint, recentStorageKey, resumeRecentTracker, stepRecentTracker,
+  updateChosenBranches, writeMenuState, type RecentItem, type RecentTracker,
+} from "@/lib/nav-storage"
 import { AppletRail, AssistantButton, SheetApplets, SubmenuPanel, appletBadge, type MenuState, type RailApplet } from "@/shell-nav"
+import { usePageShowsWorkspaceUnavailable } from "@/lib/workspace"
 import { SIDEBAR_ID, Sidebar, SidebarClose, SidebarInset, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Hint, KitMenuContent, KitMenuItem, KitMenuLabel, KitMenuRadioItem, KitMenuSeparator, KitPopoverContent, Menu, Popover } from "@/components/system/kit"
@@ -92,7 +99,7 @@ const real = (workspace: (typeof WORKSPACES)[number], live: boolean) => workspac
  */
 function WorkspaceState() {
   const { open } = useOpenWorkspace(useWorkspaces().data)
-  return <span data-workspace-state className="truncate text-meta text-muted-foreground">{open ? `${open.name} · ${open.detail}` : ""}</span>
+  return <span data-workspace-state className="max-w-full truncate text-meta text-muted-foreground">{open ? `${open.name} · ${open.detail}` : ""}</span>
 }
 
 /** The workspace switcher: the user's real workspaces and a separate labelled Examples group. */
@@ -417,15 +424,49 @@ function Crumbs({ section, entries, pathname }: { readonly section: Section; rea
   )
 }
 
+/**
+ * Decide how selecting a destination in the command palette updates router history:
+ * - Same URL and same applet: skip when there is no hash, or `replace: true` to re-scroll to the hash.
+ * - Different URL OR different applet on a shared URL: push a new entry (`replace` omitted) so Back restores the prior applet.
+ */
+export function commandNavigation(
+  current: { readonly pathname: string; readonly searchStr: string; readonly hash: string; readonly applet: string | undefined },
+  to: { readonly to: string; readonly hash?: string; readonly applet: string },
+): { readonly to: string; readonly hash?: string; readonly state: { readonly applet: string }; readonly replace?: true } | null {
+  const sameUrl = to.to === current.pathname && current.searchStr === "" && (to.hash ?? "") === current.hash
+  const sameApplet = current.applet === to.applet
+  if (sameUrl && sameApplet) {
+    if (to.hash === undefined) return null
+    return { to: to.to, hash: to.hash, state: { applet: to.applet }, replace: true }
+  }
+  return {
+    to: to.to,
+    ...(to.hash !== undefined ? { hash: to.hash } : {}),
+    state: { applet: to.applet },
+  }
+}
+
 /** "Search… ⌘K", the universal entry: every destination in every applet, every page they list, and the appearance. */
-function CommandMenu({ sections, navigation }: { readonly sections: readonly Section[]; readonly navigation: Navigation }) {
+function CommandMenu({ sections, navigation, currentApplet }: {
+  readonly sections: readonly Section[]
+  readonly navigation: Navigation
+  readonly currentApplet: string | undefined
+}) {
   const [open, setOpen] = useState(false)
   const navigate = useNavigate()
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const searchStr = useRouterState({ select: (state) => state.location.searchStr })
+  const currentHash = useRouterState({ select: (state) => state.location.hash })
+  const currentStateApplet = useRouterState({ select: (state) => state.location.state.applet })
   const { setSkin, setShell } = useAppearance()
+  const applets = appletsOf(sections)
   const lists = sections.map((section) => ({ section, entries: navigation.menus.get(section.path) ?? [] }))
-  const routes = new Map<string, { to: string; hash?: string }>([
-    ...sections.map(({ path }) => [`section:${path}`, { to: path }] as const),
-    ...lists.flatMap(({ section, entries }) => entries.map(({ href }) => [`entry:${section.path}:${href}`, target(section, href)] as const)),
+  const routes = new Map<string, { readonly to: string; readonly hash?: string; readonly applet: string }>([
+    ...sections.map((section) => [`section:${section.path}`, { to: section.path, applet: appletOfSection(section).id }] as const),
+    ...lists.flatMap(({ section, entries }) => entries.map((entry) => [
+      `entry:${section.path}:${entry.href}`,
+      { ...target(section, entry.href), applet: placeOf(section, entry, applets).applet },
+    ] as const)),
   ])
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -448,7 +489,12 @@ function CommandMenu({ sections, navigation }: { readonly sections: readonly Sec
             return
           }
           const to = routes.get(value)
-          if (to) void navigate(to)
+          if (!to) return
+          const nav = commandNavigation(
+            { pathname, searchStr, hash: currentHash, applet: currentStateApplet ?? currentApplet },
+            to,
+          )
+          if (nav !== null) void navigate(nav)
         }}>
           <div className="flex items-center gap-2 border-b px-4">
             <Search aria-hidden className="size-4 text-muted-foreground" />
@@ -502,22 +548,6 @@ function CommandMenu({ sections, navigation }: { readonly sections: readonly Sec
   )
 }
 
-/** Whether the page in the main island shows the full Workspace unavailable state itself (`WorkspaceUnavailable`). */
-function usePageShowsUnavailable(watching: boolean): boolean {
-  const [shows, setShows] = useState(false)
-  useEffect(() => {
-    if (!watching) { setShows(false); return }
-    const page = document.querySelector("[data-route]")
-    if (page === null) return
-    const read = () => setShows(page.querySelector("[data-workspace-unavailable]") !== null)
-    read()
-    const observer = new MutationObserver(read)
-    observer.observe(page, { childList: true, subtree: true })
-    return () => observer.disconnect()
-  }, [watching])
-  return shows
-}
-
 /**
  * Honest cell connection status (#1424), one line at the top of the main island that never wraps
  * into a column on a phone:
@@ -537,7 +567,7 @@ function ConnectionBanner() {
   const { locale } = useLocale()
   const { view } = useView()
   const unavailable = mode.data === undefined && (mode.isError || (mode.failureCount > 0 && !isRetryableModeError(mode.failureReason)))
-  const pageShows = usePageShowsUnavailable(unavailable)
+  const pageShows = usePageShowsWorkspaceUnavailable()
   const retry = () => { void retryWorkspace(queryClient) }
   const line = "flex min-h-[44px] flex-nowrap items-center gap-2 px-4 py-1.5 text-body md:px-8"
   if (mode.data !== undefined) return null
@@ -655,13 +685,21 @@ function DockLabel({ children }: { readonly children: ReactNode }) {
  * following norn-mockups v6/shell.tsx craft: rounded-[26px] dark pill, size-10 circular buttons,
  * soft #34343a active well, hover tooltips, the assistant mascot, appearance tray, and overflow destinations.
  */
-function FloatingDock({ sections, navigation, current, assistant }: {
+function FloatingDock({ sections, navigation, current, currentApplet, assistant }: {
   readonly sections: readonly Section[]
   readonly navigation: Navigation
   readonly current: Section | undefined
+  readonly currentApplet: string | undefined
   readonly assistant?: AssistantContent
 }) {
   const { open, toggle } = useAssistant()
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const searchStr = useRouterState({ select: (state) => state.location.searchStr })
+  const hash = useRouterState({ select: (state) => state.location.hash })
+  const stateApplet = useRouterState({ select: (state) => state.location.state.applet })
+  const activeApplet = stateApplet ?? currentApplet
+  const sameDock = (to: string, targetApplet: string) =>
+    pathname === to && searchStr === "" && hash === "" && activeApplet === targetApplet
   const global = sections.filter((section) => section.perspective === "global")
   const firstHref = (section: Section) => navigation.menus.get(section.path)?.find(({ href }) => !href.startsWith("#"))?.href
   const resolvedOwn = sections
@@ -691,10 +729,11 @@ function FloatingDock({ sections, navigation, current, assistant }: {
           const count = navigation.badges.get(section.path)
           const active = current?.path === section.path
           const label = count ? `${section.label}, ${count} open` : section.label
+          const sectionApplet = appletOfSection(section).id
           return (
             <Hint key={section.path} side="top" label={label}>
               <ToolbarLink
-                render={<Link to={section.path} />}
+                render={<Link to={section.path} state={{ applet: sectionApplet }} replace={sameDock(section.path, sectionApplet)} />}
                 aria-label={label}
                 aria-current={active ? "page" : undefined}
                 data-active={active || undefined}
@@ -711,10 +750,11 @@ function FloatingDock({ sections, navigation, current, assistant }: {
           const Icon = section.icon
           const active = current?.path === section.path
           const label = count ? `${section.label}, ${count} open` : section.label
+          const sectionApplet = appletOfSection(section).id
           return (
             <Hint key={section.path} side="top" label={label}>
               <ToolbarLink
-                render={<Link to={to} />}
+                render={<Link to={to} state={{ applet: sectionApplet }} replace={sameDock(to, sectionApplet)} />}
                 aria-label={label}
                 aria-current={active ? "page" : undefined}
                 data-active={active || undefined}
@@ -757,8 +797,9 @@ function FloatingDock({ sections, navigation, current, assistant }: {
                 {overflow.map(({ section, to, count }) => {
                   const Icon = section.icon
                   const overflowLabel = count ? `${section.label}, ${count} open` : section.label
+                  const sectionApplet = appletOfSection(section).id
                   return (
-                    <KitMenuItem key={section.path} value={section.path} label={section.label} aria-label={overflowLabel} render={<Link to={to} aria-label={overflowLabel} />}>
+                    <KitMenuItem key={section.path} value={section.path} label={section.label} aria-label={overflowLabel} render={<Link to={to} state={{ applet: sectionApplet }} replace={sameDock(to, sectionApplet)} aria-label={overflowLabel} />}>
                       <Icon aria-hidden />
                       <span className="truncate">{section.label}</span>
                       {count && <span aria-hidden className="ms-auto text-meta text-muted-foreground tabular-nums">{count}</span>}
@@ -820,35 +861,122 @@ function useHashScroll() {
   }, [hash, at])
 }
 
-/** Each applet's own reader choices, kept while Studio is open: branches opened or closed, lists shown whole, the filter. */
+/** Each applet's own reader choices: branches opened/closed and "Show all" persist per browser; the filter stays in memory. */
 function useMenuStates() {
-  const [chosen, setChosen] = useState<Readonly<Record<string, Readonly<Record<string, boolean>>>>>({})
-  const [whole, setWhole] = useState<ReadonlySet<string>>(() => new Set())
-  const [queries, setQueries] = useState<Readonly<Record<string, string>>>({})
+  const [persisted, setPersisted] = useState(() => readMenuState())
+  const [queries, setQueries] = useState<Readonly<Record<string, string>>>(() => Object.create(null) as Record<string, string>)
   return (id: string): MenuState => ({
-    chosen: chosen[id] ?? {},
-    onChosenChange: (update) => setChosen((all) => ({ ...all, [id]: update(all[id] ?? {}) })),
-    whole,
-    onWhole: (key) => setWhole((previous) => {
-      const next = new Set(previous)
-      if (!next.delete(key)) next.add(key)
+    chosen: getOwn(persisted.chosen, id) ?? {},
+    onChosenChange: (update) => setPersisted((previous) => {
+      const chosen = updateChosenBranches(previous.chosen, id, update)
+      writeMenuState(chosen, previous.whole)
+      return { chosen, whole: previous.whole }
+    }),
+    whole: persisted.whole,
+    onWhole: (key) => setPersisted((previous) => {
+      const whole = new Set(previous.whole)
+      if (!whole.delete(key)) whole.add(key)
+      writeMenuState(previous.chosen, whole)
+      return { chosen: previous.chosen, whole }
+    }),
+    query: getOwn(queries, id) ?? "",
+    onQuery: (query) => setQueries((all) => {
+      if (!isSafeRecordKey(id)) return all
+      const next = Object.create(null) as Record<string, string>
+      for (const [key, value] of Object.entries(all)) {
+        if (isSafeRecordKey(key)) next[key] = value
+      }
+      next[id] = query
       return next
     }),
-    query: queries[id] ?? "",
-    onQuery: (query) => setQueries((all) => ({ ...all, [id]: query })),
   })
 }
 
+/** Whether every destination in an applet menu is a single-page global surface (Home, Inbox). */
+const isGlobalAppletMenu = (menu: AppletMenu | undefined): boolean =>
+  menu !== undefined
+  && menu.headings.length > 0
+  && menu.headings.every(({ destinations }) => destinations.every(({ section }) => section.perspective === "global"))
+
+/**
+ * Browser-local list of recently opened records, runs and views, scoped to the confirmed live or
+ * recorded workspace and role (`fingerprint`). Fails closed while the scope is unconfirmed (`null`),
+ * never records a pathname carried across a workspace switch or role change, and syncs cross-tab clears.
+ */
+function useRecentItems(accountKey: string, fingerprint: string | null, pathname: string, menus: Menus) {
+  const [items, setItems] = useState<readonly RecentItem[]>(() => fingerprint === null ? [] : readRecent(fingerprint))
+  const [loadedFingerprint, setLoadedFingerprint] = useState<string | null>(fingerprint)
+  if (loadedFingerprint !== fingerprint) {
+    setLoadedFingerprint(fingerprint)
+    setItems(fingerprint === null ? [] : readRecent(fingerprint))
+  }
+  useEffect(() => {
+    if (fingerprint === null || typeof window === "undefined") return
+    const key = recentStorageKey(fingerprint)
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === key) {
+        setItems(readRecent(fingerprint))
+      }
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [fingerprint])
+
+  const menusRef = useRef<Menus>(menus)
+  menusRef.current = menus
+  const trackerRef = useRef<RecentTracker | null>(null)
+  if (trackerRef.current === null) {
+    trackerRef.current = typeof window !== "undefined"
+      ? resumeRecentTracker(pathname, fingerprint, accountKey)
+      : initialRecentTracker(pathname, fingerprint, accountKey)
+  }
+  const recordedVisitRef = useRef<{ readonly fingerprint: string; readonly pathname: string } | null>(null)
+
+  useEffect(() => {
+    const { next, shouldRecord } = stepRecentTracker(trackerRef.current!, pathname, fingerprint, accountKey)
+    trackerRef.current = next
+    commitRecentTracker(next, accountKey)
+    if (recordedVisitRef.current !== null && recordedVisitRef.current.pathname !== pathname) {
+      recordedVisitRef.current = null
+    }
+    if (!shouldRecord || fingerprint === null) return
+    const candidate = recentForPath(pathname, menusRef.current)
+    if (candidate === null) return
+    if (
+      recordedVisitRef.current !== null
+      && recordedVisitRef.current.fingerprint === fingerprint
+      && recordedVisitRef.current.pathname === pathname
+    ) {
+      return
+    }
+    recordedVisitRef.current = { fingerprint, pathname }
+    setItems(appendRecent(fingerprint, candidate))
+  }, [accountKey, fingerprint, pathname])
+
+  return {
+    items: fingerprint === null ? [] : enrichRecentItems(items, menus),
+    onClear: () => {
+      if (fingerprint !== null) clearRecent(fingerprint)
+      setItems([])
+    },
+  }
+}
+
 /** The rail, the submenu island (or the phone sheet holding both) and the main island, keeping focus across a collapse. */
-function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathname, navigation, applet, menu, current }: {
+function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, recentFingerprint, pathname, navigation, applet, menu, current }: {
   readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent
-  readonly account: Account; readonly onSignOut: () => void
+  readonly account: Account; readonly onSignOut: () => void; readonly recentFingerprint: string | null
   readonly pathname: string; readonly navigation: Navigation
   readonly applet: Applet | undefined; readonly menu: AppletMenu | undefined; readonly current: Section | undefined
 }) {
   const { open, isMobile, openMobile, setOpenMobile } = useSidebar()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuState = useMenuStates()
+  const recent = useRecentItems(accountScopeIdentity(account), recentFingerprint, pathname, navigation.menus)
+  const handleSignOut = () => {
+    markRecentSignOut()
+    onSignOut()
+  }
   const rail: readonly RailApplet[] = appletsOf(sections).map((each) => ({
     applet: each,
     home: appletHome(each, sections, navigation.menus),
@@ -890,7 +1018,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
   const resolvedPathname = useRouterState({ select: (state) => state.resolvedLocation?.pathname ?? state.location.pathname })
   const principal = <>
     {assistant && <AssistantButton title={assistant.title} />}
-    <AccountMenu account={account} onSignOut={onSignOut} inToolbar={false} variant="rail" />
+    <AccountMenu account={account} onSignOut={handleSignOut} inToolbar={false} variant="rail" />
   </>
 
   return (
@@ -906,14 +1034,14 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
             <Sidebar>
               <SheetApplets applets={rail} current={applet?.id} shown={sheetMenu?.applet.id} onShow={setSheetApplet} top={<ScopeSwitcher variant="rail" />} bottom={principal} />
               <div className="flex min-w-0 flex-1 flex-col">
-                {sheetMenu && <SubmenuPanel menu={sheetMenu} pathname={pathname} unread={navigation.unread} state={menuState(sheetMenu.applet.id)} onFollow={() => setOpenMobile(false)} close={<SidebarClose />} context={<WorkspaceState />} />}
+                {sheetMenu && <SubmenuPanel menu={sheetMenu} pathname={pathname} unread={navigation.unread} state={menuState(sheetMenu.applet.id)} onFollow={() => setOpenMobile(false)} close={<SidebarClose />} context={<WorkspaceState />} recent={isGlobalAppletMenu(sheetMenu) ? recent : undefined} currentApplet={applet?.id} />}
               </div>
             </Sidebar>
           )
           : (
             <Sidebar>
               {menu
-                ? <SubmenuPanel menu={menu} pathname={pathname} unread={navigation.unread} state={menuState(menu.applet.id)} onFollow={() => {}} context={<WorkspaceState />} />
+                ? <SubmenuPanel menu={menu} pathname={pathname} unread={navigation.unread} state={menuState(menu.applet.id)} onFollow={() => {}} context={<WorkspaceState />} recent={isGlobalAppletMenu(menu) ? recent : undefined} currentApplet={applet?.id} />
                 : <p className="px-[16px] py-[16px] text-body text-muted-foreground">No applet lists this page.</p>}
             </Sidebar>
           )
@@ -923,17 +1051,17 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
           {isDock
             ? (
               <header data-slot="dock-topbar" className="flex h-[4.5rem] shrink-0 items-center gap-3 px-6 md:px-8">
-                <Link to="/" aria-label="Norn Studio home" className="flex size-8 shrink-0 items-center justify-center rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
+                <Link to="/" state={{ applet: "/" }} aria-label="Norn Studio home" className="flex size-8 shrink-0 items-center justify-center rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
                   <img src={nornMark} alt="" width={28} height={28} className="size-7 object-contain" />
                 </Link>
                 <ScopeSwitcher variant="pill" />
                 <div className="hidden min-w-0 overflow-hidden @[36rem]:block">{current && current.path !== "/" && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
                 <div className="ms-auto flex shrink-0 items-center gap-2">
-                  <div className="flex shrink-0 justify-center @3xl:w-52"><CommandMenu sections={sections} navigation={navigation} /></div>
+                  <div className="flex shrink-0 justify-center @3xl:w-52"><CommandMenu sections={sections} navigation={navigation} currentApplet={applet?.id} /></div>
                   {tools}
                   <TopBarExtras tickBar="hidden @5xl:flex" language="hidden @3xl:flex" scheme="hidden @md:flex" />
                   <Notifications />
-                  <AccountMenu account={account} onSignOut={onSignOut} inToolbar={false} variant="topbar" />
+                  <AccountMenu account={account} onSignOut={handleSignOut} inToolbar={false} variant="topbar" />
                 </div>
               </header>
             )
@@ -948,7 +1076,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
                     {/* The crumbs collapse by the room they have beside the bar's controls, not by the page's width. */}
                     <div className="hidden min-w-0 flex-1 overflow-hidden @[17rem]:block"><div className="@container min-w-0">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div></div>
                   </div>
-                  <div className="flex shrink-0 justify-center @2xl:w-48 @6xl:w-64 @7xl:w-80"><CommandMenu sections={sections} navigation={navigation} /></div>
+                  <div className="flex shrink-0 justify-center @2xl:w-48 @6xl:w-64 @7xl:w-80"><CommandMenu sections={sections} navigation={navigation} currentApplet={applet?.id} /></div>
                   <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">
                     <BarButtons tools={tools} />
                   </div>
@@ -963,7 +1091,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
         <Inspector />
         <AssistantPanel assistant={assistant} />
       </SidebarInset>
-      {isDock && <FloatingDock sections={sections} navigation={navigation} current={current} assistant={assistant} />}
+      {isDock && <FloatingDock sections={sections} navigation={navigation} current={current} currentApplet={applet?.id} assistant={assistant} />}
     </>
   )
 }
@@ -977,6 +1105,8 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
   const { shell } = useAppearance()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const navigation = useNavigation(sections)
+  const mode = useMode()
+  const recentFingerprint = recentScopeFingerprint(account, mode)
   // The applet whose rail button or menu row the reader followed decides a page two applets list
   // (Data's first record type is also Builder's); the history entry keeps it, so Back restores it.
   // Else the applet the reader was in on the page before this one does: the last applet shown on
@@ -997,7 +1127,7 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
     <ViewProvider><InspectorProvider><TooltipProvider>
       <SidebarProvider shortcut={shell !== "dock"} data-shell={shell} data-density={DENSITY[current?.perspective ?? "global"]}>
         <WorkbenchFrame sections={sections} tools={tools} assistant={assistant} account={account} onSignOut={onSignOut}
-          pathname={pathname} navigation={navigation} applet={applet} menu={menu} current={current} />
+          recentFingerprint={recentFingerprint} pathname={pathname} navigation={navigation} applet={applet} menu={menu} current={current} />
       </SidebarProvider>
     </TooltipProvider></InspectorProvider></ViewProvider>
   )

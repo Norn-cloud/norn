@@ -1,4 +1,5 @@
 //! One already-opened tenant cell shared by authorized transport adapters.
+mod source_capture;
 use crate::{
     action_admission::Serving,
     authz::{Authorizer, DenyAll, ReadCapability, ReadRequest, read_denied},
@@ -12,9 +13,11 @@ use norn_cell::{
 };
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::{Command, FactEvent, ObservationEvent, Observed};
-use std::ops::{Deref, DerefMut};
-use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, atomic::Ordering};
-
+pub use source_capture::{DisputeFallbackState, SourceCaptureError, SourceCapturePlan};
+use std::{
+    ops::{Deref, DerefMut},
+    sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, atomic::Ordering},
+};
 pub(crate) type ActionCell<E> = norn_cell::SqliteCell<FactEvent, RuntimeObject, RuntimeObject, E>;
 /// A single tenant's cell and definition epoch. Unconfigured authorization denies.
 pub struct DevHost<E: SqlEngine> {
@@ -508,13 +511,7 @@ impl<E: SqlEngine> DevHost<E> {
         // budget, whose continuation point needs batch order.
         let independent = budget.is_none() && groupable(rows) && self.independent_inputs(rows)?;
         let mut framed: std::collections::VecDeque<Page<'_>> = pages(rows, independent).into();
-        let mut report = IngestReport {
-            outcomes: Vec::with_capacity(rows.len()),
-            next: None,
-            pages: 0,
-            commits: 0,
-            work_ms: 0,
-        };
+        let mut report = IngestReport::with_capacity(rows.len());
         let mut out: Vec<(usize, Ingested)> = Vec::with_capacity(rows.len());
         let mut committed = false;
         let spent = |work: u64, more: u64| {

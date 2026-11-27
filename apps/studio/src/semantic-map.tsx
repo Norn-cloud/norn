@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { ArrowLeft, ArrowRight, Database, ExternalLink, Map as MapIcon, Search, Waypoints, X } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
@@ -13,7 +14,7 @@ import { Input } from "@/components/ui/input"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import { lawHeadline } from "./lib/catalog.ts"
-import { useMode } from "./lib/live-transport.ts"
+import { retryWorkspace, useMode } from "./lib/live-transport.ts"
 import { useCatalog } from "./lib/use-catalog.ts"
 import {
   SEMANTIC_LENSES,
@@ -463,6 +464,7 @@ const openerSelector = (opener: Opener): string => opener.kind === "island"
 
 /** `/map`: Read-only Catalog Ontology Map (Phase 1, #1664) — Monochrome Islands, Bundled Bridges, Lenses & Schema Dossier. */
 export function SemanticMapPage() {
+  const queries = useQueryClient()
   const { read, catalog } = useCatalog()
   const mode = useMode()
   const inbox = useInbox()
@@ -520,9 +522,9 @@ export function SemanticMapPage() {
         data={projection}
         error={read.error}
         isFetching={read.isFetching}
-        // A refusal's Retry reads again; Workspace unavailable owns its own Retry, which decides the
-        // mode again as the shell's would (`WorkspaceUnavailable`).
-        onRetry={() => void read.refetch()}
+        // Route pending/refusal Retry through retryWorkspace so a wedged mode probe or unavailable
+        // cell recovers in one click without refetching against a dead cell (#1774).
+        onRetry={() => void retryWorkspace(queries).then((ok) => { if (ok) void read.refetch({ cancelRefetch: false }) })}
         bone="semantic-map"
         skeleton="cards"
         loadingLabel="Building semantic map"
@@ -574,12 +576,12 @@ export function SemanticMapPage() {
                   ))}
                 </ToggleGroup>
 
-                <label className="relative ms-auto block w-full max-w-72">
+                <label className="relative ms-auto block w-full max-w-80">
                   <span className="sr-only">Filter object types, feeds, or markings</span>
                   <Search aria-hidden className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     type="search"
-                    placeholder="Find object types, feeds, markings…"
+                    placeholder="Find types, feeds, markings…"
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     className="h-8 ps-8 max-sm:min-h-[44px]"
