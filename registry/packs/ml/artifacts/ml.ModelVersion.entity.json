@@ -43,7 +43,7 @@
               ],
               "guardRefusalCode": "core.projection.publication_guard",
               "guards": [
-                "((self.contracts_passed ?? false) and (self.evaluation_receipt != null)) and (self.evaluation_revision == self.pinned_dataset_revision)"
+                "((((self.contracts_passed ?? false) and (self.evaluation_receipt != null)) and (self.pinned_dataset_revision == self.evaluation_revision)) and (self.artifact_sha256 == self.evaluated_artifact_sha256)) and (self.artifact_size == self.evaluated_artifact_size)"
               ],
               "id": "promote",
               "to": "production"
@@ -183,6 +183,24 @@
           "id": "evaluation_revision",
           "type": {
             "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "evaluated_artifact_sha256",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "evaluated_artifact_size",
+          "type": {
+            "kind": "integer"
           }
         },
         {

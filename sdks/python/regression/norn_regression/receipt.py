@@ -354,6 +354,8 @@ EVALUATION_OUTPUT_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "required": [
         "evaluation_revision",
+        "evaluated_artifact_sha256",
+        "evaluated_artifact_size",
         "metric_name",
         "metric_value",
         "contracts_passed",
@@ -363,6 +365,8 @@ EVALUATION_OUTPUT_SCHEMA: dict[str, Any] = {
     ],
     "properties": {
         "evaluation_revision": {"type": "string"},
+        "evaluated_artifact_sha256": {"type": "string"},
+        "evaluated_artifact_size": {"type": "integer"},
         "metric_name": {"type": "string"},
         "metric_value": {"type": "number", "nornType": {"kind": "decimal", "scale": 9}},
         "contracts_passed": {"type": "boolean"},
@@ -389,28 +393,30 @@ def verify_evaluator_artifact_pins(regression_dir: Path | None = None) -> None:
     dockerfile_text = (root / "Dockerfile.evaluator").read_text(encoding="utf-8")
 
     expected_from = f"python:3.11-slim@{pins['baseImage']}"
-    from_lines: list[str] = []
+    from_parts: list[list[str]] = []
     actual_copies: set[tuple[str, str]] = set()
     entrypoint_lines: list[str] = []
     for line in dockerfile_text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        upper = stripped.upper()
-        if upper.startswith("FROM "):
-            from_lines.append(stripped)
-        elif upper.startswith("COPY "):
-            parts = stripped.split()
+        parts = stripped.split()
+        instr = parts[0].upper()
+        if instr == "FROM":
+            from_parts.append(parts)
+        elif instr == "COPY":
             if len(parts) != 3 or parts[1].startswith("--"):
                 raise ValueError(f"Dockerfile.evaluator COPY must be exact `COPY <src> <dst>`: {stripped!r}")
             pair = (parts[1], parts[2])
             if pair in actual_copies:
                 raise ValueError(f"Dockerfile.evaluator duplicate COPY instruction: {stripped!r}")
             actual_copies.add(pair)
-        elif upper.startswith("ENTRYPOINT "):
+        elif instr == "ADD":
+            raise ValueError(f"Dockerfile.evaluator must not use ADD: {stripped!r}")
+        elif instr == "ENTRYPOINT":
             entrypoint_lines.append(stripped)
 
-    if len(from_lines) != 1 or from_lines[0].split()[1] != expected_from:
+    if len(from_parts) != 1 or from_parts[0] != ["FROM", expected_from]:
         raise ValueError(f"Dockerfile.evaluator must declare exactly one `FROM {expected_from}`")
     if entrypoint_lines != ['ENTRYPOINT ["python", "-m", "norn_regression.evaluator_cli"]']:
         raise ValueError(
@@ -697,12 +703,21 @@ def encode_dataset_snapshot(frame: Any, columns: Sequence[str]) -> bytes:
     )
 
 
+def _parse_json_int(text: str) -> int:
+    """Parse a JSON integer token up to `MAX_CANONICAL_NUMBER_BYTES` without Python's 4,300-digit `int()` limit."""
+    if len(text) > MAX_CANONICAL_NUMBER_BYTES:
+        raise ValueError(f"JSON integer ({len(text)} bytes) exceeds Norn1 limit")
+    if len(text) <= 4300:
+        return int(text)
+    return Fraction(Decimal(text)).numerator
+
+
 def decode_dataset_snapshot(raw_bytes: bytes) -> tuple[list[str], list[dict[str, Any]]]:
     """Decode `norn.snapshot/v1` bytes, refusing any non-canonical encoding."""
     if not isinstance(raw_bytes, (bytes, bytearray)):
         raise TypeError("snapshot payload must be bytes")
     raw = bytes(raw_bytes)
-    doc = json.loads(raw.decode("utf-8"), parse_float=Decimal)
+    doc = json.loads(raw.decode("utf-8"), parse_float=Decimal, parse_int=_parse_json_int)
     if not isinstance(doc, dict) or set(doc.keys()) != {"format", "columns", "rows"}:
         raise ValueError("dataset snapshot must contain exactly format, columns, and rows")
     if doc.get("format") != SNAPSHOT_FORMAT_V1:
@@ -827,7 +842,7 @@ def decode_model_artifact(raw_bytes: bytes) -> dict[str, Any]:
     """Decode and validate raw `norn.linear-model/v1` model artifact bytes."""
     if not isinstance(raw_bytes, (bytes, bytearray)):
         raise TypeError("model_artifact_bytes must be bytes")
-    doc = json.loads(raw_bytes.decode("utf-8"), parse_float=Decimal)
+    doc = json.loads(raw_bytes.decode("utf-8"), parse_float=Decimal, parse_int=_parse_json_int)
     if not isinstance(doc, dict) or doc.get("format") != MODEL_ARTIFACT_FORMAT_V1:
         raise ValueError(f"model artifact must declare format {MODEL_ARTIFACT_FORMAT_V1!r}")
     model_id = doc.get("modelId")
@@ -900,16 +915,17 @@ def _to_exact_eval_decimal(value: Any, label: str) -> Decimal:
 
 
 def _decimal_to_exact_fraction(value: Decimal) -> Fraction:
-    """Convert any finite `Decimal` to an exact `Fraction` without ambient context rounding."""
-    negative, significant, exponent = _exact_decimal_parts(value)
-    if not significant:
-        return Fraction(0)
-    integer = int(significant)
-    if negative:
-        integer = -integer
-    if exponent >= 0:
-        return Fraction(integer * (10**exponent), 1)
-    return Fraction(integer, 10 ** (-exponent))
+    """Convert any finite `Decimal` to an exact `Fraction` without ambient context rounding or digit limits."""
+    if not value.is_finite():
+        raise ValueError(f"non-finite decimal cannot be converted to Fraction: {value!r}")
+    return Fraction(value)
+
+
+def _format_fraction_brief(value: Fraction) -> str:
+    """Format a `Fraction` safely without hitting Python's 4,300-digit `str(int)` conversion limit."""
+    if value.numerator.bit_length() <= 256 and value.denominator.bit_length() <= 256:
+        return str(value)
+    return f"~{_format_decimal(_fraction_to_decimal_scale9(value), [0])}"
 
 
 def _fraction_to_decimal_scale9(value: Fraction) -> Decimal:
@@ -1003,7 +1019,7 @@ def _score_model_artifact(
             EvaluationCheck(
                 name="minPrediction",
                 status="pass" if passed else "fail",
-                detail=f"min(prediction)={worst} vs minPrediction={min_pred}",
+                detail=f"min(prediction)={_format_fraction_brief(worst)} vs minPrediction={_format_fraction_brief(min_pred)}",
             )
         )
     max_pred = contracts.get("maxPrediction")
@@ -1014,17 +1030,18 @@ def _score_model_artifact(
             EvaluationCheck(
                 name="maxPrediction",
                 status="pass" if passed else "fail",
-                detail=f"max(prediction)={worst} vs maxPrediction={max_pred}",
+                detail=f"max(prediction)={_format_fraction_brief(worst)} vs maxPrediction={_format_fraction_brief(max_pred)}",
             )
         )
     max_wape = contracts.get("maxWape")
     if max_wape is not None:
         passed = wape is not None and wape <= max_wape
+        wape_text = "n/a" if wape is None else _format_fraction_brief(wape)
         checks.append(
             EvaluationCheck(
                 name="maxWape",
                 status="pass" if passed else "fail",
-                detail=f"wape={wape} vs maxWape={max_wape}",
+                detail=f"wape={wape_text} vs maxWape={_format_fraction_brief(max_wape)}",
             )
         )
     max_mae = contracts.get("maxMae")
@@ -1034,17 +1051,18 @@ def _score_model_artifact(
             EvaluationCheck(
                 name="maxMae",
                 status="pass" if passed else "fail",
-                detail=f"mae={mae} vs maxMae={max_mae}",
+                detail=f"mae={_format_fraction_brief(mae)} vs maxMae={_format_fraction_brief(max_mae)}",
             )
         )
     min_r2 = contracts.get("minRSquared")
     if min_r2 is not None:
         passed = r_squared is not None and r_squared >= min_r2
+        r2_text = "n/a" if r_squared is None else _format_fraction_brief(r_squared)
         checks.append(
             EvaluationCheck(
                 name="minRSquared",
                 status="pass" if passed else "fail",
-                detail=f"r_squared={r_squared} vs minRSquared={min_r2}",
+                detail=f"r_squared={r2_text} vs minRSquared={_format_fraction_brief(min_r2)}",
             )
         )
     if not checks:
@@ -1176,6 +1194,8 @@ def build_evaluation_receipt(
     invocation: Mapping[str, Any],
     *,
     evaluation_revision: str,
+    evaluated_artifact_sha256: str | None = None,
+    evaluated_artifact_size: int | None = None,
     metric_name: str,
     metric_value: Decimal | int | str,
     contracts_passed: bool,
@@ -1202,7 +1222,21 @@ def build_evaluation_receipt(
     if "dataset" not in blobs or "model" not in blobs:
         raise ValueError("invocation must pin both blobs['dataset'] and blobs['model'] content digests")
     _require_digest(blobs["dataset"].get("digest"), "invocation.blobs.dataset.digest")
-    _require_digest(blobs["model"].get("digest"), "invocation.blobs.model.digest")
+    model_digest = _require_digest(blobs["model"].get("digest"), "invocation.blobs.model.digest")
+    model_size = blobs["model"].get("sizeBytes")
+    if type(model_size) is not int or model_size < 0:
+        raise ValueError(f"invocation.blobs.model.sizeBytes must be a non-negative int, got {model_size!r}")
+    expected_artifact_sha = model_digest.removeprefix("sha256:")
+    resolved_artifact_sha = expected_artifact_sha if evaluated_artifact_sha256 is None else evaluated_artifact_sha256
+    resolved_artifact_size = model_size if evaluated_artifact_size is None else evaluated_artifact_size
+    if resolved_artifact_sha != expected_artifact_sha:
+        raise ValueError(
+            f"evaluated_artifact_sha256 {resolved_artifact_sha!r} does not match invocation.blobs.model.digest {model_digest!r}"
+        )
+    if type(resolved_artifact_size) is not int or resolved_artifact_size != model_size:
+        raise ValueError(
+            f"evaluated_artifact_size {resolved_artifact_size!r} does not match invocation.blobs.model.sizeBytes {model_size!r}"
+        )
     inputs = invocation.get("inputs", {})
     if inputs.get("dataset_revision") != evaluation_revision:
         raise ValueError(
@@ -1225,6 +1259,8 @@ def build_evaluation_receipt(
     exact_metric = parse_exact_decimal(metric_value, max_scale=9)
     summary: dict[str, Any] = {
         "evaluation_revision": evaluation_revision,
+        "evaluated_artifact_sha256": resolved_artifact_sha,
+        "evaluated_artifact_size": resolved_artifact_size,
         "metric_name": metric_name,
         "metric_value": exact_metric,
         "contracts_passed": contracts_passed,
@@ -1302,7 +1338,7 @@ def evaluate_forecast_receipt(
         raise ValueError(
             f"unsupported metric_name {metric_name!r}; expected one of {sorted(SUPPORTED_METRICS)}"
         )
-    if isinstance(generation, bool) or not isinstance(generation, int) or generation <= 0:
+    if type(generation) is not int or generation <= 0:
         raise ValueError(f"generation must be a positive int, got {generation!r}")
 
     columns = [valid_target, *valid_features] + (
@@ -1339,9 +1375,10 @@ def evaluate_forecast_receipt(
         dispatched_run = dispatched_invocation.get("run")
         if (
             not isinstance(dispatched_run, Mapping)
-            or dispatched_run.get("id") != version_id
-            or isinstance(dispatched_run.get("generation"), bool)
-            or dispatched_run.get("generation") != generation
+            or set(dispatched_run.keys()) != {"id", "generation"}
+            or dispatched_run["id"] != version_id
+            or type(dispatched_run["generation"]) is not int
+            or dispatched_run["generation"] != generation
         ):
             raise ValueError(
                 f"run does not match dispatched invocation: expected id={version_id!r}, generation={generation!r}, got {dispatched_run!r}"
@@ -1349,35 +1386,44 @@ def evaluate_forecast_receipt(
         dispatched_authority = dispatched_invocation.get("authority")
         if (
             not isinstance(dispatched_authority, Mapping)
-            or dispatched_authority.get("kind") != authority_kind
-            or dispatched_authority.get("id") != authority_id
+            or set(dispatched_authority.keys()) != {"kind", "id"}
+            or dispatched_authority["kind"] != authority_kind
+            or dispatched_authority["id"] != authority_id
         ):
             raise ValueError(
                 f"authority does not match dispatched invocation: expected kind={authority_kind!r}, id={authority_id!r}, got {dispatched_authority!r}"
             )
 
         pinned_dataset = dispatched_invocation.get("blobs", {}).get("dataset")
-        if not isinstance(pinned_dataset, Mapping) or pinned_dataset.get("digest") != actual_dataset_blob["digest"]:
+        if (
+            not isinstance(pinned_dataset, Mapping)
+            or set(pinned_dataset.keys()) != {"digest", "version", "sizeBytes"}
+            or pinned_dataset["digest"] != actual_dataset_blob["digest"]
+        ):
             raise ValueError(
                 f"evaluated dataset snapshot {actual_dataset_blob['digest']} does not match dispatched blob pin {pinned_dataset!r}"
             )
-        if pinned_dataset.get("sizeBytes") != actual_dataset_blob["sizeBytes"]:
+        if type(pinned_dataset["sizeBytes"]) is not int or pinned_dataset["sizeBytes"] != actual_dataset_blob["sizeBytes"]:
             raise ValueError("evaluated dataset snapshot size does not match dispatched blob pin")
-        if pinned_dataset.get("version") != dataset_revision:
+        if pinned_dataset["version"] != dataset_revision:
             raise ValueError(
-                f"dispatched blobs.dataset.version {pinned_dataset.get('version')!r} does not match dataset_revision {dataset_revision!r}"
+                f"dispatched blobs.dataset.version {pinned_dataset['version']!r} does not match dataset_revision {dataset_revision!r}"
             )
 
         pinned_model = dispatched_invocation.get("blobs", {}).get("model")
-        if not isinstance(pinned_model, Mapping) or pinned_model.get("digest") != actual_model_blob["digest"]:
+        if (
+            not isinstance(pinned_model, Mapping)
+            or set(pinned_model.keys()) != {"digest", "version", "sizeBytes"}
+            or pinned_model["digest"] != actual_model_blob["digest"]
+        ):
             raise ValueError(
                 f"registered model artifact {actual_model_blob['digest']} does not match dispatched model blob pin {pinned_model!r}"
             )
-        if pinned_model.get("sizeBytes") != actual_model_blob["sizeBytes"]:
+        if type(pinned_model["sizeBytes"]) is not int or pinned_model["sizeBytes"] != actual_model_blob["sizeBytes"]:
             raise ValueError("registered model artifact size does not match dispatched model blob pin")
-        if pinned_model.get("version") != version_id:
+        if pinned_model["version"] != version_id:
             raise ValueError(
-                f"dispatched blobs.model.version {pinned_model.get('version')!r} does not match version_id {version_id!r}"
+                f"dispatched blobs.model.version {pinned_model['version']!r} does not match version_id {version_id!r}"
             )
 
         dispatched_inputs = dispatched_invocation.get("inputs")
@@ -1447,6 +1493,8 @@ def evaluate_forecast_receipt(
     receipt = build_evaluation_receipt(
         invocation,
         evaluation_revision=dataset_revision,
+        evaluated_artifact_sha256=actual_model_blob["digest"].removeprefix("sha256:"),
+        evaluated_artifact_size=actual_model_blob["sizeBytes"],
         metric_name=metric_name,
         metric_value=metric_value,
         contracts_passed=contracts_passed,

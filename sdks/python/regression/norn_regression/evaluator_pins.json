@@ -3,5 +3,5 @@
   "dockerfile": "sha256:208ad3e35c4bca5743b54ce9e01cd6e7a9b25eaeedddfd3ea6b8454e7d766ffd",
   "evaluatorCliSource": "sha256:20af5c3138a5a2f232783307c65f5737410cf993e92471c44e624acbf818f12c",
   "initSource": "sha256:f0b12ce3d5196e69c5ef12b2fc91961405cd54702cb6f6a0dbfc8b218c68de45",
-  "receiptSource": "sha256:14d027c607353fa25f8aacf7770e536069d6ead83921586ad31709d533700501"
+  "receiptSource": "sha256:0c791aae2c792800bf7fa950377c07f31be6db0c0d96457bdf5d22d36e608683"
 }

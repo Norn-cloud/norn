@@ -296,6 +296,11 @@ class ForecastReceiptTests(unittest.TestCase):
         )
         good_summary = good_receipt["outcome"]["success"]["summary"]
         self.assertEqual(good_summary["metric_value"], Decimal(0))
+        self.assertEqual(
+            good_summary["evaluated_artifact_sha256"],
+            invocation["blobs"]["model"]["digest"].removeprefix("sha256:"),
+        )
+        self.assertEqual(good_summary["evaluated_artifact_size"], len(good_model))
         self.assertTrue(good_summary["contracts_passed"])
         self.assertEqual(len(good_checks), 2)
 
@@ -527,6 +532,115 @@ class ForecastReceiptTests(unittest.TestCase):
                 order="seq",
                 dispatched_invocation=wrong_auth_kind,
             )
+
+        # Extra nested keys and float generation (1.0) in dispatched invocation must refuse.
+        float_gen = copy.deepcopy(invocation)
+        float_gen["run"]["generation"] = 1.0
+        with self.assertRaisesRegex(ValueError, "run does not match"):
+            evaluate_forecast_receipt(
+                snap_bytes,
+                good_model,
+                "y",
+                ["x1"],
+                tenant="org_demo/dev",
+                authority_id="svc:evaluator",
+                command_id="cmd-eval-good",
+                version_id="v1",
+                model_id="supply.demand_forecast",
+                evaluation_run="run-eval",
+                dataset_revision="c10",
+                metric_name="wape",
+                order="seq",
+                dispatched_invocation=float_gen,
+            )
+        extra_run = copy.deepcopy(invocation)
+        extra_run["run"]["extra"] = "bad"
+        with self.assertRaisesRegex(ValueError, "run does not match"):
+            evaluate_forecast_receipt(
+                snap_bytes,
+                good_model,
+                "y",
+                ["x1"],
+                tenant="org_demo/dev",
+                authority_id="svc:evaluator",
+                command_id="cmd-eval-good",
+                version_id="v1",
+                model_id="supply.demand_forecast",
+                evaluation_run="run-eval",
+                dataset_revision="c10",
+                metric_name="wape",
+                order="seq",
+                dispatched_invocation=extra_run,
+            )
+        extra_auth = copy.deepcopy(invocation)
+        extra_auth["authority"]["extra"] = "bad"
+        with self.assertRaisesRegex(ValueError, "authority does not match"):
+            evaluate_forecast_receipt(
+                snap_bytes,
+                good_model,
+                "y",
+                ["x1"],
+                tenant="org_demo/dev",
+                authority_id="svc:evaluator",
+                command_id="cmd-eval-good",
+                version_id="v1",
+                model_id="supply.demand_forecast",
+                evaluation_run="run-eval",
+                dataset_revision="c10",
+                metric_name="wape",
+                order="seq",
+                dispatched_invocation=extra_auth,
+            )
+
+        # >4,300-digit values in a canonical snapshot score and format contracts without str(int) errors.
+        huge_val = Decimal("1" + "0" * 4499 + "7")
+        huge_rows = [{"id": "h1", "y": huge_val, "x1": huge_val}]
+        huge_model = encode_model_artifact(
+            model_id="supply.demand_forecast",
+            target="y",
+            features=["x1"],
+            intercept="0",
+            coefficients={"x1": "1"},
+            contracts={"minPrediction": "0", "maxMae": "0"},
+        )
+        _, huge_receipt, huge_checks, _ = evaluate_forecast_receipt(
+            huge_rows,
+            huge_model,
+            "y",
+            ["x1"],
+            tenant="org_demo/dev",
+            authority_id="svc:evaluator",
+            command_id="cmd-huge",
+            version_id="v-huge",
+            model_id="supply.demand_forecast",
+            evaluation_run="run-eval",
+            dataset_revision="c10",
+            metric_name="mae",
+        )
+        self.assertTrue(huge_receipt["outcome"]["success"]["summary"]["contracts_passed"])
+        self.assertEqual(len(huge_checks), 2)
+
+    def test_dockerfile_verifier_rejects_stage_alias_and_tab_copy(self):
+        src_root = Path(__file__).resolve().parent
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            pkg = tmp_root / "norn_regression"
+            pkg.mkdir()
+            for name in ("__init__.py", "receipt.py", "evaluator_cli.py", "evaluator_pins.json"):
+                (pkg / name).write_bytes((src_root / "norn_regression" / name).read_bytes())
+            orig_df = (src_root / "Dockerfile.evaluator").read_text(encoding="utf-8")
+
+            # Reject FROM ... AS stage even if everything else matches.
+            staged_df = orig_df.replace("535\n", "535 AS stage\n", 1)
+            (tmp_root / "Dockerfile.evaluator").write_text(staged_df, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "must declare exactly one"):
+                verify_evaluator_artifact_pins(tmp_root)
+
+            # Reject tab-separated extra COPY instruction.
+            tab_df = orig_df + "COPY\t/etc/passwd\t/app/leak\n"
+            (tmp_root / "Dockerfile.evaluator").write_text(tab_df, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "COPY set mismatch"):
+                verify_evaluator_artifact_pins(tmp_root)
 
 
 if __name__ == "__main__":

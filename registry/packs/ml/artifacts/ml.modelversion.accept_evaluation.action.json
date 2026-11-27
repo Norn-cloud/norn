@@ -15,10 +15,12 @@
     "effectProgram": {
       "acceptReceipt": {
         "digestProperty": "evaluation_receipt",
-        "manifestDigest": "sha256:be922f45ee8dc4f7c990c611f9be5b0edaa83781121f7321632e35d37681d736",
+        "manifestDigest": "sha256:727d22e10828fff4346a4c231533eda37216d4b74ae5d1264fb4d9b6fcf3fef0",
         "referenceField": "evaluation_receipt",
         "resultBindings": {
           "contracts_passed": "contracts_passed",
+          "evaluated_artifact_sha256": "evaluated_artifact_sha256",
+          "evaluated_artifact_size": "evaluated_artifact_size",
           "evaluation_revision": "evaluation_revision",
           "metric_name": "metric_name",
           "metric_value": "metric_value"

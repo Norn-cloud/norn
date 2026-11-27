@@ -12,7 +12,7 @@ import { Norn } from "@norn/authoring"
 // Content digest of `FORECAST_EVALUATOR_MANIFEST` in
 // `sdks/python/regression/norn_regression/receipt.py` (`ml.forecast.evaluate` v1).
 const FORECAST_EVALUATOR_MANIFEST_DIGEST =
-  "sha256:be922f45ee8dc4f7c990c611f9be5b0edaa83781121f7321632e35d37681d736"
+  "sha256:727d22e10828fff4346a4c231533eda37216d4b74ae5d1264fb4d9b6fcf3fef0"
 
 const Version = Schema.Struct({
   version_id: Schema.String, // "<model id>@<version>"
@@ -29,6 +29,8 @@ const Version = Schema.Struct({
   pinned_dataset_revision: Schema.String, // the evaluation dataset this version must be evaluated on
   evaluation_receipt: Schema.NullOr(Schema.String), // authenticated FunctionReceipt content digest
   evaluation_revision: Schema.NullOr(Schema.String), // snapshot read by the authenticated evaluator
+  evaluated_artifact_sha256: Schema.NullOr(Schema.String), // SHA-256 of the model bytes scored by the evaluator
+  evaluated_artifact_size: Schema.NullOr(Schema.Int), // byte size of the model bytes scored by the evaluator
   metric_name: Schema.NullOr(Schema.String),
   metric_value: Schema.NullOr(Norn.decimal(9)),
   contracts_passed: Schema.NullOr(Schema.Boolean),
@@ -39,14 +41,16 @@ export const ModelVersionEvidence = Norn.interfaceType({
   properties: Version,
   invariants: [{
     id: "evaluated_on_pinned_dataset",
-    message: "A production model version has an authenticated evaluation receipt on its pinned dataset revision, and every output contract held.",
+    message: "A production model version has an authenticated evaluation receipt on its registered artifact and pinned dataset revision, and every output contract held.",
     expression: Norn.expression(
       Version,
       (self) =>
         self.status !== "production" ||
         ((self.contracts_passed ?? false) &&
           self.evaluation_receipt !== null &&
-          self.evaluation_revision === self.pinned_dataset_revision),
+          self.pinned_dataset_revision === self.evaluation_revision &&
+          self.artifact_sha256 === self.evaluated_artifact_sha256 &&
+          self.artifact_size === self.evaluated_artifact_size),
     ),
   }],
 })
@@ -68,6 +72,8 @@ const StoredVersion = Schema.Struct({
   pinned_dataset_revision: Schema.String,
   evaluation_receipt: Schema.NullOr(Schema.String),
   evaluation_revision: Schema.NullOr(Schema.String),
+  evaluated_artifact_sha256: Schema.NullOr(Schema.String),
+  evaluated_artifact_size: Schema.NullOr(Schema.Int),
   metric_name: Schema.NullOr(Schema.String),
   metric_value: Schema.NullOr(Norn.decimal(9)),
   contracts_passed: Schema.NullOr(Schema.Boolean),
@@ -88,15 +94,18 @@ export const ModelVersion = Norn.type({
   lifecycles: [{ property: "status", initial: ["candidate"], terminal: ["retired"], transitions: [
     { id: "accept_evaluation", from: ["candidate"], to: "evaluated" },
     // ANALYSIS-PUBLISH-1: a version without an authenticated evaluation receipt,
-    // evaluated on another revision than its pinned one (temporal leakage), or
-    // failing a contract is refused as a publication guard.
+    // evaluated on another revision than its pinned one (temporal leakage),
+    // scored on different artifact bytes than registered, or failing a contract
+    // is refused as a publication guard.
     { id: "promote", from: ["evaluated"], to: "production",
       guards: [Norn.expression(
         Version,
         (self) =>
           (self.contracts_passed ?? false) &&
           self.evaluation_receipt !== null &&
-          self.evaluation_revision === self.pinned_dataset_revision,
+          self.pinned_dataset_revision === self.evaluation_revision &&
+          self.artifact_sha256 === self.evaluated_artifact_sha256 &&
+          self.artifact_size === self.evaluated_artifact_size,
       )],
       guardRefusalCode: "core.projection.publication_guard" },
     { id: "retire", from: ["candidate", "evaluated", "production"], to: "retired" },
@@ -167,6 +176,8 @@ export const AcceptModelEvaluation = Norn.action({
       digestProperty: "evaluation_receipt",
       resultBindings: {
         evaluation_revision: "evaluation_revision",
+        evaluated_artifact_sha256: "evaluated_artifact_sha256",
+        evaluated_artifact_size: "evaluated_artifact_size",
         metric_name: "metric_name",
         metric_value: "metric_value",
         contracts_passed: "contracts_passed",

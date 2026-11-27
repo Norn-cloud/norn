@@ -210,7 +210,7 @@ enum Outcome {
 const FORECAST_EVALUATOR_EXECUTOR: &str = "pool.ml-evaluator";
 const FORECAST_EVALUATOR_AUTHORITY: &str = "svc:ml-evaluator";
 const FORECAST_EVALUATOR_MANIFEST_DIGEST: &str =
-    "sha256:be922f45ee8dc4f7c990c611f9be5b0edaa83781121f7321632e35d37681d736";
+    "sha256:727d22e10828fff4346a4c231533eda37216d4b74ae5d1264fb4d9b6fcf3fef0";
 const FORECAST_EVALUATOR_PROFILE_DIGEST: &str =
     "sha256:a780163924782b48cc7ef188073bbc22d903bdd5a55825b7077c9e9eb9c7656e";
 
@@ -1808,7 +1808,7 @@ fn forecast_evaluator_manifest_json() -> Value {
         "cache": "none",
         "capabilities": [],
         "dependencyClosure": {
-            "digest": "sha256:6771d0cf819f45bb9bc28ebe11992fbc4d5894b5f2739cef26f19326a69d9477",
+            "digest": "sha256:7de35b8e20e7846ea24f9c06cf34311dcc32ec8302d1ae12ee28996167aacf6d",
             "entries": [
                 {
                     "digest": "sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535",
@@ -1831,7 +1831,7 @@ fn forecast_evaluator_manifest_json() -> Value {
                     "name": "norn-evaluator-init"
                 },
                 {
-                    "digest": "sha256:14d027c607353fa25f8aacf7770e536069d6ead83921586ad31709d533700501",
+                    "digest": "sha256:0c791aae2c792800bf7fa950377c07f31be6db0c0d96457bdf5d22d36e608683",
                     "kind": "library",
                     "name": "norn-evaluator-receipt"
                 }
@@ -1855,7 +1855,7 @@ fn forecast_evaluator_manifest_json() -> Value {
         },
         "functionId": "ml.forecast.evaluate",
         "implementation": {
-            "digest": "sha256:ec78dc1e1d97846fe621ffd37faa9f9be46f8fc81c4b8c623870ca86de0372d2",
+            "digest": "sha256:949a59f1deae17acca5d42546b1543639d0dcde535f347af1a111110d7b125db",
             "entryPoint": "python -m norn_regression.evaluator_cli",
             "format": "oci_image",
             "locator": null
@@ -1866,7 +1866,7 @@ fn forecast_evaluator_manifest_json() -> Value {
             "version": 1
         },
         "outputSchema": {
-            "digest": "sha256:7b820a8742077c755bd496e680ead083a75cd99c1ad2508f6d213786ef736937",
+            "digest": "sha256:61bf3f4fe4992c7280a8f1e8c165e7996426524ee48971344387e0225e4f8328",
             "id": "ml.forecast.evaluate.output",
             "version": 1
         },
@@ -1887,6 +1887,8 @@ fn forecast_evaluator_manifest_json() -> Value {
 
 fn evaluation_summary(
     evaluated_revision: &str,
+    artifact_sha256: &str,
+    artifact_size: i64,
     contracts_passed: bool,
 ) -> Result<JsonObject, String> {
     let metric_val = Decimal::parse_wire("0.12").map_err(|e| format!("decimal: {e}"))?;
@@ -1894,6 +1896,14 @@ fn evaluation_summary(
         (
             "evaluation_revision".to_owned(),
             RuntimeValue::String(evaluated_revision.to_owned()),
+        ),
+        (
+            "evaluated_artifact_sha256".to_owned(),
+            RuntimeValue::String(artifact_sha256.to_owned()),
+        ),
+        (
+            "evaluated_artifact_size".to_owned(),
+            RuntimeValue::from(artifact_size),
         ),
         (
             "metric_name".to_owned(),
@@ -1921,6 +1931,8 @@ fn evaluation_invocation(
     version_id: &str,
     manifest_digest: &str,
     evaluated_revision: &str,
+    artifact_sha256: &str,
+    artifact_size: u64,
     now_millis: u64,
 ) -> FunctionInvocation {
     FunctionInvocation {
@@ -1982,9 +1994,9 @@ fn evaluation_invocation(
             (
                 "model".to_owned(),
                 BlobRef {
-                    digest: Digest(format!("sha256:{}", "ab".repeat(32))),
+                    digest: Digest(format!("sha256:{artifact_sha256}")),
                     version: Some(version_id.to_owned()),
-                    size_bytes: 4096,
+                    size_bytes: artifact_size,
                 },
             ),
         ]),
@@ -2004,20 +2016,33 @@ fn evaluation_invocation(
     }
 }
 
-fn build_evaluation_receipt(
-    cmd_id: &str,
-    version_id: &str,
-    manifest_digest: &str,
-    evaluated_revision: &str,
+struct EvalReceiptSpec<'a> {
+    cmd_id: &'a str,
+    version_id: &'a str,
+    manifest_digest: &'a str,
+    evaluated_revision: &'a str,
+    artifact_sha256: &'a str,
+    artifact_size: u64,
     contracts_passed: bool,
+}
+
+fn build_evaluation_receipt(
+    spec: &EvalReceiptSpec<'_>,
     now_millis: u64,
 ) -> Result<(DispatchedCommand, FunctionReceipt, JsonObject), String> {
-    let summary = evaluation_summary(evaluated_revision, contracts_passed)?;
+    let summary = evaluation_summary(
+        spec.evaluated_revision,
+        spec.artifact_sha256,
+        i64::try_from(spec.artifact_size).map_err(|e| format!("artifact size: {e}"))?,
+        spec.contracts_passed,
+    )?;
     let invocation = evaluation_invocation(
-        cmd_id,
-        version_id,
-        manifest_digest,
-        evaluated_revision,
+        spec.cmd_id,
+        spec.version_id,
+        spec.manifest_digest,
+        spec.evaluated_revision,
+        spec.artifact_sha256,
+        spec.artifact_size,
         now_millis,
     );
     let dispatched = DispatchedCommand::pin(
@@ -2067,22 +2092,11 @@ fn build_evaluation_receipt(
 
 fn retain_evaluation_receipt(
     stress: &mut Stress,
-    cmd_id: &str,
-    version_id: &str,
-    manifest_digest: &str,
-    evaluated_revision: &str,
-    contracts_passed: bool,
+    spec: &EvalReceiptSpec<'_>,
 ) -> Result<String, String> {
-    let (dispatched, receipt, encoded) = build_evaluation_receipt(
-        cmd_id,
-        version_id,
-        manifest_digest,
-        evaluated_revision,
-        contracts_passed,
-        stress.now().as_millis(),
-    )?;
+    let (dispatched, receipt, encoded) = build_evaluation_receipt(spec, stress.now().as_millis())?;
     if let Ok(mut answers) = stress.receipt_answers.lock() {
-        answers.insert(cmd_id.to_owned(), encoded);
+        answers.insert(spec.cmd_id.to_owned(), encoded);
     }
     let state = norn_ir::runtime::encode(&CommandState::dispatched(&dispatched))
         .map_err(|e| format!("encode state: {e}"))?;
@@ -2095,7 +2109,7 @@ fn retain_evaluation_receipt(
         .cell
         .commit(CellCommit {
             writes: vec![FactWrite {
-                key: FactKey::new(FUNCTION_COMMAND_TYPE, cmd_id),
+                key: FactKey::new(FUNCTION_COMMAND_TYPE, spec.cmd_id),
                 expected: FactVersion::ABSENT,
                 mutation: FactMutation::Put {
                     values: JsonObject::from([("state".to_owned(), state)]),
@@ -2104,7 +2118,7 @@ fn retain_evaluation_receipt(
             effects: vec![Effect::Perform(Command {
                 id: dispatched.command_id(),
                 generation: dispatched.generation(),
-                idempotency_key: IdempotencyKey(format!("{cmd_id}/1")),
+                idempotency_key: IdempotencyKey(format!("{}/1", spec.cmd_id)),
                 freshness,
                 deadline: None,
                 payload: JsonObject::from([
@@ -2123,7 +2137,10 @@ fn retain_evaluation_receipt(
         .perform()
         .map_err(|e| format!("perform evaluation command: {e}"))?;
     if performed.is_none() {
-        return Err(format!("evaluation command {cmd_id} did not perform"));
+        return Err(format!(
+            "evaluation command {} did not perform",
+            spec.cmd_id
+        ));
     }
     let command = dispatched.command_id();
     let digest = stress
@@ -2160,12 +2177,17 @@ fn assert_forecast_evaluator_manifest_parity() -> Result<(), String> {
         admitted.execution_profile.0,
         FORECAST_EVALUATOR_PROFILE_DIGEST
     );
+    let registered_sha = "ab".repeat(32);
     let (dispatched, receipt, _) = build_evaluation_receipt(
-        "cmd-parity-check",
-        "v1",
-        FORECAST_EVALUATOR_MANIFEST_DIGEST,
-        "c1",
-        true,
+        &EvalReceiptSpec {
+            cmd_id: "cmd-parity-check",
+            version_id: "v1",
+            manifest_digest: FORECAST_EVALUATOR_MANIFEST_DIGEST,
+            evaluated_revision: "c1",
+            artifact_sha256: &registered_sha,
+            artifact_size: 4096,
+            contracts_passed: true,
+        },
         CLOCK,
     )?;
     let inv_diags = check_function_invocation(&dispatched.invocation, &admitted);
@@ -2196,15 +2218,21 @@ fn accept_authenticated_evaluations(
     )?;
     assert_eq!(unretained_code, "action.receipt_unknown");
 
+    let registered_sha = "ab".repeat(32);
+    let mismatched_sha = "ef".repeat(32);
     // Wrong manifest digest is refused even when retained by the host.
     let wrong_manifest = format!("sha256:{}", "9".repeat(64));
     let wrong_manifest_receipt = retain_evaluation_receipt(
         stress,
-        "cmd-eval-wrong-manifest",
-        "v1",
-        &wrong_manifest,
-        k1,
-        true,
+        &EvalReceiptSpec {
+            cmd_id: "cmd-eval-wrong-manifest",
+            version_id: "v1",
+            manifest_digest: &wrong_manifest,
+            evaluated_revision: k1,
+            artifact_sha256: &registered_sha,
+            artifact_size: 4096,
+            contracts_passed: true,
+        },
     )?;
     let (wrong_manifest_code, _) = stress.refused(
         "ml.modelversion.accept_evaluation",
@@ -2215,27 +2243,52 @@ fn accept_authenticated_evaluations(
 
     let r1 = retain_evaluation_receipt(
         stress,
-        "cmd-eval-v1",
-        "v1",
-        FORECAST_EVALUATOR_MANIFEST_DIGEST,
-        k1,
-        true,
+        &EvalReceiptSpec {
+            cmd_id: "cmd-eval-v1",
+            version_id: "v1",
+            manifest_digest: FORECAST_EVALUATOR_MANIFEST_DIGEST,
+            evaluated_revision: k1,
+            artifact_sha256: &registered_sha,
+            artifact_size: 4096,
+            contracts_passed: true,
+        },
     )?;
     let r2 = retain_evaluation_receipt(
         stress,
-        "cmd-eval-v2",
-        "v2",
-        FORECAST_EVALUATOR_MANIFEST_DIGEST,
-        k2,
-        true,
+        &EvalReceiptSpec {
+            cmd_id: "cmd-eval-v2",
+            version_id: "v2",
+            manifest_digest: FORECAST_EVALUATOR_MANIFEST_DIGEST,
+            evaluated_revision: k2,
+            artifact_sha256: &registered_sha,
+            artifact_size: 4096,
+            contracts_passed: true,
+        },
     )?;
     let r3 = retain_evaluation_receipt(
         stress,
-        "cmd-eval-v3",
-        "v3",
-        FORECAST_EVALUATOR_MANIFEST_DIGEST,
-        k1,
-        false,
+        &EvalReceiptSpec {
+            cmd_id: "cmd-eval-v3",
+            version_id: "v3",
+            manifest_digest: FORECAST_EVALUATOR_MANIFEST_DIGEST,
+            evaluated_revision: k1,
+            artifact_sha256: &registered_sha,
+            artifact_size: 4096,
+            contracts_passed: false,
+        },
+    )?;
+    // Same-version receipt on K1 passing contracts, but scored on different model bytes.
+    let r4 = retain_evaluation_receipt(
+        stress,
+        &EvalReceiptSpec {
+            cmd_id: "cmd-eval-v4-wrong-artifact",
+            version_id: "v4",
+            manifest_digest: FORECAST_EVALUATOR_MANIFEST_DIGEST,
+            evaluated_revision: k1,
+            artifact_sha256: &mismatched_sha,
+            artifact_size: 4096,
+            contracts_passed: true,
+        },
     )?;
     // RUN-BIND-1: a receipt dispatched for v2 cannot be accepted for v1.
     let (run_mismatch_code, _) = stress.refused(
@@ -2245,7 +2298,7 @@ fn accept_authenticated_evaluations(
     )?;
     assert_eq!(run_mismatch_code, "action.receipt_run_mismatch");
 
-    for (id, receipt_ref) in [("v1", &r1), ("v2", &r2), ("v3", &r3)] {
+    for (id, receipt_ref) in [("v1", &r1), ("v2", &r2), ("v3", &r3), ("v4", &r4)] {
         stress.ok(
             "ml.modelversion.accept_evaluation",
             "eng:dina",
@@ -2295,7 +2348,7 @@ fn register_versions(stress: &mut Stress) -> Result<(String, String, String), St
     let (forged_code, _) = stress.refused("ml.modelversion.register", "eng:dina", self_attested)?;
     assert_eq!(forged_code, "action.invalid_input");
 
-    for id in ["v0", "v1", "v2", "v3"] {
+    for id in ["v0", "v1", "v2", "v3", "v4"] {
         stress.ok("ml.modelversion.register", "eng:dina", version(id, &k1))?;
     }
     let r1 = accept_authenticated_evaluations(stress, &k1, &k2)?;
@@ -2315,6 +2368,14 @@ fn assert_promoted_v1_evidence(stress: &Stress, r1: &str, k1: &str) -> Result<()
     assert_eq!(
         stored.get("evaluation_revision"),
         Some(&RuntimeValue::String(k1.to_owned()))
+    );
+    assert_eq!(
+        stored.get("evaluated_artifact_sha256"),
+        Some(&RuntimeValue::String("ab".repeat(32)))
+    );
+    assert_eq!(
+        stored.get("evaluated_artifact_size"),
+        Some(&RuntimeValue::from(4096_i64))
     );
     assert_eq!(
         stored.get("contracts_passed"),
@@ -2359,6 +2420,16 @@ fn axis6_promotion_is_pinned_to_k1_and_forecasts_need_production() -> Result<(),
         json!({"version_id": "v3"}),
     )?;
     assert!(!stale.is_empty() && !failed.is_empty());
+    // Same-version passing receipt on K1 scored on DIFFERENT model artifact bytes refuses promotion.
+    let (mismatch_code, mismatch_msg) = stress.refused(
+        "ml.modelversion.promote",
+        "ops:omar",
+        json!({"version_id": "v4"}),
+    )?;
+    assert_eq!(
+        mismatch_code, "core.projection.publication_guard",
+        "{mismatch_msg}"
+    );
     stress.refused(
         "supply.forecast.record",
         "eng:dina",
