@@ -46,6 +46,8 @@ mod object_query;
 mod object_routes;
 #[path = "privacy.rs"]
 mod privacy;
+#[path = "pull_cursor_atomicity_quint.rs"]
+mod pull_cursor_atomicity_quint;
 #[path = "pull_rest.rs"]
 mod pull_rest;
 #[path = "question_routes.rs"]

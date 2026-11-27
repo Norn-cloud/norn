@@ -100,6 +100,8 @@ use proptest_state_machine::{ReferenceStateMachine, StateMachineTest};
 use crate::coverage::{self, Coverage};
 use crate::runner::{Failure, Settings};
 
+mod apply;
+
 /// One committed ledger entry of a [`MemoryCell`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct LedgerEntry<E> {
@@ -1093,6 +1095,31 @@ pub trait SimulatedCell:
         Ok(false)
     }
 
+    /// Durably authorizes reissuing an ambiguous outbox head from
+    /// `from_generation` to `next_generation` (`D1`). Hosts without durable
+    /// outbox reconciliation (such as [`MemoryCell`]) keep the default no-op.
+    ///
+    /// # Errors
+    /// A host failure, as its message.
+    fn sim_authorize_reissue(
+        &mut self,
+        _command: &CommandId,
+        _from_generation: Generation,
+        _next_generation: Generation,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Whether this host retains per-generation late outcomes on superseded
+    /// dispatches (`D1`), checked in the refinement snapshot.
+    const TRACKS_LATE_OUTCOMES: bool = false;
+
+    /// Sorted `(command_id, prior_confirmed_success_generations)` observed on
+    /// hosts that declare [`Self::TRACKS_LATE_OUTCOMES`].
+    fn sim_prior_outcomes(&self) -> Vec<(CommandId, Vec<u64>)> {
+        Vec::new()
+    }
+
     /// A fresh, empty cell at the epoch whose outside world answers every
     /// command with [`law_responder`].
     fn sim_new() -> Self;
@@ -1340,6 +1367,22 @@ struct ArmedFault {
     firing: Firing,
 }
 
+/// D1 reissue authorization target passed from the model to the host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReissueAuth {
+    command: CommandId,
+    from: Generation,
+    next: Generation,
+}
+
+/// Model expectations plus any D1 reissue authorizations for a chained
+/// `Dispatching` or `Exchange` transition.
+struct ChainPlan {
+    chain: Vec<Expect>,
+    auth_prepare: Option<ReissueAuth>,
+    auth_reissue: Option<ReissueAuth>,
+}
+
 /// Everything about a cell the laws compare after each operation.
 #[derive(Debug, Clone, PartialEq)]
 struct Snapshot {
@@ -1351,6 +1394,27 @@ struct Snapshot {
     timers: Vec<DueTimer<LawInput>>,
     ledger: Vec<LedgerEntry<LawEvent>>,
     executions: u64,
+    prior_outcomes: Vec<(CommandId, Vec<u64>)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LateOutcomeTracking {
+    Disabled,
+    Enabled,
+}
+
+impl LateOutcomeTracking {
+    const fn from_flag(enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+
+    const fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
 }
 
 /// The independent reference model of a cell. Model facts (canonical
@@ -1361,6 +1425,7 @@ pub struct CellModel {
     now: u64,
     seq: u64,
     commits_perform_claims: bool,
+    late_outcomes: LateOutcomeTracking,
     types: Vec<ObjectTypeDef>,
     facts: BTreeMap<FactKey, FactState>,
     concrete: BTreeMap<FactKey, ObjectTypeName>,
@@ -1371,6 +1436,20 @@ pub struct CellModel {
     /// result record): it is never executed again at this generation.
     head_unknown: bool,
     generations: BTreeMap<CommandId, Generation>,
+    /// Canonical payload first enqueued for each `(command_id, generation)` so
+    /// generated random commits stay compliant with D1 `PayloadDiverged`.
+    enqueued_payloads: BTreeMap<(CommandId, Generation), LawCommand>,
+    /// Generations durably claimed in each command's current outbox epoch.
+    dispatched_in_epoch: BTreeMap<CommandId, BTreeSet<u64>>,
+    /// Every generation durably claimed across all epochs (for durable late attachment).
+    all_dispatched: BTreeMap<CommandId, BTreeSet<u64>>,
+    /// Every generation that already has a recorded outcome across all epochs.
+    settled_generations: BTreeMap<CommandId, BTreeSet<u64>>,
+    /// Superseded prior generations in the current epoch with attached late
+    /// outcomes (D1 refinement observable).
+    prior_outcomes: BTreeMap<CommandId, BTreeSet<u64>>,
+    /// Commands whose current epoch was consumed (next enqueue starts a fresh epoch).
+    consumed_in_epoch: BTreeSet<CommandId>,
     timers: BTreeMap<TimerId, DueTimer<LawInput>>,
     inbox: Vec<Observed<LawInput>>,
     seen: BTreeSet<ObservationId>,
@@ -1391,6 +1470,7 @@ impl Default for CellModel {
             now: 0,
             seq: 0,
             commits_perform_claims: false,
+            late_outcomes: LateOutcomeTracking::Disabled,
             types: law_object_types(),
             facts: BTreeMap::new(),
             concrete: BTreeMap::new(),
@@ -1399,6 +1479,12 @@ impl Default for CellModel {
             head_performed: false,
             head_unknown: false,
             generations: BTreeMap::new(),
+            enqueued_payloads: BTreeMap::new(),
+            dispatched_in_epoch: BTreeMap::new(),
+            all_dispatched: BTreeMap::new(),
+            settled_generations: BTreeMap::new(),
+            prior_outcomes: BTreeMap::new(),
+            consumed_in_epoch: BTreeSet::new(),
             timers: BTreeMap::new(),
             inbox: Vec::new(),
             seen: BTreeSet::new(),
@@ -1804,8 +1890,9 @@ impl CellModel {
             Some(Consumed::Timer { id, .. }) => {
                 self.timers.remove(id);
             }
-            Some(Consumed::Result { .. }) => {
+            Some(Consumed::Result { command, .. }) => {
                 self.head_performed = false;
+                self.consumed_in_epoch.insert(command.clone());
                 if !self.outbox.is_empty() {
                     self.outbox.remove(0);
                 }
@@ -1878,8 +1965,14 @@ impl CellModel {
                     if known.is_some_and(|known| known >= command.generation) {
                         continue;
                     }
+                    if self.consumed_in_epoch.remove(&command.id) {
+                        self.dispatched_in_epoch.remove(&command.id);
+                        self.prior_outcomes.remove(&command.id);
+                    }
                     self.generations
                         .insert(command.id.clone(), command.generation);
+                    self.enqueued_payloads
+                        .insert((command.id.clone(), command.generation), command.payload);
                     let position = self.outbox.iter().position(|slot| slot.id == command.id);
                     if position == Some(0) {
                         self.head_performed = false;
@@ -1926,6 +2019,10 @@ impl CellModel {
             if self.commits_perform_claims {
                 self.claim();
             }
+            self.settled_generations
+                .entry(delivered.command.clone())
+                .or_default()
+                .insert(delivered.generation.0);
             self.executions = self.executions.saturating_add(1);
             self.head_performed = true;
         }
@@ -1982,6 +2079,14 @@ impl CellModel {
         if self.commits_perform_claims {
             self.claim();
         }
+        self.dispatched_in_epoch
+            .entry(head.id.clone())
+            .or_default()
+            .insert(head.generation.0);
+        self.all_dispatched
+            .entry(head.id.clone())
+            .or_default()
+            .insert(head.generation.0);
         self.head_unknown = true;
         let input = law_responder(&head);
         self.in_flight
@@ -1990,19 +2095,100 @@ impl CellModel {
         Expect::Dispatch(Some(head))
     }
 
+    /// Target `(command, from_gen, next_gen)` if `commit` reissues an
+    /// ambiguous (`head_unknown`) outbox head and therefore requires durable
+    /// `AuthorizeReissue` reconciliation before committing (`D1`).
+    fn reissue_target(&self, commit: &LawCommit) -> Option<ReissueAuth> {
+        let head = self.outbox.first().filter(|_| self.head_unknown)?;
+        commit.effects.iter().find_map(|effect| match effect {
+            Effect::Perform(command)
+                if command.id == head.id && command.generation > head.generation =>
+            {
+                Some(ReissueAuth {
+                    command: head.id.clone(),
+                    from: head.generation,
+                    next: command.generation,
+                })
+            }
+            Effect::Perform(_) | Effect::Schedule(_) | Effect::CancelTimer(_) => None,
+        })
+    }
+
+    fn authorize_if_needed(&mut self, commit: &LawCommit) -> Option<ReissueAuth> {
+        let target = self.reissue_target(commit)?;
+        if self.commits_perform_claims {
+            self.claim();
+        }
+        Some(target)
+    }
+
+    /// Normalize generated random `Effect::Perform` values so they do not
+    /// trigger host-only D1 outbox refusals (`PayloadDiverged` or unauthorized
+    /// reissue over a claimed/succeeded head) that `MemoryCell` (`Infallible`)
+    /// cannot return via `CommitError::Host`.
+    fn normalize_effects(
+        enqueued_payloads: &BTreeMap<(CommandId, Generation), LawCommand>,
+        blocked_head: Option<&(CommandId, Generation)>,
+        consumes: Option<&Consumed>,
+        effects: Vec<Effect<LawCommand, LawInput>>,
+    ) -> Vec<Effect<LawCommand, LawInput>> {
+        let mut known = enqueued_payloads.clone();
+        let active_block = blocked_head.filter(|(id, gen_id)| {
+            !matches!(
+                consumes,
+                Some(Consumed::Result {
+                    command,
+                    generation,
+                }) if command == id && generation == gen_id
+            )
+        });
+        effects
+            .into_iter()
+            .map(|effect| match effect {
+                Effect::Perform(mut command) => {
+                    if let Some((head_id, head_gen)) = active_block
+                        && &command.id == head_id
+                        && command.generation > *head_gen
+                    {
+                        command.generation = *head_gen;
+                        command.idempotency_key =
+                            IdempotencyKey(format!("{}/{}", command.id.0, head_gen.0));
+                    }
+                    let key = (command.id.clone(), command.generation);
+                    if let Some(existing) = known.get(&key) {
+                        command.payload = *existing;
+                    } else {
+                        known.insert(key, command.payload);
+                    }
+                    Effect::Perform(command)
+                }
+                other @ (Effect::Schedule(_) | Effect::CancelTimer(_)) => other,
+            })
+            .collect()
+    }
+
     /// A [`Dispatching`]: the expectations of its preparing commit, its
-    /// dispatch, and its re-issue and second dispatch, in order.
-    fn dispatching(&mut self, dispatching: &Dispatching) -> Vec<Expect> {
+    /// dispatch, and its re-issue and second dispatch, in order, together with
+    /// any D1 reissue authorizations needed before `prepare` or `reissue`.
+    fn dispatching(&mut self, dispatching: &Dispatching) -> ChainPlan {
         let mut chain = Vec::new();
+        let mut auth_prepare = None;
+        let mut auth_reissue = None;
         if let Some(commit) = &dispatching.prepare {
+            auth_prepare = self.authorize_if_needed(commit);
             chain.push(Expect::Commit(self.commit(commit)));
         }
         chain.push(self.dispatch());
         if let Some(commit) = &dispatching.reissue {
+            auth_reissue = self.authorize_if_needed(commit);
             chain.push(Expect::Commit(self.commit(commit)));
             chain.push(self.dispatch());
         }
-        chain
+        ChainPlan {
+            chain,
+            auth_prepare,
+            auth_reissue,
+        }
     }
 
     /// A dispatch prepared to claim a fresh head; with `twice`, re-issued and
@@ -2051,6 +2237,10 @@ impl CellModel {
         if current && !self.head_performed {
             self.head_performed = true;
             self.head_unknown = false;
+            self.settled_generations
+                .entry(delivery.command.id.clone())
+                .or_default()
+                .insert(delivery.command.generation.0);
             self.executions = self.executions.saturating_add(1);
             return Expect::Deliver {
                 recorded: true,
@@ -2062,6 +2252,31 @@ impl CellModel {
             .generations
             .get(&delivery.command.id)
             .is_some_and(|known| *known > delivery.command.generation);
+        if stale
+            && self
+                .all_dispatched
+                .get(&delivery.command.id)
+                .is_some_and(|gens| gens.contains(&delivery.command.generation.0))
+            && self
+                .settled_generations
+                .entry(delivery.command.id.clone())
+                .or_default()
+                .insert(delivery.command.generation.0)
+        {
+            if self.late_outcomes.is_enabled() && self.commits_perform_claims {
+                self.claim();
+            }
+            if self
+                .dispatched_in_epoch
+                .get(&delivery.command.id)
+                .is_some_and(|gens| gens.contains(&delivery.command.generation.0))
+            {
+                self.prior_outcomes
+                    .entry(delivery.command.id.clone())
+                    .or_default()
+                    .insert(delivery.command.generation.0);
+            }
+        }
         Expect::Deliver {
             recorded: false,
             stale,
@@ -2187,6 +2402,16 @@ impl CellModel {
                     // The claim is durable and the outside world ran, but no
                     // result was recorded.
                     self.claim();
+                    if let Some(head) = self.outbox.first() {
+                        self.dispatched_in_epoch
+                            .entry(head.id.clone())
+                            .or_default()
+                            .insert(head.generation.0);
+                        self.all_dispatched
+                            .entry(head.id.clone())
+                            .or_default()
+                            .insert(head.generation.0);
+                    }
                     self.head_unknown = true;
                     (Expect::Failed, Firing::Fires)
                 }
@@ -2283,12 +2508,15 @@ impl CellModel {
 
     /// An [`Exchange`] (law 7): the expectations of each of its steps, in
     /// order. Each network step advances the network's clock.
-    fn exchanging(&mut self, exchange: &Exchange) -> Vec<Expect> {
+    fn exchanging(&mut self, exchange: &Exchange) -> ChainPlan {
         let mut chain = Vec::new();
+        let mut auth_prepare = None;
         if let Some(commit) = &exchange.prepare {
+            auth_prepare = self.authorize_if_needed(commit);
             chain.push(Expect::Commit(self.commit(commit)));
         }
         chain.push(self.dispatch());
+        let auth_reissue = self.authorize_if_needed(&exchange.reissue);
         chain.push(Expect::Commit(self.commit(&exchange.reissue)));
         self.steps = self.steps.saturating_add(1);
         chain.push(self.dispatch());
@@ -2308,7 +2536,11 @@ impl CellModel {
             };
             chain.push(expect);
         }
-        chain
+        ChainPlan {
+            chain,
+            auth_prepare,
+            auth_reissue,
+        }
     }
 
     /// A [`Reinjecting`] with `payload` from this state: its observation is
@@ -2363,6 +2595,15 @@ impl CellModel {
                 .collect();
             (facts, links)
         });
+        let prior_outcomes = if self.late_outcomes.is_enabled() {
+            self.prior_outcomes
+                .iter()
+                .filter(|(_, gens)| !gens.is_empty())
+                .map(|(id, gens)| (id.clone(), gens.iter().copied().collect()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         Snapshot {
             facts,
             links,
@@ -2372,6 +2613,7 @@ impl CellModel {
             timers: self.timers.values().cloned().collect(),
             ledger: self.ledger.clone(),
             executions: self.executions,
+            prior_outcomes,
         }
     }
 
@@ -2499,6 +2741,12 @@ impl CellModel {
                 .map(Some),
         );
         let pairs = LAW_UNIVERSE * LAW_UNIVERSE;
+        let enqueued_payloads = self.enqueued_payloads.clone();
+        let blocked_head = self
+            .outbox
+            .first()
+            .filter(|_| self.head_unknown || self.head_performed)
+            .map(|head| (head.id.clone(), head.generation));
         (
             proptest::sample::select(consumes),
             0..LAW_UNIVERSE,
@@ -2510,6 +2758,12 @@ impl CellModel {
         )
             .prop_map(
                 move |(consumes, source, first, step, two, value, effects)| {
+                    let effects = Self::normalize_effects(
+                        &enqueued_payloads,
+                        blocked_head.as_ref(),
+                        consumes.as_ref(),
+                        effects,
+                    );
                     let mut targets = vec![first];
                     if two {
                         targets.push(first.wrapping_add(step) % LAW_UNIVERSE);
@@ -2610,6 +2864,12 @@ impl CellModel {
         });
         let links = self.link_strategy();
         let effect = self.effect_strategy();
+        let enqueued_payloads = self.enqueued_payloads.clone();
+        let blocked_head = self
+            .outbox
+            .first()
+            .filter(|_| self.head_unknown || self.head_performed)
+            .map(|head| (head.id.clone(), head.generation));
         (
             proptest::sample::select(self.consume_candidates()),
             reads,
@@ -2618,8 +2878,14 @@ impl CellModel {
             proptest::collection::vec(effect, 0..3),
             links,
         )
-            .prop_map(
-                |(consumes, reads, writes, events, effects, links)| CellCommit {
+            .prop_map(move |(consumes, reads, writes, events, effects, links)| {
+                let effects = Self::normalize_effects(
+                    &enqueued_payloads,
+                    blocked_head.as_ref(),
+                    consumes.as_ref(),
+                    effects,
+                );
+                CellCommit {
                     consumes,
                     reads,
                     writes,
@@ -2628,8 +2894,8 @@ impl CellModel {
                     links,
                     link_reads: Vec::new(),
                     predicate_reads: Vec::new(),
-                },
-            )
+                }
+            })
             .boxed()
     }
 }
@@ -2905,6 +3171,12 @@ pub struct CellReference {
     /// The expectations of the most recently applied [`Dispatching`], in
     /// order.
     chain: Vec<Expect>,
+    /// D1 reissue authorization needed before the preparing commit, if any.
+    auth_before_prepared: Option<ReissueAuth>,
+    /// D1 reissue authorization needed before a standalone commit, if any.
+    auth_before_commit: Option<ReissueAuth>,
+    /// D1 reissue authorization needed before a `Dispatching`/`Exchange` reissue.
+    auth_before_reissue: Option<ReissueAuth>,
     /// The case's transition mix; `None` keeps the fixed mix.
     swarm: Option<Swarm>,
 }
@@ -2919,6 +3191,7 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
     fn init_state() -> BoxedStrategy<CellReference> {
         let model = CellModel {
             commits_perform_claims: H::COMMITS_PERFORM_CLAIMS,
+            late_outcomes: LateOutcomeTracking::from_flag(H::TRACKS_LATE_OUTCOMES),
             ..CellModel::default()
         };
         if H::FAULT_KINDS.is_empty() && !H::NETWORK {
@@ -2957,10 +3230,18 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
         state.fault = None;
         state.prepared = None;
         state.chain = Vec::new();
+        state.auth_before_prepared = None;
+        state.auth_before_commit = None;
+        state.auth_before_reissue = None;
         let model = &mut state.model;
         model.steps = model.steps.saturating_add(1);
         let expected = match op {
-            CellOp::Commit(commit) => Expect::Commit(model.commit(commit)),
+            CellOp::Commit(commit) => {
+                if model.clone().commit(commit).is_ok() {
+                    state.auth_before_commit = model.authorize_if_needed(commit);
+                }
+                Expect::Commit(model.commit(commit))
+            }
             CellOp::Perform => model.perform(),
             CellOp::Observe => Expect::Observe(model.inbox.first().cloned()),
             CellOp::Clock => Expect::Clock(model.next_timer()),
@@ -2970,7 +3251,10 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
             }
             CellOp::Inject { id, payload } => model.inject(*id, *payload),
             CellOp::Dispatch(dispatching) => {
-                state.chain = model.dispatching(dispatching);
+                let plan = model.dispatching(dispatching);
+                state.chain = plan.chain;
+                state.auth_before_prepared = plan.auth_prepare;
+                state.auth_before_reissue = plan.auth_reissue;
                 Expect::Nothing
             }
             CellOp::Reinject(reinjecting) => {
@@ -2978,7 +3262,10 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
                 Expect::Nothing
             }
             CellOp::Exchange(exchange) => {
-                state.chain = model.exchanging(exchange);
+                let plan = model.exchanging(exchange);
+                state.chain = plan.chain;
+                state.auth_before_prepared = plan.auth_prepare;
+                state.auth_before_reissue = plan.auth_reissue;
                 Expect::Nothing
             }
             CellOp::Deliver(delivery) => model.deliver(delivery),
@@ -2989,10 +3276,10 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
                 Expect::Nothing
             }
             CellOp::Faulted(faulted) => {
-                state.prepared = faulted
-                    .prepare
-                    .as_ref()
-                    .map(|commit| Expect::Commit(model.commit(commit)));
+                state.prepared = faulted.prepare.as_ref().map(|commit| {
+                    state.auth_before_prepared = model.authorize_if_needed(commit);
+                    Expect::Commit(model.commit(commit))
+                });
                 let (expected, firing) = model.faulted(&faulted.target, faulted.plan);
                 state.fault = Some(ArmedFault {
                     plan: faulted.plan,
@@ -3024,363 +3311,12 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
         timers: host.sim_timers(),
         ledger: host.sim_ledger(),
         executions: host.sim_executions(),
-    }
-}
-
-/// Rebuild every listed field-only variant with an uninhabited host error.
-/// The generated `match` is exhaustive, so a new [`CommitError`] variant
-/// fails to compile until it is listed here.
-macro_rules! rehost {
-    ($error:expr; $($variant:ident $({ $($field:ident),* })?),* $(,)?) => {
-        match $error {
-            $(norn_kernel::CommitError::$variant $({ $($field),* })? =>
-                norn_kernel::CommitError::$variant $({ $($field),* })?,)*
-            norn_kernel::CommitError::Host(error) => return Err(error),
-        }
-    };
-}
-
-/// The refusal without its host error, or the host error itself.
-fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
-    Ok(rehost!(error;
-        IdentityReuse, AtomicBoundary { key }, AtomicDeliveryBoundary { consumed }, ImmutableObject { key },
-        LifecycleInitialization { key, refusal },
-        Law { key, reason }, IdentityCollision { owner, key, conflicts },
-        OwnedRowsProtected { key }, DuplicateKey { key }, NotPending { consumed }, ReceiptNotAccepted { consumed },
-        Conflict { key, expected, current }, DuplicateLink { key },
-        IdentifierTooLong { field, actual_bytes, max_bytes },
-        LinkConflict { key, expected, current }, LinkReadConflict { source_key, link },
-        UnsupportedLinkRead { source_key, link }, DuplicateLinkRead { source_key, link },
-        LinkReadTooLarge { source_key, link, actual, max }, InvalidLinkRead { source_key, link },
-        PredicateReadConflict { object_type }, UnsupportedPredicateRead { object_type },
-        InvalidPredicateRead { object_type, reason }, DanglingLink { key, missing },
-        LinkTarget { key }, LinkCardinality { key, endpoint }, LinkRequired { parent, link },
-        TypeMismatch { key, concrete }, EffectiveValues { key, reason },
-        TraversalLimitExceeded { key, reason }, AccountingPosting { key, reason },
-        InvariantViolation { key, owner, version, id, message, outcome },
-        InvariantBudgetExceeded { key, limit }, InvariantModel { key, interface },
-        ObservationAuthorization, EventLimitExceeded { limit, actual }, Overflow,
-    ))
-}
-
-fn consumed_label(consumed: Option<&Consumed>) -> &'static str {
-    match consumed {
-        None => "commit.accepted",
-        Some(Consumed::Timer { .. }) => "commit.accepted.consumed_timer",
-        Some(Consumed::Result { .. }) => "commit.accepted.consumed_result",
-        Some(Consumed::Observation { .. }) => "commit.accepted.consumed_observation",
-    }
-}
-
-/// Disarms the host's fault and checks it fired exactly when the model says
-/// the operation runs the faulted write transaction (law 6).
-fn fault_fired<H: SimulatedCell>(host: &mut H, fault: ArmedFault) -> bool {
-    let fired = host.sim_disarm_fault();
-    match fault.firing {
-        Firing::Fires => assert!(
-            fired,
-            "law violated: a fault armed for a write transaction the operation runs did not fire\nfault: {:?}",
-            fault.plan
-        ),
-        Firing::Never => assert!(
-            !fired,
-            "law violated: a fault fired in a write transaction the operation must not run (a commit is one transaction, a fresh perform two)\nfault: {:?}",
-            fault.plan
-        ),
-        Firing::Either => {}
-    }
-    let label = if fired {
-        match fault.plan.kind {
-            FaultKind::Crash => "fault.crash",
-            FaultKind::IoError => "fault.io_error",
-            FaultKind::CommitFails => "fault.commit_failed",
-        }
-    } else {
-        "fault.unfired"
-    };
-    coverage::hit_prefixed("cell", label);
-    fired
-}
-
-fn apply_commit<H: SimulatedCell>(
-    host: &mut H,
-    commit: &LawCommit,
-    expected: &Expect,
-    fault: Option<ArmedFault>,
-) {
-    let before = snapshot(host);
-    if let Some(fault) = fault {
-        host.sim_arm_fault(fault.plan);
-    }
-    // A host failure is reported as its message and can never equal the
-    // model's expectation.
-    let actual = match host.commit(commit.clone()) {
-        Ok(receipt) => Ok(Ok(receipt)),
-        Err(error) => without_host(error)
-            .map(Err)
-            .map_err(|error| error.to_string()),
-    };
-    if fault.is_some_and(|fault| fault_fired(host, fault)) {
-        coverage::hit_prefixed("cell", "fault.commit");
-        // Refinement against the unchanged model follows.
-        assert!(
-            actual.is_err(),
-            "law violated: a faulted commit did not fail with a host error\ncommit: {commit:?}\noutcome: {actual:?}"
-        );
-        return;
-    }
-    assert_eq!(
-        actual.clone().map(Expect::Commit),
-        Ok(expected.clone()),
-        "law violated: commit outcome differs from check-then-apply\ncommit: {commit:?}"
-    );
-    match actual {
-        Ok(Ok(receipt)) => {
-            coverage::hit_prefixed("cell", consumed_label(commit.consumes.as_ref()));
-            if !receipt.linked.is_empty() {
-                coverage::hit_prefixed("cell", "commit.accepted.linked");
-            }
-            let published = host.publish(&receipt).map_err(|error| error.to_string());
-            assert_eq!(published, Ok(()), "publish of an accepted commit failed");
-        }
-        Ok(Err(refusal)) => {
-            coverage::hit_prefixed("cell", refusal.code());
-            assert_eq!(
-                snapshot(host),
-                before,
-                "law violated: a refused commit changed the cell\ncommit: {commit:?}"
-            );
-        }
-        Err(_) => {}
-    }
-}
-
-impl<H: SimulatedCell> StateMachineTest for CellHostMachine<H> {
-    type SystemUnderTest = H;
-    type Reference = Self;
-
-    fn init_test(_: &CellReference) -> H {
-        H::sim_new()
-    }
-
-    fn apply(mut host: H, reference: &CellReference, op: CellOp) -> H {
-        let expected = reference.expected.clone().unwrap_or(Expect::Nothing);
-        match op {
-            CellOp::Commit(commit) => apply_commit(&mut host, &commit, &expected, None),
-            CellOp::Perform => apply_perform(&mut host, expected, None),
-            CellOp::Observe => {
-                let observed = host.observe().map_err(|error| error.to_string());
-                if matches!(observed, Ok(Some(_))) {
-                    coverage::hit_prefixed("cell", "observe.delivered");
-                }
-                assert_eq!(
-                    observed.map(Expect::Observe),
-                    Ok(expected),
-                    "law violated: observe delivered the wrong observation"
-                );
-            }
-            CellOp::Clock => {
-                let due = host.clock().map_err(|error| error.to_string());
-                if matches!(due, Ok(Some(_))) {
-                    coverage::hit_prefixed("cell", "clock.due");
-                }
-                assert_eq!(
-                    due.map(Expect::Clock),
-                    Ok(expected),
-                    "law violated: clock delivered the wrong timer"
-                );
-            }
-            CellOp::Advance(_) => {
-                host.sim_advance_to(LogicalTime::from_millis(reference.model.now));
-            }
-            CellOp::Inject { id, payload } => apply_inject(&mut host, id, payload, &expected),
-            CellOp::Reinject(reinjecting) => {
-                apply_reinjecting(&mut host, &reinjecting, &reference.chain);
-            }
-            CellOp::Exchange(exchange) => apply_exchange(&mut host, &exchange, &reference.chain),
-            CellOp::Dispatch(dispatching) => {
-                apply_dispatching(&mut host, &dispatching, &reference.chain);
-            }
-            CellOp::Deliver(_) | CellOp::Lose(_) => apply_network(&mut host, &op, &expected),
-            CellOp::Faulted(faulted) => {
-                let Faulted {
-                    prepare, target, ..
-                } = *faulted;
-                if let Some(commit) = prepare {
-                    let prepared = reference.prepared.clone().unwrap_or(Expect::Nothing);
-                    apply_commit(&mut host, &commit, &prepared, None);
-                }
-                match target {
-                    FaultTarget::Commit(commit) => {
-                        apply_commit(&mut host, &commit, &expected, reference.fault);
-                    }
-                    FaultTarget::Perform => apply_perform(&mut host, expected, reference.fault),
-                }
-            }
-        }
-        Self::refines(host, reference)
-    }
-}
-
-/// One observation arrives: ingested once; a seen id, before or after its
-/// consumption, is ignored (law 3; law 7 redelivers them).
-fn apply_inject<H: SimulatedCell>(host: &mut H, id: u8, payload: u8, expected: &Expect) {
-    host.sim_inject(law_observed(id, payload));
-    if let Expect::Inject {
-        duplicate: true,
-        late,
-    } = *expected
-    {
-        let label = if late {
-            "observe.late_ignored"
+        prior_outcomes: if H::TRACKS_LATE_OUTCOMES {
+            host.sim_prior_outcomes()
         } else {
-            "observe.duplicate_ignored"
-        };
-        coverage::hit_prefixed("cell", label);
+            Vec::new()
+        },
     }
-}
-
-/// A [`Reinjecting`] (law 7): each arrival ingested at most once, the
-/// consumption as a commit.
-fn apply_reinjecting<H: SimulatedCell>(host: &mut H, reinjecting: &Reinjecting, chain: &[Expect]) {
-    let mut expected = chain.iter().cloned();
-    let mut next = || expected.next().unwrap_or(Expect::Nothing);
-    let (id, payload) = (reinjecting.id, reinjecting.payload);
-    apply_inject(host, id, payload, &next());
-    apply_inject(host, id, payload, &next());
-    apply_commit(host, &reinjecting.consume, &next(), None);
-    apply_inject(host, id, payload, &next());
-}
-
-/// An [`Exchange`] (law 7): its commits as commits, each dispatch and
-/// delivery as the model predicts.
-fn apply_exchange<H: SimulatedCell>(host: &mut H, exchange: &Exchange, chain: &[Expect]) {
-    let mut expected = chain.iter().cloned();
-    let mut next = || expected.next().unwrap_or(Expect::Nothing);
-    if let Some(commit) = &exchange.prepare {
-        apply_commit(host, commit, &next(), None);
-    }
-    dispatch_once(host, next());
-    apply_commit(host, &exchange.reissue, &next(), None);
-    dispatch_once(host, next());
-    for step in exchange.tail() {
-        let op = step.map_or(CellOp::Lose(0), |delivery| {
-            CellOp::Deliver(Box::new(delivery))
-        });
-        apply_network(host, &op, &next());
-    }
-}
-
-/// A [`Dispatching`] (law 7): its commits as commits, and each dispatch
-/// claims exactly what the model predicts.
-fn apply_dispatching<H: SimulatedCell>(host: &mut H, dispatching: &Dispatching, chain: &[Expect]) {
-    let mut expected = chain.iter().cloned();
-    let mut next = || expected.next().unwrap_or(Expect::Nothing);
-    if let Some(commit) = &dispatching.prepare {
-        apply_commit(host, commit, &next(), None);
-    }
-    dispatch_once(host, next());
-    if let Some(commit) = &dispatching.reissue {
-        apply_commit(host, commit, &next(), None);
-        dispatch_once(host, next());
-    }
-}
-
-fn dispatch_once<H: SimulatedCell>(host: &mut H, expected: Expect) {
-    let dispatched = host.sim_dispatch();
-    let label = if matches!(dispatched, Ok(Some(_))) {
-        "network.dispatched"
-    } else {
-        "network.dispatch_idle"
-    };
-    coverage::hit_prefixed("cell", label);
-    assert_eq!(
-        dispatched.map(Expect::Dispatch),
-        Ok(expected),
-        "law violated: dispatch claims a command other than the fresh head"
-    );
-}
-
-/// One network transition (law 7): a delivery is recorded exactly when the
-/// model records it, and a loss is the network's alone.
-fn apply_network<H: SimulatedCell>(host: &mut H, op: &CellOp, expected: &Expect) {
-    match op {
-        CellOp::Deliver(delivery) => {
-            let recorded = host.sim_deliver(&delivery.command, &delivery.input);
-            if let Expect::Deliver { stale, delayed, .. } = *expected {
-                let outcome = match (&recorded, stale) {
-                    (Ok(true), _) => "network.delivered",
-                    (_, true) => "result.stale_refused",
-                    (_, false) => "network.duplicate_ignored",
-                };
-                coverage::hit_prefixed("cell", outcome);
-                if delayed {
-                    coverage::hit_prefixed("cell", "network.delayed");
-                }
-            }
-            match delivery.route {
-                Route::InOrder => {}
-                Route::OutOfOrder => coverage::hit_prefixed("cell", "network.out_of_order"),
-                Route::Duplicate => coverage::hit_prefixed("cell", "network.duplicate"),
-            }
-            let expected_recorded = matches!(expected, Expect::Deliver { recorded: true, .. });
-            assert_eq!(
-                recorded,
-                Ok(expected_recorded),
-                "law violated: a result is recorded only as the current head's first result at its generation\ndelivery: {delivery:?}"
-            );
-        }
-        CellOp::Lose(_) => coverage::hit_prefixed("cell", "network.dropped"),
-        CellOp::Dispatch(_)
-        | CellOp::Reinject(_)
-        | CellOp::Exchange(_)
-        | CellOp::Commit(_)
-        | CellOp::Perform
-        | CellOp::Observe
-        | CellOp::Clock
-        | CellOp::Advance(_)
-        | CellOp::Inject { .. }
-        | CellOp::Faulted(_) => {}
-    }
-}
-
-/// One `perform`, under `fault` if armed: exactly once per generation, and
-/// never delivered or executed when the model expects it to fail.
-fn apply_perform<H: SimulatedCell>(host: &mut H, expected: Expect, fault: Option<ArmedFault>) {
-    let executions = host.sim_executions();
-    if let Some(fault) = fault {
-        host.sim_arm_fault(fault.plan);
-    }
-    let delivered = host.perform().map_err(|error| error.to_string());
-    let fired = fault.is_some_and(|fault| fault_fired(host, fault));
-    let executed = host.sim_executions() != executions;
-    if expected == Expect::Failed {
-        let label = match fault {
-            Some(fault) if fired && fault.plan.transaction == 0 => "fault.perform.claim",
-            Some(_) if fired => "fault.perform.result",
-            Some(_) | None => "perform.outcome_unknown",
-        };
-        coverage::hit_prefixed("cell", label);
-        assert!(
-            delivered.is_err() && !executed,
-            "law violated: a perform whose claim or result is lost delivered or executed\noutcome: {delivered:?}, executed: {executed}"
-        );
-        return;
-    }
-    let label = match (&delivered, executed) {
-        (Ok(None), _) => "perform.empty",
-        (_, true) => "perform.executed",
-        (_, false) => "perform.redelivered",
-    };
-    coverage::hit_prefixed("cell", label);
-    assert_eq!(
-        delivered.map(|delivered| Expect::Perform {
-            delivered,
-            executed
-        }),
-        Ok(expected),
-        "law violated: perform is not exactly-once per generation"
-    );
 }
 
 impl<H: SimulatedCell> CellHostMachine<H> {
@@ -3389,6 +3325,7 @@ impl<H: SimulatedCell> CellHostMachine<H> {
         CellReference {
             model: CellModel {
                 commits_perform_claims: H::COMMITS_PERFORM_CLAIMS,
+                late_outcomes: LateOutcomeTracking::from_flag(H::TRACKS_LATE_OUTCOMES),
                 ..CellModel::default()
             },
             ..CellReference::default()

@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, CommitReceipt, Consumed, FactExpectation, FactKey,
     FactMutation, FactState, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey, LinkMutation,
-    LinkReadExpectation, LinkWrite,
+    LinkReadExpectation, LinkWrite, PredicateReadExpectation,
 };
 use crate::commit::{CommitLinks, Projection, linked_subjects};
 use crate::commit_check::{InvariantEvaluationError, InvariantFailure, evaluate_invariants};
@@ -34,6 +34,7 @@ use crate::envelope::{EnvelopeCounts, check_decision_envelope};
 use crate::limits::EnvelopeLimits;
 use norn_expr::TurnFuel;
 
+mod event_wire;
 mod read_findings;
 use read_findings::AuthorizedObservedReadFinding;
 
@@ -46,7 +47,7 @@ pub enum ObservationSynthesis {
 }
 
 /// Provenance-bearing ledger facts from an observed snapshot.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(
     tag = "op",
     rename_all = "snake_case",
@@ -281,6 +282,7 @@ struct ObservedReferenceReads {
     writes: Vec<FactWrite>,
     links: Vec<LinkWrite>,
     link_reads: Vec<LinkReadExpectation>,
+    predicate_reads: Vec<PredicateReadExpectation>,
     consumes: Option<Consumed>,
     event_count: usize,
 }
@@ -453,6 +455,7 @@ impl ObservationAuthorization {
             writes: commit.writes.clone(),
             links: commit.links.clone(),
             link_reads: commit.link_reads.clone(),
+            predicate_reads: commit.predicate_reads.clone(),
             consumes: commit.consumes.clone(),
             event_count: commit.events.len(),
         }));
@@ -470,6 +473,7 @@ impl ObservationAuthorization {
                     && proof.writes == commit.writes
                     && proof.links == commit.links
                     && proof.link_reads == commit.link_reads
+                    && proof.predicate_reads == commit.predicate_reads
                     && proof.consumes == commit.consumes
                     && proof.event_count == commit.events.len()
                     && commit.effects.is_empty()
@@ -1068,6 +1072,7 @@ impl ObservationAuthorization {
             authorized_links.entry(&link.key).or_default().push(link);
         }
         if !commit.effects.is_empty()
+            || !commit.predicate_reads.is_empty()
             || self.source_scopes.iter().any(|(scope, _)| {
                 read(scope) == 0
                     && !writes_of(&scope.key)
@@ -1823,6 +1828,7 @@ impl PreparedObservation {
         commit.effects.extend(part.effects);
         commit.links.extend(part.links);
         commit.link_reads.extend(part.link_reads);
+        commit.predicate_reads.extend(part.predicate_reads);
         authorization.merge(authority);
         Ok(())
     }

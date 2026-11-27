@@ -6,7 +6,8 @@
 //! | `_norn_meta` | store format, engine storage-version stamp, the model's DDL hash, and the property-column layout | open |
 //! | `_norn_ledger` | one event, hash-chained to the previous one | commit |
 //! | `_norn_receipt` | one commit: ledger span and head, request hash, consumption, written versions, idempotency key | commit |
-//! | `_norn_outbox` | one command id: its latest generation, its recorded result, and the commit that consumed it (unconsumed rows are the `perform` queue, in enqueue order) | commit; perform |
+//! | `_norn_outbox` | one command id: its latest generation, its recorded result, and the commit that consumed it (unconsumed rows are the `perform` queue, in enqueue order), projected from `_norn_outbox_record` | commit; perform |
+//! | `_norn_outbox_record` | append-only immutable outbox generation records (`Requested`, `Dispatched`, `Outcome`, `RestoreFenced`, `Reconciliation`, `Compensation`, `Consumed`) keyed by `(command_id, epoch, seq)` (D1) | commit; perform; restore |
 //! | `_norn_perform_claim` | one durable claim per command generation, committed before external dispatch | commit |
 //! | `_norn_timer` | one pending timer and its incarnation (the scheduling commit); the `clock` queue, whose earliest `due` is the host alarm | commit |
 //! | `_norn_run` | one `perform` execution and its outcome, and the commit that consumed it | perform; commit |
@@ -49,8 +50,10 @@ pub(crate) const FACT_VALUES: &str = "_norn_fact_values";
 pub(crate) const LEDGER: &str = "_norn_ledger";
 /// Receipt table.
 pub(crate) const RECEIPT: &str = "_norn_receipt";
-/// Outbox table.
+/// Outbox table (projected head).
 pub(crate) const OUTBOX: &str = "_norn_outbox";
+/// Immutable per-generation outbox ledger table (D1, storage version 11).
+pub(crate) const OUTBOX_RECORD: &str = "_norn_outbox_record";
 /// Durable perform-claim table.
 pub(crate) const PERFORM_CLAIM: &str = "_norn_perform_claim";
 /// Timer table.
@@ -797,6 +800,8 @@ pub const SYSTEM_DDL: &[&str] = &[
 )"#,
     r#"CREATE UNIQUE INDEX IF NOT EXISTS "_norn_outbox/position" ON "_norn_outbox" ("position")"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_outbox/queue" ON "_norn_outbox" ("queue", "position") WHERE "consumed_commit_seq" IS NULL"#,
+    // D1: immutable per-generation outbox ledger, storage version 11.
+    crate::outbox_ledger::DDL,
     r#"CREATE TABLE IF NOT EXISTS "_norn_perform_claim" (
   "command_id" TEXT NOT NULL,
   "generation" INTEGER NOT NULL,
