@@ -24,11 +24,10 @@ use norn_cell_do::olap::InProcess;
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
 use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::server;
-use norn_checker::{
-    EntityArtifactSetContext,
-    receipt::{ReceiptSources, check_artifact_set_with_receipt},
-};
+// Both rings, as a cell admits the set: it carries a widget (#1762 C2).
+use norn_checker::{EntityArtifactSetContext, receipt::ReceiptSources};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
+use norn_ui_checker::check_artifact_set_with_receipt;
 use serde_json::{Value, json};
 
 const MEMBER: Option<&str> = Some("Bearer fixture:admin@demo");
