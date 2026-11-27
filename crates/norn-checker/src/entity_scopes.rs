@@ -524,7 +524,8 @@ pub(crate) fn is_redundant_unknown_after_scope(
             | crate::interfaces::codes::UNKNOWN_LINK_TARGET
             | crate::interfaces::codes::UNKNOWN_REPLACEMENT
             | crate::property_types::codes::UNKNOWN_REF
-    );
+    ) || (code == crate::interfaces::codes::DISJOINT_VIOLATION
+        && diagnostic.message.contains("names no interface"));
     if !is_unknown {
         return false;
     }
