@@ -116,6 +116,30 @@ mod tests {
         set
     }
 
+    /// ERPNext artifact set with nullable `valuation_method` and `owner_ref` on
+    /// `Warehouse Lot Balance` so explicit `null` clears and nullable guards
+    /// conform to the source schema.
+    fn erpnext_patch_artifacts() -> Vec<ArtifactEnvelope> {
+        let mut set = erpnext_artifacts();
+        let source = set
+            .iter_mut()
+            .find(|a| a.artifact_id == "erpnext.rest.source")
+            .expect("source");
+        let mut wire = serde_json::to_value(&*source).expect("wire");
+        for field in wire["payload"]["fields"].as_array_mut().expect("fields") {
+            if field["dataset"] == "Warehouse Lot Balance"
+                && matches!(
+                    field["name"].as_str(),
+                    Some("valuation_method" | "owner_ref")
+                )
+            {
+                field["required"] = json!(false);
+            }
+        }
+        *source = serde_json::from_value(wire).expect("source");
+        set
+    }
+
     fn open_host(artifacts: &[ArtifactEnvelope]) -> DevHost<NativeEngine> {
         let (base, candidate): (Vec<_>, Vec<_>) = artifacts
             .iter()
@@ -415,7 +439,7 @@ mod tests {
         .expect("valid")
         .expect("profile");
         let mut full_pull = Pull::new(full_profile.clone(), BTreeMap::new(), Limits::default());
-        let pages: BTreeMap<String, Value> = recorded["pages"]
+        let mut pages: BTreeMap<String, Value> = recorded["pages"]
             .as_array()
             .expect("pages")
             .iter()
@@ -427,11 +451,13 @@ mod tests {
             })
             .collect();
         while let Some(req) = full_pull.next_request() {
-            let body = pages.get(&req.dataset).expect("page");
+            let body = pages
+                .remove(&req.dataset)
+                .unwrap_or_else(|| json!({ "data": [] }));
             let rows = full_pull
                 .accept(200, body.to_string().as_bytes())
                 .expect("accept");
-            if skip == Some(req.dataset.as_str()) {
+            if skip == Some(req.dataset.as_str()) || rows.is_empty() {
                 continue;
             }
             let batch: Vec<_> = rows
@@ -478,7 +504,7 @@ mod tests {
 
     #[test]
     fn cell_ingest_full_snapshot_then_tri_state_patches_and_reducer_equivalence() {
-        let host = open_host(&erpnext_artifacts());
+        let host = open_host(&erpnext_patch_artifacts());
         seed_full_erpnext_snapshot(&host);
         let holding_key = "demo/holding/owner/north/gold";
         let before = host
@@ -619,7 +645,7 @@ mod tests {
 
     #[test]
     fn uint64_version_100_patch_supersedes_version_99_link_claim_and_clears_link() {
-        let host = open_host(&erpnext_artifacts());
+        let host = open_host(&erpnext_patch_artifacts());
         seed_full_erpnext_snapshot(&host);
         let uint_full = holding_profile(FeedMode::FullSnapshot, VersionKind::Uint64);
         let uint_patch = holding_profile(FeedMode::Patch, VersionKind::Uint64);
@@ -652,7 +678,7 @@ mod tests {
 
     #[test]
     fn patch_omitting_nullable_guard_input_fails_closed() {
-        let artifacts = erpnext_artifacts();
+        let artifacts = erpnext_patch_artifacts();
         let mut mapping_doc = serde_json::to_value(load_artifact(
             "fixtures/packs/erpnext-rest/artifacts/erpnext.rest.mapping.json",
         ))
@@ -719,30 +745,28 @@ mod tests {
     }
 
     #[test]
-    fn mapping_declared_feed_enforces_version_kind_and_refuses_contradiction() {
-        let mut artifacts = erpnext_artifacts();
+    fn mapping_declared_feed_binds_pull_and_refuses_unbound_or_contradictory_delivery() {
+        let mut artifacts = erpnext_patch_artifacts();
         let mapping = artifacts
             .iter_mut()
             .find(|a| a.artifact_id == "erpnext.rest.mapping")
             .expect("mapping");
-        let mut wire = serde_json::to_value(&*mapping).expect("wire");
-        wire["payload"]["extensions"] = json!({
-            "norn.feed/1": {
-                "feeds": {
-                    "Warehouse Lot Balance": {
-                        "mode": "patch",
-                        "versionKind": "uint64"
-                    }
+        let decl_json = json!({
+            "feeds": {
+                "Warehouse Lot Balance": {
+                    "mode": "patch",
+                    "versionKind": "uint64"
                 }
             }
         });
+        let decl: norn_ir::feed::FeedDeclaration =
+            serde_json::from_value(decl_json.clone()).expect("decl");
+        let mut wire = serde_json::to_value(&*mapping).expect("wire");
+        wire["payload"]["extensions"] = json!({ "norn.feed/1": decl_json });
         *mapping = serde_json::from_value(wire).expect("mapping");
         let host = open_host(&artifacts);
         seed_erpnext_datasets(&host, Some("Warehouse Lot Balance"));
-        // Raw observations omit `version_kind` and `feed_mode` (default lexical
-        // full_snapshot profile), yet the mapping's `norn.feed/1` declaration
-        // governs both: `100` supersedes `99` and partial patch clears owner link.
-        let lex_profile = holding_profile(FeedMode::FullSnapshot, VersionKind::Lexicographical);
+
         let key = "demo/holding/declared-uint64";
         let v99 = json!({
             "name": "WLB-DECL-1", "modified": "99", "custom_norn_ref": key,
@@ -751,41 +775,89 @@ mod tests {
             "custodian_ref": "demo/party/custodian", "stock_cost": 100.0,
             "cost_currency": "USD", "valuation_method": "moving_average"
         });
+        // Unbound snapshot/lexical profile omits `feed_mode` and `version_kind`:
+        // cell MUST refuse so pull-fabricated nulls never enter a Patch mapping.
+        let unbound = holding_profile(FeedMode::FullSnapshot, VersionKind::Lexicographical);
+        let mut unbound_pull = Pull::new(unbound.clone(), BTreeMap::new(), Limits::default());
+        let _req = unbound_pull.next_request().expect("req");
+        let unbound_rows = unbound_pull
+            .accept(200, json!({"data": [v99]}).to_string().as_bytes())
+            .expect("accept");
+        let unbound_obs = observation(&unbound, &unbound_rows[0], T0.saturating_add(1)).expect("o");
+        assert!(
+            host.ingest(&[(unbound_obs, mapping_input("Warehouse Lot Balance"))])
+                .is_err(),
+            "unbound snapshot/lexical envelope must refuse under Patch/Uint64 mapping"
+        );
+
+        // Bind mapping's `norn.feed/1` onto the default profile BEFORE pull projection:
+        let mut bound = holding_profile(FeedMode::FullSnapshot, VersionKind::Lexicographical);
+        bound.feeds[0].initial.version = "0".into();
+        bound
+            .bind_feed_declaration(&decl)
+            .expect("bind norn.feed/1 onto default profile");
+        assert_eq!(bound.feed_mode("Warehouse Lot Balance"), FeedMode::Patch);
         assert_eq!(
-            ingest_patch_row(&host, &lex_profile, &v99, T0.saturating_add(1)),
+            bound.version_kind("Warehouse Lot Balance"),
+            VersionKind::Uint64
+        );
+        assert_eq!(
+            ingest_patch_row(&host, &bound, &v99, T0.saturating_add(2)),
             MappingOutcome::Landed
         );
-        // Explicit patch with omitted `version_kind` clears owner_ref at version 100 > 99.
-        let patch_no_vk = holding_profile(FeedMode::Patch, VersionKind::Lexicographical);
         let v100 = json!({
             "name": "WLB-DECL-1", "modified": "100",
             "custom_norn_ref": key, "owner_ref": null
         });
         assert_eq!(
-            ingest_patch_row(&host, &patch_no_vk, &v100, T0.saturating_add(2)),
+            ingest_patch_row(&host, &bound, &v100, T0.saturating_add(3)),
             MappingOutcome::Landed
         );
         assert!(
             holding_links(&host, key, "owner").is_empty(),
-            "declared uint64 mapping must supersede version 99 with 100 even if envelope omits version_kind"
+            "bound uint64 patch 100 must supersede 99 and clear owner link"
         );
-        // Contradictory envelope (`version_kind: rfc3339` on a `uint64` mapping) refuses.
-        let bad_vk = holding_profile(FeedMode::Patch, VersionKind::Rfc3339);
-        let bad_row = json!({
-            "name": "WLB-DECL-1", "modified": "2026-11-12T10:00:00Z",
-            "custom_norn_ref": key, "quantity": 11.0
+    }
+
+    #[test]
+    fn keyset_decimal_id_and_rfc3339_equivalent_spelling_bounds() {
+        // Fractional numeric id 10 -> 2.5 at a tied version moves backward.
+        let keyset_uint = holding_profile(FeedMode::Patch, VersionKind::Uint64);
+        let mut dec = Pull::new(keyset_uint, BTreeMap::new(), Limits::default());
+        let _req = dec.next_request().expect("req");
+        let bad_ids = json!({
+            "data": [
+                {"name": 10, "modified": "100", "custom_norn_ref": "demo/h/1"},
+                {"name": 2.5, "modified": "100", "custom_norn_ref": "demo/h/2"}
+            ]
         });
-        let mut pull = Pull::new(bad_vk.clone(), BTreeMap::new(), Limits::default());
-        let _req = pull.next_request().expect("req");
-        let rows = pull
-            .accept(200, json!({"data": [bad_row]}).to_string().as_bytes())
-            .expect("accept");
-        let obs = observation(&bad_vk, &rows[0], T0.saturating_add(3)).expect("obs");
-        assert!(
-            host.ingest(&[(obs, mapping_input("Warehouse Lot Balance"))])
-                .is_err(),
-            "contradictory version_kind must fail closed"
-        );
+        assert!(matches!(
+            dec.accept(200, bad_ids.to_string().as_bytes()),
+            Err(PullError::Bound { .. })
+        ));
+
+        // Equivalent RFC 3339 spelling (+02:00 vs Z) with the same id did not advance.
+        let keyset_rfc = holding_profile(FeedMode::Patch, VersionKind::Rfc3339);
+        let saved = BTreeMap::from([(
+            "Warehouse Lot Balance".to_owned(),
+            Watermark {
+                version: "2026-11-12T10:00:00+02:00".into(),
+                id: Value::from("WLB-1"),
+            },
+        )]);
+        let mut rfc = Pull::new(keyset_rfc, saved, Limits::default());
+        let _req = rfc.next_request().expect("req");
+        let same_instant = json!({
+            "data": [{
+                "name": "WLB-1",
+                "modified": "2026-11-12T08:00:00Z",
+                "custom_norn_ref": "demo/h/1"
+            }]
+        });
+        assert!(matches!(
+            rfc.accept(200, same_instant.to_string().as_bytes()),
+            Err(PullError::Bound { .. })
+        ));
     }
 
     #[test]
@@ -865,6 +937,29 @@ mod tests {
         assert_eq!(
             ingest_patch_row(&host, &full_profile, &row, T0.saturating_add(1)),
             MappingOutcome::Landed
+        );
+        // Repeating the exact same event with explicit default `"feed_mode": "full_snapshot"`
+        // matches canonically without raising a spurious conflict.
+        let mut pull = Pull::new(full_profile.clone(), BTreeMap::new(), Limits::default());
+        let _req = pull.next_request().expect("req");
+        let rows = pull
+            .accept(200, json!({ "data": [&row] }).to_string().as_bytes())
+            .expect("accept");
+        let mut explicit_default =
+            observation(&full_profile, &rows[0], T0.saturating_add(1)).expect("obs");
+        if let RuntimeValue::Object(ref mut map) = explicit_default.input {
+            map.insert(
+                "feed_mode".into(),
+                RuntimeValue::String("full_snapshot".into()),
+            );
+        }
+        let replay = host
+            .ingest(&[(explicit_default, mapping_input("Warehouse Lot Balance"))])
+            .expect("explicit default replay");
+        assert_eq!(
+            replay[0].outcome,
+            MappingOutcome::Landed,
+            "explicit default full_snapshot must not spuriously conflict with omitted default"
         );
         let second = ingest_patch_row(&host, &patch_profile, &row, T0.saturating_add(2));
         assert!(

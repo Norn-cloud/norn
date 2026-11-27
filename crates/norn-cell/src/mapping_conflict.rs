@@ -39,8 +39,16 @@ fn content(bundle: &MappingBundle) -> Result<String, CellError> {
     let source_version = field(bundle, "source_version")?;
     let payload_digest = field(bundle, "payload_digest")?;
     let redaction = bundle.raw.get("redaction").filter(|v| !v.is_null());
-    let feed_mode = bundle.raw.get("feed_mode").filter(|v| !v.is_null());
-    let version_kind = bundle.raw.get("version_kind").filter(|v| !v.is_null());
+    // Canonicalize omitted and explicit default wire values so repeating the
+    // default (`full_snapshot` / `lexicographical`) never causes a spurious
+    // conflict while differing effective interpretations always conflict.
+    let feed_mode = bundle
+        .raw
+        .get("feed_mode")
+        .filter(|v| !v.is_null() && v.as_str() != Some(norn_ir::FeedMode::FullSnapshot.as_str()));
+    let version_kind = bundle.raw.get("version_kind").filter(|v| {
+        !v.is_null() && v.as_str() != Some(norn_ir::VersionKind::Lexicographical.as_str())
+    });
     if feed_mode.is_none() && version_kind.is_none() {
         return Ok(norn_ir::canonical::domain_hash_hex(
             b"norn.source.content.v1\0",

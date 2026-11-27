@@ -882,25 +882,24 @@ fn resolve_version_kind(
     raw: &RuntimeValue,
 ) -> Result<norn_ir::VersionKind, CellError> {
     let raw_kind = match raw.get("version_kind") {
-        None => None,
-        Some(value) => Some(
-            value
-                .as_str()
-                .and_then(norn_ir::VersionKind::parse_wire)
-                .ok_or_else(mismatch)?,
-        ),
+        None => norn_ir::VersionKind::Lexicographical,
+        Some(value) => value
+            .as_str()
+            .and_then(norn_ir::VersionKind::parse_wire)
+            .ok_or_else(mismatch)?,
     };
-    match (declared.map(|c| c.version_kind), raw_kind) {
-        (Some(decl), Some(supplied)) if decl != supplied => Err(mismatch()),
-        (Some(decl), _) => Ok(decl),
-        (None, Some(supplied)) => Ok(supplied),
-        (None, None) => Ok(norn_ir::VersionKind::Lexicographical),
+    if let Some(contract) = declared
+        && raw_kind != contract.version_kind
+    {
+        return Err(mismatch());
     }
+    Ok(raw_kind)
 }
 
 /// Resolve and cross-check `feed_mode` and `version_kind` between the retained
 /// mapping's `norn.feed/1` declaration and the raw observation envelope
-/// (`FEED-MODE-1`). Contradictory declarations fail closed.
+/// (`FEED-MODE-1`). Unbound or contradictory deliveries fail closed so a
+/// snapshot-projected payload can never enter a `Patch` mapping as clears.
 fn parse_raw_feed_mode(
     plan: &MappingPlan,
     dataset: &str,
@@ -909,25 +908,22 @@ fn parse_raw_feed_mode(
 ) -> Result<norn_ir::FeedMode, CellError> {
     let declared = plan.declared_feed(dataset);
     let raw_mode = match raw.get("feed_mode") {
-        None => None,
-        Some(value) => Some(
-            value
-                .as_str()
-                .and_then(norn_ir::FeedMode::parse_wire)
-                .ok_or_else(mismatch)?,
-        ),
+        None => norn_ir::FeedMode::FullSnapshot,
+        Some(value) => value
+            .as_str()
+            .and_then(norn_ir::FeedMode::parse_wire)
+            .ok_or_else(mismatch)?,
     };
-    let feed_mode = match (declared.map(|c| c.mode), raw_mode) {
-        (Some(decl), Some(supplied)) if decl != supplied => return Err(mismatch()),
-        (Some(decl), _) => decl,
-        (None, Some(supplied)) => supplied,
-        (None, None) => norn_ir::FeedMode::FullSnapshot,
-    };
+    if let Some(contract) = declared
+        && raw_mode != contract.mode
+    {
+        return Err(mismatch());
+    }
     let version_kind = resolve_version_kind(declared, raw)?;
     if declared.is_some() || raw.get("version_kind").is_some() {
         norn_ir::SourceVersion::parse(version_kind, source_version).map_err(|_err| mismatch())?;
     }
-    Ok(feed_mode)
+    Ok(raw_mode)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

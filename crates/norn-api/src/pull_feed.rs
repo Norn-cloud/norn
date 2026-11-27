@@ -1,12 +1,62 @@
-//! Typed source-version ordering and `FeedMode::Patch` projection helpers for
-//! [`crate::pull`] (`FEED-MODE-1`).
+//! Typed source-version ordering, mapping-contract binding, and `FeedMode::Patch`
+//! projection helpers for [`crate::pull`] (`FEED-MODE-1`).
 
 use std::cmp::Ordering;
 
-use norn_ir::{RuntimeValue, SourceVersion, VersionKind};
+use norn_ir::feed::{FEED_EXTENSION_KEY, FeedDeclaration};
+use norn_ir::{Decimal, RuntimeValue, SourceVersion, VersionKind};
 use serde_json::Value;
 
-use crate::pull::{PullError, Row, Watermark};
+use crate::pull::{PullError, PullProfile, Row, Watermark};
+
+/// Bind a mapping's `norn.feed/1` declaration onto `profile` before projection
+/// and pagination. Default connector settings (`FullSnapshot`, `Lexicographical`)
+/// adopt the mapping's contract; explicit contradictions refuse closed.
+pub(crate) fn bind_feed_declaration(
+    profile: &mut PullProfile,
+    declaration: &FeedDeclaration,
+) -> Result<(), PullError> {
+    for feed in &mut profile.feeds {
+        if let Some(contract) = declaration.feeds.get(&feed.dataset) {
+            if !feed.mode.is_default() && feed.mode != contract.mode {
+                return Err(PullError::Profile(format!(
+                    "feed {:?} mode {} contradicts mapping norn.feed/1 mode {}",
+                    feed.dataset,
+                    feed.mode.as_str(),
+                    contract.mode.as_str()
+                )));
+            }
+            if !feed.version_kind.is_default() && feed.version_kind != contract.version_kind {
+                return Err(PullError::Profile(format!(
+                    "feed {:?} versionKind {} contradicts mapping norn.feed/1 versionKind {}",
+                    feed.dataset,
+                    feed.version_kind.as_str(),
+                    contract.version_kind.as_str()
+                )));
+            }
+            feed.mode = contract.mode;
+            feed.version_kind = contract.version_kind;
+        }
+    }
+    profile.validate()
+}
+
+/// Bind `extensions["norn.feed/1"]` from a mapping artifact's JSON payload when
+/// present.
+pub(crate) fn bind_mapping_feed_declaration(
+    profile: &mut PullProfile,
+    mapping_payload: &Value,
+) -> Result<(), PullError> {
+    let Some(raw) = mapping_payload
+        .get("extensions")
+        .and_then(|ext| ext.get(FEED_EXTENSION_KEY))
+    else {
+        return Ok(());
+    };
+    let declaration: FeedDeclaration = serde_json::from_value(raw.clone())
+        .map_err(|e| PullError::Profile(format!("invalid {FEED_EXTENSION_KEY}: {e}")))?;
+    bind_feed_declaration(profile, &declaration)
+}
 
 /// Update a cursor feed's greatest seen version using typed [`SourceVersion`]
 /// ordering.
@@ -43,7 +93,13 @@ fn cmp_keyset_id(a: &Value, b: &Value) -> Ordering {
             (Some(x), Some(y)) => x.cmp(&y),
             _ => match (x.as_u64(), y.as_u64()) {
                 (Some(x), Some(y)) => x.cmp(&y),
-                _ => x.to_string().cmp(&y.to_string()),
+                _ => match (
+                    Decimal::parse(&x.to_string()),
+                    Decimal::parse(&y.to_string()),
+                ) {
+                    (Ok(x), Ok(y)) => x.cmp(&y),
+                    _ => x.to_string().cmp(&y.to_string()),
+                },
             },
         },
         (Value::String(x), Value::String(y)) => x.cmp(y),
@@ -52,7 +108,8 @@ fn cmp_keyset_id(a: &Value, b: &Value) -> Ordering {
 }
 
 /// Verify monotonic `(version, id)` progression across the saved watermark and
-/// every adjacent row in a keyset page.
+/// every adjacent row in a keyset page, and verify strict typed advance of the
+/// page's final position past `current`.
 pub(crate) fn check_keyset_order(
     kind: VersionKind,
     current: &Watermark,
@@ -64,7 +121,7 @@ pub(crate) fn check_keyset_order(
         dataset: dataset(),
         reason,
     };
-    let mut prev = if current.version.is_empty() {
+    let start = if current.version.is_empty() {
         None
     } else {
         Some((
@@ -72,6 +129,7 @@ pub(crate) fn check_keyset_order(
             &current.id,
         ))
     };
+    let mut prev = start.clone();
     for (row, id) in rows.iter().zip(ids) {
         let next = SourceVersion::parse(kind, &row.version).map_err(|e| bound(e.to_string()))?;
         if let Some((prev_v, prev_id)) = &prev {
@@ -83,6 +141,12 @@ pub(crate) fn check_keyset_order(
             }
         }
         prev = Some((next, id));
+    }
+    if let (Some((start_v, start_id)), Some((last_v, last_id))) = (&start, &prev) {
+        let ord = last_v.try_cmp(start_v).map_err(|e| bound(e.to_string()))?;
+        if ord == Ordering::Equal && cmp_keyset_id(last_id, start_id) != Ordering::Greater {
+            return Err(bound("the keyset position did not advance".into()));
+        }
     }
     Ok(())
 }

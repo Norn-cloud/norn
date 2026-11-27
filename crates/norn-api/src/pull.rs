@@ -110,12 +110,18 @@ pub struct Feed {
     pub version_kind: VersionKind,
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)]
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if requires &T"
+)]
 const fn is_default_mode(mode: &FeedMode) -> bool {
     mode.is_default()
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)]
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if requires &T"
+)]
 const fn is_default_version(kind: &VersionKind) -> bool {
     kind.is_default()
 }
@@ -423,6 +429,19 @@ impl PullProfile {
             .iter()
             .find(|feed| feed.dataset == dataset)
             .map_or(VersionKind::Lexicographical, |feed| feed.version_kind)
+    }
+
+    /// Bind a mapping's `norn.feed/1` declaration onto this profile before
+    /// projection and pagination, failing closed on explicit contradictions.
+    ///
+    /// # Errors
+    /// A feed whose explicit `mode` or `versionKind` contradicts `declaration`,
+    /// or whose resulting initial watermark / orderability is invalid.
+    pub fn bind_feed_declaration(
+        &mut self,
+        declaration: &norn_ir::feed::FeedDeclaration,
+    ) -> Result<(), PullError> {
+        crate::pull_feed::bind_feed_declaration(self, declaration)
     }
 }
 
