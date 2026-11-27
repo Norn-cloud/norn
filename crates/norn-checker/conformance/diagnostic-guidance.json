@@ -832,6 +832,10 @@
     "fix": "Shorten the reported identifier to its declared byte limit and update its references consistently."
   },
   {
+    "code": "interface.validation.disjoint_violation",
+    "fix": "Remove one of the mutually disjoint interfaces from the reported inheritance or implements list, or fix the disjointWith target."
+  },
+  {
     "code": "interface.validation.duplicate_link_id",
     "fix": "Keep one declaration per reported identity; remove or rename the duplicate at the reported path."
   },

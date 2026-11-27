@@ -5957,6 +5957,8 @@ export interface components {
          */
         NornIrInterfaceDef: {
             description?: string;
+            /** @description Interfaces mutually exclusive with this one; no interface or object type may inherit both. Omitted when empty. */
+            disjointWith?: components["schemas"]["NornIrInterfaceName"][];
             /** @description Parent contracts. All members, constraints, markings and invariants apply. */
             extends?: components["schemas"]["NornIrInterfaceName"][];
             /**
@@ -5964,6 +5966,8 @@ export interface components {
              *     its own and inherited invariants. Omitted when empty.
              */
             invariants?: components["schemas"]["NornIrInvariant"][];
+            /** @description Lifecycles every implementing object type and child interface inherits with non-weakening narrowing. Omitted when empty. */
+            lifecycles?: components["schemas"]["NornIrLifecycle"][];
             /**
              * @description Required links, in presentation order; their ids are distinct from
              *     the required property ids. Omitted when empty.

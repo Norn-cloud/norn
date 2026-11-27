@@ -834,6 +834,10 @@
       "message": "{$identifier} طوله {$actualBytes} بايت UTF-8؛ حد القبول {$limitBytes}؛ أعد تسميته قبل تثبيت التعريفات المحدَّثة",
       "review": "needs_review"
     },
+    "interface.validation.disjoint_violation": {
+      "message": "عقد عدم التقاطع بين الواجهات غير صالح أو منتهَك",
+      "review": "needs_review"
+    },
     "interface.validation.duplicate_link_id": {
       "message": "معرّف الرابط المطلوب {$link} مستخدم بالفعل لرابط أو خاصية مطلوبة",
       "review": "needs_review"
