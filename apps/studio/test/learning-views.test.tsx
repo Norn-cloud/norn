@@ -124,6 +124,7 @@ function liveMode(
     catalog: { document: artifacts, numbers: new Map(), origin: "live" },
     counts: {},
     publishedQuestions: new Set(publishedQuestions),
+    builtins: [],
   }
 }
 

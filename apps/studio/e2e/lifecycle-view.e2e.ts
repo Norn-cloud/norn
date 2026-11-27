@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page, type Route, type WebSocketRoute } from "@playwright/test"
 import { session } from "./object-cell.ts"
+import { withRecordPage } from "./record-page-widget.ts"
 
 // The lifecycle view (UI-LIFECYCLE-2): both the contact-sheet specimens and the full Studio
 // Records & Record page flows (Table | Lifecycle toggle, scoped `object_facets.rs` counts,
@@ -173,7 +174,7 @@ async function lifecycleCell(
     const url = new URL(route.request().url())
     const tail = url.pathname.split("/v1/definitions")[1] ?? ""
     if (tail === ":list") return route.fulfill({ json: { items: [], nextCursor: null } })
-    return route.fulfill({ json: { artifacts } })
+    return route.fulfill({ json: { artifacts: withRecordPage(artifacts) } })
   })
   await page.route("**/api/host/v1/actions**", (route: Route) => route.fulfill({ json: { actions: [] } }))
   await page.route("**/api/host/v1/access**", (route: Route) => route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } }))

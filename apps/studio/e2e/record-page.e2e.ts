@@ -576,7 +576,7 @@ test("changes: a member (no Sources, no call records) sees the history list in b
   const history = page.locator("#record-history")
   await expect(history.locator("ol > li")).toHaveCount(2)
   // The header names the version the page shows, and the commit and time that wrote it, from the same cell.
-  const chip = (label: string) => page.locator("section > header").first().locator('[data-slot="fact-chip"]', { hasText: label }).locator("span").last()
+  const chip = (label: string) => page.locator('[data-island="record-header"] > header').locator('[data-slot="fact-chip"]', { hasText: label }).locator("span").last()
   await expect(chip("version")).toHaveText("2")
   await expect(chip("commit")).toHaveText("412")
   await expect(chip("as of")).toContainText("20 Nov")

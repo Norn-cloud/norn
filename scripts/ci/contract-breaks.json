@@ -16,6 +16,82 @@
     {
       "ruling": "#618",
       "break": "refusal code approval.would_commit: removed"
+    },
+    {
+      "ruling": "#1762",
+      "break": "openapi #/components/schemas/NornIrWidgetComponentOneOf<kind=\"control\">.label{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/artifact_envelope.schema.json/$defs/WidgetSection.label{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/widget.schema.json/$defs/WidgetNavigationItem.label{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/artifact_envelope.schema.json/$defs/WidgetActionPlacement.label{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/widget.schema.json/$defs/WidgetFieldPresentation.help{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/artifact_envelope.schema.json/$defs/WidgetCatalogEntry.label{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/widget.schema.json/$defs/WidgetCatalogEntry.label{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/artifact_envelope.schema.json/$defs/WidgetComponent[oneOf kind=\"child_grid\"].label{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/widget.schema.json/$defs/WidgetOverrideValue[oneOf kind=\"label\"].value{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/artifact_envelope.schema.json/$defs/WidgetFieldPresentation.help{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/artifact_envelope.schema.json/$defs/WidgetActionConfirmation.message{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/widget.schema.json/$defs/WidgetActionConfirmation.message{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/artifact_envelope.schema.json/$defs/WidgetOverrideValue[oneOf kind=\"label\"].value{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/widget.schema.json/$defs/WidgetComponent[oneOf kind=\"child_grid\"].label{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/widget.schema.json/$defs/WidgetSection.label{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/artifact_envelope.schema.json/$defs/WidgetFormSubmit.label{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/artifact_envelope.schema.json/$defs/WidgetNavigationItem.label{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/widget.schema.json/$defs/WidgetFormSubmit.label{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#1762",
+      "break": "crates/norn-ir/schema/widget.schema.json/$defs/WidgetActionPlacement.label{*}: output schema widened from {\"type\": \"string\"} to true"
     }
   ]
 }

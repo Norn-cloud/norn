@@ -9,4 +9,5 @@
 //!   one.
 
 pub mod outbox;
+pub mod outbox_ledger;
 pub mod pin;

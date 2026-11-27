@@ -1123,7 +1123,7 @@ Measured on `origin/main` at `ff0f95bd5e`, except the shell gaps, which were mea
   Closed in restyle 2 (Part of #1705): none remain anywhere in `src/` (`test/type-lock.test.ts` enforces it).
 - [x] `font-medium`: 346 uses; most are outside the allowed four. Heaviest:
   `imports/split-pane-review.tsx` (20), `shell.tsx` (18), `imports/supersession-diff.tsx` (18),
-  `semantic-map.tsx` (17), `sources.tsx`, `objects.tsx`, `guarantees.tsx` (10 each);
+  `semantic-map.tsx` (17), `sources.tsx`, `record/record-view.tsx`, `guarantees.tsx` (10 each);
   `components/chip.tsx` sets 500 on every chip.
   Closed in restyle 2 (Part of #1705): none remain anywhere in `src/` (`test/type-lock.test.ts` enforces it).
 - [x] Arbitrary `text-[…]` sizes: 81 uses (`text-[0.6875rem]` ×42, `text-[11px]` ×14, `text-[10px]`,
@@ -1139,7 +1139,7 @@ Measured on `origin/main` at `ff0f95bd5e`, except the shell gaps, which were mea
 - [x] Filled tinted status pills: `components/chip.tsx` (`Chip` fills every tone) used in 21 files;
   heaviest `widget/views.tsx` (18), `learning/proposals-page.tsx` (15), `laws.tsx` (9),
   `imports/split-pane-review.tsx` (9), `learning/cases-page.tsx` (8), `learning/misfit-page.tsx`,
-  `objects.tsx`, `learning/episodes-page.tsx`, `imports/supersession-diff.tsx`,
+  `record/record-view.tsx`, `learning/episodes-page.tsx`, `imports/supersession-diff.tsx`,
   `evidence/evidence-crop.tsx`. Status → `StatusDot`; kinds and sources → outline `SourceTag`.
   Closed in #1753: `Chip` renders a state as a 6px dot and its word, and a neutral chip as an outline SourceTag, in every file that uses it.
 - [x] `components/fact-status-badge.tsx` renders the honesty states as filled chips; needs dot-first
@@ -1172,7 +1172,7 @@ Measured on `origin/main` at `ff0f95bd5e`, except the shell gaps, which were mea
   `left/right/border-l/border-r`; no 12px inset, no 24px radius, no single-CTA footer. Used by
   `answer-view.tsx`, `assistant-slot.tsx`, `dashboards.tsx`, `actions/action-sheet.tsx`,
   `decisions/decision-sheet.tsx`, `components/provenance.tsx`, `questions.tsx`,
-  `dashboards/tile-view.tsx`, `objects.tsx`, `grid/records-grid.tsx`, `learning/cases-page.tsx`,
+  `dashboards/tile-view.tsx`, `record/record-view.tsx`, `grid/records-grid.tsx`, `learning/cases-page.tsx`,
   `lib/inspector.tsx`. Widths vary (`sm:max-w-lg` to `sm:max-w-4xl`). Replace with one DetailSheet.
   Closed in #1753: `SheetContent` is the floating inset DetailSheet (12px inset, 24px radius, `--sheet-shadow`, logical sides) with `SheetBody`, `SheetSection` and a footer for one primary action; callers no longer set their own widths except the wide answer and dashboard sheets.
 
