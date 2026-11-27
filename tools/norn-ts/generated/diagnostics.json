@@ -1641,6 +1641,14 @@
       "no_fix": null
     },
     {
+      "code": "interface.validation.disjoint_violation",
+      "tier": "T3",
+      "severity": "error",
+      "message": "interface disjointness contract is malformed or violated",
+      "fix": "Remove one of the mutually disjoint interfaces from the reported inheritance or implements list, or fix the disjointWith target.",
+      "no_fix": null
+    },
+    {
       "code": "interface.validation.duplicate_link_id",
       "tier": "T2",
       "severity": "error",

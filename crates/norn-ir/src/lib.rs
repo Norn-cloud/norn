@@ -163,7 +163,9 @@ pub use entity_v2::invariant::{ConstraintClass, Invariant, InvariantId};
 pub use entity_v2::lifecycle::{
     FiringRefusal, Lifecycle, LifecycleEnding, LifecycleEvent, LifecycleIgnore, LifecycleOutcome,
     LifecyclePathProperty, Transition, TransitionId, TransitionMode, TransitionTrigger,
-    codes as lifecycle_codes, declared_lifecycle_properties, effective_lifecycles,
+    codes as lifecycle_codes, declared_lifecycle_properties,
+    declared_lifecycle_properties_with_interfaces, effective_lifecycles,
+    effective_lifecycles_with_interfaces,
 };
 pub use entity_v2::link::{InterfaceLink, Link, LinkCardinality, LinkId, Multiplicity};
 pub use entity_v2::naming_series::{

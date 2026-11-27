@@ -1,10 +1,10 @@
 {
-  "sha256": "b8cf626f5a2f5aa7cc837f6a0f3e2f3a8c6084f645609926a40c9707b4dbf8a3",
-  "origin": "derived",
-  "category": "generated",
-  "license": "Apache-2.0",
-  "sources": [],
   "analyzed_sources": [],
+  "category": "generated",
+  "connector": null,
+  "license": "Apache-2.0",
+  "notices": [],
+  "origin": "derived",
   "parents": [
     "Cargo.lock",
     "crates/norn-ir/Cargo.toml",
@@ -67,6 +67,6 @@
       "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
     }
   ],
-  "notices": [],
-  "connector": null
+  "sha256": "51f97d15bc0f8109e149229a42c60e7946ad62d64733c92128b0dc4f33586c67",
+  "sources": []
 }
