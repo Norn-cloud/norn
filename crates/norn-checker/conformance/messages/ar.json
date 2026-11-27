@@ -74,6 +74,10 @@
       "message": "النموذج {$model} ليس ضمن قائمة النماذج المسموح بها",
       "review": "needs_review"
     },
+    "artifact_set.action.compensation_cycle": {
+      "message": "تعويض الإجراء يشكّل حلقة مغلقة: {$cycle}",
+      "review": "needs_review"
+    },
     "artifact_set.action.create_link": {
       "message": "تأثير الرابط «إنشاء فقط» للإجراء أو شريحة الهدف المصرَّح بها غير صالح",
       "review": "needs_review"
@@ -92,6 +96,10 @@
     },
     "artifact_set.action.invalid_aggregate": {
       "message": "مُدخل تجميعي للإجراء يسمّي نوعًا أو خاصية غير معروفة، أو خاصية لا يستطيع الطيّ قراءتها",
+      "review": "needs_review"
+    },
+    "artifact_set.action.invalid_compensation": {
+      "message": "الإجراء التعويضي {$actionId} غير صالح: {$detail}",
       "review": "needs_review"
     },
     "artifact_set.action.invalid_slice": {
@@ -124,6 +132,10 @@
     },
     "artifact_set.action.unknown_write_kind": {
       "message": "مجموعة الكتابة تسمّي {$entityKind}، وهو ليس نوع كائن في مجموعة الأدوات ولا في القاعدة المثبَّتة",
+      "review": "needs_review"
+    },
+    "artifact_set.action.unresolved_compensation": {
+      "message": "التعويض يسمّي الإجراء {$actionId}، وهو ليس إجراءً في مجموعة الأدوات ولا في القاعدة المثبَّتة",
       "review": "needs_review"
     },
     "artifact_set.action.unresolved_effect_entity": {

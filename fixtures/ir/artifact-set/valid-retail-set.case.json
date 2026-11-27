@@ -12,7 +12,8 @@
     "ir/retail-reorder-threshold.setting.json",
     "ir/retail-sku-supplier.relation.json",
     "ir/retail-reorder-routing.rule.json",
-    "ir/retail-inventory.connector.json"
+    "ir/retail-inventory.connector.json",
+    "ir/retail-cancel-reorder.action.json"
   ],
   "expect": []
 }
