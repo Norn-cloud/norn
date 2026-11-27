@@ -2349,7 +2349,7 @@ fn civil_date_and_timestamp_ordering_and_guards_match_per_row() {
     assert_eq!(bulk0.data, row_trusted0);
 }
 
-/// Lane A5.1: DuckDB byte-fuel uses `strlen` (UTF-8 bytes, matching ZEN)
+/// Lane A5.1: `DuckDB` byte-fuel uses `strlen` (UTF-8 bytes, matching ZEN)
 /// while `PointLaw::{MinLength, MaxLength}` uses `length` (Unicode char count,
 /// matching `entity_instance.rs:1155`).
 #[test]
@@ -2435,7 +2435,7 @@ fn multibyte_utf8_byte_fuel_and_char_length_preserve_contracts() {
 
 /// Lane A5.1: 3-way differential test proving exact agreement across
 /// `Per-Row == DuckDB == DataFusion` (and identical residue counts between
-/// DuckDB and DataFusion) over nested-null `Coalesce`, `Conditional`,
+/// `DuckDB` and `DataFusion`) over nested-null `Coalesce`, `Conditional`,
 /// row-tree `unless` exception trees, `timestamp(...)` ordering, NFC/NFD text,
 /// and optional nulls.
 #[cfg(all(feature = "duckdb", feature = "datafusion", feature = "native"))]
@@ -2711,15 +2711,27 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
                 "not (self.id != 'null-big' and (self.large == (self.id == 'null-big' ? null : self.small)))",
             ),
             ("deep_short_circuit_or", "error", &deep_or_expr),
+            (
+                "null_branch_overflow_eq",
+                "error",
+                "((self.large == self.small) ? null : null) == null",
+            ),
+            (
+                "null_cond_residue",
+                "error",
+                "((self.id == 'null-big' ? null : true) ? null : null) == null",
+            ),
         ],
     );
     let ten_26 = "100000000000000000000000000";
-    // Row 1 (`b-1`): `10^26` overflows `DECIMAL(38,12)` across all 7 rules -> residue (7 rules).
-    // Row 2 (`null`): `COALESCE(NULL, 0.000000000001)` passes 6 rules and fails ONLY `wide_compare` in SQL.
+    // Row 1 (`b-1`): `10^26` overflows `DECIMAL(38,12)` across 8 rules -> residue (8 rules);
+    //   `null_cond_residue` evaluates `(true ? null : null) == null` cleanly in SQL.
+    // Row 2 (`null`): `COALESCE(NULL, 0.000000000001)` passes 8 rules and fails ONLY `wide_compare` in SQL.
     // Row 3 (`null-big`): `short_circuit_or`, `short_circuit_and`, and 17-term `deep_short_circuit_or`
-    //   all short-circuit on their row-dependent LHS with 0 residue in BOTH DuckDB and DataFusion,
-    //   while the other 4 rules overflow `DECIMAL(38,12)` -> residue (4 rules).
-    // Row 4 (`b-4`): `5` -> all 7 pass in SQL with 0 residue.
+    //   short-circuit on their row-dependent LHS with 0 residue in BOTH DuckDB and DataFusion,
+    //   while the other 6 rules (4 decimal overflows + `null_branch_overflow_eq` + `null_cond_residue`)
+    //   go to residue in BOTH engines (6 rules).
+    // Row 4 (`b-4`): `5` -> all 9 pass in SQL with 0 residue.
     let big_csv = format!(
         "id,large,small\n\
          b-1,{ten_26},0.000000000001\n\
@@ -2788,8 +2800,8 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
         "DataFusion matches DuckDB's DECIMAL(38, s) storage bound on branch, comparison, and short-circuit logicals"
     );
     assert_eq!(duck_big_landed.residue, df_big_landed.residue);
-    assert_eq!(duck_big_landed.residue[0].rules.len(), 7);
-    assert_eq!(duck_big_landed.residue[1].rules.len(), 4);
+    assert_eq!(duck_big_landed.residue[0].rules.len(), 8);
+    assert_eq!(duck_big_landed.residue[1].rules.len(), 6);
     // Row 2 (`null`) must be held ONLY by `wide_compare` (`0 > 0.000000000001`),
     // NOT by `wide_coalesce`, `no_silent_round_to_zero`, or `nullable_mixed_eq`.
     assert_eq!(duck_big_landed.held_by_rules, 1);
@@ -2800,12 +2812,48 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
         duck_big_landed.rules.values().next().expect("rule").label,
         "law:wide_compare"
     );
+    let null_cond_rule = big_req_base
+        .checks
+        .iter()
+        .find(|check| check.label == "law:null_cond_residue")
+        .expect("null_cond_residue check")
+        .rule
+        .as_str();
+    assert!(
+        duck_big_landed.residue[1]
+            .rules
+            .iter()
+            .any(|rule| rule == null_cond_rule),
+        "row 3 must send null_cond_residue to residue"
+    );
+    let overflow_only: Vec<_> = duck_big_landed
+        .residue
+        .iter()
+        .map(|row| norn_cell::analytics::ResidueRow {
+            row: row.row,
+            values: row.values.clone(),
+            rules: row
+                .rules
+                .iter()
+                .filter(|rule| rule.as_str() != null_cond_rule)
+                .cloned()
+                .collect(),
+        })
+        .collect();
     assert_eq!(
         big_store
-            .residue_findings(big_type, &big_req_base.load.table, &duck_big_landed.residue)
+            .residue_findings(big_type, &big_req_base.load.table, &overflow_only)
             .expect("per-row settles 10^26 cleanly"),
         Vec::new()
     );
+    let null_cond_only = vec![norn_cell::analytics::ResidueRow {
+        row: duck_big_landed.residue[1].row,
+        values: duck_big_landed.residue[1].values.clone(),
+        rules: vec![null_cond_rule.to_owned()],
+    }];
+    big_store
+        .residue_findings(big_type, &big_req_base.load.table, &null_cond_only)
+        .expect_err("per-row ZEN refuses a null ternary condition rather than taking ELSE");
 }
 
 /// Sol 6.2 R1 (High 4): `RowPlan::fuel` pays for referenced column key bytes

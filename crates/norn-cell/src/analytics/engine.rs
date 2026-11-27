@@ -766,7 +766,7 @@ impl Engine {
         let landed = self.with(&load_request.tenant, |conn| {
             let landed = (|| {
                 let load = load_locked(conn, &staged_load, &file, bytes, started, Lineage::Skip)?;
-                without_cse(conn, || {
+                without_rule_optimizers(conn, || {
                     in_transaction(conn, |conn| check_rules(conn, &staged_table, request))
                 })?;
                 residue_fits(conn, &staged_table, request.residue_page)?;
@@ -1420,34 +1420,44 @@ fn in_transaction<T>(
     }
 }
 
-/// Run `body` with `DuckDB`'s `common_subexpressions` optimizer disabled, then
-/// restore the previous `disabled_optimizers` setting after `body` commits or
-/// rolls back (while still holding the tenant connection lock).
+/// Run `body` with `DuckDB`'s `common_subexpressions` and
+/// `statistics_propagation` optimizers disabled, then restore the previous
+/// `disabled_optimizers` setting after `body` commits or rolls back (while
+/// still holding the tenant connection lock).
 ///
 /// `DuckDB` 2.0.0's `common_subexpressions` optimizer does not treat `TRY(...)`
-/// as an exception boundary and can hoist a shared throwing subexpression (such
-/// as a mixed-scale `DECIMAL(38, s)` cast) above `TRY`, aborting the landing
-/// query instead of recording residue.
-fn without_cse<T>(conn: &Connection, body: impl FnOnce() -> Outcome<T>) -> Outcome<T> {
+/// as an exception boundary and can hoist a shared throwing subexpression above
+/// `TRY`, aborting the landing query instead of recording residue;
+/// `statistics_propagation` can erase an always-`NULL` subexpression whose
+/// condition throws (e.g. `CASE WHEN <overflow> THEN NULL ELSE NULL END`) from
+/// `COALESCE` / `IS NULL`, splitting residue sets from `DataFusion`.
+fn without_rule_optimizers<T>(conn: &Connection, body: impl FnOnce() -> Outcome<T>) -> Outcome<T> {
     let prior: String = db(conn.query_row(
         "SELECT current_setting('disabled_optimizers')",
         [],
         |row| row.get(0),
     ))?;
-    let already_disabled = prior
+    let mut active: Vec<&str> = prior
         .split(',')
-        .any(|entry| entry.trim().eq_ignore_ascii_case("common_subexpressions"));
-    if !already_disabled {
-        let next = if prior.trim().is_empty() {
-            "common_subexpressions".to_owned()
-        } else {
-            format!("{prior},common_subexpressions")
-        };
-        let escaped = next.replace('\'', "''");
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .collect();
+    let mut added = false;
+    for optimizer in ["common_subexpressions", "statistics_propagation"] {
+        if !active
+            .iter()
+            .any(|entry| entry.eq_ignore_ascii_case(optimizer))
+        {
+            active.push(optimizer);
+            added = true;
+        }
+    }
+    if added {
+        let escaped = active.join(",").replace('\'', "''");
         db(conn.execute_batch(&format!("SET disabled_optimizers = '{escaped}';")))?;
     }
     let result = body();
-    if already_disabled {
+    if !added {
         return result;
     }
     let restore = if prior.trim().is_empty() {
@@ -3708,8 +3718,8 @@ fn widen_decimal_pair(
 }
 
 /// `a == b` or `a != b`; uses SQL null-safe equality (`IS [NOT] DISTINCT FROM`)
-/// with explicit mixed-scale decimal widening so dynamically nullable branches
-/// match ZEN's `null == null` / `null == x` without rounding.
+/// with explicit mixed-scale decimal widening and never drops `Null`-typed
+/// subexpressions whose conditions can overflow or evaluate to `NULL`.
 fn lower_equality(
     equal: bool,
     a: &RowPredicate,
@@ -3720,28 +3730,14 @@ fn lower_equality(
     let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
     let mut guards = a.guards;
     guards.extend(b.guards);
-    let sql = match (a.kind, b.kind) {
-        (K::Null, K::Null) => Frag::raw(if equal { "TRUE" } else { "FALSE" }),
-        (K::Null, _) => {
-            let test = if equal { "IS NULL" } else { "IS NOT NULL" };
-            Frag::fmt(&format!("({{}} {test})"), &[&b.sql])
-        }
-        (_, K::Null) => {
-            let test = if equal { "IS NULL" } else { "IS NOT NULL" };
-            Frag::fmt(&format!("({{}} {test})"), &[&a.sql])
-        }
-        _ => {
-            let (a_sql, b_sql) = widen_decimal_pair(a.sql, a.kind, b.sql, b.kind);
-            let op = if equal {
-                "IS NOT DISTINCT FROM"
-            } else {
-                "IS DISTINCT FROM"
-            };
-            Frag::fmt(&format!("({{}} {op} {{}})"), &[&a_sql, &b_sql])
-        }
+    let (a_sql, b_sql) = widen_decimal_pair(a.sql, a.kind, b.sql, b.kind);
+    let op = if equal {
+        "IS NOT DISTINCT FROM"
+    } else {
+        "IS DISTINCT FROM"
     };
     Ok(LoweredRule {
-        sql,
+        sql: Frag::fmt(&format!("({{}} {op} {{}})"), &[&a_sql, &b_sql]),
         kind: K::Bool,
         guards,
     })
@@ -3753,13 +3749,12 @@ fn lower_coalesce(a: &RowPredicate, b: &RowPredicate, table: &TableSchema) -> Ou
         .ok_or_else(|| refusal(LAW, "a coalesce the engine does not type"))?;
     let mut guards = a.guards;
     guards.extend(b.guards);
-    let sql = if a.kind == PredicateKind::Null && b.kind == PredicateKind::Null {
-        Frag::raw("NULL")
-    } else {
-        let (a_sql, b_sql) = widen_decimal_pair(a.sql, a.kind, b.sql, b.kind);
-        Frag::fmt("COALESCE({}, {})", &[&a_sql, &b_sql])
-    };
-    Ok(LoweredRule { sql, kind, guards })
+    let (a_sql, b_sql) = widen_decimal_pair(a.sql, a.kind, b.sql, b.kind);
+    Ok(LoweredRule {
+        sql: Frag::fmt("COALESCE({}, {})", &[&a_sql, &b_sql]),
+        kind,
+        guards,
+    })
 }
 
 fn lower_conditional(
@@ -3783,10 +3778,17 @@ fn lower_conditional(
     guards.extend(a.guards);
     guards.extend(b.guards);
     let (a_sql, b_sql) = widen_decimal_pair(a.sql, a.kind, b.sql, b.kind);
+    // Evaluate `c` once and turn `c = NULL` into a conversion error caught by
+    // outer `TRY(...)` as residue, matching `DataFusion`'s `Val::Null => None`
+    // instead of SQL `CASE`'s silent `ELSE` fallback.
+    let check = Frag::fmt(
+        "CAST(list_extract(['x', '0', '1'], COALESCE(CAST(({}) AS BIGINT), -1) + 2) AS BIGINT) = 1",
+        &[&c.sql],
+    );
     Ok(LoweredRule {
         sql: Frag::fmt(
             "(CASE WHEN {} THEN {} ELSE {} END)",
-            &[&c.sql, &a_sql, &b_sql],
+            &[&check, &a_sql, &b_sql],
         ),
         kind,
         guards,
