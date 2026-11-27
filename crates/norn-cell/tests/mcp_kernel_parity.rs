@@ -319,11 +319,15 @@ proptest! {
                 "0.1.0",
                 "user:alice",
             );
-            prop_assert!(matches!(
+            let actor_refused = matches!(
                 result,
                 Err(ActionRefusal::InvalidInput { field: ref refused })
                     if actor_fields.contains(refused)
-            ));
+            );
+            prop_assert!(
+                actor_refused,
+                "kernel accepted spoofed actor-derived field `{field}`: {result:?}"
+            );
         }
 
         // 4. Required-derivation parity: any non-actor field with an
@@ -350,7 +354,11 @@ proptest! {
                 "0.1.0",
                 "user:alice",
             );
-            prop_assert!(matches!(result, Err(ActionRefusal::InvalidInput { .. })));
+            let missing_refused = matches!(result, Err(ActionRefusal::InvalidInput { .. }));
+            prop_assert!(
+                missing_refused,
+                "kernel accepted missing required field `{field}`: {result:?}"
+            );
         }
 
         // 5. Positive parity + decimal wire parity: on evaluable ZEN without
