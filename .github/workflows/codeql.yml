@@ -61,12 +61,12 @@ jobs:
           actions=false
           while IFS= read -r -d '' path; do
             case "$path" in
-              *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|package.json|*/package.json|bun.lock|*/bun.lock|tsconfig*.json|*/tsconfig*.json|.github/workflows/codeql.yml|.github/codeql/*)
+              *.ts|*.tsx|*.mts|*.cts|*.js|*.jsx|*.mjs|*.cjs|package.json|*/package.json|bun.lock|*/bun.lock|tsconfig*.json|*/tsconfig*.json|.github/workflows/codeql.yml|.github/codeql/*)
                 js_ts=true
                 ;;
             esac
             case "$path" in
-              *.py|pyproject.toml|*/pyproject.toml|requirements*.txt|.github/workflows/codeql.yml|.github/codeql/*)
+              *.py|*.pyi|pyproject.toml|*/pyproject.toml|requirements*.txt|.github/workflows/codeql.yml|.github/codeql/*)
                 py=true
                 ;;
             esac
