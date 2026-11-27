@@ -480,6 +480,14 @@ export const PosSaleMatchesStoreAndSku = Norn.law("pos_sale_matches_store_and_sk
   because: "A POS sale must record quantities in its catalog SKU's unit of measure and amounts in its store's functional currency.",
 })
 
+export const PosSaleCostedRequiresCostLink = Norn.law("pos_sale_costed_requires_cost_link", {
+  on: PosSale,
+  must: (self) =>
+    (self.cost_status === "costed" && self.cost_record !== null)
+    || (self.cost_status === "missing_cost" && self.cost_record === null),
+  because: "Every costed POS sale must link a governed UnitCost record, and an uncosted sale must carry no UnitCost link.",
+})
+
 export const PosSaleMatchesCostRecord = Norn.law("pos_sale_matches_cost_record", {
   on: PosSale,
   when: (self): self is typeof self & { readonly cost_record: NonNullable<typeof self.cost_record> } => self.cost_record !== null,

@@ -6,7 +6,9 @@ import { PosSale, PosSaleEvidence, StockLot, StoreCount } from "./retail.ts"
 // chasm-trap safe, partitioned by exact unit/currency/basis, and admitted
 // against the Rust checker's derived metric space. Cost-dependent questions
 // group explicitly by `cost_status` (never silently filtering uncosted rows) so
-// mixed buckets fail closed and withhold instead of publishing partial totals.
+// mixed buckets remain separated while declared transforms (`StoreSalesPerformance`,
+// `StoreLotAging`) null-withhold incomplete groups in IR; declarative feed/count
+// source freshness wires into B6 (`#1905` `RequiredSources`) once merged.
 
 const window = { basis: "effective", from: "2026-07-06T00:00:00Z", to: "2026-10-26T00:00:00Z", freshness: { kind: "live", maxAgeMs: 60000 } } as const
 
