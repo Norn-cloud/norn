@@ -70,7 +70,7 @@ test("an unreachable host is a structured 502; a read may be retried, a write is
   const host = httpHost(ORIGIN, failing)
   const read = await refusalOf(await host.fetch(new Request("https://norn-host/v1/me")))
   expect(read.status).toBe(502)
-  expect(read.body).toMatchObject({ code: "host.unreachable", category: "host", retryable: true })
+  expect(read.body).toMatchObject({ code: "host.unreachable", category: "internal", retryable: true })
   const write = await refusalOf(await host.fetch(new Request("https://norn-host/v1/cell/definitions:apply", { method: "POST", body: "{}" })))
   expect(write.status).toBe(502)
   expect(write.body).toMatchObject({ code: "host.unreachable", retryable: false })
