@@ -12,7 +12,7 @@ use norn_kernel::{
 
 use super::{
     AuthenticatedForkCommand, ForkActionCall, ForkMergeRefusalReason, MaterialOutcome,
-    PromotedCommand, merge_refused, scope_binding_event,
+    PromotedCommand, is_fork_scope_event, merge_refused, scope_binding_event,
 };
 use crate::admitted::AdmittedDefinitions;
 use crate::engine::SqlEngine;
