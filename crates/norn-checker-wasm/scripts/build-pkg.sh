@@ -81,6 +81,36 @@ cat > "${out}/package.json" <<JSON
 }
 JSON
 
+run_wasm_opt() {
+  # Prefer native C++ binaryen 132 on Linux x86_64 (checksum-verified release binary,
+  # multi-threaded, ~10-15s vs ~3m under npx's single-threaded JS/WASM port, #1951).
+  if [[ "$(uname -sm)" == "Linux x86_64" ]]; then
+    local cache_dir="${CARGO_HOME:-$HOME/.cargo}/bin"
+    local cached="${cache_dir}/wasm-opt-132"
+    if [[ ! -x "${cached}" ]] || ! "${cached}" --version 2>/dev/null | grep -qE '^wasm-opt version 132([^0-9]|$)'; then
+      mkdir -p "${cache_dir}"
+      local stage
+      stage="$(mktemp -d "${cache_dir}/.wasm-opt-132.XXXXXX")"
+      local archive="${stage}/binaryen-version_132-x86_64-linux.tar.gz"
+      if ! {
+        curl -fsSL --retry 3 -o "${archive}" \
+          "https://github.com/WebAssembly/binaryen/releases/download/version_132/binaryen-version_132-x86_64-linux.tar.gz" &&
+        printf '%s  %s\n' "195ddc94f9bc89f45abdabb0b9eea86023d727ba90eac8b35b80f2544fc30572" "${archive}" | sha256sum -c --quiet - &&
+        tar -xzf "${archive}" -C "${stage}" binaryen-version_132/bin/wasm-opt &&
+        "${stage}/binaryen-version_132/bin/wasm-opt" --version | grep -qE '^wasm-opt version 132([^0-9]|$)' &&
+        mv -f "${stage}/binaryen-version_132/bin/wasm-opt" "${cached}"
+      }; then
+        rm -rf "${stage}"
+        return 1
+      fi
+      rm -rf "${stage}"
+    fi
+    "${cached}" "$@"
+  else
+    npx --yes -p binaryen@132.0.0 wasm-opt "$@"
+  fi
+}
+
 bg="${out}/${name}_bg.wasm"
 # wasm-opt -Oz after wasm-bindgen (binaryen, exact pin; NORN_WASM_OPT=0 skips it). It keeps the
 # module's behaviour: the native-vs-wasm parity suite runs on the optimized package.
@@ -88,7 +118,7 @@ bindgen_bytes="$(wc -c < "${bg}" | tr -d ' ')"
 bindgen_gzip_bytes="$(gzip -9 -n -c "${bg}" | wc -c | tr -d ' ')"
 wasm_opt="none"
 if [[ "${NORN_WASM_OPT:-1}" != "0" ]]; then
-  npx --yes -p binaryen@132.0.0 wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
+  run_wasm_opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int \
     --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue \
     "${bg}" -o "${bg}.opt"
   mv "${bg}.opt" "${bg}"

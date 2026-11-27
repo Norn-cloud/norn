@@ -8,6 +8,10 @@ const url = process.env.E2E_BASE
 export default defineConfig({
   testDir: "e2e",
   testMatch: "*.e2e.ts",
+  // Parallelize independent E2E rows across 4 workers in CI (#1951); stateful suites
+  // (e.g. e2e/supply-lab.e2e.ts) opt into `test.describe.configure({ mode: "serial" })`.
+  fullyParallel: true,
+  workers: process.env.CI ? 4 : undefined,
   forbidOnly: Boolean(process.env.CI),
   timeout: 60_000,
   retries: 0,
