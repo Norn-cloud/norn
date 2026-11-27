@@ -941,7 +941,7 @@ fn verify_main_world_intent<S: SqlEngine>(
         Prepared::Replayed(_) => Err(merge_refused(ForkMergeRefusalReason::ReplayRejected {
             action_id: auth_cmd.call.action_id.clone(),
             idempotency_key: auth_cmd.call.idempotency_key.clone(),
-            code: "action.already_committed".to_owned(),
+            code: "action.idempotency_conflict".to_owned(),
             detail: "idempotency key was already committed on main before promotion".to_owned(),
         })),
     }
@@ -1018,7 +1018,7 @@ fn replay_into_main<S: SqlEngine>(
             return Err(partial_or_initial_refusal(
                 promoted,
                 auth_cmd.call,
-                "action.already_committed",
+                "action.idempotency_conflict",
                 "idempotency key was already committed on main".to_owned(),
             ));
         };
@@ -1181,7 +1181,7 @@ fn verify_staged_material_outcome<S: SqlEngine>(
         return Err(merge_refused(ForkMergeRefusalReason::ReplayRejected {
             action_id: auth_cmd.call.action_id.clone(),
             idempotency_key: auth_cmd.call.idempotency_key.clone(),
-            code: "action.already_committed".to_owned(),
+            code: "action.idempotency_conflict".to_owned(),
             detail: "idempotency key was already committed on main before promotion".to_owned(),
         }));
     };
