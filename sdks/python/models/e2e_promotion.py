@@ -1,8 +1,9 @@
-"""Model promotion end to end on a dev host (#1171 M2/M3): registered versions
-and the promotion law.
+"""Model promotion end to end on a dev host (#1171 M2/M3): registered versions,
+authenticated evaluation receipts, separation of duties, and the promotion law.
 
-    python e2e_promotion.py /path/to/project
+    NORN_EVALUATION_RECEIPT_1=sha256:... python e2e_promotion.py /path/to/project
 """
+import os
 import sys
 from pathlib import Path
 
@@ -50,38 +51,48 @@ for run in ("train-1", "eval-1"):
 
 base = {"model_id": "sales.churn_model", "training_run": "train-1", "evaluation_run": "eval-1",
         "artifact_uri": "s3://models/churn/train-1/model.pkl", "artifact_sha256": "ab" * 32, "artifact_size": 1024,
-        "input_type": "sales.Customer", "input_revision": "c41", "pinned_dataset_revision": "c42",
-        "metric_name": "auc", "metric_value": "0.91", "contracts_passed": True}
+        "input_type": "sales.Customer", "input_revision": "c41", "pinned_dataset_revision": "c42"}
 
 # A version is registered only from finished runs.
-status, body = call("ml.modelversion.register", {**base, "version_id": "churn@0", "version": "0", "evaluation_run": "running-1",
-                                                 "evaluation_revision": "c42"}, "reg-0")
+status, body = call("ml.modelversion.register", {**base, "version_id": "churn@0", "version": "0", "evaluation_run": "running-1"}, "reg-0")
 assert status != 200, ("registered from a running evaluation", body)
 
-# Evaluated on another revision than the pinned one: registered as a candidate, never promoted.
-ok("ml.modelversion.register", {**base, "version_id": "churn@1", "version": "1", "evaluation_revision": "c40"}, "reg-1")
+# Caller-supplied evaluation metrics / booleans are refused at registration (no self-attestation).
+status, body = call("ml.modelversion.register", {**base, "version_id": "churn@forged", "version": "forged",
+                                                 "evaluation_revision": "c42", "contracts_passed": True}, "reg-forged")
+assert status != 200, ("caller self-attested evaluation evidence on register", body)
+
+# Registered as a candidate: promoting without an authenticated evaluation receipt is refused.
+ok("ml.modelversion.register", {**base, "version_id": "churn@1", "version": "1"}, "reg-1")
 status, body = call("ml.modelversion.promote", {"version_id": "churn@1"}, "promote-1")
 assert status != 200 and version("churn@1")["status"] == "candidate", (status, body)
 refused_code = body.get("code")
 
-# A failed contract: never promoted either.
-ok("ml.modelversion.register", {**base, "version_id": "churn@2", "version": "2", "evaluation_revision": "c42",
-                                "contracts_passed": False}, "reg-2")
-status, _ = call("ml.modelversion.promote", {"version_id": "churn@2"}, "promote-2")
-assert status != 200 and version("churn@2")["status"] == "candidate"
+# An unretained/forged evaluation receipt digest is refused by ml.modelversion.accept_evaluation.
+status, body = call("ml.modelversion.accept_evaluation", {"version_id": "churn@1", "evaluation_receipt": "sha256:" + "a" * 64}, "accept-forged")
+assert status != 200 and version("churn@1")["status"] == "candidate", (status, body)
 
-# Evaluated on the pinned revision with every contract held. Separation of duties
-# (ACTOR-INDEPENDENT-1): the registrant's own promotion is refused; the reviewer's lands.
-ok("ml.modelversion.register", {**base, "version_id": "churn@3", "version": "3", "evaluation_revision": "c42"}, "reg-3")
-status, body = call("ml.modelversion.promote", {"version_id": "churn@3"}, "promote-3-self")
-assert status != 200 and version("churn@3")["status"] == "candidate", (status, body)
-status, body = call_as_reviewer("ml.modelversion.promote", {"version_id": "churn@3"}, "promote-3")
-assert status == 200 and version("churn@3")["status"] == "production", (status, body)
-links = http.get("/v1/objects/ml.ModelVersion/churn@3/links", params={"orgId": cell.org_id, "environmentId": cell.environment_id}).json()
-assert {"trained_by", "evaluated_by"} <= {item.get("link") for item in links["items"]}, links
+# Positive end-to-end promotion requires a host-retained `ml.forecast.evaluate` receipt digest
+# (`SqliteCell::retain_function_receipt`). Fail loudly rather than silently skipping positive
+# coverage if the host fixture did not retain a receipt for `churn@1`.
+receipt_1 = os.environ.get("NORN_EVALUATION_RECEIPT_1")
+if not receipt_1:
+    raise SystemExit(
+        "e2e_promotion.py requires NORN_EVALUATION_RECEIPT_1 (a host-retained ml.forecast.evaluate "
+        "FunctionReceipt digest for churn@1); refusing to report ok without positive promotion coverage"
+    )
 
-# The approval gate (APPROVAL-1) installs on a hosted cell, whose grant table
-# declares the admin and owner deciders; a dev host declares no roles and
-# installs no approvals. crates/norn-cell-do/tests/ml_approval.rs checks the
-# definition against the hosted table.
-print(f"model promotion: ok (registration needs finished runs; unevaluated and failed-contract promotions refused: {refused_code}; the registrant's own promotion refused, the reviewer's promoted; run links kept)")
+ok("ml.modelversion.accept_evaluation", {"version_id": "churn@1", "evaluation_receipt": receipt_1}, "accept-1")
+evaluated = version("churn@1")
+assert evaluated["status"] == "evaluated" and evaluated["evaluation_receipt"] == receipt_1, evaluated
+
+# Separation of duties (ACTOR-INDEPENDENT-1): the registrant cannot promote its own version.
+status, body = call("ml.modelversion.promote", {"version_id": "churn@1"}, "promote-self")
+assert status != 200 and version("churn@1")["status"] == "evaluated", (status, body)
+
+# Independent reviewer promotes the evaluated version to production.
+status, body = call_as_reviewer("ml.modelversion.promote", {"version_id": "churn@1"}, "promote-reviewer")
+assert status == 200 and version("churn@1")["status"] == "production", (status, body)
+
+print(f"model promotion: ok (closed registration, forged/unevaluated/self-promotion refused: {refused_code}; "
+      f"authenticated evaluation receipt accepted and promoted by reviewer)")
