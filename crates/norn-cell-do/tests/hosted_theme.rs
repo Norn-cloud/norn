@@ -72,7 +72,10 @@ fn subscribed(cell: &mut Cell) -> (String, Option<Value>) {
         })
         .cloned()
         .collect();
-    assert!(themes.len() <= 1, "one active theme per workspace: {themes:#?}");
+    assert!(
+        themes.len() <= 1,
+        "one active theme per workspace: {themes:#?}"
+    );
     (digest, themes.into_iter().next())
 }
 
@@ -205,8 +208,12 @@ fn hosted_theme_rejects_unknown_fields_named_colors_invisible_warning_and_suppor
         "{}",
         planned_unknown.body
     );
-    let applied_unknown =
-        cell.change(APPLY_PATH, Some("owner"), &unknown_artifact, Some(before_refusals));
+    let applied_unknown = cell.change(
+        APPLY_PATH,
+        Some("owner"),
+        &unknown_artifact,
+        Some(before_refusals),
+    );
     assert_eq!(applied_unknown.status, 422, "{}", applied_unknown.body);
     assert!(
         refusal_codes(&applied_unknown).contains(&"theme.validation.schema".to_owned()),
@@ -226,8 +233,7 @@ fn hosted_theme_rejects_unknown_fields_named_colors_invisible_warning_and_suppor
     );
     assert_eq!(cell.version(), before_refusals);
     let invisible = [theme(THEME_ID, "0.2.0", INVISIBLE_WARNING)];
-    let refused_warning =
-        cell.change(APPLY_PATH, Some("owner"), &invisible, Some(before_refusals));
+    let refused_warning = cell.change(APPLY_PATH, Some("owner"), &invisible, Some(before_refusals));
     assert_eq!(refused_warning.status, 422, "{}", refused_warning.body);
     assert!(
         refusal_codes(&refused_warning)
@@ -285,7 +291,11 @@ fn hosted_draft_and_proposed_themes_do_not_paint_or_block_active_theme() {
     )];
     let applied_proposed = apply(&mut cell, "owner", &proposed);
     assert_eq!(applied_proposed.status, 200, "{}", applied_proposed.body);
-    assert_eq!(subscribed(&mut cell).1, None, "proposed theme must not paint");
+    assert_eq!(
+        subscribed(&mut cell).1,
+        None,
+        "proposed theme must not paint"
+    );
 
     // An active theme under a different id is admitted without conflict and becomes the sole
     // served active theme.

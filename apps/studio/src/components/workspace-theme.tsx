@@ -28,11 +28,11 @@ export function WorkspaceThemeFeed() {
     clearPublishedServedTheme(scopeKey)
   }, [scopeKey])
 
-  // Clear synchronously the instant sign-out (`endSession` -> `forgetReads`) evicts read queries
-  // from the TanStack Query cache, before the follow-up `/api/me` response resolves.
-  useIsomorphicLayoutEffect(() => subscribeThemeCacheEviction(queryClient, () => {
-    clearPublishedServedTheme()
-  }), [queryClient])
+  // Clear synchronously the instant sign-out (`endSession` -> `forgetReads`) evicts this workspace's
+  // theme query from the TanStack Query cache, before the follow-up `/api/me` response resolves.
+  useIsomorphicLayoutEffect(() => subscribeThemeCacheEviction(queryClient, scopeKey, () => {
+    clearPublishedServedTheme(scopeKey)
+  }), [queryClient, scopeKey])
 
   if (served.kind !== "invalid") return null
   const first = served.issues[0]

@@ -860,7 +860,9 @@ pub(crate) fn parse_wire_color(raw: &str) -> Option<Color> {
                 || text
                     .strip_prefix("0.")
                     .or_else(|| text.strip_prefix('.'))
-                    .is_some_and(|frac| !frac.is_empty() && frac.bytes().all(|b| b.is_ascii_digit()))
+                    .is_some_and(|frac| {
+                        !frac.is_empty() && frac.bytes().all(|b| b.is_ascii_digit())
+                    })
                 || text
                     .strip_prefix("1.")
                     .is_some_and(|frac| !frac.is_empty() && frac.bytes().all(|b| b == b'0'));

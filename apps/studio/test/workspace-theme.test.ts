@@ -7,10 +7,12 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { applyAppearance, clearPublishedServedTheme } from "../src/lib/appearance.tsx"
 import {
+  CustomThemeDialog,
   captureThemeEditorSnapshot,
   openThemeEditorSession,
   reconcileThemeEditorSession,
 } from "../src/components/custom-theme-dialog.tsx"
+import { studioScopeKey } from "../src/lib/definitions.ts"
 import { readDocument } from "../src/lib/exact.ts"
 import { endSession, type Account } from "../src/lib/session.ts"
 import { parseServedTheme, parseStudioTheme, type StudioTheme } from "../src/lib/studio-theme.ts"
@@ -420,11 +422,30 @@ test("R2 Finding 3: endSession clears painted DOM theme immediately on cache evi
   expect(dataset.customTheme).toBe("Paper")
   expect(styles.get("--canvas")).toBe("#f4f2ed")
 
-  const unsubEvict = subscribeThemeCacheEviction(queryClient, () => {
+  let evictions = 0
+  const unsubEvict = subscribeThemeCacheEviction(queryClient, studioScopeKey(scopeA), () => {
+    evictions += 1
     clearPublishedServedTheme(undefined, root)
   })
 
   try {
+    // Routine GC/removal of unrelated inactive theme queries (startup `["workspace-theme", "none"]`
+    // or a previous workspace's entry) must NOT fire eviction or clear the active workspace's theme.
+    const startupObserver = new QueryObserver<ServedTheme>(queryClient, {
+      queryKey: servedThemeKey(null),
+      queryFn: async () => ({ kind: "unavailable" }),
+      gcTime: 1,
+    })
+    const unsubStartup = startupObserver.subscribe(() => {})
+    unsubStartup()
+    queryClient.setQueryData(servedThemeKey({ orgId: "org_b", environmentId: "env_b" }), servedA)
+    queryClient.removeQueries({ queryKey: servedThemeKey({ orgId: "org_b", environmentId: "env_b" }), exact: true })
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(queryClient.getQueryCache().find({ queryKey: servedThemeKey(null), exact: true })).toBeUndefined()
+    expect(evictions).toBe(0)
+    expect(dataset.customTheme).toBe("Paper")
+    expect(styles.get("--canvas")).toBe("#f4f2ed")
+
     // Run the real `endSession` while `/api/me` stays pending.
     let finished = false
     const signOutPromise = endSession(queryClient, async () => {}).then(() => { finished = true })
@@ -434,6 +455,7 @@ test("R2 Finding 3: endSession clears painted DOM theme immediately on cache evi
     // `/api/me` is still in flight, yet the previous workspace's DOM theme overrides are already gone.
     expect(meFetches).toBe(1)
     expect(finished).toBe(false)
+    expect(evictions).toBe(1)
     expect(dataset.customTheme).toBeUndefined()
     expect(styles.size).toBe(0)
     expect(dataset.skin).toBe("luma")
@@ -466,4 +488,25 @@ test("R2 Finding 3: endSession clears painted DOM theme immediately on cache evi
     unsubTheme()
     unsubSession()
   }
+})
+
+test("R3 Finding 3: CustomThemeDialog renders Apply disabled on initial render before effects run", () => {
+  const scopeA = { orgId: "org_a", environmentId: "env_a" }
+  const queryClient = new QueryClient()
+  const emptyCatalog = readDocument<readonly []>("[]", "live")
+  const liveA = workspaceOf({ status: "success", data: { kind: "live", scope: scopeA, catalog: emptyCatalog, counts: {}, publishedQuestions: new Set(), builtins: [] } })
+
+  const markup = renderToStaticMarkup(
+    createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement(
+        WorkspaceProvider,
+        { workspace: liveA, children: createElement(CustomThemeDialog, { open: true, onOpenChange: () => {} }) },
+      ),
+    ),
+  )
+  const applyButton = markup.match(/<button[^>]*>[^<]*Use for this workspace<\/button>/)
+  expect(applyButton).not.toBeNull()
+  expect(applyButton![0]).toContain("disabled")
 })

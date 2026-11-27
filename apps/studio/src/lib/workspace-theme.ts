@@ -62,8 +62,6 @@ export const THEME_FEED_INTERVAL_MS = 4_000
 export const LOADING_SERVED_THEME: ServedTheme = { kind: "loading" }
 export const UNAVAILABLE_SERVED_THEME: ServedTheme = { kind: "unavailable" }
 
-const THEME_EVICTION_QUERY_ROOTS = new Set(["workspace-theme", "studio-scope", "studio-mode"])
-
 const pinned = (scope: StudioScope) => async () => scope
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -186,23 +184,33 @@ export function servedThemeQuery(scope: StudioScope | null, fetcher: Fetch = def
 }
 
 /**
- * Whether a TanStack Query cache event evicts or resets the workspace theme (for example,
- * `endSession` -> `forgetReads` calling `removeQueries` synchronously before `/api/me` resolves).
+ * Whether a TanStack Query cache event evicts or resets the **active** workspace's theme query
+ * (for example, `endSession` -> `forgetReads` calling `removeQueries` or `resetQueries`
+ * synchronously before `/api/me` resolves). Routine garbage collection of unrelated inactive
+ * entries such as `["workspace-theme", "none"]` from startup or a prior workspace is ignored.
  */
-export function isThemeCacheEvictionEvent(event: {
-  readonly type: string
-  readonly query: { readonly queryKey: readonly unknown[]; readonly state: { readonly data: unknown } }
-}): boolean {
-  const root = event.query.queryKey[0]
-  if (typeof root !== "string" || !THEME_EVICTION_QUERY_ROOTS.has(root)) return false
+export function isThemeCacheEvictionEvent(
+  event: {
+    readonly type: string
+    readonly query: { readonly queryKey: readonly unknown[]; readonly state: { readonly data: unknown } }
+  },
+  activeScopeKey: string | null,
+): boolean {
+  if (activeScopeKey === null) return false
+  if (event.query.queryKey[0] !== "workspace-theme" || event.query.queryKey[1] !== activeScopeKey) return false
   if (event.type === "removed") return true
-  return root === "workspace-theme" && event.type === "updated" && event.query.state.data === undefined
+  return event.type === "updated" && event.query.state.data === undefined
 }
 
-/** Subscribe to TanStack Query cache evictions/resets that invalidate the painted workspace theme. */
-export function subscribeThemeCacheEviction(client: QueryClient, onEvict: () => void): () => void {
+/** Subscribe to TanStack Query cache evictions/resets that invalidate `activeScopeKey`'s painted workspace theme. */
+export function subscribeThemeCacheEviction(
+  client: QueryClient,
+  activeScopeKey: string | null,
+  onEvict: () => void,
+): () => void {
+  if (activeScopeKey === null) return () => {}
   return client.getQueryCache().subscribe((event) => {
-    if (isThemeCacheEvictionEvent(event)) onEvict()
+    if (isThemeCacheEvictionEvent(event, activeScopeKey)) onEvict()
   })
 }
 
@@ -225,10 +233,11 @@ export function useServedTheme(): { readonly scope: StudioScope | null; readonly
 
   const subscribeCache = useCallback(
     (notify: () => void) => queryClient.getQueryCache().subscribe((event) => {
-      const root = event.query.queryKey[0]
-      if (typeof root === "string" && THEME_EVICTION_QUERY_ROOTS.has(root)) notify()
+      if (scopeKey !== null && event.query.queryKey[0] === "workspace-theme" && event.query.queryKey[1] === scopeKey) {
+        notify()
+      }
     }),
-    [queryClient],
+    [queryClient, scopeKey],
   )
   const readCached = () =>
     liveScope === null ? undefined : queryClient.getQueryCache().find<ServedTheme>({ queryKey, exact: true })?.state.data

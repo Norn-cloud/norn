@@ -192,7 +192,7 @@ export function CustomThemeDialog({
 
   const snapshot = session?.snapshot ?? null
   const scopeChanged = session?.scopeChanged ?? false
-  const loadingInitial = open && session !== null && !session.captured
+  const loadingInitial = open && (session === null || !session.captured)
 
   const settle = async (targetScope: StudioScope, result: ThemeApplyResult) => {
     if (result.applied) {

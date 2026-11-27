@@ -235,7 +235,11 @@ fn a_workspace_holds_one_theme() {
             tenant: None,
         },
     );
-    assert_eq!(error_codes(&after_reset), BTreeSet::new(), "{after_reset:#?}");
+    assert_eq!(
+        error_codes(&after_reset),
+        BTreeSet::new(),
+        "{after_reset:#?}"
+    );
 
     // Draft, proposed, and approved themes do not occupy the active workspace theme slot and must
     // not block an active theme under a different id.
