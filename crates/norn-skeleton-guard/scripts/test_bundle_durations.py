@@ -96,6 +96,19 @@ class WasmPackageReuse(unittest.TestCase):
         with self.assertRaises(SystemExit):
             table(bundle(("phase/browser", 350, {}), ("phase/integration-wasm", 50, {WASM_BUILT: 30})))
 
+    def test_guards_cold_is_netted_by_median_test_build(self):
+        result = table(bundle(("phase/integration-wasm", 380, {WASM_BUILT: 300}), ("phase/guards", 340, {})))
+        self.assertEqual(result["test_build_seconds"], 100)
+        self.assertEqual(result["task_seconds"]["phase/guards"], 240)
+
+    def test_guards_after_test_shard_keeps_its_warm_time(self):
+        result = table(
+            bundle(("test/rest-1", 210, {TEST_BUILT: 110}), ("phase/guards", 240, {})),
+            bundle(("phase/integration-wasm", 380, {WASM_BUILT: 300})),
+        )
+        self.assertEqual(result["test_build_seconds"], 100)
+        self.assertEqual(result["task_seconds"]["phase/guards"], 240)
+
 
 class UtcStamps(unittest.TestCase):
     def setUp(self):

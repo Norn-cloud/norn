@@ -664,21 +664,25 @@ weights = table["task_seconds"]
 #   without charging wasm_compile_seconds when packed alone.
 compile_seconds = table["test_build_seconds"]
 wasm_compile_seconds = table["wasm_pkg_seconds"]
+all_packages = not plan.get("packages")
 wasm_compile_tasks = {"phase/integration-authoring", "phase/integration-wasm", "phase/browser"}
 wasm_group_tasks = wasm_compile_tasks | {"phase/integration-clients"}
-def compiles_tests(task):
-    return task.startswith("test/") or task in {"phase/test-shards", "phase/guards"}
+def in_test_group(task):
+    return task.startswith("test/") or (all_packages and task in {"phase/test-shards", "phase/guards"})
+def needs_own_test_build(task):
+    return not all_packages and task in {"phase/test-shards", "phase/guards"}
 def in_wasm_group(task):
     return task in wasm_group_tasks
 def compiles_wasm_pkg(task):
     return task in wasm_compile_tasks
 def cold_cost(task):
     return (weights[task]
-            + (compile_seconds if compiles_tests(task) else 0)
+            + (compile_seconds if in_test_group(task) or needs_own_test_build(task) else 0)
             + (wasm_compile_seconds if compiles_wasm_pkg(task) else 0))
 def bin_cost(tasks):
     return (sum(weights[task] for task in tasks)
-            + (compile_seconds if any(map(compiles_tests, tasks)) else 0)
+            + (compile_seconds if any(map(in_test_group, tasks)) else 0)
+            + compile_seconds * sum(1 for task in tasks if needs_own_test_build(task))
             + (wasm_compile_seconds if any(map(compiles_wasm_pkg, tasks)) else 0))
 
 if set(weights) != known:
@@ -706,9 +710,9 @@ max_bundles = 6
 # (Test, WasmPkg) so the packer keeps shared builds together whenever that lowers
 # makespan or total CPU time.
 def pack_once(ordered, count, coalesce_test, coalesce_wasm):
-    test_group = [task for task in ordered if compiles_tests(task)]
+    test_group = [task for task in ordered if in_test_group(task)]
     wasm_group = [task for task in ordered if in_wasm_group(task)]
-    other = [task for task in ordered if not compiles_tests(task) and not in_wasm_group(task)]
+    other = [task for task in ordered if not in_test_group(task) and not in_wasm_group(task)]
     items = []
     if coalesce_test and test_group:
         items.append(test_group)
