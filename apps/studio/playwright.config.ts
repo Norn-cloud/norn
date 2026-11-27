@@ -8,6 +8,7 @@ const url = process.env.E2E_BASE
 export default defineConfig({
   testDir: "e2e",
   testMatch: "*.e2e.ts",
+  forbidOnly: Boolean(process.env.CI),
   timeout: 60_000,
   retries: 0,
   reporter: [["list"]],

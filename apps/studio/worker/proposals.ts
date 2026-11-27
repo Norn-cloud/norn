@@ -46,8 +46,11 @@ const proposalOf = (row: Row): Proposal => ({
   installed: row.installed_id !== null && row.installed_version !== null ? { id: row.installed_id, version: row.installed_version } : null,
   costMicroUsd: row.cost ?? 0,
   createdAtMs: row.created_at,
-  decidedAtMs: row.decided_at,
+  decidedAtMs: row.state === "pending" ? null : row.decided_at,
 })
+
+/** Lease duration for an in-flight proposal acceptance claim before another attempt may recover it. */
+export const ACCEPT_CLAIM_LEASE_MS = 60_000
 
 /** Everything the assistant has spent (settled), in millionths of a dollar. */
 export async function spent(db: D1Database): Promise<number> {
@@ -128,17 +131,54 @@ export async function getProposal(db: D1Database, scope: Scope, id: string): Pro
 }
 
 /**
+ * Atomically claim a pending proposal for an in-flight cell install by recording the claim timestamp
+ * in `decided_at` while `state` stays `'pending'`. Concurrent accept or decline calls see the live
+ * lease and refuse with 409, preventing double installs and accept/decline races without altering the
+ * `state` CHECK constraint; an expired lease (`<= now - leaseMs`) can be reclaimed after a crash.
+ */
+export async function claimAccept(db: D1Database, scope: Scope, id: string, now: number, leaseMs = ACCEPT_CLAIM_LEASE_MS): Promise<boolean> {
+  const { results } = await db.prepare(
+    `UPDATE dashboard_proposal SET decided_at = ?
+     WHERE org_id = ? AND environment_id = ? AND user_id = ? AND id = ?
+       AND state = 'pending'
+       AND (decided_at IS NULL OR decided_at <= ?)
+     RETURNING id`,
+  ).bind(now, scope.orgId, scope.environmentId, scope.userId, id, now - leaseMs).all<{ id: string }>()
+  return results.length > 0
+}
+
+/** Release an in-flight accept claim when a non-terminal error occurs so the person can retry. */
+export async function releaseAcceptClaim(db: D1Database, scope: Scope, id: string, claimAt: number): Promise<void> {
+  await db.prepare(
+    `UPDATE dashboard_proposal SET decided_at = NULL
+     WHERE org_id = ? AND environment_id = ? AND user_id = ? AND id = ?
+       AND state = 'pending' AND decided_at = ?`,
+  ).bind(scope.orgId, scope.environmentId, scope.userId, id, claimAt).run()
+}
+
+/**
  * Move a pending proposal to its decision. Only a pending row moves (the
  * compare-and-set is in the statement), so a double accept installs once
- * and a decided proposal never changes again.
+ * and a decided proposal never changes again. When `claimAt` is supplied,
+ * the update is fenced to that exact in-flight accept claim; otherwise it
+ * refuses while an unexpired accept claim is active.
  */
-export async function decide(db: D1Database, scope: Scope, id: string, next: { readonly state: "accepted"; readonly installed: { readonly id: string; readonly version: number } } | { readonly state: "declined" } | { readonly state: "refused"; readonly verdict: Proposal["verdict"] }, now: number): Promise<boolean> {
-  const where = "WHERE org_id = ? AND environment_id = ? AND user_id = ? AND id = ? AND state = 'pending'"
+export async function decide(
+  db: D1Database,
+  scope: Scope,
+  id: string,
+  next: { readonly state: "accepted"; readonly installed: { readonly id: string; readonly version: number } } | { readonly state: "declined" } | { readonly state: "refused"; readonly verdict: Proposal["verdict"] },
+  now: number,
+  claimAt?: number,
+): Promise<boolean> {
+  const claimClause = claimAt === undefined ? "AND (decided_at IS NULL OR decided_at <= ?)" : "AND decided_at = ?"
+  const claimBound = claimAt === undefined ? now - ACCEPT_CLAIM_LEASE_MS : claimAt
+  const where = `WHERE org_id = ? AND environment_id = ? AND user_id = ? AND id = ? AND state = 'pending' ${claimClause}`
   const statement = next.state === "accepted"
-    ? db.prepare(`UPDATE dashboard_proposal SET state = 'accepted', installed_id = ?, installed_version = ?, decided_at = ? ${where}`).bind(next.installed.id, next.installed.version, now, scope.orgId, scope.environmentId, scope.userId, id)
+    ? db.prepare(`UPDATE dashboard_proposal SET state = 'accepted', installed_id = ?, installed_version = ?, decided_at = ? ${where}`).bind(next.installed.id, next.installed.version, now, scope.orgId, scope.environmentId, scope.userId, id, claimBound)
     : next.state === "refused"
-      ? db.prepare(`UPDATE dashboard_proposal SET state = 'refused', verdict = ?, decided_at = ? ${where}`).bind(JSON.stringify(next.verdict), now, scope.orgId, scope.environmentId, scope.userId, id)
-      : db.prepare(`UPDATE dashboard_proposal SET state = 'declined', decided_at = ? ${where}`).bind(now, scope.orgId, scope.environmentId, scope.userId, id)
+      ? db.prepare(`UPDATE dashboard_proposal SET state = 'refused', verdict = ?, decided_at = ? ${where}`).bind(JSON.stringify(next.verdict), now, scope.orgId, scope.environmentId, scope.userId, id, claimBound)
+      : db.prepare(`UPDATE dashboard_proposal SET state = 'declined', decided_at = ? ${where}`).bind(now, scope.orgId, scope.environmentId, scope.userId, id, claimBound)
   const result = await statement.run()
   return (result.meta?.changes ?? 0) > 0
 }

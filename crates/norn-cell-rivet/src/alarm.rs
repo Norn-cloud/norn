@@ -52,6 +52,9 @@ struct Row {
 #[derive(Debug, Default)]
 pub struct Alarm {
     lock: Mutex<()>,
+    /// Serializes concurrent `fire` executions so two overlapping triggers
+    /// never run `alarm_run` at the same time.
+    run_lock: Mutex<()>,
     created: AtomicBool,
 }
 
@@ -209,6 +212,7 @@ impl Alarm {
         F: FnOnce(Delivery) -> Fut,
         Fut: Future<Output = Result<()>>,
     {
+        let _running = self.run_lock.lock().await;
         let (claimed, delivery) = {
             let _held = self.lock.lock().await;
             let Some(row) = self.row(ctx.sql()).await? else {
@@ -253,6 +257,7 @@ impl Alarm {
     /// # Errors
     /// Storage errors.
     pub async fn scope<A: Actor>(&self, ctx: &Ctx<A>) -> Result<Option<String>> {
+        let _held = self.lock.lock().await;
         if !self.exists(ctx.sql()).await? {
             return Ok(None);
         }
@@ -277,6 +282,7 @@ impl Alarm {
     /// # Errors
     /// Storage errors.
     pub async fn keep_scope<A: Actor>(&self, ctx: &Ctx<A>, scope: &str) -> Result<()> {
+        let _held = self.lock.lock().await;
         self.ensure(ctx.sql()).await?;
         ctx.sql()
             .run(
@@ -292,6 +298,7 @@ impl Alarm {
     /// # Errors
     /// Storage errors.
     pub async fn forget_scope<A: Actor>(&self, ctx: &Ctx<A>) -> Result<()> {
+        let _held = self.lock.lock().await;
         if !self.exists(ctx.sql()).await? {
             return Ok(());
         }

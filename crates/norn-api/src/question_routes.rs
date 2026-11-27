@@ -289,7 +289,7 @@ fn answer_plan<E: SqlEngine>(
     };
     withhold_ledger_head(result, key, world);
     withhold_exclusions(result, key, world);
-    withhold_values(result, &withheld, runtime.min_disclosed_bucket());
+    crate::privacy::withhold_values(result, &withheld, runtime.min_disclosed_bucket());
     result.lineage_ref = keyed_lineage_handle(key, &result.lineage_ref);
     Ok(answer)
 }
@@ -332,8 +332,12 @@ pub(crate) fn world_values<E: SqlEngine>(
     store: &CellStore<E>,
     actor: &str,
 ) -> bool {
+    let unmarked = host
+        .marking_catalog(&store.read())
+        .is_ok_and(|c| c.is_empty());
     let mut types = store.model().object_types().peekable();
-    types.peek().is_some()
+    unmarked
+        && types.peek().is_some()
         && types.all(|object_type| {
             let name = object_type.name.as_str();
             runtime
@@ -408,15 +412,6 @@ fn visible_recording(
         withheld.insert(row.id.clone());
     }
     Ok(member)
-}
-
-/// DATA-VALUES-1 (D52/D53): per-member amounts are row values. A bucket with
-/// any member the reader may not see the values of withholds every amount, and
-/// discloses its aggregate only at `min_disclosed` members or more.
-fn withhold_values(result: &mut QueryResult, withheld: &BTreeSet<String>, min_disclosed: usize) {
-    for row in result.rows.values_mut() {
-        row.withhold(|id| withheld.contains(id), min_disclosed.max(1));
-    }
 }
 
 /// LINEAGE-SUM-1: revalidate one exact result with separate value/source grants.
@@ -619,7 +614,14 @@ fn trace_plan<E: SqlEngine>(
         },
     )?;
     let mut trace = outcome.map_err(Refusal::from_compute)?;
-    let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
+    let any_marked = crate::privacy::redact_trace_contributions(
+        host,
+        (actor, &world_name),
+        &cell.store().read(),
+        &mut trace.contributions,
+    )?;
+    let world =
+        !any_marked && withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
     withhold_ledger_head(&mut trace.result, key, world);
     withhold_exclusions(&mut trace.result, key, world);
     if !world {
@@ -631,7 +633,7 @@ fn trace_plan<E: SqlEngine>(
             *receipt = keyed_receipt_handle(key, receipt);
         }
     }
-    withhold_values(&mut trace.result, &withheld, runtime.min_disclosed_bucket());
+    crate::privacy::withhold_values(&mut trace.result, &withheld, runtime.min_disclosed_bucket());
     lineage.clone_into(&mut trace.result.lineage_ref);
     Ok(trace)
 }

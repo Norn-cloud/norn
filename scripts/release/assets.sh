@@ -23,8 +23,16 @@ ZIG_VERSION=0.13.0
 ZIG_SHA256=d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea # zig-linux-x86_64-0.13.0.tar.xz
 CARGO_ZIGBUILD=0.24.1
 
+caller_pwd=$PWD
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
+
+resolve_caller_path() {
+  case "$1" in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s/%s\n' "$caller_pwd" "$1" ;;
+  esac
+}
 
 CLEANUP=()
 cleanup() {
@@ -110,11 +118,16 @@ assert magic == 0xFEEDFACF, f"not a 64-bit Mach-O: {magic:#x}"
 assert cpu == expected, f"cpu {cpu:#x}, expected {expected:#x}"
 offset, commands, dylibs = 32, [], []
 for _ in range(ncmds):
+    assert offset + 8 <= len(data), f"truncated load command at {offset}"
     cmd, size = struct.unpack_from("<II", data, offset)
+    assert size >= 8 and offset + size <= len(data), f"invalid load command size {size} at {offset}"
     commands.append(cmd)
     if cmd in (0xC, 0x80000018):  # LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB
-        name_at = offset + struct.unpack_from("<I", data, offset + 8)[0]
-        dylibs.append(data[name_at : data.index(b"\0", name_at)].decode())
+        assert size >= 12, f"truncated dylib load command at {offset}"
+        name_offset = struct.unpack_from("<I", data, offset + 8)[0]
+        name_at = offset + name_offset
+        assert offset <= name_at < offset + size, f"invalid dylib name offset {name_offset}"
+        dylibs.append(data[name_at : data.index(b"\0", name_at, offset + size)].decode())
     offset += size
 signed = 0x1D in commands
 assert signed or platform == "macos-x64", "arm64 binary has no LC_CODE_SIGNATURE"
@@ -185,7 +198,7 @@ cmd=${1:?usage: assets.sh COMMAND ...}
 shift
 case "$cmd" in
   tools)
-    prefix=${1:-$HOME/.norn-release-tools}
+    prefix=$(resolve_caller_path "${1:-$HOME/.norn-release-tools}")
     mkdir -p "$prefix/bin"
     [[ $(uname -sm) == "Linux x86_64" ]] || { echo "assets.sh: builds run on Linux x86_64" >&2; exit 1; }
     rustup toolchain install "$TOOLCHAIN" --profile minimal --no-self-update >&2
@@ -212,30 +225,30 @@ case "$cmd" in
 
   cli)
     platform=${1:?usage: assets.sh cli PLATFORM OUT}
-    out=${2:?usage: assets.sh cli PLATFORM OUT}
+    out=$(resolve_caller_path "${2:?usage: assets.sh cli PLATFORM OUT}")
     build_rust_asset "$platform" "$out" norn -p norn-cli
     ;;
 
   smoke)
     platform=${1:?usage: assets.sh smoke PLATFORM OUT}
-    out=${2:?usage: assets.sh smoke PLATFORM OUT}
+    out=$(resolve_caller_path "${2:?usage: assets.sh smoke PLATFORM OUT}")
     smoke_binary_asset "$platform" "$out" norn 1
     ;;
 
   dev-host)
     platform=${1:?usage: assets.sh dev-host PLATFORM OUT}
-    out=${2:?usage: assets.sh dev-host PLATFORM OUT}
+    out=$(resolve_caller_path "${2:?usage: assets.sh dev-host PLATFORM OUT}")
     build_rust_asset "$platform" "$out" norn-dev-host -p norn-cell-do --bin norn-dev-host
     ;;
 
   smoke-dev-host)
     platform=${1:?usage: assets.sh smoke-dev-host PLATFORM OUT}
-    out=${2:?usage: assets.sh smoke-dev-host PLATFORM OUT}
+    out=$(resolve_caller_path "${2:?usage: assets.sh smoke-dev-host PLATFORM OUT}")
     smoke_binary_asset "$platform" "$out" norn-dev-host 0
     ;;
 
   wasm)
-    out=${1:?usage: assets.sh wasm OUT}
+    out=$(resolve_caller_path "${1:?usage: assets.sh wasm OUT}")
     mkdir -p "$out" && out=$(cd "$out" && pwd)
     export RUSTUP_TOOLCHAIN=$TOOLCHAIN CARGO_INCREMENTAL=0
     stage=$(mktemp -d)
@@ -255,7 +268,7 @@ case "$cmd" in
 
   sdk)
     tag=${1:?usage: assets.sh sdk TAG OUT}
-    out=${2:?usage: assets.sh sdk TAG OUT}
+    out=$(resolve_caller_path "${2:?usage: assets.sh sdk TAG OUT}")
     version=$(version_of "$tag")
     mkdir -p "$out" && out=$(cd "$out" && pwd)
     stage=$(mktemp -d)
@@ -279,7 +292,7 @@ PY
 
   pyclient)
     tag=${1:?usage: assets.sh pyclient TAG OUT}
-    out=${2:?usage: assets.sh pyclient TAG OUT}
+    out=$(resolve_caller_path "${2:?usage: assets.sh pyclient TAG OUT}")
     version=$(python_version_of "$tag")
     mkdir -p "$out" && out=$(cd "$out" && pwd)
     work=$(mktemp -d)
@@ -289,8 +302,11 @@ PY
       -r sdks/python/requirements.txt -r sdks/python/package-requirements.txt
     python3 -I sdks/python/prepare.py sdks/openapi/norn-api.openapi.json "$work/client-input.json"
     mkdir -p "$work/project"
-    PATH="$work/venv/bin:$PATH" "$work/venv/bin/openapi-python-client" generate \
-      --path "$work/client-input.json" --output-path "$work/project/norn_client" --meta none > "$work/generate.log" 2>&1
+    if ! PATH="$work/venv/bin:$PATH" "$work/venv/bin/openapi-python-client" generate \
+      --path "$work/client-input.json" --output-path "$work/project/norn_client" --meta none > "$work/generate.log" 2>&1; then
+      cat "$work/generate.log" >&2
+      exit 1
+    fi
     if grep -Eq "Warning|WARNING|Unable to process" "$work/generate.log"; then
       cat "$work/generate.log"
       echo "assets.sh: the generator reported warnings; the client would be missing pieces" >&2
@@ -320,8 +336,25 @@ TOML
     ;;
 
   sums)
-    out=${1:?usage: assets.sh sums OUT}
-    (cd "$out" && rm -f SHA256SUMS && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+    out=$(resolve_caller_path "${1:?usage: assets.sh sums OUT}")
+    (
+      cd "$out"
+      shopt -s nullglob
+      files=()
+      for f in *; do
+        [[ $f == SHA256SUMS ]] && continue
+        [[ -f $f && ! -L $f ]] || { echo "assets.sh: sums refuses non-regular entry '$f'" >&2; exit 1; }
+        files+=("$f")
+      done
+      ((${#files[@]})) || { echo "assets.sh: no release files in $out" >&2; exit 1; }
+      tmp=$(mktemp "$out/.SHA256SUMS.XXXXXX")
+      trap 'rm -f "$tmp"' EXIT
+      sha256sum -- "${files[@]}" > "$tmp"
+      chmod 644 "$tmp"
+      mv -f "$tmp" SHA256SUMS
+      trap - EXIT
+      cat SHA256SUMS
+    )
     ;;
 
   *)

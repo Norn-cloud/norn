@@ -172,20 +172,7 @@ fn effective_required_links(
     object_type: &ObjectTypeDef,
 ) -> Vec<(String, String, Vec<Property>)> {
     let mut by_id: BTreeMap<String, (String, bool, Vec<Property>)> = BTreeMap::new();
-    let mut concrete_chain = Vec::new();
-    let mut visited_types = BTreeSet::new();
-    let mut walk_ty = Some(object_type);
-    while let Some(def) = walk_ty {
-        if !visited_types.insert(def.name.as_str().to_owned()) {
-            break;
-        }
-        concrete_chain.push(def);
-        walk_ty = def.extends.as_ref().and_then(|parent| {
-            pack.object_types
-                .iter()
-                .find(|ty| ty.name.as_str() == parent.as_str())
-        });
-    }
+    let concrete_chain = super::object_type_ancestors(pack, object_type);
     // Pass 1: concrete `extends` chain (subtype -> ancestor) takes precedence
     // for narrowed link targets and merges inherited link properties.
     for def in &concrete_chain {
@@ -211,30 +198,18 @@ fn effective_required_links(
     }
     // Pass 2: interface contracts add interface-only links and tighten
     // `required`, never overriding a narrower concrete declaration.
-    for def in &concrete_chain {
-        for iface_name in &def.implements {
-            if let Some(iface) = pack
-                .interfaces
-                .iter()
-                .find(|i| i.name.as_str() == iface_name.as_str())
-            {
-                for owner in
-                    iface.contract_owners(|name| pack.interfaces.iter().find(|i| i.name == *name))
-                {
-                    for link in &owner.links {
-                        by_id
-                            .entry(link.id.as_str().to_owned())
-                            .and_modify(|entry| entry.1 |= link.cardinality.required)
-                            .or_insert_with(|| {
-                                (
-                                    link.target.as_str().to_owned(),
-                                    link.cardinality.required,
-                                    Vec::new(),
-                                )
-                            });
-                    }
-                }
-            }
+    for owner in super::object_type_interfaces(pack, &concrete_chain) {
+        for link in &owner.links {
+            by_id
+                .entry(link.id.as_str().to_owned())
+                .and_modify(|entry| entry.1 |= link.cardinality.required)
+                .or_insert_with(|| {
+                    (
+                        link.target.as_str().to_owned(),
+                        link.cardinality.required,
+                        Vec::new(),
+                    )
+                });
         }
     }
     by_id
@@ -244,38 +219,20 @@ fn effective_required_links(
 }
 
 fn type_matches_target(pack: &AdmittedPack, candidate: &ObjectTypeDef, target_name: &str) -> bool {
-    let mut visited = BTreeSet::new();
-    let mut walk = Some(candidate);
-    while let Some(def) = walk {
-        if !visited.insert(def.name.as_str().to_owned()) {
-            break;
-        }
-        if def.name.as_str() == target_name {
-            return true;
-        }
-        for iface_name in &def.implements {
-            if iface_name.as_str() == target_name {
-                return true;
-            }
-            if let Some(iface) = pack
-                .interfaces
-                .iter()
-                .find(|i| i.name.as_str() == iface_name.as_str())
-                && iface
-                    .contract_owners(|name| pack.interfaces.iter().find(|i| i.name == *name))
-                    .into_iter()
-                    .any(|owner| owner.name.as_str() == target_name)
-            {
-                return true;
-            }
-        }
-        walk = def.extends.as_ref().and_then(|parent| {
-            pack.object_types
-                .iter()
-                .find(|ty| ty.name.as_str() == parent.as_str())
-        });
+    let chain = super::object_type_ancestors(pack, candidate);
+    if chain.iter().any(|def| def.name.as_str() == target_name) {
+        return true;
     }
-    false
+    if chain.iter().any(|def| {
+        def.implements
+            .iter()
+            .any(|name| name.as_str() == target_name)
+    }) {
+        return true;
+    }
+    super::object_type_interfaces(pack, &chain)
+        .into_iter()
+        .any(|owner| owner.name.as_str() == target_name)
 }
 
 fn resolve_concrete_link_target<'a>(
@@ -372,11 +329,19 @@ pub fn synthesize_guard_satisfying(
     seed: u64,
 ) -> JsonObject {
     let mut base = synthesize_object(pack, object_type, key, seed);
-    if guards.is_empty() || guards_hold(guards, &base) {
+    if guards.is_empty() {
+        return base;
+    }
+    let compiled = compile_guards(guards).ok();
+    let holds = |values: &JsonObject| match compiled.as_deref() {
+        Some(exprs) => evaluate_compiled_guards(exprs, values) == GuardEval::True,
+        None => guards_hold(guards, values),
+    };
+    if holds(&base) {
         return base;
     }
     apply_guard_positive_heuristics(pack, &mut base, object_type, lifecycle, guards);
-    if guards_hold(guards, &base) {
+    if holds(&base) {
         return base;
     }
     let bool_props = non_lifecycle_bool_properties(pack, object_type, lifecycle);
@@ -389,7 +354,7 @@ pub fn synthesize_guard_satisfying(
             let bit = (mask >> idx) & 1 == 1;
             candidate.insert(prop_id.clone(), JsonValue::Bool(bit));
         }
-        if guards_hold(guards, &candidate) {
+        if holds(&candidate) {
             return candidate;
         }
     }
@@ -415,12 +380,17 @@ pub fn synthesize_guard_violating_at_state(
         return None;
     }
     let shared = shared_property_map(pack);
+    let compiled = compile_guards(guards).ok();
+    let eval = |values: &JsonObject| match compiled.as_deref() {
+        Some(exprs) => evaluate_compiled_guards(exprs, values),
+        None => evaluate_guards(guards, values),
+    };
     let mut base = synthesize_guard_satisfying(pack, object_type, lifecycle, guards, key, seed);
     base.insert(
         lifecycle.property.as_str().to_owned(),
         JsonValue::String(source_state.to_owned()),
     );
-    if evaluate_guards(guards, &base) == GuardEval::False {
+    if eval(&base) == GuardEval::False {
         return Some((base, None));
     }
     let lifecycle_props = lifecycle_property_names(object_type, lifecycle);
@@ -433,7 +403,7 @@ pub fn synthesize_guard_violating_at_state(
         for candidate_val in guard_violating_candidates(resolved, base.get(id), id) {
             let mut candidate = base.clone();
             candidate.insert(id.to_owned(), candidate_val.clone());
-            if evaluate_guards(guards, &candidate) == GuardEval::False {
+            if eval(&candidate) == GuardEval::False {
                 return Some((candidate, Some((id.to_owned(), candidate_val))));
             }
         }
@@ -442,7 +412,7 @@ pub fn synthesize_guard_violating_at_state(
     for prop_id in non_lifecycle_bool_properties(pack, object_type, lifecycle) {
         all_false.insert(prop_id, JsonValue::Bool(false));
     }
-    (evaluate_guards(guards, &all_false) == GuardEval::False).then_some((all_false, None))
+    (eval(&all_false) == GuardEval::False).then_some((all_false, None))
 }
 
 fn guard_violating_candidates(
@@ -525,6 +495,54 @@ pub fn pick_non_lifecycle_mutation(
         }
     }
     None
+}
+
+struct CompiledGuard<'a> {
+    source: &'a str,
+    expr: Expression,
+}
+
+fn compile_guards(guards: &[ZenExpression]) -> Result<Vec<CompiledGuard<'_>>, String> {
+    guards
+        .iter()
+        .map(|guard| {
+            Expression::compile(guard.as_str())
+                .map(|expr| CompiledGuard {
+                    source: guard.as_str(),
+                    expr,
+                })
+                .map_err(|err| format!("compile `{}`: {err}", guard.as_str()))
+        })
+        .collect()
+}
+
+fn evaluate_compiled_guards(compiled: &[CompiledGuard<'_>], values: &JsonObject) -> GuardEval {
+    let self_val = match ExprValue::try_from(&JsonValue::Object(values.clone())) {
+        Ok(val) => val,
+        Err(err) => return GuardEval::Error(format!("self conversion failed: {err}")),
+    };
+    let context = ExprValue::object([("self", self_val)]);
+    for guard in compiled {
+        let evaluated = match guard.expr.evaluate(&context, EvaluationBudget::default()) {
+            Ok(res) => res,
+            Err(err) => return GuardEval::Error(format!("eval `{}`: {err}", guard.source)),
+        };
+        match evaluated.value() {
+            ExprValue::Bool(true) => {}
+            ExprValue::Bool(false) => return GuardEval::False,
+            other @ (ExprValue::Null
+            | ExprValue::Number(_)
+            | ExprValue::String(_)
+            | ExprValue::Array(_)
+            | ExprValue::Object(_)) => {
+                return GuardEval::Error(format!(
+                    "guard `{}` returned non-boolean {other:?}",
+                    guard.source
+                ));
+            }
+        }
+    }
+    GuardEval::True
 }
 
 /// Evaluates all `guards` on `values`, separating [`GuardEval::True`],
@@ -680,8 +698,8 @@ fn effective_properties<'a>(
 ) -> Vec<EffectiveProp<'a>> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
-    let mut walk = Some(object_type);
-    while let Some(def) = walk {
+    let chain = super::object_type_ancestors(pack, object_type);
+    for def in &chain {
         for prop in &def.properties {
             if seen.insert(prop.id.as_str()) {
                 out.push(EffectiveProp {
@@ -693,30 +711,19 @@ fn effective_properties<'a>(
                 });
             }
         }
-        for iface_name in &def.implements {
-            if let Some(iface) = pack
-                .interfaces
-                .iter()
-                .find(|i| i.name.as_str() == iface_name.as_str())
-            {
-                for prop in &iface.properties {
-                    if seen.insert(prop.id.as_str()) {
-                        out.push(EffectiveProp {
-                            id: &prop.id,
-                            property_type: &prop.property_type,
-                            read_only: false,
-                            protected: false,
-                            default: None,
-                        });
-                    }
-                }
+    }
+    for owner in super::object_type_interfaces(pack, &chain) {
+        for prop in &owner.properties {
+            if seen.insert(prop.id.as_str()) {
+                out.push(EffectiveProp {
+                    id: &prop.id,
+                    property_type: &prop.property_type,
+                    read_only: false,
+                    protected: false,
+                    default: None,
+                });
             }
         }
-        walk = def.extends.as_ref().and_then(|parent| {
-            pack.object_types
-                .iter()
-                .find(|ty| ty.name.as_str() == parent.as_str())
-        });
     }
     out
 }
@@ -745,22 +752,7 @@ pub(super) fn resolve_property_type<'a>(
     ty: &'a PropertyType,
     shared: &'a BTreeMap<&'a str, &'a PropertyTypeDef>,
 ) -> &'a PropertyType {
-    match ty {
-        PropertyType::Ref { name, .. } => shared
-            .get(name.as_str())
-            .map_or(ty, |def| &def.property_type),
-        PropertyType::Text { .. }
-        | PropertyType::Integer { .. }
-        | PropertyType::Decimal { .. }
-        | PropertyType::DecimalBinding { .. }
-        | PropertyType::Boolean {}
-        | PropertyType::Enum { .. }
-        | PropertyType::Date {}
-        | PropertyType::Duration {}
-        | PropertyType::Timestamp { .. }
-        | PropertyType::Record { .. }
-        | PropertyType::JsonExt { .. } => ty,
-    }
+    super::resolve_property_type_chain(ty, shared)
 }
 
 fn json_default_to_runtime(
@@ -816,12 +808,25 @@ fn synthesize_property_value(
     synthesize_type_value(prop.property_type, prop.id.as_str(), shared, key, seed)
 }
 
+const MAX_RECORD_SYNTH_DEPTH: usize = 16;
+
 fn synthesize_type_value(
     ty: &PropertyType,
     id: &str,
     shared: &BTreeMap<&str, &PropertyTypeDef>,
     key: &str,
     seed: u64,
+) -> JsonValue {
+    synthesize_type_value_depth(ty, id, shared, key, seed, 0)
+}
+
+fn synthesize_type_value_depth(
+    ty: &PropertyType,
+    id: &str,
+    shared: &BTreeMap<&str, &PropertyTypeDef>,
+    key: &str,
+    seed: u64,
+    depth: usize,
 ) -> JsonValue {
     let resolved = resolve_property_type(ty, shared);
     match resolved {
@@ -877,13 +882,17 @@ fn synthesize_type_value(
         PropertyType::Timestamp { .. } => JsonValue::String("2026-01-15T12:00:00Z".to_owned()),
         PropertyType::Record { members } => {
             let mut obj = JsonObject::new();
+            if depth >= MAX_RECORD_SYNTH_DEPTH {
+                return JsonValue::Object(obj);
+            }
             for member in members {
-                let val = synthesize_type_value(
+                let val = synthesize_type_value_depth(
                     &member.property_type,
                     member.id.as_str(),
                     shared,
                     key,
                     seed,
+                    depth.saturating_add(1),
                 );
                 obj.insert(member.id.as_str().to_owned(), val);
             }

@@ -70,14 +70,7 @@ impl UxChecker<'_, '_, '_> {
         for (index, form) in ux.forms.iter().enumerate() {
             let path = format!("/payload/ux/forms/{index}");
             self.check_generated_transition_condition(&form.submit_binding_id, &path);
-            if form.submit.label.0.is_empty()
-                || form
-                    .submit
-                    .label
-                    .0
-                    .values()
-                    .any(|label| label.trim().is_empty())
-            {
+            if !super::is_nonblank_locale_text(&form.submit.label) {
                 self.error(
                     &format!("{path}/submit/label"),
                     "form submit label must contain nonblank localized text",

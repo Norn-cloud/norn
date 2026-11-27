@@ -99,9 +99,21 @@ def records_from(output: str, sha: str, date: str, sandbox: str | None, snapshot
     for line in output.splitlines():
         kind, _, payload = line.partition(" ")
         if kind == "ENV":
-            env = json.loads(payload)
+            try:
+                parsed = json.loads(payload)
+            except json.JSONDecodeError:
+                notes.append(f"FAIL {snapshot} malformed ENV line")
+                continue
+            if isinstance(parsed, dict):
+                env = parsed
         elif kind == "METRIC":
-            rows.append(json.loads(payload))
+            try:
+                parsed = json.loads(payload)
+            except json.JSONDecodeError:
+                notes.append(f"FAIL {snapshot} malformed METRIC line")
+                continue
+            if isinstance(parsed, dict):
+                rows.append(parsed)
         elif kind in ("SKIP", "FAIL"):
             notes.append(line)
     records = []
@@ -155,12 +167,20 @@ def measure(args, repo: Path, sha: str, date: str, rust: str, snapshot: str,
         command = ["python3", "scripts/metrics/run_probes.py"]
         for name in names:
             command += ["--only", name]
-        ran = boat(args, "run", "--from", snapshot, "--type", args.type, "--timeout", str(args.timeout),
-                   "--no-env", "--push", str(tree), "-e", "CARGO_INCREMENTAL=0",
-                   "-e", f"RUSTUP_TOOLCHAIN={rust}", "--", *command,
-                   timeout=args.timeout + 300, capture_output=True)
-    sys.stderr.write(ran.stderr[-4000:])
-    sandbox = next(iter(SANDBOX.findall(ran.stdout + ran.stderr)), None)
+        try:
+            ran = boat(args, "run", "--from", snapshot, "--type", args.type, "--timeout", str(args.timeout),
+                       "--no-env", "--push", str(tree), "-e", "CARGO_INCREMENTAL=0",
+                       "-e", f"RUSTUP_TOOLCHAIN={rust}", "--", *command,
+                       timeout=args.timeout + 300, capture_output=True)
+            stdout, stderr, returncode = ran.stdout, ran.stderr, ran.returncode
+            timed_out = False
+        except subprocess.TimeoutExpired as error:
+            stdout = error.stdout.decode(errors="replace") if isinstance(error.stdout, bytes) else (error.stdout or "")
+            stderr = error.stderr.decode(errors="replace") if isinstance(error.stderr, bytes) else (error.stderr or "")
+            returncode = 124
+            timed_out = True
+    sys.stderr.write(stderr[-4000:])
+    sandbox = next(iter(SANDBOX.findall(stderr)), None)
     if sandbox:
         info = boat(args, "info", sandbox, "--json", capture_output=True)
         gone = info.returncode != 0 and "not_found" in (info.stdout + info.stderr).replace(" ", "_").lower()
@@ -170,8 +190,10 @@ def measure(args, repo: Path, sha: str, date: str, rust: str, snapshot: str,
             gone = info.returncode != 0 and "not_found" in (info.stdout + info.stderr).replace(" ", "_").lower()
         print(f"sandbox {sandbox} ({snapshot}): {'deleted (boat info: not_found)' if gone else 'STILL PRESENT'}",
               file=sys.stderr)
-    records, notes = records_from(ran.stdout, sha, date, sandbox, snapshot, args.type)
-    return records, notes, ran.returncode
+    records, notes = records_from(stdout, sha, date, sandbox, snapshot, args.type)
+    if timed_out:
+        notes.append(f"FAIL {snapshot} boat run timed out after {args.timeout + 300} s")
+    return records, notes, returncode
 
 
 def main(argv: list[str] | None = None) -> int:

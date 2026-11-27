@@ -9,7 +9,8 @@ export interface ExpansionLimits {
 
 export class BudgetExceeded extends Error {}
 interface Cost { readonly work: number; readonly bytes: number; readonly lines: number; readonly height: number }
-const utf8 = (value: string): number => new TextEncoder().encode(value).length
+const UTF8_ENCODER = new TextEncoder()
+const utf8 = (value: string): number => UTF8_ENCODER.encode(value).length
 
 export class ExpansionBudget {
   private readonly memo = new WeakMap<object, Cost>()

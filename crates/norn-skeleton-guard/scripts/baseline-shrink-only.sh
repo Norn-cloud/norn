@@ -13,6 +13,8 @@ set -euo pipefail
 base="${1:-origin/main}"
 baseline_file="crates/norn-skeleton-guard/baseline.json"
 loc_file="crates/norn-skeleton-guard/loc-baseline.json"
+repo_root="$(git rev-parse --show-toplevel)"
+cd "${repo_root}"
 
 validate_baseline_schema() {
   local old_json="$1"
@@ -53,12 +55,19 @@ validate_loc_schema() {
   fi
 }
 
-if ! base_json="$(git show "${base}:${baseline_file}" 2>/dev/null)"; then
+if ! git rev-parse --verify "${base}^{commit}" >/dev/null 2>&1; then
+  printf '::error::base ref %s does not resolve to a commit.\n' "${base}"
+  exit 1
+fi
+
+baseline_entry="$(git ls-tree --full-tree --name-only "${base}^{commit}" -- "${baseline_file}")"
+if [[ -z "${baseline_entry}" ]]; then
   if [[ -f "${baseline_file}" ]]; then
     validate_baseline_schema "null"
   fi
   echo "${baseline_file} does not exist on ${base}; nothing to compare (first introduction)."
 else
+  base_json="$(git show "${base}:${baseline_file}")"
   validate_baseline_schema "${base_json}"
   added="$(jq -n --argjson old "${base_json}" --slurpfile new "${baseline_file}" '
     ([ "norn_edges", "third_party", "norn_ir_validators" ][] as $k
@@ -81,12 +90,14 @@ else
   echo "${baseline_file}: no entries added and no ratchet raised relative to ${base}."
 fi
 
-if ! loc_base_json="$(git show "${base}:${loc_file}" 2>/dev/null)"; then
+loc_entry="$(git ls-tree --full-tree --name-only "${base}^{commit}" -- "${loc_file}")"
+if [[ -z "${loc_entry}" ]]; then
   if [[ -f "${loc_file}" ]]; then
     validate_loc_schema
   fi
   echo "${loc_file} does not exist on ${base}; nothing to compare (first introduction)."
 else
+  loc_base_json="$(git show "${base}:${loc_file}")"
   validate_loc_schema
   loc_added="$(jq -n --argjson old "${loc_base_json}" --slurpfile new "${loc_file}" '
     (if $new[0].max_non_test_loc > $old.max_non_test_loc then

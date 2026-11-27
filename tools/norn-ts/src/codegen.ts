@@ -22,7 +22,7 @@ import { createHash } from "node:crypto"
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { canonicalJson, type Json } from "./canonical.ts"
-import { CodegenError, islandsBlock, islandWidgets } from "./codegen-islands.ts"
+import { CodegenError, collectIslands } from "./codegen-islands.ts"
 import { isArtifact, readArtifacts } from "./pack.ts"
 import { mayReadActor } from "./zen-reads.ts"
 
@@ -51,15 +51,15 @@ const LABELS = ["title", "description"]
  * admits them. An admitted set already satisfies this; codegen re-checks so a set that was not
  * admitted can never yield types wider than the dialect.
  */
-const ADMITTED: Readonly<Record<string, readonly string[]>> = {
-  number: ["type", "nornType"],
-  object: ["type", "properties", "required", "additionalProperties"],
-  array: ["type", "items"],
-  string: ["type", "enum"],
-  integer: ["type"],
-  boolean: ["type"],
-  null: ["type"],
-}
+const ADMITTED: ReadonlyMap<string, readonly string[]> = new Map([
+  ["number", ["type", "nornType"]],
+  ["object", ["type", "properties", "required", "additionalProperties"]],
+  ["array", ["type", "items"]],
+  ["string", ["type", "enum"]],
+  ["integer", ["type"]],
+  ["boolean", ["type"]],
+  ["null", ["type"]],
+])
 const SCALARS = new Set(["string", "integer", "number", "boolean"])
 
 type Mode = "input" | "output"
@@ -175,12 +175,21 @@ function entityDecimal(type: Node, at: string): void {
 const MEMBER_ID = /^[a-z][a-z0-9_]*$/
 
 /** A closed action schema node as a TypeScript type. */
-function schemaType(schema: unknown, at: string, depth: number, mode: Mode, root = false): string {
+function schemaType(
+  schema: unknown,
+  at: string,
+  depth: number,
+  mode: Mode,
+  root = false,
+  omit: ReadonlySet<string> = new Set(),
+  optional: ReadonlySet<string> = new Set(),
+): string {
   if (!record(schema)) throw new CodegenError(at, "a schema node is not an object")
   const type = schema["type"]
   if (Array.isArray(type)) return unionType(schema, type, at, depth, mode)
-  if (typeof type !== "string" || ADMITTED[type] === undefined) throw new CodegenError(at, `schema type ${JSON.stringify(type)} is not in the closed dialect`)
-  const allowed = [...ADMITTED[type]!, ...(mode === "input" ? LABELS : []), ...(root && mode === "input" && type === "object" ? ["x-norn"] : [])]
+  const baseAllowed = typeof type === "string" ? ADMITTED.get(type) : undefined
+  if (baseAllowed === undefined) throw new CodegenError(at, `schema type ${JSON.stringify(type)} is not in the closed dialect`)
+  const allowed = [...baseAllowed, ...(mode === "input" ? LABELS : []), ...(root && mode === "input" && type === "object" ? ["x-norn"] : [])]
   const unknown = Object.keys(schema).find((member) => !allowed.includes(member))
   if (unknown !== undefined) throw new CodegenError(at, `\`${unknown}\` is not admitted in a closed \`${type}\` schema`)
   for (const label of LABELS) {
@@ -205,7 +214,7 @@ function schemaType(schema: unknown, at: string, depth: number, mode: Mode, root
     case "boolean": return "boolean"
     case "null": return "null"
     case "array": return `ReadonlyArray<${schemaType(schema["items"], `${at}/items`, depth, mode)}>`
-    case "object": return objectType(schema, at, depth, mode, new Set(), new Set())
+    case "object": return objectType(schema, at, depth, mode, omit, optional)
     default: throw new CodegenError(at, `schema type ${JSON.stringify(type)} is not in the closed dialect`)
   }
 }
@@ -237,19 +246,20 @@ function objectType(schema: Node, at: string, depth: number, mode: Mode, omit: R
   const properties = schema["properties"]
   if (!record(properties)) throw new CodegenError(at, "an object schema has no `properties` object")
   const requiredList = schema["required"] ?? []
-  if (!Array.isArray(requiredList) || !requiredList.every((name) => typeof name === "string" && name in properties)) {
+  if (!Array.isArray(requiredList) || !requiredList.every((name) => typeof name === "string" && Object.hasOwn(properties, name))) {
     throw new CodegenError(at, "`required` names a member the object does not declare")
   }
   const required = new Set(requiredList as string[])
-  const names = Object.keys(properties).filter((name) => !omit.has(name)).sort(compare)
-  if (names.length === 0) return CLOSED_EMPTY
-  const lines = names.map((name) => {
+  const lines: string[] = []
+  for (const name of Object.keys(properties).sort(compare)) {
     const child = properties[name]
+    const rendered = schemaType(child, `${at}/properties/${pointer(name)}`, depth + 1, mode)
+    if (omit.has(name)) continue
     const comment = schemaDoc(child)
     const present = required.has(name) && !optional.has(name)
-    return `${comment === null ? "" : `${pad(depth + 1)}/** ${comment} */\n`}${pad(depth + 1)}readonly ${key(name)}${present ? "" : "?"}: ${schemaType(child, `${at}/properties/${pointer(name)}`, depth + 1, mode)}`
-  })
-  return `{\n${lines.join("\n")}\n${pad(depth)}}`
+    lines.push(`${comment === null ? "" : `${pad(depth + 1)}/** ${comment} */\n`}${pad(depth + 1)}readonly ${key(name)}${present ? "" : "?"}: ${rendered}`)
+  }
+  return lines.length === 0 ? CLOSED_EMPTY : `{\n${lines.join("\n")}\n${pad(depth)}}`
 }
 
 /**
@@ -275,9 +285,7 @@ function callerInput(payload: Node, at: string): string {
     if (mayReadActor(step["expression"])) omit.add(step["field"])
     else optional.add(step["field"])
   })
-  // Validate the whole root (including the omitted members) before projecting it.
-  schemaType(schema, `${at}#/inputSchema`, 2, "input", true)
-  return objectType(schema, `${at}#/inputSchema`, 2, "input", omit, optional)
+  return schemaType(schema, `${at}#/inputSchema`, 2, "input", true, omit, optional)
 }
 
 interface Property { readonly id: string; readonly type: unknown; readonly constraints?: unknown; readonly description?: unknown }
@@ -345,16 +353,18 @@ interface Envelope { readonly artifactId: string; readonly kind: string; readonl
 const ENTITY_MEMBERS = new Set(["entityVersion", "extensions", "mutationAuthority", "objectType", "interface", "objectTypeExtension", "propertyTypes", "markings"])
 const ENTITY_SHAPES = ["objectType", "interface", "objectTypeExtension", "propertyTypes", "markings"]
 
+type OwnedExtension = Owned<{ readonly target: string; readonly properties: readonly Property[] }>
 interface Collected {
   readonly actions: Map<string, Owned<Node>>
   readonly objects: Map<string, Owned<ObjectTypeDef>>
-  readonly extensions: Owned<{ readonly target: string; readonly properties: readonly Property[] }>[]
+  readonly extensions: OwnedExtension[]
+  readonly extensionsByTarget: Map<string, OwnedExtension[]>
   readonly catalog: Catalog
 }
 
 /** Every definition of the set and its base, refusing two that claim one name. */
 function collect(set: readonly unknown[], base: readonly unknown[]): Collected {
-  const out: Collected = { actions: new Map(), objects: new Map(), extensions: [], catalog: new Map() }
+  const out: Collected = { actions: new Map(), objects: new Map(), extensions: [], extensionsByTarget: new Map(), catalog: new Map() }
   const envelopes = new Map<string, { readonly artifact: Envelope; readonly base: boolean }>()
   for (const [list, isBase] of [[set, false], [base, true]] as const) {
     for (const value of list) {
@@ -418,6 +428,11 @@ function collect(set: readonly unknown[], base: readonly unknown[]): Collected {
     }
   }
   out.extensions.sort((a, b) => compare(a.artifact.artifactId, b.artifact.artifactId))
+  for (const extension of out.extensions) {
+    let bucket = out.extensionsByTarget.get(extension.value.target)
+    if (!bucket) { bucket = []; out.extensionsByTarget.set(extension.value.target, bucket) }
+    bucket.push(extension)
+  }
   return out
 }
 
@@ -431,8 +446,7 @@ function objectProperties(name: string, found: Collected, chain: readonly string
   const type = owned.value
   if (type.extends !== undefined) for (const p of objectProperties(type.extends, found, [...chain, name])) byId.set(p.id, p)
   for (const p of type.properties ?? []) byId.set(p.id, p)
-  for (const extension of found.extensions) {
-    if (extension.value.target !== name) continue
+  for (const extension of found.extensionsByTarget.get(name) ?? []) {
     extension.used = true
     for (const p of extension.value.properties) {
       if (byId.has(p.id)) throw new CodegenError(extension.artifact.artifactId, `extension member \`${p.id}\` shadows a member of \`${name}\``)
@@ -473,6 +487,7 @@ export function generateTypes(artifacts: readonly unknown[], options: GenerateOp
     const owned = found.objects.get(name)!
     return `  readonly ${key(name)}: ${fieldsType(objectProperties(name, found), owned.artifact.artifactId, found.catalog, 1)}`
   })
+  const islands = collectIslands(artifacts)
   // The digest covers what the types were made from: the set's typed definitions and every base
   // definition they resolved through.
   const typed = [
@@ -480,7 +495,7 @@ export function generateTypes(artifacts: readonly unknown[], options: GenerateOp
     ...[...found.objects.values()].filter((o) => !o.base || o.used),
     ...found.extensions.filter((e) => !e.base || e.used),
     ...[...found.catalog.values()].filter((c) => !c.base || c.used),
-    ...islandWidgets(artifacts).map((artifact) => ({ artifact: artifact as unknown as Envelope })),
+    ...islands.artifacts.map((artifact) => ({ artifact: artifact as unknown as Envelope })),
   ].map((owned) => ({ artifactId: owned.artifact.artifactId, version: String(owned.artifact.version), payload: owned.artifact.payload as Json }))
   const unique = [...new Map(typed.map((t) => [t.artifactId, t])).values()].sort((a, b) => compare(a.artifactId, b.artifactId))
   const digest = createHash("sha256").update(canonicalJson(unique)).digest("hex")
@@ -496,7 +511,7 @@ export function generateTypes(artifacts: readonly unknown[], options: GenerateOp
     "/** Each object type → its stored fields (every field present; nullable ones may be `null`). */",
     `export type ObjectMap = ${block(objectEntries)}`,
     "",
-    ...islandsBlock(artifacts),
+    ...islands.lines,
     "/** The typed surface of this definition set. */",
     "export interface NornDefinitions {",
     "  readonly actions: ActionMap",
@@ -568,20 +583,14 @@ class AdmissionRefused extends Error {
 }
 
 async function loadSet(input: string, base: readonly unknown[], orgId: string | undefined, environmentId: string | undefined): Promise<{ readonly artifacts: readonly unknown[]; readonly base: readonly unknown[] }> {
-  const { compilePack, admit, packModules } = await import("./pack.ts")
+  const { admit, packModules } = await import("./pack.ts")
   const directory = statSync(input).isDirectory()
   const project = directory && existsSync(join(input, "norn.json"))
   const isPack = project || input.endsWith(".ts") || (directory && packModules(input).length > 0)
   if (!isPack) return { artifacts: readArtifactSet(input), base }
   if (!project && (orgId === undefined || environmentId === undefined)) throw new AdmissionRefused({ ok: false, message: "--org and --env are required to compile a pack" }, 2)
-  const pack = project
-    ? await (async () => {
-      const { readProject } = await import("./project.ts")
-      const { compileProjectPack } = await import("./worker.ts")
-      const { root, manifest } = readProject(input)
-      return compileProjectPack(root, manifest)
-    })()
-    : compilePack(input, { scope: { orgId: orgId!, environmentId: environmentId! }, root: process.cwd(), ...(directory ? {} : { modules: [input] }) })
+  const { compileInputPack } = await import("./worker.ts")
+  const pack = compileInputPack(input, { ...(orgId && environmentId ? { scope: { orgId, environmentId } } : {}) })
   if (!pack.ok) throw new AdmissionRefused(pack, 1)
   const { loadChecker } = await import("./checker-abi.ts")
   const checker = await loadChecker()

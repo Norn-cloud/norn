@@ -118,11 +118,6 @@ export function defaultCacheRoot(env: Readonly<Record<string, string | undefined
   return nornCacheRoot(env) ?? join(homedir(), ".cache", "norn")
 }
 
-export function runtimeCacheDir(env: Readonly<Record<string, string | undefined>> = process.env): string | undefined {
-  const root = nornCacheRoot(env)
-  return root ? join(root, "runtime") : undefined
-}
-
 export function readActiveGenerationId(cacheDir: string): string | undefined {
   const pointerPath = join(cacheDir, "runtime", "current")
   if (!isRegularFileNoFollow(pointerPath)) return undefined
@@ -155,8 +150,4 @@ export function activeRuntimeDir(cacheDir: string): ActiveRuntimeRoot {
 export function cachedCheckerWasmDir(env: Readonly<Record<string, string | undefined>> = process.env): string | undefined {
   const root = nornCacheRoot(env)
   return root ? join(activeRuntimeDir(root).dir, "checker-wasm") : undefined
-}
-
-export function cachedRuntimeManifestPath(cacheDir: string): string {
-  return join(activeRuntimeDir(cacheDir).dir, "manifest.json")
 }

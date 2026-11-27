@@ -18,13 +18,13 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::entitlement::{EntitlementEvaluation, EntitlementMatches, evaluate_entitlements};
 use cedar_policy::{
-    Authorizer, Context, Decision, Entities, Entity, EntityUid, Request, Response,
+    Authorizer, Context, Decision, Entities, Entity, EntityTypeName, EntityUid, Request, Response,
     RestrictedExpression,
 };
 
 use crate::admit::ValidatedPolicySet;
 use crate::diag::AuthzError;
-use crate::grants::{CapabilityQuery, CompiledGrants, scope_record, uid};
+use crate::grants::{CapabilityQuery, CompiledGrants, cached_uid, scope_record, uid};
 use crate::lower::{ACTION_TYPE, ACTOR_TYPE, ROLE_TYPE, SCOPE_ATTRIBUTE, cedar_type_name};
 use crate::lower::{DECLASSIFY_ACTION_ID, MARKING_RESOURCE_TYPE, REVEAL_ACTION_ID};
 use crate::request::{
@@ -234,9 +234,13 @@ impl Pdp {
             explanation.decision = PdpDecision::Deny(DenyReason::AbsentScope);
             return explanation;
         };
-        let entitlement_matches =
-            evaluate_entitlements(request, scope, entitlements, explain_shadow);
-        explanation.entitlement_evaluation = entitlement_matches.evaluation.clone();
+        let entitlement_matches = if explain_shadow {
+            let matches = evaluate_entitlements(request, scope, entitlements, true);
+            explanation.entitlement_evaluation = matches.evaluation.clone();
+            Some(matches)
+        } else {
+            None
+        };
         let principal = &request.principal;
         let capability = CapabilityQuery {
             subject_id: &principal.subject_id,
@@ -250,7 +254,9 @@ impl Pdp {
             explanation.capability = ConjunctOutcome::Deny;
             explanation.decision = PdpDecision::Deny(DenyReason::Capability);
             explanation.entitlement_evaluation.outcome = ConjunctOutcome::NotEvaluated;
-            set_shadow_counterfactual(&mut explanation, false, &entitlement_matches);
+            if let Some(matches) = &entitlement_matches {
+                set_shadow_counterfactual(&mut explanation, false, matches);
+            }
             return explanation;
         }
         explanation.capability = ConjunctOutcome::Allow;
@@ -258,12 +264,25 @@ impl Pdp {
             explanation.delegation = ConjunctOutcome::Deny;
             explanation.decision = PdpDecision::Deny(DenyReason::Delegation);
             explanation.entitlement_evaluation.outcome = ConjunctOutcome::NotEvaluated;
-            set_shadow_counterfactual(&mut explanation, false, &entitlement_matches);
+            if let Some(matches) = &entitlement_matches {
+                set_shadow_counterfactual(&mut explanation, false, matches);
+            }
             return explanation;
         }
         explanation.delegation = ConjunctOutcome::Allow;
 
-        let access = self.access_evaluation(request, scope, &entitlement_matches.enforced_kinds);
+        let entitlement_matches = match entitlement_matches {
+            Some(matches) => Some(matches),
+            None if self.access.uses_entitlements() && !entitlements.is_empty() => {
+                Some(evaluate_entitlements(request, scope, entitlements, false))
+            }
+            None => None,
+        };
+        let empty_kinds = std::collections::BTreeSet::new();
+        let enforced_kinds = entitlement_matches
+            .as_ref()
+            .map_or(&empty_kinds, |matches| &matches.enforced_kinds);
+        let access = self.access_evaluation(request, scope, enforced_kinds);
         explanation.access = access.outcome;
         explanation.determining_policies = access.determining_policies;
         explanation.diagnostics = access.diagnostics;
@@ -274,9 +293,10 @@ impl Pdp {
                 PdpDecision::Deny(DenyReason::AccessError)
             }
         };
-        if entitlement_matches.has_relevant_shadow {
-            let counterfactual =
-                self.access_evaluation(request, scope, &entitlement_matches.all_kinds);
+        if let Some(matches) = &entitlement_matches
+            && matches.has_relevant_shadow
+        {
+            let counterfactual = self.access_evaluation(request, scope, &matches.all_kinds);
             explanation.entitlement_evaluation.would_allow_if_enforced = Some(
                 explanation.access != ConjunctOutcome::Error
                     && counterfactual.outcome == ConjunctOutcome::Allow,
@@ -296,30 +316,8 @@ impl Pdp {
         marking_id: &str,
         action_id: &str,
     ) -> PdpExplanation {
-        let mut marking_request = request.clone();
-        let valid_action = matches!(action_id, REVEAL_ACTION_ID | DECLASSIFY_ACTION_ID);
-        if !valid_action || !crate::lower::canonical_marking_id(marking_id) {
-            // Reuse the PDP's stable malformed-request denial. This helper is
-            // an allow-list boundary as well as a convenience constructor.
-            marking_request.capability.clear();
-            return self.explain(&marking_request);
-        }
-
-        action_id.clone_into(&mut marking_request.capability);
-        action_id.clone_into(&mut marking_request.action_id);
-        marking_request.resource = ResourceInput {
-            object_type: MARKING_RESOURCE_TYPE.to_owned(),
-            id: marking_id.to_owned(),
-            scope: request.resource.scope.clone(),
-            attributes: BTreeMap::from([(
-                "id".to_owned(),
-                AttrValue::String(marking_id.to_owned()),
-            )]),
-        };
-        marking_request.context.clear();
-        marking_request.binding =
-            crate::request::Binding::Unbound(crate::request::UnboundProfile::MarkingDecision);
-        self.explain(&marking_request)
+        let request = marking_request(request, marking_id, action_id);
+        self.explain(&request)
     }
 
     /// Decide one exact marking action using the same scoped PDP path as
@@ -331,8 +329,8 @@ impl Pdp {
         marking_id: &str,
         action_id: &str,
     ) -> PdpDecision {
-        self.explain_marking(request, marking_id, action_id)
-            .decision
+        let request = marking_request(request, marking_id, action_id);
+        self.decide(&request)
     }
 
     fn access_evaluation(
@@ -397,38 +395,29 @@ impl Pdp {
         scope: &ScopeKey,
         entitlement_kinds: &std::collections::BTreeSet<&'static str>,
     ) -> Result<Response, String> {
+        static ACTOR_NAME: std::sync::OnceLock<Option<EntityTypeName>> = std::sync::OnceLock::new();
+        static ROLE_NAME: std::sync::OnceLock<Option<EntityTypeName>> = std::sync::OnceLock::new();
+        static ACTION_NAME: std::sync::OnceLock<Option<EntityTypeName>> =
+            std::sync::OnceLock::new();
         let schema = self.access.schema().cedar();
-        let principal_uid = uid(ACTOR_TYPE, &request.principal.subject_id)
+        let principal_uid = cached_uid(&ACTOR_NAME, ACTOR_TYPE, &request.principal.subject_id)
             .ok_or_else(|| "principal could not be lowered to a Cedar entity id".to_owned())?;
         let mut role_entities = Vec::with_capacity(request.principal.roles.len());
         let mut parents = HashSet::new();
         let roles: std::collections::BTreeSet<&str> =
             request.principal.roles.iter().map(String::as_str).collect();
         for role in roles {
-            let role_uid = uid(ROLE_TYPE, role)
+            let role_uid = cached_uid(&ROLE_NAME, ROLE_TYPE, role)
                 .ok_or_else(|| "role could not be lowered to a Cedar entity id".to_owned())?;
             role_entities.push(Entity::new_no_attrs(role_uid.clone(), HashSet::new()));
             parents.insert(role_uid);
         }
-        let mut principal_input_attributes = request.principal.attributes.clone();
-        // Verified membership keys are inputs to the typed entitlement
-        // matcher, not Cedar entity attributes; keeping them out also
-        // preserves old projected schemas without generic rules.
-        principal_input_attributes.remove("entitlement_roles");
-        principal_input_attributes.remove("entitlement_groups");
-        if self.access.uses_entitlements() {
-            principal_input_attributes.insert(
-                "entitlement_kinds".to_owned(),
-                AttrValue::Set(
-                    entitlement_kinds
-                        .iter()
-                        .map(|kind| AttrValue::String((*kind).to_owned()))
-                        .collect(),
-                ),
-            );
-        }
-        let principal_attributes = attributes(scope, &principal_input_attributes)
-            .ok_or_else(|| "principal attributes could not be lowered to Cedar".to_owned())?;
+        let principal_attributes = principal_attributes(
+            scope,
+            &request.principal.attributes,
+            self.access.uses_entitlements().then_some(entitlement_kinds),
+        )
+        .ok_or_else(|| "principal attributes could not be lowered to Cedar".to_owned())?;
         let principal = Entity::new(principal_uid.clone(), principal_attributes, parents)
             .map_err(|error| error.to_string())?;
 
@@ -465,7 +454,7 @@ impl Pdp {
             ));
         }
         let context = Context::from_pairs(pairs).map_err(|error| error.to_string())?;
-        let action = uid(ACTION_TYPE, &request.action_id)
+        let action = cached_uid(&ACTION_NAME, ACTION_TYPE, &request.action_id)
             .ok_or_else(|| "action could not be lowered to a Cedar entity id".to_owned())?;
         let cedar_request =
             Request::new(principal_uid, action, resource_uid, context, Some(schema))
@@ -479,6 +468,30 @@ impl Pdp {
             ),
         )
     }
+}
+
+fn marking_request(request: &AccessRequest, marking_id: &str, action_id: &str) -> AccessRequest {
+    let mut marking_request = request.clone();
+    let valid_action = matches!(action_id, REVEAL_ACTION_ID | DECLASSIFY_ACTION_ID);
+    if !valid_action || !crate::lower::canonical_marking_id(marking_id) {
+        // Reuse the PDP's stable malformed-request denial. This helper is
+        // an allow-list boundary as well as a convenience constructor.
+        marking_request.capability.clear();
+        return marking_request;
+    }
+
+    action_id.clone_into(&mut marking_request.capability);
+    action_id.clone_into(&mut marking_request.action_id);
+    marking_request.resource = ResourceInput {
+        object_type: MARKING_RESOURCE_TYPE.to_owned(),
+        id: marking_id.to_owned(),
+        scope: request.resource.scope.clone(),
+        attributes: BTreeMap::from([("id".to_owned(), AttrValue::String(marking_id.to_owned()))]),
+    };
+    marking_request.context.clear();
+    marking_request.binding =
+        crate::request::Binding::Unbound(crate::request::UnboundProfile::MarkingDecision);
+    marking_request
 }
 
 fn set_shadow_counterfactual(
@@ -503,13 +516,13 @@ struct AccessEvaluation {
 /// target can never authorize another.
 fn is_well_formed(request: &AccessRequest) -> bool {
     let principal = &request.principal;
-    !principal.subject_id.trim().is_empty()
+    is_exact_value(&principal.subject_id)
         && principal
             .agent_session_id
             .as_deref()
             .is_none_or(is_exact_value)
-        && !request.capability.trim().is_empty()
-        && !request.action_id.trim().is_empty()
+        && is_exact_value(&request.capability)
+        && is_exact_value(&request.action_id)
         && request.scope.as_ref().is_none_or(ScopeKey::is_exact)
         && request.resource.scope.is_exact()
         && !principal.attributes.contains_key(SCOPE_ATTRIBUTE)
@@ -520,14 +533,51 @@ fn is_well_formed(request: &AccessRequest) -> bool {
             binding.action_id == request.action_id
                 && binding.resource_kind == request.resource.object_type
                 && binding.resource_id == request.resource.id
+                && binding
+                    .required()
+                    .iter()
+                    .all(|(_, value)| is_exact_value(value))
+                && binding
+                    .artifact_version
+                    .as_deref()
+                    .is_none_or(is_exact_value)
         })
+}
+
+fn principal_attributes(
+    scope: &ScopeKey,
+    values: &BTreeMap<String, AttrValue>,
+    entitlement_kinds: Option<&std::collections::BTreeSet<&'static str>>,
+) -> Option<HashMap<String, RestrictedExpression>> {
+    let mut out = HashMap::with_capacity(values.len().saturating_add(2));
+    out.insert(SCOPE_ATTRIBUTE.to_owned(), scope_record(scope)?);
+    // Verified membership keys are inputs to the typed entitlement matcher,
+    // not Cedar entity attributes; keeping them out also preserves old
+    // projected schemas without generic rules.
+    for (name, value) in values {
+        if matches!(name.as_str(), "entitlement_roles" | "entitlement_groups") {
+            continue;
+        }
+        out.insert(name.clone(), restricted(value)?);
+    }
+    if let Some(kinds) = entitlement_kinds {
+        out.insert(
+            "entitlement_kinds".to_owned(),
+            RestrictedExpression::new_set(
+                kinds
+                    .iter()
+                    .map(|kind| RestrictedExpression::new_string((*kind).to_owned())),
+            ),
+        );
+    }
+    Some(out)
 }
 
 fn attributes(
     scope: &ScopeKey,
     values: &BTreeMap<String, AttrValue>,
 ) -> Option<HashMap<String, RestrictedExpression>> {
-    let mut out = HashMap::with_capacity(values.len());
+    let mut out = HashMap::with_capacity(values.len().saturating_add(1));
     out.insert(SCOPE_ATTRIBUTE.to_owned(), scope_record(scope)?);
     for (name, value) in values {
         out.insert(name.clone(), restricted(value)?);

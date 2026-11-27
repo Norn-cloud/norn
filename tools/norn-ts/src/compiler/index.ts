@@ -25,8 +25,34 @@ export type CompileResult =
   | { readonly ok: false; readonly diagnostics: ReadonlyArray<Diagnostic> }
 
 type Env = ReadonlyMap<ts.Symbol, Expr>
+const UTF8_ENCODER = new TextEncoder()
 /** Array methods and the norn-zen/6 closures they lower to (A2, #1176). */
 const ARRAY_CLOSURES: Readonly<Record<string, B.X.ClosureFn>> = { some: "some", every: "all", filter: "filter", map: "map" }
+const STRING_METHODS: ReadonlyMap<string, B.X.CallFn> = new Map([
+  ["toLowerCase", "lower"],
+  ["toUpperCase", "upper"],
+  ["trim", "trim"],
+  ["startsWith", "startsWith"],
+  ["endsWith", "endsWith"],
+])
+const BINARY_OPS: ReadonlyMap<ts.SyntaxKind, (l: Expr, r: Expr) => Expr> = new Map([
+  [ts.SyntaxKind.EqualsEqualsToken, B.X.eq],
+  [ts.SyntaxKind.EqualsEqualsEqualsToken, B.X.eq],
+  [ts.SyntaxKind.ExclamationEqualsToken, B.X.ne],
+  [ts.SyntaxKind.ExclamationEqualsEqualsToken, B.X.ne],
+  [ts.SyntaxKind.LessThanToken, B.X.lt],
+  [ts.SyntaxKind.LessThanEqualsToken, B.X.le],
+  [ts.SyntaxKind.GreaterThanToken, B.X.gt],
+  [ts.SyntaxKind.GreaterThanEqualsToken, B.X.ge],
+  [ts.SyntaxKind.PlusToken, (l, r) => B.X.binary("+", l, r)],
+  [ts.SyntaxKind.MinusToken, (l, r) => B.X.binary("-", l, r)],
+  [ts.SyntaxKind.AsteriskToken, (l, r) => B.X.binary("*", l, r)],
+  [ts.SyntaxKind.SlashToken, (l, r) => B.X.binary("/", l, r)],
+  [ts.SyntaxKind.PercentToken, (l, r) => B.X.binary("%", l, r)],
+  [ts.SyntaxKind.QuestionQuestionToken, B.X.coalesce],
+  [ts.SyntaxKind.AmpersandAmpersandToken, B.X.and],
+  [ts.SyntaxKind.BarBarToken, B.X.or],
+])
 interface Plan {
   readonly steps: ReadonlyArray<Step>
   readonly value: Expr
@@ -54,7 +80,7 @@ function boundedHost(started: number, limits: CompilerLimits, declarations: Map<
       const text = host.readFile(path)
       if (text !== undefined) {
         const stub = ts.createSourceFile(path, "", ts.ScriptTarget.ES2022)
-        sources.add(path); bytes += new TextEncoder().encode(text).length
+        sources.add(path); bytes += UTF8_ENCODER.encode(text).length
         if (sources.size > limits.maxModules || bytes > limits.maxSourceBytes) throw new CompileError("NORN-FLOW-UNBOUNDED", "source import closure exceeds compiler module or byte bound", stub)
         const scanner = ts.createScanner(ts.ScriptTarget.ES2022, true, ts.LanguageVariant.Standard, text)
         let depth = 0
@@ -143,7 +169,7 @@ export function prepareCompilation(files: ReadonlyArray<string>, overrides: Part
       continue
     }
     const text = readFileSync(path, "utf8")
-    if (new TextEncoder().encode(text).length > limits.maxSourceBytes) {
+    if (UTF8_ENCODER.encode(text).length > limits.maxSourceBytes) {
       const sf = ts.createSourceFile(path, "", ts.ScriptTarget.ES2022)
       failed.set(path, [diagnostic(sf, "NORN-FLOW-UNBOUNDED", "source exceeds compiler byte bound")])
     } else { eligible.push(path); rootBytes += rawBytes; readRoots.add(path) }
@@ -189,7 +215,7 @@ export function checkClosure(program: ts.Program, source: ts.SourceFile, limits:
     ts.forEachChild(node, (child) => count(child, depth + 1))
   }
   let bytes = 0
-  for (const sf of local) { bytes += new TextEncoder().encode(sf.text).length; if (bytes > limits.maxSourceBytes) throw new CompileError("NORN-FLOW-UNBOUNDED", "import closure exceeds compiler byte bound", source); count(sf, 0) }
+  for (const sf of local) { bytes += UTF8_ENCODER.encode(sf.text).length; if (bytes > limits.maxSourceBytes) throw new CompileError("NORN-FLOW-UNBOUNDED", "import closure exceeds compiler byte bound", source); count(sf, 0) }
 }
 
 /** Batched profile recognition shares one Program; rejected roots never reach lowering. */
@@ -572,25 +598,12 @@ export class SyntaxCompiler {
             const t = this.checker.getTypeAtLocation(e.expression.expression)
             return this.checker.isArrayType(t) || this.checker.isTupleType(t) ? B.X.binary("in", args[0]!, receiver) : B.X.call("contains", receiver, ...args)
           }
-          const methods = { toLowerCase: "lower", toUpperCase: "upper", trim: "trim", startsWith: "startsWith", endsWith: "endsWith" } as const
-          if (name in methods) return B.X.call(methods[name as keyof typeof methods], receiver, ...args)
+          const method = STRING_METHODS.get(name)
+          if (method !== undefined) return B.X.call(method, receiver, ...args)
         }
       }
       if (ts.isBinaryExpression(e)) {
-        const ops: Partial<Record<ts.SyntaxKind, (l: Expr, r: Expr) => Expr>> = {
-          [ts.SyntaxKind.EqualsEqualsToken]: B.X.eq, [ts.SyntaxKind.EqualsEqualsEqualsToken]: B.X.eq,
-          [ts.SyntaxKind.ExclamationEqualsToken]: B.X.ne, [ts.SyntaxKind.ExclamationEqualsEqualsToken]: B.X.ne,
-          [ts.SyntaxKind.LessThanToken]: B.X.lt, [ts.SyntaxKind.LessThanEqualsToken]: B.X.le,
-          [ts.SyntaxKind.GreaterThanToken]: B.X.gt, [ts.SyntaxKind.GreaterThanEqualsToken]: B.X.ge,
-          [ts.SyntaxKind.PlusToken]: (l, r) => B.X.binary("+", l, r),
-          [ts.SyntaxKind.MinusToken]: (l, r) => B.X.binary("-", l, r),
-          [ts.SyntaxKind.AsteriskToken]: (l, r) => B.X.binary("*", l, r),
-          [ts.SyntaxKind.SlashToken]: (l, r) => B.X.binary("/", l, r),
-          [ts.SyntaxKind.PercentToken]: (l, r) => B.X.binary("%", l, r),
-          [ts.SyntaxKind.QuestionQuestionToken]: B.X.coalesce,
-          [ts.SyntaxKind.AmpersandAmpersandToken]: B.X.and, [ts.SyntaxKind.BarBarToken]: B.X.or,
-        }
-        const op = ops[e.operatorToken.kind]
+        const op = BINARY_OPS.get(e.operatorToken.kind)
         if (op) return op(this.data(e.left, env), this.data(e.right, env))
       }
       throw new CompileError("NORN-FLOW-EXPRESSION", "expression has no first-order lowering", e)

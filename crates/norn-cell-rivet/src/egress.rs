@@ -19,9 +19,73 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+
+/// A hung DNS lookup must not stall a source sync indefinitely.
+const DNS_TIMEOUT: Duration = Duration::from_secs(5);
+/// A source page or an uploaded object, read once and bounded.
+const MAX_SOURCE_BODY: usize = 20 * 1024 * 1024;
+/// One outbound source or storage request may take this long.
+const SOURCE_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Perform exactly the request the cell planned, on `http`; the status and
+/// bytes go back to the cell, unread here. A network failure is status 0.
+pub(crate) async fn perform(http: &reqwest::Client, planned: &str) -> (u16, Vec<u8>) {
+    let Ok(planned) = serde_json::from_str::<serde_json::Value>(planned) else {
+        return (0, Vec::new());
+    };
+    let Some(url) = planned.get("url").and_then(serde_json::Value::as_str) else {
+        return (0, Vec::new());
+    };
+    let method = planned
+        .get("method")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|method| reqwest::Method::from_bytes(method.as_bytes()).ok())
+        .unwrap_or(reqwest::Method::GET);
+    let mut request = http.request(method, url).timeout(SOURCE_FETCH_TIMEOUT);
+    if let Some(headers) = planned
+        .get("headers")
+        .and_then(serde_json::Value::as_object)
+    {
+        for (name, value) in headers {
+            if let Some(value) = value.as_str() {
+                request = request.header(name.as_str(), value);
+            }
+        }
+    }
+    if let Some(body) = planned.get("body").and_then(serde_json::Value::as_str) {
+        request = request.body(body.to_owned());
+    }
+    match request.send().await {
+        Ok(response) => {
+            let status = response.status().as_u16();
+            read_bounded(response, MAX_SOURCE_BODY)
+                .await
+                .map_or((413, Vec::new()), |bytes| (status, bytes))
+        }
+        Err(_error) => (0, Vec::new()),
+    }
+}
+
+/// A response body counted as it arrives; `None` once it passes `limit`.
+pub(crate) async fn read_bounded(mut response: reqwest::Response, limit: usize) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if bytes.len().saturating_add(chunk.len()) > limit {
+                    return None;
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(None) => return Some(bytes),
+            Err(_error) => return None,
+        }
+    }
+}
 
 /// The host's outbound clients.
 #[derive(Debug, Clone)]
@@ -95,7 +159,10 @@ impl Resolve for Pinned {
         Box::pin(async move {
             let host = name.as_str().to_owned();
             let resolved: Vec<SocketAddr> =
-                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+                tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((host.as_str(), 0)))
+                    .await
+                    .map_err(|_elapsed| format!("{host} DNS lookup timed out"))??
+                    .collect();
             let checked = checked(&host, resolved, &listed)?;
             let addrs: Addrs = Box::new(checked.into_iter());
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(addrs)
@@ -116,7 +183,11 @@ fn checked(
     if resolved.is_empty() {
         return Err(format!("{host} resolved to no address"));
     }
-    if listed.iter().any(|entry| entry == host) {
+    let normalized = host.trim_end_matches('.');
+    if listed
+        .iter()
+        .any(|entry| entry.trim_end_matches('.').eq_ignore_ascii_case(normalized))
+    {
         return Ok(resolved);
     }
     match resolved
@@ -153,6 +224,10 @@ mod tests {
             );
             assert_eq!(
                 checked("metrics.internal.example", resolved.clone(), &listed),
+                Ok(resolved.clone())
+            );
+            assert_eq!(
+                checked("METRICS.INTERNAL.EXAMPLE.", resolved.clone(), &listed),
                 Ok(resolved)
             );
         }

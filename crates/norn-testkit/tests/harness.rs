@@ -12,6 +12,7 @@ use norn_kernel::{
 use norn_testkit::proptest::prelude::*;
 use norn_testkit::{
     DeciderModel, DecisionShape, KERNEL_OUTCOMES, Prediction, Settings, StateOf, check, run,
+    run_property,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -320,5 +321,18 @@ fn mutant_nondeterministic_only_in_historical_world_is_caught() {
         failure.reason.contains("decide is not deterministic"),
         "{}",
         failure.reason
+    );
+}
+
+#[test]
+fn zero_cases_clamps_to_at_least_one_and_executes_property() {
+    let settings = Settings::new(file!()).cases(0).without_persistence();
+    assert!(settings.config().cases >= 1);
+    let outcome = run_property(&settings, &Just(()), |()| {
+        Err(TestCaseError::fail("must execute at least one case"))
+    });
+    assert!(
+        outcome.is_err(),
+        "zero-case settings must not pass vacuously"
     );
 }

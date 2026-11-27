@@ -24,6 +24,15 @@ def gzip_size(data: bytes) -> int:
     return len(gzip.compress(data, compresslevel=9, mtime=0))
 
 
+def _stat_non_empty(path: Path) -> int:
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError(f"missing built artifact: {path}")
+    size = path.stat().st_size
+    if size <= 0:
+        raise RuntimeError(f"built artifact is empty: {path}")
+    return size
+
+
 def _read_non_empty(path: Path) -> bytes:
     if not path.is_file() or path.is_symlink():
         raise RuntimeError(f"missing built artifact: {path}")
@@ -39,8 +48,8 @@ def measure_artifacts(target_dir: Path, rivet_target_dir: Path) -> list[dict]:
     checker_wasm = target_dir / "wasm32-unknown-unknown" / "wasm-release" / "norn_checker_wasm.wasm"
     cell_do_wasm = target_dir / "wasm32-unknown-unknown" / "wasm-release" / "norn_cell_do.wasm"
 
-    cli_bytes = len(_read_non_empty(norn_cli))
-    rivet_bytes = len(_read_non_empty(rivet_bin))
+    cli_bytes = _stat_non_empty(norn_cli)
+    rivet_bytes = _stat_non_empty(rivet_bin)
     checker_data = _read_non_empty(checker_wasm)
     cell_do_data = _read_non_empty(cell_do_wasm)
 

@@ -29,9 +29,14 @@ const MAX_BODY_BYTES: usize = 512 * 1024;
 /// it closes.
 const IDLE: Duration = Duration::from_secs(10);
 /// Most connections held open at once. Past it a connection is answered once
-/// and closed on the accepting thread, so a flood of idle connections cannot
-/// grow the host's threads without bound.
+/// and closed, up to [`MAX_THREADS`]; beyond [`MAX_THREADS`], accepted sockets
+/// are closed immediately so a flood cannot grow OS threads without bound.
 const MAX_CONNECTIONS: usize = 32;
+/// Hard ceiling on live connection threads spawned by the accept loop.
+const MAX_THREADS: usize = MAX_CONNECTIONS * 2;
+/// Body read chunk size: keeps incremental allocation small and re-arms the
+/// request deadline on every syscall.
+const BODY_CHUNK: usize = 8 * 1024;
 /// Requests the dev host answers at once (DEV-CONCURRENT-1).
 const WORKERS: usize = 4;
 
@@ -147,36 +152,49 @@ pub(crate) fn serve(
     std::thread::scope(|scope| {
         for stream in listener.incoming().flatten() {
             let (handler, open) = (&handler, &open);
-            let slot = Slot::take(open);
-            // Every connection, even one over the bound, is read on its own
-            // thread, so a silent client never holds up the accept loop. Over
-            // the bound it gets one answer and closes, as before keep-alive;
-            // the per-request deadline bounds how long that thread lives.
-            scope.spawn(move || {
-                // A broken connection, even a panicking one, affects only itself.
-                let _ignored = connection(&stream, handler, slot.within_bound);
-                drop(slot);
-            });
+            let Some(slot) = Slot::take(open) else {
+                drop(stream);
+                continue;
+            };
+            // Every connection up to MAX_THREADS is read on its own thread so
+            // a silent client never holds up the accept loop; past
+            // MAX_CONNECTIONS it gets one answer and closes. Builder errors
+            // drop the closure (releasing `slot`) without panicking the loop.
+            let _ignored = std::thread::Builder::new()
+                .name("norn-dev-http".to_owned())
+                .spawn_scoped(scope, move || {
+                    // A broken connection, even a panicking one, affects only itself.
+                    let _ignored = connection(&stream, handler, slot.within_bound);
+                    drop(slot);
+                });
         }
     });
 }
 
-/// One open connection, counted against [`MAX_CONNECTIONS`] until dropped.
+/// One open connection, counted against [`MAX_THREADS`] (and persistent up to
+/// [`MAX_CONNECTIONS`]) until dropped.
 struct Slot<'a> {
     open: &'a AtomicUsize,
     within_bound: bool,
 }
 
 impl<'a> Slot<'a> {
-    fn take(open: &'a AtomicUsize) -> Self {
-        let within_bound = open.fetch_add(1, Ordering::SeqCst) < MAX_CONNECTIONS;
-        Self { open, within_bound }
+    fn take(open: &'a AtomicUsize) -> Option<Self> {
+        let previous = open
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |held| {
+                (held < MAX_THREADS).then(|| held.saturating_add(1))
+            })
+            .ok()?;
+        Some(Self {
+            open,
+            within_bound: previous < MAX_CONNECTIONS,
+        })
     }
 }
 
 impl Drop for Slot<'_> {
     fn drop(&mut self) {
-        self.open.fetch_sub(1, Ordering::SeqCst);
+        self.open.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -214,14 +232,19 @@ fn write_response(mut stream: &TcpStream, response: &Response, open: bool) -> st
     let reason = match response.status {
         200 => "OK",
         201 => "Created",
+        202 => "Accepted",
         400 => "Bad Request",
+        401 => "Unauthorized",
         403 => "Forbidden",
         404 => "Not Found",
-        502 => "Bad Gateway",
-        503 => "Service Unavailable",
+        405 => "Method Not Allowed",
         409 => "Conflict",
         413 => "Payload Too Large",
         422 => "Unprocessable Content",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
         _ => "Status",
     };
     stream.write_all(&encode_response(
@@ -294,11 +317,33 @@ fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Parsed, Refusal> {
             "a dev host request body is at most 512 KiB",
         ));
     }
-    let mut body = vec![0_u8; head.length];
-    arm(reader, deadline)?;
-    reader.read_exact(&mut body).map_err(|error| {
-        Refusal::invalid(format!("the body is shorter than content-length: {error}"))
-    })?;
+    let mut body = Vec::with_capacity(head.length.min(BODY_CHUNK));
+    let mut scratch = [0_u8; BODY_CHUNK];
+    while body.len() < head.length {
+        arm(reader, deadline)?;
+        let want = head.length.saturating_sub(body.len()).min(BODY_CHUNK);
+        let Some(buf) = scratch.get_mut(..want) else {
+            break;
+        };
+        match reader.read(buf) {
+            Ok(0) => {
+                return Err(Refusal::invalid(
+                    "the body is shorter than content-length: unexpected eof",
+                ));
+            }
+            Ok(n) => {
+                if let Some(chunk) = buf.get(..n) {
+                    body.extend_from_slice(chunk);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => {
+                return Err(Refusal::invalid(format!(
+                    "the body is shorter than content-length: {error}"
+                )));
+            }
+        }
+    }
     let body = String::from_utf8(body)
         .map_err(|error| Refusal::invalid(format!("the body is not UTF-8: {error}")))?;
     let (path, query) = head
@@ -383,13 +428,13 @@ pub(crate) fn answer(
     };
     // D102: with an engine linked in, questions and profiles run on it.
     let Some(engine) = engine else {
-        return server::handle_all(host, principals, Some(&questions), &kinds, request);
+        return server::handle_all(host, principals, Some(&questions), kinds, request);
     };
     if let Some(response) = server::analytics(host, principals, engine, None, request) {
         return response;
     }
     let on_engine = EngineQuestions::new(&questions, engine, host.scope());
-    server::handle_all(host, principals, Some(&on_engine), &kinds, request)
+    server::handle_all(host, principals, Some(&on_engine), kinds, request)
 }
 
 /// The routes that change the installed definitions: the hosted plan/apply
@@ -534,7 +579,7 @@ mod tests {
                 environment_id: Some("dev".into()),
             },
             Some(DEVELOPER),
-            &crate::dev::policy::dev_kinds(),
+            crate::dev::policy::dev_kinds(),
             None,
             &serde_json::from_str(&body.to_string()).unwrap(),
             1_800_000_000_000,
@@ -679,7 +724,7 @@ mod tests {
         crate::dev::definitions::commit(
             &dev.host,
             DEVELOPER,
-            &crate::dev::policy::dev_kinds(),
+            crate::dev::policy::dev_kinds(),
             approvals,
             crate::dev::admit::Admitted { model, input },
             &active,

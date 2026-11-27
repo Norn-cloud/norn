@@ -443,46 +443,47 @@ pub fn parse_csv(text: &str) -> Result<Table, String> {
 
 /// The records of RFC 4180 text, header included.
 fn records(text: &str) -> Result<Vec<Vec<String>>, String> {
-    let mut records = Vec::new();
-    let mut record: Vec<String> = Vec::new();
-    let mut cell = String::new();
-    let mut quoted = false;
-    let mut in_quotes = false;
+    let (mut records, mut record, mut cell) = (Vec::new(), Vec::new(), String::new());
+    let (mut quoted, mut in_quotes, mut pending) = (false, false, false);
     let mut chars = text.chars().peekable();
-    let mut pending = false;
+    let finish_row =
+        |records: &mut Vec<Vec<String>>, record: &mut Vec<String>, cell: &mut String| {
+            record.push(std::mem::take(cell));
+            if record.len() > MAX_COLUMNS {
+                return Err(format!("more than {MAX_COLUMNS} columns"));
+            }
+            records.push(std::mem::take(record));
+            if records.len() > MAX_ROWS {
+                return Err(format!("more than {MAX_ROWS} rows"));
+            }
+            Ok(())
+        };
     while let Some(c) = chars.next() {
         pending = true;
         if in_quotes {
-            if c == '"' {
-                if chars.peek() == Some(&'"') {
-                    cell.push('"');
-                    chars.next();
-                } else {
-                    in_quotes = false;
-                }
+            if c == '"' && chars.peek() == Some(&'"') {
+                cell.push('"');
+                chars.next();
+            } else if c == '"' {
+                in_quotes = false;
             } else {
                 cell.push(c);
             }
             continue;
         }
         match c {
-            '"' if cell.is_empty() && !quoted => {
-                in_quotes = true;
-                quoted = true;
-            }
+            '"' if cell.is_empty() && !quoted => (in_quotes, quoted) = (true, true),
             ',' => {
                 record.push(std::mem::take(&mut cell));
+                if record.len() > MAX_COLUMNS {
+                    return Err(format!("more than {MAX_COLUMNS} columns"));
+                }
                 quoted = false;
             }
             '\r' if chars.peek() == Some(&'\n') => {}
             '\n' => {
-                record.push(std::mem::take(&mut cell));
-                quoted = false;
-                records.push(std::mem::take(&mut record));
-                pending = false;
-                if records.len() > MAX_ROWS {
-                    return Err(format!("more than {MAX_ROWS} rows"));
-                }
+                finish_row(&mut records, &mut record, &mut cell)?;
+                (quoted, pending) = (false, false);
             }
             other => cell.push(other),
         }
@@ -491,8 +492,7 @@ fn records(text: &str) -> Result<Vec<Vec<String>>, String> {
         return Err("a quoted cell is not closed".into());
     }
     if pending {
-        record.push(cell);
-        records.push(record);
+        finish_row(&mut records, &mut record, &mut cell)?;
     }
     Ok(records)
 }
@@ -1254,5 +1254,22 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn csv_records_enforce_column_and_eof_row_limits() {
+        let too_wide = ",".repeat(MAX_COLUMNS.saturating_add(1));
+        let err = records(&too_wide).expect_err("column cap enforced inside records()");
+        assert!(err.contains("columns"), "{err}");
+
+        let mut eof_rows = String::with_capacity(MAX_ROWS.saturating_add(1).saturating_mul(2));
+        for index in 0..=MAX_ROWS {
+            if index > 0 {
+                eof_rows.push('\n');
+            }
+            eof_rows.push('a');
+        }
+        let err = records(&eof_rows).expect_err("EOF row cap enforced without trailing newline");
+        assert!(err.contains("rows"), "{err}");
     }
 }

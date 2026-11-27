@@ -1068,3 +1068,216 @@ test("parseSha256Sums rejects duplicate entries and malformed lines", () => {
   expect(() => parseSha256Sums(`${valid}  dup.tar.gz\n${valid}  dup.tar.gz\n`)).toThrow("more than once")
   expect(() => parseSha256Sums("not-a-hash  bad.tar.gz\n")).toThrow("malformed SHA256SUMS line")
 })
+
+test("resolveReleaseBaseUrl rejects invalid or traversal --repo values", () => {
+  expect(resolveReleaseBaseUrl({ repo: "Norn-cloud/norn", env: {} }).baseUrl).toBe(
+    "https://github.com/Norn-cloud/norn/releases/latest/download",
+  )
+  for (const bad of ["../attacker/repo", "owner/..", "./repo", "owner/repo?x=1", "owner/repo#frag", "just-one"]) {
+    expect(() => resolveReleaseBaseUrl({ repo: bad, env: {} })).toThrow("refusing invalid repository")
+  }
+})
+
+function encodePax(records: ReadonlyArray<readonly [string, string]>): Uint8Array {
+  const encoder = new TextEncoder()
+  const parts = records.map(([k, v]) => {
+    const body = ` ${k}=${v}\n`
+    let len = encoder.encode(body).length + 1
+    while (String(len).length + encoder.encode(body).length !== len) {
+      len = String(len).length + encoder.encode(body).length
+    }
+    return encoder.encode(`${len}${body}`)
+  })
+  const total = parts.reduce((acc, p) => acc + p.length, 0)
+  const out = new Uint8Array(total)
+  let off = 0
+  for (const p of parts) {
+    out.set(p, off)
+    off += p.length
+  }
+  return out
+}
+
+test("inspectTarGzArchive refuses tar header precedence differentials and ambiguous extended headers", () => {
+  const root = scratch()
+  const enc = new TextEncoder()
+  try {
+    const cases: ReadonlyArray<{ readonly label: string; readonly archive: Uint8Array; readonly pattern: string }> = [
+      {
+        label: "pax-then-gnu-longname.tar.gz",
+        archive: makeRawTarGz([
+          { name: "PaxHeaders/a", typeflag: "x", content: encodePax([["path", "safe.txt"]]) },
+          { name: "././@LongLink", typeflag: "L", content: enc.encode("../escape.txt\0") },
+          { name: "safe.txt", typeflag: "0", content: enc.encode("ok") },
+        ]),
+        pattern: "both PAX header and GNU longname",
+      },
+      {
+        label: "gnu-longname-then-pax.tar.gz",
+        archive: makeRawTarGz([
+          { name: "././@LongLink", typeflag: "L", content: enc.encode("../escape.txt\0") },
+          { name: "PaxHeaders/a", typeflag: "x", content: encodePax([["path", "safe.txt"]]) },
+          { name: "safe.txt", typeflag: "0", content: enc.encode("ok") },
+        ]),
+        pattern: "both GNU longname and PAX header",
+      },
+      {
+        label: "duplicate-gnu-longname.tar.gz",
+        archive: makeRawTarGz([
+          { name: "././@LongLink", typeflag: "L", content: enc.encode("a.txt\0") },
+          { name: "././@LongLink", typeflag: "L", content: enc.encode("b.txt\0") },
+          { name: "a.txt", typeflag: "0", content: enc.encode("ok") },
+        ]),
+        pattern: "duplicate GNU longname",
+      },
+      {
+        label: "duplicate-pax-header.tar.gz",
+        archive: makeRawTarGz([
+          { name: "PaxHeaders/1", typeflag: "x", content: encodePax([["path", "a.txt"]]) },
+          { name: "PaxHeaders/2", typeflag: "x", content: encodePax([["path", "b.txt"]]) },
+          { name: "a.txt", typeflag: "0", content: enc.encode("ok") },
+        ]),
+        pattern: "duplicate PAX extended header",
+      },
+      {
+        label: "duplicate-pax-path-key.tar.gz",
+        archive: makeRawTarGz([
+          { name: "PaxHeaders/1", typeflag: "x", content: encodePax([["path", "a.txt"], ["path", "b.txt"]]) },
+          { name: "a.txt", typeflag: "0", content: enc.encode("ok") },
+        ]),
+        pattern: "duplicate PAX key 'path'",
+      },
+      {
+        label: "global-pax-path.tar.gz",
+        archive: makeRawTarGz([
+          { name: "pax_global_header", typeflag: "g", content: encodePax([["path", "override.txt"]]) },
+          { name: "a.txt", typeflag: "0", content: enc.encode("ok") },
+        ]),
+        pattern: "global PAX path override",
+      },
+      {
+        label: "pax-ustar-size-desync.tar.gz",
+        archive: makeRawTarGz([
+          { name: "PaxHeaders/1", typeflag: "x", content: encodePax([["size", "1024"]]) },
+          { name: "a.txt", typeflag: "0", content: new Uint8Array(1024), declaredSize: 512 },
+        ]),
+        pattern: "conflicting PAX and USTAR entry sizes",
+      },
+      {
+        label: "unsafe-rawname-under-pax.tar.gz",
+        archive: makeRawTarGz([
+          { name: "PaxHeaders/1", typeflag: "x", content: encodePax([["path", "safe.txt"]]) },
+          { name: "../evil.txt", typeflag: "0", content: enc.encode("ok") },
+        ]),
+        pattern: "refusing unsafe archive entry",
+      },
+      {
+        label: "orphaned-pax-eof.tar.gz",
+        archive: makeRawTarGz([
+          { name: "safe.txt", typeflag: "0", content: enc.encode("ok") },
+          { name: "PaxHeaders/1", typeflag: "x", content: encodePax([["path", "dangling.txt"]]) },
+        ]),
+        pattern: "orphaned extended tar header",
+      },
+    ]
+
+    for (const c of cases) {
+      const archivePath = join(root, c.label)
+      writeFileSync(archivePath, c.archive)
+      expect(() => inspectTarGzArchive(archivePath, c.label)).toThrow(c.pattern)
+    }
+
+    // Valid PAX entry with matching size and safe rawName still succeeds.
+    const validPax = join(root, "valid-pax.tar.gz")
+    writeFileSync(
+      validPax,
+      makeRawTarGz([
+        { name: "PaxHeaders/1", typeflag: "x", content: encodePax([["path", "dir/valid.txt"], ["size", "2"]]) },
+        { name: "dir/valid.txt", typeflag: "0", content: enc.encode("ok") },
+      ]),
+    )
+    expect(inspectTarGzArchive(validPax, "valid-pax.tar.gz")).toEqual({ entries: 1, totalBytes: 2 })
+
+    // A non-zero header following a single zero block is refused (parser differential).
+    const singleZeroThenEntry = new Uint8Array(512 * 4)
+    const entryHeader = makeRawTarGz([{ name: "after-zero.txt", typeflag: "0", content: new Uint8Array(0) }])
+    const rawEntryTar = Bun.gunzipSync(new Uint8Array(entryHeader))
+    singleZeroThenEntry.set(rawEntryTar.subarray(0, 512), 512)
+    const zeroGapArchive = join(root, "zero-gap.tar.gz")
+    writeFileSync(zeroGapArchive, Bun.gzipSync(singleZeroThenEntry))
+    expect(() => inspectTarGzArchive(zeroGapArchive, "zero-gap.tar.gz")).toThrow(
+      "unexpected archive header after zero block",
+    )
+
+    // Leading-NUL octal size ("\00000001000\0"): GNU tar skips one leading NUL and reads 512,
+    // which would hide a trailing symlink header if the inspector stopped at byte 0.
+    const smuggledTar = new Uint8Array(512 * 5)
+    const decoyHeader = Bun.gunzipSync(
+      new Uint8Array(makeRawTarGz([{ name: "decoy.txt", typeflag: "0", content: new Uint8Array(0) }])),
+    ).subarray(0, 512)
+    const nulSizeBytes = enc.encode("\0" + "0000001000\0")
+    decoyHeader.set(nulSizeBytes, 124)
+    decoyHeader.fill(0x20, 148, 156)
+    let decoySum = 0
+    for (let i = 0; i < 512; i++) decoySum += decoyHeader[i]!
+    decoyHeader.set(enc.encode(`${decoySum.toString(8).padStart(6, "0")}\0 `), 148)
+    smuggledTar.set(decoyHeader, 0)
+    const hiddenSymlink = Bun.gunzipSync(
+      new Uint8Array(makeRawTarGz([{ name: "evil", typeflag: "2", linkname: "/etc" }])),
+    ).subarray(0, 512)
+    smuggledTar.set(hiddenSymlink, 1024)
+    const nulSizeArchive = join(root, "leading-nul-size.tar.gz")
+    writeFileSync(nulSizeArchive, Bun.gzipSync(smuggledTar))
+    expect(() => inspectTarGzArchive(nulSizeArchive, "leading-nul-size.tar.gz")).toThrow(
+      "invalid tar entry size",
+    )
+
+    // UTF-8 BOM and Unicode NBSP in size fields: GNU tar rejects them while TextDecoder/.trim() would accept.
+    const badRawSizes: ReadonlyArray<{ readonly label: string; readonly bytes: Uint8Array }> = [
+      {
+        label: "bom-size.tar.gz",
+        bytes: new Uint8Array([0xef, 0xbb, 0xbf, 0x30, 0x30, 0x30, 0x31, 0x30, 0x30, 0x30, 0x00, 0x00]),
+      },
+      {
+        label: "nbsp-prefix-size.tar.gz",
+        bytes: new Uint8Array([0xc2, 0xa0, 0x30, 0x30, 0x30, 0x30, 0x31, 0x30, 0x30, 0x30, 0x00, 0x00]),
+      },
+      {
+        label: "nbsp-suffix-size.tar.gz",
+        bytes: new Uint8Array([0x30, 0x30, 0x30, 0x30, 0x31, 0x30, 0x30, 0x30, 0xc2, 0xa0, 0x00, 0x00]),
+      },
+      {
+        label: "newline-prefix-size.tar.gz",
+        bytes: enc.encode("\n0000001000\0"),
+      },
+      {
+        label: "all-spaces-size.tar.gz",
+        bytes: enc.encode("            "),
+      },
+    ]
+    for (const bad of badRawSizes) {
+      const buf = new Uint8Array(smuggledTar)
+      buf.set(bad.bytes, 124)
+      buf.fill(0x20, 148, 156)
+      let sum = 0
+      for (let i = 0; i < 512; i++) sum += buf[i]!
+      buf.set(enc.encode(`${sum.toString(8).padStart(6, "0")}\0 `), 148)
+      const p = join(root, bad.label)
+      writeFileSync(p, Bun.gzipSync(buf))
+      expect(() => inspectTarGzArchive(p, bad.label)).toThrow("invalid tar entry size")
+    }
+
+    // All-space checksum field with signed byte sum == 0 must be refused ("Blanks in header" in GNU tar).
+    const blankChecksumTar = new Uint8Array(512 * 3)
+    blankChecksumTar.fill(0x20, 148, 156) // 8 * 32 = 256
+    blankChecksumTar[0] = 0x80 // -128 signed
+    blankChecksumTar[1] = 0x80 // -128 signed => total signed sum = 0
+    const blankChecksumArchive = join(root, "all-spaces-checksum.tar.gz")
+    writeFileSync(blankChecksumArchive, Bun.gzipSync(blankChecksumTar))
+    expect(() => inspectTarGzArchive(blankChecksumArchive, "all-spaces-checksum.tar.gz")).toThrow(
+      "invalid tar header checksum",
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

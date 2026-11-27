@@ -22,6 +22,8 @@
 //!   so a renamed approval takes over its action with no ungated window.
 //! - A declaration that is not `{ kind, id, payload }`, or an id declared
 //!   twice, refuses before the cell is asked anything.
+use std::collections::BTreeSet;
+
 use norn_api::cell_definitions::source_approvals;
 use norn_api::definition_routes::DefinitionKinds;
 use norn_api::host::DevHost;
@@ -122,10 +124,11 @@ pub(crate) fn prepare<E: SqlEngine>(
     now_ms: u64,
 ) -> Result<Prepared, Vec<Value>> {
     let mut refused = Vec::new();
+    let mut seen = BTreeSet::new();
     let mut declarations: Vec<(String, Box<RawValue>)> = Vec::new();
     for value in definitions {
         match declared(value) {
-            Ok((id, _)) if declarations.iter().any(|(other, _)| *other == id) => {
+            Ok((id, _)) if !seen.insert(id.clone()) => {
                 refused.push(finding(
                     &id,
                     "norn.dev.definition_duplicate",
@@ -289,7 +292,7 @@ mod tests {
         commit(
             host,
             ACTOR,
-            &dev_kinds(),
+            dev_kinds(),
             definitions,
             candidate(extra, at),
             &active,
@@ -320,7 +323,7 @@ mod tests {
         let refused = prepare(
             &host,
             ACTOR,
-            &dev_kinds(),
+            dev_kinds(),
             &[approval("ops.a", MELT_ACTION, "admin"), malformed],
             "[]",
             1,
@@ -333,7 +336,7 @@ mod tests {
     fn a_duplicated_id_refuses_before_the_cell() {
         let host = cell();
         let gate = approval("ops.a", MELT_ACTION, "admin");
-        let refused = prepare(&host, ACTOR, &dev_kinds(), &[gate.clone(), gate], "[]", 1)
+        let refused = prepare(&host, ACTOR, dev_kinds(), &[gate.clone(), gate], "[]", 1)
             .expect_err("refused");
         assert_eq!(codes(&refused), ["norn.dev.definition_duplicate"]);
         assert_eq!(refused[0]["definitionId"], json!("ops.a"));

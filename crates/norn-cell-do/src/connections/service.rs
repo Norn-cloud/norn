@@ -61,7 +61,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fmt::Write as _;
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use base64::Engine as _;
 use norn_cell::engine::{SqlEngine, SqlValue};
@@ -78,6 +78,10 @@ use zeroize::Zeroize as _;
 use super::egress::{Egress, EgressError};
 use super::providers::{ClientAuth, Provider};
 use super::vault::{Secret, Vault, VaultError};
+use super::{
+    Flight, FlightGuard, sql_get_int as get_int, sql_get_ms as get_ms, sql_get_text as get_text,
+    sql_ms as ms, sql_opt_ms as opt_ms, sql_opt_text as opt_text, sql_text as text,
+};
 
 /// One audit row: when (Unix ms), event, actor, detail.
 pub type AuditRow = (u64, String, String, Option<String>);
@@ -192,6 +196,7 @@ fn storage(error: impl fmt::Display) -> ConnError {
 }
 
 /// A provider OAuth client registered by the host.
+#[derive(Clone)]
 pub struct ClientCredentials {
     /// The client id.
     pub client_id: String,
@@ -326,6 +331,19 @@ struct Record {
     params: BTreeMap<String, String>,
 }
 
+fn status_of(id: &str, record: Record) -> Status {
+    Status {
+        id: id.to_owned(),
+        provider: Some(record.provider),
+        state: record.state.as_str().to_owned(),
+        last4: record.last4,
+        scopes: record.scopes,
+        expires_at_ms: record.expires_at_ms,
+        last_used_ms: record.last_used_ms,
+        last_error: record.last_error,
+    }
+}
+
 const DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS "_norn_connection" (
   "id" TEXT PRIMARY KEY,
@@ -361,44 +379,20 @@ CREATE TABLE IF NOT EXISTS "_norn_oauth_state" (
 );
 "#;
 
-fn ms(value: u64) -> SqlValue {
-    SqlValue::Integer(i64::try_from(value).unwrap_or(i64::MAX))
-}
-
-fn opt_ms(value: Option<u64>) -> SqlValue {
-    value.map_or(SqlValue::Null, ms)
-}
-
-fn opt_text(value: Option<&str>) -> SqlValue {
-    value.map_or(SqlValue::Null, |text| SqlValue::Text(text.to_owned()))
-}
-
-fn text(value: &str) -> SqlValue {
-    SqlValue::Text(value.to_owned())
-}
-
-fn get_text(row: &[SqlValue], index: usize) -> Option<String> {
-    match row.get(index) {
-        Some(SqlValue::Text(text)) => Some(text.clone()),
-        _ => None,
-    }
-}
-
-fn get_int(row: &[SqlValue], index: usize) -> Option<i64> {
-    match row.get(index) {
-        Some(SqlValue::Integer(value)) => Some(*value),
-        _ => None,
-    }
-}
-
-fn get_ms(row: &[SqlValue], index: usize) -> Option<u64> {
-    get_int(row, index).and_then(|value| u64::try_from(value).ok())
-}
-
 fn last4(token: &str) -> Option<String> {
-    let chars: Vec<char> = token.chars().collect();
-    let start = chars.len().checked_sub(4).filter(|_| chars.len() >= 12)?;
-    chars.get(start..).map(|tail| tail.iter().collect())
+    let mut iter = token.chars();
+    for _ in 0..12 {
+        iter.next()?;
+    }
+    let mut tail = ['\0'; 4];
+    for (slot, ch) in tail.iter_mut().rev().zip(token.chars().rev()) {
+        *slot = ch;
+    }
+    Some(tail.into_iter().collect())
+}
+
+const fn valid_token_len(token: &str) -> bool {
+    !token.is_empty() && token.len() <= 8192
 }
 
 fn slot(id: &str) -> String {
@@ -413,10 +407,12 @@ fn state_slot(hash: &str) -> String {
 #[must_use]
 pub fn state_hash(state: &str) -> String {
     let digest = sha2::Sha256::digest(state.as_bytes());
-    digest.iter().fold(String::new(), |mut hex, byte| {
-        let _infallible = write!(hex, "{byte:02x}");
-        hex
-    })
+    digest
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            let _infallible = write!(hex, "{byte:02x}");
+            hex
+        })
 }
 
 /// A connection id: 1-64 of `[A-Za-z0-9._-]`.
@@ -430,12 +426,6 @@ pub fn valid_id(id: &str) -> bool {
 
 fn expires_at(now_ms: u64, left: Option<std::time::Duration>) -> Option<u64> {
     left.map(|left| now_ms.saturating_add(u64::try_from(left.as_millis()).unwrap_or(u64::MAX)))
-}
-
-#[derive(Default)]
-struct Flight {
-    done: Mutex<Option<Result<(), ConnError>>>,
-    ready: Condvar,
 }
 
 /// One cell's connections.
@@ -668,13 +658,14 @@ impl<E: SqlEngine> Connections<E> {
         let Some(row) = rows.first() else {
             return Ok(None);
         };
+        let state = match get_text(row, 1).as_deref() {
+            Some("connected") => State::Connected,
+            Some("reconnect_needed") => State::ReconnectNeeded,
+            _ => return Err(ConnError::Vault(VaultError::Integrity)),
+        };
         Ok(Some(Record {
             provider: get_text(row, 0).unwrap_or_default(),
-            state: if get_text(row, 1).as_deref() == Some("reconnect_needed") {
-                State::ReconnectNeeded
-            } else {
-                State::Connected
-            },
+            state,
             last4: get_text(row, 2),
             scopes: get_text(row, 3)
                 .and_then(|text| serde_json::from_str(&text).ok())
@@ -755,13 +746,22 @@ impl<E: SqlEngine> Connections<E> {
         &self,
         actor: &str,
         id: &str,
-        body: SetCredentials,
+        mut body: SetCredentials,
         now_ms: u64,
     ) -> Result<Status, ConnError> {
         let provider = self.provider(&body.provider)?;
-        if body.access_token.is_empty() || body.access_token.len() > 8192 {
+        if !valid_token_len(&body.access_token) {
             return Err(ConnError::Invalid(
                 "accessToken must be 1-8192 bytes".to_owned(),
+            ));
+        }
+        if body
+            .refresh_token
+            .as_deref()
+            .is_some_and(|refresh| !valid_token_len(refresh))
+        {
+            return Err(ConnError::Invalid(
+                "refreshToken must be 1-8192 bytes".to_owned(),
             ));
         }
         if !provider.offers(&body.scopes) {
@@ -776,7 +776,7 @@ impl<E: SqlEngine> Connections<E> {
             provider: body.provider.clone(),
             state: State::Connected,
             last4: last4(&body.access_token),
-            scopes: body.scopes.clone(),
+            scopes: std::mem::take(&mut body.scopes),
             expires_at_ms: body.expires_at_ms,
             last_used_ms: None,
             last_error: None,
@@ -785,17 +785,18 @@ impl<E: SqlEngine> Connections<E> {
             params: body.params.clone(),
         };
         let tokens = Tokens {
-            provider: body.provider.clone(),
-            params: body.params.clone(),
-            access_token: body.access_token.clone(),
-            refresh_token: body.refresh_token.clone(),
+            provider: std::mem::take(&mut body.provider),
+            params: std::mem::take(&mut body.params),
+            access_token: std::mem::take(&mut body.access_token),
+            refresh_token: body.refresh_token.take(),
         };
         drop(body);
-        self.transaction(|vault| {
-            Self::store(vault, id, record, &tokens, true, now_ms)?;
-            Self::audit(vault, now_ms, id, "credential.set", actor, None)
+        let stored = self.transaction(|vault| {
+            let stored = Self::store(vault, id, record, &tokens, true, now_ms)?;
+            Self::audit(vault, now_ms, id, "credential.set", actor, None)?;
+            Ok(stored)
         })?;
-        self.status(id)
+        Ok(status_of(id, stored))
     }
 
     /// `GET`: the status of `id`.
@@ -804,18 +805,8 @@ impl<E: SqlEngine> Connections<E> {
     /// Storage failures.
     pub fn status(&self, id: &str) -> Result<Status, ConnError> {
         self.with_vault(|vault| {
-            Ok(match Self::record(vault, id)? {
-                Some(record) => Status {
-                    id: id.to_owned(),
-                    provider: Some(record.provider),
-                    state: record.state.as_str().to_owned(),
-                    last4: record.last4,
-                    scopes: record.scopes,
-                    expires_at_ms: record.expires_at_ms,
-                    last_used_ms: record.last_used_ms,
-                    last_error: record.last_error,
-                },
-                None => Status {
+            Ok(Self::record(vault, id)?.map_or_else(
+                || Status {
                     id: id.to_owned(),
                     provider: None,
                     state: "not_connected".to_owned(),
@@ -825,7 +816,8 @@ impl<E: SqlEngine> Connections<E> {
                     last_used_ms: None,
                     last_error: None,
                 },
-            })
+                |record| status_of(id, record),
+            ))
         })
     }
 
@@ -1108,6 +1100,10 @@ impl<E: SqlEngine> Connections<E> {
             }
         };
         let access = response.access_token().secret().clone();
+        let refresh = response.refresh_token().map(|token| token.secret().clone());
+        if !valid_token_len(&access) || refresh.as_deref().is_some_and(|r| !valid_token_len(r)) {
+            return Err(ConnError::Provider("unreadable_token_response"));
+        }
         let record = Record {
             provider: provider.id.clone(),
             state: State::Connected,
@@ -1127,33 +1123,34 @@ impl<E: SqlEngine> Connections<E> {
             provider: provider.id.clone(),
             params: pending.params.clone(),
             access_token: access,
-            refresh_token: response.refresh_token().map(|token| token.secret().clone()),
+            refresh_token: refresh,
         };
-        self.transaction(|vault| {
-            if Self::epoch(vault, id)?.0 != pending.generation {
+        let stored = self
+            .transaction(|vault| {
+                if Self::epoch(vault, id)?.0 != pending.generation {
+                    Self::audit(
+                        vault,
+                        now_ms,
+                        id,
+                        "oauth.refused",
+                        actor,
+                        Some("superseded"),
+                    )?;
+                    return Ok(Decided::Refused(ConnError::Conflict));
+                }
+                let stored = Self::store(vault, id, record, &tokens, true, now_ms)?;
                 Self::audit(
                     vault,
                     now_ms,
                     id,
-                    "oauth.refused",
+                    "oauth.connected",
                     actor,
-                    Some("superseded"),
+                    Some(&provider.id),
                 )?;
-                return Ok(Decided::Refused(ConnError::Conflict));
-            }
-            Self::store(vault, id, record, &tokens, true, now_ms)?;
-            Self::audit(
-                vault,
-                now_ms,
-                id,
-                "oauth.connected",
-                actor,
-                Some(&provider.id),
-            )?;
-            Ok(Decided::Done(()))
-        })?
-        .into_result()?;
-        self.status(id)
+                Ok(Decided::Done(stored))
+            })?
+            .into_result()?;
+        Ok(status_of(id, stored))
     }
 
     /// `DELETE`: disconnect (CONN-GENERATION-1). In one transaction: the next
@@ -1256,18 +1253,18 @@ impl<E: SqlEngine> Connections<E> {
             .header("accept", "application/json");
         match (provider.client_auth, secret) {
             (ClientAuth::Basic, Some(secret)) => {
-                let pair = |text: &str| {
-                    form_urlencoded::byte_serialize(text.as_bytes()).collect::<String>()
-                };
-                let credentials = zeroize::Zeroizing::new(format!(
-                    "{}:{}",
-                    pair(&registered.client_id),
-                    pair(secret)
-                ));
+                let encoded_id = form_urlencoded::byte_serialize(registered.client_id.as_bytes())
+                    .collect::<String>();
+                let encoded_secret = zeroize::Zeroizing::new(
+                    form_urlencoded::byte_serialize(secret.as_bytes()).collect::<String>(),
+                );
+                let credentials =
+                    zeroize::Zeroizing::new(format!("{encoded_id}:{}", encoded_secret.as_str()));
                 let encoded = zeroize::Zeroizing::new(
                     base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes()),
                 );
-                request = request.header("authorization", format!("Basic {}", encoded.as_str()));
+                let header = zeroize::Zeroizing::new(format!("Basic {}", encoded.as_str()));
+                request = request.header("authorization", header.as_str());
                 form.append_pair("client_id", &registered.client_id);
             }
             (ClientAuth::Post, Some(secret)) => {
@@ -1297,14 +1294,14 @@ impl<E: SqlEngine> Connections<E> {
     /// No such connection, [`ConnError::ReconnectNeeded`], or a refresh
     /// failure.
     pub fn access_token(&self, actor: &str, id: &str, now_ms: u64) -> Result<Secret, ConnError> {
-        let (record, _) = self.read(id)?;
+        let (mut record, mut tokens) = self.read(id)?;
         let expiring = record
             .expires_at_ms
             .is_some_and(|expires| expires <= now_ms.saturating_add(REFRESH_SKEW_MS));
         if expiring {
             self.refresh(actor, id, (record.generation, record.revision), now_ms)?;
+            (record, tokens) = self.read(id)?;
         }
-        let (record, tokens) = self.read(id)?;
         self.transaction(|vault| {
             vault
                 .engine()
@@ -1315,7 +1312,7 @@ impl<E: SqlEngine> Connections<E> {
                 .map_err(storage)?;
             Self::audit(vault, now_ms, id, "credential.use", actor, None)
         })?;
-        Ok(Secret::from(tokens.access_token.clone()))
+        Ok(Secret::from(std::mem::take(&mut tokens.access_token)))
     }
 
     /// The record and sealed tokens of `id`, the sealed provider and
@@ -1367,13 +1364,14 @@ impl<E: SqlEngine> Connections<E> {
             }
             return done.clone().unwrap_or(Ok(()));
         }
+        let mut guard = FlightGuard {
+            flights: &self.flights,
+            id,
+            flight: &flight,
+            settled: false,
+        };
         let result = self.refresh_now(actor, id, seen, now_ms);
-        self.flights
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(id);
-        *flight.done.lock().unwrap_or_else(PoisonError::into_inner) = Some(result.clone());
-        flight.ready.notify_all();
+        guard.finish(&result);
         result
     }
 
@@ -1402,7 +1400,15 @@ impl<E: SqlEngine> Connections<E> {
             .map_err(oauth_error);
         let response = match refreshed {
             Ok(response) => response,
-            Err(ConnError::Provider(code)) => {
+            Err(ConnError::Provider(
+                code @ ("invalid_grant"
+                | "invalid_client"
+                | "invalid_request"
+                | "invalid_scope"
+                | "unauthorized_client"
+                | "unsupported_grant_type"
+                | "provider_error"),
+            )) => {
                 return self
                     .mark_reconnect(actor, id, &record, code, now_ms)
                     .and(Err(ConnError::ReconnectNeeded));
@@ -1410,20 +1416,20 @@ impl<E: SqlEngine> Connections<E> {
             Err(error) => {
                 let code = failure_code(&error);
                 self.transaction(|vault| {
-                    // Only the credential this refresh read gets the error.
-                    vault
-                        .engine()
-                        .execute(
-                            r#"UPDATE "_norn_connection" SET "last_error" = ?1 WHERE "id" = ?2 AND "generation" = ?3 AND "revision" = ?4"#,
-                            &[text(code), text(id), SqlValue::Integer(seen.0), SqlValue::Integer(seen.1)],
-                        )
-                        .map_err(storage)?;
+                    let sql = r#"UPDATE "_norn_connection" SET "last_error" = ?1 WHERE "id" = ?2 AND "generation" = ?3 AND "revision" = ?4"#;
+                    let params = [text(code), text(id), SqlValue::Integer(seen.0), SqlValue::Integer(seen.1)];
+                    vault.engine().execute(sql, &params).map_err(storage)?;
                     Self::audit(vault, now_ms, id, "credential.failure", actor, Some(code))
                 })?;
                 return Err(error);
             }
         };
         let access = response.access_token().secret().clone();
+        let next_refresh = response.refresh_token().map(|token| token.secret().clone());
+        if !valid_token_len(&access) || next_refresh.as_deref().is_some_and(|r| !valid_token_len(r))
+        {
+            return Err(ConnError::Provider("unreadable_token_response"));
+        }
         let next = Record {
             last4: last4(&access),
             expires_at_ms: expires_at(now_ms, response.expires_in()),
@@ -1439,21 +1445,12 @@ impl<E: SqlEngine> Connections<E> {
             provider: tokens.provider.clone(),
             params: tokens.params.clone(),
             access_token: access,
-            refresh_token: response
-                .refresh_token()
-                .map(|token| token.secret().clone())
-                .or_else(|| tokens.refresh_token.clone()),
+            refresh_token: next_refresh.or_else(|| tokens.refresh_token.clone()),
         };
         self.transaction(|vault| {
             if Self::epoch(vault, id)? != seen {
-                Self::audit(
-                    vault,
-                    now_ms,
-                    id,
-                    "credential.failure",
-                    actor,
-                    Some("superseded"),
-                )?;
+                let why = Some("superseded");
+                Self::audit(vault, now_ms, id, "credential.failure", actor, why)?;
                 return Ok(Decided::Refused(ConnError::Conflict));
             }
             Self::store(vault, id, next, &rotated, false, now_ms)?;

@@ -98,8 +98,11 @@ export class LiveClient {
   #socket: SocketLike | null = null
   #state: LiveState = "idle"
   #failures = 0
+  #authRetries = 0
   #next = 0
   #pending = false
+  #generation = 0
+  #timer: unknown = null
 
   constructor(options: LiveOptions) {
     this.#options = options
@@ -147,6 +150,14 @@ export class LiveClient {
   }
 
   close(): void {
+    this.#generation += 1
+    this.#pending = false
+    this.#failures = 0
+    this.#authRetries = 0
+    if (this.#timer !== null) {
+      if (this.#options.schedule === undefined) clearTimeout(this.#timer as ReturnType<typeof setTimeout>)
+      this.#timer = null
+    }
     const socket = this.#socket
     this.#socket = null
     socket?.close(1000, "done")
@@ -190,15 +201,18 @@ export class LiveClient {
 
   #ensure() {
     if (this.#socket !== null || this.#pending || this.#entries.size === 0 || this.#state === "unavailable") return
+    const generation = this.#generation
     this.#pending = true
     this.#setState("connecting")
     void Promise.resolve(this.#options.url()).then(
       (url) => {
+        if (generation !== this.#generation) return
         this.#pending = false
         if (this.#entries.size === 0) return this.#setState("idle")
         this.#open(url)
       },
       () => {
+        if (generation !== this.#generation) return
         this.#pending = false
         this.#lost(1006)
       },
@@ -225,7 +239,10 @@ export class LiveClient {
     // proves the connection usable and restores the retry budget, so open/close cycles still end
     // in `unavailable` (and the view's Refresh) instead of retrying forever.
     socket.addEventListener("message", () => {
-      if (this.#socket === socket) this.#failures = 0
+      if (this.#socket === socket) {
+        this.#failures = 0
+        this.#authRetries = 0
+      }
     })
     socket.addEventListener("message", (event) => {
       if (this.#socket !== socket || typeof event.data !== "string") return
@@ -267,17 +284,27 @@ export class LiveClient {
 
   #lost(code: number) {
     if (this.#entries.size === 0) return this.#setState("idle")
-    // An expired token is routine: reconnect at once with a fresh one.
+    // A single expired token is routine: reconnect at once with a fresh one. Repeated 4401 closes
+    // without any server frame (e.g. revoked membership or broken token minting) fall through to
+    // bounded backoff and `unavailable` instead of spinning an infinite zero-delay loop.
     if (code === 4401) {
-      this.#setState("connecting")
-      this.#ensure()
-      return
+      this.#authRetries += 1
+      if (this.#authRetries === 1) {
+        this.#setState("connecting")
+        this.#ensure()
+        return
+      }
     }
     this.#failures += 1
     if (this.#failures >= (this.#options.maxFailures ?? 5)) return this.#setState("unavailable")
     this.#setState("connecting")
     const wait = (this.#options.delay ?? ((attempt: number) => Math.min(30_000, 1000 * 2 ** (attempt - 1))))(this.#failures)
     const schedule = this.#options.schedule ?? ((callback: () => void, ms: number) => setTimeout(callback, ms))
-    schedule(() => this.#ensure(), wait)
+    const generation = this.#generation
+    this.#timer = schedule(() => {
+      if (generation !== this.#generation) return
+      this.#timer = null
+      this.#ensure()
+    }, wait)
   }
 }
