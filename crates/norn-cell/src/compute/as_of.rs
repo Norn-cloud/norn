@@ -319,7 +319,7 @@ fn load_authenticated_connection<E: SqlEngine>(
     ver: i64,
 ) -> Result<(Option<ObjectRecord>, u64), CellError> {
     use crate::engine::params;
-    let ver_u64 = u64::try_from(ver).map_err(|_| CellError::OutOfRange("connection version"))?;
+    let ver_u64 = u64::try_from(ver).map_err(|_err| CellError::OutOfRange("connection version"))?;
     let rec = reader.object_at_version(
         hist_world,
         super::freshness::CONNECTION_TYPE,
@@ -332,7 +332,7 @@ fn load_authenticated_connection<E: SqlEngine>(
         params![hist_world, super::freshness::CONNECTION_TYPE, conn_id, ver],
         |row| row.get(0),
     )?;
-    let seq_u64 = u64::try_from(seq).map_err(|_| CellError::OutOfRange("commit_seq"))?;
+    let seq_u64 = u64::try_from(seq).map_err(|_err| CellError::OutOfRange("commit_seq"))?;
     Ok((rec, seq_u64))
 }
 
@@ -440,7 +440,7 @@ fn latest_foreign_connection_version<E: SqlEngine>(
 ) -> Result<Option<i64>, CellError> {
     use crate::engine::params;
     let valid_since_i64 =
-        i64::try_from(valid_since).map_err(|_| CellError::OutOfRange("commit_seq"))?;
+        i64::try_from(valid_since).map_err(|_err| CellError::OutOfRange("commit_seq"))?;
     let mut boundary: Option<i64> = reader.conn.query_optional(
         "SELECT version FROM _norn_fact_values INDEXED BY \"_norn_fact_values/connection_commit\" \
          WHERE world=?1 AND root_type='source.Connection' AND id=?2 \
@@ -591,7 +591,7 @@ fn scan_rewind_in_range<E: SqlEngine>(
     active: &mut BTreeMap<&str, &str>,
 ) -> Result<bool, CellError> {
     use crate::engine::{SqlRow, SqlValue};
-    let limit_i64 = i64::try_from(limit).map_err(|_| CellError::OutOfRange("rewind limit"))?;
+    let limit_i64 = i64::try_from(limit).map_err(|_err| CellError::OutOfRange("rewind limit"))?;
     let tail = if after_wm.is_some() {
         " AND COALESCE(json_extract(snapshot, '$.values.watermark'), '')>?7"
     } else {
@@ -892,7 +892,7 @@ pub(super) fn connection_history_proves_cursors_at<E: SqlEngine>(
         return Ok(false);
     };
     let max_ver =
-        i64::try_from(conn.version).map_err(|_| CellError::OutOfRange("connection version"))?;
+        i64::try_from(conn.version).map_err(|_err| CellError::OutOfRange("connection version"))?;
     if reader.has_unverified_external_writes()? {
         verify_all_connection_versions(reader, &hist_world, &conn.id, max_ver)?;
     }

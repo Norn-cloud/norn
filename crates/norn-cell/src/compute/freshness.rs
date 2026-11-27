@@ -258,13 +258,12 @@ fn mapping_datasets_for_plan(
                     .map_or(map.source.dataset.as_str(), |nested| {
                         nested.dataset.as_str()
                     });
-                let key = match &binding_key {
-                    Some(existing) => existing.clone(),
-                    None => {
-                        let computed = mapping_binding_key(artifact)?;
-                        binding_key = Some(computed.clone());
-                        computed
-                    }
+                let key = if let Some(existing) = &binding_key {
+                    existing.clone()
+                } else {
+                    let computed = mapping_binding_key(artifact)?;
+                    binding_key = Some(computed.clone());
+                    computed
                 };
                 required
                     .entry(artifact.artifact_id.clone())
@@ -479,10 +478,10 @@ impl<E: SqlEngine> CellStore<E> {
             if let Some(rec) = reader.object(world, CONNECTION_TYPE, source_id)? {
                 return Ok(Some(rec));
             }
-            return if world != MAIN_WORLD {
-                reader.object(MAIN_WORLD, CONNECTION_TYPE, source_id)
-            } else {
+            return if world == MAIN_WORLD {
                 Ok(None)
+            } else {
+                reader.object(MAIN_WORLD, CONNECTION_TYPE, source_id)
             };
         };
         if frontier == 0 {
@@ -894,7 +893,7 @@ pub(super) fn mapping_binding_valid_since<E: SqlEngine>(
     expected_binding: &str,
 ) -> Result<Option<u64>, CellError> {
     use crate::engine::{SqlRow, params};
-    let max_seq = i64::try_from(conn_seq).map_err(|_| CellError::OutOfRange("commit_seq"))?;
+    let max_seq = i64::try_from(conn_seq).map_err(|_err| CellError::OutOfRange("commit_seq"))?;
     let defs = reader.conn.query(
         "SELECT version, commit_seq FROM _norn_definition_version \
          WHERE commit_seq <= ?1 ORDER BY commit_seq DESC",
@@ -925,7 +924,7 @@ pub(super) fn connection_world_and_commit_seq<E: SqlEngine>(
 ) -> Result<Option<(String, u64)>, CellError> {
     use crate::engine::params;
     let ver =
-        i64::try_from(conn.version).map_err(|_| CellError::OutOfRange("connection version"))?;
+        i64::try_from(conn.version).map_err(|_err| CellError::OutOfRange("connection version"))?;
     let mut chosen = world;
     let mut seq: Option<i64> = reader.conn.query_optional(
         "SELECT commit_seq FROM _norn_fact_values \

@@ -554,7 +554,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .unwrap_or(0);
         let live =
             self.unresolved_quarantined_datasets_with(mapping_id, connection_id, None, Some(head))?;
-        let head_u64 = u64::try_from(head).map_err(|_| CellError::OutOfRange("frontier"))?;
+        let head_u64 = u64::try_from(head).map_err(|_err| CellError::OutOfRange("frontier"))?;
         let committed = self.unresolved_quarantined_datasets_with(
             mapping_id,
             connection_id,
@@ -579,7 +579,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         at: Option<(u64, u64)>,
     ) -> Result<BTreeSet<String>, CellError> {
         let frontier_i64 = at
-            .map(|(f, _)| i64::try_from(f).map_err(|_| CellError::OutOfRange("frontier")))
+            .map(|(f, _)| i64::try_from(f).map_err(|_err| CellError::OutOfRange("frontier")))
             .transpose()?;
         self.unresolved_quarantined_datasets_with(mapping_id, connection_id, at, frontier_i64)
     }
@@ -593,7 +593,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<BTreeSet<String>, CellError> {
         let mut datasets = BTreeSet::new();
         let frontier_i64 = at
-            .map(|(f, _)| i64::try_from(f).map_err(|_| CellError::OutOfRange("frontier")))
+            .map(|(f, _)| i64::try_from(f).map_err(|_err| CellError::OutOfRange("frontier")))
             .transpose()?;
         let scope_at = match (frontier_i64, at) {
             (Some(f), Some((_, ms))) => Some((f, ms, max_consumed_inbox_position(self.conn, f)?)),

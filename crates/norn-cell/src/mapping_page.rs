@@ -734,9 +734,13 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
         self.commit_observed_evidence_with_fence(commit, &authorization, &bundles, source_fence)
-            .map_err(|e| match e {
-                norn_kernel::CommitError::Host(err @ CellError::SourceLeaseFenced { .. }) => err,
-                other => CellError::ObservationCommit(Box::new(other)),
+            .map_err(|e| {
+                if let norn_kernel::CommitError::Host(err @ CellError::SourceLeaseFenced { .. }) = e
+                {
+                    err
+                } else {
+                    CellError::ObservationCommit(Box::new(e))
+                }
             })?;
         Ok(())
     }
@@ -805,10 +809,10 @@ impl<E: SqlEngine> CellStore<E> {
         use crate::source_cursor::{
             SOURCE_BINDING, SOURCE_CURSOR, SOURCE_PENDING, verify_active_lease,
         };
-        let gen_i64 =
-            i64::try_from(generation).map_err(|_| CellError::OutOfRange("binding generation"))?;
+        let gen_i64 = i64::try_from(generation)
+            .map_err(|_err| CellError::OutOfRange("binding generation"))?;
         let now_i64 =
-            i64::try_from(now_ms).map_err(|_| CellError::OutOfRange("binding updated_at_ms"))?;
+            i64::try_from(now_ms).map_err(|_err| CellError::OutOfRange("binding updated_at_ms"))?;
         self.write_tx(|| {
             verify_active_lease(&self.conn, connection_id, lease_id, generation, now_ms)?;
             crate::mapping_conflict::verify_mapping_binding_in_tx(
@@ -880,10 +884,10 @@ impl<E: SqlEngine> CellStore<E> {
         use crate::source_cursor::{
             SOURCE_BINDING, SOURCE_CURSOR, SOURCE_PENDING, verify_active_lease,
         };
-        let gen_i64 =
-            i64::try_from(generation).map_err(|_| CellError::OutOfRange("binding generation"))?;
+        let gen_i64 = i64::try_from(generation)
+            .map_err(|_err| CellError::OutOfRange("binding generation"))?;
         let now_i64 =
-            i64::try_from(now_ms).map_err(|_| CellError::OutOfRange("binding updated_at_ms"))?;
+            i64::try_from(now_ms).map_err(|_err| CellError::OutOfRange("binding updated_at_ms"))?;
         self.write_tx(|| {
             verify_active_lease(&self.conn, connection_id, lease_id, generation, now_ms)?;
             crate::mapping_conflict::verify_mapping_binding_in_tx(

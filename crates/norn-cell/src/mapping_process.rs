@@ -80,9 +80,13 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
         self.commit_observed_evidence_with_fence(commit, &authorization, &bundles, source_fence)
-            .map_err(|e| match e {
-                norn_kernel::CommitError::Host(err @ CellError::SourceLeaseFenced { .. }) => err,
-                other => CellError::ObservationCommit(Box::new(other)),
+            .map_err(|e| {
+                if let norn_kernel::CommitError::Host(err @ CellError::SourceLeaseFenced { .. }) = e
+                {
+                    err
+                } else {
+                    CellError::ObservationCommit(Box::new(e))
+                }
             })?;
         Ok(true)
     }
@@ -645,14 +649,15 @@ enum RawInputDigest<'a> {
 }
 
 fn raw_input_digest(value: &RuntimeValue) -> RawInputDigest<'_> {
-    match value {
-        RuntimeValue::Object(map) => RawInputDigest::Object(
+    if let RuntimeValue::Object(map) = value {
+        RawInputDigest::Object(
             map.iter()
                 .filter(|(k, _)| k.as_str() != "extracted_at")
                 .map(|(k, v)| (k.as_str(), v))
                 .collect(),
-        ),
-        other => RawInputDigest::Other(other),
+        )
+    } else {
+        RawInputDigest::Other(value)
     }
 }
 
@@ -762,6 +767,7 @@ pub(crate) fn source_page_digest_v3(
     )?)
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct LegacyReplayCheck<'a> {
     pub(crate) mapping: Option<&'a str>,
     pub(crate) input: Option<&'a crate::mapping_bundle::MappingInput>,

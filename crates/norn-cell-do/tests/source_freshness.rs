@@ -30,7 +30,7 @@ mod tests {
     use norn_cell::compute::{Freshness, QueryContext, RequiredSources};
     use norn_cell::engine::{NativeEngine, SqlEngine as _, SqlRow, SqlValue};
     use norn_cell::{
-        CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model,
+        CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, LinkChange, MAIN_WORLD,
         StoreOptions,
     };
     use norn_cell_do::connect::Connect;
@@ -41,9 +41,7 @@ mod tests {
     use norn_cell_do::tenant::{Served, Tenant};
     use norn_checker::EntityArtifactSetContext;
     use norn_checker::receipt::ReceiptSources;
-    use norn_ir::{
-        ArtifactEnvelope, ArtifactKind, Decimal, EntityRoot, ResourceLimitProfile, RuntimeValue,
-    };
+    use norn_ir::{ArtifactEnvelope, ArtifactKind, Decimal, ResourceLimitProfile, RuntimeValue};
     use norn_ui_checker::check_artifact_set_with_receipt;
     use serde_json::{Value, json};
 
@@ -140,26 +138,7 @@ mod tests {
         )
         .expect("checked");
         assert!(checked.receipt.admitted, "{:#?}", checked.diagnostics);
-        let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
-        for artifact in artifacts
-            .iter()
-            .filter(|a| a.kind() == ArtifactKind::Entity)
-        {
-            let root: EntityRoot = serde_json::from_value(
-                serde_json::to_value(artifact.payload.to_json_value()).expect("payload"),
-            )
-            .expect("entity root");
-            match root {
-                EntityRoot::V2(root) => objects.push(root.object_type),
-                EntityRoot::V2Interface(root) => interfaces.push(root.interface),
-                EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
-                EntityRoot::V2Markings(_) | EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {}
-            }
-        }
-        let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
-            .expect("model")
-            .with_governing_laws(&artifacts)
-            .expect("laws");
+        let model = norn_api::kernel_set::serving_model(&artifacts).expect("serving model");
         let scope = CellScope {
             org_id: "org_demo".into(),
             environment_id: "dev".into(),
@@ -326,14 +305,15 @@ mod tests {
             .iter()
             .map(|p| {
                 let mut body = p["body"].clone();
-                if let Some(new_modified) = bump_modified
+                if let Some(new_prefix) = bump_modified
                     && let Some(rows) = body.get_mut("data").and_then(Value::as_array_mut)
                 {
                     for row in rows {
                         if let Some(obj) = row.as_object_mut()
-                            && obj.contains_key("modified")
+                            && let Some(orig) = obj.get("modified").and_then(Value::as_str)
                         {
-                            obj.insert("modified".into(), Value::String(new_modified.to_owned()));
+                            let bumped = orig.replacen("2026-11-12 17:", new_prefix, 1);
+                            obj.insert("modified".into(), Value::String(bumped));
                         }
                     }
                 }
@@ -463,27 +443,7 @@ mod tests {
     #[test]
     fn native_only_questions_remain_exact_and_trace_across_wall_clock_ticks() {
         let (mut store, scope) = open_store(&[]);
-        store
-            .commit(&CommitBatch {
-                world: MAIN_WORLD.into(),
-                scope: scope.key(),
-                logical_time: T0,
-                writes: vec![FactWriteRow::Put {
-                    object_type: "canon.OrderLine".into(),
-                    key: "order-native-1".into(),
-                    values: BTreeMap::from([
-                        ("status".into(), RuntimeValue::from("promised")),
-                        ("due_at".into(), RuntimeValue::from("2026-08-06T12:00:00Z")),
-                        (
-                            "quantity".into(),
-                            RuntimeValue::Number("5".parse::<Decimal>().unwrap()),
-                        ),
-                        ("unit".into(), RuntimeValue::from("g")),
-                    ]),
-                }],
-                ..CommitBatch::default()
-            })
-            .expect("commit native order line");
+        commit_sample_order_line(&mut store, &scope, T0);
         let (host, principals, scope) = wrap_host(store, scope);
         let derived = DerivedQuestions::new([7; 32], scope);
         let rt0 = derived.questions_at(&host, T0).expect("rt0");
@@ -742,7 +702,7 @@ mod tests {
             &host,
             &scope,
             T0.saturating_add(30_000),
-            erpnext_pages(Some("2026-11-12 18:00:00.000000")),
+            erpnext_pages(Some("2026-11-12 18:")),
         );
         let second = eval_question(&host, &principals, &derived, &q);
         assert_eq!(second["freshness"], "exact", "{second}");
@@ -1242,13 +1202,19 @@ mod tests {
         payload: Value,
         now_ms: u64,
     ) -> norn_kernel::Observed<RuntimeValue> {
+        let mapped = json!({
+            "name": payload["name"],
+            "label": payload["customer_name"],
+            "custom_norn_ref": payload["custom_norn_ref"],
+            "role": payload["custom_norn_role"],
+        });
         norn_api::pull::observation(
             profile,
             &norn_api::pull::Row {
                 dataset: "Party".into(),
                 source_id: party_name.to_owned(),
                 version: ver.to_owned(),
-                payload: RuntimeValue::from_json(payload).expect("rv"),
+                payload: RuntimeValue::from_json(mapped).expect("rv"),
             },
             now_ms,
         )
@@ -1609,24 +1575,48 @@ mod tests {
         scope: &CellScope,
         logical_time: u64,
     ) {
+        let party = |key: &str, name: &str| FactWriteRow::Put {
+            object_type: "canon.Party".into(),
+            key: key.into(),
+            values: BTreeMap::from([
+                ("display_name".into(), RuntimeValue::from(name)),
+                ("kind".into(), RuntimeValue::from("organization")),
+            ]),
+        };
+        let link = |role: &str, target: &str| LinkChange::Add {
+            object_type: "canon.OrderLine".into(),
+            link: role.into(),
+            source: "order-poll-1".into(),
+            target: target.into(),
+            values: BTreeMap::new(),
+            target_type: None,
+        };
         store
             .commit(&CommitBatch {
                 world: MAIN_WORLD.into(),
                 scope: scope.key(),
                 logical_time,
-                writes: vec![FactWriteRow::Put {
-                    object_type: "canon.OrderLine".into(),
-                    key: "order-poll-1".into(),
-                    values: BTreeMap::from([
-                        ("status".into(), RuntimeValue::from("promised")),
-                        ("due_at".into(), RuntimeValue::from("2026-08-06T12:00:00Z")),
-                        (
-                            "quantity".into(),
-                            RuntimeValue::Number("5".parse::<Decimal>().unwrap()),
-                        ),
-                        ("unit".into(), RuntimeValue::from("g")),
-                    ]),
-                }],
+                writes: vec![
+                    party("party-provider", "Provider"),
+                    party("party-receiver", "Receiver"),
+                    FactWriteRow::Put {
+                        object_type: "canon.OrderLine".into(),
+                        key: "order-poll-1".into(),
+                        values: BTreeMap::from([
+                            ("status".into(), RuntimeValue::from("promised")),
+                            ("due_at".into(), RuntimeValue::from("2026-08-06T12:00:00Z")),
+                            (
+                                "quantity".into(),
+                                RuntimeValue::Number("5".parse::<Decimal>().unwrap()),
+                            ),
+                            ("unit".into(), RuntimeValue::from("g")),
+                        ]),
+                    },
+                ],
+                links: vec![
+                    link("provider", "party-provider"),
+                    link("receiver", "party-receiver"),
+                ],
                 ..CommitBatch::default()
             })
             .expect("commit order line");

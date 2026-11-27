@@ -767,6 +767,14 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                         params![commit_seq, observation_id],
                     )?;
                 }
+                self.conn.execute(
+                    &format!(
+                        "DELETE FROM \"{}\" WHERE \"connection_id\" = '' AND \"observation_id\" IN (\
+                         SELECT \"observation_id\" FROM \"{INBOX}\" WHERE \"consumed_commit_seq\" = ?1)",
+                        crate::source_cursor::SOURCE_EVIDENCE
+                    ),
+                    params![commit_seq],
+                )?;
             }
         }
         Ok(())
