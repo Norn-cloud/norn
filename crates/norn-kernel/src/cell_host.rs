@@ -1146,12 +1146,15 @@ pub trait CellHost {
     fn supports_reference_reads(&self) -> bool {
         false
     }
-
-    /// Read only an object's concrete identity and version. A present identity
-    /// carries an empty value map, never classified source properties.
+    /// Whether this host implements budgeted physical-column projected reads
+    /// for `object_type` and its concrete subtypes without metering unread fields.
+    fn supports_projected_read(&self, _object_type: &ObjectTypeName, _properties: &[&str]) -> bool {
+        false
+    }
+    /// Read only an object's concrete identity and version (empty value map).
     ///
     /// # Errors
-    /// A host read failure. Unsupported hosts return no snapshot.
+    /// A host read failure. Unsupported hosts return `Ok(None)`.
     fn load_reference(
         &self,
         _key: &FactKey,
@@ -1159,13 +1162,23 @@ pub trait CellHost {
     ) -> Result<Option<BoundedFact>, Self::Error> {
         Ok(None)
     }
-
-    /// Reads one fact only when the host can charge its stored representation
-    /// against `max_bytes` before decoding it. `None` means unsupported or
-    /// over budget; callers that require a bounded slice must fail closed.
+    /// Read only an object's concrete identity, version, and `properties`,
+    /// charging only metadata and selected columns against `max_bytes`.
     ///
     /// # Errors
+    /// A host read failure. Unsupported hosts return `Ok(None)`.
+    fn load_projected(
+        &self,
+        _key: &FactKey,
+        _properties: &[&str],
+        _max_bytes: u64,
+    ) -> Result<Option<BoundedFact>, Self::Error> {
+        Ok(None)
+    }
+    /// Read one fact charged against `max_bytes` before decoding; `None` means
+    /// unsupported or over budget (callers fail closed).
     ///
+    /// # Errors
     /// Returns the host read failure.
     fn load_bounded(
         &self,
@@ -1177,16 +1190,13 @@ pub trait CellHost {
     }
 
     /// Resolve and authenticate an unconsumed receipt within this cell's scope,
-    /// world and pinned Function manifest. Action JSON supplies only a reference.
-    /// RECEIPT-EFFECT-1: `Ok(None)` means the host does not support receipt
-    /// effects and the action refuses. A binding alone neither commits effects
-    /// nor consumes the receipt: the accepting action commit consumes the
-    /// binding's delivery (`Acceptance::consumed`) in the same commit as its
-    /// transition, and the host's pending check refuses a second consumption.
+    /// world and pinned Function manifest (RECEIPT-EFFECT-1). `Ok(None)` means
+    /// unsupported and the action refuses; a binding alone neither commits nor
+    /// consumes the receipt—the accepting commit consumes `Acceptance::consumed`
+    /// in the same transaction, and the host's pending check refuses reuse.
     ///
     /// # Errors
-    /// A typed binding refusal (unknown, replayed, mismatched, not accepted,
-    /// result type), or [`crate::receipt_binding::ReceiptBindingError::Store`] for a host failure.
+    /// A typed binding refusal or [`crate::receipt_binding::ReceiptBindingError::Store`].
     fn resolve_accepted_receipt(
         &self,
         _reference: &crate::receipt_binding::ReceiptReference,
@@ -1197,25 +1207,17 @@ pub trait CellHost {
     > {
         Ok(None)
     }
-
-    /// Reads the committed state of one link (not an effect verb).
-    /// Temporal properties follow the same read contract as [`Self::load`].
+    /// Reads the committed state of one link (not an effect verb); temporal
+    /// properties follow the same read contract as [`Self::load`].
     ///
     /// # Errors
-    ///
     /// The host's read failure.
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error>;
-
     /// Reads the complete, bounded live target set for one declared outgoing
-    /// link. `None` means this host cannot provide an atomicity-safe list
-    /// read; callers must fail closed when a declaration needs one.
-    ///
-    /// Implementations must return targets in key order and must refuse a
-    /// list exceeding `max_targets` or aggregate target-key bytes exceeding
-    /// `max_key_bytes`.
+    /// link in key order; refuses lists exceeding `max_targets` or aggregate
+    /// target-key bytes exceeding `max_key_bytes` (`None` = unsupported/over bound).
     ///
     /// # Errors
-    ///
     /// Returns the host read failure.
     fn read_link_targets(
         &self,
@@ -1227,10 +1229,8 @@ pub trait CellHost {
         let _ = (source, link, max_targets, max_key_bytes);
         Ok(None)
     }
-
     /// Reads every live object matching `predicate` for a turn; returns at most
-    /// `max_members + 1` objects within `max_bytes`, or `None` when unsupported
-    /// or over bound.
+    /// `max_members + 1` objects within `max_bytes`, or `None` when unsupported/over bound.
     ///
     /// # Errors
     /// Returns the host read failure.
@@ -1243,7 +1243,6 @@ pub trait CellHost {
         let _ = (predicate, max_members, max_bytes);
         Ok(None)
     }
-
     /// Reads matching predicate objects for an action, running `authorize` on
     /// every matched row before surfacing host-side dispute refusals.
     ///
@@ -1267,7 +1266,6 @@ pub trait CellHost {
         objects.truncate(max_members.saturating_add(1));
         Ok(PredicateActionRead::Admitted(objects))
     }
-
     /// **commit**: atomically consume the delivery, apply writes and links,
     /// append events, and enqueue effects after [`check_commit`] admits it.
     ///
@@ -1277,7 +1275,6 @@ pub trait CellHost {
         &mut self,
         commit: CellCommit<Self::Event, Self::Command, Self::Input>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>>;
-
     /// Atomically commit one proposal and its ordered partition postings.
     ///
     /// # Errors
@@ -1290,7 +1287,6 @@ pub trait CellHost {
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
         Err(CommitError::ObservationAuthorization)
     }
-
     /// Commit an action whose kernel proof distinguishes reference existence
     /// from classified values.
     ///

@@ -1,0 +1,876 @@
+{
+  "format": "norn-calls/1",
+  "calls": [
+    {
+      "actor": "eng:dina",
+      "action": "supply.warehouse.register",
+      "idempotencyKey": "call-1",
+      "input": {
+        "warehouse_id": "WH-A",
+        "name": "Warehouse WH-A",
+        "region": "delta",
+        "latitude": "30.044420",
+        "longitude": "31.235700"
+      }
+    },
+    {
+      "actor": "eng:dina",
+      "action": "supply.warehouse.register",
+      "idempotencyKey": "call-2",
+      "input": {
+        "warehouse_id": "WH-B",
+        "name": "Warehouse WH-B",
+        "region": "canal",
+        "latitude": "30.596500",
+        "longitude": "31.235700"
+      }
+    },
+    {
+      "actor": "eng:dina",
+      "action": "supply.sku.register",
+      "idempotencyKey": "call-3",
+      "input": {
+        "sku_id": "SKU-WATER",
+        "category": "dry_goods",
+        "unit_of_measure": "each",
+        "shelf_life_days": 365
+      }
+    },
+    {
+      "actor": "eng:dina",
+      "action": "supply.sku.register",
+      "idempotencyKey": "call-4",
+      "input": {
+        "sku_id": "SKU-RICE",
+        "category": "dry_goods",
+        "unit_of_measure": "kg",
+        "shelf_life_days": 365
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.open",
+      "idempotencyKey": "call-5",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "1000",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-07-06T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-07-06T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-6",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "950",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-07-14T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-07-14T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-7",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "930",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-07-21T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-07-21T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-8",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "900",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-07-23T15:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-07-23T15:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-9",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "870",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-07-28T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-07-28T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-10",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "800",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-08-18T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-08-18T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-11",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "780",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-08-25T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-08-25T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-12",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "760",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-09-01T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-09-01T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-13",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "740",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-09-08T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-09-08T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-14",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "720",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-09-15T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-09-15T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-15",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "700",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-09-22T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-09-22T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-16",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "680",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-09-29T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-09-29T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-17",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "660",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-10-06T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-10-06T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-18",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "640",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-10-13T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-10-13T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-19",
+      "input": {
+        "snapshot_id": "WH-A/SKU-WATER/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "620",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-10-20T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-WATER/on_hand@2026-10-20T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.open",
+      "idempotencyKey": "call-20",
+      "input": {
+        "snapshot_id": "WH-B/SKU-WATER/on_hand",
+        "warehouse_id": "WH-B",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "300",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-07-14T09:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-B/SKU-WATER/on_hand@2026-07-14T09:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-21",
+      "input": {
+        "snapshot_id": "WH-B/SKU-WATER/on_hand",
+        "warehouse_id": "WH-B",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "350",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-07-28T09:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-B/SKU-WATER/on_hand@2026-07-28T09:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-22",
+      "input": {
+        "snapshot_id": "WH-B/SKU-WATER/on_hand",
+        "warehouse_id": "WH-B",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "500",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-09-08T09:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-B/SKU-WATER/on_hand@2026-09-08T09:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-23",
+      "input": {
+        "snapshot_id": "WH-B/SKU-WATER/on_hand",
+        "warehouse_id": "WH-B",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "450",
+        "unit": "each",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-09-22T09:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-B/SKU-WATER/on_hand@2026-09-22T09:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.open",
+      "idempotencyKey": "call-24",
+      "input": {
+        "snapshot_id": "WH-A/SKU-RICE/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-RICE",
+        "on_hand_qty": "2000.5",
+        "unit": "kg",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-07-06T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-RICE/on_hand@2026-07-06T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.record_count",
+      "idempotencyKey": "call-25",
+      "input": {
+        "snapshot_id": "WH-A/SKU-RICE/on_hand",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-RICE",
+        "on_hand_qty": "1800.25",
+        "unit": "kg",
+        "quantity_basis": "on_hand",
+        "as_of": "2026-08-25T10:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-A/SKU-RICE/on_hand@2026-08-25T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.position.open",
+      "idempotencyKey": "call-26",
+      "input": {
+        "snapshot_id": "WH-B/SKU-WATER/available",
+        "warehouse_id": "WH-B",
+        "sku_id": "SKU-WATER",
+        "on_hand_qty": "280",
+        "unit": "each",
+        "quantity_basis": "available",
+        "as_of": "2026-07-14T09:00:00Z",
+        "count_source": "wms_scan",
+        "count_ref": "WH-B/SKU-WATER/available@2026-07-14T09:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-27",
+      "input": {
+        "movement_id": "MV-2026-07-06",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "120",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-07-06T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-28",
+      "input": {
+        "movement_id": "MV-2026-07-13",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "110",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-07-13T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-29",
+      "input": {
+        "movement_id": "MV-2026-07-20",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "130",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-07-20T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-30",
+      "input": {
+        "movement_id": "MV-2026-07-27",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "125",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-07-27T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-31",
+      "input": {
+        "movement_id": "MV-2026-08-03",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "140",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-08-03T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-32",
+      "input": {
+        "movement_id": "MV-2026-08-10",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "135",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-08-10T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-33",
+      "input": {
+        "movement_id": "MV-2026-08-17",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "150",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-08-17T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-34",
+      "input": {
+        "movement_id": "MV-2026-08-24",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "145",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-08-24T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-35",
+      "input": {
+        "movement_id": "MV-2026-08-31",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "160",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-08-31T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-36",
+      "input": {
+        "movement_id": "MV-2026-09-07",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "155",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-09-07T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-37",
+      "input": {
+        "movement_id": "MV-2026-09-14",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "170",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-09-14T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-38",
+      "input": {
+        "movement_id": "MV-2026-09-21",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "165",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-09-21T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-39",
+      "input": {
+        "movement_id": "MV-2026-09-28",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "180",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-09-28T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-40",
+      "input": {
+        "movement_id": "MV-2026-10-05",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "175",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-10-05T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-41",
+      "input": {
+        "movement_id": "MV-2026-10-12",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "190",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-10-12T12:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.movement.record",
+      "idempotencyKey": "call-42",
+      "input": {
+        "movement_id": "MV-2026-10-19",
+        "warehouse_id": "WH-A",
+        "sku_id": "SKU-WATER",
+        "qty": "185",
+        "unit": "each",
+        "movement_kind": "issue",
+        "occurred_at": "2026-10-19T12:00:00Z"
+      }
+    },
+    {
+      "actor": "planner:amal",
+      "action": "supply.po.create",
+      "idempotencyKey": "call-43",
+      "input": {
+        "po_id": "PO-1",
+        "supplier_id": "SUP-NILE",
+        "promised_at": "2026-07-15T00:00:00Z",
+        "currency": "EGP"
+      }
+    },
+    {
+      "actor": "planner:amal",
+      "action": "supply.line.add",
+      "idempotencyKey": "call-44",
+      "input": {
+        "line_id": "PO-1/1",
+        "po_id": "PO-1",
+        "sku_id": "SKU-WATER",
+        "promised_at": "2026-07-15T00:00:00Z",
+        "ordered_qty": "1000",
+        "received_qty": "0",
+        "fill_rate": "0",
+        "unit": "each",
+        "unit_price": "2.5",
+        "currency": "EGP"
+      }
+    },
+    {
+      "actor": "planner:amal",
+      "action": "supply.line.add",
+      "idempotencyKey": "call-45",
+      "input": {
+        "line_id": "PO-1/2",
+        "po_id": "PO-1",
+        "sku_id": "SKU-WATER",
+        "promised_at": "2026-07-15T00:00:00Z",
+        "ordered_qty": "100",
+        "received_qty": "0",
+        "fill_rate": "0",
+        "unit": "each",
+        "unit_price": "2.5",
+        "currency": "EGP"
+      }
+    },
+    {
+      "actor": "planner:amal",
+      "action": "supply.line.add",
+      "idempotencyKey": "call-46",
+      "input": {
+        "line_id": "PO-1/3",
+        "po_id": "PO-1",
+        "sku_id": "SKU-RICE",
+        "promised_at": "2026-07-15T00:00:00Z",
+        "ordered_qty": "500",
+        "received_qty": "0",
+        "fill_rate": "0",
+        "unit": "kg",
+        "unit_price": "2.5",
+        "currency": "EGP"
+      }
+    },
+    {
+      "actor": "ops:omar",
+      "action": "supply.po.submit",
+      "idempotencyKey": "call-47",
+      "input": {
+        "po_id": "PO-1"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.po.receive_partial",
+      "idempotencyKey": "call-48",
+      "input": {
+        "po_id": "PO-1"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.receipt.record",
+      "idempotencyKey": "call-49",
+      "input": {
+        "receipt_id": "RC-1",
+        "supplier_id": "SUP-NILE",
+        "warehouse_id": "WH-A",
+        "line_id": "PO-1/1",
+        "received_qty": "600",
+        "damaged_qty": "0",
+        "unit": "each",
+        "received_at": "2026-07-14T08:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.receipt.record",
+      "idempotencyKey": "call-50",
+      "input": {
+        "receipt_id": "RC-2",
+        "supplier_id": "SUP-NILE",
+        "warehouse_id": "WH-A",
+        "line_id": "PO-1/1",
+        "received_qty": "300",
+        "damaged_qty": "20",
+        "unit": "each",
+        "received_at": "2026-07-16T08:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.receipt.record",
+      "idempotencyKey": "call-51",
+      "input": {
+        "receipt_id": "RC-3",
+        "supplier_id": "SUP-NILE",
+        "warehouse_id": "WH-A",
+        "line_id": "PO-1/2",
+        "received_qty": "100",
+        "damaged_qty": "0",
+        "unit": "each",
+        "received_at": "2026-07-15T08:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.receipt.record",
+      "idempotencyKey": "call-52",
+      "input": {
+        "receipt_id": "RC-4",
+        "supplier_id": "SUP-NILE",
+        "warehouse_id": "WH-A",
+        "line_id": "PO-1/3",
+        "received_qty": "250",
+        "damaged_qty": "0",
+        "unit": "kg",
+        "received_at": "2026-07-15T09:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.receipt.record_blind",
+      "idempotencyKey": "call-53",
+      "input": {
+        "receipt_id": "RC-B1",
+        "supplier_id": "SUP-NILE",
+        "warehouse_id": "WH-A",
+        "line_id": null,
+        "received_qty": "40",
+        "damaged_qty": "0",
+        "unit": "each",
+        "received_at": "2026-07-15T10:00:00Z"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.inspection.record",
+      "idempotencyKey": "call-54",
+      "input": {
+        "inspection_id": "IN-1",
+        "receipt_id": "RC-1",
+        "inspected_qty": "50",
+        "rejected_qty": "2",
+        "unit": "each"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.inspection.record",
+      "idempotencyKey": "call-55",
+      "input": {
+        "inspection_id": "IN-2",
+        "receipt_id": "RC-1",
+        "inspected_qty": "30",
+        "rejected_qty": "1",
+        "unit": "each"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.inspection.record",
+      "idempotencyKey": "call-56",
+      "input": {
+        "inspection_id": "IN-3",
+        "receipt_id": "RC-2",
+        "inspected_qty": "40",
+        "rejected_qty": "20",
+        "unit": "each"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.inspection.record_orphan",
+      "idempotencyKey": "call-57",
+      "input": {
+        "inspection_id": "IN-4",
+        "receipt_id": null,
+        "inspected_qty": "10",
+        "rejected_qty": "0",
+        "unit": "each"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.line.record_received",
+      "idempotencyKey": "call-58",
+      "input": {
+        "line_id": "PO-1/1",
+        "po_id": "PO-1",
+        "sku_id": "SKU-WATER",
+        "promised_at": "2026-07-15T00:00:00Z",
+        "ordered_qty": "1000",
+        "received_qty": "900",
+        "currency": "EGP",
+        "unit": "each",
+        "unit_price": "2.5"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.line.record_received",
+      "idempotencyKey": "call-59",
+      "input": {
+        "line_id": "PO-1/2",
+        "po_id": "PO-1",
+        "sku_id": "SKU-WATER",
+        "promised_at": "2026-07-15T00:00:00Z",
+        "ordered_qty": "100",
+        "received_qty": "100",
+        "currency": "EGP",
+        "unit": "each",
+        "unit_price": "2.5"
+      }
+    },
+    {
+      "actor": "clerk:hana",
+      "action": "supply.line.record_received",
+      "idempotencyKey": "call-60",
+      "input": {
+        "line_id": "PO-1/3",
+        "po_id": "PO-1",
+        "sku_id": "SKU-RICE",
+        "promised_at": "2026-07-15T00:00:00Z",
+        "ordered_qty": "500",
+        "received_qty": "250",
+        "currency": "EGP",
+        "unit": "kg",
+        "unit_price": "2.5"
+      }
+    }
+  ]
+}

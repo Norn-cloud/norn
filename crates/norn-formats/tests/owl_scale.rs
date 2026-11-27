@@ -248,8 +248,8 @@ fn owl_scale_admission() {
             };
         }
         ("three-systems", _) => {
-            // The admitted three-systems set, as `norn-cell`'s
-            // `explorer_documents.rs` and `label_identity.rs` select it.
+            // The admitted three-systems set, as `norn-api`'s `explorer_objects.rs`
+            // and `norn-cell`'s `label_identity.rs` select it.
             let excluded = [
                 "commerce.SalesOrder.entity",
                 "core.Order.interface",

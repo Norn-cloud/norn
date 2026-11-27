@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
 import { session } from "./object-cell.ts"
+import { withRecordPage } from "./record-page-widget.ts"
 
 // RULES: each rule in plain words, grouped by type and rule, with the records it holds back now
 // (lower-bound counts, withholding and disagreement semantics, main's record title resolution, and
@@ -37,7 +38,7 @@ const warningLaw = {
   scope: {},
   version: "0.1.0",
 }
-const artifacts = [...base, ...scans.filter(({ artifactId }) => !seen.has(artifactId)), warningLaw]
+const artifacts = withRecordPage([...base, ...scans.filter(({ artifactId }) => !seen.has(artifactId)), warningLaw])
 
 const heldLines = {
   kind: "held_back",

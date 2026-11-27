@@ -848,7 +848,13 @@ where
     fn supports_reference_reads(&self) -> bool {
         self.inner.supports_reference_reads()
     }
-
+    fn supports_projected_read(
+        &self,
+        object_type: &norn_ir::ObjectTypeName,
+        properties: &[&str],
+    ) -> bool {
+        self.inner.supports_projected_read(object_type, properties)
+    }
     fn load_reference(
         &self,
         key: &FactKey,
@@ -856,7 +862,14 @@ where
     ) -> Result<Option<BoundedFact>, CellError> {
         self.inner.load_reference(key, max_bytes)
     }
-
+    fn load_projected(
+        &self,
+        key: &FactKey,
+        properties: &[&str],
+        max_bytes: u64,
+    ) -> Result<Option<BoundedFact>, CellError> {
+        self.inner.load_projected(key, properties, max_bytes)
+    }
     fn load_bounded(
         &self,
         key: &FactKey,
@@ -864,7 +877,6 @@ where
     ) -> Result<Option<BoundedFact>, CellError> {
         self.inner.load_bounded(key, max_bytes)
     }
-
     fn resolve_accepted_receipt(
         &self,
         reference: &norn_kernel::receipt_binding::ReceiptReference,
@@ -875,11 +887,9 @@ where
     > {
         self.inner.resolve_accepted_receipt(reference, manifest)
     }
-
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
         self.inner.load_link(key)
     }
-
     fn read_predicate(
         &self,
         predicate: &PredicateQuery,
@@ -888,7 +898,6 @@ where
     ) -> Result<Option<Vec<PredicateObject>>, CellError> {
         self.inner.read_predicate(predicate, max_members, max_bytes)
     }
-
     fn read_link_targets(
         &self,
         source: &FactKey,
@@ -899,7 +908,6 @@ where
         self.inner
             .read_link_targets(source, link, max_targets, max_key_bytes)
     }
-
     fn commit(
         &mut self,
         commit: CellCommit<E, C, I>,
@@ -909,7 +917,6 @@ where
         self.record_commit_outcome(&targets, false, &result);
         result
     }
-
     fn commit_action_references(
         &mut self,
         commit: CellCommit<E, C, I>,
@@ -921,7 +928,6 @@ where
         self.record_commit_outcome(&targets, false, &result);
         result
     }
-
     fn commit_action_quantity(
         &mut self,
         commit: CellCommit<E, C, I>,
@@ -935,7 +941,6 @@ where
         self.record_commit_outcome(&targets, false, &result);
         result
     }
-
     fn commit_owned_rows(
         &mut self,
         commit: CellCommit<E, C, I>,
@@ -946,7 +951,6 @@ where
         self.record_commit_outcome(&targets, false, &result);
         result
     }
-
     fn commit_stamped(
         &mut self,
         commit: CellCommit<E, C, I>,
@@ -958,7 +962,6 @@ where
         self.record_commit_outcome(&targets, false, &result);
         result
     }
-
     fn commit_observed(
         &mut self,
         commit: CellCommit<E, C, I>,
@@ -972,19 +975,15 @@ where
         self.record_commit_outcome(&targets, true, &result);
         result
     }
-
     fn perform(&mut self) -> Result<Option<Performed<I>>, CellError> {
         self.inner.perform()
     }
-
     fn observe(&mut self) -> Result<Option<Observed<I>>, CellError> {
         self.inner.observe()
     }
-
     fn clock(&mut self) -> Result<Option<DueTimer<I>>, CellError> {
         self.inner.clock()
     }
-
     fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), CellError> {
         self.inner.publish(receipt)
     }

@@ -1,6 +1,7 @@
 import { hostToken, type NornActor, type ValidatedWriteScope } from "./actor.ts"
 import type { Auth } from "./auth.ts"
 import { cellScope, scopeQuery } from "./scope.ts"
+import type { Cell, CellAnswer } from "./cell-call.ts"
 
 /**
  * The Worker's own calls to the cell, made as the signed-in actor in that
@@ -9,29 +10,8 @@ import { cellScope, scopeQuery } from "./scope.ts"
  * the Worker gains no right of its own. Used by server-side routes (the
  * question catalog and check, the dashboard agent).
  */
-export type CellAnswer =
-  | { readonly kind: "answer"; readonly status: number; readonly body: unknown }
-  /** The workspace has no data environment: nothing was asked. */
-  | { readonly kind: "no-cell" }
-
-export interface Cell {
-  get(path: string): Promise<CellAnswer>
-  post(path: string, body: unknown): Promise<CellAnswer>
-}
-
-export interface Finding {
-  readonly code: string
-  readonly message: string
-  readonly pointer: string | null
-}
-
-/** Decode checker diagnostics from a cell refusal/admission payload into typed findings. */
-export const findingsOf = (diagnostics: unknown): Finding[] =>
-  (Array.isArray(diagnostics) ? diagnostics : []).map((d: { code?: unknown; message?: unknown; span?: { pointer?: unknown } | null }) => ({
-    code: String(d.code ?? ""),
-    message: String(d.message ?? ""),
-    pointer: typeof d.span?.pointer === "string" ? d.span.pointer : null,
-  }))
+export type { Cell, CellAnswer, Finding } from "./cell-call.ts"
+export { findingsOf } from "./cell-call.ts"
 
 export function cellFor(host: Fetcher, auth: Auth, actor: NornActor, validatedScope?: ValidatedWriteScope): Cell {
   const call = async (method: "GET" | "POST", path: string, body?: unknown): Promise<CellAnswer> => {

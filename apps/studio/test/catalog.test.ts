@@ -7,7 +7,7 @@ import { readDocument } from "../src/lib/exact.ts"
 import type { Artifact } from "../src/lib/transport.ts"
 import { watermarkText } from "../src/lib/format.ts"
 
-// The cell's installed three-systems definitions (crates/norn-cell/tests/explorer_documents.rs).
+// The cell's installed three-systems definitions (crates/norn-api/tests/explorer_objects.rs).
 const source = readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/three-systems.definitions.json"), "utf8")
 const catalog = catalogOf(readDocument<readonly Artifact[]>(source, "recorded").document)
 
