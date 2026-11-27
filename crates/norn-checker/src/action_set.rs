@@ -96,9 +96,11 @@ use crate::typed_roots::{
 use crate::{Diagnostic, DiagnosticCode, Span};
 
 mod actor_binding;
+mod compensation;
 mod set_fields;
 
 use actor_binding::{actor_binding_findings, transition_guard_findings, writer_protected_findings};
+use compensation::compensation_findings;
 
 /// Stable `artifact_set.action.*` and `artifact_set.entity.*` codes.
 pub mod codes {
@@ -139,10 +141,14 @@ pub mod codes {
     /// the action can bypass allocation for an existing series key.
     pub const NAMING_SERIES_TARGET_MISMATCH: &str =
         "artifact_set.action.naming_series_target_mismatch";
-    /// ACTOR-INDEPENDENT-1: an independent-actor check names a property that
-    /// is not a protected text property of an existing transition target, so
-    /// a caller-controlled value could satisfy it.
+    /// ACTOR-INDEPENDENT-1: independent-actor check names an unprotected or non-text property.
     pub const INDEPENDENT_ACTOR: &str = "artifact_set.action.independent_actor";
+    /// ACTION-COMPENSATION-1: `compensation.actionId` names no admitted action.
+    pub const UNRESOLVED_COMPENSATION: &str = "artifact_set.action.unresolved_compensation";
+    /// ACTION-COMPENSATION-1: action compensation links form a cycle.
+    pub const COMPENSATION_CYCLE: &str = "artifact_set.action.compensation_cycle";
+    /// ACTION-COMPENSATION-1: compensating action violates ledgering, uniqueness, lifecycle, or scope rules.
+    pub const INVALID_COMPENSATION: &str = "artifact_set.action.invalid_compensation";
     /// D66: a string-enum input writes no enum property.
     pub const INPUT_ENUM_UNBOUND: &str = "action.validation.input_enum_unbound";
     /// D66: a string-enum input admits a value its target property does not declare.
@@ -247,6 +253,7 @@ pub fn check_action_set(
     findings.extend(transition_guard_findings(
         &actions, artifacts, base, &mut views,
     ));
+    findings.extend(compensation_findings(&actions, base, &mut views));
     findings
 }
 
@@ -2618,7 +2625,7 @@ impl<'m, 'a> AdmittedType<'m, 'a> {
         &self.defined.name
     }
 
-    fn effective(self) -> Option<&'m EffectiveObjectType> {
+    pub(super) fn effective(self) -> Option<&'m EffectiveObjectType> {
         self.defined.effective_object_type.as_ref()?.as_ref().ok()
     }
 
