@@ -53,6 +53,14 @@ class ForecastReceiptTests(unittest.TestCase):
             canonical_json_str(wide_scaled),
             "12345678901234567890123456789.123456789",
         )
+        # Python ints > 4,300 digits must succeed up to Norn's 1,048,576-byte limit.
+        big_int = 10**5000 + 7
+        big_json = canonical_json_str(big_int)
+        self.assertEqual(len(big_json), 5001)
+        self.assertTrue(big_json.startswith("1000") and big_json.endswith("0007"))
+        self.assertEqual(canonical_json_str(parse_exact_decimal(big_int, max_scale=0)), big_json)
+        with self.assertRaises(ValueError):
+            canonical_json_str(1 << (MAX_CANONICAL_NUMBER_BYTES * 4))
         # NFC normalization of decomposed characters (`e` + combining acute)
         self.assertEqual(
             canonical_json_str({"caf\u0065\u0301": "caf\u0065\u0301"}),
@@ -72,11 +80,16 @@ class ForecastReceiptTests(unittest.TestCase):
         manifest = FORECAST_EVALUATOR_MANIFEST
         self.assertEqual(manifest["functionId"], FORECAST_EVALUATOR_FUNCTION_ID)
         self.assertEqual(manifest["implementation"]["format"], "oci_image")
-        self.assertTrue(
-            manifest["implementation"]["locator"].endswith(
-                f"@{manifest['implementation']['digest']}"
-            )
+        self.assertEqual(
+            manifest["implementation"]["entryPoint"],
+            "python -m norn_regression.worker --evaluate-receipt",
         )
+        self.assertIsNone(manifest["implementation"]["locator"])
+        closure_names = [entry["name"] for entry in manifest["dependencyClosure"]["entries"]]
+        self.assertEqual(closure_names, sorted(closure_names))
+        self.assertIn("norn-regression-receipt", closure_names)
+        self.assertIn("norn-regression-worker", closure_names)
+        self.assertIn("norn-regression-suite", closure_names)
         self.assertEqual(manifest["cache"], "none")
         self.assertEqual(manifest["retention"], "ledger")
         self.assertEqual(manifest["capabilities"], [])
@@ -191,17 +204,35 @@ class ForecastReceiptTests(unittest.TestCase):
         self.assertNotEqual(invocation_digest(invocation), invocation_digest(other_scope))
         self.assertRegex(norn1_json_digest({"ok": True}), r"^sha256:[0-9a-f]{64}$")
 
-    def test_evaluate_forecast_receipt_default_r_squared_and_snapshot_verification(self):
+    def test_evaluate_forecast_receipt_stub_runner_dispatched_binding_and_typed_snapshot(self):
+        # Distinct runtime types that text-sort differently (`1` vs `1.0` vs `"1"`) must hash distinctly.
+        int_order_rows = [
+            {"id": "r1", "y": Decimal("3.0"), "x1": Decimal("1.0"), "seq": 1},
+            {"id": "r2", "y": Decimal("5.0"), "x1": Decimal("2.0"), "seq": "1"},
+            {"id": "r3", "y": Decimal("7.0"), "x1": Decimal("3.0"), "seq": "z"},
+        ]
+        float_order_rows = [
+            {"id": "r1", "y": Decimal("3.0"), "x1": Decimal("1.0"), "seq": 1.0},
+            {"id": "r2", "y": Decimal("5.0"), "x1": Decimal("2.0"), "seq": "1"},
+            {"id": "r3", "y": Decimal("7.0"), "x1": Decimal("3.0"), "seq": "z"},
+        ]
+        self.assertNotEqual(
+            dataset_snapshot_blob(int_order_rows, ["y", "x1", "seq"], dataset_revision="c10")["digest"],
+            dataset_snapshot_blob(float_order_rows, ["y", "x1", "seq"], dataset_revision="c10")["digest"],
+        )
+
         rows = [
-            {"id": "r1", "y": Decimal("3.0"), "x1": Decimal("1.0")},
-            {"id": "r2", "y": Decimal("5.0"), "x1": Decimal("2.0")},
+            {"id": "r1", "y": Decimal("3.0"), "x1": Decimal("1.0"), "seq": 1, "unhashed": "ignored"},
+            {"id": "r2", "y": Decimal("5.0"), "x1": Decimal("2.0"), "seq": 2, "unhashed": "ignored"},
         ]
         tampered_rows = [
-            {"id": "r1", "y": Decimal("3.0"), "x1": Decimal("1.0")},
-            {"id": "r2", "y": Decimal("9.0"), "x1": Decimal("2.0")},
+            {"id": "r1", "y": Decimal("3.0"), "x1": Decimal("1.0"), "seq": 1},
+            {"id": "r2", "y": Decimal("9.0"), "x1": Decimal("2.0"), "seq": 2},
         ]
+        observed_frames: list[list[dict]] = []
 
-        def stub_suite(_frame, _target, _features, order=None):
+        def stub_suite(eval_frame, _target, _features, order=None):
+            observed_frames.append(eval_frame)
             return (
                 [_StubCheck("pass"), _StubCheck("pass")],
                 {"fitted": [], "residuals": [], "qq": {}, "n": 2, "r_squared": 0.94125, "coefficients": {}},
@@ -218,15 +249,77 @@ class ForecastReceiptTests(unittest.TestCase):
             model_id="supply.demand_forecast",
             evaluation_run="run-eval",
             dataset_revision="c10",
+            order="seq",
             suite_runner=stub_suite,
         )
         self.assertEqual(len(checks), 2)
         self.assertEqual(plots["r_squared"], 0.94125)
+        # Runner must only observe hashed columns (never extra unhashed columns).
+        self.assertTrue(all("unhashed" not in row for row in observed_frames[0]))
         summary = receipt["outcome"]["success"]["summary"]
         self.assertEqual(summary["metric_name"], "r_squared")
         self.assertEqual(summary["metric_value"], Decimal("0.94125"))
         self.assertTrue(summary["contracts_passed"])
-        self.assertEqual(invocation["blobs"]["dataset"], dataset_snapshot_blob(rows, ["y", "x1"], dataset_revision="c10"))
+        self.assertEqual(
+            invocation["blobs"]["dataset"],
+            dataset_snapshot_blob(rows, ["y", "x1", "seq"], dataset_revision="c10"),
+        )
+
+        # Default evaluator refuses relabeling r_squared under another metric_name.
+        with self.assertRaisesRegex(ValueError, "cannot attest metric_name"):
+            evaluate_forecast_receipt(
+                rows,
+                "y",
+                ["x1"],
+                tenant="org_demo/dev",
+                authority_id="svc:evaluator",
+                command_id="cmd-eval-default",
+                version_id="v1",
+                model_id="supply.demand_forecast",
+                evaluation_run="run-eval",
+                dataset_revision="c10",
+                metric_name="mae",
+                order="seq",
+                suite_runner=stub_suite,
+            )
+
+        # Dropping `order` against a dispatched invocation that required `order="seq"` must refuse.
+        with self.assertRaisesRegex(ValueError, "does not match dispatched"):
+            evaluate_forecast_receipt(
+                rows,
+                "y",
+                ["x1"],
+                tenant="org_demo/dev",
+                authority_id="svc:evaluator",
+                command_id="cmd-eval-default",
+                version_id="v1",
+                model_id="supply.demand_forecast",
+                evaluation_run="run-eval",
+                dataset_revision="c10",
+                order=None,
+                dispatched_invocation=invocation,
+                suite_runner=stub_suite,
+            )
+
+        # Relabeling metric_name against a dispatched invocation must refuse even with metric_fn.
+        with self.assertRaisesRegex(ValueError, "evaluation setting 'metric_name'"):
+            evaluate_forecast_receipt(
+                rows,
+                "y",
+                ["x1"],
+                tenant="org_demo/dev",
+                authority_id="svc:evaluator",
+                command_id="cmd-eval-default",
+                version_id="v1",
+                model_id="supply.demand_forecast",
+                evaluation_run="run-eval",
+                dataset_revision="c10",
+                metric_name="mae",
+                metric_fn=lambda _p: Decimal("0.1"),
+                order="seq",
+                dispatched_invocation=invocation,
+                suite_runner=stub_suite,
+            )
 
         # Re-evaluating against a dispatched invocation with different data refuses before emitting.
         with self.assertRaisesRegex(ValueError, "does not match dispatched blob pin"):
@@ -241,6 +334,7 @@ class ForecastReceiptTests(unittest.TestCase):
                 model_id="supply.demand_forecast",
                 evaluation_run="run-eval",
                 dataset_revision="c10",
+                order="seq",
                 dispatched_invocation=invocation,
                 suite_runner=stub_suite,
             )

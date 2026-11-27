@@ -12,7 +12,7 @@ import { Norn } from "@norn/authoring"
 // Content digest of `FORECAST_EVALUATOR_MANIFEST` in
 // `sdks/python/regression/norn_regression/receipt.py` (`ml.forecast.evaluate` v1).
 const FORECAST_EVALUATOR_MANIFEST_DIGEST =
-  "sha256:7cfe4234158e3c8f7d1001b08deb8e7b8e61f389d65752a3ed8f2e9310d041dd"
+  "sha256:d2ef419c28a6b87ddd9c673486fd51e0a39a264c357b8e004f9cc2af4caa174f"
 
 const Version = Schema.Struct({
   version_id: Schema.String, // "<model id>@<version>"

@@ -208,7 +208,7 @@ enum Outcome {
 const FORECAST_EVALUATOR_EXECUTOR: &str = "pool.ml-evaluator";
 const FORECAST_EVALUATOR_AUTHORITY: &str = "svc:ml-evaluator";
 const FORECAST_EVALUATOR_MANIFEST_DIGEST: &str =
-    "sha256:7cfe4234158e3c8f7d1001b08deb8e7b8e61f389d65752a3ed8f2e9310d041dd";
+    "sha256:d2ef419c28a6b87ddd9c673486fd51e0a39a264c357b8e004f9cc2af4caa174f";
 const FORECAST_EVALUATOR_PROFILE_DIGEST: &str =
     "sha256:a780163924782b48cc7ef188073bbc22d903bdd5a55825b7077c9e9eb9c7656e";
 
@@ -1806,7 +1806,7 @@ fn forecast_evaluator_manifest_json() -> Value {
         "cache": "none",
         "capabilities": [],
         "dependencyClosure": {
-            "digest": "sha256:6acf116e80714892b85ddbb3d35d6b455e995069ebe57ba1c10a493c879f2459",
+            "digest": "sha256:554399217cfbd1e0cc2b328e03985ab195cfce0d617e3212571feb3fadcae671",
             "entries": [
                 {
                     "digest": "sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535",
@@ -1814,9 +1814,24 @@ fn forecast_evaluator_manifest_json() -> Value {
                     "name": "base-python-3.11-slim"
                 },
                 {
+                    "digest": "sha256:86d7a08c756c1beef1f0ab87640dce99b5421969ba159528fab127ef7185dd91",
+                    "kind": "library",
+                    "name": "norn-regression-cell"
+                },
+                {
                     "digest": "sha256:48a768534f887b2272aaad42e884f9fb6c3ed20042b96cb1b0c58ff7c0adbbc6",
                     "kind": "asset",
                     "name": "norn-regression-dockerfile"
+                },
+                {
+                    "digest": "sha256:f0b12ce3d5196e69c5ef12b2fc91961405cd54702cb6f6a0dbfc8b218c68de45",
+                    "kind": "library",
+                    "name": "norn-regression-init"
+                },
+                {
+                    "digest": "sha256:599d4b33a3c668ed3f81aa9ce29b478737faa975f8cfb267a85b8664b5d8f9de",
+                    "kind": "library",
+                    "name": "norn-regression-receipt"
                 },
                 {
                     "digest": "sha256:76f8b5d4d5fc10d508b3a372246548a6738fea83a652308da173b41f4f915adf",
@@ -1827,6 +1842,11 @@ fn forecast_evaluator_manifest_json() -> Value {
                     "digest": "sha256:15361cf814d137f03885fdca7d8e118f2dbc3a0fdae6d8911ca6c43269b5a491",
                     "kind": "library",
                     "name": "norn-regression-suite"
+                },
+                {
+                    "digest": "sha256:8206c1dd78cfe03473091a63e0e6d32637b2f3388fa62256bb0ab7463fbbe793",
+                    "kind": "library",
+                    "name": "norn-regression-worker"
                 }
             ]
         },
@@ -1848,10 +1868,10 @@ fn forecast_evaluator_manifest_json() -> Value {
         },
         "functionId": "ml.forecast.evaluate",
         "implementation": {
-            "digest": "sha256:b57fe69c2ca9c75a146e07c67f6ebea9488f3058a42a3a18e6e3ad90d22f749b",
-            "entryPoint": "norn_regression.receipt:evaluate_forecast_receipt",
+            "digest": "sha256:0cb44d215ad8cd21775078f50010123c3953bfab1fad20099f5d5fe8e567b31c",
+            "entryPoint": "python -m norn_regression.worker --evaluate-receipt",
             "format": "oci_image",
-            "locator": "ghcr.io/norn-cloud/norn-forecast-evaluator@sha256:b57fe69c2ca9c75a146e07c67f6ebea9488f3058a42a3a18e6e3ad90d22f749b"
+            "locator": null
         },
         "inputSchema": {
             "digest": "sha256:464c57a917b0f8eea37fba2ddeddcdea9087d2f0e62fdfe2bc49fa7e9e648d9a",

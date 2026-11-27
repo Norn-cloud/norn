@@ -39,6 +39,54 @@ class Suite(unittest.TestCase):
         self.assertGreater(plots["r_squared"], 0.7)
         self.assertLessEqual(plots["r_squared"], 1.0)
 
+    def test_evaluate_forecast_receipt_default_runner_integration(self):
+        from norn_regression.receipt import (
+            FORECAST_EVALUATOR_MANIFEST_DIGEST,
+            dataset_snapshot_blob,
+            evaluate_forecast_receipt,
+        )
+
+        frame = clean(n=400, seed=19)
+        invocation, receipt, checks, plots = evaluate_forecast_receipt(
+            frame,
+            "y",
+            ["x1", "x2"],
+            tenant="org_demo/dev",
+            authority_id="svc:evaluator",
+            command_id="cmd-suite-default",
+            version_id="v1",
+            model_id="supply.demand_forecast",
+            evaluation_run="run-eval",
+            dataset_revision="c10",
+        )
+        self.assertEqual(receipt["manifest"], FORECAST_EVALUATOR_MANIFEST_DIGEST)
+        self.assertEqual(
+            invocation["blobs"]["dataset"],
+            dataset_snapshot_blob(frame, ["y", "x1", "x2"], dataset_revision="c10"),
+        )
+        self.assertGreater(len(checks), 0)
+        summary = receipt["outcome"]["success"]["summary"]
+        self.assertEqual(summary["metric_name"], "r_squared")
+        self.assertAlmostEqual(float(summary["metric_value"]), plots["r_squared"], places=6)
+        self.assertTrue(summary["contracts_passed"])
+
+        # Re-running with the dispatched invocation reproduces identical result identity.
+        _, replay_receipt, _, _ = evaluate_forecast_receipt(
+            frame,
+            "y",
+            ["x1", "x2"],
+            tenant="org_demo/dev",
+            authority_id="svc:evaluator",
+            command_id="cmd-suite-default",
+            version_id="v1",
+            model_id="supply.demand_forecast",
+            evaluation_run="run-eval",
+            dataset_revision="c10",
+            dispatched_invocation=invocation,
+        )
+        self.assertEqual(replay_receipt["dispatch"], receipt["dispatch"])
+        self.assertEqual(replay_receipt["outcome"], receipt["outcome"])
+
     def test_heteroscedastic_data_fails_breusch_pagan(self):
         frame = dataset(n=1500)
         checks, _ = assumption_suite(frame, "y", ["x1", "x2"])

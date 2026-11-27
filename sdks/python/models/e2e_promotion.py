@@ -1,8 +1,9 @@
-"""Model promotion end to end on a dev host (#1171 M2/M3): registered versions
-and the promotion law.
+"""Model promotion end to end on a dev host (#1171 M2/M3): registered versions,
+authenticated evaluation receipts, separation of duties, and the promotion law.
 
-    python e2e_promotion.py /path/to/project
+    NORN_EVALUATION_RECEIPT_1=sha256:... python e2e_promotion.py /path/to/project
 """
+import os
 import sys
 from pathlib import Path
 
@@ -71,10 +72,27 @@ refused_code = body.get("code")
 status, body = call("ml.modelversion.accept_evaluation", {"version_id": "churn@1", "evaluation_receipt": "sha256:" + "a" * 64}, "accept-forged")
 assert status != 200 and version("churn@1")["status"] == "candidate", (status, body)
 
-# Host-authenticated receipt intake (`SqliteCell::retain_function_receipt`) binds
-# evaluation_revision, metric_name, metric_value, and contracts_passed from a
-# verified `ml.forecast.evaluate` FunctionReceipt before promotion. See
-# `crates/norn-cell/tests/supply_lab_stress.rs` (axis 6) for the end-to-end
-# durable cell receipt intake, replay refusal, SoD, and promotion flow.
-print(f"model promotion: ok (registration needs finished runs and refuses caller-supplied evaluation evidence; "
-      f"unevaluated promotion and forged evaluation receipt refused: {refused_code})")
+# Positive end-to-end promotion requires a host-retained `ml.forecast.evaluate` receipt digest
+# (`SqliteCell::retain_function_receipt`). Fail loudly rather than silently skipping positive
+# coverage if the host fixture did not retain a receipt for `churn@1`.
+receipt_1 = os.environ.get("NORN_EVALUATION_RECEIPT_1")
+if not receipt_1:
+    raise SystemExit(
+        "e2e_promotion.py requires NORN_EVALUATION_RECEIPT_1 (a host-retained ml.forecast.evaluate "
+        "FunctionReceipt digest for churn@1); refusing to report ok without positive promotion coverage"
+    )
+
+ok("ml.modelversion.accept_evaluation", {"version_id": "churn@1", "evaluation_receipt": receipt_1}, "accept-1")
+evaluated = version("churn@1")
+assert evaluated["status"] == "evaluated" and evaluated["evaluation_receipt"] == receipt_1, evaluated
+
+# Separation of duties (ACTOR-INDEPENDENT-1): the registrant cannot promote its own version.
+status, body = call("ml.modelversion.promote", {"version_id": "churn@1"}, "promote-self")
+assert status != 200 and version("churn@1")["status"] == "evaluated", (status, body)
+
+# Independent reviewer promotes the evaluated version to production.
+status, body = call_as_reviewer("ml.modelversion.promote", {"version_id": "churn@1"}, "promote-reviewer")
+assert status == 200 and version("churn@1")["status"] == "production", (status, body)
+
+print(f"model promotion: ok (closed registration, forged/unevaluated/self-promotion refused: {refused_code}; "
+      f"authenticated evaluation receipt accepted and promoted by reviewer)")
