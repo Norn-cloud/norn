@@ -19,7 +19,7 @@
  * depth only.
  */
 import type { Machine } from "./machine/machine.ts"
-import { text, type WidgetUx } from "./ux.ts"
+import { text, type Translate, type WidgetForm, type WidgetUx } from "./ux.ts"
 
 /** How the server projected one marked property for this caller (`NornMaskedProperty`). */
 export interface MaskedProperty {
@@ -80,9 +80,9 @@ export function effectsReason(effects: ActionEffects | undefined): string | null
 export const confirmMark = (reason: string | null): AgentAttributes => (reason === null ? NONE : { "data-agent-confirm": reason })
 
 /** The placements of action binding `bindingId` whose confirmation is not `safe`, as the mark says them. */
-function severities(ux: WidgetUx, bindingId: string, locale: string): string[] {
+function severities(ux: WidgetUx, bindingId: string, locale: string, translate: Translate | undefined): string[] {
   return ux.actionPlacements.flatMap((placement) =>
-    placement.bindingId === bindingId && placement.confirmation.severity !== "safe" ? [`${text(placement.label, locale)}: ${placement.confirmation.severity}`] : [])
+    placement.bindingId === bindingId && placement.confirmation.severity !== "safe" ? [`${text(placement.label, locale, translate)}: ${placement.confirmation.severity}`] : [])
 }
 
 /**
@@ -91,22 +91,52 @@ function severities(ux: WidgetUx, bindingId: string, locale: string): string[] {
  * starts an action that a placement asks to confirm, or that the server says is consequential, or
  * whose effects the server has not said.
  */
-export function confirmReason(ux: WidgetUx, machine: Machine | undefined, nodeId: string, placementId: string | null, effectsOf: (actionId: string) => ActionEffects | undefined, locale: string): string | null {
+export function confirmReason(ux: WidgetUx, machine: Machine | undefined, nodeId: string, placementId: string | null, effectsOf: (actionId: string) => ActionEffects | undefined, locale: string, translate?: Translate): string | null {
   const reasons: string[] = []
   const placement = placementId === null ? undefined : ux.actionPlacements.find((candidate) => candidate.placementId === placementId)
-  if (placement !== undefined && placement.confirmation.severity !== "safe") reasons.push(`${text(placement.label, locale)}: ${placement.confirmation.severity}`)
+  if (placement !== undefined && placement.confirmation.severity !== "safe") reasons.push(`${text(placement.label, locale, translate)}: ${placement.confirmation.severity}`)
   const events = new Set((machine?.events ?? []).filter((event) => event.source.kind === "user" && event.source.nodeId === nodeId).map((event) => event.eventId))
   for (const transition of machine?.transitions ?? []) {
     if (!events.has(transition.on)) continue
     for (const effect of transition.effects ?? []) {
       if (effect.kind !== "start" || effect.call.kind !== "action") continue
       const bindingId = effect.call.bindingId
-      reasons.push(...severities(ux, bindingId, locale))
+      reasons.push(...severities(ux, bindingId, locale, translate))
       const binding = ux.actionBindings.find((candidate) => candidate.bindingId === bindingId)
       // A start the contract does not bind is refused at admission; were it here, it is not known either.
       const reason = effectsReason(binding === undefined ? undefined : effectsOf(binding.action.id))
       if (reason !== null) reasons.push(`${binding?.action.id ?? bindingId}: ${reason}`)
     }
   }
+  return reasons.length === 0 ? null : [...new Set(reasons)].join(". ")
+}
+
+/**
+ * Why submitting `form` needs a person (L6): its own submit confirmation is not `safe` or requires
+ * confirmation, its `submitBindingId` starts a consequential or unknown-effects action, OR any
+ * machine transition triggered by the form node's `user` events starts a consequential or
+ * unknown-effects action (fails closed).
+ */
+export function formConfirmReason(
+  ux: WidgetUx,
+  machine: Machine | undefined,
+  nodeId: string,
+  form: WidgetForm,
+  effectsOf: (actionId: string) => ActionEffects | undefined,
+  locale: string,
+  translate?: Translate,
+): string | null {
+  const reasons: string[] = []
+  if (form.submit.confirmation.severity !== "safe") {
+    reasons.push(`${text(form.submit.label, locale, translate)}: ${form.submit.confirmation.severity}`)
+  } else if (form.submit.confirmation.strength !== "none") {
+    reasons.push(`${text(form.submit.label, locale, translate)}: confirmation required`)
+  }
+  reasons.push(...severities(ux, form.submitBindingId, locale, translate))
+  const binding = ux.actionBindings.find((candidate) => candidate.bindingId === form.submitBindingId)
+  const reason = effectsReason(binding === undefined ? undefined : effectsOf(binding.action.id))
+  if (reason !== null) reasons.push(`${binding?.action.id ?? form.submitBindingId}: ${reason}`)
+  const machineReason = confirmReason(ux, machine, nodeId, null, effectsOf, locale, translate)
+  if (machineReason !== null) reasons.push(machineReason)
   return reasons.length === 0 ? null : [...new Set(reasons)].join(". ")
 }

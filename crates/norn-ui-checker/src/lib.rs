@@ -339,6 +339,28 @@ fn check_artifact_set_with_receipt_inner(
     })
 }
 
+/// Re-check a retained set under its verified receipt (Ring-0 + Ring-1 UI checks), as a cell
+/// does before it acts on the set: a widget it holds is judged by the laws it was admitted under,
+/// never refused because Ring-0 alone cannot judge it.
+///
+/// # Errors
+///
+/// As [`norn_checker::check_artifact_set_with_verified_receipt`].
+pub fn check_artifact_set_with_verified_receipt(
+    artifacts: &ReceiptSources,
+    context: &EntityArtifactSetContext<'_>,
+    limits: &ResourceLimitProfile,
+    version: &norn_checker::ReceiptVersion,
+) -> Result<CheckedArtifactSet, ReceiptError> {
+    norn_checker::check_artifact_set_with_verified_receipt_by(
+        artifacts,
+        context,
+        limits,
+        version,
+        check_artifact_set,
+    )
+}
+
 /// Check `artifacts` against `context` (Ring-0 + Ring-1 UI checks) under
 /// `limits` and issue the [`norn_checker::CheckReceipt`].
 ///

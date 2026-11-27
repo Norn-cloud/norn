@@ -15,6 +15,7 @@ use crate::limits::SliceMeter;
 
 use super::host_failure;
 use super::input::action_expression_context;
+use super::receipt::SliceReadMode;
 use super::types::{
     ActionAuthorizer, ActionCall, ActionParameterPin, ActionPreconditionOutcome,
     ActionPreconditionOutcomeRef, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
@@ -27,9 +28,11 @@ fn reference_action(
     authorizer: &dyn ActionAuthorizer,
     target: &FactKey,
 ) -> bool {
-    // Closed creates use identity-only links. Patches preserve their complete
-    // target while attributing exact expression operands. Unknown selectors,
-    // optional references, commands and policy dependencies stay conservative.
+    // Closed creates use reference lineage plus exact proved property reads for
+    // preconditions and `LAW-LINK-1` governing laws. Patches preserve their
+    // complete target while attributing exact expression operands. Unknown
+    // selectors, optional references, commands, aggregates and policy
+    // dependencies stay conservative.
     let Some(ActionEffectProgram::UpsertInputObject {
         object_kind,
         object_id_field,
@@ -45,7 +48,7 @@ fn reference_action(
         || !action.commands.is_empty()
         // CREATE-WRITER-1: a writer reads complete slice values.
         || action.synchronous_rule.is_some()
-        || (!patch && !action.derive.is_empty())
+        || !action.aggregates.is_empty()
         || norn_expr::schema::first_slice_derivation_index(action).is_some()
         || action.slice.is_empty()
         // A patch reads the full target to preserve its other values. Only
@@ -57,18 +60,15 @@ fn reference_action(
                 || !catalog.lifecycles(&target.object_type).is_empty()
                 || catalog.ancestry(&target.object_type).iter().any(|ty| ty.accounting_leg.is_some())
                 || patch_read_properties(catalog, action, target).is_none()))
+        || (!patch
+            && super::receipt::create_slice_property_reads(catalog, action, target).is_none())
         || action.slice.iter().any(|entry| {
             entry.optional
-                || !matches!(&entry.key, SliceKey::Property { from, property } if from == "input" && if patch {
-                    entry.object_type.as_str() == object_kind.as_str() && property.as_str() == object_id_field.as_str()
-                } else {
-                    action.create_links.iter().any(|link| link.target_type == entry.object_type.as_str() && link.target_id_field == property.as_str())
-                })
+                || !matches!(&entry.key, SliceKey::Property { from, property } if from == "input"
+                    && (!patch
+                        || (entry.object_type.as_str() == object_kind.as_str()
+                            && property.as_str() == object_id_field.as_str())))
         })
-        || (!patch && action.preconditions.iter().any(|expression| {
-            !norn_expr::expression_reads(&expression.0, "slice")
-                .is_ok_and(|reads| !reads.whole_root && reads.fields.is_empty())
-        }))
     {
         return false;
     }
@@ -132,6 +132,7 @@ pub(super) fn reference_read_proof<E, C, I>(
     authorizer: &dyn ActionAuthorizer,
     commit: &CellCommit<E, C, I>,
     target: &FactKey,
+    effective_input: &JsonObject,
 ) -> Option<ActionReferenceReads> {
     if !reference_action(catalog, action, authorizer, target)
         || !commit.effects.is_empty()
@@ -171,8 +172,16 @@ pub(super) fn reference_read_proof<E, C, I>(
         let reference = references.iter().find(|read| read.key == *target)?.clone();
         vec![(reference, patch_read_properties(catalog, action, target)?)]
     } else {
-        Vec::new()
+        super::receipt::create_reference_property_reads(
+            catalog,
+            action,
+            target,
+            effective_input,
+            &references,
+        )?
     };
+    let laws_digest =
+        ActionReferenceReads::governing_laws_digest(catalog.law_artifacts.iter().copied())?;
     Some(ActionReferenceReads {
         reads: commit.reads.clone(),
         references,
@@ -181,6 +190,7 @@ pub(super) fn reference_read_proof<E, C, I>(
         links: commit.links.clone(),
         link_reads: commit.link_reads.clone(),
         event_count: commit.events.len(),
+        laws_digest,
     })
 }
 
@@ -303,7 +313,7 @@ fn load_action_slice_entry<H: CellHost + ?Sized>(
     context: &ActionSliceContext<'_, '_, '_, H>,
     state: &mut ActionSliceState,
     entry: &SliceDeclaration,
-    reference_only: bool,
+    read_mode: SliceReadMode<'_>,
 ) -> Result<(), ActionRefusal<H::Error>> {
     let ActionSliceContext {
         host,
@@ -390,7 +400,7 @@ fn load_action_slice_entry<H: CellHost + ?Sized>(
         observed_records,
         limits,
         read_types,
-        reference_only,
+        read_mode,
     )?;
     precondition_keys.insert(known_fact_key(facts, catalog, &requested));
     let Some(object) = state.values.as_ref() else {
@@ -537,7 +547,7 @@ fn load_action_slice_links<H: CellHost + ?Sized>(
             observed_records,
             limits,
             read_types,
-            false,
+            SliceReadMode::Full,
         )?;
         let concrete_key = known_fact_key(facts, catalog, &target.key.target);
         precondition_keys.insert(concrete_key.clone());
@@ -643,8 +653,15 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
     let call = context.call;
     let limits = ResourceLimitProfile::norn_limits_v1().slice;
     let reserved_bytes = meter.bytes();
-    let reference_only = context.host.supports_reference_reads()
+    let mut reference_only = context.host.supports_reference_reads()
         && reference_action(catalog, call.action, context.authorizer, action_target);
+    let read_plan = super::receipt::prepare_create_slice_plan(
+        context.host,
+        catalog,
+        call.action,
+        context.effective_input,
+        &mut reference_only,
+    );
     // Keep the separately authorized target snapshot out of the slice cache
     // until declared entries have passed their read-type gates. If an entry
     // aliases the target, it must be loaded through the same bounded read and
@@ -674,19 +691,8 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
         read_types,
         limits,
     };
-    for entry in &call.action.slice {
-        // A precise patch still loads the complete target to preserve its
-        // unmodified fields. The closed effect never consults those values
-        // for a predicate or derives a new value from them.
-        let identity_only = reference_only
-            && matches!(
-                call.action.effect_program,
-                Some(ActionEffectProgram::UpsertInputObject {
-                    write_mode: UpsertWriteMode::CreateOnly,
-                    ..
-                })
-            );
-        load_action_slice_entry(context, &mut state, entry, identity_only)?;
+    for (index, entry) in call.action.slice.iter().enumerate() {
+        load_action_slice_entry(context, &mut state, entry, read_plan.mode_for(index))?;
     }
     let aggregates = load_action_aggregates(
         context,
@@ -838,9 +844,9 @@ fn load_action_fact<H: CellHost + ?Sized>(
     observed_records: &mut u32,
     limits: &crate::SliceLimits,
     read_types: &mut BTreeSet<ObjectTypeName>,
-    reference_only: bool,
+    read_mode: SliceReadMode<'_>,
 ) -> Result<FactState, ActionRefusal<H::Error>> {
-    if reference_only && !authorizer.supports_action_reference_lineage(call.action) {
+    if !read_mode.is_full() && !authorizer.supports_action_reference_lineage(call.action) {
         return Err(ActionRefusal::TargetNotFound);
     }
     if relation_depth > limits.max_relation_depth {
@@ -901,16 +907,13 @@ fn load_action_fact<H: CellHost + ?Sized>(
         });
     }
     let remaining_bytes = limits.max_canonical_bytes.saturating_sub(meter.bytes());
-    let bounded = if reference_only {
-        host.load_reference(requested, remaining_bytes)
-    } else {
-        host.load_bounded(requested, remaining_bytes)
-    }
-    .map_err(host_failure)?
-    // Unsupported and over-bound snapshots are indistinguishable from an
-    // unreadable object. Do not expose row existence or size before
-    // object-level authorization can run.
-    .ok_or(ActionRefusal::TargetNotFound)?;
+    let bounded = read_mode
+        .load(host, requested, remaining_bytes)
+        .map_err(host_failure)?
+        // Unsupported and over-bound snapshots are indistinguishable from an
+        // unreadable object. Do not expose row existence or size before
+        // object-level authorization can run.
+        .ok_or(ActionRefusal::TargetNotFound)?;
     let fact_key = bounded.concrete_type.as_ref().map_or_else(
         || requested.clone(),
         |kind| FactKey::new(kind.as_str(), requested.key.clone()),

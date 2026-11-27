@@ -15,7 +15,7 @@
  * scope, or at none, does not compile (`test/workspace-types.test.ts`), and pages cannot reach the raw
  * reads (`lib/raw/`, `test/workspace-reads-lint.test.ts`).
  */
-import { createContext, use, useMemo, type ReactNode } from "react"
+import { createContext, use, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react"
 import { defaultFetch, readAtScope, readStudioScope, StudioScopeError, studioScopeKey, type StudioScope } from "./definitions.ts"
 import type { Read } from "./exact.ts"
 import { useMode, type Fetch, type Mode } from "./live-transport.ts"
@@ -106,7 +106,7 @@ const RECORDED: RecordedReader = Object.freeze({
   // Loaded with the first widget page that reads: no page off that path pays for it.
   widget: (read: BindingRead) => ({
     queryKey: ["widget", "recorded", read],
-    queryFn: async () => (await import("./raw/widget.ts")).readRecordedWidget(read),
+    queryFn: async ({ signal }: { readonly signal: AbortSignal }) => (await import("./raw/widget.ts")).readRecordedWidget(read, signal),
   }),
 })
 
@@ -161,6 +161,63 @@ export function workspaceOf(mode: ModeAnswer, fetcher: Fetch = defaultFetch): Wo
 /** Outside a provider nothing is decided: every read waits, and nothing is read. */
 const WorkspaceContext = createContext<Workspace>(DECIDING)
 
+/**
+ * Tracks whether a page inside the main island is currently rendering the full
+ * `WorkspaceUnavailable` state, so the shell's one-line `ConnectionBanner` steps aside
+ * synchronously before paint (DESIGN.md 9.1 & 18, #1774) without DOM-sniffing.
+ */
+interface PageUnavailableRegistry {
+  readonly subscribe: (listener: () => void) => () => void
+  readonly getSnapshot: () => boolean
+  readonly register: () => () => void
+}
+
+function createPageUnavailableRegistry(): PageUnavailableRegistry {
+  let count = 0
+  const listeners = new Set<() => void>()
+  const emit = () => { for (const listener of listeners) listener() }
+  return {
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    getSnapshot: () => count > 0,
+    register: () => {
+      const before = count > 0
+      count += 1
+      if (!before) emit()
+      return () => {
+        count = Math.max(0, count - 1)
+        if (count === 0) emit()
+      }
+    },
+  }
+}
+
+const NOOP_REGISTRY: PageUnavailableRegistry = {
+  subscribe: () => () => {},
+  getSnapshot: () => false,
+  register: () => () => {},
+}
+
+const PageUnavailableContext = createContext<PageUnavailableRegistry>(NOOP_REGISTRY)
+const useIsomorphicLayoutEffect = typeof document !== "undefined" ? useLayoutEffect : useEffect
+
+/**
+ * Mark that the current page is showing the full `WorkspaceUnavailable` state. Runs in
+ * `useLayoutEffect` so the shell's one-line alert suppresses synchronously before first paint.
+ */
+export function useRegisterWorkspaceUnavailable(): void {
+  const registry = use(PageUnavailableContext)
+  useIsomorphicLayoutEffect(() => registry.register(), [registry])
+}
+
+/** Whether any mounted `WorkspaceUnavailable` component is currently shown on the page. */
+export function usePageShowsWorkspaceUnavailable(): boolean {
+  const registry = use(PageUnavailableContext)
+  return useSyncExternalStore(registry.subscribe, registry.getSnapshot, () => false)
+}
+
 function ModeWorkspace({ children }: { readonly children: ReactNode }) {
   const mode = useMode()
   const workspace = useMemo(() => workspaceOf(mode), [mode.status, mode.data, mode.error])
@@ -172,7 +229,12 @@ function ModeWorkspace({ children }: { readonly children: ReactNode }) {
  * {@link workspaceOf} already decided instead (component tests, which read no mode).
  */
 export function WorkspaceProvider({ workspace, children }: { readonly workspace?: Workspace; readonly children: ReactNode }) {
-  return workspace === undefined ? <ModeWorkspace>{children}</ModeWorkspace> : <WorkspaceContext value={workspace}>{children}</WorkspaceContext>
+  const [registry] = useState(createPageUnavailableRegistry)
+  return (
+    <PageUnavailableContext value={registry}>
+      {workspace === undefined ? <ModeWorkspace>{children}</ModeWorkspace> : <WorkspaceContext value={workspace}>{children}</WorkspaceContext>}
+    </PageUnavailableContext>
+  )
 }
 
 /** The page's workspace, as its {@link WorkspaceProvider} decided it. */

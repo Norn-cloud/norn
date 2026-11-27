@@ -9,8 +9,14 @@ import {
   SHOW_FIRST, appletHome, appletMenu, appletOf, appletsOf, currentIn, decoded, diffExpanded, initials, matches, placeOf, sectionOf, target, visibleItems,
   type Applet, type MenuEntry, type Section,
 } from "../src/lib/nav-model.ts"
-import type { Account } from "../src/lib/session.ts"
-import { Shell } from "../src/shell.tsx"
+import {
+  MAX_RECENT, accountScopeIdentity, appendRecent, clearRecent, commitRecentTracker, createTabRecentGuard,
+  enrichRecentItems, getOwn, initialRecentTracker, markRecentSignOut, readMenuState, readRecent,
+  recentForPath, recentScopeFingerprint, recordRecent, resetRecentVisitGuard, resumeRecentTracker, stepRecentTracker,
+  updateChosenBranches, writeMenuState, writeRecent,
+} from "../src/lib/nav-storage.ts"
+import { accountQuery, type Account } from "../src/lib/session.ts"
+import { Shell, commandNavigation } from "../src/shell.tsx"
 import { appletBadge } from "../src/shell-nav.tsx"
 import { isEmptyWorkspace } from "../src/home.tsx"
 import { ViewProvider } from "../src/lib/view.tsx"
@@ -76,8 +82,8 @@ test("two landmarks: the Applets rail with exactly one current applet, and the o
   expect(html).not.toContain("[&amp;&gt;svg]:text-kind")
   // The toggle is named "Sidebar" in both states and controls the submenu island it names.
   expect(html).toMatch(/<button[^>]*aria-label="Sidebar"[^>]*aria-expanded="true"[^>]*aria-controls="studio-sidebar"/)
-  expect(html).toMatch(/id="studio-sidebar"[^>]*data-island="nav"/)
-  expect(html).toMatch(/data-slot="sidebar-inset"[^>]*data-island="main"/)
+  expect(html).toMatch(/id="studio-sidebar"[^>]*data-shell-island="nav"/)
+  expect(html).toMatch(/data-slot="sidebar-inset"[^>]*data-shell-island="main"/)
   // The rail replaced the perspective switch.
   expect(html).not.toContain('aria-label="Perspective"')
 })
@@ -289,6 +295,7 @@ test("#1414: the workspace switcher shows the workspace name and role, never raw
     catalog: { document: [], numbers: new Map(), origin: "live" },
     counts: {},
     publishedQuestions: new Set(),
+    builtins: [],
   }
   client.setQueryData(modeQuery(scope).queryKey, liveMode)
   const doc: WorkspacesDocument = {
@@ -315,4 +322,315 @@ test("#1414: isEmptyWorkspace identifies cells holding only trusted base artifac
   expect(isEmptyWorkspace([])).toBe(true)
   expect(isEmptyWorkspace([{ artifactId: "core.units" }, { artifactId: "std.value_types" }])).toBe(true)
   expect(isEmptyWorkspace([{ artifactId: "core.units" }, { artifactId: "canon.Holding.entity" }])).toBe(false)
+})
+
+function memoryStorage() {
+  const map = new Map<string, string>()
+  return {
+    getItem: (key: string) => map.get(key) ?? null,
+    setItem: (key: string, value: string) => { map.set(key, value) },
+    removeItem: (key: string) => { map.delete(key) },
+  }
+}
+
+test("submenu branch choices and Show all persist cleanly in storage and degrade gracefully when blocked or malformed", () => {
+  const storage = memoryStorage()
+  expect(readMenuState(storage)).toEqual({ chosen: {}, whole: new Set() })
+
+  writeMenuState({ builder: { "space:Logic": false }, data: { "dest:/objects": true } }, new Set(["data:/objects:"]), storage)
+  const restored = readMenuState(storage)
+  expect(restored.chosen).toEqual({ builder: { "space:Logic": false }, data: { "dest:/objects": true } })
+  expect([...restored.whole]).toEqual(["data:/objects:"])
+
+  // Corrupted or hostile JSON degrades safely.
+  storage.setItem("norn.studio.menu", "{not-json")
+  expect(readMenuState(storage)).toEqual({ chosen: {}, whole: new Set() })
+  storage.setItem("norn.studio.menu", JSON.stringify({ chosen: { builder: { ok: false, bad: "nope" } }, whole: [42, "valid:key", ""] }))
+  expect(readMenuState(storage)).toEqual({ chosen: { builder: { ok: false } }, whole: new Set(["valid:key"]) })
+
+  const blocked = {
+    getItem: () => { throw new DOMException("blocked", "SecurityError") },
+    setItem: () => { throw new DOMException("blocked", "SecurityError") },
+    removeItem: () => { throw new DOMException("blocked", "SecurityError") },
+  }
+  expect(readMenuState(blocked)).toEqual({ chosen: {}, whole: new Set() })
+  expect(() => writeMenuState({ builder: { "space:Logic": false } }, new Set(["x"]), blocked)).not.toThrow()
+})
+
+test("recent items track opened records, runs and views, deduplicate, cap, scope per workspace, and clear cleanly", () => {
+  const menus = new Map<string, readonly MenuEntry[]>([
+    ["/sources", [{ href: "/sources/canon.Holding", label: "Holding" }]],
+    ["/views", [{ href: "/views/open-items", label: "Open items" }]],
+  ])
+  expect(recentForPath("/", menus, 1)).toBeNull()
+  expect(recentForPath("/decisions", menus, 1)).toBeNull()
+  expect(recentForPath("/sources", menus, 1)).toBeNull()
+  expect(recentForPath("/sources/canon.Holding", menus, 1)).toBeNull()
+  expect(recentForPath("/views/new", menus, 1)).toBeNull()
+
+  const rec = recentForPath("/sources/canon.Holding/demo%2Fitem%2F1", menus, 10)
+  expect(rec).toEqual({ href: "/sources/canon.Holding/demo%2Fitem%2F1", label: "demo/item/1", kind: "record", detail: "Holding", visitedAt: 10 })
+  const run = recentForPath("/runs/run_42", menus, 20)
+  expect(run).toEqual({ href: "/runs/run_42", label: "run_42", kind: "run", visitedAt: 20 })
+  const view = recentForPath("/views/open-items/edit", menus, 30)
+  expect(view).toEqual({ href: "/views/open-items", label: "Open items", kind: "view", visitedAt: 30 })
+
+  let list = recordRecent([], rec!)
+  list = recordRecent(list, run!)
+  list = recordRecent(list, view!)
+  list = recordRecent(list, { ...rec!, visitedAt: 40 })
+  expect(list.map((item) => item.href)).toEqual([rec!.href, view!.href, run!.href])
+
+  // Capped at MAX_RECENT.
+  for (let i = 0; i < MAX_RECENT + 5; i += 1) {
+    list = recordRecent(list, { href: `/runs/r${i}`, label: `r${i}`, kind: "run", visitedAt: 100 + i })
+  }
+  expect(list).toHaveLength(MAX_RECENT)
+
+  const storage = memoryStorage()
+  writeRecent("u1:o1:", list, storage)
+  expect(readRecent("u1:o1:", storage)).toEqual(list)
+  expect(readRecent("u1:o2:", storage)).toEqual([])
+  clearRecent("u1:o1:", storage)
+  expect(readRecent("u1:o1:", storage)).toEqual([])
+})
+
+test("Home and Inbox submenu islands show the local Recent list with Clear when items exist, and Builder does not", async () => {
+  const scope = { orgId: "o1", environmentId: "env1" }
+  const liveMode: Mode = {
+    kind: "live",
+    scope,
+    catalog: { document: [], numbers: new Map(), origin: "live" },
+    counts: {},
+    publishedQuestions: new Set(),
+    builtins: [],
+  }
+  const fingerprint = recentScopeFingerprint(account, { status: "success", data: liveMode })!
+  const storage = memoryStorage()
+  writeRecent(fingerprint, [
+    { href: "/sources/canon.Holding/rec_1", label: "rec_1", kind: "record", detail: "Holding", visitedAt: 1 },
+    { href: "/runs/run_7", label: "run_7", kind: "run", visitedAt: 2 },
+  ], storage)
+  const saved = Object.getOwnPropertyDescriptor(globalThis, "localStorage")
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage })
+  const renderWithLiveMode = async (pathname: string) => {
+    const client = new QueryClient()
+    client.setQueryData(["studio-scope"], scope)
+    client.setQueryData(modeQuery(scope).queryKey, liveMode)
+    const router = createRouter({
+      routeTree: createRootRoute({ component: () => <Shell sections={[home, inbox, sources]} account={account} onSignOut={() => {}} /> }),
+      history: createMemoryHistory({ initialEntries: [pathname] }),
+    })
+    await router.load()
+    return renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
+  }
+  try {
+    const homeHtml = await renderWithLiveMode("/")
+    const homeMenu = landmark(homeHtml, "Home menu")
+    expect(homeMenu).toContain('data-slot="recent-section"')
+    expect(homeMenu).toContain(">Recent<")
+    expect(homeMenu).toContain(">Clear<")
+    expect(homeMenu).toContain('href="/sources/canon.Holding/rec_1"')
+    expect(homeMenu).toContain('href="/runs/run_7"')
+
+    const inboxHtml = await renderWithLiveMode("/decisions")
+    expect(landmark(inboxHtml, "Inbox menu")).toContain('data-slot="recent-section"')
+
+    const builderHtml = await renderWithLiveMode("/sources")
+    expect(landmark(builderHtml, "Builder menu")).not.toContain('data-slot="recent-section"')
+
+    // While mode is still pending (unconfirmed scope), Recent fails closed and renders nothing.
+    const pendingHtml = await at("/", () => <Shell sections={[home, inbox, sources]} account={account} onSignOut={() => {}} />)
+    expect(landmark(pendingHtml, "Home menu")).not.toContain('data-slot="recent-section"')
+  } finally {
+    if (saved) Object.defineProperty(globalThis, "localStorage", saved); else delete (globalThis as { localStorage?: unknown }).localStorage
+  }
+})
+
+test("Recent fails closed across workspace switches, unconfirmed scopes, and role downgrades", async () => {
+  const scopeA = { orgId: "org_a", environmentId: "env_a" }
+  const scopeB = { orgId: "org_b", environmentId: "env_b" }
+  const modeA: Mode = { kind: "live", scope: scopeA, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set(), builtins: [] }
+  const modeB: Mode = { kind: "live", scope: scopeB, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set(), builtins: [] }
+  const adminA: Account = { user: { id: "u1", name: "Ada", email: "ada@example.com" }, organization: { id: "org_a", name: "Org A", role: "admin" }, environmentId: "env_a" }
+  const viewerA: Account = { ...adminA, organization: { id: "org_a", name: "Org A", role: "viewer" } }
+  const adminB: Account = { user: { id: "u1", name: "Ada", email: "ada@example.com" }, organization: { id: "org_b", name: "Org B", role: "admin" }, environmentId: "env_b" }
+
+  // Pending / error / disagreeing account+mode scopes (including explicit environmentId: null) fail closed to null.
+  expect(recentScopeFingerprint(adminA, { status: "pending", data: undefined })).toBeNull()
+  expect(recentScopeFingerprint(adminA, { status: "error", data: undefined })).toBeNull()
+  expect(recentScopeFingerprint(adminB, { status: "success", data: modeA })).toBeNull()
+  expect(recentScopeFingerprint({ ...adminA, environmentId: "env_b" }, { status: "success", data: modeA })).toBeNull()
+  expect(recentScopeFingerprint({ ...adminA, environmentId: null }, { status: "success", data: modeA })).toBeNull()
+
+  // Recorded mode also isolates distinct environments within the same organization.
+  const recordedMode: Mode = { kind: "recorded" }
+  const fpRecEnvA = recentScopeFingerprint(adminA, { status: "success", data: recordedMode })!
+  const fpRecEnvB = recentScopeFingerprint({ ...adminA, environmentId: "env_b" }, { status: "success", data: recordedMode })!
+  expect(fpRecEnvA).not.toBe(fpRecEnvB)
+
+  const fpAdminA = recentScopeFingerprint(adminA, { status: "success", data: modeA })!
+  const fpViewerA = recentScopeFingerprint(viewerA, { status: "success", data: modeA })!
+  const fpAdminB = recentScopeFingerprint(adminB, { status: "success", data: modeB })!
+  expect(fpAdminA).not.toBe(fpAdminB)
+  expect(fpAdminA).not.toBe(fpViewerA)
+
+  // Account/role change BEFORE the first mode settles must NOT record the carried-over URL under the next workspace/role.
+  const preSettleTracker = initialRecentTracker("/sources/canon.Holding/secret-pre", null, accountScopeIdentity(adminA))
+  const preSettleSwitched = stepRecentTracker(preSettleTracker, "/sources/canon.Holding/secret-pre", fpAdminB, accountScopeIdentity(adminB))
+  expect(preSettleSwitched.shouldRecord).toBe(false)
+  const preSettleRoleChanged = stepRecentTracker(preSettleTracker, "/sources/canon.Holding/secret-pre", fpViewerA, accountScopeIdentity(viewerA))
+  expect(preSettleRoleChanged.shouldRecord).toBe(false)
+
+  // Signing out and remounting the shell as account B on the same carried-over URL (even before A's mode settled)
+  // must stay locked out across remounts until B navigates to a new URL.
+  const tabGuard = createTabRecentGuard()
+  const mountedA = resumeRecentTracker("/sources/canon.Holding/secret-signout", null, accountScopeIdentity(adminA), tabGuard)
+  const stepA = stepRecentTracker(mountedA, "/sources/canon.Holding/secret-signout", null, accountScopeIdentity(adminA))
+  commitRecentTracker(stepA.next, accountScopeIdentity(adminA), tabGuard)
+  markRecentSignOut(tabGuard)
+  const remountedB = resumeRecentTracker("/sources/canon.Holding/secret-signout", null, accountScopeIdentity(adminB), tabGuard)
+  const settledRemountB = stepRecentTracker(remountedB, "/sources/canon.Holding/secret-signout", fpAdminB, accountScopeIdentity(adminB))
+  expect(settledRemountB.shouldRecord).toBe(false)
+  commitRecentTracker(settledRemountB.next, accountScopeIdentity(adminB), tabGuard)
+  // Even a second remount on the same URL stays locked out; navigating to a new route records normally.
+  const remountedBAgain = resumeRecentTracker("/sources/canon.Holding/secret-signout", fpAdminB, accountScopeIdentity(adminB), tabGuard)
+  expect(stepRecentTracker(remountedBAgain, "/sources/canon.Holding/secret-signout", fpAdminB, accountScopeIdentity(adminB)).shouldRecord).toBe(false)
+  expect(stepRecentTracker(remountedBAgain, "/runs/run-b-fresh", fpAdminB, accountScopeIdentity(adminB)).shouldRecord).toBe(true)
+
+  // A 401 on /api/me also marks the tab guard signed out, so signing back in as the SAME account on the carried-over URL stays locked out.
+  resetRecentVisitGuard()
+  try {
+    const pendingSame = resumeRecentTracker("/sources/canon.Holding/secret-401", null, accountScopeIdentity(adminA))
+    const stepSame = stepRecentTracker(pendingSame, "/sources/canon.Holding/secret-401", null, accountScopeIdentity(adminA))
+    commitRecentTracker(stepSame.next, accountScopeIdentity(adminA))
+    const client = new QueryClient()
+    const expired = await client.fetchQuery(accountQuery(client, async () => new Response(null, { status: 401 })))
+    expect(expired).toBeNull()
+    const remountedSame = resumeRecentTracker("/sources/canon.Holding/secret-401", null, accountScopeIdentity(adminA))
+    expect(stepRecentTracker(remountedSame, "/sources/canon.Holding/secret-401", fpAdminA, accountScopeIdentity(adminA)).shouldRecord).toBe(false)
+    // Navigating to a brand-new run BEFORE mode settles (fingerprint still null) must record once mode settles for that same account.
+    const navWhilePending = stepRecentTracker(remountedSame, "/runs/run-after-401", null, accountScopeIdentity(adminA))
+    expect(navWhilePending.shouldRecord).toBe(false)
+    expect(stepRecentTracker(navWhilePending.next, "/runs/run-after-401", fpAdminA, accountScopeIdentity(adminA)).shouldRecord).toBe(true)
+    // Still fails closed if the account switches again before that pending navigation settles.
+    expect(stepRecentTracker(navWhilePending.next, "/runs/run-after-401", fpAdminB, accountScopeIdentity(adminB)).shouldRecord).toBe(false)
+  } finally {
+    resetRecentVisitGuard()
+  }
+
+  // Fresh page load on a detail route records once the initial scope settles for the same account.
+  let tracker = initialRecentTracker("/sources/canon.Holding/secret-1", null, accountScopeIdentity(adminA))
+  let step = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", null, accountScopeIdentity(adminA))
+  expect(step.shouldRecord).toBe(false)
+  step = stepRecentTracker(step.next, "/sources/canon.Holding/secret-1", fpAdminA, accountScopeIdentity(adminA))
+  tracker = step.next
+  expect(step.shouldRecord).toBe(true)
+
+  // Switching workspace directly (A -> B) or via pending (A -> null -> B) while staying on the same URL never records it under B.
+  step = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", fpAdminB, accountScopeIdentity(adminB))
+  expect(step.shouldRecord).toBe(false)
+  const pendingStep = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", null, accountScopeIdentity(adminB))
+  expect(pendingStep.shouldRecord).toBe(false)
+  const settledBStep = stepRecentTracker(pendingStep.next, "/sources/canon.Holding/secret-1", fpAdminB, accountScopeIdentity(adminB))
+  expect(settledBStep.shouldRecord).toBe(false)
+
+  // Role downgrade (admin -> viewer) on the same URL also refuses to record under the downgraded role, and isolates stored items.
+  const downgradeStep = stepRecentTracker(tracker, "/sources/canon.Holding/secret-1", fpViewerA, accountScopeIdentity(viewerA))
+  expect(downgradeStep.shouldRecord).toBe(false)
+  const storage = memoryStorage()
+  writeRecent(fpAdminA, [{ href: "/sources/canon.Holding/secret-1", label: "secret-1", kind: "record", detail: "Holding", visitedAt: 1 }], storage)
+  expect(readRecent(fpViewerA, storage)).toEqual([])
+  expect(readRecent(fpAdminB, storage)).toEqual([])
+
+  // Navigating to a new detail route after switching to B records normally under B.
+  const navigatedB = stepRecentTracker(settledBStep.next, "/runs/run-b-1", fpAdminB, accountScopeIdentity(adminB))
+  expect(navigatedB.shouldRecord).toBe(true)
+})
+
+test("appendRecent and enrichRecentItems never resurrect a cross-tab Clear on label updates", () => {
+  const storage = memoryStorage()
+  const fp = JSON.stringify(["live", "u1", "o1", "e1", "viewer"])
+  let writes = 0
+  const countedStorage = {
+    getItem: (key: string) => storage.getItem(key),
+    setItem: (key: string, value: string) => {
+      writes += 1
+      storage.setItem(key, value)
+    },
+    removeItem: (key: string) => storage.removeItem(key),
+  }
+  const initialMenus = new Map<string, readonly MenuEntry[]>()
+  const loadedMenus = new Map<string, readonly MenuEntry[]>([
+    ["/views", [{ href: "/views/open-items", label: "Open items" }]],
+  ])
+  appendRecent(fp, recentForPath("/views/open-items", initialMenus, 1)!, countedStorage)
+  expect(readRecent(fp, countedStorage).map((item) => item.label)).toEqual(["open-items"])
+
+  // Enriching display labels when menus load happens purely in memory (zero storage writes).
+  const writesBefore = writes
+  const enriched = enrichRecentItems(readRecent(fp, countedStorage), loadedMenus)
+  expect(enriched.map((item) => item.label)).toEqual(["Open items"])
+  expect(writes).toBe(writesBefore)
+
+  // Tab A clears Recent: enriching an empty list stays empty and performs zero storage writes.
+  clearRecent(fp, countedStorage)
+  expect(readRecent(fp, countedStorage)).toEqual([])
+  expect(enrichRecentItems(readRecent(fp, countedStorage), loadedMenus)).toEqual([])
+  expect(writes).toBe(writesBefore)
+
+  // Navigating to r3 in Tab B records only r3 without resurrecting cleared items.
+  const merged = appendRecent(fp, { href: "/runs/r3", label: "r3", kind: "run", visitedAt: 3 }, countedStorage)
+  expect(merged.map((item) => item.href)).toEqual(["/runs/r3"])
+  expect(readRecent(fp, countedStorage).map((item) => item.href)).toEqual(["/runs/r3"])
+})
+
+test("readMenuState and updateChosenBranches reject prototype-pollution keys and use null-prototype maps", () => {
+  const storage = memoryStorage()
+  storage.setItem(
+    "norn.studio.menu",
+    '{"chosen":{"__proto__":{"polluted":true},"constructor":{"bad":true},"prototype":{"bad":true},"builder":{"__proto__":true,"constructor":false,"space:Logic":false}},"whole":["ok"]}',
+  )
+  const restored = readMenuState(storage)
+  expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+  expect(Object.getPrototypeOf(restored.chosen)).toBeNull()
+  expect(Object.getPrototypeOf(restored.chosen.builder)).toBeNull()
+  expect(getOwn(restored.chosen, "__proto__")).toBeUndefined()
+  expect(getOwn(restored.chosen, "constructor")).toBeUndefined()
+  expect(getOwn(restored.chosen, "prototype")).toBeUndefined()
+  expect(getOwn(restored.chosen.builder, "__proto__")).toBeUndefined()
+  expect(getOwn(restored.chosen.builder, "constructor")).toBeUndefined()
+  expect(getOwn(restored.chosen.builder, "space:Logic")).toBe(false)
+
+  const updated = updateChosenBranches(restored.chosen, "__proto__", () => ({ hacked: true }))
+  expect(updated).toBe(restored.chosen)
+  const safeUpdated = updateChosenBranches(restored.chosen, "builder", (prev) => ({ ...prev, prototype: true, "dest:/sources": true }))
+  expect(getOwn(safeUpdated.builder, "prototype")).toBeUndefined()
+  expect(getOwn(safeUpdated.builder, "dest:/sources")).toBe(true)
+})
+
+test("commandNavigation pushes a history entry when switching applets on a shared URL and replaces only when both URL and applet match", () => {
+  // Same URL, same applet, no hash -> no-op.
+  expect(commandNavigation(
+    { pathname: "/sources/canon.Holding", searchStr: "", hash: "", applet: "builder" },
+    { to: "/sources/canon.Holding", applet: "builder" },
+  )).toBeNull()
+
+  // Same URL, same applet, with hash -> replace to re-scroll without duplicating history.
+  expect(commandNavigation(
+    { pathname: "/rules", searchStr: "", hash: "law-1", applet: "builder" },
+    { to: "/rules", hash: "law-1", applet: "builder" },
+  )).toEqual({ to: "/rules", hash: "law-1", state: { applet: "builder" }, replace: true })
+
+  // Same URL, DIFFERENT applet -> pushes a new history entry (no replace) so Back restores the prior applet.
+  expect(commandNavigation(
+    { pathname: "/sources/canon.Holding", searchStr: "", hash: "", applet: "data" },
+    { to: "/sources/canon.Holding", applet: "builder" },
+  )).toEqual({ to: "/sources/canon.Holding", state: { applet: "builder" } })
+
+  // Same URL with hash, DIFFERENT applet -> pushes a new history entry under the target applet.
+  expect(commandNavigation(
+    { pathname: "/rules", searchStr: "", hash: "law-1", applet: "data" },
+    { to: "/rules", hash: "law-1", applet: "builder" },
+  )).toEqual({ to: "/rules", hash: "law-1", state: { applet: "builder" } })
 })

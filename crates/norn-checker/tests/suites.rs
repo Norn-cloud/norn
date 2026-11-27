@@ -122,6 +122,8 @@ mod owned_collections;
 mod path_mapping;
 #[path = "pr_a_origin_clock_slice_patch.rs"]
 mod pr_a_origin_clock_slice_patch;
+#[path = "pr_c_honesty_and_red_team.rs"]
+mod pr_c_honesty_and_red_team;
 #[path = "predicate_slice_and_links.rs"]
 mod predicate_slice_and_links;
 #[path = "principal_inputs.rs"]

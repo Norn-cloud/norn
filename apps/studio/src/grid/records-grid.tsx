@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { CopyId, PathText } from "@/components/copy-id"
 import { LoadState, ReadErrorState, WorkspaceUnavailable, WorkspaceUndecided, isWorkspaceUnavailableError, useBoundedWait } from "@/components/load-state"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { PropRow, Props } from "@/components/system/props"
 import { Disclosure } from "@/components/disclosure"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -18,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import type { Concept, Field } from "../lib/catalog.ts"
 import { CellUnavailable, NO_DATA_CELL, studioScopeKey, StudioScopeError, useStudioScope, type StudioScope } from "../lib/definitions.ts"
+import { retryWorkspace } from "../lib/live-transport.ts"
 import { recordName } from "../lib/objects.ts"
 import { cycleSort, DATA_CHANGED, LIMITS, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
 import { diagnosticsAt, type RecordsRead } from "../lib/records-source.ts"
@@ -329,7 +331,7 @@ export function RecordsGrid({ concept, reader, initial, onQuery, timeline = fals
         )}
         {result.isError && (isWorkspaceUnavailableError(result.error)
           ? <WorkspaceUnavailable error={result.error} compact />
-          : <ReadErrorState error={result.error} isFetching={result.isFetching} onRetry={() => void result.refetch()} />)}
+          : <ReadErrorState error={result.error} isFetching={result.isFetching} onRetry={() => void retryWorkspace(client).then((ok) => { if (ok) void result.refetch({ cancelRefetch: false }) })} />)}
         <div className="flex flex-wrap items-center gap-2">
           {hasViewModes && (
             <Segmented aria-label="Show as" value={layout}
@@ -448,14 +450,14 @@ export function RecordsGrid({ concept, reader, initial, onQuery, timeline = fals
                 })}
               </div>
               {result.isPending && (gridWait === "timed-out"
-                ? <div className="sticky start-0 w-full max-w-[min(100%,64rem)] p-4"><LoadState status="pending" timeoutMs={0} slowAfterMs={0} onRetry={() => void result.refetch()}>{() => null}</LoadState></div>
+                ? <div className="sticky start-0 w-full max-w-[min(100%,64rem)] p-4"><LoadState status="pending" timeoutMs={0} slowAfterMs={0} onRetry={() => void retryWorkspace(client).then((ok) => { if (ok) void result.refetch({ cancelRefetch: false }) })}>{() => null}</LoadState></div>
                 : (
                   <div className="grid gap-1 p-3" aria-label="Reading records" data-load-state={gridWait === "slow" ? "slow" : "loading"}>
                     {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-6" />)}
                     {gridWait === "slow" && (
                       <div role="status" className="flex items-center gap-2 pt-2 text-meta text-muted-foreground">
                         <span>Taking longer than usual to reach the workspace…</span>
-                        <Button type="button" variant="ghost" size="xs" onClick={() => void result.refetch()}>Retry</Button>
+                        <Button type="button" variant="ghost" size="xs" onClick={() => void retryWorkspace(client).then((ok) => { if (ok) void result.refetch({ cancelRefetch: false }) })}>Retry</Button>
                       </div>
                     )}
                   </div>
@@ -570,13 +572,21 @@ function RecordDrawer({ concept, fields, row, reader, actions, actionsOff, onClo
             <SheetSection label="What Norn found">
               {isWithheld(row)
                 ? <p className="px-2.5 py-2.5 text-body"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></p>
-                : <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] text-body">
+                : <Props>
                   {/* The record's own name when the server projected it (masked or pseudonymised): the same chip,
                       with the same Reveal the server allows, as the grid's Record column shows. */}
-                  {namedBy.map(({ field, masked }) => <div key={field.id} data-name-fact={field.id} className="contents"><dt className="flex min-h-10 flex-wrap items-center gap-1 px-2.5 py-2.5 text-muted-foreground">{factLabel(field)}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="flex min-h-10 min-w-0 items-center px-2.5 py-2.5 break-words"><MaskedValue objectType={record.objectType} id={record.id} version={record.version} property={field.id} masked={masked} projected={record.values?.[field.id]} /></dd></div>)}
-                  {fields.map((field) => <div key={field.id} className="contents"><dt className="flex min-h-10 flex-wrap items-center gap-1 px-2.5 py-2.5 text-muted-foreground">{factLabel(field)}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="flex min-h-10 min-w-0 items-center px-2.5 py-2.5 break-words"><TracedCell field={field} row={row} live={live} lineage={object.data?.source?.document ?? null} variant="inline" /></dd></div>)}
-                  <dt className="flex min-h-10 items-center px-2.5 py-2.5 text-muted-foreground">version</dt><dd className="flex min-h-10 items-center px-2.5 py-2.5 tabular-nums">{record.version}</dd>
-                </dl>}
+                  {namedBy.map(({ field, masked }) => (
+                    <PropRow key={field.id} data-name-fact={field.id} label={<span className="inline-flex flex-wrap items-center gap-1">{factLabel(field)}<MarkingChips markings={field.markings} catalog={markings} /></span>}>
+                      <MaskedValue objectType={record.objectType} id={record.id} version={record.version} property={field.id} masked={masked} projected={record.values?.[field.id]} />
+                    </PropRow>
+                  ))}
+                  {fields.map((field) => (
+                    <PropRow key={field.id} label={<span className="inline-flex flex-wrap items-center gap-1">{factLabel(field)}<MarkingChips markings={field.markings} catalog={markings} /></span>}>
+                      <TracedCell field={field} row={row} live={live} lineage={object.data?.source?.document ?? null} variant="inline" />
+                    </PropRow>
+                  ))}
+                  <PropRow label="version" tabular>{record.version}</PropRow>
+                </Props>}
             </SheetSection>
             {!isWithheld(row) && <SheetSection label="Linked records">
               <div className="px-2.5 py-2">

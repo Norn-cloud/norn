@@ -8787,6 +8787,25 @@
           }
         }
       },
+      "NornBuiltinDefinition": {
+        "type": "object",
+        "description": "One built-in page as `GET /v1/definitions` serves it.",
+        "required": [
+          "artifact",
+          "sha256"
+        ],
+        "properties": {
+          "artifact": {
+            "type": "object",
+            "description": "One built-in artifact envelope, admitted by both checker rings when this host was built.",
+            "additionalProperties": true
+          },
+          "sha256": {
+            "type": "string",
+            "description": "The sha256 (lowercase hex) of the bytes this host embeds for the page."
+          }
+        }
+      },
       "NornCheckReceipt": {
         "type": "object",
         "description": "A current checker admission receipt.",
@@ -9535,6 +9554,7 @@
           "registry",
           "baseArtifactIds",
           "artifacts",
+          "builtins",
           "objectCounts"
         ],
         "properties": {
@@ -9560,6 +9580,13 @@
               "type": "string"
             },
             "description": "Read-only base artifact identities."
+          },
+          "builtins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornBuiltinDefinition"
+            },
+            "description": "Studio's built-in pages this host serves for ids `artifacts` does not hold\n(`builtin_pages`): in no revision and no receipt, admitted by both checker rings when the\nhost was built. A definition the workspace installed with a built-in's id replaces it."
           },
           "diagnostics": {
             "type": "null",
@@ -30454,11 +30481,11 @@
         ],
         "properties": {
           "message": {
-            "$ref": "#/components/schemas/NornIrLocaleText",
+            "$ref": "#/components/schemas/NornIrWidgetText",
             "description": "Optional localized explanation of the action's consequences."
           },
           "phrase": {
-            "$ref": "#/components/schemas/NornIrLocaleText",
+            "$ref": "#/components/schemas/NornIrWidgetText",
             "description": "Required localized phrase for typed confirmation; absent otherwise."
           },
           "severity": {
@@ -30553,7 +30580,7 @@
             "description": "Effects handled specifically by this invocation."
           },
           "label": {
-            "$ref": "#/components/schemas/NornIrLocaleText",
+            "$ref": "#/components/schemas/NornIrWidgetText",
             "description": "Localized text shown on the action control."
           },
           "location": {
@@ -30750,7 +30777,7 @@
             "description": "Values it draws faithfully beyond plain ones (a masked value, an exact decimal)."
           },
           "label": {
-            "$ref": "#/components/schemas/NornIrLocaleText",
+            "$ref": "#/components/schemas/NornIrWidgetText",
             "description": "Human-readable name."
           },
           "machine": {
@@ -30967,7 +30994,7 @@
             ]
           },
           "label": {
-            "$ref": "#/components/schemas/NornIrLocaleText"
+            "$ref": "#/components/schemas/NornIrWidgetText"
           }
         },
         "additionalProperties": false
@@ -31108,7 +31135,7 @@
             ]
           },
           "label": {
-            "$ref": "#/components/schemas/NornIrLocaleText",
+            "$ref": "#/components/schemas/NornIrWidgetText",
             "description": "Localized label used as the grid's accessible region and heading."
           },
           "maxRows": {
@@ -31293,6 +31320,35 @@
               "Elapsed duration.",
               "Opaque JSON value; it cannot be inspected by ZEN."
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetContextRead": {
+        "type": "object",
+        "description": "One read of the object a page's context names (UI-CONTEXT-READ-1): its type and its key are\ntwo required text parameters of one page, so the page serves every object type the cell\nserves. The cell decides the read; the checker has no entity to check its values against, so\nnothing but a catalog island draws it, and the island draws them as the cell projected them.",
+        "required": [
+          "bindingId",
+          "pageId",
+          "typeParameterId",
+          "keyParameterId"
+        ],
+        "properties": {
+          "bindingId": {
+            "type": "string",
+            "description": "Stable binding id, unique among data bindings and context reads."
+          },
+          "keyParameterId": {
+            "type": "string",
+            "description": "The required text parameter holding the object's key."
+          },
+          "pageId": {
+            "type": "string",
+            "description": "The page whose context names the object, and whose machine reads it."
+          },
+          "typeParameterId": {
+            "type": "string",
+            "description": "The required text parameter holding the object type."
           }
         },
         "additionalProperties": false
@@ -31796,11 +31852,11 @@
             ]
           },
           "help": {
-            "$ref": "#/components/schemas/NornIrLocaleText",
+            "$ref": "#/components/schemas/NornIrWidgetText",
             "description": "Optional localized help text."
           },
           "label": {
-            "$ref": "#/components/schemas/NornIrLocaleText",
+            "$ref": "#/components/schemas/NornIrWidgetText",
             "description": "Localized visible label."
           },
           "optionQueryBindingId": {
@@ -32188,7 +32244,7 @@
             "description": "Effects handled specifically by the submit invocation."
           },
           "label": {
-            "$ref": "#/components/schemas/NornIrLocaleText",
+            "$ref": "#/components/schemas/NornIrWidgetText",
             "description": "Localized submit label."
           }
         },
@@ -32832,6 +32888,43 @@
           "$ref": "#/components/schemas/NornIrZenExpression"
         }
       },
+      "NornIrWidgetMessage": {
+        "type": "object",
+        "description": "One source message.",
+        "required": [
+          "id",
+          "source"
+        ],
+        "properties": {
+          "context": {
+            "type": "string",
+            "description": "What tells this use of the text apart from another use of the same text."
+          },
+          "id": {
+            "type": "string",
+            "description": "[`message_id`] of `source` and `context`."
+          },
+          "source": {
+            "type": "string",
+            "description": "The text as written, in the contract's source language."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWidgetMessageText": {
+        "type": "object",
+        "description": "The wire form of a message: one member, `msg`, so no locale map can be read as one.",
+        "required": [
+          "msg"
+        ],
+        "properties": {
+          "msg": {
+            "$ref": "#/components/schemas/NornIrWidgetMessage",
+            "description": "The message."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrWidgetNativeProjection": {
         "type": "string",
         "description": "Host-native projections available to Widget UX.",
@@ -32960,7 +33053,7 @@
             "description": "Stable navigation item id."
           },
           "label": {
-            "$ref": "#/components/schemas/NornIrLocaleText",
+            "$ref": "#/components/schemas/NornIrWidgetText",
             "description": "Localized item label."
           },
           "requiredCapability": {
@@ -33092,7 +33185,7 @@
             ]
           },
           "value": {
-            "$ref": "#/components/schemas/NornIrLocaleText"
+            "$ref": "#/components/schemas/NornIrWidgetText"
           }
         },
         "additionalProperties": false
@@ -33556,7 +33649,7 @@
             ]
           },
           "label": {
-            "$ref": "#/components/schemas/NornIrLocaleText",
+            "$ref": "#/components/schemas/NornIrWidgetText",
             "description": "Localized heading."
           },
           "order": {
@@ -33678,6 +33771,19 @@
           "Done; the page has nothing left to do. No transition leaves it."
         ]
       },
+      "NornIrWidgetText": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/NornIrWidgetMessageText",
+            "description": "`{ \"msg\": { \"id\", \"source\", \"context\"? } }`."
+          },
+          {
+            "$ref": "#/components/schemas/NornIrLocaleText",
+            "description": "`{ \"<locale>\": \"<text>\", … }`."
+          }
+        ],
+        "description": "User-facing text in a Widget UX contract: a source message, or locale-keyed text.\n\nA message is shaped as GT shapes one (#1762): its source text, an optional context that tells\ntwo uses of one text apart, and a stable id, [`message_id`] of both. A host draws it through its\ntranslations, keyed by the id, and falls back to the source text. The checker refuses an id\nthat is not the hash of its text and context, so no id is hand-written or left stale."
+      },
       "NornIrWidgetTrust": {
         "type": "string",
         "description": "Where a catalog component stands on the trust ladder (UI-CATALOG-1).",
@@ -33731,6 +33837,13 @@
               "$ref": "#/components/schemas/NornIrWidgetCatalogEntry"
             },
             "description": "Catalog components this contract declares (UI-CATALOG-1): custom UI written in any\nframework, each with a typed props contract, declared events and its machine."
+          },
+          "contextReads": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWidgetContextRead"
+            },
+            "description": "Reads of one object whose type and key a page's context supplies (UI-CONTEXT-READ-1): a\npage that presents any object type, such as Studio's record page. A page machine reads\none as it reads a data binding; no property, field, form, filter or list names one, since\nno entity is bound to check them against, so only catalog islands draw it."
           },
           "dataBindings": {
             "type": "array",

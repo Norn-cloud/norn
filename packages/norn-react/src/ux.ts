@@ -7,24 +7,73 @@
  */
 import type { Machine, ValueType } from "./machine/machine.ts"
 
-/** Locale-keyed user-facing text. */
+/** Locale-keyed user-facing text, as older contracts carry it. */
 export type LocaleText = Readonly<Record<string, string>>
+
+/** A source message (UI-TEXT-1): its stable id, its source text and its optional context. */
+export interface Message { readonly msg: { readonly id: string; readonly source: string; readonly context?: string } }
+
+/** User-facing text: a source message, or locale-keyed text. */
+export type Text = Message | LocaleText
+
+/**
+ * A host's translations: the text of message `id` in `locale`, or `undefined` when it has none (the
+ * source text is drawn then). The translations themselves are the host's (a later checked artifact).
+ */
+export type Translate = (id: string, locale: string) => string | undefined
 
 export interface ArtifactRef { readonly id: string; readonly version: string }
 export interface PropertyRef { readonly bindingId: string; readonly propertyId: string }
 
+export type DismissalMethod = "visible_close" | "scrim" | "swipe" | "escape"
+
+export type FieldControl =
+  | "text"
+  | "text_area"
+  | "number"
+  | "date"
+  | "date_time"
+  | "checkbox"
+  | "select"
+  | "link"
+  | "display"
+
+export type FieldFormat =
+  | "text"
+  | "integer"
+  | "decimal"
+  | "currency"
+  | "percent"
+  | "date"
+  | "date_time"
+  | "boolean"
+  | "metric_buckets"
+
+export interface ExpressionInputs {
+  readonly recordBindingId?: string
+  readonly draftFormId?: string
+  readonly selectionBindingId?: string
+  readonly contextPageId?: string
+  readonly rowGridId?: string
+}
+
+export interface ZenCondition {
+  readonly expression: string
+  readonly inputs: ExpressionInputs
+}
+
 export type Component =
-  | { readonly kind: "section"; readonly section: { readonly sectionId: string; readonly kind: "section" | "tab"; readonly label: LocaleText; readonly fields: readonly PropertyRef[]; readonly order: number } }
+  | { readonly kind: "section"; readonly section: { readonly sectionId: string; readonly kind: "section" | "tab"; readonly label: Text; readonly fields: readonly PropertyRef[]; readonly order: number } }
   | { readonly kind: "list"; readonly dataBindingId: string; readonly fields: readonly PropertyRef[]; readonly selection: "none" | "single" | "multiple" }
   | { readonly kind: "detail"; readonly dataBindingId: string }
-  | { readonly kind: "dialog"; readonly bindingId?: string; readonly blocking: boolean; readonly dismissalMethods?: readonly string[] }
+  | { readonly kind: "dialog"; readonly bindingId?: string; readonly blocking: boolean; readonly dismissalMethods?: readonly DismissalMethod[] }
   | { readonly kind: "form"; readonly formId: string }
   | { readonly kind: "child_grid"; readonly formId: string }
   | { readonly kind: "field"; readonly fieldId: string }
   | { readonly kind: "action"; readonly placementId: string }
   | { readonly kind: "navigation"; readonly itemId: string }
   | { readonly kind: "catalog"; readonly entry: { readonly entryId: string; readonly widget?: ArtifactRef }; readonly props?: Readonly<Record<string, string>>; readonly heldIn?: readonly string[] }
-  | { readonly kind: "control"; readonly label: LocaleText; readonly input: "trigger" | "choice" | "text" }
+  | { readonly kind: "control"; readonly label: Text; readonly input: "trigger" | "choice" | "text" }
   | { readonly kind: "composition"; readonly widget: ArtifactRef; readonly pageId: string }
 
 export type ComponentKind = Component["kind"]
@@ -56,6 +105,9 @@ export type DataQuery =
 
 export interface DataBinding { readonly bindingId: string; readonly object: ArtifactRef; readonly query: DataQuery }
 
+/** A read of the object a page's context names (UI-CONTEXT-READ-1): its type and key are two of the page's parameters. */
+export interface ContextRead { readonly bindingId: string; readonly pageId: string; readonly typeParameterId: string; readonly keyParameterId: string }
+
 export interface ActionBinding {
   readonly bindingId: string
   readonly action: ArtifactRef
@@ -66,26 +118,71 @@ export interface ActionBinding {
 
 export type Severity = "safe" | "confirm" | "destructive" | "irreversible"
 
+export interface ActionConfirmation {
+  readonly severity: Severity
+  readonly strength: "none" | "click" | "typed"
+  readonly message?: Text
+  readonly phrase?: Text
+}
+
 export interface ActionPlacement {
   readonly placementId: string
   readonly bindingId: string
-  readonly label: LocaleText
-  readonly confirmation: { readonly severity: Severity; readonly strength: "none" | "click" | "typed"; readonly message?: LocaleText }
+  readonly label: Text
+  readonly confirmation: ActionConfirmation
 }
+
+export type FieldTarget =
+  | { readonly kind: "property"; readonly property: PropertyRef }
+  | { readonly kind: "form_input"; readonly formId: string; readonly inputName: string; readonly initial?: PropertyRef }
+  | { readonly kind: "parent_property"; readonly formId: string; readonly inputName: string; readonly propertyId: string }
+  | { readonly kind: "child_row_property"; readonly formId: string; readonly collectionId: string; readonly propertyId: string }
+  | { readonly kind: string; readonly property?: PropertyRef }
 
 export interface FieldPresentation {
   readonly fieldId: string
-  readonly target: { readonly kind: string; readonly property?: PropertyRef }
-  readonly label: LocaleText
+  readonly target: FieldTarget
+  readonly label: Text
+  readonly help?: Text
+  readonly control?: FieldControl
+  readonly format?: FieldFormat
+  readonly optionQueryBindingId?: string
+  readonly visibleWhen?: ZenCondition
+  readonly requiredWhen?: ZenCondition
+  readonly readOnlyWhen?: ZenCondition
 }
 
-export interface NavigationItem { readonly itemId: string; readonly label: LocaleText }
+export type FormMode = "create" | "edit" | "action_input"
+
+export interface VersionConflictBinding {
+  readonly property: PropertyRef
+  readonly inputName: string
+  readonly onConflict: "reject_and_retain_draft"
+}
+
+export interface FormSubmit {
+  readonly label: Text
+  readonly confirmation: ActionConfirmation
+  readonly handlers?: readonly unknown[]
+}
+
+export interface WidgetForm {
+  readonly formId: string
+  readonly mode: FormMode
+  readonly inputNames: readonly string[]
+  readonly dataBindingId?: string
+  readonly submitBindingId: string
+  readonly submit: FormSubmit
+  readonly versionConflictBinding?: VersionConflictBinding
+}
+
+export interface NavigationItem { readonly itemId: string; readonly label: Text }
 
 export type Trust = "native" | "contract_checked" | "opaque_island"
 
 export interface CatalogEntry {
   readonly entryId: string
-  readonly label: LocaleText
+  readonly label: Text
   readonly trust: Trust
   readonly framework?: string
   readonly props?: readonly { readonly fieldId: string; readonly type: ValueType; readonly required: boolean }[]
@@ -100,21 +197,38 @@ export interface WidgetUx {
   readonly dataBindings: readonly DataBinding[]
   readonly actionBindings: readonly ActionBinding[]
   readonly fields: readonly FieldPresentation[]
-  readonly forms: readonly unknown[]
+  readonly forms: readonly WidgetForm[]
   readonly actionPlacements: readonly ActionPlacement[]
   readonly navigationItems: readonly NavigationItem[]
   readonly overrides: readonly unknown[]
   readonly catalog?: readonly CatalogEntry[]
+  readonly contextReads?: readonly ContextRead[]
 }
 
 /** The entry prefix that names a UI SDK primitive at the catalog's pinned version. */
 export const UI_SDK_PREFIX = "ui-sdk:"
 
-/** The text of `label` in `locale`, else English, else any locale's. */
-export function text(label: LocaleText, locale: string): string {
-  if (Object.hasOwn(label, locale) && label[locale] !== undefined) return label[locale]
-  if (Object.hasOwn(label, "en") && label.en !== undefined) return label.en
-  return Object.values(label)[0] ?? ""
+/** Whether `label` is a source message: an own `msg` object holding a string `id` and `source`. */
+function isMessage(label: Text): label is Message {
+  if (!Object.hasOwn(label, "msg")) return false
+  const message = (label as { readonly msg?: unknown }).msg
+  if (typeof message !== "object" || message === null || Array.isArray(message)) return false
+  if (!Object.hasOwn(message, "id") || !Object.hasOwn(message, "source")) return false
+  const { id, source } = message as { readonly id?: unknown; readonly source?: unknown }
+  return typeof id === "string" && typeof source === "string"
+}
+
+/**
+ * The text of `label` in `locale`: a message through the host's translations (`translate`), else its
+ * source text; locale-keyed text in `locale`, else English, else any locale's. Only own keys are read,
+ * so a locale named like an `Object.prototype` member never resolves to it.
+ */
+export function text(label: Text, locale: string, translate?: Translate): string {
+  if (isMessage(label)) return translate?.(label.msg.id, locale) ?? label.msg.source
+  const locales = label as LocaleText
+  if (Object.hasOwn(locales, locale) && locales[locale] !== undefined) return locales[locale]
+  if (Object.hasOwn(locales, "en") && locales.en !== undefined) return locales.en
+  return Object.values(locales)[0] ?? ""
 }
 
 /** Every node of a tree, parents before children. */

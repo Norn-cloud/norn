@@ -1,0 +1,540 @@
+{
+  "artifactId": "norn.link.frappe-hrms.workforce",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "Frappe HRMS v16.60.0 to Norn Workforce Canon v0.2",
+  "namespace": "norn.ontology",
+  "payload": {
+    "correspondences": [
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.frappe.hrms.shift.type",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.shift.type",
+        "justification": "Frappe HRMS Shift Type maps cleanly onto Norn Workforce Canon `norn.hr.roster.shift.template`.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.roster.shift.template"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.frappe.hrms.shift.assignment",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.shift.assignment",
+        "justification": "Frappe HRMS Shift Assignment maps cleanly onto Norn Workforce Canon `norn.hr.shift.commitment`.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.shift.commitment"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8000,
+        "correspondenceId": "corr.frappe.hrms.attendance",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.attendance",
+        "justification": "Frappe HRMS Attendance records Present/Half Day/WFH shift attendance alongside Absent and On Leave rows with optional shift; canonical `norn.hr.attendance.event` is the worked-shift subset.",
+        "relation": "subsumes",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.attendance.event"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.employee.checkin",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.employee.checkin",
+        "justification": "Frappe HRMS Employee Checkin maps cleanly onto Norn Workforce Canon `norn.hr.attendance.checkin`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.attendance.checkin"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.frappe.hrms.attendance.request",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.attendance.request",
+        "justification": "Frappe HRMS Attendance Request maps cleanly onto Norn Workforce Canon `norn.hr.attendance.exception`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.attendance.exception"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.leave.type",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.leave.type",
+        "justification": "Frappe HRMS Leave Type maps cleanly onto Norn Workforce Canon `norn.hr.leave.type`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.leave.type"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.leave.policy",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.leave.policy",
+        "justification": "Frappe HRMS Leave Policy maps cleanly onto Norn Workforce Canon `norn.hr.leave.policy`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.leave.policy"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.leave.allocation",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.leave.allocation",
+        "justification": "Frappe HRMS Leave Allocation maps cleanly onto Norn Workforce Canon `norn.hr.leave.allocation`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.leave.allocation"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9500,
+        "correspondenceId": "corr.frappe.hrms.leave.ledger.entry",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.leave.ledger.entry",
+        "justification": "Frappe HRMS Leave Ledger Entry maps cleanly onto Norn Workforce Canon `norn.hr.leave.ledger.entry`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.leave.ledger.entry"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9500,
+        "correspondenceId": "corr.frappe.hrms.leave.application",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.leave.application",
+        "justification": "Frappe HRMS Leave Application maps cleanly onto Norn Workforce Canon `norn.hr.leave.request`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.leave.request"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.compensatory.leave.request",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.compensatory.leave.request",
+        "justification": "Frappe HRMS Compensatory Leave Request maps cleanly onto Norn Workforce Canon `norn.hr.leave.comp.off`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.leave.comp.off"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.leave.encashment",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.leave.encashment",
+        "justification": "Frappe HRMS Leave Encashment maps cleanly onto Norn Workforce Canon `norn.hr.leave.encashment`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.leave.encashment"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.salary.component",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.salary.component",
+        "justification": "Frappe HRMS Salary Component maps cleanly onto Norn Workforce Canon `norn.hr.payroll.component`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.payroll.component"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.salary.structure",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.salary.structure",
+        "justification": "Frappe HRMS Salary Structure maps cleanly onto Norn Workforce Canon `norn.hr.payroll.structure`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.payroll.structure"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.salary.structure.assignment",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.salary.structure.assignment",
+        "justification": "Frappe HRMS Salary Structure Assignment maps cleanly onto Norn Workforce Canon `norn.hr.payroll.assignment`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.payroll.assignment"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.payroll.entry",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.payroll.entry",
+        "justification": "Frappe HRMS Payroll Entry maps cleanly onto Norn Workforce Canon `norn.hr.payroll.run`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.payroll.run"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9500,
+        "correspondenceId": "corr.frappe.hrms.salary.slip",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.salary.slip",
+        "justification": "Frappe HRMS Salary Slip maps cleanly onto Norn Workforce Canon `norn.hr.payroll.payslip`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.payroll.payslip"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.additional.salary",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.additional.salary",
+        "justification": "Frappe HRMS Additional Salary maps cleanly onto Norn Workforce Canon `norn.hr.payroll.adjustment`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.payroll.adjustment"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.income.tax.slab",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.income.tax.slab",
+        "justification": "Frappe HRMS Income Tax Slab maps cleanly onto Norn Workforce Canon `norn.hr.statutory.tax.slab`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.statutory.tax.slab"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.gratuity",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.gratuity",
+        "justification": "Frappe HRMS Gratuity maps cleanly onto Norn Workforce Canon `norn.hr.statutory.gratuity`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.statutory.gratuity"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9500,
+        "correspondenceId": "corr.frappe.hrms.expense.claim",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.expense.claim",
+        "justification": "Frappe HRMS Expense Claim maps cleanly onto Norn Workforce Canon `norn.hr.expense.claim`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.expense.claim"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.employee.advance",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.employee.advance",
+        "justification": "Frappe HRMS Employee Advance maps cleanly onto Norn Workforce Canon `norn.hr.expense.advance`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.expense.advance"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.job.opening",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.job.opening",
+        "justification": "Frappe HRMS Job Opening maps cleanly onto Norn Workforce Canon `norn.hr.talent.job.opening`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.talent.job.opening"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.job.applicant",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.job.applicant",
+        "justification": "Frappe HRMS Job Applicant maps cleanly onto Norn Workforce Canon `norn.hr.talent.applicant`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.talent.applicant"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.interview",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.interview",
+        "justification": "Frappe HRMS Interview maps cleanly onto Norn Workforce Canon `norn.hr.talent.interview`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.talent.interview"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.job.offer",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.job.offer",
+        "justification": "Frappe HRMS Job Offer maps cleanly onto Norn Workforce Canon `norn.hr.talent.job.offer`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.talent.job.offer"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.employee.onboarding",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.employee.onboarding",
+        "justification": "Frappe HRMS Employee Onboarding maps cleanly onto Norn Workforce Canon `norn.hr.talent.onboarding`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.talent.onboarding"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.frappe.hrms.employee.transfer",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.employee.transfer",
+        "justification": "Frappe HRMS Employee Transfer maps cleanly onto Norn Workforce Canon `norn.hr.talent.employment.change`.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.talent.employment.change"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.frappe.hrms.employee.promotion",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.employee.promotion",
+        "justification": "Frappe HRMS Employee Promotion maps cleanly onto Norn Workforce Canon `norn.hr.talent.employment.change`.",
+        "relation": "subsumed_by",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.talent.employment.change"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.employee.separation",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.employee.separation",
+        "justification": "Frappe HRMS Employee Separation maps cleanly onto Norn Workforce Canon `norn.hr.talent.separation`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.talent.separation"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.appraisal",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.appraisal",
+        "justification": "Frappe HRMS Appraisal maps cleanly onto Norn Workforce Canon `norn.hr.performance.appraisal`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.performance.appraisal"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.goal",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.goal",
+        "justification": "Frappe HRMS Goal maps cleanly onto Norn Workforce Canon `norn.hr.performance.goal`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.performance.goal"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.training.event",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.training.event",
+        "justification": "Frappe HRMS Training Event maps cleanly onto Norn Workforce Canon `norn.hr.training.event`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.training.event"
+        ]
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "correspondenceId": "corr.frappe.hrms.training.result",
+        "evidenceRefs": [
+          "source.frappe-hrms"
+        ],
+        "fromTermId": "norn.frappe.hrms.training.result",
+        "justification": "Frappe HRMS Training Result maps cleanly onto Norn Workforce Canon `norn.hr.training.result`.",
+        "relation": "equivalent",
+        "reviewedAt": "2026-11-26T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "toTermIds": [
+          "norn.hr.training.result"
+        ]
+      }
+    ],
+    "fromPack": {
+      "packId": "norn.ontology-pack.frappe-hrms",
+      "version": "0.1.0"
+    },
+    "packId": "norn.link.frappe-hrms.workforce",
+    "packKind": "link",
+    "packVersion": "0.1",
+    "toPack": {
+      "packId": "norn.ontology-pack.workforce",
+      "version": "0.2.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/frappe-hrms/artifacts/norn.link.frappe-hrms.workforce.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

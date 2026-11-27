@@ -251,12 +251,27 @@ where
     fn supports_reference_reads(&self) -> bool {
         self.0.supports_reference_reads()
     }
+    fn supports_projected_read(
+        &self,
+        object_type: &norn_ir::ObjectTypeName,
+        properties: &[&str],
+    ) -> bool {
+        self.0.supports_projected_read(object_type, properties)
+    }
     fn load_reference(
         &self,
         key: &FactKey,
         max_bytes: u64,
     ) -> Result<Option<BoundedFact>, Self::Error> {
         self.0.load_reference(key, max_bytes)
+    }
+    fn load_projected(
+        &self,
+        key: &FactKey,
+        properties: &[&str],
+        max_bytes: u64,
+    ) -> Result<Option<BoundedFact>, Self::Error> {
+        self.0.load_projected(key, properties, max_bytes)
     }
     fn load_bounded(
         &self,

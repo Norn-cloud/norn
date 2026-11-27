@@ -13455,11 +13455,11 @@
       "properties": {
         "message": {
           "description": "Optional localized explanation of the action's consequences.",
-          "$ref": "#/$defs/LocaleText"
+          "$ref": "#/$defs/WidgetText"
         },
         "phrase": {
           "description": "Required localized phrase for typed confirmation; absent otherwise.",
-          "$ref": "#/$defs/LocaleText"
+          "$ref": "#/$defs/WidgetText"
         },
         "severity": {
           "description": "Impact if the action is executed.",
@@ -13539,7 +13539,7 @@
         },
         "label": {
           "description": "Localized text shown on the action control.",
-          "$ref": "#/$defs/LocaleText"
+          "$ref": "#/$defs/WidgetText"
         },
         "location": {
           "description": "Page location that hosts the action.",
@@ -13746,7 +13746,7 @@
         },
         "label": {
           "description": "Human-readable name.",
-          "$ref": "#/$defs/LocaleText"
+          "$ref": "#/$defs/WidgetText"
         },
         "machine": {
           "description": "The component's own interaction machine; an opaque island has none.",
@@ -13961,7 +13961,7 @@
             },
             "label": {
               "description": "Localized label used as the grid's accessible region and heading.",
-              "$ref": "#/$defs/LocaleText"
+              "$ref": "#/$defs/WidgetText"
             },
             "maxRows": {
               "description": "Maximum row count, checked against the owned collection declaration.",
@@ -14085,7 +14085,7 @@
               "const": "control"
             },
             "label": {
-              "$ref": "#/$defs/LocaleText"
+              "$ref": "#/$defs/WidgetText"
             }
           },
           "additionalProperties": false,
@@ -14175,6 +14175,35 @@
         "paramId",
         "type",
         "required"
+      ]
+    },
+    "WidgetContextRead": {
+      "description": "One read of the object a page's context names (UI-CONTEXT-READ-1): its type and its key are\ntwo required text parameters of one page, so the page serves every object type the cell\nserves. The cell decides the read; the checker has no entity to check its values against, so\nnothing but a catalog island draws it, and the island draws them as the cell projected them.",
+      "type": "object",
+      "properties": {
+        "bindingId": {
+          "description": "Stable binding id, unique among data bindings and context reads.",
+          "type": "string"
+        },
+        "keyParameterId": {
+          "description": "The required text parameter holding the object's key.",
+          "type": "string"
+        },
+        "pageId": {
+          "description": "The page whose context names the object, and whose machine reads it.",
+          "type": "string"
+        },
+        "typeParameterId": {
+          "description": "The required text parameter holding the object type.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "bindingId",
+        "pageId",
+        "typeParameterId",
+        "keyParameterId"
       ]
     },
     "WidgetControlInput": {
@@ -14650,11 +14679,11 @@
         },
         "help": {
           "description": "Optional localized help text.",
-          "$ref": "#/$defs/LocaleText"
+          "$ref": "#/$defs/WidgetText"
         },
         "label": {
           "description": "Localized visible label.",
-          "$ref": "#/$defs/LocaleText"
+          "$ref": "#/$defs/WidgetText"
         },
         "optionQueryBindingId": {
           "description": "Data binding that supplies options for a select or link control.",
@@ -15005,7 +15034,7 @@
         },
         "label": {
           "description": "Localized submit label.",
-          "$ref": "#/$defs/LocaleText"
+          "$ref": "#/$defs/WidgetText"
         }
       },
       "additionalProperties": false,
@@ -15535,6 +15564,43 @@
         "target"
       ]
     },
+    "WidgetMessage": {
+      "description": "One source message.",
+      "type": "object",
+      "properties": {
+        "context": {
+          "description": "What tells this use of the text apart from another use of the same text.",
+          "type": "string"
+        },
+        "id": {
+          "description": "[`message_id`] of `source` and `context`.",
+          "type": "string"
+        },
+        "source": {
+          "description": "The text as written, in the contract's source language.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source"
+      ]
+    },
+    "WidgetMessageText": {
+      "description": "The wire form of a message: one member, `msg`, so no locale map can be read as one.",
+      "type": "object",
+      "properties": {
+        "msg": {
+          "description": "The message.",
+          "$ref": "#/$defs/WidgetMessage"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "msg"
+      ]
+    },
     "WidgetNativeProjection": {
       "description": "Host-native projections available to Widget UX.",
       "oneOf": [
@@ -15649,7 +15715,7 @@
         },
         "label": {
           "description": "Localized item label.",
-          "$ref": "#/$defs/LocaleText"
+          "$ref": "#/$defs/WidgetText"
         },
         "requiredCapability": {
           "description": "Capability required to show or follow the item; never a grant.",
@@ -15769,7 +15835,7 @@
               "const": "label"
             },
             "value": {
-              "$ref": "#/$defs/LocaleText"
+              "$ref": "#/$defs/WidgetText"
             }
           },
           "additionalProperties": false,
@@ -16209,7 +16275,7 @@
         },
         "label": {
           "description": "Localized heading.",
-          "$ref": "#/$defs/LocaleText"
+          "$ref": "#/$defs/WidgetText"
         },
         "order": {
           "description": "Order among sibling sections.",
@@ -16344,6 +16410,19 @@
         }
       ]
     },
+    "WidgetText": {
+      "description": "User-facing text in a Widget UX contract: a source message, or locale-keyed text.\n\nA message is shaped as GT shapes one (#1762): its source text, an optional context that tells\ntwo uses of one text apart, and a stable id, [`message_id`] of both. A host draws it through its\ntranslations, keyed by the id, and falls back to the source text. The checker refuses an id\nthat is not the hash of its text and context, so no id is hand-written or left stale.",
+      "anyOf": [
+        {
+          "description": "`{ \"msg\": { \"id\", \"source\", \"context\"? } }`.",
+          "$ref": "#/$defs/WidgetMessageText"
+        },
+        {
+          "description": "`{ \"<locale>\": \"<text>\", … }`.",
+          "$ref": "#/$defs/LocaleText"
+        }
+      ]
+    },
     "WidgetTrust": {
       "description": "Where a catalog component stands on the trust ladder (UI-CATALOG-1).",
       "oneOf": [
@@ -16391,6 +16470,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/WidgetCatalogEntry"
+          }
+        },
+        "contextReads": {
+          "description": "Reads of one object whose type and key a page's context supplies (UI-CONTEXT-READ-1): a\npage that presents any object type, such as Studio's record page. A page machine reads\none as it reads a data binding; no property, field, form, filter or list names one, since\nno entity is bound to check them against, so only catalog islands draw it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetContextRead"
           }
         },
         "dataBindings": {

@@ -156,6 +156,42 @@ withEngine("driver", () => {
   })
 })
 
+// A cancel settles without the engine: neither path below evaluates an expression.
+const noEngine: Evaluate = () => {
+  throw new Error("this path evaluates nothing")
+}
+
+describe("driver cancels", () => {
+  // The same page with its call made a read: a read cancelled after it answered is stale.
+  const reading = JSON.parse(JSON.stringify(machine).replaceAll('{"kind":"action","bindingId":"approve"}', '{"kind":"read","bindingId":"approve"}')) as Machine
+
+  test("a read cancelled after it answered tells the host it was cancelled, never the stale answer", async () => {
+    const heard: Classified[] = []
+    const { transport, calls } = manualTransport()
+    const driver = createDriver({ machine: reading, evaluate: noEngine, transport, clock: manualClock(), onAnswer: (_, answer) => { heard.push(answer) } })
+    driver.dispatch({ kind: "user", eventId: "approve" })
+    calls[0]?.resolve({ outcome: "accepted", payload: {}, body: { stale: true } } as Classified)
+    driver.dispatch({ kind: "user", eventId: "cancel" })
+    await settle()
+    expect(heard).toEqual([{ outcome: "cancelled", payload: {} }])
+    expect(driver.snapshot().stateId).toBe("browsing")
+    driver.dispose()
+  })
+
+  test("an action cancelled after it answered keeps the server's answer", async () => {
+    const heard: Classified[] = []
+    const { transport, calls } = manualTransport()
+    const driver = createDriver({ machine, evaluate: noEngine, transport, clock: manualClock(), onAnswer: (_, answer) => { heard.push(answer) } })
+    driver.dispatch({ kind: "user", eventId: "approve" })
+    calls[0]?.resolve({ outcome: "accepted", payload: {} })
+    driver.dispatch({ kind: "user", eventId: "cancel" })
+    await settle()
+    expect(heard).toEqual([{ outcome: "accepted", payload: {} }])
+    expect(driver.snapshot().stateId).toBe("browsing")
+    driver.dispose()
+  })
+})
+
 describe("classifyResponse", () => {
   test("reads only what the server said", () => {
     expect(classifyResponse(200, { outcome: "committed" }).outcome).toBe("accepted")

@@ -1,4 +1,4 @@
-import { useQueries, useQuery } from "@tanstack/react-query"
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { CalendarRange, ChartLine, Clock, Database, ListTree, Plus, Rows3, Sigma, X } from "lucide-react"
@@ -27,8 +27,8 @@ import { RestatementCard } from "./restatement.tsx"
 
 import { AnswerView, AskedAnswer, RefusedNote } from "./answer-view.tsx"
 import { useStudioScope, type StudioScope } from "./lib/definitions.ts"
-import { useMode } from "./lib/live-transport.ts"
-import { metricHeading, metricQuestion, readMetrics, recentWindow, timeLabel, windowOf, type Condition, type MetricSummary } from "./lib/metrics.ts"
+import { retryWorkspace, useMode } from "./lib/live-transport.ts"
+import { metricHeading, metricQuestion, readMetrics, recentWindow, timeLabel, windowOf, type CellMetric, type Condition, type MetricSummary } from "./lib/metrics.ts"
 import { figure, unitGroups, type UnitGroup } from "./lib/answer-anatomy.ts"
 import { evaluateQuestion } from "./lib/evaluate.ts"
 import { readDocument } from "./lib/exact.ts"
@@ -241,7 +241,7 @@ function LiveQuestionsBoard() {
       skeleton="cards"
       loadingLabel="Reading metrics"
       notServed={{ icon: ChartLine, title: "Not served" }}
-      isEmpty={(data) => data.document.metrics.length === 0}
+      isEmpty={(data) => data.document.metrics.length === 0 && data.document.combined.length === 0}
       empty={{
         icon: ChartLine,
         title: "No metrics yet",
@@ -252,9 +252,33 @@ function LiveQuestionsBoard() {
       {(data) => {
         const list = data.document.metrics
         const types = [...new Set(list.map(({ objectType }) => objectType))]
-        return <TypeSections types={types} list={list} scope={boundScope} />
+        return <>
+          <TypeSections types={types} list={list} scope={boundScope} />
+          <CombinedMetrics list={data.document.combined} />
+        </>
       }}
     </LoadState>
+  )
+}
+
+/** The metrics the cell lists over no single type (they combine others): named, never asked as if they had one. */
+function CombinedMetrics({ list }: { readonly list: readonly CellMetric[] }) {
+  const { view } = useView()
+  if (list.length === 0) return null
+  return (
+    <Panel icon={Sigma} label="Combined metrics">
+      <Well className="p-1.5">
+        <ul className="divide-y divide-border/70" data-combined-metrics>
+          {list.map((metric) => (
+            <li key={metric.name} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-2.5 py-2 text-body">
+              <span>{metricHeading(metric, "period", view)}</span>
+              {view === "technical" && <span className="font-mono text-meta text-muted-foreground">{metric.name}</span>}
+            </li>
+          ))}
+        </ul>
+        <p className="px-2.5 pt-1 pb-1.5 text-meta text-muted-foreground">Each combines other metrics, so it is asked from a question or a dashboard tile, not on its own here.</p>
+      </Well>
+    </Panel>
   )
 }
 
@@ -346,6 +370,7 @@ export function QuestionPage() {
 }
 
 export function QuestionsPage() {
+  const queries = useQueryClient()
   const mode = useMode()
   const live = mode.data?.kind === "live"
   const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard, enabled: mode.data?.kind === "recorded" })
@@ -354,7 +379,7 @@ export function QuestionsPage() {
       <PageHeader title="Metrics" description="The numbers your records add up to, answered exactly by the cell. Every number opens to the records behind it."
         primary={<Button asChild><Link to="/metrics/new"><Plus />Explore a metric</Link></Button>}
         secondary={[{ label: "Build step by step", icon: ListTree, to: "/metrics/build" }]} />
-      {mode.isPending && <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={() => void mode.refetch()}>{() => null}</LoadState>}
+      {mode.isPending && <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={() => void retryWorkspace(queries)}>{() => null}</LoadState>}
       {mode.isError && <WorkspaceUnavailable error={mode.error} />}
       {live ? <LiveQuestionsBoard /> : mode.data && (
         <LoadState
