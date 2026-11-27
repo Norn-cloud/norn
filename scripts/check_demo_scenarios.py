@@ -67,20 +67,45 @@ def unique_object(pairs):
     return result
 
 
-def main():
-    """List every configured drop through nextest and check its frozen inventory."""
-    config = tomllib.loads((ROOT / ".config/nextest.toml").read_text())
+BUILD_TIMEOUT_SECONDS = 1800
+LIST_TIMEOUT_SECONDS = 300
+
+
+def build_workspace_tests(root=ROOT, runner=subprocess.run):
+    """Compile every workspace test target once before listing drop profiles."""
+    runner(
+        ["cargo", "nextest", "run", "--no-run", "--locked", "--workspace", "--all-targets"],
+        cwd=root,
+        check=True,
+        timeout=BUILD_TIMEOUT_SECONDS,
+    )
+
+
+def list_profile_scenarios(profile, root=ROOT, check_output=subprocess.check_output):
+    """List one drop profile's nextest selection as parsed JSON."""
+    raw = check_output(
+        [
+            "cargo", "nextest", "list", "--locked", "--workspace", "--all-targets",
+            "--profile", profile, "--message-format", "json",
+        ],
+        cwd=root,
+        text=True,
+        timeout=LIST_TIMEOUT_SECONDS,
+    )
+    return json.loads(raw, object_pairs_hook=unique_object)
+
+
+def main(root=ROOT, build_runner=subprocess.run, list_runner=subprocess.check_output):
+    """Build once, then list every configured drop through nextest and check its frozen inventory."""
+    config = tomllib.loads((root / ".config/nextest.toml").read_text())
     profiles = {name for name in config["profile"] if name.startswith("drop-")}
     if not profiles:
         raise ValueError("no drop-* profiles declared")
-    data = json.loads((ROOT / ".config/drop-scenarios.json").read_text(), object_pairs_hook=unique_object)
+    data = json.loads((root / ".config/drop-scenarios.json").read_text(), object_pairs_hook=unique_object)
     required = required_scenarios(data, profiles)
+    build_workspace_tests(root=root, runner=build_runner)
     for profile in sorted(profiles):
-        raw = subprocess.check_output([
-            "cargo", "nextest", "list", "--locked", "--workspace", "--all-targets",
-            "--profile", profile, "--message-format", "json",
-        ], cwd=ROOT, text=True, timeout=300)
-        check_profile(profile, required[profile], json.loads(raw, object_pairs_hook=unique_object))
+        check_profile(profile, required[profile], list_profile_scenarios(profile, root=root, check_output=list_runner))
         print(f"{profile}: exactly {len(required[profile])} required scenarios selected", flush=True)
 
 

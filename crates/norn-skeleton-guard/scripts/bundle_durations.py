@@ -46,11 +46,13 @@ TASK = r"((?:test|phase)/[a-z0-9-]+)"
 STAMP = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?Z (.*)$")
 GROUP = re.compile(rf"^(?:##\[group\]|::group::){TASK}$")
 NOTICE = re.compile(rf"^(?:##\[notice\]|::notice::)task={TASK} result=success seconds=(\d+)$")
+PRUNED = re.compile(rf"^(?:##\[notice\]|::notice::)pruned target before {TASK};")
 TEST_BUILT = re.compile(r"^\s*Finished `test` profile ")
 WASM_BUILT = re.compile(r"^@norn/checker-wasm \S+ size report ")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 WASM_FIRST = ("phase/browser", "phase/integration-wasm")
 WASM_AFTER_NATIVE = ("phase/integration-authoring",)
+TEST_AFTER_PREREQ = ("phase/guards",)
 
 
 def gh(*args: str) -> str:
@@ -71,9 +73,9 @@ def bundle_logs(run: int) -> list[str]:
     return [gh("api", "--allow-escape-sequences", f"repos/{REPO}/actions/jobs/{job}/logs") for job in ids]
 
 
-def parse(log: str) -> list[tuple[str, int, list[tuple[float, str]]]]:
-    """The tasks of one bundle log: (task, seconds, timestamped lines from its start)."""
-    tasks, current = [], None
+def parse_bundle(log: str) -> list[tuple[str, int, list[tuple[float, str]], bool]]:
+    """The tasks of one bundle log: (task, seconds, timestamped lines, pruned_before)."""
+    tasks, current, pruned_before = [], None, None
     for raw in log.splitlines():
         match = STAMP.match(ANSI.sub("", raw))
         if not match:
@@ -81,16 +83,24 @@ def parse(log: str) -> list[tuple[str, int, list[tuple[float, str]]]]:
         # The runner stamps every line in UTC (`Z`), whatever the reader's local zone.
         seconds = datetime.fromisoformat(f"{match[1]}+00:00").timestamp() + float(f"0.{match[2] or 0}")
         line = match[3]
-        if group := GROUP.match(line):
-            current = (group[1], [(seconds, line)])
+        if pruned := PRUNED.match(line):
+            pruned_before = pruned[1]
+        elif group := GROUP.match(line):
+            current = (group[1], [(seconds, line)], pruned_before == group[1])
+            pruned_before = None
         elif notice := NOTICE.match(line):
             if current is None or current[0] != notice[1]:
                 sys.exit(f"task {notice[1]} ended without starting")
-            tasks.append((notice[1], int(notice[2]), current[1]))
+            tasks.append((notice[1], int(notice[2]), current[1], current[2]))
             current = None
         elif current is not None:
             current[1].append((seconds, line))
     return tasks
+
+
+def parse(log: str) -> list[tuple[str, int, list[tuple[float, str]]]]:
+    """The tasks of one bundle log: (task, seconds, timestamped lines from its start)."""
+    return [(task, seconds, lines) for task, seconds, lines, _ in parse_bundle(log)]
 
 
 def elapsed(lines: list[tuple[float, str]], pattern: re.Pattern[str]) -> float | None:
@@ -100,19 +110,28 @@ def elapsed(lines: list[tuple[float, str]], pattern: re.Pattern[str]) -> float |
 
 def table(runs: list[int]) -> dict[str, object]:
     net: dict[str, list[float]] = {}
-    cold_tests, warm_rebuilds, wasm_builds, after_native = [], [], [], []
+    cold_tests, warm_rebuilds, guards_cold, wasm_builds, after_native = [], [], [], [], []
     for run in runs:
         for log in bundle_logs(run):
-            # bundle.rs runs a bundle's WASM-package tasks back to back without pruning, so
-            # only the first builds the package; the rest reuse it.
+            # bundle.rs runs a bundle's Test-group and WASM-package tasks back to back without
+            # pruning, so only the first of each group builds its shared artifacts; the rest reuse
+            # them.
             previous, wasm_built = None, False
-            for task, seconds, lines in parse(log):
+            for task, seconds, lines, pruned in parse_bundle(log):
+                if pruned:
+                    previous = None
+                    wasm_built = False
                 own = float(seconds)
-                tests = task.startswith("test/") or task == "phase/test-shards"
+                tests = task.startswith("test/") or task in {"phase/test-shards", "phase/guards"}
                 first, previous = tests and not previous, tests
                 if first:
-                    # Charged below, once the shared part of its build is known.
-                    cold_tests.append((task, own, elapsed(lines, TEST_BUILT) or 0.0))
+                    if task in TEST_AFTER_PREREQ:
+                        # phase/guards runs fast checks before compiling workspace tests, so net
+                        # it against the median shared workspace test build below.
+                        guards_cold.append((task, own))
+                    else:
+                        # Charged below, once the shared part of its build is known.
+                        cold_tests.append((task, own, elapsed(lines, TEST_BUILT) or 0.0))
                     continue
                 if task.startswith("test/"):
                     warm_rebuilds.append(elapsed(lines, TEST_BUILT) or 0.0)
@@ -133,6 +152,9 @@ def table(runs: list[int]) -> dict[str, object]:
     test_builds = [max(0.0, build - rebuild) for _, _, build in cold_tests]
     for task, own, build in cold_tests:
         net.setdefault(task, []).append(own - max(0.0, build - rebuild))
+    test_build = statistics.median(test_builds)
+    for task, own in guards_cold:
+        net.setdefault(task, []).append(max(0.0, own - test_build))
     wasm = statistics.median(wasm_builds)
     for task, own in after_native:
         net.setdefault(task, []).append(own - wasm)
@@ -143,7 +165,7 @@ def table(runs: list[int]) -> dict[str, object]:
         "generated_by": "crates/norn-skeleton-guard/scripts/bundle_durations.py",
         "runs": runs,
         "statistic": "median",
-        "test_build_seconds": round(statistics.median(test_builds)),
+        "test_build_seconds": round(test_build),
         "wasm_pkg_seconds": round(wasm),
         "task_seconds": {task: max(1, round(statistics.median(samples))) for task, samples in sorted(net.items())},
     }
