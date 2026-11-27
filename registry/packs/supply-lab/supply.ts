@@ -213,18 +213,39 @@ export const MovementNegativeAdjustmentHolds = Norn.example("a negative adjustme
 
 // ---------------------------------------------------------------- purchasing
 
+const OrderStatus = Schema.Literals(["draft", "submitted", "partially_received", "fulfilled", "cancelled"])
+
+/**
+ * Shared order-commitment lifecycle contract (`INTERFACE-LIFECYCLE-1` + `INTERFACE-DISJOINT-1`):
+ * an order commitment is never a stock snapshot (`CountEvidence`) or a delivery receipt (`ReceiptEvidence`).
+ */
+export const OrderLifecycle = Norn.interfaceType({
+  name: "supply.OrderLifecycle", title: "Order commitment lifecycle", version: "0.1.0",
+  label: { en: "Order lifecycle", ar: "دورة حياة الطلب" },
+  needsReview: ["ar"],
+  disjointWith: [CountEvidence],
+  properties: Schema.Struct({ status: OrderStatus }),
+  lifecycles: [{ property: "status", initial: ["draft"], terminal: ["fulfilled", "cancelled"], immutable: ["fulfilled", "cancelled"], endings: { fulfilled: "completed", cancelled: "cancelled" }, transitions: [
+    { id: "submit", from: ["draft"], to: "submitted" },
+    { id: "receive_partial", from: ["submitted"], to: "partially_received" },
+    { id: "fulfil", from: ["submitted", "partially_received"], to: "fulfilled" },
+    { id: "cancel", from: ["draft", "submitted"], to: "cancelled" },
+  ] }],
+})
+
 const PurchaseOrderProps = Schema.Struct({
   po_id: Schema.String,
   supplier_id: Schema.String, // the canonical supplier code (ERP vendor codes map onto it)
   promised_at: Norn.timestamp("utc"),
   currency: Schema.Literals(["EGP", "USD", "EUR"]),
   created_by: Schema.String,
-  status: Schema.Literals(["draft", "submitted", "partially_received", "fulfilled", "cancelled"]),
+  status: OrderStatus,
 })
 
 export const PurchaseOrder = Norn.type({
   name: "supply.PurchaseOrder", title: "Purchase order", version: "0.1.0",
   label: { en: "Purchase order", ar: "أمر شراء" },
+  implements: [OrderLifecycle],
   properties: PurchaseOrderProps,
   valueLabels: { status: {
     draft: { en: "Draft", ar: "مسودة" }, submitted: { en: "Submitted", ar: "مُرسل" },
@@ -305,6 +326,7 @@ const ReceiptFacts = Schema.Struct({
 export const ReceiptEvidence = Norn.interfaceType({
   name: "supply.ReceiptEvidence", title: "Receipt evidence", version: "0.1.0",
   label: { en: "Receipt", ar: "استلام" },
+  disjointWith: [CountEvidence, OrderLifecycle],
   properties: ReceiptFacts,
 })
 
