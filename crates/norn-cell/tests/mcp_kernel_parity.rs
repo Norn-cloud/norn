@@ -7,7 +7,10 @@
 
 use std::collections::BTreeSet;
 
-use norn_ir::{ActionInputDerivation, ActionRoot, JsonObject, JsonValue, ZenExpression};
+use norn_ir::{
+    ActionInputDerivation, ActionRoot, Decimal, JsonObject, JsonValue, RuntimeObject, RuntimeValue,
+    ZenExpression,
+};
 use norn_kernel::{ActionRefusal, actor_derived_fields, prepare_action_input_for_call};
 use norn_projections::mcp::{action_tool, action_tool_with_server_filled};
 use proptest::prelude::*;
@@ -56,7 +59,6 @@ enum DecimalShape {
     Scalar,
     NullableArray,
     NullableArrayNullFirst,
-    AnyOfNullable,
 }
 
 impl DecimalShape {
@@ -69,12 +71,13 @@ impl DecimalShape {
             Self::NullableArrayNullFirst => {
                 json!({"type": ["null", "number"], "nornType": {"kind": "decimal", "scale": 2}})
             }
-            Self::AnyOfNullable => json!({
-                "anyOf": [
-                    {"type": "number", "nornType": {"kind": "decimal", "scale": 2}},
-                    {"type": "null"}
-                ]
-            }),
+        }
+    }
+
+    const fn allows_null(self) -> bool {
+        match self {
+            Self::Scalar => false,
+            Self::NullableArray | Self::NullableArrayNullFirst => true,
         }
     }
 }
@@ -111,7 +114,6 @@ fn decimal_shape_strategy() -> impl Strategy<Value = DecimalShape> {
         Just(DecimalShape::Scalar),
         Just(DecimalShape::NullableArray),
         Just(DecimalShape::NullableArrayNullFirst),
-        Just(DecimalShape::AnyOfNullable),
     ]
 }
 
@@ -209,6 +211,68 @@ fn schema_keys(schema: &JsonObject) -> (BTreeSet<String>, BTreeSet<String>) {
     (props, required)
 }
 
+fn check_decimal_wire_parity(
+    action: &ActionRoot,
+    base_valid: &RuntimeObject,
+    decimal_shape: DecimalShape,
+) -> Result<(), TestCaseError> {
+    let mut with_string = base_valid.clone();
+    with_string.insert(
+        "amount".to_owned(),
+        RuntimeValue::String("12.34".to_owned()),
+    );
+    let prepared_str = prepare_action_input_for_call::<()>(
+        action,
+        &with_string,
+        "test.action",
+        "0.1.0",
+        "user:alice",
+    );
+    prop_assert!(
+        prepared_str.is_ok(),
+        "kernel rejected MCP wire decimal string: {prepared_str:?}"
+    );
+
+    let mut with_raw_number = base_valid.clone();
+    let Ok(raw_decimal) = Decimal::parse_wire("12.34") else {
+        return Err(TestCaseError::fail("constant decimal literal must parse"));
+    };
+    with_raw_number.insert("amount".to_owned(), RuntimeValue::Number(raw_decimal));
+    let prepared_num = prepare_action_input_for_call::<()>(
+        action,
+        &with_raw_number,
+        "test.action",
+        "0.1.0",
+        "user:alice",
+    );
+    prop_assert!(
+        matches!(prepared_num, Err(ActionRefusal::InvalidInput { .. })),
+        "kernel accepted raw JSON number for decimal input"
+    );
+
+    let mut with_null = base_valid.clone();
+    with_null.insert("amount".to_owned(), RuntimeValue::Null);
+    let prepared_null = prepare_action_input_for_call::<()>(
+        action,
+        &with_null,
+        "test.action",
+        "0.1.0",
+        "user:alice",
+    );
+    if decimal_shape.allows_null() {
+        prop_assert!(
+            prepared_null.is_ok(),
+            "kernel rejected null for nullable decimal schema: {prepared_null:?}"
+        );
+    } else {
+        prop_assert!(
+            matches!(prepared_null, Err(ActionRefusal::InvalidInput { .. })),
+            "kernel accepted null for non-nullable scalar decimal schema"
+        );
+    }
+    Ok(())
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(96))]
 
@@ -220,8 +284,9 @@ proptest! {
     ) {
         let action = build_action(required_mask, &steps, decimal_shape);
         let actor_fields = actor_derived_fields(&action);
-        let tool = action_tool_with_server_filled(&action, &actor_fields)
-            .expect("object action schema always projects");
+        let Ok(tool) = action_tool_with_server_filled(&action, &actor_fields) else {
+            return Err(TestCaseError::fail("object action schema must project"));
+        };
         let (projected_props, projected_required) = schema_keys(&tool.input_schema);
 
         // 1. No raw JSON number survives on any decimal schema node.
@@ -234,7 +299,9 @@ proptest! {
         //    the kernel's fail-closed `actor_derived_fields` set).
         let has_malformed = steps.iter().any(|(_, kind, _)| kind.is_malformed());
         if !has_malformed {
-            let standalone = action_tool(&action).expect("standalone projection succeeds");
+            let Ok(standalone) = action_tool(&action) else {
+                return Err(TestCaseError::fail("standalone projection must succeed"));
+            };
             prop_assert_eq!(&standalone.input_schema, &tool.input_schema);
         }
 
@@ -243,8 +310,8 @@ proptest! {
         for field in &actor_fields {
             prop_assert!(!projected_props.contains(field));
             prop_assert!(!projected_required.contains(field));
-            let mut spoofed = JsonObject::new();
-            spoofed.insert(field.clone(), JsonValue::String("spoof".to_owned()));
+            let mut spoofed = RuntimeObject::new();
+            spoofed.insert(field.clone(), RuntimeValue::String("spoof".to_owned()));
             let result = prepare_action_input_for_call::<()>(
                 &action,
                 &spoofed,
@@ -270,10 +337,10 @@ proptest! {
             .collect();
         for field in &required_non_actor {
             prop_assert!(projected_required.contains(field));
-            let mut missing = JsonObject::new();
+            let mut missing = RuntimeObject::new();
             for req in &projected_required {
                 if req != field {
-                    missing.insert(req.clone(), JsonValue::String(" ok ".to_owned()));
+                    missing.insert(req.clone(), RuntimeValue::String(" ok ".to_owned()));
                 }
             }
             let result = prepare_action_input_for_call::<()>(
@@ -286,9 +353,11 @@ proptest! {
             prop_assert!(matches!(result, Err(ActionRefusal::InvalidInput { .. })));
         }
 
-        // 5. Positive parity: on well-formed ZEN without contradictory
-        //    actor-derived + input_required=true steps on the same field,
-        //    supplying exactly `projected_required` succeeds in the kernel.
+        // 5. Positive parity + decimal wire parity: on evaluable ZEN without
+        //    contradictory actor-derived + input_required=true steps on the
+        //    same field, supplying `projected_required` succeeds and `amount`
+        //    accepts wire strings (and null iff the schema is nullable) while
+        //    refusing raw JSON numbers.
         let has_rejected_eval = steps
             .iter()
             .any(|(_, kind, _)| kind.is_rejected_at_eval());
@@ -300,9 +369,9 @@ proptest! {
             .iter()
             .any(|(_, kind, req)| !req && matches!(kind, ExprKind::TrimInput));
         if !has_rejected_eval && !has_contradiction && !has_unfilled_optional_trim {
-            let mut valid = JsonObject::new();
+            let mut valid = RuntimeObject::new();
             for req in &projected_required {
-                valid.insert(req.clone(), JsonValue::String(" ok ".to_owned()));
+                valid.insert(req.clone(), RuntimeValue::String(" ok ".to_owned()));
             }
             let prepared = prepare_action_input_for_call::<()>(
                 &action,
@@ -315,6 +384,7 @@ proptest! {
                 prepared.is_ok(),
                 "supplying MCP required keys failed kernel preparation: {prepared:?}"
             );
+            check_decimal_wire_parity(&action, &valid, decimal_shape)?;
         }
     }
 }

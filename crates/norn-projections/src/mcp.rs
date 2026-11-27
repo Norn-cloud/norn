@@ -356,7 +356,8 @@ fn expression_reads_root_ident(expression: &str, target: &str) -> bool {
             }
             prev_dot = false;
         } else if ch == '$' {
-            if !prev_dot {
+            // `${...}` is a template interpolation opener, not ZEN's whole-environment `$`.
+            if !prev_dot && chars.peek() != Some(&'{') {
                 return true;
             }
             prev_dot = false;

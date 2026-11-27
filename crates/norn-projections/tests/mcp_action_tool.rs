@@ -582,9 +582,11 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
             "owner": {"type": "string"},
             "root_actor": {"type": "string"},
             "root_input": {"type": "string"},
+            "greeting": {"type": "string"},
+            "actor_greeting": {"type": "string"},
             "extra_secret": {"type": "string"}
         },
-        "required": ["code", "owner", "root_actor", "root_input", "extra_secret"]
+        "required": ["code", "owner", "root_actor", "root_input", "greeting", "actor_greeting", "extra_secret"]
     }))
     .expect("schema decodes");
     action.derive = serde_json::from_value(json!([
@@ -592,7 +594,9 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
         {"field": "code", "expression": "input.code ?? 'FALLBACK'", "inputRequired": false},
         {"field": "owner", "expression": "input.owner ?? actor.subjectId", "inputRequired": false},
         {"field": "root_actor", "expression": "$.actor.subjectId", "inputRequired": false},
-        {"field": "root_input", "expression": "$.input.root_input ?? 'DEFAULT'", "inputRequired": false}
+        {"field": "root_input", "expression": "$.input.root_input ?? 'DEFAULT'", "inputRequired": false},
+        {"field": "greeting", "expression": "`Hello ${input.greeting}`", "inputRequired": false},
+        {"field": "actor_greeting", "expression": "`Hello ${actor.subjectId}`", "inputRequired": false}
     ]))
     .expect("derivations decode");
 
@@ -614,6 +618,14 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
     assert!(
         schema["properties"].get("root_input").is_none(),
         "$ whole-environment root fails closed as server-filled, matching kernel actor_derived_fields"
+    );
+    assert!(
+        schema["properties"]["greeting"]["anyOf"].is_array(),
+        "template interpolation `${input.greeting}` must not be misread as whole-environment `$`"
+    );
+    assert!(
+        schema["properties"].get("actor_greeting").is_none(),
+        "template interpolation `${actor.subjectId}` is still detected as an actor read"
     );
     assert!(
         schema["properties"].get("extra_secret").is_none(),
