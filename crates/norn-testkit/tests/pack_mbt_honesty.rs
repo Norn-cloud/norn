@@ -43,7 +43,9 @@ use norn_testkit::cell_host::MemoryCell;
 use norn_testkit::pack_mbt::coverage::{DomainCoverage, ObservedPdpAuthorizer, PolicyRuleTarget};
 use norn_testkit::pack_mbt::driver::run_pack_mbt;
 use norn_testkit::pack_mbt::dst::{PackDstConfig, run_pack_dst};
-use norn_testkit::pack_mbt::static_gaps::{StructuralGap, analyze_static_gaps};
+use norn_testkit::pack_mbt::static_gaps::{
+    StructuralGap, VerifiedFinancialReversal, analyze_static_gaps,
+};
 use norn_testkit::pack_mbt::{AdmittedPack, EvidenceLevel, PackHost};
 use norn_testkit::proptest::prelude::*;
 use serde_json::{Value, json};
@@ -447,9 +449,134 @@ fn static_gaps_accepts_linked_financial_reversal_compensation() -> Result<(), St
             }),
         ],
     )?;
+    let report = analyze_static_gaps(&pack);
     assert!(
-        !has_missing_financial_reversal(&pack, "fin.LedgerEntry"),
-        "linked financial reversal should satisfy reversal coverage"
+        !report.gaps.iter().any(|gap| matches!(
+            gap,
+            StructuralGap::ImmutableFinancialMissingReversal { object_type, .. }
+                if object_type == "fin.LedgerEntry"
+        )),
+        "linked financial reversal should satisfy reversal coverage: {report}"
+    );
+    assert!(
+        report
+            .verified_financial_reversals
+            .contains(&VerifiedFinancialReversal {
+                object_type: "fin.LedgerEntry".to_owned(),
+                action_id: "fin.entry.post".to_owned(),
+                compensation_action_id: "fin.credit.issue".to_owned(),
+            }),
+        "expected VerifiedCompensation credit for fin.LedgerEntry: {:?}",
+        report.verified_financial_reversals
+    );
+    Ok(())
+}
+
+fn build_mixed_policy_slice_pack(read_roles: &[&str]) -> Result<AdmittedPack, String> {
+    decode_pack(
+        "mixed_read_action",
+        vec![
+            json!({
+                "irVersion": "0.1", "artifactId": "sec.RefDoc.entity", "version": "1.0.0",
+                "kind": "entity", "namespace": "sec", "name": "RefDoc", "lifecycle": "active",
+                "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+                "payload": {
+                    "entityVersion": "2.0",
+                    "objectType": {
+                        "name": "sec.RefDoc",
+                        "identity": [{"name": "primary", "properties": ["ref_id"]}],
+                        "properties": [{"id": "ref_id", "type": {"kind": "text"}}]
+                    }
+                }
+            }),
+            json!({
+                "irVersion": "0.1", "artifactId": "sec.Note.entity", "version": "1.0.0",
+                "kind": "entity", "namespace": "sec", "name": "Note", "lifecycle": "active",
+                "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+                "payload": {
+                    "entityVersion": "2.0",
+                    "objectType": {
+                        "name": "sec.Note",
+                        "identity": [{"name": "primary", "properties": ["note_id"]}],
+                        "properties": [
+                            {"id": "note_id", "type": {"kind": "text"}},
+                            {"id": "ref_id", "type": {"kind": "text"}}
+                        ]
+                    }
+                }
+            }),
+            json!({
+                "irVersion": "0.1", "artifactId": "sec.note.create.action", "version": "1.0.0",
+                "kind": "action", "namespace": "sec", "name": "Create note", "lifecycle": "active",
+                "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+                "payload": {
+                    "actionId": "sec.note.create",
+                    "scopeRequired": ["orgId"],
+                    "idempotent": true,
+                    "ledgered": true,
+                    "inputSchema": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {"note_id": {"type": "string"}, "ref_id": {"type": "string"}},
+                        "required": ["note_id", "ref_id"]
+                    },
+                    "outputSchema": {"type": "object", "properties": {"note_id": {"type": "string"}}, "required": ["note_id"]},
+                    "slice": [{"name": "ref_doc", "objectType": "sec.RefDoc", "key": {"property": {"from": "input", "property": "ref_id"}}}],
+                    "effectProgram": {
+                        "kind": "upsert_input_object",
+                        "entityArtifactId": "sec.Note.entity",
+                        "entityArtifactVersion": "1.0.0",
+                        "objectKind": "sec.Note",
+                        "objectIdField": "note_id",
+                        "writeMode": {"kind": "create_only"}
+                    },
+                    "writes": [{"entityKind": "sec.Note", "change": "created"}]
+                }
+            }),
+            json!({
+                "irVersion": "0.1", "artifactId": "sec.access.policy", "version": "1.0.0",
+                "kind": "policy", "namespace": "sec", "name": "Mixed access", "lifecycle": "active",
+                "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+                "payload": {
+                    "accessVersion": "0.1",
+                    "policyId": "sec.access",
+                    "rules": [
+                        {
+                            "ruleId": "read_ref",
+                            "actions": ["norn.read"],
+                            "resourceType": "sec.RefDoc",
+                            "scope": {"dimensions": ["org"]},
+                            "allOf": [{"role": {"anyOf": read_roles}}]
+                        },
+                        {
+                            "ruleId": "create_note",
+                            "actions": ["sec.note.create"],
+                            "resourceType": "sec.Note",
+                            "scope": {"dimensions": ["org"]},
+                            "allOf": [{"role": {"anyOf": ["editor"]}}]
+                        }
+                    ]
+                }
+            }),
+        ],
+    )
+}
+
+#[test]
+fn cedar_matrix_enforces_declared_read_policies_in_mixed_policy_packs() -> Result<(), String> {
+    let denied_pack = build_mixed_policy_slice_pack(&["reader"])?;
+    let denied_run = run_pack_mbt(&denied_pack, |_| Ok(MemoryPackHost::open()));
+    assert!(
+        denied_run.is_err(),
+        "Cedar matrix must not bypass declared norn.read policies when editor lacks read access"
+    );
+
+    let allowed_pack = build_mixed_policy_slice_pack(&["reader", "editor"])?;
+    let report = run_pack_mbt(&allowed_pack, |_| Ok(MemoryPackHost::open()))?;
+    assert!(
+        report.coverage.uncovered_cedar_allows.is_empty(),
+        "both read_ref and create_note should earn allow coverage: {:?}",
+        report.coverage.uncovered_cedar_allows
     );
     Ok(())
 }

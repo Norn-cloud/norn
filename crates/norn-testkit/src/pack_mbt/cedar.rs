@@ -39,6 +39,17 @@ use super::seed::{
 use super::synth::{synthesize_guard_satisfying, synthesize_object};
 use super::{AdmittedAction, AdmittedPack, PackHost};
 
+const READ_ACTION: &str = "norn.read";
+
+fn pack_declares_read_policies(pack: &AdmittedPack) -> bool {
+    pack.access_policies.iter().any(|policy| {
+        policy
+            .rules
+            .iter()
+            .any(|rule| rule.actions.iter().any(|action| action == READ_ACTION))
+    })
+}
+
 struct CedarCtx<'a> {
     pack: &'a AdmittedPack,
     catalog: &'a TypeCatalog<'a>,
@@ -46,6 +57,7 @@ struct CedarCtx<'a> {
     projected_attrs: &'a BTreeMap<String, BTreeMap<String, CedarAttribute>>,
     principal_attrs: &'a BTreeMap<String, CedarPrincipalAttribute>,
     coverage: &'a Arc<Mutex<DomainCoverage>>,
+    has_read_policies: bool,
 }
 
 struct RuleActionCtx<'a> {
@@ -117,6 +129,7 @@ where
         projected_attrs: &projection.attributes,
         principal_attrs: &inferred,
         coverage,
+        has_read_policies: pack_declares_read_policies(pack),
     };
     let mut checks = 0usize;
     let mut seq = 0u64;
@@ -148,6 +161,9 @@ where
     };
     let mut count = 0usize;
     for action_id in &rule.actions {
+        if action_id == READ_ACTION {
+            continue;
+        }
         let action_opt = ctx
             .pack
             .actions
@@ -233,7 +249,13 @@ where
     H: PackHost,
     F: FnMut(&str) -> Result<H, String>,
 {
-    let pdp = build_rule_pdp(rc.cedar.policy_set, action_id, rc.scope, rc.foreign_scope)?;
+    let pdp = build_rule_pdp(
+        rc.cedar.policy_set,
+        action_id,
+        rc.cedar.has_read_policies,
+        rc.scope,
+        rc.foreign_scope,
+    )?;
     let target = resolve_action_target(rc, action_id, action_opt, &pdp)?;
     let unauth_roles = vec!["__mbt_unauthorized_role__".to_owned()];
     let mut attempts = vec![ActionAttempt {
@@ -279,6 +301,49 @@ where
     Ok(attempts.len())
 }
 
+struct AccessRequestTemplate {
+    projected_attrs: BTreeMap<String, BTreeMap<String, CedarAttribute>>,
+    prin_schema: BTreeMap<String, CedarPrincipalAttribute>,
+    rule: AccessRule,
+    roles: Vec<String>,
+    caller_scope: ScopeKey,
+    resource_scope: ScopeKey,
+}
+
+impl AccessRequestTemplate {
+    fn build(
+        &self,
+        actor: &str,
+        action_id: &str,
+        object_type: &str,
+        resource_id: &str,
+        target_values: Option<&JsonObject>,
+    ) -> AccessRequest {
+        let res_attrs = self
+            .projected_attrs
+            .get(object_type)
+            .or_else(|| self.projected_attrs.get(self.rule.resource_type.as_str()))
+            .map_or_else(BTreeMap::new, |schema| {
+                project_resource_attrs_from_values(target_values, schema)
+            });
+        let prin_attrs = build_principal_attrs_for_actor(actor, &self.rule, &self.prin_schema);
+        AccessRequest::new(
+            &VerifiedPrincipal::new(actor, ActorKind::User, None, self.roles.clone(), prin_attrs),
+            Some(self.caller_scope.clone()),
+            action_id,
+            action_id,
+            ResourceInput {
+                object_type: object_type.to_owned(),
+                id: resource_id.to_owned(),
+                scope: self.resource_scope.clone(),
+                attributes: res_attrs,
+            },
+            BTreeMap::new(),
+            Binding::Unbound(UnboundProfile::HostedAction),
+        )
+    }
+}
+
 fn run_action_attempt<H, F>(
     rc: &RuleActionCtx<'_>,
     target: &ActionTarget<'_>,
@@ -299,50 +364,57 @@ where
 
     let ledger_before = host.ledger_len();
     let scope_map = scope_key_to_map(attempt.caller_scope);
-    let projected_attrs = rc.cedar.projected_attrs.clone();
-    let prin_schema = rc.cedar.principal_attrs.clone();
-    let rule_clone = rc.rule.clone();
-    let roles = attempt.roles.to_vec();
-    let caller_scope = attempt.caller_scope.clone();
-    let resource_scope = attempt.resource_scope.clone();
-    // Action-only AccessIR rules do not declare `norn.read` policies, so opt in
-    // to slice reads here to ensure `commit_action` reaches the action PDP check.
-    let authorizer = ObservedPdpAuthorizer::new(
+    let template = Arc::new(AccessRequestTemplate {
+        projected_attrs: rc.cedar.projected_attrs.clone(),
+        prin_schema: rc.cedar.principal_attrs.clone(),
+        rule: rc.rule.clone(),
+        roles: attempt.roles.to_vec(),
+        caller_scope: attempt.caller_scope.clone(),
+        resource_scope: attempt.resource_scope.clone(),
+    });
+    let action_tpl = Arc::clone(&template);
+    let base_authorizer = ObservedPdpAuthorizer::new(
         Arc::clone(target.pdp),
         Arc::clone(rc.cedar.coverage),
         Some(rc.hint.clone()),
         move |auth_req| {
-            let res_attrs = projected_attrs
-                .get(auth_req.target.object_type.as_str())
-                .or_else(|| projected_attrs.get(rule_clone.resource_type.as_str()))
-                .map_or_else(BTreeMap::new, |schema| {
-                    project_resource_attrs_from_values(auth_req.target_values, schema)
-                });
-            let prin_attrs =
-                build_principal_attrs_for_actor(auth_req.actor, &rule_clone, &prin_schema);
-            Ok(AccessRequest::new(
-                &VerifiedPrincipal::new(
-                    auth_req.actor,
-                    ActorKind::User,
-                    None,
-                    roles.clone(),
-                    prin_attrs,
-                ),
-                Some(caller_scope.clone()),
+            Ok(action_tpl.build(
+                auth_req.actor,
                 &auth_req.action.action_id,
-                &auth_req.action.action_id,
-                ResourceInput {
-                    object_type: auth_req.target.object_type.as_str().to_owned(),
-                    id: auth_req.target.key.clone(),
-                    scope: resource_scope.clone(),
-                    attributes: res_attrs,
-                },
-                BTreeMap::new(),
-                Binding::Unbound(UnboundProfile::HostedAction),
+                auth_req.target.object_type.as_str(),
+                &auth_req.target.key,
+                auth_req.target_values,
             ))
         },
-    )
-    .allow_action_only_slice_reads();
+    );
+    // Only action-only fixtures opt into slice reads; packs declaring `norn.read`
+    // policies enforce those policies through the read PDP on every slice read.
+    let authorizer = if rc.cedar.has_read_policies {
+        let read_tpl = Arc::clone(&template);
+        let read_type_tpl = Arc::clone(&template);
+        base_authorizer.with_read_pdp(
+            move |read_req| {
+                Ok(read_tpl.build(
+                    read_req.actor,
+                    READ_ACTION,
+                    read_req.target.object_type.as_str(),
+                    &read_req.target.key,
+                    read_req.target_values,
+                ))
+            },
+            move |read_type_req| {
+                Ok(read_type_tpl.build(
+                    read_type_req.actor,
+                    READ_ACTION,
+                    read_type_req.object_type.as_str(),
+                    "*",
+                    None,
+                ))
+            },
+        )
+    } else {
+        base_authorizer.allow_action_only_slice_reads()
+    };
 
     let call = ActionCall {
         action: &target.admitted.root,
@@ -422,6 +494,18 @@ fn check_action_attempt_outcome<H: PackHost>(
                 if !denied_by_access_policy {
                     return Err(format!(
                         "Cedar matrix ({}): expected DenyReason::Access for {}/{} action '{action_id}', got explanation={explanation:?}",
+                        attempt.label, rc.hint.policy_id, rc.hint.rule_id
+                    ));
+                }
+                assert_zero_ledger_writes(host, ledger_before, action_id, attempt.label)?;
+                host.verify_ledger()
+            }
+            Err(ActionRefusal::TargetNotFound) if rc.cedar.has_read_policies => {
+                let denied_by_access_policy = explanation
+                    .is_some_and(|exp| exp.decision == PdpDecision::Deny(DenyReason::Access));
+                if !denied_by_access_policy {
+                    return Err(format!(
+                        "Cedar matrix ({}): expected read-policy DenyReason::Access for {}/{} action '{action_id}', got explanation={explanation:?}",
                         attempt.label, rc.hint.policy_id, rc.hint.rule_id
                     ));
                 }
@@ -708,15 +792,20 @@ fn build_principal_attrs_for_actor(
 fn build_rule_pdp(
     policy_set: &ValidatedPolicySet,
     action_id: &str,
+    include_read_capability: bool,
     scope: &ScopeKey,
     foreign_scope: &ScopeKey,
 ) -> Result<Arc<Pdp>, String> {
+    let mut capabilities = vec![action_id.to_owned()];
+    if include_read_capability {
+        capabilities.push(READ_ACTION.to_owned());
+    }
     let grant = |subject: &str, grant_scope: &ScopeKey| CapabilityGrant {
         subject_id: subject.to_owned(),
         actor_kind: ActorKind::User,
         agent_session_id: None,
         scope: Some(grant_scope.clone()),
-        capabilities: vec![action_id.to_owned()],
+        capabilities: capabilities.clone(),
         binding: None,
     };
     let grants = vec![
