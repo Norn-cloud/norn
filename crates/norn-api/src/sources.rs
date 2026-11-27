@@ -239,6 +239,8 @@ struct Run {
     watermark_from: String,
     /// Last page's watermarks whose rows were fully drained/ingested.
     committed_watermarks: BTreeMap<String, Watermark>,
+    /// Exact stored `_norn_source_cursor.cursor_json` bytes per dataset for CAS.
+    committed_cursor_json: BTreeMap<String, String>,
     read: u64,
     landed: u64,
     quarantined: u64,
@@ -394,6 +396,7 @@ impl Sources {
             lease: None,
             watermark_from: String::new(),
             committed_watermarks: BTreeMap::new(),
+            committed_cursor_json: BTreeMap::new(),
             read: 0,
             landed: 0,
             quarantined: 0,
@@ -671,25 +674,7 @@ fn begin<E: SqlEngine>(
     known: Option<BTreeMap<String, Watermark>>,
     now_ms: u64,
 ) -> Result<Next, Failure> {
-    let connector = host
-        .installed_artifact(&config.connector)
-        .map_err(|refusal| fail("source.connector_missing", refusal.message))?
-        .ok_or_else(|| {
-            fail(
-                "source.connector_missing",
-                format!("{} is not installed", config.connector),
-            )
-        })?;
-    let payload = connector.get("payload").cloned().unwrap_or_default();
-    let mut profile = PullProfile::from_connector(&payload)
-        .map_err(|e| fail("source.profile_invalid", e.to_string()))?
-        .ok_or_else(|| {
-            fail(
-                "source.profile_missing",
-                format!("{} declares no norn.pull/1 profile", config.connector),
-            )
-        })?;
-    capture::bind_mapping_feed(host, &config.mapping, &mut profile)?;
+    let (mut profile, payload) = capture::load_connector_profile(host, config)?;
     // SYNC-PAGE-1: the host's page size, when it sets one.
     if let Some(rows) = config.page_size {
         for feed in &mut profile.feeds {
@@ -710,11 +695,13 @@ fn begin<E: SqlEngine>(
             let (code, message) = error.code_and_message();
             fail(code, message)
         })?;
-    let watermarks = capture::load_and_seed_watermarks(host, &config.id, &lease, known, now_ms)?;
+    let (watermarks, raw_cursors) =
+        capture::load_and_seed_watermarks(host, &config.id, &lease, known, now_ms)?;
     let pending = capture::load_pending_captures(host, &config.id)?;
     run.lease = Some(lease);
     run.watermark_from = watermark_text(&watermarks);
     run.committed_watermarks = watermarks.clone();
+    run.committed_cursor_json = raw_cursors;
     run.pending_captures.extend(pending);
     let mut pull = Pull::new(profile, watermarks, Limits::default());
     let first = pull.next_request();
@@ -812,11 +799,14 @@ fn advance<E: SqlEngine>(
     let (captured, advance) = capture::capture_accepted_page(
         host,
         config,
-        lease,
         &profile,
         accepted,
-        run.step_rows,
-        now_ms,
+        capture::CaptureTurn {
+            lease,
+            committed_cursor_json: &mut run.committed_cursor_json,
+            step_rows: run.step_rows,
+            now_ms,
+        },
     )?;
     run.read = run
         .read
@@ -895,6 +885,12 @@ fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run, now_ms: u64) -> Result<
             capture::ActiveCapture::DisputeFallback { advance, .. } => Some(advance),
         };
         if let (Some(pull), Some(advance)) = (run.pull.as_mut(), advance) {
+            if let Some(next_wm) = &advance.next
+                && let Ok(raw) = next_wm.cursor_json()
+            {
+                run.committed_cursor_json
+                    .insert(advance.dataset.clone(), raw);
+            }
             pull.confirm(&advance);
             run.committed_watermarks = pull.watermarks().clone();
         }

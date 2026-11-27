@@ -379,6 +379,10 @@ impl std::error::Error for PullError {}
 impl PullProfile {
     /// The profile in a connector payload's `extensions`, if it declares one.
     ///
+    /// Callers with >53-bit decimal `initial.id` values should prefer
+    /// [`Self::from_connector_json`] so numbers never pass through binary64
+    /// `serde_json::Value`.
+    ///
     /// # Errors
     /// A present extension that is not a valid profile.
     pub fn from_connector(payload: &Value) -> Result<Option<Self>, PullError> {
@@ -391,6 +395,32 @@ impl PullProfile {
         let encoded =
             serde_json::to_string(value).map_err(|error| PullError::Profile(error.to_string()))?;
         let profile: Self = serde_json::from_str(&encoded)
+            .map_err(|error| PullError::Profile(error.to_string()))?;
+        profile.validate()?;
+        Ok(Some(profile))
+    }
+
+    /// The profile in a connector payload's raw JSON text, preserving exact
+    /// decimal tokens (such as >53-bit `initial.id` values) without passing
+    /// through binary64 `serde_json::Value`.
+    ///
+    /// # Errors
+    /// Invalid JSON or a present extension that is not a valid profile.
+    pub fn from_connector_json(payload_json: &str) -> Result<Option<Self>, PullError> {
+        #[derive(Deserialize)]
+        struct RawPayload<'a> {
+            #[serde(borrow, default)]
+            extensions: Option<BTreeMap<String, &'a serde_json::value::RawValue>>,
+        }
+        let parsed: RawPayload<'_> = serde_json::from_str(payload_json)
+            .map_err(|error| PullError::Profile(error.to_string()))?;
+        let Some(raw_ext) = parsed
+            .extensions
+            .and_then(|mut exts| exts.remove(PULL_EXTENSION_KEY))
+        else {
+            return Ok(None);
+        };
+        let profile: Self = serde_json::from_str(raw_ext.get())
             .map_err(|error| PullError::Profile(error.to_string()))?;
         profile.validate()?;
         Ok(Some(profile))

@@ -667,11 +667,14 @@ mod tests {
     fn uint64_version_100_patch_supersedes_version_99_link_claim_and_clears_link() {
         let host = open_host(&erpnext_patch_artifacts());
         seed_full_erpnext_snapshot(&host);
-        let uint_full = holding_profile(FeedMode::FullSnapshot, VersionKind::Uint64);
-        let uint_patch = holding_profile(FeedMode::Patch, VersionKind::Uint64);
+        let mut uint_full = holding_profile(FeedMode::FullSnapshot, VersionKind::Uint64);
+        let mut uint_patch = holding_profile(FeedMode::Patch, VersionKind::Uint64);
+        uint_full.feeds[0].version_path = "/seq".into();
+        uint_patch.feeds[0].version_path = "/seq".into();
         let key = "demo/holding/uint-link-test";
         let v99 = json!({
-            "name": "WLB-UINT-1", "modified": "99", "custom_norn_ref": key,
+            "name": "WLB-UINT-1", "seq": 99,
+            "modified": "2026-11-12 18:00:00.000000", "custom_norn_ref": key,
             "resource_code": "GOLD", "quantity": 10.0, "unit": "g", "location": "north",
             "item_ref": "demo/item/gold", "owner_ref": "demo/party/owner",
             "custodian_ref": "demo/party/custodian", "stock_cost": 100.0,
@@ -682,7 +685,7 @@ mod tests {
             MappingOutcome::Landed
         );
         let v100_clear = json!({
-            "name": "WLB-UINT-1", "modified": "100",
+            "name": "WLB-UINT-1", "seq": 100,
             "custom_norn_ref": key, "owner_ref": null
         });
         assert_eq!(
@@ -792,7 +795,8 @@ mod tests {
 
         let key = "demo/holding/declared-uint64";
         let v99 = json!({
-            "name": "WLB-DECL-1", "modified": "99", "custom_norn_ref": key,
+            "name": "WLB-DECL-1", "seq": "99",
+            "modified": "2026-11-12 18:00:00.000000", "custom_norn_ref": key,
             "resource_code": "GOLD", "quantity": 10.0, "unit": "g", "location": "north",
             "item_ref": "demo/item/gold", "owner_ref": "demo/party/owner",
             "custodian_ref": "demo/party/custodian", "stock_cost": 100.0,
@@ -800,7 +804,8 @@ mod tests {
         });
         // Unbound snapshot/lexical profile omits `feed_mode` and `version_kind`:
         // cell MUST refuse so pull-fabricated nulls never enter a Patch mapping.
-        let unbound = holding_profile(FeedMode::FullSnapshot, VersionKind::Lexicographical);
+        let mut unbound = holding_profile(FeedMode::FullSnapshot, VersionKind::Lexicographical);
+        unbound.feeds[0].version_path = "/seq".into();
         let mut unbound_pull = Pull::new(unbound.clone(), BTreeMap::new(), Limits::default());
         let _req = unbound_pull.next_request().expect("req");
         let unbound_rows = unbound_pull
@@ -825,6 +830,7 @@ mod tests {
         let mut bound = holding_profile(FeedMode::FullSnapshot, VersionKind::Lexicographical);
         bound.feeds[0].mode = None;
         bound.feeds[0].version_kind = None;
+        bound.feeds[0].version_path = "/seq".into();
         bound.feeds[0].initial.version = "0".into();
         bound
             .bind_feed_declaration(&decl)
@@ -839,7 +845,7 @@ mod tests {
             MappingOutcome::Landed
         );
         let v100 = json!({
-            "name": "WLB-DECL-1", "modified": "100",
+            "name": "WLB-DECL-1", "seq": 100,
             "custom_norn_ref": key, "owner_ref": null
         });
         assert_eq!(
@@ -869,11 +875,12 @@ mod tests {
             Err(PullError::Bound { .. })
         ));
 
-        // High-precision decimals above 2^53 stay exact across watermark, next request, and advance.
+        // High-precision decimals above 2^53 stay exact across watermark, next request, and advance,
+        // while arbitrary fixed JSON literals like `1e100` stay intact (never turned into `null`).
         let mut exact_profile = keyset_uint;
         exact_profile.feeds[0].paging = Paging::Keyset { size: 1 };
         exact_profile.feeds[0].request.method = Method::Post;
-        exact_profile.feeds[0].request.body = Some(json!({ "afterId": "{{id}}" }));
+        exact_profile.feeds[0].request.body = Some(json!({ "afterId": "{{id}}", "huge": 1e100 }));
         let mut exact = Pull::new(exact_profile, BTreeMap::new(), Limits::default());
         let _req = exact.next_request().expect("req1");
         let p1 = exact
@@ -884,10 +891,16 @@ mod tests {
             .expect("accept 9007199254740992.1");
         exact.confirm(&p1.advance);
         let req2 = exact.next_request().expect("req2");
+        let req2_body = req2.body.as_deref().expect("body");
+        assert!(
+            req2_body.contains(r#""afterId":9007199254740992.1"#),
+            "next request must preserve exact decimal id without binary64 rounding: {req2_body}"
+        );
+        let parsed_req2: Value = serde_json::from_str(req2_body).expect("valid json");
         assert_eq!(
-            req2.body.as_deref(),
-            Some(r#"{"afterId":9007199254740992.1}"#),
-            "next request must preserve exact decimal id without binary64 rounding"
+            parsed_req2["huge"],
+            json!(1e100),
+            "fixed out-of-Decimal JSON literal 1e100 must stay intact, never null"
         );
         let p2 = exact
             .accept(
@@ -899,6 +912,16 @@ mod tests {
         assert_eq!(
             exact.watermarks()["Warehouse Lot Balance"].id,
             RuntimeValue::from_json_text("9007199254740992.2").expect("exact")
+        );
+
+        // Raw connector JSON loading preserves exact >53-bit decimal `initial.id`.
+        let raw_conn = r#"{"extensions":{"norn.pull/1":{"source":"s","pipeline":"p/1","feeds":[{"dataset":"D","request":{"method":"GET","path":"/d"},"itemsPath":"/data","paging":{"kind":"keyset","size":10},"idPath":"/id","versionPath":"/v","fields":{"id":"/id"},"initial":{"version":"0","id":9007199254740992.1}}]}}}"#;
+        let loaded = PullProfile::from_connector_json(raw_conn)
+            .expect("valid")
+            .expect("profile");
+        assert_eq!(
+            loaded.feeds[0].initial.id,
+            RuntimeValue::from_json_text("9007199254740992.1").expect("exact initial id")
         );
 
         // Equivalent RFC 3339 spelling (+02:00 vs Z) with the same id did not advance.

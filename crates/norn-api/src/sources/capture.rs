@@ -27,50 +27,90 @@ pub(super) enum ActiveCapture {
     },
 }
 
-/// Bind an installed mapping's `norn.feed/1` declaration onto `profile` before
-/// projection and pagination (`FEED-MODE-1`).
-pub(super) fn bind_mapping_feed<E: SqlEngine>(
+/// Load the connector's `norn.pull/1` profile directly from the retained
+/// canonical JSON text (preserving >53-bit decimal `initial.id` values), bind
+/// the mapping's `norn.feed/1` declaration, and return both the profile and
+/// the connector's parsed payload for auth resolution.
+pub(super) fn load_connector_profile<E: SqlEngine>(
     host: &DevHost<E>,
-    mapping_id: &str,
-    profile: &mut PullProfile,
-) -> Result<(), Failure> {
-    if let Ok(Some(mapping)) = host.installed_artifact(mapping_id) {
+    config: &ConnectionConfig,
+) -> Result<(PullProfile, serde_json::Value), Failure> {
+    #[derive(serde::Deserialize)]
+    struct RawArtifact<'a> {
+        #[serde(rename = "artifactId")]
+        artifact_id: String,
+        #[serde(borrow)]
+        payload: &'a serde_json::value::RawValue,
+    }
+    let active = host
+        .active_definitions()
+        .map_err(|refusal| fail("source.connector_missing", refusal.message))?
+        .ok_or_else(|| {
+            fail(
+                "source.connector_missing",
+                format!("{} is not installed", config.connector),
+            )
+        })?;
+    let set: Vec<RawArtifact<'_>> = serde_json::from_str(&active.canonical_set)
+        .map_err(|e| fail("source.connector_missing", e.to_string()))?;
+    let raw_payload = set
+        .into_iter()
+        .find(|artifact| artifact.artifact_id == config.connector)
+        .ok_or_else(|| {
+            fail(
+                "source.connector_missing",
+                format!("{} is not installed", config.connector),
+            )
+        })?
+        .payload
+        .get();
+    let mut profile = PullProfile::from_connector_json(raw_payload)
+        .map_err(|e| fail("source.profile_invalid", e.to_string()))?
+        .ok_or_else(|| {
+            fail(
+                "source.profile_missing",
+                format!("{} declares no norn.pull/1 profile", config.connector),
+            )
+        })?;
+    if let Ok(Some(mapping)) = host.installed_artifact(&config.mapping) {
         let mapping_payload = mapping.get("payload").cloned().unwrap_or_default();
-        crate::pull_feed::bind_mapping_feed_declaration(profile, &mapping_payload)
+        crate::pull_feed::bind_mapping_feed_declaration(&mut profile, &mapping_payload)
             .map_err(|e| fail("source.profile_invalid", e.to_string()))?;
     }
-    Ok(())
+    let payload: serde_json::Value = serde_json::from_str(raw_payload)
+        .map_err(|e| fail("source.profile_invalid", e.to_string()))?;
+    Ok((profile, payload))
 }
 
-/// Read the connection's durably committed watermarks. `_norn_source_cursor` is
-/// authoritative; when upgrading a populated legacy cell whose prior syncs only
-/// wrote `source.Connection.watermark`, seed each legacy dataset cursor into
-/// `_norn_source_cursor` under the active fencing lease before planning the
-/// first request.
+/// Read the connection's durably committed watermarks alongside their exact
+/// stored cursor JSON strings (so restarting over a legacy spelling such as
+/// `1e-7` preserves the exact bytes for CAS compare-and-set).
 pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     host: &DevHost<E>,
     connection_id: &str,
     lease: &SourceLease,
     known: Option<BTreeMap<String, Watermark>>,
     now_ms: u64,
-) -> Result<BTreeMap<String, Watermark>, Failure> {
+) -> Result<(BTreeMap<String, Watermark>, BTreeMap<String, String>), Failure> {
     let cursors = host
         .source_cursors(connection_id)
         .map_err(|r| fail("source.ingest", r.message))?;
     if !cursors.is_empty() {
         let mut parsed = BTreeMap::new();
+        let mut raw_cursors = BTreeMap::new();
         for (dataset, record) in cursors {
             if let Ok(watermark) = serde_json::from_str::<Watermark>(&record.cursor_json) {
-                parsed.insert(dataset, watermark);
+                parsed.insert(dataset.clone(), watermark);
+                raw_cursors.insert(dataset, record.cursor_json);
             }
         }
-        return Ok(parsed);
+        return Ok((parsed, raw_cursors));
     }
     let legacy = legacy_connection_watermarks(host, connection_id)
         .or(known)
         .unwrap_or_default();
+    let mut encoded = BTreeMap::new();
     if !legacy.is_empty() {
-        let mut encoded = BTreeMap::new();
         for (dataset, watermark) in &legacy {
             let cursor_json = watermark
                 .cursor_json()
@@ -89,7 +129,7 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
             fail(code, message)
         })?;
     }
-    Ok(legacy)
+    Ok((legacy, encoded))
 }
 
 fn legacy_connection_watermarks<E: SqlEngine>(
@@ -108,19 +148,24 @@ fn legacy_connection_watermarks<E: SqlEngine>(
         .and_then(|text| serde_json::from_str::<BTreeMap<String, Watermark>>(&text).ok())
 }
 
-/// Build the atomic [`CursorAdvanceSpec`] for one complete accepted page.
+/// Build the atomic [`CursorAdvanceSpec`] for one complete accepted page,
+/// preserving exact stored `expected_previous_cursor` bytes when present.
 pub(super) fn cursor_advance_spec(
     config: &ConnectionConfig,
     lease: &SourceLease,
     pending: &CursorAdvance,
+    committed_cursor_json: &BTreeMap<String, String>,
     now_ms: u64,
 ) -> Result<CursorAdvanceSpec, Failure> {
-    let expected_previous_cursor = pending
-        .expected_previous
-        .as_ref()
-        .map(Watermark::cursor_json)
-        .transpose()
-        .map_err(|e| fail("source.ingest", e.to_string()))?;
+    let expected_previous_cursor = match &pending.expected_previous {
+        Some(wm) => Some(match committed_cursor_json.get(&pending.dataset) {
+            Some(raw) => raw.clone(),
+            None => wm
+                .cursor_json()
+                .map_err(|e| fail("source.ingest", e.to_string()))?,
+        }),
+        None => None,
+    };
     let next_cursor = pending
         .next
         .as_ref()
@@ -186,25 +231,31 @@ pub(super) fn load_pending_captures<E: SqlEngine>(
         .collect())
 }
 
+/// Per-page capture context passed from `sources::reply` into [`capture_accepted_page`].
+pub(super) struct CaptureTurn<'a> {
+    pub(super) lease: &'a SourceLease,
+    pub(super) committed_cursor_json: &'a mut BTreeMap<String, String>,
+    pub(super) step_rows: usize,
+    pub(super) now_ms: u64,
+}
+
 /// Seal every row of an accepted HTTP page and atomically capture the complete
 /// page + `_norn_source_cursor` + `_norn_source_pending` in one SQLite
-/// transaction under `lease`, or return a paced dispute-fallback plan when the
-/// page spans an `OBS-LINK-DISPUTE-1` conflict or identity finding.
+/// transaction under `turn.lease`, or return a paced dispute-fallback plan when
+/// the page spans an `OBS-LINK-DISPUTE-1` conflict or identity finding.
 pub(super) fn capture_accepted_page<E: SqlEngine>(
     host: &DevHost<E>,
     config: &ConnectionConfig,
-    lease: &SourceLease,
     profile: &PullProfile,
     accepted: AcceptedPage,
-    step_rows: usize,
-    now_ms: u64,
+    turn: CaptureTurn<'_>,
 ) -> Result<(Option<ActiveCapture>, CursorAdvance), Failure> {
-    let recorded_at = norn_ir::provenance::UtcTimestamp(rfc3339(now_ms));
+    let recorded_at = norn_ir::provenance::UtcTimestamp(rfc3339(turn.now_ms));
     let batch = accepted
         .rows
         .iter()
         .map(|row| {
-            observation(profile, row, now_ms).map(|raw| {
+            observation(profile, row, turn.now_ms).map(|raw| {
                 (
                     raw,
                     MappingInput {
@@ -219,9 +270,19 @@ pub(super) fn capture_accepted_page<E: SqlEngine>(
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| fail("source.seal", e))?;
-    let spec = cursor_advance_spec(config, lease, &accepted.advance, now_ms)?;
+    let spec = cursor_advance_spec(
+        config,
+        turn.lease,
+        &accepted.advance,
+        turn.committed_cursor_json,
+        turn.now_ms,
+    )?;
     let plan = host
-        .capture_source_page_planned(&batch, &spec, step_rows.clamp(1, crate::host::PAGE_ROWS))
+        .capture_source_page_planned(
+            &batch,
+            &spec,
+            turn.step_rows.clamp(1, crate::host::PAGE_ROWS),
+        )
         .map_err(|error| {
             let (code, message) = error.code_and_message();
             fail(code, message)
@@ -229,6 +290,10 @@ pub(super) fn capture_accepted_page<E: SqlEngine>(
     let advance = accepted.advance.clone();
     match plan {
         SourceCapturePlan::Captured(pending) => {
+            if let Some(next_raw) = spec.next_cursor {
+                turn.committed_cursor_json
+                    .insert(advance.dataset.clone(), next_raw);
+            }
             if pending.pages.is_empty() && pending.records.is_empty() {
                 return Ok((None, accepted.advance));
             }

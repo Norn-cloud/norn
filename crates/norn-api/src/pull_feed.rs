@@ -242,16 +242,17 @@ impl Tokens<'_> {
         })
     }
 
-    fn fill_str(&self, template: &str) -> RuntimeValue {
+    fn write_json_str(&self, template: &str, out: &mut String) {
         if let Some(name) = template
             .strip_prefix("{{")
             .and_then(|rest| rest.strip_suffix("}}"))
             .filter(|name| !name.contains("{{") && !name.starts_with("json:"))
             && let Some(value) = self.runtime_value(name)
         {
-            return value;
+            out.push_str(&serde_json::to_string(&value).unwrap_or_default());
+            return;
         }
-        RuntimeValue::String(self.splice(template))
+        out.push_str(&serde_json::to_string(&self.splice(template)).unwrap_or_default());
     }
 
     pub(crate) fn splice(&self, template: &str) -> String {
@@ -274,27 +275,43 @@ impl Tokens<'_> {
         out
     }
 
-    fn fill_runtime(&self, template: &Value) -> RuntimeValue {
+    fn write_json(&self, template: &Value, out: &mut String) {
         match template {
-            Value::String(text) => self.fill_str(text),
+            Value::String(text) => self.write_json_str(text, out),
             Value::Array(items) => {
-                RuntimeValue::Array(items.iter().map(|v| self.fill_runtime(v)).collect())
+                out.push('[');
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    self.write_json(item, out);
+                }
+                out.push(']');
             }
-            Value::Object(entries) => RuntimeValue::Object(
-                entries
-                    .iter()
-                    .map(|(key, value)| (key.clone(), self.fill_runtime(value)))
-                    .collect(),
-            ),
+            Value::Object(entries) => {
+                out.push('{');
+                for (index, (key, value)) in entries.iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&serde_json::to_string(key).unwrap_or_default());
+                    out.push(':');
+                    self.write_json(value, out);
+                }
+                out.push('}');
+            }
             Value::Null | Value::Bool(_) | Value::Number(_) => {
-                RuntimeValue::from_json(template.clone()).unwrap_or_default()
+                out.push_str(&serde_json::to_string(template).unwrap_or_default());
             }
         }
     }
 
-    /// Render a JSON request body preserving exact decimal keyset IDs.
+    /// Render a JSON request body preserving both exact decimal keyset IDs and
+    /// arbitrary fixed JSON literals (such as `1e100`).
     pub(crate) fn fill_json(&self, template: &Value) -> String {
-        serde_json::to_string(&self.fill_runtime(template)).unwrap_or_default()
+        let mut out = String::new();
+        self.write_json(template, &mut out);
+        out
     }
 }
 
