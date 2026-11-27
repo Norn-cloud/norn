@@ -12,8 +12,11 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use norn_kernel::authz::{AccessRequest, DenyReason, Pdp, PdpDecision};
-use norn_kernel::pack_mbt_support::{LawResponse, ObjectTypeDef, PdpExplanation};
-use norn_kernel::{ActionAuthorizer, ActionAuthzRequest, ActionDenial};
+use norn_kernel::pack_mbt_support::{LawResponse, Lifecycle, ObjectTypeDef, PdpExplanation};
+use norn_kernel::{
+    ActionAuthorizer, ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest,
+    ActionReadTypeAuthzRequest,
+};
 
 use super::{AdmittedPack, action_call_object_type};
 
@@ -437,19 +440,53 @@ pub(crate) fn is_effectively_immutable(pack: &AdmittedPack, object_type: &Object
 /// [`ActionAuthorizer`] backed by a real Cedar [`Pdp`] via [`Pdp::explain`]
 /// that records every `allow` and policy `Access` `deny` decision into a
 /// shared [`DomainCoverage`] and retains the last [`PdpExplanation`].
+type ReadRequestBuilder = Box<
+    dyn for<'a> Fn(&ActionReadAuthzRequest<'a>) -> Result<AccessRequest, ActionDenial>
+        + Send
+        + Sync,
+>;
+
+type ReadTypeRequestBuilder = Box<
+    dyn for<'a> Fn(&ActionReadTypeAuthzRequest<'a>) -> Result<AccessRequest, ActionDenial>
+        + Send
+        + Sync,
+>;
+
+enum ReadAuthzMode {
+    DenyByDefault,
+    AllowActionOnlySliceReads,
+    Pdp {
+        build_read: ReadRequestBuilder,
+        build_read_type: ReadTypeRequestBuilder,
+    },
+}
+
+/// An [`ActionAuthorizer`] backed by a real `norn-authz` [`Pdp`] that records
+/// every determining policy rule allow and access denial directly into a
+/// [`DomainCoverage`] collector.
+///
+/// Slice reads (`authorize_read` and `authorize_read_type`) fail closed by
+/// default (`Err(ActionDenial::Invisible)`), matching `norn-kernel`'s own
+/// default. Call [`Self::with_read_authorizers`] to evaluate slice reads
+/// through the same [`Pdp`], or [`Self::allow_action_only_slice_reads`] when
+/// driving an action-only `AccessIR` policy that declares no read rules.
 pub struct ObservedPdpAuthorizer<F> {
     pdp: Arc<Pdp>,
     build_request: F,
     coverage: Arc<Mutex<DomainCoverage>>,
     deny_rule_hint: Option<PolicyRuleTarget>,
     last_explanation: Mutex<Option<PdpExplanation>>,
+    last_read_explanation: Mutex<Option<PdpExplanation>>,
+    read_mode: ReadAuthzMode,
 }
 
 impl<F> ObservedPdpAuthorizer<F>
 where
     F: for<'a> Fn(&ActionAuthzRequest<'a>) -> Result<AccessRequest, ActionDenial>,
 {
-    /// Builds an observed Cedar authorizer.
+    /// Builds an observed Cedar authorizer whose slice reads fail closed until
+    /// configured with [`Self::with_read_authorizers`] or
+    /// [`Self::allow_action_only_slice_reads`].
     #[must_use]
     pub fn new(
         pdp: Arc<Pdp>,
@@ -463,10 +500,43 @@ where
             coverage,
             deny_rule_hint,
             last_explanation: Mutex::new(None),
+            last_read_explanation: Mutex::new(None),
+            read_mode: ReadAuthzMode::DenyByDefault,
         }
     }
 
-    /// Returns the most recent [`PdpExplanation`] produced by [`Self::authorize`].
+    /// Evaluates `authorize_read` and `authorize_read_type` through the same
+    /// [`Pdp`], recording allow/deny hits and returning [`ActionDenial::Invisible`]
+    /// on any denial.
+    #[must_use]
+    pub fn with_read_authorizers<R, T>(mut self, build_read: R, build_read_type: T) -> Self
+    where
+        R: for<'a> Fn(&ActionReadAuthzRequest<'a>) -> Result<AccessRequest, ActionDenial>
+            + Send
+            + Sync
+            + 'static,
+        T: for<'a> Fn(&ActionReadTypeAuthzRequest<'a>) -> Result<AccessRequest, ActionDenial>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.read_mode = ReadAuthzMode::Pdp {
+            build_read: Box::new(build_read),
+            build_read_type: Box::new(build_read_type),
+        };
+        self
+    }
+
+    /// Explicitly permits slice reads when verifying action-only `AccessIR`
+    /// policies that declare no `norn.read` rules, so `commit_action` reaches
+    /// the action PDP decision under test.
+    #[must_use]
+    pub fn allow_action_only_slice_reads(mut self) -> Self {
+        self.read_mode = ReadAuthzMode::AllowActionOnlySliceReads;
+        self
+    }
+
+    /// Returns the most recent action [`PdpExplanation`] produced by this authorizer.
     #[must_use]
     pub fn last_explanation(&self) -> Option<PdpExplanation> {
         let guard = match self.last_explanation.lock() {
@@ -475,17 +545,32 @@ where
         };
         guard.clone()
     }
-}
 
-impl<F> ActionAuthorizer for ObservedPdpAuthorizer<F>
-where
-    F: for<'a> Fn(&ActionAuthzRequest<'a>) -> Result<AccessRequest, ActionDenial>,
-{
-    fn authorize(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        let access_request = (self.build_request)(request)?;
-        let explanation = self.pdp.explain(&access_request);
+    /// Returns the most recent slice-read [`PdpExplanation`] produced by this authorizer.
+    #[must_use]
+    pub fn last_read_explanation(&self) -> Option<PdpExplanation> {
+        let guard = match self.last_read_explanation.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.clone()
+    }
+
+    fn evaluate_pdp(
+        &self,
+        access_request: &AccessRequest,
+        deny_hint: Option<&PolicyRuleTarget>,
+        fallback_action: &str,
+        is_read: bool,
+    ) -> PdpDecision {
+        let explanation = self.pdp.explain(access_request);
         {
-            let mut last = match self.last_explanation.lock() {
+            let slot = if is_read {
+                &self.last_read_explanation
+            } else {
+                &self.last_explanation
+            };
+            let mut last = match slot.lock() {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
             };
@@ -504,36 +589,88 @@ where
                         cov.hit_cedar_allow(policy_id.clone(), rule_id.clone());
                     }
                 }
-                Ok(())
             }
             PdpDecision::Deny(reason) => {
                 if reason == DenyReason::Access {
-                    if let Some(hint) = &self.deny_rule_hint {
+                    if let Some(hint) = deny_hint {
                         cov.hit_cedar_deny(hint.policy_id.clone(), hint.rule_id.clone());
                     } else {
-                        cov.hit_cedar_deny(request.action.action_id.clone(), reason.code());
+                        cov.hit_cedar_deny(fallback_action.to_owned(), reason.code());
                     }
                 }
-                Err(ActionDenial::Forbidden {
-                    reason: reason.code().to_owned(),
-                })
+            }
+        }
+        explanation.decision
+    }
+}
+
+impl<F> ActionAuthorizer for ObservedPdpAuthorizer<F>
+where
+    F: for<'a> Fn(&ActionAuthzRequest<'a>) -> Result<AccessRequest, ActionDenial>,
+{
+    fn authorize(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        let access_request = (self.build_request)(request)?;
+        match self.evaluate_pdp(
+            &access_request,
+            self.deny_rule_hint.as_ref(),
+            &request.action.action_id,
+            false,
+        ) {
+            PdpDecision::Allow => Ok(()),
+            PdpDecision::Deny(reason) => Err(ActionDenial::Forbidden {
+                reason: reason.code().to_owned(),
+            }),
+        }
+    }
+
+    fn authorize_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        match &self.read_mode {
+            ReadAuthzMode::DenyByDefault => Err(ActionDenial::Invisible),
+            ReadAuthzMode::AllowActionOnlySliceReads => Ok(()),
+            ReadAuthzMode::Pdp { build_read, .. } => {
+                let access_request = build_read(request)?;
+                // Never attribute slice-read denials to the action rule's hint.
+                match self.evaluate_pdp(&access_request, None, access_request.action_id(), true) {
+                    PdpDecision::Allow => Ok(()),
+                    PdpDecision::Deny(_) => Err(ActionDenial::Invisible),
+                }
             }
         }
     }
 
-    fn authorize_read(
-        &self,
-        _request: &norn_kernel::ActionReadAuthzRequest<'_>,
-    ) -> Result<(), ActionDenial> {
-        Ok(())
-    }
-
     fn authorize_read_type(
         &self,
-        _request: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
+        request: &ActionReadTypeAuthzRequest<'_>,
     ) -> Result<(), ActionDenial> {
-        Ok(())
+        match &self.read_mode {
+            ReadAuthzMode::DenyByDefault => Err(ActionDenial::Invisible),
+            ReadAuthzMode::AllowActionOnlySliceReads => Ok(()),
+            ReadAuthzMode::Pdp {
+                build_read_type, ..
+            } => {
+                let access_request = build_read_type(request)?;
+                // Never attribute collection-read denials to the action rule's hint.
+                match self.evaluate_pdp(&access_request, None, access_request.action_id(), true) {
+                    PdpDecision::Allow => Ok(()),
+                    PdpDecision::Deny(_) => Err(ActionDenial::Invisible),
+                }
+            }
+        }
     }
+}
+
+/// Selects a lifecycle state distinct from `current` so direct lifecycle write
+/// refusal checks exercise a real state change instead of a same-state no-op.
+pub(crate) fn distinct_lifecycle_state(lifecycle: &Lifecycle, current: &str) -> String {
+    lifecycle
+        .initial
+        .iter()
+        .chain(lifecycle.terminal.iter())
+        .chain(lifecycle.transitions.iter().map(|tr| &tr.to))
+        .chain(lifecycle.transitions.iter().flat_map(|tr| tr.from.iter()))
+        .find(|candidate| candidate.as_str() != current)
+        .cloned()
+        .unwrap_or_else(|| format!("{current}_illegal"))
 }
 
 fn bump<K: Ord>(map: &mut BTreeMap<K, u64>, key: K) {

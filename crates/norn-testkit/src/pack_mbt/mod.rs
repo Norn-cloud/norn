@@ -62,6 +62,8 @@ pub enum EvidenceLevel {
     RuntimeEnforced,
     /// Explored through seeded randomized multi-entity walks.
     Sampled,
+    /// No runtime or static checks ran for this surface.
+    Unknown,
 }
 
 impl EvidenceLevel {
@@ -74,6 +76,7 @@ impl EvidenceLevel {
             Self::Bounded => "bounded",
             Self::RuntimeEnforced => "runtime-enforced",
             Self::Sampled => "sampled",
+            Self::Unknown => "unknown",
         }
     }
 }
