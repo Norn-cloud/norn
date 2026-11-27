@@ -90,15 +90,20 @@ impl Model {
         })
     }
 
-    fn cost(&self, tasks: &[Task]) -> u32 {
+    fn cost(&self, tasks: &[Task], all_packages: bool) -> u32 {
         let mut total = tasks
             .iter()
             .fold(0_u32, |acc, task| acc.saturating_add(task.weight));
         if tasks
             .iter()
-            .any(|task| task.build_group(true) == BuildGroup::Test)
+            .any(|task| task.build_group(all_packages) == BuildGroup::Test)
         {
             total = total.saturating_add(self.test_build);
+        }
+        for task in tasks {
+            if task.needs_own_test_build(all_packages) {
+                total = total.saturating_add(self.test_build);
+            }
         }
         if tasks.iter().any(|task| task.compiles_wasm_pkg()) {
             total = total.saturating_add(self.wasm_pkg);
@@ -151,7 +156,9 @@ struct Task {
 
 impl Task {
     fn build_group(self, all_packages: bool) -> BuildGroup {
-        if self.name.starts_with("test/") || (all_packages && self.name == "phase/test-shards") {
+        if self.name.starts_with("test/")
+            || (all_packages && matches!(self.name, "phase/test-shards" | "phase/guards"))
+        {
             BuildGroup::Test
         } else if matches!(
             self.name,
@@ -164,6 +171,10 @@ impl Task {
         } else {
             BuildGroup::None
         }
+    }
+
+    fn needs_own_test_build(self, all_packages: bool) -> bool {
+        !all_packages && matches!(self.name, "phase/test-shards" | "phase/guards")
     }
 
     fn compiles_wasm_pkg(self) -> bool {
@@ -180,19 +191,19 @@ struct Bin {
 }
 
 impl Bin {
-    fn added_cost(&self, model: &Model, task: Task) -> u32 {
-        self.cost_with(model, &[task])
-            .saturating_sub(self.cost(model))
+    fn added_cost(&self, model: &Model, task: Task, all_packages: bool) -> u32 {
+        self.cost_with(model, &[task], all_packages)
+            .saturating_sub(self.cost(model, all_packages))
     }
 
-    fn cost_with(&self, model: &Model, extra: &[Task]) -> u32 {
+    fn cost_with(&self, model: &Model, extra: &[Task], all_packages: bool) -> u32 {
         let mut tasks = self.tasks.clone();
         tasks.extend_from_slice(extra);
-        model.cost(&tasks)
+        model.cost(&tasks, all_packages)
     }
 
-    fn cost(&self, model: &Model) -> u32 {
-        model.cost(&self.tasks)
+    fn cost(&self, model: &Model, all_packages: bool) -> u32 {
+        model.cost(&self.tasks, all_packages)
     }
 }
 
@@ -219,26 +230,39 @@ fn pack(plan: &Plan) -> Result<Vec<Bundle>, String> {
     if tasks.is_empty() {
         return Ok(Vec::new());
     }
-    tasks.sort_by_key(|task| (Reverse(Bin::default().added_cost(&model, *task)), task.name));
+    let all_packages = plan.packages.as_deref().is_none_or(str::is_empty);
+    tasks.sort_by_key(|task| {
+        (
+            Reverse(Bin::default().added_cost(&model, *task, all_packages)),
+            task.name,
+        )
+    });
     let limit = MAX_BUNDLES.min((tasks.len() / 2).max(1));
     let mut best = Vec::new();
     let mut best_key = (u32::MAX, usize::MAX, u32::MAX);
     for count in 1..=limit {
         for coalesce_test in [false, true] {
             for coalesce_wasm in [false, true] {
-                let Some(bins) = pack_count(&model, &tasks, count, coalesce_test, coalesce_wasm)?
+                let Some(bins) = pack_count(
+                    &model,
+                    &tasks,
+                    count,
+                    coalesce_test,
+                    coalesce_wasm,
+                    all_packages,
+                )?
                 else {
                     continue;
                 };
                 let max_cost = bins
                     .iter()
-                    .map(|bin| bin.cost(&model))
+                    .map(|bin| bin.cost(&model, all_packages))
                     .max()
                     .unwrap_or(0)
                     .max(TARGET_SECONDS);
-                let total_cost = bins
-                    .iter()
-                    .fold(0_u32, |acc, bin| acc.saturating_add(bin.cost(&model)));
+                let total_cost = bins.iter().fold(0_u32, |acc, bin| {
+                    acc.saturating_add(bin.cost(&model, all_packages))
+                });
                 let key = (max_cost, count, total_cost);
                 if key < best_key {
                     best = bins;
@@ -277,12 +301,13 @@ fn pack_count(
     count: usize,
     coalesce_test: bool,
     coalesce_wasm: bool,
+    all_packages: bool,
 ) -> Result<Option<Vec<Bin>>, String> {
     let mut test_group = Vec::new();
     let mut wasm_group = Vec::new();
     let mut other = Vec::new();
     for &task in tasks {
-        match task.build_group(true) {
+        match task.build_group(all_packages) {
             BuildGroup::Test => test_group.push(task),
             BuildGroup::WasmPkg => wasm_group.push(task),
             BuildGroup::None => other.push(task),
@@ -302,7 +327,7 @@ fn pack_count(
     items.extend(other.into_iter().map(|task| vec![task]));
     items.sort_by_key(|group| {
         (
-            Reverse(model.cost(group)),
+            Reverse(model.cost(group, all_packages)),
             group.first().map_or("", |task| task.name),
         )
     });
@@ -311,7 +336,7 @@ fn pack_count(
     for group in &items {
         let bin = bins
             .iter_mut()
-            .min_by_key(|bin| bin.cost_with(model, group))
+            .min_by_key(|bin| bin.cost_with(model, group, all_packages))
             .ok_or("no bundle for task")?;
         bin.tasks.extend_from_slice(group);
     }
@@ -328,11 +353,11 @@ fn pack_count(
                 .flat_map(|(index, bin)| {
                     bin.tasks
                         .iter()
-                        .map(move |&task| (index, bin.cost(model), task))
+                        .map(move |&task| (index, bin.cost(model, all_packages), task))
                 })
                 .min_by_key(|&(donor, cost, task)| {
                     (
-                        recipient.added_cost(model, task),
+                        recipient.added_cost(model, task, all_packages),
                         Reverse(cost),
                         task.name,
                         donor,
@@ -645,15 +670,15 @@ mod tests {
     // Byte-for-byte outputs from core.sh: full, norn-api, and norn-cell affected plans.
     const PYTHON_PLANS: &[&str] = &[
         concat!(
-            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["phase/integration-authoring", "phase/provenance"]}, {"id": "b1", "tasks": ["test/rest-2", "test/heavy-2", "test/heavy-1", "test/heavy-5", "phase/clippy"]}, {"id": "b2", "tasks": ["phase/browser", "phase/rivet", "phase/doc"]}, {"id": "b3", "tasks": ["phase/duckdb", "phase/features", "phase/integration-clients"]}, {"id": "b4", "tasks": ["phase/integration-wasm", "phase/guards", "phase/doctest"]}, {"id": "b5", "tasks": ["test/rest-3", "test/rest-1", "test/heavy-3", "test/heavy-6", "test/heavy-4", "phase/test-shards", "phase/wasm"]}]}"#,
+            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["phase/integration-authoring", "phase/doctest"]}, {"id": "b1", "tasks": ["phase/browser", "phase/wasm", "phase/provenance"]}, {"id": "b2", "tasks": ["phase/integration-wasm", "test/heavy-2", "test/heavy-3", "phase/test-shards", "phase/integration-clients"]}, {"id": "b3", "tasks": ["test/rest-2", "phase/guards", "test/heavy-4", "test/heavy-5", "phase/clippy"]}, {"id": "b4", "tasks": ["test/rest-3", "test/rest-1", "test/heavy-6", "test/heavy-1", "phase/doc"]}, {"id": "b5", "tasks": ["phase/duckdb", "phase/features", "phase/rivet"]}]}"#,
             "\n"
         ),
         concat!(
-            r#"{"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy", "rivet"], "packages": "norn-api norn-cell-do norn-cli", "rest_shards": 1, "reason": "changed: norn-api", "bundle": [{"id": "b0", "tasks": ["test/rest-1", "phase/clippy", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/guards", "phase/rivet"]}]}"#,
+            r#"{"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy", "doc", "rivet"], "packages": "norn-api norn-cell-do norn-cli", "rest_shards": 1, "reason": "changed: norn-api", "bundle": [{"id": "b0", "tasks": ["test/rest-1", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/guards", "phase/doc"]}, {"id": "b2", "tasks": ["phase/rivet", "phase/clippy"]}]}"#,
             "\n"
         ),
         concat!(
-            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["test/rest-2", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/duckdb", "phase/clippy"]}, {"id": "b2", "tasks": ["test/rest-3", "test/heavy-3", "test/heavy-4"]}, {"id": "b3", "tasks": ["test/rest-1", "test/heavy-2", "test/heavy-6", "test/heavy-5"]}, {"id": "b4", "tasks": ["phase/guards", "phase/rivet"]}]}"#,
+            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "doc", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["test/rest-2", "phase/doc"]}, {"id": "b1", "tasks": ["test/rest-3", "test/heavy-5"]}, {"id": "b2", "tasks": ["phase/duckdb", "phase/provenance"]}, {"id": "b3", "tasks": ["test/rest-1", "test/heavy-6", "test/heavy-4"]}, {"id": "b4", "tasks": ["phase/guards", "phase/clippy"]}, {"id": "b5", "tasks": ["test/heavy-2", "phase/rivet", "test/heavy-3"]}]}"#,
             "\n"
         ),
     ];
@@ -842,6 +867,7 @@ mod tests {
                 "phase/browser",
                 "test/rest-2",
                 "phase/test-shards",
+                "phase/guards",
                 "phase/integration-wasm",
                 "test/rest-1",
                 "phase/doc",
@@ -858,6 +884,7 @@ mod tests {
                 [
                     ("test/rest-2", false),
                     ("phase/test-shards", false),
+                    ("phase/guards", false),
                     ("test/rest-1", false),
                     ("phase/browser", true),
                     ("phase/integration-wasm", false),
@@ -878,6 +905,7 @@ mod tests {
                     ("phase/integration-clients", false),
                     ("phase/clippy", true),
                     ("phase/test-shards", true),
+                    ("phase/guards", true),
                     ("phase/doc", true),
                 ],
             ),
@@ -1042,8 +1070,11 @@ mod tests {
         let standalone = Bin {
             tasks: vec![clients],
         };
-        assert_eq!(standalone.cost(&model), clients.weight);
-        assert_eq!(Bin::default().added_cost(&model, clients), clients.weight);
+        assert_eq!(standalone.cost(&model, true), clients.weight);
+        assert_eq!(
+            Bin::default().added_cost(&model, clients, true),
+            clients.weight
+        );
 
         // Co-located phase/integration-authoring + phase/integration-clients charges
         // the WASM package build once and does not prune between them.
@@ -1051,15 +1082,31 @@ mod tests {
             tasks: vec![authoring, clients],
         };
         assert_eq!(
-            combined.cost(&model),
+            combined.cost(&model, true),
             authoring.weight + clients.weight + model.wasm_pkg
         );
         assert_eq!(
             Bin {
                 tasks: vec![authoring]
             }
-            .cost_with(&model, &[clients]),
+            .cost_with(&model, &[clients], true),
             authoring.weight + clients.weight + model.wasm_pkg
+        );
+
+        // phase/guards shares the workspace test build on full plans (all_packages=true),
+        // and pays its own workspace test build on narrowed affected plans (all_packages=false).
+        let guards = model.tasks["phase/guards"];
+        let shard = model.tasks["test/rest-1"];
+        let guards_with_shard = Bin {
+            tasks: vec![shard, guards],
+        };
+        assert_eq!(
+            guards_with_shard.cost(&model, true),
+            shard.weight + guards.weight + model.test_build
+        );
+        assert_eq!(
+            guards_with_shard.cost(&model, false),
+            shard.weight + guards.weight + model.test_build * 2
         );
 
         let bundle = Bundle {

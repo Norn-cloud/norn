@@ -17,6 +17,7 @@
       }
     },
     "ir/retail-reorder.action.json",
+    "ir/retail-cancel-reorder.action.json",
     "ir/retail-purchase-request.entity.json",
     "rule-ir-v2/valid/reorder-decision.rule.json"
   ],
