@@ -6,8 +6,8 @@ use norn_ir::RuntimeValue;
 use norn_kernel::cell_host::{FactKey, JsonObject};
 use norn_kernel::{
     ACTION_CALL_TYPE, ActionAuthorizer, ActionCall, ActionCallRecord, ActionOutcome, ActionRefusal,
-    Command, DecisionRefusal, DecisionTurn, FactEvent, LogicalTime, Prepared, World, commit_action,
-    prepare_action_intent,
+    CellHost as _, Command, DecisionRefusal, DecisionTurn, FactEvent, LogicalTime, Prepared, World,
+    commit_action, prepare_action_intent,
 };
 
 use super::{

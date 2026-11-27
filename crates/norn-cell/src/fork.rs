@@ -460,7 +460,7 @@ impl<E: SqlEngine> CellStore<E> {
                     state: "promoting".to_owned(),
                 });
             }
-            let actual = copied_head(&self.conn, &self.model)?;
+            let actual = copied_head(&self.conn, self.model())?;
             if actual != (expected_head.commits, expected_head.hash.clone()) {
                 return Err(CellError::ForkMergeRefused {
                     reason: Box::new(
