@@ -84,6 +84,7 @@ impl DomainCoveragePlan {
                     lifecycle: "<object>".to_owned(),
                     state: "<immutable_object>".to_owned(),
                 });
+                continue;
             }
             for lifecycle in catalog.lifecycles(&object_type.name).into_values() {
                 let prop = lifecycle.property.as_str();
@@ -428,22 +429,9 @@ impl fmt::Display for DomainCoverageReport {
 /// ancestor in `pack`.
 #[must_use]
 pub(crate) fn is_effectively_immutable(pack: &AdmittedPack, object_type: &ObjectTypeDef) -> bool {
-    let mut visited = BTreeSet::new();
-    let mut current = Some(object_type);
-    while let Some(def) = current {
-        if !visited.insert(def.name.as_str()) {
-            break;
-        }
-        if def.immutable {
-            return true;
-        }
-        current = def.extends.as_ref().and_then(|parent| {
-            pack.object_types
-                .iter()
-                .find(|ty| ty.name.as_str() == parent.as_str())
-        });
-    }
-    false
+    super::object_type_ancestors(pack, object_type)
+        .into_iter()
+        .any(|def| def.immutable)
 }
 
 /// [`ActionAuthorizer`] backed by a real Cedar [`Pdp`] via [`Pdp::explain`]

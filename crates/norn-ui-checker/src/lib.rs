@@ -213,9 +213,6 @@ pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
         return merge_widget_diagnostics(findings, extra);
     }
     findings
-        .into_iter()
-        .filter(|d| d.code.as_str() != norn_checker::codes::WIDGET_RING1_REQUIRED)
-        .collect()
 }
 
 /// Resolve `artifacts` against `context.base` and run every Ring-0 set check

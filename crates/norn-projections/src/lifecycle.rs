@@ -18,6 +18,7 @@
 //! (`norn_checker::EffectiveObjectType::lifecycles`). The goldens are
 //! `fixtures/projections/lifecycles/`. The admin display is T7-ADM-1 (#2621).
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use norn_ir::{Lifecycle, ObjectTypeDef, PropertyType};
@@ -43,6 +44,12 @@ pub fn lifecycle_diagram_path(object_type: &str, property: &str) -> String {
     format!("{LIFECYCLE_DIAGRAM_DIR}/{object_type}.{property}.mmd")
 }
 
+fn sanitize_title_token(text: &str) -> String {
+    text.chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect()
+}
+
 /// The diagram artifact of one lifecycle of `object_type`, over `states` (the
 /// lifecycle property's effective enum values; see
 /// [`lifecycle_state_diagram`]).
@@ -53,10 +60,12 @@ pub fn lifecycle_diagram(
     lifecycle: &Lifecycle,
 ) -> LifecycleDiagram {
     let property = lifecycle.property.as_str();
+    let title_object = sanitize_title_token(object_type);
+    let title_property = sanitize_title_token(property);
     LifecycleDiagram {
         path: lifecycle_diagram_path(object_type, property),
         mermaid: format!(
-            "---\ntitle: {object_type} {property} lifecycle\n---\n{}",
+            "---\ntitle: {title_object} {title_property} lifecycle\n---\n{}",
             lifecycle_state_diagram(states, lifecycle)
         ),
     }
@@ -93,7 +102,13 @@ pub fn declared_lifecycle_diagrams(def: &ObjectTypeDef) -> Vec<LifecycleDiagram>
 /// is appended after them.
 #[must_use]
 pub fn lifecycle_state_diagram(states: &[&str], lifecycle: &Lifecycle) -> String {
-    let mut names: Vec<&str> = states.to_vec();
+    let mut names: Vec<&str> = Vec::with_capacity(states.len());
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for &state in states {
+        if seen.insert(state) {
+            names.push(state);
+        }
+    }
     let used = lifecycle.initial.iter().chain(&lifecycle.terminal).chain(
         lifecycle.transitions.iter().flat_map(|transition| {
             transition
@@ -103,7 +118,7 @@ pub fn lifecycle_state_diagram(states: &[&str], lifecycle: &Lifecycle) -> String
         }),
     );
     for name in used {
-        if !names.contains(&name.as_str()) {
+        if seen.insert(name.as_str()) {
             names.push(name);
         }
     }

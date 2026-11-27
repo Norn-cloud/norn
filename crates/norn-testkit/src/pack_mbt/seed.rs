@@ -32,6 +32,14 @@ use super::{AdmittedAction, AdmittedPack, PackHost};
 /// A stamped create's outcome: committed, or the kernel's refusal.
 pub(crate) type Seeded<X> = Result<(), DecisionRefusal<X>>;
 
+/// Result of a governed stamped create together with the ledger length captured
+/// immediately before the create's own `commit_action` call (after any slice or
+/// link target seeding).
+pub(crate) struct StampedSeedOutcome<X> {
+    pub(crate) before_commit: usize,
+    pub(crate) result: Seeded<X>,
+}
+
 /// The principal a seeded create runs as when no protected value names one.
 const SEED_PRINCIPAL: &str = "mbt-seed-creator";
 
@@ -56,19 +64,13 @@ pub(crate) fn protected_properties(
     object_type: &ObjectTypeDef,
 ) -> Vec<String> {
     let mut protected = Vec::new();
-    let mut walk = Some(object_type);
-    while let Some(def) = walk {
+    for def in super::object_type_ancestors(pack, object_type) {
         protected.extend(
             def.properties
                 .iter()
                 .filter(|property| property.protected)
                 .map(|property| property.id.as_str().to_owned()),
         );
-        walk = def.extends.as_ref().and_then(|parent| {
-            pack.object_types
-                .iter()
-                .find(|ty| ty.name.as_str() == parent.as_str())
-        });
     }
     protected
 }
@@ -110,7 +112,7 @@ pub(crate) fn seed_stamped<H: PackHost>(
     id: &str,
     values: &JsonObject,
     seq: u64,
-) -> Result<Option<Seeded<H::Error>>, String> {
+) -> Result<Option<StampedSeedOutcome<H::Error>>, String> {
     let protected = protected_properties(pack, object_type);
     if protected.is_empty() {
         return Ok(None);
@@ -140,7 +142,8 @@ pub(crate) fn seed_stamped<H: PackHost>(
     for field in creator.root.actor_stamped_fields() {
         input.remove(&field);
     }
-    let key = format!("seed-{name}-{id}-{}", host.ledger_len());
+    let before_commit = host.ledger_len();
+    let key = format!("seed-{name}-{id}-{before_commit}");
     let call = ActionCall {
         action: &creator.root,
         action_artifact_id: &creator.artifact_id,
@@ -162,7 +165,7 @@ pub(crate) fn seed_stamped<H: PackHost>(
         },
         trace: None,
     };
-    Ok(Some(match commit_action(host, catalog, &call, &Seeder) {
+    let result = match commit_action(host, catalog, &call, &Seeder) {
         Ok(ActionOutcome::Committed { .. }) => Ok(()),
         Ok(ActionOutcome::Replayed { .. }) => {
             return Err(format!("seed {name}/{id}: replayed a fresh call key"));
@@ -177,6 +180,10 @@ pub(crate) fn seed_stamped<H: PackHost>(
                 creator.artifact_id
             ));
         }
+    };
+    Ok(Some(StampedSeedOutcome {
+        before_commit,
+        result,
     }))
 }
 
@@ -311,23 +318,204 @@ pub(crate) fn seed_create_links_and_slice_targets<H: PackHost>(
     bind_input_to_preconditions(admitted, input, &seeded_slices, host)
 }
 
+/// Strips balanced outer parentheses around `text`, respecting string literals.
+fn strip_outer_parens(mut text: &str) -> &str {
+    loop {
+        let trimmed = text.trim();
+        if !(trimmed.starts_with('(') && trimmed.ends_with(')')) {
+            return trimmed;
+        }
+        let mut depth = 0_usize;
+        let mut in_quote: Option<char> = None;
+        let mut escaped = false;
+        let mut wraps_whole = true;
+        let last_idx = trimmed.len().saturating_sub(1);
+        for (idx, ch) in trimmed.char_indices() {
+            if let Some(q) = in_quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == q {
+                    in_quote = None;
+                }
+                continue;
+            }
+            match ch {
+                '\'' | '"' => in_quote = Some(ch),
+                '(' => depth = depth.saturating_add(1),
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 && idx < last_idx {
+                        wraps_whole = false;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if wraps_whole && depth == 0 && in_quote.is_none() {
+            let Some(inner) = trimmed.get(1..last_idx) else {
+                return trimmed;
+            };
+            text = inner;
+        } else {
+            return trimmed;
+        }
+    }
+}
+
+fn is_ident_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+/// Splits `text` on a top-level logical operator (`symbol` like `&&` or word
+/// `word` like `and`) outside quotes and nested parentheses.
+fn split_top_level_logic<'a>(text: &'a str, symbol: &str, word: &str) -> Vec<&'a str> {
+    let mut parts = Vec::new();
+    let mut start = 0_usize;
+    let mut skip_until = 0_usize;
+    let mut depth = 0_usize;
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices() {
+        if idx < skip_until {
+            continue;
+        }
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => {
+                in_quote = Some(ch);
+                continue;
+            }
+            '(' => {
+                depth = depth.saturating_add(1);
+                continue;
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                continue;
+            }
+            _ => {}
+        }
+        if depth != 0 {
+            continue;
+        }
+        let rest = text.get(idx..).unwrap_or("");
+        let matched = if rest.starts_with(symbol) {
+            Some(symbol.len())
+        } else if rest.starts_with(word) {
+            let prev_ok = text
+                .get(..idx)
+                .and_then(|before| before.chars().next_back())
+                .is_some_and(|prev| !is_ident_char(prev));
+            let next_ok = rest
+                .get(word.len()..)
+                .and_then(|after| after.chars().next())
+                .is_some_and(|next| !is_ident_char(next));
+            (prev_ok && next_ok).then_some(word.len())
+        } else {
+            None
+        };
+        if let Some(len) = matched {
+            if let Some(part) = text.get(start..idx) {
+                parts.push(part);
+            }
+            start = idx.saturating_add(len);
+            skip_until = start;
+        }
+    }
+    if let Some(tail) = text.get(start..) {
+        parts.push(tail);
+    }
+    parts
+}
+
+/// Splits `text` on a single top-level `==` (ignoring `!=`, `<=`, `>=`, `===`,
+/// quoted strings, and parenthesized sub-expressions).
+fn split_top_level_eq(text: &str) -> Option<(&str, &str)> {
+    let mut depth = 0_usize;
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in text.char_indices() {
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => in_quote = Some(ch),
+            '(' => depth = depth.saturating_add(1),
+            ')' => depth = depth.saturating_sub(1),
+            '=' if depth == 0 => {
+                let rest = text.get(idx..).unwrap_or("");
+                let prev = text
+                    .get(..idx)
+                    .and_then(|before| before.chars().next_back());
+                let after = rest.get(2..).and_then(|tail| tail.chars().next());
+                if rest.starts_with("==")
+                    && !matches!(prev, Some('!' | '=' | '<' | '>'))
+                    && after != Some('=')
+                {
+                    let lhs = text.get(..idx)?;
+                    let rhs = rest.get(2..)?;
+                    return Some((lhs, rhs));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn collect_top_level_conjuncts<'a>(text: &'a str, depth: usize, out: &mut Vec<&'a str>) {
+    let stripped = strip_outer_parens(text);
+    if depth >= 16 {
+        out.push(stripped);
+        return;
+    }
+    let parts = split_top_level_logic(stripped, "&&", "and");
+    if parts.len() <= 1 {
+        out.push(stripped);
+        return;
+    }
+    for part in parts {
+        collect_top_level_conjuncts(part, depth.saturating_add(1), out);
+    }
+}
+
 /// Each `==` conjunct of `preconditions` as its two sides, grouping trimmed;
 /// of a disjunction, its first alternative (one way to satisfy it).
 fn precondition_equalities(preconditions: &[ZenExpression]) -> Vec<(String, String)> {
-    let side = |text: &str| {
-        text.trim()
-            .trim_start_matches('(')
-            .trim_end_matches(')')
-            .trim()
-            .to_owned()
-    };
     let mut out = Vec::new();
     for expr in preconditions {
-        for conj in expr.as_str().split(" and ").flat_map(|s| s.split("&&")) {
-            let first = conj.split(" or ").next().unwrap_or(conj);
-            let first = first.split("||").next().unwrap_or(first);
-            if let Some((lhs, rhs)) = first.split_once("==") {
-                out.push((side(lhs), side(rhs)));
+        let mut conjuncts = Vec::new();
+        collect_top_level_conjuncts(expr.as_str(), 0, &mut conjuncts);
+        for conj in conjuncts {
+            let first = split_top_level_logic(conj, "||", "or")
+                .into_iter()
+                .next()
+                .unwrap_or(conj);
+            let first = strip_outer_parens(first);
+            if let Some((lhs, rhs)) = split_top_level_eq(first) {
+                out.push((
+                    strip_outer_parens(lhs).to_owned(),
+                    strip_outer_parens(rhs).to_owned(),
+                ));
             }
         }
     }
@@ -466,7 +654,9 @@ fn seed_related_target<H: PackHost>(
     }
     let vals = synthesize_object(pack, target_ty, target_id, seq);
     if let Some(created) = seed_stamped(host, pack, catalog, target_ty, target_id, &vals, seq)? {
-        return created.map_err(|err| format!("Cedar fixture: seed {target_ty_name}: {err}"));
+        return created
+            .result
+            .map_err(|err| format!("Cedar fixture: seed {target_ty_name}: {err}"));
     }
     let key = FactKey::new(target_ty_name, target_id);
     let mut graph = collect_required_link_graph(pack, target_ty, &key, seq)?;
@@ -530,11 +720,48 @@ pub(crate) fn stamp_link_targets<H: PackHost>(
         }
         let key = write.key.key.clone();
         match seed_stamped(host, pack, catalog, object_type, &key, values, seq)? {
-            Some(Ok(()) | Err(DecisionRefusal::ObjectExists { .. })) => {}
-            Some(Err(refusal)) => return Err(format!("seed {}: {refusal}", write.key)),
+            Some(StampedSeedOutcome {
+                result: Ok(()) | Err(DecisionRefusal::ObjectExists { .. }),
+                ..
+            }) => {}
+            Some(StampedSeedOutcome {
+                result: Err(refusal),
+                ..
+            }) => return Err(format!("seed {}: {refusal}", write.key)),
             None => kept.push(write),
         }
     }
     *writes = kept;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_slice_precondition_states, precondition_equalities};
+    use norn_kernel::pack_mbt_support::ZenExpression;
+
+    #[test]
+    fn precondition_equalities_handles_quotes_parens_and_inequality() {
+        let exprs = [ZenExpression(
+            "(slice.a.status == 'open and ready' or slice.a.status == 'draft') \
+             and input.tag == 'a == b' && input.other != 'skip' \
+             && (input.x == 'ok' && input.y == 'yes')"
+                .to_owned(),
+        )];
+        let pairs = precondition_equalities(&exprs);
+        assert_eq!(
+            pairs,
+            vec![
+                ("slice.a.status".to_owned(), "'open and ready'".to_owned()),
+                ("input.tag".to_owned(), "'a == b'".to_owned()),
+                ("input.x".to_owned(), "'ok'".to_owned()),
+                ("input.y".to_owned(), "'yes'".to_owned()),
+            ]
+        );
+        let states = parse_slice_precondition_states(&exprs);
+        assert_eq!(
+            states.get("a"),
+            Some(&("status".to_owned(), "open and ready".to_owned()))
+        );
+    }
 }

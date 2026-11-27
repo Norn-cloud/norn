@@ -127,6 +127,7 @@ test("the route table covers every route the cell server declares (server.rs rou
 test("refusal codes are allowlisted: a known code is kept, anything else is other", () => {
   expect(refusalCode('{"code":"authz.denied"}')).toBe("authz.denied")
   expect(refusalCode('{"code":"action.write_mode_failed"}')).toBe("action.write_mode_failed")
+  expect(refusalCode('{"code":"privacy.marked_column"}')).toBe("privacy.marked_column")
   expect(refusalCode('{"code":"acme.customer_42"}')).toBe("other")
   expect(refusalCode('{"code":"acme customer 42"}')).toBe("other")
   expect(refusalCode("<html>")).toBe("other")

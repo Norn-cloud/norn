@@ -31,6 +31,10 @@ pub(crate) struct PrincipalContract {
 }
 
 impl PrincipalContract {
+    pub(crate) const fn schema(&self) -> &Arc<Schema> {
+        &self.schema
+    }
+
     /// Pair the rule's declarations with its `principal` input record: both
     /// are present or both absent, and the record has exactly one required
     /// column per declaration.
@@ -93,14 +97,22 @@ impl AdmittedDecision {
     ///
     /// # Errors
     ///
-    /// [`DecisionError::PrincipalInputType`] when the decision declares no
-    /// principal inputs or a value does not conform to its declared column.
-    /// The error names the column and never carries a value.
+    /// [`DecisionError::InputBinding`] when `event` was validated for another
+    /// decision or schema; [`DecisionError::PrincipalInputType`] when the
+    /// decision declares no principal inputs or a value does not conform to
+    /// its declared column. The error names the column and never carries a
+    /// value.
     pub fn bind_principal(
         &self,
         mut event: TypedEvent,
         principal: Value,
     ) -> Result<TypedEvent, DecisionError> {
+        if !self.accepts_event(&event) {
+            return Err(DecisionError::InputBinding {
+                decision: self.rule_id().to_owned(),
+                validated_for: event.rule_id,
+            });
+        }
         let Some(contract) = self.principal_contract() else {
             return Err(DecisionError::PrincipalInputType {
                 path: DECIDE_PRINCIPAL_MEMBER.to_owned(),
@@ -112,7 +124,7 @@ impl AdmittedDecision {
             .map_err(|violation| DecisionError::PrincipalInputType {
                 path: violation.path,
             })?;
-        event.principal = Some(principal);
+        event.principal = Some((Arc::clone(&contract.schema), principal));
         Ok(event)
     }
 }
