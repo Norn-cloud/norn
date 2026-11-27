@@ -2329,45 +2329,15 @@ pub(crate) fn restore_input<E: SqlEngine>(
             result,
             runs,
         } => {
-            let head = replayed_result(store, position)?.ok_or_else(mismatch)?;
-            if head.position != position
-                || head.commit_seq != commit_seq
-                || head.command != command
-                || head.result.is_some()
-                || result.is_none()
-            {
-                return Err(mismatch());
-            }
-            // Older generation runs can survive command replacement without
-            // ever having been consumed. Recover the recorded history, without IO.
-            let existing = store.read().runs(&command.command_id)?;
-            if existing.iter().any(|run| !runs.contains(run)) {
-                return Err(mismatch());
-            }
-            restore_run_history(store, record, &command, &runs, &existing)?;
-            let current: Vec<_> = runs
-                .iter()
-                .filter(|run| run.generation == command.generation)
-                .collect();
-            if current.len() != 1
-                || current.first().is_none_or(|run| {
-                    run.attempt != 1
-                        || run.consumed_commit_seq.is_some()
-                        || Some(&run.outcome) != result.as_ref()
-                })
-            {
-                return Err(mismatch());
-            }
-            let world = crate::payload_storage::receipt_world(&store.conn, head.commit_seq)?;
-            let encoded_result = crate::payload_storage::encode_result(
-                &store.conn,
-                &record.batch.scope,
-                &world,
-                result.as_ref().ok_or_else(mismatch)?,
-            )?;
-            store.conn.execute(
-                "UPDATE \"_norn_outbox\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3",
-                params![encoded_result, command.command_id, to_i64(command.generation, "generation")?],
+            crate::outbox_generations::restore_consumed_result(
+                store,
+                record,
+                position,
+                commit_seq,
+                &command,
+                result.as_ref(),
+                &runs,
+                &mismatch,
             )?;
         }
     }
@@ -2384,7 +2354,7 @@ pub(crate) fn restore_input<E: SqlEngine>(
 
 /// PARKED-1: the pending command a retained result consumption names: a
 /// parked command at its own position, any other only as the FIFO head.
-fn replayed_result<E: SqlEngine>(
+pub(crate) fn replayed_result<E: SqlEngine>(
     store: &CellStore<E>,
     position: u64,
 ) -> Result<Option<crate::read::PendingCommand>, CellError> {
@@ -2399,7 +2369,7 @@ fn replayed_result<E: SqlEngine>(
     Ok((fifo_head == Some(row.position)).then_some(row))
 }
 
-fn restore_run_history<E: SqlEngine>(
+pub(crate) fn restore_run_history<E: SqlEngine>(
     store: &mut CellStore<E>,
     record: &ExportRecord,
     command: &crate::OutboxCommand,

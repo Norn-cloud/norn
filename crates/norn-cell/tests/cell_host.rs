@@ -900,6 +900,7 @@ impl<const REOPEN: bool, S: LawEngine, const NETWORK: bool> SimulatedCell
     for LawSqlite<REOPEN, S, NETWORK>
 {
     const COMMITS_PERFORM_CLAIMS: bool = true;
+    const TRACKS_LATE_OUTCOMES: bool = true;
     const NETWORK: bool = NETWORK;
     /// Only a file store survives a crash: it reopens from the file. Only a
     /// storage that commits itself can fail its commit.
@@ -978,6 +979,24 @@ impl<const REOPEN: bool, S: LawEngine, const NETWORK: bool> SimulatedCell
             .map_err(|error| error.to_string())
     }
 
+    fn sim_authorize_reissue(
+        &mut self,
+        command: &CommandId,
+        from_generation: Generation,
+        next_generation: Generation,
+    ) -> Result<(), String> {
+        let authorized = self.cell.reconcile_outbox(
+            command,
+            from_generation,
+            norn_kernel::world::outbox_ledger::ReconciliationDecision::AuthorizeReissue {
+                next_generation: next_generation.0,
+            },
+            None,
+        );
+        self.after_write();
+        authorized.map(|_| ()).map_err(|error| error.to_string())
+    }
+
     fn sim_advance_to(&mut self, now: LogicalTime) {
         self.cell.advance_to(now);
     }
@@ -995,6 +1014,17 @@ impl<const REOPEN: bool, S: LawEngine, const NETWORK: bool> SimulatedCell
 
     fn sim_executions(&self) -> u64 {
         self.cell.executions().expect("counts")
+    }
+
+    fn sim_prior_outcomes(&self) -> Vec<(CommandId, Vec<u64>)> {
+        self.cell
+            .store()
+            .read()
+            .outbox_prior_outcomes()
+            .expect("prior outcomes")
+            .into_iter()
+            .map(|(id, gens)| (CommandId(id), gens))
+            .collect()
     }
 
     fn sim_outbox(&self) -> Vec<Command<LawCommand>> {
@@ -1299,6 +1329,7 @@ impl<const BUG: u8> CellHost for ResponderMutant<BUG> {
 
 impl<const BUG: u8> SimulatedCell for ResponderMutant<BUG> {
     const COMMITS_PERFORM_CLAIMS: bool = true;
+    const TRACKS_LATE_OUTCOMES: bool = true;
     const NETWORK: bool = true;
 
     fn sim_new() -> Self {
@@ -1336,6 +1367,16 @@ impl<const BUG: u8> SimulatedCell for ResponderMutant<BUG> {
         }
     }
 
+    fn sim_authorize_reissue(
+        &mut self,
+        command: &CommandId,
+        from_generation: Generation,
+        next_generation: Generation,
+    ) -> Result<(), String> {
+        self.inner
+            .sim_authorize_reissue(command, from_generation, next_generation)
+    }
+
     fn sim_advance_to(&mut self, now: LogicalTime) {
         self.inner.sim_advance_to(now);
     }
@@ -1346,6 +1387,10 @@ impl<const BUG: u8> SimulatedCell for ResponderMutant<BUG> {
 
     fn sim_executions(&self) -> u64 {
         self.inner.sim_executions().saturating_add(self.again)
+    }
+
+    fn sim_prior_outcomes(&self) -> Vec<(CommandId, Vec<u64>)> {
+        self.inner.sim_prior_outcomes()
     }
 
     fn sim_outbox(&self) -> Vec<Command<LawCommand>> {
@@ -2110,6 +2155,31 @@ fn a_late_completion_never_writes_a_replacement_generation() {
     let mut replacement = old.clone();
     replacement.generation = Generation(1);
     replacement.idempotency_key = IdempotencyKey("charge/O-1/1".to_owned());
+    // D1: reissuing over an ambiguous dispatch without durable reconciliation
+    // fails closed.
+    let refused = cell.commit(CellCommit {
+        effects: vec![Effect::Perform(replacement.clone())],
+        ..CellCommit::empty()
+    });
+    assert!(
+        matches!(
+            refused,
+            Err(CommitError::Host(CellError::OutboxReissueRefused {
+                generation: 1,
+                ..
+            }))
+        ),
+        "{refused:?}"
+    );
+    cell.reconcile_outbox(
+        &old.id,
+        old.generation,
+        norn_kernel::world::outbox_ledger::ReconciliationDecision::AuthorizeReissue {
+            next_generation: 1,
+        },
+        None,
+    )
+    .expect("reconciles reissue");
     cell.commit(CellCommit {
         effects: vec![Effect::Perform(replacement.clone())],
         ..CellCommit::empty()
@@ -2124,9 +2194,17 @@ fn a_late_completion_never_writes_a_replacement_generation() {
                 ok: true,
             },
         )
-        .expect("stale completion is ignored"),
+        .expect("stale completion attaches only to prior generation"),
         None
     );
+    let ledger = cell
+        .store()
+        .read()
+        .outbox_ledger(&old.id.0)
+        .expect("ledger reads")
+        .expect("ledger exists");
+    assert_eq!(ledger.active_generation(), 1);
+    assert_eq!(ledger.prior_confirmed_successes(), vec![0]);
     assert!(matches!(
         cell.claim_perform().expect("claims replacement"),
         ClaimOutcome::Fresh(found) if found == replacement

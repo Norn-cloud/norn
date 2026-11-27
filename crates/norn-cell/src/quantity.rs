@@ -243,10 +243,10 @@ pub(crate) fn establish_boundary<S: SqlEngine>(
 }
 
 fn check_expiry_timer_effects(batch: &CommitBatch) -> Result<(), CellError> {
-    if batch.effects.iter().any(|effect| match effect {
-        crate::EffectRow::Schedule { timer } => timer.timer_id.starts_with(EXPIRY_TIMER_PREFIX),
-        crate::EffectRow::CancelTimer { timer_id } => timer_id.starts_with(EXPIRY_TIMER_PREFIX),
-        crate::EffectRow::Enqueue { .. } | crate::EffectRow::ClaimPerform { .. } => false,
+    if batch.effects.iter().any(|effect| {
+        effect
+            .expiry_timer_id()
+            .is_some_and(|timer_id| timer_id.starts_with(EXPIRY_TIMER_PREFIX))
     }) {
         return Err(QuantityError::InvalidContract.into());
     }

@@ -1,7 +1,7 @@
 //! Core 08 Fork Unit 2b (E4, #1947, `FORK-EVIDENCE-1` Lemma L6): pin-bound
 //! fork writes and auditable fork-local simulated evidence for Decision Cards.
 //!
-//! Under storage version 11, every commit newly minted inside a forked store
+//! Under storage version 12, every commit newly minted inside a forked store
 //! binds its durable [`ForkPin`] directly into:
 //! - [`ReceiptBody::fork_pin`](crate::store::ReceiptBody::fork_pin) (hashed
 //!   into [`Receipt::hash`]),
@@ -11,7 +11,7 @@
 //!
 //! Ordinary `main`-world receipt bodies and ledger entries omit these fields
 //! and keep byte-identical hashes (`ExportRecord::storage_version` records
-//! `STORAGE_VERSION` 11 per `ENGINE-UPGRADE-1`). Two invariants hold across
+//! `STORAGE_VERSION` 12 per `ENGINE-UPGRADE-1`). Two invariants hold across
 //! arbitrary fork nesting depths (`D_i`, nested `S_i`, ...):
 //! 1. **Never main evidence (Lemma L6):** any fork-bound receipt, row, ledger
 //!    entry, or export record refuses `core.world.fork_evidence_forbidden` if
@@ -191,7 +191,7 @@ pub enum ComparisonBaseline<'a> {
 }
 
 /// Explicitly simulated, pin-bound evidence for one commit minted inside a
-/// fork lineage (`commit_seq > main_horizon`) under storage version 11.
+/// fork lineage (`commit_seq > main_horizon`) under storage version 12.
 ///
 /// Independently verifiable after the originating fork is discarded via
 /// [`verify_fork_commit_evidence`], and always refused as main-world evidence

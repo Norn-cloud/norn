@@ -13,8 +13,19 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+#[allow(
+    unreachable_pub,
+    reason = "standalone Charon/Aeneas extraction crate root; private to norn-ir public API"
+)]
+#[path = "feed_patch_core.rs"]
+mod feed_patch_core;
+
 use crate::rule::JsonObject;
 use crate::{RuntimeObject, RuntimeValue};
+use feed_patch_core::{
+    LinkOp, PatchOp, VersionCmp, compare_instant_core, compose_field_core, compose_link_core,
+    reduce_field_core, reduce_link_core,
+};
 
 /// Mapping extension key declaring per-dataset feed mode and version ordering.
 pub const FEED_EXTENSION_KEY: &str = "norn.feed/1";
@@ -365,7 +376,11 @@ impl SourceVersion {
                     epoch_seconds: sb,
                     nanos: nb,
                 },
-            ) => Ok((sa, na).cmp(&(sb, nb))),
+            ) => Ok(match compare_instant_core(*sa, *na, *sb, *nb) {
+                VersionCmp::Less => Ordering::Less,
+                VersionCmp::Equal => Ordering::Equal,
+                VersionCmp::Greater => Ordering::Greater,
+            }),
             (ParsedVersion::Uint64(a), ParsedVersion::Uint64(b)) => Ok(a.cmp(b)),
             (ParsedVersion::Int64(a), ParsedVersion::Int64(b)) => Ok(a.cmp(b)),
             (ParsedVersion::Opaque(_), ParsedVersion::Opaque(_)) => {
@@ -620,19 +635,67 @@ pub enum LinkPatchOp {
     Target(String),
 }
 
-/// Pure field-level observation reducer (generic, Aeneas/Lean-extractable):
-/// applies a single [`FieldPatch`] to an optional prior field value.
+enum FieldRef<'a, V> {
+    Borrowed(&'a V),
+    Owned(V),
+}
+
+impl<V: Clone> FieldRef<'_, V> {
+    fn into_owned(self) -> V {
+        match self {
+            Self::Borrowed(value) => value.clone(),
+            Self::Owned(value) => value,
+        }
+    }
+}
+
+fn field_patch_as_core<V>(patch: &FieldPatch<V>) -> PatchOp<&V> {
+    match patch {
+        FieldPatch::Absent => PatchOp::Absent,
+        FieldPatch::ExplicitNull => PatchOp::ExplicitNull,
+        FieldPatch::Value(value) => PatchOp::Value(value),
+    }
+}
+
+fn field_patch_from_core_ref<V: Clone>(patch: &PatchOp<&V>) -> FieldPatch<V> {
+    match patch {
+        PatchOp::Absent => FieldPatch::Absent,
+        PatchOp::ExplicitNull => FieldPatch::ExplicitNull,
+        PatchOp::Value(value) => FieldPatch::Value((*value).clone()),
+    }
+}
+
+fn link_patch_as_core(op: &LinkPatchOp) -> LinkOp<&str> {
+    match op {
+        LinkPatchOp::Absent => LinkOp::Absent,
+        LinkPatchOp::Clear => LinkOp::Clear,
+        LinkPatchOp::Target(target) => LinkOp::Target(target.as_str()),
+    }
+}
+
+fn link_patch_from_core_ref(op: &LinkOp<&str>) -> LinkPatchOp {
+    match op {
+        LinkOp::Absent => LinkPatchOp::Absent,
+        LinkOp::Clear => LinkPatchOp::Clear,
+        LinkOp::Target(target) => LinkPatchOp::Target((*target).to_owned()),
+    }
+}
+
+/// Pure field-level observation reducer (delegates to the standalone
+/// Aeneas-extractable core in `feed_patch_core`).
 #[must_use]
 pub fn reduce_field<V: Clone>(
     prior: Option<&V>,
     patch: &FieldPatch<V>,
     null_value: V,
 ) -> Option<V> {
-    match patch {
-        FieldPatch::Absent => prior.cloned(),
-        FieldPatch::ExplicitNull => Some(null_value),
-        FieldPatch::Value(value) => Some(value.clone()),
-    }
+    let prior_ref = prior.map(FieldRef::Borrowed);
+    let patch_ref = match patch {
+        FieldPatch::Absent => PatchOp::Absent,
+        FieldPatch::ExplicitNull => PatchOp::ExplicitNull,
+        FieldPatch::Value(value) => PatchOp::Value(FieldRef::Borrowed(value)),
+    };
+    reduce_field_core(prior_ref, patch_ref, FieldRef::Owned(null_value)).map(FieldRef::into_owned)
 }
 
 /// Pure [`RuntimeValue`] specialization of [`reduce_field`].
@@ -654,11 +717,10 @@ pub fn compose_field_patch<V: Clone>(
     earlier: &FieldPatch<V>,
     later: &FieldPatch<V>,
 ) -> FieldPatch<V> {
-    match later {
-        FieldPatch::Absent => earlier.clone(),
-        FieldPatch::ExplicitNull => FieldPatch::ExplicitNull,
-        FieldPatch::Value(value) => FieldPatch::Value(value.clone()),
-    }
+    field_patch_from_core_ref(&compose_field_core(
+        field_patch_as_core(earlier),
+        field_patch_as_core(later),
+    ))
 }
 
 /// Pure object-level observation reducer: applies a map of tri-state
@@ -696,23 +758,18 @@ pub fn compose_object_patches(
 }
 
 /// Pure link-level observation reducer: applies a [`LinkPatchOp`] to an
-/// optional prior target key.
+/// optional prior target key (delegates to `feed_patch_core`).
 #[must_use]
 pub fn reduce_link(prior: Option<&str>, op: &LinkPatchOp) -> Option<String> {
-    match op {
-        LinkPatchOp::Absent => prior.map(str::to_owned),
-        LinkPatchOp::Clear => None,
-        LinkPatchOp::Target(target) => Some(target.clone()),
-    }
+    reduce_link_core(prior, link_patch_as_core(op)).map(str::to_owned)
 }
 
 /// Associative composition of two [`LinkPatchOp`] updates (`earlier` followed
 /// by `later`), with identity [`LinkPatchOp::Absent`].
 #[must_use]
 pub fn compose_link_patch(earlier: &LinkPatchOp, later: &LinkPatchOp) -> LinkPatchOp {
-    match later {
-        LinkPatchOp::Absent => earlier.clone(),
-        LinkPatchOp::Clear => LinkPatchOp::Clear,
-        LinkPatchOp::Target(target) => LinkPatchOp::Target(target.clone()),
-    }
+    link_patch_from_core_ref(&compose_link_core(
+        link_patch_as_core(earlier),
+        link_patch_as_core(later),
+    ))
 }

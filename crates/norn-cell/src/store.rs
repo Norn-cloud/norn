@@ -39,8 +39,8 @@ use crate::read::{
 };
 use crate::system::{
     DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
-    DEFINITION_VERSION, INBOX, MARKING_SNAPSHOT, META, MarkingSlot, MarkingTarget, OUTBOX, RUN,
-    STORE_FORMAT, ensure_marking_subject, query_marking_slot, write_nonempty_marking_slot,
+    DEFINITION_VERSION, INBOX, MARKING_SNAPSHOT, META, MarkingSlot, MarkingTarget, STORE_FORMAT,
+    ensure_marking_subject, query_marking_slot, write_nonempty_marking_slot,
 };
 use crate::write::Writer;
 
@@ -1350,6 +1350,50 @@ pub enum EffectRow {
         /// The generation being dispatched.
         generation: u64,
     },
+    /// Durably record an outbox reconciliation decision for `(command_id, generation)` (`D1`).
+    ReconcileOutbox {
+        /// The command id being reconciled.
+        command_id: String,
+        /// The generation being reconciled.
+        generation: u64,
+        /// The durable reconciliation decision (`ConfirmedOutcome`,
+        /// `AuthorizeReissue`, or `RequireCompensation`).
+        decision: norn_kernel::world::outbox_ledger::ReconciliationDecision,
+        /// Optional confirmed outcome payload when `decision` is
+        /// `ConfirmedOutcome`; its canonical digest must match `outcome_digest`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        confirmed_outcome: Option<Value>,
+        /// Optional restore-fence generation observed when this reconciliation
+        /// was committed, so a subsequent restore replays the prerequisite fence
+        /// before replaying this reconciliation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fenced_at: Option<u64>,
+    },
+    /// Durably record the result of a compensation attempt for `(command_id, generation)` (`D1`).
+    RecordCompensation {
+        /// The command id being compensated.
+        command_id: String,
+        /// The generation being compensated.
+        generation: u64,
+        /// Whether compensation completed.
+        ok: bool,
+        /// Optional restore-fence generation observed when this compensation
+        /// was committed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fenced_at: Option<u64>,
+    },
+    /// Durably attach an external outcome verified by `proof` to its original
+    /// generation (`D1`), surviving export and restore.
+    RecordLateOutcome {
+        /// The command id.
+        command_id: String,
+        /// Exact immutable claim proof of the generation that produced this outcome.
+        proof: norn_kernel::world::outbox_ledger::DispatchProof,
+        /// Whether the external outcome succeeded.
+        ok: bool,
+        /// The external outcome payload.
+        outcome: Value,
+    },
     /// Insert or replace a timer by id; its incarnation is this commit.
     Schedule {
         /// The timer.
@@ -1787,7 +1831,7 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     pub(crate) conn: E,
     pub(crate) transparency: RefCell<crate::transparency::ReceiptLog>,
     pub(crate) instance_identity: Arc<()>,
-    model: Model,
+    pub(crate) model: Model,
     candidate_validator: Cell<Option<CandidateValidator<E>>>,
     pub(crate) commit_precondition: RefCell<Option<CommitPrecondition>>,
     #[cfg(feature = "native")]
@@ -1795,7 +1839,7 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     /// The last head this store verified (#2975): verification at open,
     /// then [`Self::verified_head`] extends it over later commits only.
     verified: RefCell<LedgerHead>,
-    source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
+    pub(crate) source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
     pub(crate) mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
     verified_receipts: RefCell<crate::history::VerifiedReceipts>,
     /// Immutable quantity boundary found at open or established by a committed
@@ -3101,11 +3145,15 @@ impl<E: SqlEngine> CellStore<E> {
         self.persist_pending_fence();
         self.scrub.borrow().refuse_fenced()?;
         self.refuse_fork_write()?;
-        if batch
-            .effects
-            .iter()
-            .any(|effect| matches!(effect, EffectRow::ClaimPerform { .. }))
-        {
+        if batch.effects.iter().any(|effect| {
+            matches!(
+                effect,
+                EffectRow::ClaimPerform { .. }
+                    | EffectRow::ReconcileOutbox { .. }
+                    | EffectRow::RecordCompensation { .. }
+                    | EffectRow::RecordLateOutcome { .. }
+            )
+        }) {
             self.refuse_perform_in_fork()?;
         }
         let admitted_boundary = Cell::new(self.quantity_boundary.get());
@@ -3358,7 +3406,12 @@ impl<E: SqlEngine> CellStore<E> {
             {
                 return Err(CellError::HistoricalValueUnproven("retained replay input differs".to_owned()).into());
             }
-            let mut writer = Writer::new(&self.conn, commit_model, effective_batch, commit_seq);
+            let legacy_outbox = matches!(
+                origin,
+                CommitOrigin::Retained(record) if record.storage_version.unwrap_or(1) < 11
+            );
+            let mut writer = Writer::new(&self.conn, commit_model, effective_batch, commit_seq)
+                .with_legacy_outbox(legacy_outbox);
 
             let install_record = if let (Some(install), Some(mut record)) =
                 (installation.as_ref(), install_record)
@@ -3514,6 +3567,9 @@ impl<E: SqlEngine> CellStore<E> {
                     .filter_map(|effect| match effect {
                         EffectRow::Enqueue { command } => Some(command.command_id.clone()),
                         EffectRow::ClaimPerform { .. }
+                        | EffectRow::ReconcileOutbox { .. }
+                        | EffectRow::RecordCompensation { .. }
+                        | EffectRow::RecordLateOutcome { .. }
                         | EffectRow::Schedule { .. }
                         | EffectRow::CancelTimer { .. } => None,
                     })
@@ -3525,6 +3581,9 @@ impl<E: SqlEngine> CellStore<E> {
                         EffectRow::Schedule { timer } => Some(timer.timer_id.clone()),
                         EffectRow::Enqueue { .. }
                         | EffectRow::ClaimPerform { .. }
+                        | EffectRow::ReconcileOutbox { .. }
+                        | EffectRow::RecordCompensation { .. }
+                        | EffectRow::RecordLateOutcome { .. }
                         | EffectRow::CancelTimer { .. } => None,
                     })
                     .collect(),
@@ -3592,9 +3651,13 @@ impl<E: SqlEngine> CellStore<E> {
 
     /// Record the result of performing the outbox head command `command_id`
     /// at `generation`, in its own transaction, so a crash before the result
-    /// is consumed never executes the command again. Returns `false` (and
-    /// writes nothing) when that command is not the head or already has a
-    /// recorded result.
+    /// is consumed never executes the command again.
+    ///
+    /// Returns `true` when it settled the active unperformed head. If
+    /// `(command_id, generation)` is a superseded prior generation that was
+    /// durably claimed, attaches the late evidence immutably to that original
+    /// generation via its [`norn_kernel::world::outbox_ledger::DispatchProof`]
+    /// without altering the active head, and returns `false`.
     ///
     /// # Errors
     ///
@@ -3608,127 +3671,6 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<bool, CellError> {
         self.refuse_perform_in_fork()?;
         self.record_head_result(command_id, generation, outcome)
-    }
-
-    /// Record `outcome` as the head command's result when it has none.
-    pub(crate) fn record_head_result(
-        &self,
-        command_id: &str,
-        generation: u64,
-        outcome: &Value,
-    ) -> Result<bool, CellError> {
-        self.write_tx(|| {
-            let head = StoreReader::new(&self.conn, &self.model)
-                .with_source_disputes(&self.source_disputes)
-                .head_command()?;
-            let is_head = head.as_ref().is_some_and(|head| {
-                head.command.command_id == command_id
-                    && head.command.generation == generation
-                    && head.result.is_none()
-            });
-            if !is_head {
-                return Ok(false);
-            }
-            let head = head.ok_or_else(|| {
-                CellError::Encoding("pending result command disappeared".to_owned())
-            })?;
-            self.store_result(&head, command_id, generation, outcome)
-        })
-    }
-
-    /// Fault fixture: record a parked command's result in its own
-    /// transaction, apart from any consuming commit, as an engine before P3
-    /// did; a file such an engine wrote can still hold one, and recovery
-    /// consumes it with `Settlement::Recorded`. Production records a parked
-    /// result only inside the commit that consumes it.
-    ///
-    /// # Errors
-    ///
-    /// Serialization or SQL engine errors.
-    #[cfg(any(test, feature = "fault-injection"))]
-    #[doc(hidden)]
-    pub fn record_parked_apart(
-        &mut self,
-        command_id: &str,
-        generation: u64,
-        outcome: &Value,
-    ) -> Result<bool, CellError> {
-        self.write_tx(|| self.record_parked_in_tx(command_id, generation, outcome))
-    }
-
-    /// PARKED-1: record the result of a parked command (one the cell resolves
-    /// itself, such as a `norn.decision@1` the cell issued a receipt for) in
-    /// the open transaction. A parked command may complete out of FIFO order,
-    /// but at most once: a second record of the same generation, or of a
-    /// command that is not parked and pending, returns `false` and writes
-    /// nothing.
-    fn record_parked_in_tx(
-        &self,
-        command_id: &str,
-        generation: u64,
-        outcome: &Value,
-    ) -> Result<bool, CellError> {
-        let parked = StoreReader::new(&self.conn, &self.model)
-            .with_source_disputes(&self.source_disputes)
-            .pending_command(command_id)?
-            .filter(|row| {
-                row.queue == norn_kernel::world::outbox::Queue::Parked
-                    && row.command.generation == generation
-                    && row.result.is_none()
-            });
-        let Some(parked) = parked else {
-            return Ok(false);
-        };
-        self.store_result(&parked, command_id, generation, outcome)
-    }
-
-    /// Record `outcome` as `head`'s result, with its run attempt.
-    fn store_result(
-        &self,
-        head: &crate::read::PendingCommand,
-        command_id: &str,
-        generation: u64,
-        outcome: &Value,
-    ) -> Result<bool, CellError> {
-        crate::payload_storage::remember_command(
-            &self.conn,
-            command_id,
-            generation,
-            head.commit_seq,
-        )?;
-        let outcome = match self.local_export_record(head.commit_seq)? {
-            Some(record) => crate::payload_storage::encode_result(
-                &self.conn,
-                &record.batch.scope,
-                &record.batch.world,
-                outcome,
-            )?,
-            None => canonical_json(outcome)?,
-        };
-        let generation = to_i64(generation, "generation")?;
-        self.conn.execute(
-            &format!(
-                "UPDATE \"{OUTBOX}\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3"
-            ),
-            params![outcome, command_id, generation],
-        )?;
-        let attempts: i64 = self.conn.query_row(
-            &format!(
-                "SELECT COUNT(*) FROM \"{RUN}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2"
-            ),
-            params![command_id, generation],
-            |row| row.get::<i64>(0),
-        )?;
-        let attempt = to_u64(attempts, "attempt")?
-            .checked_add(1)
-            .ok_or(CellError::OutOfRange("attempt"))?;
-        self.conn.execute(
-            &format!(
-                "INSERT INTO \"{RUN}\" (\"command_id\", \"generation\", \"attempt\", \"outcome\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, ?4, NULL)"
-            ),
-            params![command_id, generation, to_i64(attempt, "attempt")?, outcome],
-        )?;
-        Ok(true)
     }
 
     /// Ingest one external observation into the inbox, in its own

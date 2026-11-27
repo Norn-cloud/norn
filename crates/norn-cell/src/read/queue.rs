@@ -1,14 +1,15 @@
 //! Pending outbox commands, due timers, pending observations, and run records.
 
 use norn_ir::RuntimeValue as Value;
-use norn_kernel::world::outbox::{OutboxEvent, OutboxRefusal, OutboxState, Queue, step};
+use norn_kernel::world::outbox::Queue;
+use norn_kernel::world::outbox_ledger::{DispatchProof, OperationLedger, OutboxRecord};
 use serde::{Deserialize, Serialize};
 
 use super::{StoreReader, to_i64, to_u64};
 use crate::engine::{SqlEngine, SqlRow, SqlValue, params};
 use crate::error::CellError;
 use crate::store::{Consumption, OutboxCommand, TimerEntry};
-use crate::system::{INBOX, OUTBOX, PERFORM_CLAIM, RUN, TIMER};
+use crate::system::{INBOX, OUTBOX, OUTBOX_RECORD, PERFORM_CLAIM, RUN, TIMER};
 
 /// A pending outbox row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -54,47 +55,6 @@ pub fn classify(command: &Value) -> Queue {
         Queue::Parked
     } else {
         Queue::Fifo
-    }
-}
-
-/// D03 (#1699): whether enqueueing `command` over its pending row (stored at
-/// generation `known` in queue `stored`) replaces the row in place. An older
-/// generation, or the same one, never re-executes.
-///
-/// The outbox step refuses an equal-generation reissue with another payload
-/// (`PayloadDiverged`, W8d), but the `CellHost` law every host is checked
-/// against (`norn_testkit::cell_host`) still defines it as a no-op, so the
-/// store keeps the law until that law changes.
-///
-/// # Errors
-///
-/// [`CellError::OutboxReissueRefused`] for a newer generation that would
-/// move the command to another queue.
-pub(crate) fn reissue_replaces(
-    command: &OutboxCommand,
-    known: u64,
-    same_payload: bool,
-    stored: &str,
-    queue: Queue,
-) -> Result<bool, CellError> {
-    let refused = |reason: String| CellError::OutboxReissueRefused {
-        command_id: command.command_id.clone(),
-        generation: command.generation,
-        reason,
-    };
-    let event = OutboxEvent::Reissue {
-        generation: command.generation,
-        same_payload,
-    };
-    match step(OutboxState::Requested, known, event) {
-        Err(OutboxRefusal::StaleGeneration | OutboxRefusal::PayloadDiverged) => Ok(false),
-        Ok((_, next)) if next == known => Ok(false),
-        // The queue is fixed at the first enqueue (PARKED-1).
-        Ok(_) if stored != queue.as_str() => {
-            Err(refused(format!("it waits in the {stored} queue")))
-        }
-        Ok(_) => Ok(true),
-        Err(refusal) => Err(refused(refusal.to_string())),
     }
 }
 
@@ -247,6 +207,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         else {
             return Ok(None);
         };
+        // D1: an outcome masked by an unreconciled restore fence (or a row
+        // waiting on compensation) is never consumable through SQL alone.
+        if self
+            .outbox_ledger(command_id)?
+            .is_some_and(|ledger| ledger.head_projection().outcome.is_none())
+        {
+            return Ok(None);
+        }
         if row.queue == Queue::Parked {
             return Ok(Some(row));
         }
@@ -330,6 +298,43 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 |row| row.get::<i64>(0),
             )?;
         Ok(found.is_some())
+    }
+
+    /// Reconstruct the active [`OperationLedger`] of `command_id` by replaying
+    /// its immutable `_norn_outbox_record` log (`D1`).
+    ///
+    /// # Errors
+    ///
+    /// Store read, decode, or replay integrity errors.
+    pub fn outbox_ledger(&self, command_id: &str) -> Result<Option<OperationLedger>, CellError> {
+        self.check_live()?;
+        crate::outbox_ledger::load_active_ledger(self.conn, command_id)
+    }
+
+    /// Every immutable [`OutboxRecord`] persisted for `command_id` across all
+    /// epochs, in append order (`D1`).
+    ///
+    /// # Errors
+    ///
+    /// Store read or decode errors.
+    pub fn outbox_records(&self, command_id: &str) -> Result<Vec<OutboxRecord>, CellError> {
+        self.check_live()?;
+        crate::outbox_ledger::load_all_records(self.conn, command_id)
+    }
+
+    /// The immutable [`DispatchProof`] for `(command_id, generation)`, if that
+    /// generation was durably claimed (`D1`).
+    ///
+    /// # Errors
+    ///
+    /// Store read, decode, or replay integrity errors.
+    pub fn dispatch_proof(
+        &self,
+        command_id: &str,
+        generation: u64,
+    ) -> Result<Option<DispatchProof>, CellError> {
+        self.check_live()?;
+        crate::outbox_ledger::load_dispatch_proof(self.conn, command_id, generation)
     }
 
     /// The outbox entry `command_id`, consumed or not, with the commit that
@@ -724,6 +729,38 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             |row| row.get(0),
         )?;
         to_u64(count, "executions")
+    }
+
+    /// D1: sorted `(command_id, prior_generation_outcomes)` across every
+    /// operation whose latest epoch retains at least one attached outcome on a
+    /// superseded generation.
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or ledger replay errors.
+    pub fn outbox_prior_outcomes(&self) -> Result<Vec<(String, Vec<u64>)>, CellError> {
+        self.check_live()?;
+        let rows = self.conn.query(
+            &format!(
+                "SELECT DISTINCT \"command_id\" FROM \"{OUTBOX_RECORD}\" ORDER BY \"command_id\""
+            ),
+            params![],
+        )?;
+        let mut out = Vec::new();
+        for values in rows {
+            let command_id: String = SqlRow(values).get(0)?;
+            if let Some(ledger) = self.outbox_ledger(&command_id)? {
+                let prior: Vec<u64> = ledger
+                    .prior_generations()
+                    .iter()
+                    .filter_map(|(gen_id, rec)| rec.outcome.is_some().then_some(*gen_id))
+                    .collect();
+                if !prior.is_empty() {
+                    out.push((command_id, prior));
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Whether `consumption` names a pending delivery: a timer with that id

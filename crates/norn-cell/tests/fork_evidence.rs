@@ -1,5 +1,5 @@
 //! Core 08 Fork Unit 2b (E4, #1947, `FORK-EVIDENCE-1` Lemma L6): pin-bound
-//! fork writes under storage version 11 and auditable simulated Decision Card
+//! fork writes under storage version 12 and auditable simulated Decision Card
 //! evidence that outlives its fork while never passing as `main` evidence.
 
 #![cfg(feature = "native")]
