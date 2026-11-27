@@ -17,15 +17,26 @@ test("every golden theme has an expected answer, and every answer a theme", () =
 })
 
 for (const [file, want] of Object.entries(expected)) {
-  test(`${file}: Studio's validators answer ${want.length === 0 ? "admitted" : want.join(", ")}, as the checker does`, () => {
+  test(`${file}: wire validators (parseServedTheme + lowerTheme) answer ${want.length === 0 ? "admitted" : want.join(", ")}, matching Ring-1`, () => {
     const payload = JSON.parse(readFileSync(join(DIR, file), "utf8")) as unknown
-    // A served theme is gated as the checker gates it (canonical colours only) …
+    // Wire theme admission: canonical colours only, matching Ring-1 `norn-ui-checker` and `defineTheme`.
     const served = parseServedTheme(payload)
     expect(codes(served)).toEqual([...want].sort())
     expect(served.ok).toBe(want.length === 0)
-    // … and so is the same theme typed into the editor, or written as code with `defineTheme`.
-    expect(codes(parseStudioTheme(payload))).toEqual([...want].sort())
     const lowered = lowerTheme(payload as Parameters<typeof lowerTheme>[0])
     expect(lowered.ok ? [] : codes(lowered)).toEqual([...want].sort())
+
+    // Studio's human editor normalizes CSS Color 4 input (such as named colours) into canonical
+    // wire form before sending to the cell; every admitted editor output must pass `parseServedTheme`.
+    const edited = parseStudioTheme(payload)
+    if (file === "named-color.json") {
+      expect(edited.ok).toBe(true)
+      if (edited.ok) {
+        expect(edited.theme.colors?.["chart-1"]).toBe("#ff0000")
+        expect(parseServedTheme(edited.theme).ok).toBe(true)
+      }
+    } else {
+      expect(codes(edited)).toEqual([...want].sort())
+    }
   })
 }

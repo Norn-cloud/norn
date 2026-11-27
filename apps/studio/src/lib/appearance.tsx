@@ -1,6 +1,8 @@
-import { createContext, use, useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react"
+import { createContext, use, useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore, type ReactNode } from "react"
 import { applyCustomTheme, effectiveBaseSkin, type StudioTheme } from "./studio-theme.ts"
 import type { ServedTheme } from "./workspace-theme.ts"
+
+const useIsomorphicLayoutEffect = typeof globalThis.window === "undefined" ? useEffect : useLayoutEffect
 
 /**
  * Swappable visual skin applied to the document root (`data-skin`).
@@ -155,22 +157,53 @@ interface AppearanceContextValue {
   /** The workspace's served theme as last read: its version (for the next apply), or why it does not paint. */
   readonly served: ServedTheme
   /** Paint what the server serves for the shown workspace (the served-theme feed calls this). */
-  readonly setServed: (served: ServedTheme) => void
+  readonly setServed: (served: ServedTheme, scopeKey?: string | null) => void
+}
+
+interface ScopedServedSnapshot {
+  readonly scopeKey: string | null
+  readonly served: ServedTheme
 }
 
 const LOADING_SERVED: ServedTheme = { kind: "loading" }
-let publishedServed: ServedTheme = LOADING_SERVED
+const EMPTY_SCOPED_SERVED: ScopedServedSnapshot = { scopeKey: null, served: LOADING_SERVED }
+let publishedServed: ScopedServedSnapshot = EMPTY_SCOPED_SERVED
 const servedListeners = new Set<() => void>()
 
 const subscribeServed = (onChange: () => void): (() => void) => {
   servedListeners.add(onChange)
   return () => { servedListeners.delete(onChange) }
 }
-const getServedSnapshot = (): ServedTheme => publishedServed
-const publishServed = (next: ServedTheme): void => {
-  if (sameServed(publishedServed, next)) return
-  publishedServed = next
+const getServedSnapshot = (): ServedTheme => publishedServed.served
+const publishServed = (next: ServedTheme, scopeKey: string | null = null): void => {
+  if (publishedServed.scopeKey === scopeKey && sameServed(publishedServed.served, next)) return
+  const hadTheme = publishedServed.served.kind === "theme"
+  publishedServed = { scopeKey, served: next }
+  if (hadTheme && next.kind !== "theme") {
+    const root = globalThis.document?.documentElement
+    if (root) applyAppearance(storedSkin(), storedShellChrome(), root, null)
+  }
   for (const listener of servedListeners) listener()
+}
+
+/**
+ * Synchronously clear any painted theme owned by `scopeKey` (or unconditionally when omitted) so
+ * workspace transitions and sign-out never retain the previous workspace's CSS overrides across a
+ * paint frame.
+ */
+export function clearPublishedServedTheme(
+  scopeKey?: string | null,
+  root: HTMLElement | undefined = globalThis.document?.documentElement,
+): void {
+  if (scopeKey !== undefined && publishedServed.scopeKey !== scopeKey) return
+  const changed = publishedServed.scopeKey !== null || publishedServed.served.kind !== "loading"
+  publishedServed = EMPTY_SCOPED_SERVED
+  if (root) {
+    applyAppearance(storedSkin(), storedShellChrome(), root, null)
+  }
+  if (changed) {
+    for (const listener of servedListeners) listener()
+  }
 }
 
 const AppearanceContext = createContext<AppearanceContextValue>({
@@ -210,7 +243,8 @@ export function AppearanceProvider({
   const served = initialServed !== undefined ? localServed : liveServed
   const customTheme = served.kind === "theme" ? served.theme : null
 
-  useEffect(() => {
+  // Synchronous before paint so switching workspaces or signing out never flashes the previous workspace's theme.
+  useIsomorphicLayoutEffect(() => {
     applyAppearance(skin, shell, undefined, customTheme)
   }, [skin, shell, customTheme])
 
@@ -244,11 +278,11 @@ export function AppearanceProvider({
   }
 
   // A repeat read of the same version keeps the same object, so the page repaints only on a change.
-  const setServed = useCallback((next: ServedTheme) => {
+  const setServed = useCallback((next: ServedTheme, scopeKey: string | null = null) => {
     if (initialServed !== undefined) {
       setLocalServed((current) => sameServed(current, next) ? current : next)
     } else {
-      publishServed(next)
+      publishServed(next, scopeKey)
     }
   }, [initialServed])
 

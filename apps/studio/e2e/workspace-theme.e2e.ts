@@ -18,16 +18,40 @@ const GRAPHITE = { version: 1, name: "Graphite", baseSkin: "polar", variants: { 
 const ground = (page: Page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor)
 const themeName = (page: Page) => page.evaluate(() => document.documentElement.dataset.customTheme ?? null)
 
-/** What an agent does: install the workspace's theme through the definitions API, from outside this page. */
-async function agentInstalls(page: Page, payload: unknown, expectedVersion?: number) {
-  return page.evaluate(async ({ payload, expectedVersion }) => {
-    const response = await fetch("/api/host/v1/definitions:install?orgId=org_alpha&environmentId=env_alpha", {
+/** What an agent does: apply the workspace's theme through `POST /v1/cell/definitions:apply`, from outside this page. */
+async function agentApplies(
+  page: Page,
+  payload: unknown,
+  scope: { readonly orgId: string; readonly environmentId: string } = { orgId: "org_alpha", environmentId: "env_alpha" },
+  expectedVersion?: number,
+) {
+  return page.evaluate(async ({ payload, scope, expectedVersion }) => {
+    const query = `orgId=${encodeURIComponent(scope.orgId)}&environmentId=${encodeURIComponent(scope.environmentId)}`
+    let base = expectedVersion
+    if (base === undefined) {
+      const catalog = await fetch(`/api/host/v1/definitions?${query}`)
+      base = (await catalog.json() as { version: number }).version
+    }
+    const envelope = {
+      irVersion: "0.1",
+      artifactId: "workspace.theme",
+      kind: "theme",
+      namespace: "workspace",
+      name: (payload as { name?: string }).name ?? "Workspace theme",
+      version: `0.${base + 1}.0`,
+      lifecycle: "active",
+      scope,
+      dependencies: [],
+      provenance: { source: "authoring_sdk" },
+      payload,
+    }
+    const response = await fetch(`/api/host/v1/cell/definitions:apply?${query}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "theme", id: "workspace.theme", payload, ...(expectedVersion === undefined ? {} : { expectedVersion }) }),
+      body: JSON.stringify({ expectedVersion: base, artifacts: [envelope] }),
     })
     return { status: response.status, body: await response.json() as unknown }
-  }, { payload, expectedVersion })
+  }, { payload, scope, expectedVersion })
 }
 
 async function openEditor(page: Page) {
@@ -53,10 +77,10 @@ test("a theme applied through the definitions API repaints an open page with no 
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/theme-live-before.png` })
   await page.evaluate(() => { (window as unknown as { notReloaded: boolean }).notReloaded = true })
 
-  // Another tab (an agent) installs the theme; this page repaints from the feed.
+  // Another tab (an agent) applies the theme; this page repaints from the feed.
   const agent = await context.newPage()
   await agent.goto("/sources")
-  expect((await agentInstalls(agent, PAPER)).status).toBe(200)
+  expect((await agentApplies(agent, PAPER)).status).toBe(200)
   await agent.close()
   await expect.poll(() => ground(page), { timeout: 15_000 }).toBe("rgb(244, 242, 237)")
   expect(await themeName(page)).toBe("Paper")
@@ -68,7 +92,7 @@ test("a theme applied through the definitions API repaints an open page with no 
   await expect.poll(() => ground(page)).toBe("rgb(18, 17, 16)")
   await page.emulateMedia({ colorScheme: "light" })
 
-  // The editor opens on the workspace's theme; Reset to default retires it, and the default repaints.
+  // The editor opens on the workspace's theme; Reset to default deprecates it, and the default repaints.
   const dialog = await openEditor(page)
   await expect(dialog.getByRole("textbox", { name: "Theme JSON definition" })).toHaveValue(/"name": "Paper"/)
   await dialog.getByRole("button", { name: "Reset to default" }).click()
@@ -76,16 +100,19 @@ test("a theme applied through the definitions API repaints an open page with no 
   await expect.poll(() => ground(page)).toBe("rgb(255, 255, 255)")
   expect(await themeName(page)).toBeNull()
 
-  // Use for this workspace installs the edited theme (a preset here) through the same apply path.
+  // Use for this workspace applies the edited theme (a preset here) through the same :apply path.
   const again = await openEditor(page)
   await again.getByRole("button", { name: "Paper Editorial" }).click()
   await again.getByRole("button", { name: "Use for this workspace" }).click()
   await expect(again).toBeHidden()
   await expect.poll(() => themeName(page)).toBe("Paper Editorial")
   await expect.poll(() => ground(page)).toBe("rgb(244, 242, 237)")
-  expect(cell.installs.map(({ orgId, admitted }) => [orgId, admitted])).toEqual([["org_alpha", true], ["org_alpha", true]])
-  // The theme was retired, so this install is a new one; the first replaced nothing either.
-  expect(cell.installs.map(({ expectedVersion }) => expectedVersion)).toEqual([undefined, undefined])
+  expect(cell.applies.map(({ orgId, admitted, lifecycle }) => [orgId, admitted, lifecycle])).toEqual([
+    ["org_alpha", true, "active"],
+    ["org_alpha", true, "deprecated"],
+    ["org_alpha", true, "active"],
+  ])
+  expect(cell.applies.map(({ expectedVersion }) => expectedVersion)).toEqual([1, 2, 3])
   expect(await page.evaluate(() => (window as unknown as { notReloaded?: boolean }).notReloaded)).toBe(true)
 })
 
@@ -93,7 +120,7 @@ test("a low-contrast theme is refused by the checker in its own words, and the p
   const cell = await themeCell(context, WORKSPACES)
   await page.goto("/sources")
   await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
-  expect((await agentInstalls(page, PAPER)).status).toBe(200)
+  expect((await agentApplies(page, PAPER)).status).toBe(200)
   await expect.poll(() => themeName(page), { timeout: 15_000 }).toBe("Paper")
   const before = await ground(page)
 
@@ -110,7 +137,7 @@ test("a low-contrast theme is refused by the checker in its own words, and the p
   await expect(refusal).toContainText("The cell refused this theme")
   await expect(refusal).toContainText("The checker: light muted-foreground (on canvas) contrast is")
   await expect(refusal).toContainText("WCAG AA requires >= 4.5:1")
-  expect(cell.installs.at(-1)).toEqual({ orgId: "org_alpha", expectedVersion: 1, admitted: false })
+  expect(cell.applies.at(-1)).toEqual({ orgId: "org_alpha", expectedVersion: 2, admitted: false, lifecycle: "active" })
 
   // Nothing changed: the dialog stays open on the draft, and the page keeps its theme.
   await expect(dialog).toBeVisible()
@@ -125,18 +152,18 @@ test("a low-contrast theme is refused by the checker in its own words, and the p
   await typo.getByRole("button", { name: "Use for this workspace" }).click()
   await expect(typo.locator('[data-slot="theme-validation-errors"]')).toHaveAttribute("data-refused-by", "studio")
   await expect(typo.locator('[data-slot="theme-validation-errors"]')).toContainText("sidebar-width")
-  expect(cell.installs).toHaveLength(2)
+  expect(cell.applies).toHaveLength(2)
 })
 
 test("switching workspace switches the theme, and a served theme that fails the checks never paints", async ({ page, context }) => {
   const cell = await themeCell(context, WORKSPACES)
   await page.goto("/sources")
   await expect(page.locator("[data-workspace-state]")).toContainText("Core Analytics")
-  expect((await agentInstalls(page, PAPER)).status).toBe(200)
+  expect((await agentApplies(page, PAPER)).status).toBe(200)
   await expect.poll(() => themeName(page), { timeout: 15_000 }).toBe("Paper")
   await expect.poll(() => ground(page)).toBe("rgb(244, 242, 237)")
   // North Operations has its own theme.
-  expect((await page.evaluate(async (payload) => (await fetch("/api/host/v1/definitions:install?orgId=org_beta&environmentId=env_beta", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "theme", id: "workspace.theme", payload }) })).status, GRAPHITE))).toBe(200)
+  expect((await agentApplies(page, GRAPHITE, { orgId: "org_beta", environmentId: "env_beta" })).status).toBe(200)
 
   expect(await page.evaluate(async () => (await fetch("/api/workspaces/org_beta/activate", { method: "POST" })).status)).toBe(200)
   await page.reload()

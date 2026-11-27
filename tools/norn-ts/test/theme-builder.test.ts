@@ -62,6 +62,14 @@ test("a low-contrast theme is refused with the pair and the scheme named", () =>
     expect(new Set(lowered.issues.map((issue) => issue.code))).toEqual(new Set(["theme.validation.contrast"]))
     expect(lowered.issues.map((issue) => issue.path)).toContain("contrast.light.foreground (on canvas)")
   }
+  // Warning text (e.g. fixed-input removal notice) is gated on background, card and popover in both schemes.
+  const hiddenWarning = lowerTheme(defineTheme({ name: "Hidden Warning", colors: { warning: "#0000" } }))
+  expect(hiddenWarning.ok).toBe(false)
+  if (!hiddenWarning.ok) {
+    expect(new Set(hiddenWarning.issues.map((issue) => issue.code))).toEqual(new Set(["theme.validation.contrast"]))
+    expect(hiddenWarning.issues.map((issue) => issue.path)).toContain("contrast.light.warning (on background)")
+    expect(hiddenWarning.issues.map((issue) => issue.path)).toContain("contrast.dark.warning (on card)")
+  }
 })
 
 test("a hue on a chrome token is refused; colour on a data, status or avatar token is not", () => {

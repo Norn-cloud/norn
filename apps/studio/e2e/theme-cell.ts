@@ -1,12 +1,13 @@
 import type { BrowserContext, Route } from "@playwright/test"
-import { parseStudioTheme } from "../../../tools/norn-ts/src/builder/theme.ts"
+import { THEME_KIND, WORKSPACE_THEME_ID, parseStudioTheme } from "../../../tools/norn-ts/src/builder/theme.ts"
 
 /**
- * A stand-in for the cell's definitions route as it serves themes (themes as data): each workspace
- * keeps its own `workspace.theme` definition, `:install` admits a theme with the checker's rules (the
- * shared theme gate) and refuses with its findings, `:retire` brings back the default, and the read
- * serves what is installed. Two workspaces, and `/api/workspaces/{id}/activate` switches between them.
- * Every other host route answers 404, so the rest of Studio renders from its recording.
+ * A stand-in for the cell's real kernel definition routes as they serve themes (themes as data):
+ * - `GET /v1/definitions` serves `{ admitted: true, version, artifacts }`
+ * - `POST /v1/cell/definitions:plan` and `:apply` admit `kind: "theme"` envelopes with the shared
+ *   theme gate, enforce compare-and-set `expectedVersion` (`409 defs.stale`), and support resetting
+ *   via `lifecycle: "deprecated"`.
+ * Two workspaces, and `/api/workspaces/{id}/activate` switches between them.
  */
 export interface ThemeCellWorkspace {
   readonly id: string
@@ -14,12 +15,17 @@ export interface ThemeCellWorkspace {
   readonly environmentId: string
 }
 
-interface Installed { version: number; payload: unknown; retired: boolean }
+interface StoredCell {
+  version: number
+  artifacts: Map<string, Record<string, unknown>>
+}
 
 export async function themeCell(context: BrowserContext, workspaces: readonly ThemeCellWorkspace[]) {
   let active = workspaces[0]!.id
-  const themes = new Map<string, Installed>()
-  const installs: { readonly orgId: string | null; readonly expectedVersion: number | undefined; readonly admitted: boolean }[] = []
+  const cells = new Map<string, StoredCell>(
+    workspaces.map((ws) => [ws.id, { version: 1, artifacts: new Map() }]),
+  )
+  const applies: { readonly orgId: string; readonly expectedVersion: number | undefined; readonly admitted: boolean; readonly lifecycle: string }[] = []
   const current = () => workspaces.find((workspace) => workspace.id === active)!
 
   await context.route("**/api/me", (route) => {
@@ -42,46 +48,116 @@ export async function themeCell(context: BrowserContext, workspaces: readonly Th
     const request = route.request()
     const url = new URL(request.url())
     const orgId = url.searchParams.get("orgId")
-    const tail = url.pathname.split("/v1/definitions")[1]
-    if (orgId === null || tail === undefined) return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
-    const stored = themes.get(orgId)
-    if (tail === "/workspace.theme" && request.method() === "GET") {
-      if (stored === undefined || stored.retired) return route.fulfill({ status: 404, json: { code: "definition.not_found", message: "No such definition." } })
-      return route.fulfill({ json: { id: "workspace.theme", kind: "theme", version: stored.version, lifecycle: "active", payload: stored.payload } })
+    const cell = orgId === null ? undefined : cells.get(orgId)
+    if (orgId === null || cell === undefined) return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
+    const hostPath = url.pathname.replace(/^\/api\/host/, "")
+
+    if (hostPath === "/v1/definitions" && request.method() === "GET") {
+      return route.fulfill({
+        json: {
+          admitted: true,
+          version: cell.version,
+          layoutRevision: 0,
+          layout: { nodes: {}, edges: {} },
+          layoutDiagnostics: null,
+          receipt: { admitted: true },
+          receiptSha256: "e".repeat(64),
+          diagnostics: null,
+          registry: [],
+          baseArtifactIds: [],
+          artifacts: [...cell.artifacts.values()],
+          builtins: [],
+          objectCounts: {},
+        },
+      })
     }
-    const body = JSON.parse(request.postData() ?? "null") as { kind?: string; id?: string; payload?: unknown; expectedVersion?: number } | null
-    if (tail === ":install" && request.method() === "POST" && body?.kind === "theme") {
-      if (body.expectedVersion !== undefined && body.expectedVersion !== stored?.version) {
-        return route.fulfill({ status: 409, json: { code: "definition.version_conflict", message: "Someone installed a newer version." } })
+
+    if ((hostPath === "/v1/cell/definitions:plan" || hostPath === "/v1/cell/definitions:apply") && request.method() === "POST") {
+      const isApply = hostPath === "/v1/cell/definitions:apply"
+      const body = JSON.parse(request.postData() ?? "null") as { expectedVersion?: number; artifacts?: readonly Record<string, unknown>[] } | null
+      const submitted = body?.artifacts ?? []
+      if (submitted.length === 0) {
+        return route.fulfill({ status: 400, json: { code: "request.invalid", message: "a definitions change names at least one artifact" } })
       }
-      const admitted = parseStudioTheme(body.payload)
-      installs.push({ orgId, expectedVersion: body.expectedVersion, admitted: admitted.ok })
-      if (!admitted.ok) {
+      const findings: { code: string; severity: string; message: string; span: { pointer: string } }[] = []
+      for (let i = 0; i < submitted.length; i += 1) {
+        const artifact = submitted[i]!
+        if (artifact.kind === THEME_KIND) {
+          const admitted = parseStudioTheme(artifact.payload)
+          if (!admitted.ok) {
+            for (const issue of admitted.issues) {
+              findings.push({
+                code: issue.code,
+                severity: "error",
+                message: `The checker: ${issue.message}`,
+                span: { pointer: `/artifacts/${i}/payload/${issue.path}` },
+              })
+            }
+          }
+        }
+      }
+      const firstLifecycle = typeof submitted[0]?.lifecycle === "string" ? submitted[0].lifecycle : "active"
+      if (isApply) {
+        applies.push({ orgId, expectedVersion: body?.expectedVersion, admitted: findings.length === 0, lifecycle: firstLifecycle })
+      }
+      if (findings.length > 0) {
         return route.fulfill({
           status: 422,
-          json: { code: "definition.refused", message: "The checker refused this theme.", diagnostics: admitted.issues.map((issue) => ({ code: issue.code, message: `The checker: ${issue.message}`, span: { pointer: `/payload/${issue.path}` } })) },
+          json: { code: "defs.refused", message: "the submitted definitions are not admissible over the cell's active definitions", diagnostics: findings },
         })
       }
-      const version = (stored?.version ?? 0) + 1
-      themes.set(orgId, { version, payload: admitted.theme, retired: false })
-      return route.fulfill({ json: { installed: true, id: "workspace.theme", version, receipt: { receiptHash: "e".repeat(64), commitSeq: version, recordedAtMs: Date.now() } } })
-    }
-    if (tail === "/workspace.theme:retire" && request.method() === "POST") {
-      if (stored === undefined || stored.retired || stored.version !== body?.expectedVersion) {
-        return route.fulfill({ status: 409, json: { code: "definition.version_conflict", message: "Someone installed a newer version." } })
+      if (isApply) {
+        if (typeof body?.expectedVersion !== "number") {
+          return route.fulfill({ status: 400, json: { code: "request.invalid", message: "an apply names the expectedVersion its plan was made against" } })
+        }
+        if (body.expectedVersion !== cell.version) {
+          return route.fulfill({ status: 409, json: { code: "defs.stale", message: "the definitions changed since this revision was planned" } })
+        }
+        const previousVersion = cell.version
+        for (const artifact of submitted) {
+          const id = typeof artifact.artifactId === "string" ? artifact.artifactId : WORKSPACE_THEME_ID
+          cell.artifacts.set(id, artifact)
+        }
+        cell.version += 1
+        return route.fulfill({
+          json: {
+            outcome: "installed",
+            definitionsVersion: cell.version,
+            previousVersion,
+            receiptSha256: "e".repeat(64),
+            commitSeq: cell.version,
+            plan: { baseVersion: previousVersion, nextVersion: cell.version, unchanged: false, added: [], changed: [], same: [], newObjectTypes: [], checkedObjects: 0, diagnostics: [], receiptSha256: "e".repeat(64) },
+          },
+        })
       }
-      stored.retired = true
-      stored.version += 1
-      return route.fulfill({ json: { installed: true, id: "workspace.theme", version: stored.version, receipt: { receiptHash: "f".repeat(64), commitSeq: stored.version, recordedAtMs: Date.now() } } })
+      return route.fulfill({
+        json: { baseVersion: cell.version, nextVersion: cell.version + 1, unchanged: false, added: [], changed: [], same: [], newObjectTypes: [], checkedObjects: 0, diagnostics: [], receiptSha256: "e".repeat(64) },
+      })
     }
+
     return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
   })
 
   return {
-    installs,
+    applies,
     /** Serve a theme as installed, bypassing admission: a theme admitted under rules that later changed. */
     serveUnchecked(orgId: string, payload: unknown) {
-      themes.set(orgId, { version: (themes.get(orgId)?.version ?? 0) + 1, payload, retired: false })
+      const cell = cells.get(orgId)
+      if (!cell) return
+      cell.version += 1
+      cell.artifacts.set(WORKSPACE_THEME_ID, {
+        irVersion: "0.1",
+        artifactId: WORKSPACE_THEME_ID,
+        kind: THEME_KIND,
+        namespace: "workspace",
+        name: "Unchecked",
+        version: `0.${cell.version}.0`,
+        lifecycle: "active",
+        scope: { orgId, environmentId: workspaces.find((w) => w.id === orgId)?.environmentId ?? "env" },
+        dependencies: [],
+        provenance: { source: "authoring_sdk" },
+        payload,
+      })
     },
   }
 }

@@ -460,6 +460,15 @@ const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] =
   ["destructive-text", "background", BG, 4.5],
   ["destructive-text", "card", CARD, 4.5],
   ["destructive-text", "popover", POPOVER, 4.5],
+  ["warning", "background", BG, 4.5],
+  ["warning", "card", CARD, 4.5],
+  ["warning", "popover", POPOVER, 4.5],
+  ["success", "background", BG, 4.5],
+  ["success", "card", CARD, 4.5],
+  ["success", "popover", POPOVER, 4.5],
+  ["destructive", "background", BG, 4.5],
+  ["destructive", "card", CARD, 4.5],
+  ["destructive", "popover", POPOVER, 4.5],
   ["destructive-text", "destructive/10 over background", [...BG, ["destructive", 0.1]], 4.5],
   ["destructive-text", "destructive/10 over card", [...CARD, ["destructive", 0.1]], 4.5],
   ["destructive-text", "destructive/10 over popover", [...POPOVER, ["destructive", 0.1]], 4.5],
@@ -733,7 +742,7 @@ export interface ThemeDef extends ThemeSpec {
   readonly _tag: "Theme"
 }
 
-/** The definitions-apply submission a theme lowers to (`POST /v1/definitions:install`). */
+/** The `theme` definition payload a theme lowers to (applied via `POST /v1/cell/definitions:apply`). */
 export interface ThemeDefinition {
   readonly kind: typeof THEME_KIND
   readonly id: string

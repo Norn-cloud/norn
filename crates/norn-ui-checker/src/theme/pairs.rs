@@ -330,12 +330,28 @@ fn control_pairs(s: &Surfaces) -> Vec<Pair> {
     ]
 }
 
+/// Semantic status text rendered directly on page/card/popover grounds (e.g. `text-warning`,
+/// `text-success`, `text-destructive`).
+fn semantic_text_pairs(s: &Surfaces) -> Vec<Pair> {
+    ["warning", "success", "destructive"]
+        .into_iter()
+        .flat_map(|token| {
+            [
+                pair(token, "background", s.bg.clone(), 4.5),
+                pair(token, "card", s.card.clone(), 4.5),
+                pair(token, "popover", s.popover.clone(), 4.5),
+            ]
+        })
+        .collect()
+}
+
 /// Every pair Studio gates, in Studio's order.
 pub(super) fn pairs() -> Vec<Pair> {
     let s = Surfaces::new();
     let mut all = text_pairs(&s);
     all.extend(muted_pairs(&s));
     all.extend(control_pairs(&s));
+    all.extend(semantic_text_pairs(&s));
     for dot in [
         "dot-live",
         "dot-held",

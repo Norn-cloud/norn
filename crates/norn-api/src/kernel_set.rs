@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use norn_cell::Model;
 use norn_checker::{EntityArtifactSetContext, ReceiptSources};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
-use norn_ui_checker::check_artifact_set_with_receipt;
+use norn_ui_checker::{check_artifact_set, check_artifact_set_with_receipt};
 
 /// An admitted kernel set, ready to install.
 #[derive(Debug, Clone)]
@@ -103,6 +103,19 @@ fn admit_with(
             })
     };
     let (base, candidates): (Vec<_>, Vec<_>) = artifacts.iter().cloned().partition(is_base);
+    let registry = BTreeSet::new();
+    let context = EntityArtifactSetContext {
+        registry: &registry,
+        base: &base,
+        tenant: None,
+    };
+    // Check the decoded envelopes BEFORE re-serializing to RuntimeValue for receipt signing:
+    // closed payload roots record unknown fields and invalid extensions during deserialization
+    // but omit them when serialized back to JSON.
+    let preflight = check_artifact_set(&candidates, &context);
+    if preflight.iter().any(norn_checker::Diagnostic::is_error) {
+        return Err(KernelRefusal::Refused(preflight));
+    }
     let candidate_values = candidates
         .iter()
         .map(value)
@@ -111,11 +124,7 @@ fn admit_with(
     let checked = check_artifact_set_with_receipt(
         &ReceiptSources::new(&candidate_values, &base_values)
             .map_err(|e| invalid("receipt sources")(&e))?,
-        &EntityArtifactSetContext {
-            registry: &BTreeSet::new(),
-            base: &base,
-            tenant: None,
-        },
+        &context,
         &ResourceLimitProfile::norn_limits_v1(),
     )
     .map_err(|e| invalid("admission")(&e))?;

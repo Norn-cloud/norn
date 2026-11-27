@@ -222,6 +222,52 @@ fn a_workspace_holds_one_theme() {
         BTreeSet::from(["theme.validation.multiple".to_owned()]),
         "{over_base:#?}"
     );
+
+    // A deprecated theme no longer occupies the workspace's active slot: another theme may replace it.
+    let mut deprecated_json = theme_json("workspace.theme", &valid);
+    deprecated_json["lifecycle"] = json!("deprecated");
+    let deprecated: ArtifactEnvelope = serde_json::from_value(deprecated_json).req("deprecated");
+    let after_reset = check_artifact_set(
+        &[theme("workspace.theme.next", &valid)],
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &[deprecated],
+            tenant: None,
+        },
+    );
+    assert_eq!(error_codes(&after_reset), BTreeSet::new(), "{after_reset:#?}");
+}
+
+#[test]
+fn invisible_warning_and_named_colors_are_refused() {
+    let invisible = check_artifact(&theme(
+        "workspace.theme",
+        &json!({ "version": 1, "name": "Hidden Warning", "baseSkin": "luma", "colors": { "warning": "#0000" } }),
+    ));
+    assert_eq!(
+        error_codes(&invisible),
+        BTreeSet::from(["theme.validation.contrast".to_owned()]),
+        "{invisible:#?}"
+    );
+    assert!(
+        invisible
+            .iter()
+            .any(|d| d.message.contains("light warning (on background)"))
+            && invisible
+                .iter()
+                .any(|d| d.message.contains("dark warning (on card)")),
+        "{invisible:#?}"
+    );
+
+    let named = check_artifact(&theme(
+        "workspace.theme",
+        &json!({ "version": 1, "name": "Named Red", "baseSkin": "luma", "colors": { "chart-1": "red" } }),
+    ));
+    assert_eq!(
+        error_codes(&named),
+        BTreeSet::from(["theme.validation.invalid_color".to_owned()]),
+        "{named:#?}"
+    );
 }
 
 #[test]

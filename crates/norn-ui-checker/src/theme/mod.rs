@@ -22,7 +22,7 @@ use std::sync::LazyLock;
 use norn_ir::{Diagnostic, DiagnosticRemediation, DiagnosticSeverity, JsonValue};
 
 use color::{
-    Color, canonical_color, contrast_on, css_color, fade, oklch_chroma, over, parse_color,
+    Color, canonical_wire_color, contrast_on, css_color, fade, oklch_chroma, over, parse_color,
 };
 
 /// The payload is not a `StudioTheme` (version, name, appearance, or the shape of a token map).
@@ -200,14 +200,14 @@ fn token_map(
             );
             continue;
         }
-        match text(raw_value).and_then(canonical_color) {
+        match text(raw_value).and_then(canonical_wire_color) {
             Some(colour) => {
                 clean.insert(key.to_owned(), colour);
             }
             None => findings.push(
                 THEME_INVALID_COLOR,
                 format!(
-                    "Invalid color value for \"{key}\". Use a CSS color such as #rrggbb, rgb(…), hsl(…) or oklch(…)."
+                    "Invalid color value for \"{key}\". Use a canonical CSS color such as #rrggbb or rgba(r, g, b, a)."
                 ),
                 &format!("{path}.{key}"),
             ),
@@ -223,11 +223,11 @@ fn shorthand(
     findings: &mut Findings<'_>,
 ) -> Option<String> {
     let value = payload.get(field)?;
-    let colour = text(value).and_then(canonical_color);
+    let colour = text(value).and_then(canonical_wire_color);
     if colour.is_none() {
         findings.push(
             THEME_INVALID_COLOR,
-            format!("{field} must be a CSS color such as #rrggbb, rgb(…) or oklch(…)."),
+            format!("{field} must be a canonical CSS color such as #rrggbb or rgba(r, g, b, a)."),
             field,
         );
     }
@@ -599,15 +599,24 @@ pub fn validate_theme_payload(payload: &JsonValue, artifact_id: Option<&str>) ->
     findings.found
 }
 
-/// A workspace has at most one theme: a second theme under another id is refused, so the theme
-/// Studio applies is never a matter of order. A theme is replaced by applying it under the same id.
+/// A workspace has at most one active theme: a second active theme under another id is refused, so
+/// the theme Studio applies is never a matter of order. A theme is replaced by applying it under
+/// the same id, or cleared by deprecating it (`lifecycle: "deprecated"`).
 #[must_use]
 pub fn check_theme_set<'a>(
     artifacts: impl IntoIterator<Item = &'a norn_ir::ArtifactEnvelope>,
 ) -> Vec<Diagnostic> {
     let ids: BTreeSet<&str> = artifacts
         .into_iter()
-        .filter(|artifact| matches!(artifact.payload, norn_ir::ArtifactPayload::Theme(_)))
+        .filter(|artifact| {
+            matches!(artifact.payload, norn_ir::ArtifactPayload::Theme(_))
+                && !matches!(
+                    artifact.lifecycle,
+                    norn_ir::ArtifactLifecycle::Deprecated
+                        | norn_ir::ArtifactLifecycle::Superseded
+                        | norn_ir::ArtifactLifecycle::Rejected
+                )
+        })
         .map(|artifact| artifact.artifact_id.as_str())
         .collect();
     let mut ids = ids.into_iter();

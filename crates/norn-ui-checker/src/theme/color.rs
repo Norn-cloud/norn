@@ -798,9 +798,85 @@ pub(crate) fn css_color(color: Color) -> String {
     format!("rgba({r}, {g}, {b}, {alpha})")
 }
 
-/// Studio's `canonicalColor`.
+/// Studio's `canonicalColor` (full CSS Color 4 via culori; used for palette parity tests).
+#[cfg(test)]
 pub(crate) fn canonical_color(raw: &str) -> Option<String> {
     parse_color(raw).map(css_color)
+}
+
+/// Parse one theme wire colour (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`,
+/// `rgb(r, g, b)` or `rgba(r, g, b, a)`, integer channels `0..=255` and decimal
+/// alpha `0..=1`), matching `tools/norn-ts/src/builder/theme.ts`'s `parseThemeColor`
+/// and Studio's `parseServedTheme`.
+pub(crate) fn parse_wire_color(raw: &str) -> Option<Color> {
+    let value = js_trim(raw);
+    if let Some(hex) = value.strip_prefix('#') {
+        if !matches!(hex.len(), 3 | 4 | 6 | 8) || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let wide: String = if hex.len() > 4 {
+            hex.to_owned()
+        } else {
+            hex.chars().flat_map(|c| [c, c]).collect()
+        };
+        let byte = |at: usize| -> Option<f64> {
+            let chunk = wide.get(at..at.saturating_add(2))?;
+            u8::from_str_radix(chunk, 16)
+                .ok()
+                .map(|value| f64::from(value) / 255.0)
+        };
+        let alpha = if wide.len() == 8 { byte(6)? } else { 1.0 };
+        return Some(Color {
+            r: byte(0)?,
+            g: byte(2)?,
+            b: byte(4)?,
+            alpha,
+        });
+    }
+    let lower = value.to_ascii_lowercase();
+    let inner = lower
+        .strip_prefix("rgba(")
+        .or_else(|| lower.strip_prefix("rgb("))?
+        .strip_suffix(')')?;
+    let parts: Vec<&str> = inner.split(',').map(js_trim).collect();
+    if !matches!(parts.len(), 3 | 4) {
+        return None;
+    }
+    let channel = |text: &str| -> Option<f64> {
+        if !(1..=3).contains(&text.len()) || !text.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let parsed = text.parse::<u16>().ok()?;
+        (parsed <= 255).then(|| f64::from(parsed) / 255.0)
+    };
+    let r = channel(parts.first()?)?;
+    let g = channel(parts.get(1)?)?;
+    let b = channel(parts.get(2)?)?;
+    let alpha = match parts.get(3) {
+        None => 1.0,
+        Some(text) => {
+            let valid_alpha = *text == "0"
+                || *text == "1"
+                || text
+                    .strip_prefix("0.")
+                    .or_else(|| text.strip_prefix('.'))
+                    .is_some_and(|frac| !frac.is_empty() && frac.bytes().all(|b| b.is_ascii_digit()))
+                || text
+                    .strip_prefix("1.")
+                    .is_some_and(|frac| !frac.is_empty() && frac.bytes().all(|b| b == b'0'));
+            if !valid_alpha {
+                return None;
+            }
+            text.parse::<f64>().ok()?
+        }
+    };
+    Some(Color { r, g, b, alpha })
+}
+
+/// Canonical CSS for a wire theme colour (`#rrggbb` or `rgba(r, g, b, a)`),
+/// rejecting non-canonical CSS forms such as named colours or `oklch()`.
+pub(crate) fn canonical_wire_color(raw: &str) -> Option<String> {
+    parse_wire_color(raw).map(css_color)
 }
 
 /// A channel rounded to the nearest of the 256 values a browser paints.

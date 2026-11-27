@@ -1,18 +1,31 @@
-import { useEffect } from "react"
+import { useEffect, useLayoutEffect } from "react"
 import { Dot } from "@/components/system/status-dot"
-import { useAppearance } from "@/lib/appearance"
+import { clearPublishedServedTheme, useAppearance } from "@/lib/appearance"
+import { studioScopeKey } from "@/lib/definitions"
 import { useServedTheme } from "@/lib/workspace-theme"
 
+const useIsomorphicLayoutEffect = typeof globalThis.window === "undefined" ? useEffect : useLayoutEffect
+
 /**
- * Follows the theme the server serves for the shown workspace and paints it (themes as data): a
- * theme an agent applies repaints this page with no reload, and switching workspace switches the
- * theme. A served theme the shared gate refuses never paints; this line says why, in the gate's words.
+ * Follows the theme the server serves for the decided workspace and paints it synchronously before
+ * browser paint (themes as data): a theme an agent applies repaints this page with no reload,
+ * switching workspace or signing out clears the prior workspace's overrides immediately with zero
+ * bleed, and a served theme the shared gate refuses never paints.
  */
 export function WorkspaceThemeFeed() {
-  const { served } = useServedTheme()
+  const { scope, served } = useServedTheme()
   const { setServed } = useAppearance()
-  useEffect(() => { setServed(served) }, [served, setServed])
-  useEffect(() => () => { setServed({ kind: "loading" }) }, [setServed])
+  const scopeKey = scope === null ? null : studioScopeKey(scope)
+
+  useIsomorphicLayoutEffect(() => {
+    setServed(served, scopeKey)
+  }, [scopeKey, served, setServed])
+
+  // Clear synchronously whenever the decided workspace changes or the signed-in shell unmounts.
+  useIsomorphicLayoutEffect(() => () => {
+    clearPublishedServedTheme(scopeKey)
+  }, [scopeKey])
+
   if (served.kind !== "invalid") return null
   const first = served.issues[0]
   return (
