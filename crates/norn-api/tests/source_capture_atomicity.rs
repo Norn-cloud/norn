@@ -291,6 +291,17 @@ mod tests {
         (host, fail_cursor_write, fail_ledger_write)
     }
 
+    fn open_native_host_at(artifacts: &[ArtifactEnvelope], path: &Path) -> DevHost<NativeEngine> {
+        let (model, input) = admit_and_model(artifacts);
+        let engine = NativeEngine::open(path, StoreOptions::default()).expect("open sqlite");
+        let mut store = CellStore::from_engine(engine, model.clone()).expect("open store");
+        let scope = cell_scope();
+        store
+            .install_definitions(model, input, Some(0), &scope.key())
+            .expect("install");
+        DevHost::from_store(store, scope, |_| BTreeMap::new()).expect("open host")
+    }
+
     fn reopen_native_host(artifacts: &[ArtifactEnvelope], path: &Path) -> DevHost<NativeEngine> {
         let (model, _input) = admit_and_model(artifacts);
         let engine = NativeEngine::open(path, StoreOptions::default()).expect("reopen sqlite");
@@ -1943,7 +1954,7 @@ mod tests {
         let (rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
         let delivered: Vec<_> = rows.iter().map(|(raw, _)| raw.clone()).collect();
         let (advance, orig_records, v2_digest) = {
-            let (host, _, _) = open_faultable_host(&artifacts, Some(db.path()));
+            let host = open_native_host_at(&artifacts, db.path());
             let lease = host
                 .acquire_source_lease("erpnext.rest", "run-v2-upgrade", T0, RUN_LEASE_MS)
                 .expect("lease");
@@ -2119,7 +2130,7 @@ mod tests {
         composed_rows[0].1.partition = "Party-\u{00e9}".into();
         let delivered: Vec<_> = decomposed_rows.iter().map(|(raw, _)| raw.clone()).collect();
         let (advance, orig_records, v2_digest) = {
-            let (host, _, _) = open_faultable_host(&artifacts, Some(db.path()));
+            let host = open_native_host_at(&artifacts, db.path());
             let lease = host
                 .acquire_source_lease("erpnext.rest", "run-decomposed", T0, RUN_LEASE_MS)
                 .expect("lease");
@@ -2228,7 +2239,7 @@ mod tests {
             host.release_source_lease(conn, &lease.lease_id, lease.generation)
                 .expect("rel");
         };
-        ingest_bad(&reopen_native_host(&artifacts, db.path()), "erpnext.a", T0);
+        ingest_bad(&open_native_host_at(&artifacts, db.path()), "erpnext.a", T0);
         // Simulate pre-upgrade store where `_norn_source_evidence` was empty.
         NativeEngine::open(db.path(), StoreOptions::default())
             .expect("sqlite")
