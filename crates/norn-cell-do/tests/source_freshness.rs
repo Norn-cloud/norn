@@ -2178,11 +2178,22 @@ mod tests {
                 T0.saturating_add(offset),
             );
         }
+        // Pad to 605 versions before pinning so the pin exercises >512-version spans too.
+        for pad in 0_u64..600 {
+            commit_connection_poll(
+                &mut store,
+                &scope,
+                "erpnext.rest",
+                "erpnext.rest.mapping",
+                &target_pair,
+                T0.saturating_add(10).saturating_add(pad),
+            );
+        }
         seed_order_cursor_binding(
             &mut store,
             "erpnext.rest",
             &target_cursor,
-            T0.saturating_add(6),
+            T0.saturating_add(620),
         );
         let (host, principals, scope) = wrap_host(store, scope);
         let derived = DerivedQuestions::new([7; 32], scope.clone());
@@ -2206,7 +2217,7 @@ mod tests {
                 "erpnext.rest",
                 &later_map,
                 &later_wm,
-                T0.saturating_add(100).saturating_add(step),
+                T0.saturating_add(1_000).saturating_add(step),
             );
         }
         let (reopened_host, reopened_principals, reopened_scope) = wrap_host(reopened, scope);

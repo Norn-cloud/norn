@@ -459,7 +459,7 @@ fn load_authenticated_connection<E: SqlEngine>(
     Ok((rec, seq_u64))
 }
 
-const DIRECT_SCAN_THRESHOLD: i64 = 512;
+const DIRECT_SCAN_THRESHOLD: i64 = 4_096;
 
 fn str_field<'a>(rec: &'a ObjectRecord, key: &str) -> Option<&'a str> {
     rec.values.get(key).and_then(norn_ir::RuntimeValue::as_str)
@@ -492,11 +492,11 @@ fn verify_all_connection_versions<E: SqlEngine>(
         }
         for values in rows {
             let ver = SqlRow(values).get::<i64>(0)?;
+            let check_ver = if ver == expected { ver } else { expected };
+            let _ = load_authenticated_connection(reader, hist_world, conn_id, check_ver)?;
             if ver != expected {
-                let _ = load_authenticated_connection(reader, hist_world, conn_id, expected)?;
                 return Err(CellError::OutOfRange("connection version"));
             }
-            let _ = load_authenticated_connection(reader, hist_world, conn_id, ver)?;
             expected = expected.saturating_add(1);
         }
     }
@@ -534,10 +534,16 @@ fn next_indexed_text<E: SqlEngine>(
     reader.conn.query_optional(&sql, &args, |row| row.get(0))
 }
 
+enum ForeignBoundary {
+    None,
+    At(i64),
+    Exceeded,
+}
+
 /// Indexed lookup of the latest version `<= max_ver` committed before
 /// `valid_since` or under a different `mapping_id`. Uses a PK-bounded scan
-/// when the post-`bv_seq` span is small (touching zero post-pin rows) and an
-/// indexed skip-scan when the span exceeds `DIRECT_SCAN_THRESHOLD`.
+/// when the post-`bv_seq` span is within `DIRECT_SCAN_THRESHOLD` (touching
+/// zero post-pin rows) and an indexed skip-scan beyond that threshold.
 fn latest_foreign_connection_version<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     hist_world: &str,
@@ -545,7 +551,7 @@ fn latest_foreign_connection_version<E: SqlEngine>(
     max_ver: i64,
     valid_since: u64,
     mapping_id: &str,
-) -> Result<Option<Option<i64>>, CellError> {
+) -> Result<ForeignBoundary, CellError> {
     use crate::engine::params;
     let valid_since_i64 =
         i64::try_from(valid_since).map_err(|_| CellError::OutOfRange("commit_seq"))?;
@@ -568,7 +574,9 @@ fn latest_foreign_connection_version<E: SqlEngine>(
             params![hist_world, conn_id, after_seq, max_ver, mapping_id],
             |row| row.get(0),
         )?;
-        return Ok(Some(foreign.or(boundary)));
+        return Ok(foreign
+            .or(boundary)
+            .map_or(ForeignBoundary::None, ForeignBoundary::At));
     }
     let mut cursor: Option<String> = None;
     for _ in 0..super::freshness::MAX_HISTORICAL_CONNECTIONS {
@@ -580,7 +588,7 @@ fn latest_foreign_connection_version<E: SqlEngine>(
             (hist_world, conn_id, after_seq, max_ver, cursor.as_deref()),
         )?
         else {
-            return Ok(Some(boundary));
+            return Ok(boundary.map_or(ForeignBoundary::None, ForeignBoundary::At));
         };
         if mid != mapping_id {
             let ver: Option<i64> = reader.conn.query_optional(
@@ -599,28 +607,25 @@ fn latest_foreign_connection_version<E: SqlEngine>(
         }
         cursor = Some(mid);
     }
-    Ok(None)
+    Ok(ForeignBoundary::Exceeded)
 }
 
-enum FailedGap {
-    Clear,
-    ForeignCarry,
-    Invalid,
-}
-
-fn verify_failed_gap<E: SqlEngine>(
+/// Authenticate every skipped version in `(v_before, v_first)` and return the
+/// subset of `active` dataset keys carried by any foreign `failed` report
+/// (`None` means a skipped version was invalid/non-failed or exceeded bounds).
+fn verify_failed_gap<'a, E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     hist_world: &str,
     conn_id: &str,
     (v_before, v_first): (Option<i64>, i64),
     bv: Option<i64>,
     (valid_since, mapping_id): (u64, &str),
-    active: &BTreeMap<&str, &str>,
-) -> Result<FailedGap, CellError> {
+    active: &BTreeMap<&'a str, &str>,
+) -> Result<Option<BTreeSet<&'a str>>, CellError> {
     use crate::engine::{SqlRow, params};
     let gap_start = v_before.map_or(1, |v| v.saturating_add(1));
     if gap_start >= v_first {
-        return Ok(FailedGap::Clear);
+        return Ok(Some(BTreeSet::new()));
     }
     let rows = reader.conn.query(
         "SELECT version FROM _norn_fact_values \
@@ -635,36 +640,31 @@ fn verify_failed_gap<E: SqlEngine>(
         ],
     )?;
     if rows.len() > super::freshness::MAX_HISTORICAL_CONNECTIONS {
-        return Ok(FailedGap::Invalid);
+        return Ok(None);
     }
-    let mut foreign_carry = false;
+    let mut carried = BTreeSet::new();
     for values in rows {
         let fv = SqlRow(values).get::<i64>(0)?;
         let (Some(rec), seq) = load_authenticated_connection(reader, hist_world, conn_id, fv)?
         else {
-            return Ok(FailedGap::Invalid);
+            return Ok(None);
         };
         if str_field(&rec, "status") != Some("failed") {
-            return Ok(FailedGap::Invalid);
+            return Ok(None);
         }
         let is_foreign = bv.is_some_and(|b| fv <= b)
             || seq < valid_since
             || str_field(&rec, "mapping_id") != Some(mapping_id);
         if is_foreign {
             let failed_cursors = super::freshness::strict_connection_cursors(&rec);
-            if active
-                .iter()
-                .any(|(&ds, &cj)| failed_cursors.get(ds).map(String::as_str) == Some(cj))
-            {
-                foreign_carry = true;
+            for (&ds, &cj) in active {
+                if failed_cursors.get(ds).map(String::as_str) == Some(cj) {
+                    carried.insert(ds);
+                }
             }
         }
     }
-    Ok(if foreign_carry {
-        FailedGap::ForeignCarry
-    } else {
-        FailedGap::Clear
-    })
+    Ok(Some(carried))
 }
 
 fn apply_rewind_witness<E: SqlEngine>(
@@ -829,10 +829,11 @@ fn prove_cursor_runs<E: SqlEngine>(
     hist_world: &str,
     conn_id: &str,
     bv: Option<i64>,
-    (valid_since, mapping_id): (u64, &str),
+    binding: (u64, &str),
     (max_ver, initial_wm): (i64, String),
     mut active: BTreeMap<&str, &str>,
 ) -> Result<bool, CellError> {
+    let (valid_since, mapping_id) = binding;
     let lower = bv.unwrap_or(0);
     let mut cur_ver = max_ver;
     let mut cur_wm = initial_wm.clone();
@@ -842,38 +843,42 @@ fn prove_cursor_runs<E: SqlEngine>(
         else {
             return Ok(false);
         };
-        if !first_run_version_valid(
-            reader,
-            hist_world,
-            conn_id,
-            v_first,
-            (valid_since, mapping_id),
-            &active,
-        )? {
+        if !first_run_version_valid(reader, hist_world, conn_id, v_first, binding, &active)? {
             return Ok(false);
         }
-        match verify_failed_gap(
+        let Some(carried_keys) = verify_failed_gap(
             reader,
             hist_world,
             conn_id,
             (v_before, v_first),
             bv,
-            (valid_since, mapping_id),
+            binding,
             &active,
-        )? {
-            FailedGap::Invalid => return Ok(false),
-            FailedGap::ForeignCarry => {
-                return prove_rewind_in_range(
-                    reader,
-                    hist_world,
-                    conn_id,
-                    (lower, max_ver),
-                    &initial_wm,
-                    (valid_since, mapping_id),
-                    &mut active,
-                );
+        )?
+        else {
+            return Ok(false);
+        };
+        if !carried_keys.is_empty() {
+            let mut carried: BTreeMap<&str, &str> = active
+                .iter()
+                .filter(|(ds, _)| carried_keys.contains(*ds))
+                .map(|(&ds, &cj)| (ds, cj))
+                .collect();
+            if !prove_rewind_in_range(
+                reader,
+                hist_world,
+                conn_id,
+                (lower, max_ver),
+                &initial_wm,
+                binding,
+                &mut carried,
+            )? {
+                return Ok(false);
             }
-            FailedGap::Clear => {}
+            active.retain(|ds, _| !carried_keys.contains(ds));
+            if active.is_empty() {
+                return Ok(true);
+            }
         }
         let Some(prev_ver) = v_before else {
             return Ok(true);
@@ -901,7 +906,7 @@ fn prove_cursor_runs<E: SqlEngine>(
                 conn_id,
                 (lower, max_ver),
                 &initial_wm,
-                (valid_since, mapping_id),
+                binding,
                 &mut active,
             );
         }
@@ -909,7 +914,7 @@ fn prove_cursor_runs<E: SqlEngine>(
             return Ok(false);
         };
         cur_ver = prev_ver;
-        cur_wm = next_wm.to_owned();
+        next_wm.clone_into(&mut cur_wm);
     }
     Ok(false)
 }
@@ -960,16 +965,17 @@ pub(super) fn connection_history_proves_cursors_at<E: SqlEngine>(
     else {
         return Ok(false);
     };
-    let Some(bv) = latest_foreign_connection_version(
+    let bv = match latest_foreign_connection_version(
         reader,
         &hist_world,
         &conn.id,
         max_ver,
         valid_since,
         mapping_id,
-    )?
-    else {
-        return Ok(false);
+    )? {
+        ForeignBoundary::None => None,
+        ForeignBoundary::At(ver) => Some(ver),
+        ForeignBoundary::Exceeded => return Ok(false),
     };
     if bv.is_some_and(|b| b >= max_ver) {
         return Ok(false);
@@ -987,4 +993,139 @@ pub(super) fn connection_history_proves_cursors_at<E: SqlEngine>(
         (max_ver, cur_wm.to_owned()),
         active,
     )
+}
+
+#[cfg(all(test, feature = "native"))]
+#[allow(clippy::expect_used, reason = "unit test for connection cursor proofs")]
+mod tests {
+    use super::*;
+    use crate::test_door::TestCommit as _;
+
+    fn open_conn_store() -> (crate::CellStore<crate::engine::NativeEngine>, String) {
+        let def: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "source.Connection",
+            "properties": [
+                {"id": "status", "type": {"kind": "text"}},
+                {"id": "mapping_id", "type": {"kind": "text"}},
+                {"id": "watermark", "type": {"kind": "text"}}
+            ]
+        }))
+        .expect("connection type");
+        let model = crate::Model::from_definitions(&[def], &[]).expect("model");
+        let mut store = crate::CellStore::open_in_memory(model.clone()).expect("store");
+        let mapping: norn_ir::ArtifactEnvelope = serde_json::from_value(serde_json::json!({
+            "irVersion": "0.1",
+            "artifactId": "m.mapping",
+            "kind": "mapping",
+            "name": "M",
+            "namespace": "m",
+            "version": "1.0.0",
+            "lifecycle": "active",
+            "dependencies": [],
+            "scope": {},
+            "provenance": {"source": "system", "sourcePath": "m.mapping.json"},
+            "payload": {}
+        }))
+        .expect("mapping artifact");
+        let binding = super::super::freshness::mapping_binding_key(&mapping).expect("binding");
+        let canonical_set = serde_json::to_string(&vec![mapping]).expect("canonical_set");
+        let input = crate::InstalledDefinitionInput {
+            canonical_set,
+            registry: Vec::new(),
+            receipt_sha256: "a".repeat(64),
+            admission_receipt: None,
+            readmission: None,
+            installed_at: 1,
+            diff: serde_json::json!({
+                "added": [], "removed": [], "changed": [], "narrowing": []
+            }),
+            layout: None,
+        };
+        store
+            .install_definitions(model, input, Some(0), "synthetic")
+            .expect("install");
+        (store, binding)
+    }
+
+    fn put_conn(
+        store: &mut crate::CellStore<crate::engine::NativeEngine>,
+        mapping_id: &str,
+        status: &str,
+        watermark: &str,
+        time: u64,
+    ) {
+        store
+            .commit(&crate::CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: "synthetic".into(),
+                logical_time: time,
+                writes: vec![crate::FactWriteRow::Put {
+                    object_type: "source.Connection".into(),
+                    key: "conn".into(),
+                    values: BTreeMap::from([
+                        ("status".into(), RuntimeValue::from(status)),
+                        ("mapping_id".into(), RuntimeValue::from(mapping_id)),
+                        ("watermark".into(), RuntimeValue::from(watermark)),
+                    ]),
+                }],
+                ..crate::CommitBatch::default()
+            })
+            .expect("commit");
+    }
+
+    fn pair_wm(first: &str, second: &str) -> String {
+        format!(
+            r#"{{"ds1":{{"version":"{first}","id":"1"}},"ds2":{{"version":"{second}","id":"2"}}}}"#
+        )
+    }
+
+    fn proves_both(
+        store: &crate::CellStore<crate::engine::NativeEngine>,
+        binding: &str,
+        first: &str,
+        second: &str,
+    ) -> bool {
+        let reader = store.read();
+        let conn = reader
+            .object(MAIN_WORLD, "source.Connection", "conn")
+            .expect("read")
+            .expect("conn");
+        let req = BTreeMap::from([
+            ("ds1".into(), format!(r#"{{"version":"{first}","id":"1"}}"#)),
+            (
+                "ds2".into(),
+                format!(r#"{{"version":"{second}","id":"2"}}"#),
+            ),
+        ]);
+        connection_history_proves_cursors_at(
+            &reader,
+            MAIN_WORLD,
+            &conn,
+            ("m.mapping", binding),
+            &req,
+            false,
+        )
+        .expect("proof")
+    }
+
+    #[test]
+    fn foreign_failed_only_requires_rewind_for_carried_dataset() {
+        // B failed (X, Q) -> A (X, P) -> A (Y, P) -> A (X, P): X rewound, P was never carried.
+        let (mut store, binding) = open_conn_store();
+        put_conn(&mut store, "other.mapping", "failed", &pair_wm("X", "Q"), 2);
+        put_conn(&mut store, "m.mapping", "ok", &pair_wm("X", "P"), 3);
+        assert!(!proves_both(&store, &binding, "X", "P"));
+        put_conn(&mut store, "m.mapping", "ok", &pair_wm("Y", "P"), 4);
+        put_conn(&mut store, "m.mapping", "ok", &pair_wm("X", "P"), 5);
+        assert!(proves_both(&store, &binding, "X", "P"));
+
+        // B ok (Z, P) -> B failed (X, Q) -> A (X, P) -> A (Y, P) -> A (X, P): P carried from B ok!
+        let (mut stale, stale_binding) = open_conn_store();
+        put_conn(&mut stale, "other.mapping", "ok", &pair_wm("Z", "P"), 2);
+        put_conn(&mut stale, "other.mapping", "failed", &pair_wm("X", "Q"), 3);
+        put_conn(&mut stale, "m.mapping", "ok", &pair_wm("X", "P"), 4);
+        put_conn(&mut stale, "m.mapping", "ok", &pair_wm("Y", "P"), 5);
+        put_conn(&mut stale, "m.mapping", "ok", &pair_wm("X", "P"), 6);
+        assert!(!proves_both(&stale, &stale_binding, "X", "P"));
+    }
 }
