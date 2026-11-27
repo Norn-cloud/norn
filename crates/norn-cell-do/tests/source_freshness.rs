@@ -1506,4 +1506,86 @@ mod tests {
         assert_pinned_trace_ok(&host, &principals, &runtime, &q, &after);
         assert_pinned_trace_ok(&host, &principals, &runtime, &q, &ans);
     }
+
+    #[test]
+    fn uncommitted_unrelated_quarantine_cannot_authorize_partial_report() {
+        let (host, principals, scope) = open_hosted(&["erpnext"]);
+        let profile = erpnext_profile();
+        let pages = erpnext_pages(None);
+        sync_named_erpnext(&host, &scope, "erpnext.a", T0, pages.clone(), "ok");
+
+        let party_row = pages["Party"].1["data"][0].clone();
+        let name = party_row["name"].as_str().unwrap().to_owned();
+        let mut bad1 = party_row.clone();
+        bad1["custom_norn_ref"] = Value::Null;
+        let obs1 = party_obs(
+            &profile,
+            &name,
+            "2026-11-12 20:00:00",
+            bad1.clone(),
+            T0 + 100,
+        );
+        let q1 = ingest_party_row(
+            &host,
+            "erpnext.a",
+            obs1,
+            &name,
+            "2026-11-12 20:00:00",
+            T0 + 100,
+        );
+        assert!(matches!(
+            q1[0].outcome,
+            norn_cell::MappingOutcome::Quarantined(_)
+        ));
+        sync_named_erpnext(
+            &host,
+            &scope,
+            "erpnext.a",
+            T0 + 120,
+            BTreeMap::new(),
+            "partial",
+        );
+
+        // Land a correction clearing the committed quarantine while `source.Connection`
+        // still reports `partial`.
+        let corr = party_obs(&profile, &name, "2099-01-01 00:00:00", party_row, T0 + 130);
+        ingest_party_row(
+            &host,
+            "erpnext.a",
+            corr,
+            &name,
+            "2099-01-01 00:00:00",
+            T0 + 130,
+        );
+
+        // Capture a NEW uncommitted quarantine on unrelated `Party` (0 new commits).
+        let obs2 = party_obs(&profile, &name, "2099-01-02 00:00:00", bad1, T0 + 140);
+        let q2 = ingest_party_row(
+            &host,
+            "erpnext.a",
+            obs2,
+            &name,
+            "2099-01-02 00:00:00",
+            T0 + 140,
+        );
+        assert!(matches!(
+            q2[0].outcome,
+            norn_cell::MappingOutcome::Quarantined(_)
+        ));
+
+        // Because the committed frontier has no quarantine explaining `partial`,
+        // live evaluation on `OrderLine` must fail closed (`incomplete`), matching `:trace`.
+        let derived = DerivedQuestions::new([7; 32], scope).with_configured_connections(
+            BTreeMap::from([("erpnext.a".into(), "erpnext.rest.mapping".into())]),
+        );
+        let runtime = derived.questions(&host).expect("runtime");
+        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+        let ans = eval_question(
+            &host,
+            &principals,
+            &derived,
+            &order_line_question(&metric, 60_000),
+        );
+        assert_eq!(ans["freshness"], "incomplete", "{ans}");
+    }
 }

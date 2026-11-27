@@ -532,15 +532,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// Live-question variant of [`Self::unresolved_quarantined_datasets`]:
-    /// sees every live unconsumed quarantine immediately, while crediting
-    /// superseding corrections only once captured before the current committed
-    /// head (`knownAsOf`) so a nonterminal redelivery without a commit never
-    /// creates an exact live answer that pinned `:trace` cannot reproduce.
+    /// returns `(live_quarantined, partial_attributable)`. `live_quarantined`
+    /// includes every live unconsumed quarantine immediately as a dataset veto
+    /// (crediting superseding corrections only once captured before `head`),
+    /// while `partial_attributable` evaluates the exact committed frontier
+    /// `head` so an uncommitted quarantine on an unrelated dataset can never
+    /// authorize a `partial` report in live when pinned `:trace` would reject it.
     pub(crate) fn unresolved_quarantined_datasets_live(
         &self,
         mapping_id: &str,
         connection_id: Option<&str>,
-    ) -> Result<BTreeSet<String>, CellError> {
+        as_of_ms: u64,
+    ) -> Result<(BTreeSet<String>, bool), CellError> {
         let head: i64 = self
             .conn
             .query_optional(
@@ -549,7 +552,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 |row| row.get(0),
             )?
             .unwrap_or(0);
-        self.unresolved_quarantined_datasets_with(mapping_id, connection_id, None, Some(head))
+        let live =
+            self.unresolved_quarantined_datasets_with(mapping_id, connection_id, None, Some(head))?;
+        let head_u64 = u64::try_from(head).map_err(|_| CellError::OutOfRange("frontier"))?;
+        let committed = self.unresolved_quarantined_datasets_with(
+            mapping_id,
+            connection_id,
+            Some((head_u64, as_of_ms)),
+            Some(head),
+        )?;
+        Ok((live, !committed.is_empty()))
     }
 
     /// Like [`Self::unresolved_quarantined_datasets`], evaluated either at live
@@ -791,14 +803,14 @@ fn landed_matches_connection<E: SqlEngine>(
         params![observation_id],
     )?;
     if rows.is_empty() {
-        return Ok(true);
+        return Ok(false);
     }
     for values in rows {
         let row = crate::engine::SqlRow(values);
         let cid: String = row.get(0)?;
         let cap_seq: i64 = row.get(1)?;
-        let frontier_ok = cap_seq < 0 || frontier.is_none_or(|f| cap_seq < f);
-        if (cid == target || cid.is_empty()) && frontier_ok {
+        if cap_seq >= 0 && (cid == target || cid.is_empty()) && frontier.is_none_or(|f| cap_seq < f)
+        {
             return Ok(true);
         }
     }

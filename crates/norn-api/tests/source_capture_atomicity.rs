@@ -2184,7 +2184,8 @@ mod tests {
 
     /// Regression 20b: if connection A captured a legacy pre-upgrade quarantine
     /// (no `_norn_source_evidence` row) and sibling connection B redelivers it
-    /// after upgrade, A must retain unresolved quarantine attribution.
+    /// after upgrade, A must retain unresolved quarantine attribution, and an
+    /// unattributed legacy correction must not clear A's quarantine.
     #[test]
     fn legacy_quarantine_redelivered_by_sibling_stays_attributed_to_original_connection() {
         let artifacts = rest_artifacts(&[]);
@@ -2206,58 +2207,67 @@ mod tests {
             );
         }
         let cursor_json = next_wm.cursor_json().expect("json");
-        {
-            let host = reopen_native_host(&artifacts, db.path());
-            let lease_a = host
-                .acquire_source_lease("erpnext.a", "run-leg-a", T0, RUN_LEASE_MS)
-                .expect("lease a");
-            let adv_a = CursorAdvanceSpec {
-                connection_id: "erpnext.a".into(),
+        let ingest_bad = |host: &DevHost<NativeEngine>, conn: &str, t: u64| {
+            let lease = host
+                .acquire_source_lease(conn, &format!("run-leg-{conn}"), t, RUN_LEASE_MS)
+                .expect("lease");
+            let adv = CursorAdvanceSpec {
+                connection_id: conn.into(),
                 dataset: dataset.clone(),
-                lease_id: lease_a.lease_id.clone(),
-                generation: lease_a.generation,
-                now_ms: T0,
+                lease_id: lease.lease_id.clone(),
+                generation: lease.generation,
+                now_ms: t,
                 expected_previous_cursor: None,
                 next_cursor: Some(cursor_json.clone()),
                 renew_ttl_ms: Some(RUN_LEASE_MS),
             };
             let out = host
-                .ingest_source_page(std::slice::from_ref(&bad_row), &adv_a)
-                .expect("capture a");
+                .ingest_source_page(std::slice::from_ref(&bad_row), &adv)
+                .expect("cap");
             assert!(matches!(out[0].outcome, MappingOutcome::Quarantined(_)));
-            host.release_source_lease("erpnext.a", &lease_a.lease_id, lease_a.generation)
-                .expect("release a");
-        }
-        // Simulate pre-upgrade store where `_norn_source_evidence` was empty.
-        {
-            let engine = NativeEngine::open(db.path(), StoreOptions::default()).expect("sqlite");
-            engine
-                .execute("DELETE FROM \"_norn_source_evidence\"", &[])
-                .expect("clear evidence");
-        }
-        let host = reopen_native_host(&artifacts, db.path());
-        let lease_b = host
-            .acquire_source_lease("erpnext.b", "run-leg-b", T0 + 10, RUN_LEASE_MS)
-            .expect("lease b");
-        let adv_b = CursorAdvanceSpec {
-            connection_id: "erpnext.b".into(),
-            dataset: dataset.clone(),
-            lease_id: lease_b.lease_id.clone(),
-            generation: lease_b.generation,
-            now_ms: T0 + 10,
-            expected_previous_cursor: None,
-            next_cursor: Some(cursor_json),
-            renew_ttl_ms: Some(RUN_LEASE_MS),
+            host.release_source_lease(conn, &lease.lease_id, lease.generation)
+                .expect("rel");
         };
-        let out_b = host
-            .ingest_source_page(&[bad_row], &adv_b)
-            .expect("sibling b redelivers legacy row");
-        assert!(matches!(out_b[0].outcome, MappingOutcome::Quarantined(_)));
+        ingest_bad(&reopen_native_host(&artifacts, db.path()), "erpnext.a", T0);
+        // Simulate pre-upgrade store where `_norn_source_evidence` was empty.
+        NativeEngine::open(db.path(), StoreOptions::default())
+            .expect("sqlite")
+            .execute("DELETE FROM \"_norn_source_evidence\"", &[])
+            .expect("clear evidence");
+        let host = reopen_native_host(&artifacts, db.path());
+        ingest_bad(&host, "erpnext.b", T0 + 10);
         assert!(
             host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.a"))
                 .expect("a still quarantined")
                 .contains(&dataset),
             "sibling B's post-upgrade attribution must not hide legacy quarantine from A"
+        );
+        // A legacy pre-upgrade landed correction with unknown attribution must NOT clear A.
+        let mut corr_row = rows[0].clone();
+        if let RuntimeValue::Object(obj) = &mut corr_row.0.input {
+            obj.insert(
+                "source_version".into(),
+                RuntimeValue::String("2099-01-01 00:00:00".into()),
+            );
+            obj.insert(
+                "event_id".into(),
+                RuntimeValue::String("legacy-corr-1".into()),
+            );
+        }
+        let landed = host.ingest(&[corr_row]).expect("land correction");
+        NativeEngine::open(db.path(), StoreOptions::default())
+            .expect("sqlite")
+            .execute(
+                "DELETE FROM \"_norn_source_evidence\" WHERE \"observation_id\" = ?1",
+                &[SqlValue::Text(landed[0].observation_id.clone())],
+            )
+            .expect("strip correction attribution");
+        let reopened = reopen_native_host(&artifacts, db.path());
+        assert!(
+            reopened
+                .unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.a"))
+                .expect("unattributed legacy correction must not clear A")
+                .contains(&dataset)
         );
     }
 }
