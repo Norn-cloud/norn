@@ -212,7 +212,33 @@ mod tests {
         space.admit(&question, 100).expect("admitted question")
     }
 
+    fn observed_link_claim_entity() -> ArtifactEnvelope {
+        envelope(
+            "norn.ObservedLinkClaim.entity",
+            "entity",
+            "norn",
+            json!({
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "norn.ObservedLinkClaim",
+                    "properties": [
+                        {"id": "observation_id", "type": {"kind": "text"}},
+                        {"id": "source_scope", "type": {"kind": "text"}},
+                        {"id": "source_type", "type": {"kind": "text"}},
+                        {"id": "source_key", "type": {"kind": "text"}},
+                        {"id": "role", "type": {"kind": "text"}},
+                        {"id": "target_type", "type": {"kind": "text"}, "constraints": {"nullable": true}},
+                        {"id": "target_key", "type": {"kind": "text"}, "constraints": {"nullable": true}},
+                        {"id": "evidence", "type": {"kind": "text"}}
+                    ]
+                }
+            }),
+            json!([]),
+        )
+    }
+
     fn linked_law_artifacts() -> Vec<ArtifactEnvelope> {
+        let link_claim = observed_link_claim_entity();
         let iface = envelope(
             "demo.Trackable.interface",
             "entity",
@@ -272,7 +298,7 @@ mod tests {
         );
         let source = linked_law_source();
         let mapping = linked_law_mapping(&source);
-        vec![iface, receipt, inspection, law, source, mapping]
+        vec![link_claim, iface, receipt, inspection, law, source, mapping]
     }
 
     fn linked_law_source() -> ArtifactEnvelope {
