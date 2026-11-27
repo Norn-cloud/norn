@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { RENDERED_COMPONENTS } from "../src/capabilities.ts"
 
-const REFUSED = ["child_grid", "composition", "dialog", "form"]
+const REFUSED = ["child_grid", "composition"]
 
 test("every WidgetComponent kind in the schema is drawn or refused", () => {
   const schema = readFileSync(join(import.meta.dir, "../../../crates/norn-ir/schema/widget.schema.json"), "utf8")

@@ -138,6 +138,7 @@ function Page<Reader extends WidgetReader>(props: Omit<NornAppRendererProps<unkn
     ...(props.clock === undefined ? {} : { clock: props.clock }),
   })
   const raisedBy = useRef<string | null>(null)
+  const dir = props.dir ?? "ltr"
   const scope: PageScope = {
     raisedBy,
     ux,
@@ -146,12 +147,13 @@ function Page<Reader extends WidgetReader>(props: Omit<NornAppRendererProps<unkn
     runtime,
     islands: props.islands ?? NO_ISLANDS,
     locale: props.locale ?? "en",
+    dir,
+    context: props.context ?? EMPTY_CONTEXT,
     translate: props.translate,
     actionEffects: props.actionEffects ?? NO_EFFECTS,
     navigate: props.navigate ?? NO_NAVIGATION,
   }
   const role = machine.states.find((state) => state.stateId === runtime.snapshot.stateId)?.role
-  const dir = props.dir ?? "ltr"
   const steps = runtime.waiting === 1 ? "One step waits" : `${runtime.waiting} steps wait`
   return (
     // Not a landmark itself: the page's own root node names its region, so no two regions share a name.
