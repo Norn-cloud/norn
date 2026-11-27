@@ -48,9 +48,12 @@ export const ModelVersionEvidence = Norn.interfaceType({
         self.status !== "production" ||
         ((self.contracts_passed ?? false) &&
           self.evaluation_receipt !== null &&
-          self.pinned_dataset_revision === self.evaluation_revision &&
-          self.artifact_sha256 === self.evaluated_artifact_sha256 &&
-          self.artifact_size === self.evaluated_artifact_size),
+          self.evaluation_revision !== null &&
+          self.pinned_dataset_revision === (self.evaluation_revision ?? "") &&
+          self.evaluated_artifact_sha256 !== null &&
+          self.artifact_sha256 === (self.evaluated_artifact_sha256 ?? "") &&
+          self.evaluated_artifact_size !== null &&
+          self.artifact_size === (self.evaluated_artifact_size ?? -1)),
     ),
   }],
 })
@@ -103,9 +106,12 @@ export const ModelVersion = Norn.type({
         (self) =>
           (self.contracts_passed ?? false) &&
           self.evaluation_receipt !== null &&
-          self.pinned_dataset_revision === self.evaluation_revision &&
-          self.artifact_sha256 === self.evaluated_artifact_sha256 &&
-          self.artifact_size === self.evaluated_artifact_size,
+          self.evaluation_revision !== null &&
+          self.pinned_dataset_revision === (self.evaluation_revision ?? "") &&
+          self.evaluated_artifact_sha256 !== null &&
+          self.artifact_sha256 === (self.evaluated_artifact_sha256 ?? "") &&
+          self.evaluated_artifact_size !== null &&
+          self.artifact_size === (self.evaluated_artifact_size ?? -1),
       )],
       guardRefusalCode: "core.projection.publication_guard" },
     { id: "retire", from: ["candidate", "evaluated", "production"], to: "retired" },

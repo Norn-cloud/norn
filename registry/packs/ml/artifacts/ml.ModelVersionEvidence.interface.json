@@ -11,7 +11,7 @@
     "interface": {
       "invariants": [
         {
-          "expression": "(self.status != 'production') or (((((self.contracts_passed ?? false) and (self.evaluation_receipt != null)) and (self.pinned_dataset_revision == self.evaluation_revision)) and (self.artifact_sha256 == self.evaluated_artifact_sha256)) and (self.artifact_size == self.evaluated_artifact_size))",
+          "expression": "(self.status != 'production') or ((((((((self.contracts_passed ?? false) and (self.evaluation_receipt != null)) and (self.evaluation_revision != null)) and (self.pinned_dataset_revision == (self.evaluation_revision ?? ''))) and (self.evaluated_artifact_sha256 != null)) and (self.artifact_sha256 == (self.evaluated_artifact_sha256 ?? ''))) and (self.evaluated_artifact_size != null)) and (self.artifact_size == (self.evaluated_artifact_size ?? -1)))",
           "id": "evaluated_on_pinned_dataset",
           "message": "A production model version has an authenticated evaluation receipt on its registered artifact and pinned dataset revision, and every output contract held."
         }
