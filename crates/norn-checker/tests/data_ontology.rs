@@ -202,13 +202,15 @@ fn quality_case_satisfies_life_sound_and_proof_lifecycle_graph() -> TestResult {
     let batch = authority
         .lifecycle_graph(&source, &BTreeSet::new(), &bounds)
         .map_err(|err| format!("lifecycle_graph: {err:?}"))?;
-    let graph = batch
-        .graph
-        .ok_or("QualityCase builds a complete bounded graph")?;
+    let graph = batch.graph?;
     assert_eq!(graph.inputs.nodes.len(), 4);
     assert_eq!(graph.initial.len(), 1);
     assert_eq!(graph.edges.len(), 6);
-    assert!(graph.blocked.is_empty());
+    assert!(
+        graph.blocked.is_empty(),
+        "expected no blocked states: {:?}",
+        graph.blocked
+    );
     let soundness = graph
         .soundness()
         .map_err(|err| format!("soundness analysis: {err:?}"))?;
