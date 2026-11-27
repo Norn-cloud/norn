@@ -160,113 +160,338 @@ function tokenizeZen(expression: string): ZenToken[] {
   return tokens
 }
 
-const ZEN_NON_RECEIVER_IDENTS = new Set(["in", "not", "and", "or", "true", "false", "null"])
+type TaintValue =
+  | { readonly kind: "root_input" }
+  | { readonly kind: "string"; readonly value: string }
+  | { readonly kind: "object"; readonly fields: Readonly<Record<string, TaintValue>> }
+  | { readonly kind: "array"; readonly elements: readonly TaintValue[] }
+  | { readonly kind: "union"; readonly members: readonly TaintValue[] }
+  | { readonly kind: "other" }
 
-function isBareInputIdent(tokens: readonly ZenToken[], index: number): boolean {
-  const token = tokens[index]
-  if (token?.kind !== "ident" || token.value !== "input") return false
-  const prev = index > 0 ? tokens[index - 1] : undefined
-  if (prev?.kind === "punct" && (prev.value === "." || prev.value === "?.")) return false
-  return true
+const OTHER: TaintValue = { kind: "other" }
+const ROOT_INPUT: TaintValue = { kind: "root_input" }
+
+function unionTaint(left: TaintValue, right: TaintValue): TaintValue {
+  if (left.kind === "other" && right.kind === "other") return OTHER
+  const flat = (value: TaintValue): readonly TaintValue[] => (value.kind === "union" ? value.members : [value])
+  return { kind: "union", members: [...flat(left), ...flat(right)] }
 }
 
-function findMatchingOpen(tokens: readonly ZenToken[], closeIndex: number, openChar: string, closeChar: string): number {
-  let depth = 0
-  for (let i = closeIndex; i >= 0; i -= 1) {
-    const token = tokens[i]!
-    if (token.kind === "punct" && token.value === closeChar) depth += 1
-    else if (token.kind === "punct" && token.value === openChar) {
-      depth -= 1
-      if (depth === 0) return i
-    }
-  }
-  return -1
-}
-
-function sliceContainsUnchainedInput(tokens: readonly ZenToken[], start: number, end: number): boolean {
-  for (let i = start; i <= end; i += 1) {
-    if (!isBareInputIdent(tokens, i)) continue
-    const next = i + 1 <= end ? tokens[i + 1] : undefined
-    if (next?.kind === "punct" && (next.value === "." || next.value === "?." || next.value === "[")) continue
-    return true
-  }
+function mayBeRootInput(value: TaintValue): boolean {
+  if (value.kind === "root_input") return true
+  if (value.kind === "union") return value.members.some(mayBeRootInput)
   return false
 }
 
-function isSubscriptOpen(tokens: readonly ZenToken[], bracketIndex: number): boolean {
-  if (bracketIndex <= 0) return false
-  const prev = tokens[bracketIndex - 1]!
-  if (prev.kind === "punct") return prev.value === ")" || prev.value === "]" || prev.value === "?."
-  if (prev.kind === "ident") return !ZEN_NON_RECEIVER_IDENTS.has(prev.value)
-  return false
+function stringLiteralsOf(value: TaintValue): readonly string[] {
+  if (value.kind === "string") return [value.value]
+  if (value.kind === "union") return value.members.flatMap(stringLiteralsOf)
+  return []
 }
 
-function receiverMayBeInput(tokens: readonly ZenToken[], accessIndex: number): boolean {
-  let receiverEnd = accessIndex - 1
-  if (receiverEnd < 0) return false
-  if (tokens[receiverEnd]!.kind === "punct" && tokens[receiverEnd]!.value === "?.") {
-    receiverEnd -= 1
-    if (receiverEnd < 0) return false
-  }
-  const endToken = tokens[receiverEnd]!
-  if (endToken.kind === "ident") return isBareInputIdent(tokens, receiverEnd)
-  if (endToken.kind === "punct" && endToken.value === ")") {
-    const open = findMatchingOpen(tokens, receiverEnd, "(", ")")
-    if (open < 0) return false
-    return sliceContainsUnchainedInput(tokens, open + 1, receiverEnd - 1)
-  }
-  if (endToken.kind === "punct" && endToken.value === "]") {
-    // Walk back through chained subscripts `[i][j]` to include the indexed base (e.g. `[input][0].recordVersion`).
-    let cursor = receiverEnd
-    let spanStart = receiverEnd
-    while (cursor >= 0 && tokens[cursor]!.kind === "punct" && tokens[cursor]!.value === "]") {
-      const open = findMatchingOpen(tokens, cursor, "[", "]")
-      if (open < 0) return false
-      spanStart = open
-      cursor = open - 1
-      if (cursor >= 0 && tokens[cursor]!.kind === "punct" && tokens[cursor]!.value === "?.") cursor -= 1
+function accessProperty(receiver: TaintValue, prop: string): TaintValue {
+  if (receiver.kind === "union") {
+    let acc: TaintValue | undefined
+    for (const member of receiver.members) {
+      const next = accessProperty(member, prop)
+      acc = acc === undefined ? next : unionTaint(acc, next)
     }
-    if (cursor >= 0 && tokens[cursor]!.kind === "punct" && tokens[cursor]!.value === ")") {
-      const open = findMatchingOpen(tokens, cursor, "(", ")")
-      if (open >= 0) spanStart = open
-    }
-    return sliceContainsUnchainedInput(tokens, spanStart, receiverEnd)
+    return acc ?? OTHER
   }
-  return false
+  if (receiver.kind === "object" && Object.hasOwn(receiver.fields, prop)) {
+    return receiver.fields[prop]!
+  }
+  return OTHER
+}
+
+function accessIndex(receiver: TaintValue, key: TaintValue): TaintValue {
+  if (receiver.kind === "union") {
+    let acc: TaintValue | undefined
+    for (const member of receiver.members) {
+      const next = accessIndex(member, key)
+      acc = acc === undefined ? next : unionTaint(acc, next)
+    }
+    return acc ?? OTHER
+  }
+  if (receiver.kind === "array") {
+    if (receiver.elements.length === 0) return OTHER
+    return receiver.elements.reduce((acc, el) => unionTaint(acc, el))
+  }
+  if (receiver.kind === "object") {
+    const keys = stringLiteralsOf(key)
+    if (keys.length === 0) return OTHER
+    let acc: TaintValue | undefined
+    for (const prop of keys) {
+      if (!Object.hasOwn(receiver.fields, prop)) continue
+      const next = receiver.fields[prop]!
+      acc = acc === undefined ? next : unionTaint(acc, next)
+    }
+    return acc ?? OTHER
+  }
+  return OTHER
 }
 
 /**
- * Whether a Zen expression accesses the unsupported `input.recordVersion` slot — covering direct,
- * parenthesized, optional-chained, indexed, and conditional forms (`input.recordVersion`,
- * `(input).recordVersion`, `(true ? input : input).recordVersion`, `input?.recordVersion`,
- * `((input))["recordVersion"]`, `[input][0].recordVersion`) while ignoring string literals
- * (`"input.recordVersion"`), array literals (`input.draft.kind in ["recordVersion"]`), and nested
- * domain properties (`input.record.recordVersion`).
+ * Whether a Zen expression accesses the unsupported `input.recordVersion` slot — parsed with a
+ * lightweight recursive-descent expression analyzer so direct, parenthesized, optional-chained,
+ * conditional, array-indexed, object-wrapped, and string-concatenated accesses on `input`
+ * (`input.recordVersion`, `(true ? input : input).recordVersion`, `[input][0].recordVersion`,
+ * `({ wrapped: input }).wrapped.recordVersion`, `input["record" + "Version"]`) are refused, while
+ * string literals (`"input.recordVersion"`), array literals (`input.draft.kind in ["recordVersion"]`),
+ * and nested domain properties (`((input).record).recordVersion`) are never misclassified.
  */
 export function referencesRecordVersion(expression: string): boolean {
   const tokens = tokenizeZen(expression)
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i]!
-    if (token.kind === "punct" && (token.value === "." || token.value === "?.")) {
-      const member = tokens[i + 1]
-      if (member?.kind === "ident" && member.value === "recordVersion" && receiverMayBeInput(tokens, i)) {
-        return true
+  let pos = 0
+  let found = false
+
+  const peek = (offset = 0): ZenToken | undefined => tokens[pos + offset]
+  const eat = (): ZenToken | undefined => {
+    const token = tokens[pos]
+    if (token !== undefined) pos += 1
+    return token
+  }
+  const isPunct = (token: ZenToken | undefined, value: string): boolean => token?.kind === "punct" && token.value === value
+  const isIdent = (token: ZenToken | undefined, value: string): boolean => token?.kind === "ident" && token.value === value
+
+  const parseExpr = (): TaintValue => parseTernary()
+
+  const parseTernary = (): TaintValue => {
+    const cond = parseNullishOr()
+    if (isPunct(peek(), "?")) {
+      eat()
+      const consequent = parseExpr()
+      if (isPunct(peek(), ":")) {
+        eat()
+        const alternate = parseExpr()
+        return unionTaint(consequent, alternate)
       }
-    } else if (token.kind === "punct" && token.value === "[" && isSubscriptOpen(tokens, i)) {
-      const key = tokens[i + 1]
-      const close = tokens[i + 2]
-      if (
-        key?.kind === "string" &&
-        key.value === "recordVersion" &&
-        close?.kind === "punct" &&
-        close.value === "]" &&
-        receiverMayBeInput(tokens, i)
-      ) {
-        return true
+      return consequent
+    }
+    return cond
+  }
+
+  const parseNullishOr = (): TaintValue => {
+    let left = parseAnd()
+    while (true) {
+      const t0 = peek()
+      const t1 = peek(1)
+      if ((isPunct(t0, "?") && isPunct(t1, "?")) || (isPunct(t0, "|") && isPunct(t1, "|"))) {
+        eat()
+        eat()
+        left = unionTaint(left, parseAnd())
+      } else if (isIdent(t0, "or")) {
+        eat()
+        left = unionTaint(left, parseAnd())
+      } else {
+        break
       }
     }
+    return left
   }
-  return false
+
+  const parseAnd = (): TaintValue => {
+    let left = parseComparison()
+    while (true) {
+      const t0 = peek()
+      const t1 = peek(1)
+      if (isPunct(t0, "&") && isPunct(t1, "&")) {
+        eat()
+        eat()
+        left = unionTaint(left, parseComparison())
+      } else if (isIdent(t0, "and")) {
+        eat()
+        left = unionTaint(left, parseComparison())
+      } else {
+        break
+      }
+    }
+    return left
+  }
+
+  const parseComparison = (): TaintValue => {
+    let left = parseAdditive()
+    while (true) {
+      const t0 = peek()
+      const t1 = peek(1)
+      if (
+        (isPunct(t0, "=") && isPunct(t1, "=")) ||
+        (isPunct(t0, "!") && isPunct(t1, "=")) ||
+        (isPunct(t0, "<") && isPunct(t1, "=")) ||
+        (isPunct(t0, ">") && isPunct(t1, "="))
+      ) {
+        eat()
+        eat()
+        if (isPunct(peek(), "=")) eat()
+        parseAdditive()
+        left = OTHER
+      } else if (isPunct(t0, "<") || isPunct(t0, ">") || isIdent(t0, "in")) {
+        eat()
+        parseAdditive()
+        left = OTHER
+      } else if (isIdent(t0, "not") && isIdent(t1, "in")) {
+        eat()
+        eat()
+        parseAdditive()
+        left = OTHER
+      } else {
+        break
+      }
+    }
+    return left
+  }
+
+  const parseAdditive = (): TaintValue => {
+    let left = parseMultiplicative()
+    while (isPunct(peek(), "+") || isPunct(peek(), "-")) {
+      const op = eat()!
+      const right = parseMultiplicative()
+      if (op.value === "+" && left.kind === "string" && right.kind === "string") {
+        left = { kind: "string", value: left.value + right.value }
+      } else {
+        left = OTHER
+      }
+    }
+    return left
+  }
+
+  const parseMultiplicative = (): TaintValue => {
+    let left = parseUnary()
+    while (isPunct(peek(), "*") || isPunct(peek(), "/") || isPunct(peek(), "%")) {
+      eat()
+      parseUnary()
+      left = OTHER
+    }
+    return left
+  }
+
+  const parseUnary = (): TaintValue => {
+    const t0 = peek()
+    if (isPunct(t0, "!") || isPunct(t0, "-") || isPunct(t0, "+") || isIdent(t0, "not")) {
+      eat()
+      parseUnary()
+      return OTHER
+    }
+    return parsePostfix()
+  }
+
+  const parsePostfix = (): TaintValue => {
+    let value = parsePrimary()
+    while (pos < tokens.length) {
+      const t0 = peek()
+      if (isPunct(t0, ".") || isPunct(t0, "?.")) {
+        eat()
+        if (isPunct(peek(), "[")) {
+          eat()
+          const key = parseExpr()
+          if (isPunct(peek(), "]")) eat()
+          if (mayBeRootInput(value) && stringLiteralsOf(key).includes("recordVersion")) found = true
+          value = accessIndex(value, key)
+          continue
+        }
+        const member = peek()
+        if (member?.kind === "ident") {
+          eat()
+          if (mayBeRootInput(value) && member.value === "recordVersion") found = true
+          value = accessProperty(value, member.value)
+          continue
+        }
+        value = OTHER
+        continue
+      }
+      if (isPunct(t0, "[")) {
+        eat()
+        const key = parseExpr()
+        if (isPunct(peek(), "]")) eat()
+        if (mayBeRootInput(value) && stringLiteralsOf(key).includes("recordVersion")) found = true
+        value = accessIndex(value, key)
+        continue
+      }
+      if (isPunct(t0, "(")) {
+        eat()
+        while (pos < tokens.length && !isPunct(peek(), ")")) {
+          parseExpr()
+          if (isPunct(peek(), ",")) eat()
+          else break
+        }
+        if (isPunct(peek(), ")")) eat()
+        value = OTHER
+        continue
+      }
+      break
+    }
+    return value
+  }
+
+  const parsePrimary = (): TaintValue => {
+    const t0 = peek()
+    if (t0 === undefined) return OTHER
+    if (isPunct(t0, "(")) {
+      eat()
+      const inner = parseExpr()
+      if (isPunct(peek(), ")")) eat()
+      return inner
+    }
+    if (isPunct(t0, "[")) {
+      eat()
+      const elements: TaintValue[] = []
+      while (pos < tokens.length && !isPunct(peek(), "]")) {
+        elements.push(parseExpr())
+        if (isPunct(peek(), ",")) eat()
+        else break
+      }
+      if (isPunct(peek(), "]")) eat()
+      return { kind: "array", elements }
+    }
+    if (isPunct(t0, "{")) {
+      eat()
+      const fields: Record<string, TaintValue> = Object.create(null) as Record<string, TaintValue>
+      while (pos < tokens.length && !isPunct(peek(), "}")) {
+        const keyToken = peek()
+        if (keyToken === undefined) break
+        let keyName: string | null = null
+        if (keyToken.kind === "ident" || keyToken.kind === "string") {
+          keyName = keyToken.value
+          eat()
+          if (isPunct(peek(), ":")) {
+            eat()
+            const fieldVal = parseExpr()
+            if (keyName !== "__proto__" && keyName !== "constructor" && keyName !== "prototype") {
+              fields[keyName] = fieldVal
+            }
+          } else if (keyToken.kind === "ident") {
+            const fieldVal = keyToken.value === "input" ? ROOT_INPUT : OTHER
+            if (keyName !== "__proto__" && keyName !== "constructor" && keyName !== "prototype") {
+              fields[keyName] = fieldVal
+            }
+          }
+        } else {
+          eat()
+        }
+        if (isPunct(peek(), ",")) eat()
+        else break
+      }
+      if (isPunct(peek(), "}")) eat()
+      return { kind: "object", fields }
+    }
+    if (t0.kind === "string") {
+      eat()
+      return { kind: "string", value: t0.value }
+    }
+    if (t0.kind === "ident") {
+      eat()
+      return t0.value === "input" ? ROOT_INPUT : OTHER
+    }
+    eat()
+    return OTHER
+  }
+
+  while (pos < tokens.length && !found) {
+    const before = pos
+    parseExpr()
+    if (pos === before) pos += 1
+  }
+  return found
 }
 
 const NUMBER_FORMATS = new Set(["integer", "decimal", "currency", "percent"])

@@ -1528,12 +1528,17 @@ describe("Capabilities parity and zero-Radix invariant", () => {
     expect(referencesRecordVersion("input?.recordVersion")).toBe(true)
     expect(referencesRecordVersion('input?.["recordVersion"]')).toBe(true)
     expect(referencesRecordVersion("[input][0].recordVersion")).toBe(true)
+    expect(referencesRecordVersion("({ wrapped: input }).wrapped.recordVersion")).toBe(true)
+    expect(referencesRecordVersion('({ wrapped: input })["wrapped"]["recordVersion"]')).toBe(true)
+    expect(referencesRecordVersion("({ input }).input.recordVersion")).toBe(true)
+    expect(referencesRecordVersion('input["record" + "Version"]')).toBe(true)
     expect(referencesRecordVersion('"input.recordVersion"')).toBe(false)
     expect(referencesRecordVersion("'input.recordVersion'")).toBe(false)
     expect(referencesRecordVersion("input.record.version")).toBe(false)
     expect(referencesRecordVersion('input.draft.kind in ["recordVersion"]')).toBe(false)
     expect(referencesRecordVersion('["recordVersion"]')).toBe(false)
     expect(referencesRecordVersion("input.record.recordVersion")).toBe(false)
+    expect(referencesRecordVersion("((input).record).recordVersion")).toBe(false)
     expect(referencesRecordVersion('input.draft["recordVersion"]')).toBe(false)
   })
 
@@ -1821,6 +1826,21 @@ describe("Capabilities parity and zero-Radix invariant", () => {
     // is undefined, so prior withholding is NOT resurrected!
     const sinceRestored = securitySince(runtime.view().readSecurityLog?.get("order-detail"), seqRestored)
     expect(sinceRestored).toBeUndefined()
+
+    // Even after 300+ subsequent reads oscillating masking on an unrelated field, the old refusal
+    // of `secret` from before `seqRestored` is NEVER resurrected!
+    for (let i = 0; i < 300; i += 1) {
+      pushSnapshot?.({
+        id: "ord-1",
+        values: { secret: "visible-again", other: "x" },
+        ...(i % 2 === 0 ? { masked: { other: { mode: "redacted", markings: ["pii"], revealable: false } } } : {}),
+      })
+    }
+    const sinceMany = securitySince(runtime.view().readSecurityLog?.get("order-detail"), seqRestored)
+    expect(sinceMany?.withheld).toBe(false)
+    expect(sinceMany?.withheldProperties).not.toContain("secret")
+    expect(sinceMany?.masked.secret).toBeUndefined()
+    expect((sinceMany?.masked.other as { mode?: string })?.mode).toBe("redacted")
     runtime.dispose()
   })
 
