@@ -97,8 +97,10 @@ pub enum VersionKind {
     /// Bytewise UTF-8 lexicographical order (default for backward compatibility).
     #[default]
     Lexicographical,
-    /// Strict RFC 3339 timestamp with explicit offset (`Z` or `±HH:MM`), ordered
-    /// by exact UTC instant (nanosecond precision).
+    /// Strict RFC 3339 nanosecond UTC-instant profile
+    /// (`YYYY-MM-DDTHH:MM:SS[.f{1..9}](Z|±HH:MM)`), ordered by UTC instant.
+    /// Seconds are `00..=59` (leap second `:60` is rejected) and fractional
+    /// precision is bounded to 1..=9 digits (nanoseconds) so ordering is lossless.
     Rfc3339,
     /// Strict unsigned 64-bit decimal integer (`"100" > "99"`).
     Uint64,
@@ -465,10 +467,10 @@ fn parse_digits_i64(
     parse_digits_u32(slice, bad).map(i64::from)
 }
 
-fn parse_fraction_and_tz<'a>(
-    rest: &'a str,
+fn parse_fraction_and_tz(
+    rest: &str,
     bad: impl Fn(&'static str) -> SourceVersionError,
-) -> Result<(u32, &'a str), SourceVersionError> {
+) -> Result<(u32, &str), SourceVersionError> {
     let Some(after_dot) = rest.strip_prefix('.') else {
         return Ok((0, rest));
     };

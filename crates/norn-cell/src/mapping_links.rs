@@ -88,20 +88,16 @@ fn touches(claim: &ObservedLinkClaim, scope: &ClaimScope) -> bool {
             .is_some_and(|t| scope.targets.contains(&t.key))
 }
 
-fn source_version(bundle: &MappingBundle) -> Result<norn_ir::SourceVersion, CellError> {
+fn parse_source_version(
+    bundle: &MappingBundle,
+    kind: norn_ir::VersionKind,
+) -> Result<norn_ir::SourceVersion, CellError> {
     let raw_version = bundle
         .raw
         .get("source_version")
         .and_then(RuntimeValue::as_str)
         .filter(|v| !v.trim().is_empty())
         .ok_or(CellError::MappingBundleMismatch)?;
-    let kind = match bundle.raw.get("version_kind") {
-        None => norn_ir::VersionKind::Lexicographical,
-        Some(value) => value
-            .as_str()
-            .and_then(norn_ir::VersionKind::parse_wire)
-            .ok_or(CellError::MappingBundleMismatch)?,
-    };
     norn_ir::SourceVersion::parse(kind, raw_version)
         .map_err(|_err| CellError::MappingBundleMismatch)
 }
@@ -291,7 +287,8 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let mut history = BTreeMap::<String, Vec<(norn_ir::SourceVersion, String)>>::new();
         let mut entries = Vec::new();
         for (bundle, fresh, disputed) in &bundles {
-            let version = source_version(bundle)?;
+            let kind = self.bundle_version_kind(bundle)?;
+            let version = parse_source_version(bundle, kind)?;
             let mut recorded = Vec::new();
             for mut claim in bundle.link_claims()? {
                 let contribution = claim.contribution_id()?;

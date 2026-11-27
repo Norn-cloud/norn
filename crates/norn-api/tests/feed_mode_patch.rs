@@ -14,6 +14,10 @@
 //!    `norn_ir::feed::reduce_object` / `compose_object_patches`.
 
 #[cfg(not(target_arch = "wasm32"))]
+#[path = "support/hosted_read.rs"]
+mod hosted_read;
+
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(
     clippy::expect_used,
     clippy::indexing_slicing,
@@ -24,15 +28,19 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
+    use super::hosted_read::Mapping;
+    use norn_api::authz::{AccessRequest, Authorizer, ReadRequest};
     use norn_api::host::DevHost;
+    use norn_api::object_links::{ObjectLinkParams, get_object_links};
     use norn_api::pull::{
         Feed, Limits, Method, Paging, Pull, PullError, PullProfile, RequestTemplate, Watermark,
         observation,
     };
-    use norn_api::scope::CellScope;
+    use norn_api::refusal::Refusal;
+    use norn_api::scope::{CellScope, ScopeQuery};
     use norn_cell::engine::NativeEngine;
     use norn_cell::mapping_bundle::MappingInput;
-    use norn_cell::{CellStore, InstalledDefinitionInput, MAIN_WORLD, MappingOutcome, Model};
+    use norn_cell::{CellStore, InstalledDefinitionInput, MappingOutcome, Model};
     use norn_checker::EntityArtifactSetContext;
     use norn_checker::mapping::{SourceDocument, compile_mapping_artifact};
     use norn_checker::receipt::ReceiptSources;
@@ -43,6 +51,46 @@ mod tests {
 
     const RECORDED_AT: &str = "2026-11-12T12:00:00Z";
     const T0: u64 = 1_794_484_800_000;
+
+    struct AllowAll;
+    impl Authorizer for AllowAll {
+        fn authorize(&self, _: &AccessRequest<'_>) -> Result<(), Refusal> {
+            Ok(())
+        }
+        fn read(&self, _: &ReadRequest<'_>) -> Result<(), Refusal> {
+            Ok(())
+        }
+    }
+
+    fn scope_query() -> ScopeQuery {
+        ScopeQuery {
+            org_id: Some("org_demo".into()),
+            environment_id: Some("dev".into()),
+        }
+    }
+
+    fn holding_links(host: &DevHost<NativeEngine>, key: &str, role: &str) -> Vec<String> {
+        let params = ObjectLinkParams {
+            direction: Some("out".into()),
+            link: Some(role.into()),
+            limit: None,
+            after: None,
+        };
+        get_object_links(
+            host,
+            &scope_query(),
+            Some("admin"),
+            "canon.Holding",
+            key,
+            &params,
+            &Mapping,
+        )
+        .expect("get_object_links")
+        .items
+        .iter()
+        .map(|edge| edge.target.clone())
+        .collect()
+    }
 
     fn root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -141,7 +189,9 @@ mod tests {
         store
             .install_definitions(model, input, Some(0), &scope.key())
             .expect("install");
-        DevHost::from_store(store, scope, |_| BTreeMap::new()).expect("host")
+        DevHost::from_store(store, scope, |_| BTreeMap::new())
+            .expect("host")
+            .with_authorizer(AllowAll)
     }
 
     fn holding_profile(mode: FeedMode, version_kind: VersionKind) -> PullProfile {
@@ -349,7 +399,7 @@ mod tests {
         }
     }
 
-    fn seed_full_erpnext_snapshot(host: &DevHost<NativeEngine>) {
+    fn seed_erpnext_datasets(host: &DevHost<NativeEngine>, skip: Option<&str>) {
         let recorded: Value = serde_json::from_str(
             &std::fs::read_to_string(
                 root().join("fixtures/connectors/rest/erpnext.responses.json"),
@@ -381,6 +431,9 @@ mod tests {
             let rows = full_pull
                 .accept(200, body.to_string().as_bytes())
                 .expect("accept");
+            if skip == Some(req.dataset.as_str()) {
+                continue;
+            }
             let batch: Vec<_> = rows
                 .iter()
                 .map(|row| {
@@ -396,6 +449,10 @@ mod tests {
                 "initial snapshot must land: {out:?}"
             );
         }
+    }
+
+    fn seed_full_erpnext_snapshot(host: &DevHost<NativeEngine>) {
+        seed_erpnext_datasets(host, None);
     }
 
     fn ingest_patch_row(
@@ -470,22 +527,15 @@ mod tests {
         assert_eq!(after_p2.get("valuation_method"), Some(&RuntimeValue::Null));
 
         // Item link survived both patches while owner link was explicitly cleared.
-        let cell = host.cell().expect("cell");
-        let reader = cell.store().read();
         assert_eq!(
-            reader
-                .links_from(MAIN_WORLD, "canon.Holding", "item", holding_key)
-                .expect("item links"),
+            holding_links(&host, holding_key, "item"),
             vec!["demo/item/gold".to_owned()]
         );
-        let owners = reader
-            .links_from(MAIN_WORLD, "canon.Holding", "owner", holding_key)
-            .expect("owner links");
+        let owners = holding_links(&host, holding_key, "owner");
         assert!(
             owners.is_empty(),
             "explicit owner_ref: null must clear owner link: {owners:?}"
         );
-        drop(cell);
 
         // Differential check against pure norn_ir::feed::reduce_object / compose_object_patches.
         let fp1 = BTreeMap::from([
@@ -525,8 +575,6 @@ mod tests {
     #[test]
     fn patch_omitting_one_operand_of_multi_field_expression_fails_closed() {
         let artifacts = erpnext_artifacts();
-        let source =
-            load_artifact("fixtures/packs/erpnext-rest/artifacts/erpnext.rest.source.json");
         let mut mapping_doc = serde_json::to_value(load_artifact(
             "fixtures/packs/erpnext-rest/artifacts/erpnext.rest.mapping.json",
         ))
@@ -545,7 +593,7 @@ mod tests {
         rc["value"] = json!("input.resource_code + '-' + input.location");
         let mapping: ArtifactEnvelope = serde_json::from_value(mapping_doc).expect("mapping");
 
-        let compiled = compile_mapping_artifact(&mapping, &source, &artifacts)
+        let compiled = compile_mapping_artifact(&mapping, &artifacts, &[])
             .expect("compile multi-field mapping");
         let partial_doc = SourceDocument::from_json(
             "Warehouse Lot Balance",
@@ -595,12 +643,7 @@ mod tests {
             ingest_patch_row(&host, &uint_patch, &v100_clear, T0.saturating_add(2)),
             MappingOutcome::Landed
         );
-        let cell = host.cell().expect("cell");
-        let owners = cell
-            .store()
-            .read()
-            .links_from(MAIN_WORLD, "canon.Holding", "owner", key)
-            .expect("owner links");
+        let owners = holding_links(&host, key, "owner");
         assert!(
             owners.is_empty(),
             "uint64 version 100 clear must supersede version 99 link claim: {owners:?}"
@@ -610,8 +653,6 @@ mod tests {
     #[test]
     fn patch_omitting_nullable_guard_input_fails_closed() {
         let artifacts = erpnext_artifacts();
-        let source =
-            load_artifact("fixtures/packs/erpnext-rest/artifacts/erpnext.rest.source.json");
         let mut mapping_doc = serde_json::to_value(load_artifact(
             "fixtures/packs/erpnext-rest/artifacts/erpnext.rest.mapping.json",
         ))
@@ -626,7 +667,7 @@ mod tests {
         holding_map["when"] = json!("input.valuation_method == null");
         let mapping: ArtifactEnvelope = serde_json::from_value(mapping_doc).expect("mapping");
         let compiled =
-            compile_mapping_artifact(&mapping, &source, &artifacts).expect("compile guarded map");
+            compile_mapping_artifact(&mapping, &artifacts, &[]).expect("compile guarded map");
         let omitted_guard_doc = SourceDocument::from_json(
             "Warehouse Lot Balance",
             &json!({
@@ -675,5 +716,160 @@ mod tests {
         let encoded = serde_json::to_value(&feed).expect("encode");
         assert!(encoded.get("mode").is_none());
         assert!(encoded.get("versionKind").is_none());
+    }
+
+    #[test]
+    fn mapping_declared_feed_enforces_version_kind_and_refuses_contradiction() {
+        let mut artifacts = erpnext_artifacts();
+        let mapping = artifacts
+            .iter_mut()
+            .find(|a| a.artifact_id == "erpnext.rest.mapping")
+            .expect("mapping");
+        let mut wire = serde_json::to_value(&*mapping).expect("wire");
+        wire["payload"]["extensions"] = json!({
+            "norn.feed/1": {
+                "feeds": {
+                    "Warehouse Lot Balance": {
+                        "mode": "patch",
+                        "versionKind": "uint64"
+                    }
+                }
+            }
+        });
+        *mapping = serde_json::from_value(wire).expect("mapping");
+        let host = open_host(&artifacts);
+        seed_erpnext_datasets(&host, Some("Warehouse Lot Balance"));
+        // Raw observations omit `version_kind` and `feed_mode` (default lexical
+        // full_snapshot profile), yet the mapping's `norn.feed/1` declaration
+        // governs both: `100` supersedes `99` and partial patch clears owner link.
+        let lex_profile = holding_profile(FeedMode::FullSnapshot, VersionKind::Lexicographical);
+        let key = "demo/holding/declared-uint64";
+        let v99 = json!({
+            "name": "WLB-DECL-1", "modified": "99", "custom_norn_ref": key,
+            "resource_code": "GOLD", "quantity": 10.0, "unit": "g", "location": "north",
+            "item_ref": "demo/item/gold", "owner_ref": "demo/party/owner",
+            "custodian_ref": "demo/party/custodian", "stock_cost": 100.0,
+            "cost_currency": "USD", "valuation_method": "moving_average"
+        });
+        assert_eq!(
+            ingest_patch_row(&host, &lex_profile, &v99, T0.saturating_add(1)),
+            MappingOutcome::Landed
+        );
+        // Explicit patch with omitted `version_kind` clears owner_ref at version 100 > 99.
+        let patch_no_vk = holding_profile(FeedMode::Patch, VersionKind::Lexicographical);
+        let v100 = json!({
+            "name": "WLB-DECL-1", "modified": "100",
+            "custom_norn_ref": key, "owner_ref": null
+        });
+        assert_eq!(
+            ingest_patch_row(&host, &patch_no_vk, &v100, T0.saturating_add(2)),
+            MappingOutcome::Landed
+        );
+        assert!(
+            holding_links(&host, key, "owner").is_empty(),
+            "declared uint64 mapping must supersede version 99 with 100 even if envelope omits version_kind"
+        );
+        // Contradictory envelope (`version_kind: rfc3339` on a `uint64` mapping) refuses.
+        let bad_vk = holding_profile(FeedMode::Patch, VersionKind::Rfc3339);
+        let bad_row = json!({
+            "name": "WLB-DECL-1", "modified": "2026-11-12T10:00:00Z",
+            "custom_norn_ref": key, "quantity": 11.0
+        });
+        let mut pull = Pull::new(bad_vk.clone(), BTreeMap::new(), Limits::default());
+        let _req = pull.next_request().expect("req");
+        let rows = pull
+            .accept(200, json!({"data": [bad_row]}).to_string().as_bytes())
+            .expect("accept");
+        let obs = observation(&bad_vk, &rows[0], T0.saturating_add(3)).expect("obs");
+        assert!(
+            host.ingest(&[(obs, mapping_input("Warehouse Lot Balance"))])
+                .is_err(),
+            "contradictory version_kind must fail closed"
+        );
+    }
+
+    #[test]
+    fn cursor_watermark_never_regresses_and_keyset_checks_lexical_and_id_order() {
+        // Cursor feed with saved watermark "100" receiving only older row "99"
+        // must keep watermark "100".
+        let mut cursor_uint = holding_profile(FeedMode::Patch, VersionKind::Uint64);
+        cursor_uint.feeds[0].paging = Paging::Cursor {
+            size: 10,
+            next_cursor_path: "/next".into(),
+            has_next_path: "/more".into(),
+        };
+        let saved = BTreeMap::from([(
+            "Warehouse Lot Balance".to_owned(),
+            Watermark {
+                version: "100".into(),
+                id: Value::from("WLB-1"),
+            },
+        )]);
+        let mut pull = Pull::new(cursor_uint, saved, Limits::default());
+        let _req = pull.next_request().expect("req");
+        let older = json!({
+            "data": [{"name": "WLB-0", "modified": "99", "custom_norn_ref": "demo/h/0"}],
+            "more": false
+        });
+        pull.accept(200, older.to_string().as_bytes())
+            .expect("accept");
+        assert_eq!(
+            pull.watermarks()["Warehouse Lot Balance"].version,
+            "100",
+            "cursor watermark must not regress from 100 to 99"
+        );
+
+        // Keyset tied versions with backward id refuse; lexical regression refuses.
+        let keyset_uint = holding_profile(FeedMode::Patch, VersionKind::Uint64);
+        let mut tied = Pull::new(keyset_uint, BTreeMap::new(), Limits::default());
+        let _req = tied.next_request().expect("req");
+        let backward_id = json!({
+            "data": [
+                {"name": "WLB-B", "modified": "100", "custom_norn_ref": "demo/h/b"},
+                {"name": "WLB-A", "modified": "100", "custom_norn_ref": "demo/h/a"}
+            ]
+        });
+        assert!(matches!(
+            tied.accept(200, backward_id.to_string().as_bytes()),
+            Err(PullError::Bound { .. })
+        ));
+        let keyset_lex = holding_profile(FeedMode::Patch, VersionKind::Lexicographical);
+        let mut lex = Pull::new(keyset_lex, BTreeMap::new(), Limits::default());
+        let _req = lex.next_request().expect("req");
+        let lex_back = json!({
+            "data": [
+                {"name": "WLB-1", "modified": "2026-11-12 10:00:00", "custom_norn_ref": "demo/h/1"},
+                {"name": "WLB-2", "modified": "2026-11-12 09:00:00", "custom_norn_ref": "demo/h/2"}
+            ]
+        });
+        assert!(matches!(
+            lex.accept(200, lex_back.to_string().as_bytes()),
+            Err(PullError::Bound { .. })
+        ));
+    }
+
+    #[test]
+    fn differing_feed_mode_on_same_source_event_raises_conflict() {
+        let host = open_host(&erpnext_artifacts());
+        seed_full_erpnext_snapshot(&host);
+        let full_profile = holding_profile(FeedMode::FullSnapshot, VersionKind::Lexicographical);
+        let patch_profile = holding_profile(FeedMode::Patch, VersionKind::Lexicographical);
+        let row = json!({
+            "name": "WLB-CONF-1", "modified": "2026-11-12 21:00:00.000000",
+            "custom_norn_ref": "demo/holding/conflict-mode",
+            "resource_code": "GOLD", "quantity": 10.0, "unit": "g", "location": "north",
+            "item_ref": "demo/item/gold", "owner_ref": "demo/party/owner",
+            "custodian_ref": "demo/party/custodian", "stock_cost": 100.0,
+            "cost_currency": "USD", "valuation_method": "moving_average"
+        });
+        assert_eq!(
+            ingest_patch_row(&host, &full_profile, &row, T0.saturating_add(1)),
+            MappingOutcome::Landed
+        );
+        let second = ingest_patch_row(&host, &patch_profile, &row, T0.saturating_add(2));
+        assert!(
+            matches!(second, MappingOutcome::Quarantined(_)),
+            "same event_id/payload with different feed_mode must conflict and quarantine: {second:?}"
+        );
     }
 }

@@ -79,6 +79,7 @@ pub mod privacy;
 pub mod privacy_guard;
 /// The generic sans-IO pull engine for declared HTTP sources (`norn.pull/1`).
 pub mod pull;
+mod pull_feed;
 /// Authorized exact question answers and numeric traces.
 pub mod question_routes;
 /// Authorized read services shared by transports.

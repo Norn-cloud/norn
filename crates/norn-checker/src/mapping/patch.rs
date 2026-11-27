@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_expr::{Type, Value};
-use norn_ir::feed::{FeedDeclaration, FeedMode, FieldPatch};
+use norn_ir::feed::{FeedContract, FeedDeclaration, FeedMode, FieldPatch};
 use norn_ir::mapping::{ActionInvocation, LinkPatch, MappedRecord, MappingIr};
 use norn_ir::provenance::UtcTimestamp;
 use norn_ir::source_schema::SourceSchemaIr;
@@ -105,11 +105,14 @@ pub(super) fn validate_feed_declaration(
     out
 }
 
-/// Read the declared [`FeedMode`] for `dataset` from `mapping.extensions`.
-pub(super) fn map_feed_mode(mapping: &MappingIr, dataset: &str) -> Result<FeedMode, String> {
+/// Read the declared [`FeedContract`] for `dataset` from `mapping.extensions`.
+pub(super) fn map_feed_contract(
+    mapping: &MappingIr,
+    dataset: &str,
+) -> Result<Option<FeedContract>, String> {
     Ok(
         FeedDeclaration::from_extensions(mapping.extensions.as_ref())?
-            .map_or(FeedMode::FullSnapshot, |decl| decl.mode_for(dataset)),
+            .and_then(|decl| decl.feeds.get(dataset).copied()),
     )
 }
 
@@ -190,10 +193,21 @@ pub(super) fn apply_row_with_mode(
         )
             .into());
     };
-    let mode = if document.mode == FeedMode::Patch || map.feed_mode == FeedMode::Patch {
-        FeedMode::Patch
-    } else {
-        FeedMode::FullSnapshot
+    let mode = match (map.declared_feed.map(|c| c.mode), document.mode) {
+        (Some(declared), Some(supplied)) if declared != supplied => {
+            return Err((
+                codes::INVALID_RECORD,
+                format!(
+                    "source document mode {} contradicts mapping norn.feed/1 mode {}",
+                    supplied.as_str(),
+                    declared.as_str()
+                ),
+            )
+                .into());
+        }
+        (Some(declared), _) => declared,
+        (None, Some(supplied)) => supplied,
+        (None, None) => FeedMode::FullSnapshot,
     };
     let (input, present_fields) = build_row_input(map, row, mode, derivation)?;
     let context = Value::object([("input", Value::Object(input))]);

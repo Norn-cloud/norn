@@ -40,12 +40,15 @@
 //! scalar as its text (a numeric source id as the text identity a schema
 //! declares).
 
-use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use norn_ir::{FeedMode, RuntimeValue, SourceVersion, VersionKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::pull_feed::{
+    check_keyset_order, extract_version, project_patch, scalar_text, update_greatest_version,
+};
 
 /// The connector extension key of a pull profile.
 pub const PULL_EXTENSION_KEY: &str = "norn.pull/1";
@@ -474,7 +477,8 @@ impl Pull {
                 .unwrap_or_else(|| feed.initial.clone());
             self.page = 0;
             self.cursor = Value::Null;
-            self.greatest = None;
+            self.greatest =
+                (!self.position.version.is_empty()).then(|| self.position.version.clone());
         }
     }
 
@@ -562,20 +566,23 @@ impl Pull {
                 reason: format!("a page held more than {} items", self.limits.max_items),
             });
         }
-        let (rows, last) = project_page(feed, items)?;
+        let (rows, ids) = project_page(feed, items)?;
         update_greatest_version(&mut self.greatest, feed.version_kind, &rows, &shape)?;
         self.page = self.page.saturating_add(1);
         let done = match &feed.paging {
             Paging::Keyset { size } => {
-                if let Some((version, id)) = last {
-                    let next = Watermark { version, id };
+                if let Some((row, id)) = rows.last().zip(ids.last()) {
+                    let next = Watermark {
+                        version: row.version.clone(),
+                        id: id.clone(),
+                    };
                     if next == self.position {
                         return Err(PullError::Bound {
                             dataset: dataset(),
                             reason: "the keyset position did not advance".into(),
                         });
                     }
-                    check_keyset_order(feed.version_kind, &self.position, &rows, &dataset)?;
+                    check_keyset_order(feed.version_kind, &self.position, &rows, &ids, &dataset)?;
                     self.position = next;
                 }
                 items.len() < usize::try_from(*size).unwrap_or(usize::MAX)
@@ -690,69 +697,16 @@ pub fn observation(
     })
 }
 
-fn update_greatest_version(
-    greatest: &mut Option<String>,
-    kind: VersionKind,
-    rows: &[Row],
-    shape: &impl Fn(String) -> PullError,
-) -> Result<(), PullError> {
-    let mut best = greatest
-        .as_deref()
-        .map(|raw| SourceVersion::parse(kind, raw))
-        .transpose()
-        .map_err(|e| shape(e.to_string()))?;
-    for row in rows {
-        let cand = SourceVersion::parse(kind, &row.version).map_err(|e| shape(e.to_string()))?;
-        let gt = match &best {
-            None => true,
-            Some(cur) => cand.try_cmp(cur).map_err(|e| shape(e.to_string()))? == Ordering::Greater,
-        };
-        if gt {
-            best = Some(cand);
-        }
-    }
-    if let Some(best) = best {
-        *greatest = Some(best.raw().to_owned());
-    }
-    Ok(())
-}
+/// A page's rows and their typed keyset ids.
+type Page = (Vec<Row>, Vec<Value>);
 
-fn check_keyset_order(
-    kind: VersionKind,
-    current: &Watermark,
-    rows: &[Row],
-    dataset: &impl Fn() -> String,
-) -> Result<(), PullError> {
-    if kind == VersionKind::Lexicographical {
-        return Ok(());
-    }
-    let bound = |reason: String| PullError::Bound {
-        dataset: dataset(),
-        reason,
-    };
-    let mut prev =
-        SourceVersion::parse(kind, &current.version).map_err(|e| bound(e.to_string()))?;
-    for row in rows {
-        let next = SourceVersion::parse(kind, &row.version).map_err(|e| bound(e.to_string()))?;
-        if next.try_cmp(&prev).map_err(|e| bound(e.to_string()))? == Ordering::Less {
-            return Err(bound("the keyset version moved backward".into()));
-        }
-        prev = next;
-    }
-    Ok(())
-}
-
-/// A page's rows and its last item's keyset position (version, id).
-type Page = (Vec<Row>, Option<(String, Value)>);
-
-/// A page's items as rows, and the last item's keyset position.
 fn project_page(feed: &Feed, items: &[RuntimeValue]) -> Result<Page, PullError> {
     let shape = |reason: String| PullError::Shape {
         dataset: feed.dataset.clone(),
         reason,
     };
     let mut rows = Vec::with_capacity(items.len());
-    let mut last = None;
+    let mut ids = Vec::with_capacity(items.len());
     for item in items {
         let id = item
             .pointer(&feed.id_path)
@@ -777,7 +731,7 @@ fn project_page(feed: &Feed, items: &[RuntimeValue]) -> Result<Page, PullError> 
                 }
             }
         }
-        last = Some((version.clone(), json_of(id)));
+        ids.push(json_of(id));
         rows.push(Row {
             dataset: feed.dataset.clone(),
             source_id,
@@ -785,25 +739,7 @@ fn project_page(feed: &Feed, items: &[RuntimeValue]) -> Result<Page, PullError> 
             payload: RuntimeValue::Object(payload),
         });
     }
-    Ok((rows, last))
-}
-
-fn extract_version(
-    item: &RuntimeValue,
-    pointer: &str,
-    kind: VersionKind,
-    shape: &impl Fn(String) -> PullError,
-) -> Result<String, PullError> {
-    let raw = match kind {
-        VersionKind::Uint64 | VersionKind::Int64 => item.pointer(pointer).and_then(scalar_text),
-        VersionKind::Lexicographical | VersionKind::Rfc3339 | VersionKind::Opaque => item
-            .pointer(pointer)
-            .and_then(RuntimeValue::as_str)
-            .map(str::to_owned),
-    }
-    .ok_or_else(|| shape(format!("an item has no version text at {pointer}")))?;
-    let parsed = SourceVersion::parse(kind, &raw).map_err(|error| shape(error.to_string()))?;
-    Ok(parsed.raw().to_owned())
+    Ok((rows, ids))
 }
 
 /// One field of an item: the value at its pointer (`null` when absent), or,
@@ -816,46 +752,6 @@ fn project(item: &RuntimeValue, pointer: &str) -> RuntimeValue {
             .and_then(scalar_text)
             .map_or(RuntimeValue::Null, RuntimeValue::String),
         None => item.pointer(pointer).cloned().unwrap_or_default(),
-    }
-}
-
-/// Patch-mode projection (`FEED-MODE-1`): absent JSON pointers return `None`,
-/// explicit JSON `null` returns `Some(Null)`, and non-null non-scalar values
-/// under `text:` fail closed instead of fabricating an explicit clear.
-fn project_patch(
-    item: &RuntimeValue,
-    field: &str,
-    pointer: &str,
-    shape: &impl Fn(String) -> PullError,
-) -> Result<Option<RuntimeValue>, PullError> {
-    let Some(ptr) = pointer.strip_prefix("text:") else {
-        return Ok(item.pointer(pointer).cloned());
-    };
-    let Some(value) = item.pointer(ptr) else {
-        return Ok(None);
-    };
-    if value.is_null() {
-        return Ok(Some(RuntimeValue::Null));
-    }
-    scalar_text(value)
-        .map(RuntimeValue::String)
-        .map(Some)
-        .ok_or_else(|| {
-            shape(format!(
-                "patch text: field {field:?} at {ptr} must be non-empty text, number, or null"
-            ))
-        })
-}
-
-/// A scalar's text: a string as is, a number as its exact decimal.
-fn scalar_text(value: &RuntimeValue) -> Option<String> {
-    match value {
-        RuntimeValue::String(text) => (!text.is_empty()).then(|| text.clone()),
-        RuntimeValue::Number(number) => Some(number.to_string()),
-        RuntimeValue::Null
-        | RuntimeValue::Bool(_)
-        | RuntimeValue::Array(_)
-        | RuntimeValue::Object(_) => None,
     }
 }
 

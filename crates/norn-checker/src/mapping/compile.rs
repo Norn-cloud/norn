@@ -48,8 +48,8 @@ use norn_ir::provenance::{InstanceProvenance, MappingVersion, SourceRecordRef, U
 use norn_ir::source_schema::SourceSchemaIr;
 use norn_ir::{
     ActionRoot, ArtifactDependency, ArtifactEnvelope, ArtifactKind, ArtifactPayload, Decimal,
-    IrVersion01, LinkId, MarkingId, ObjectTypeName, PropertyId, ResourceLimitProfile,
-    RuntimeObject, RuntimeValue, SUPPORTED_IR_VERSION,
+    IrVersion01, LinkId, MarkingId, ObjectTypeName, PropertyId, ResourceLimitProfile, RuntimeValue,
+    SUPPORTED_IR_VERSION,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -84,9 +84,10 @@ pub struct SourceDocument {
     pub record: norn_canonical::JsonValue,
     /// When the source last changed the record, if it says.
     pub observed_at: Option<UtcTimestamp>,
-    /// Delivery semantics of this record (`FullSnapshot` by default; `Patch`
-    /// preserves omitted keys as `FieldPatch::Absent`).
-    pub mode: norn_ir::FeedMode,
+    /// Delivery semantics of this record (`None` inherits the mapping's
+    /// `norn.feed/1` mode or defaults to `FullSnapshot`; `Some(mode)` must not
+    /// contradict a mapping's declared `norn.feed/1` mode).
+    pub mode: Option<norn_ir::FeedMode>,
 }
 
 impl SourceDocument {
@@ -106,14 +107,14 @@ impl SourceDocument {
             dataset: dataset.into(),
             record: norn_canonical::parse(record)?,
             observed_at,
-            mode: norn_ir::FeedMode::FullSnapshot,
+            mode: None,
         })
     }
 
     /// Set the delivery [`norn_ir::FeedMode`] of this source document.
     #[must_use]
     pub const fn with_mode(mut self, mode: norn_ir::FeedMode) -> Self {
-        self.mode = mode;
+        self.mode = Some(mode);
         self
     }
 }
@@ -162,7 +163,7 @@ pub(super) struct CompiledMap {
     pub(super) id: String,
     pub(super) dataset: String,
     pub(super) nested_in: Option<NestedSource>,
-    pub(super) feed_mode: norn_ir::FeedMode,
+    pub(super) declared_feed: Option<norn_ir::feed::FeedContract>,
     pub(super) object_type: ObjectTypeName,
     pub(super) input_types: BTreeMap<String, Type>,
     pub(super) identity_fields: Vec<String>,
@@ -811,8 +812,8 @@ fn compile_map(
         })
     };
     let when = map.when.as_ref().map(compile).transpose()?;
-    let feed_mode =
-        super::patch::map_feed_mode(mapping, &map.source.dataset).map_err(|reason| {
+    let declared_feed =
+        super::patch::map_feed_contract(mapping, &map.source.dataset).map_err(|reason| {
             Box::new(error(
                 codes::INVALID_DOCUMENT,
                 reason,
@@ -938,7 +939,7 @@ fn compile_map(
         id: map.id.clone(),
         dataset: map.source.dataset.clone(),
         nested_in: map.source.nested_in.clone(),
-        feed_mode,
+        declared_feed,
         object_type,
         input_types,
         identity_fields,

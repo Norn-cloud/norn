@@ -35,13 +35,27 @@ fn field<'a>(bundle: &'a MappingBundle, name: &str) -> Result<&'a str, CellError
 }
 
 fn content(bundle: &MappingBundle) -> Result<String, CellError> {
+    let kind = field(bundle, "kind")?;
+    let source_version = field(bundle, "source_version")?;
+    let payload_digest = field(bundle, "payload_digest")?;
+    let redaction = bundle.raw.get("redaction").filter(|v| !v.is_null());
+    let feed_mode = bundle.raw.get("feed_mode").filter(|v| !v.is_null());
+    let version_kind = bundle.raw.get("version_kind").filter(|v| !v.is_null());
+    if feed_mode.is_none() && version_kind.is_none() {
+        return Ok(norn_ir::canonical::domain_hash_hex(
+            b"norn.source.content.v1\0",
+            &(kind, source_version, payload_digest, redaction),
+        )?);
+    }
     Ok(norn_ir::canonical::domain_hash_hex(
         b"norn.source.content.v1\0",
         &(
-            field(bundle, "kind")?,
-            field(bundle, "source_version")?,
-            field(bundle, "payload_digest")?,
-            bundle.raw.get("redaction").filter(|v| !v.is_null()),
+            kind,
+            source_version,
+            payload_digest,
+            redaction,
+            feed_mode,
+            version_kind,
         ),
     )?)
 }
