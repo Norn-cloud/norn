@@ -1,6 +1,8 @@
 {
   "description": "The declared write set names an object type no entity artifact of the set or the base defines.",
-  "base": [],
+  "base": [
+    "ir/retail-cancel-reorder.action.json"
+  ],
   "artifacts": [
     "ir/retail-reorder.action.json"
   ],

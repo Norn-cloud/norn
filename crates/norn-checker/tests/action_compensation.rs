@@ -1,11 +1,5 @@
 //! ACTION-COMPENSATION-1 (D4): Ring-0 admission checks for
 //! `ActionRoot.compensation` over resolved artifact sets and installed bases.
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    missing_docs,
-    reason = "integration-test crate"
-)]
 
 use std::collections::BTreeSet;
 
@@ -28,6 +22,7 @@ fn scope(org: Option<&str>, env: Option<&str>) -> ScopeRef {
     }
 }
 
+#[allow(clippy::expect_used, reason = "test fixture")]
 fn contact_entity() -> ArtifactEnvelope {
     ArtifactEnvelope {
         ir_version: SUPPORTED_IR_VERSION.to_owned(),
@@ -78,6 +73,7 @@ fn contact_entity() -> ArtifactEnvelope {
                             { "id": "post", "from": ["approved"], "to": "posted" },
                             { "id": "archive", "from": ["posted"], "to": "archived" },
                             { "id": "restore", "from": ["archived"], "to": "posted" },
+                            { "id": "close", "from": ["posted"], "to": "cancelled" },
                             { "id": "cancel_early", "from": ["draft", "submitted"], "to": "cancelled" }
                         ]
                     }]
@@ -88,6 +84,7 @@ fn contact_entity() -> ArtifactEnvelope {
     }
 }
 
+#[allow(clippy::expect_used, reason = "test fixture")]
 fn refund_entity() -> ArtifactEnvelope {
     ArtifactEnvelope {
         ir_version: SUPPORTED_IR_VERSION.to_owned(),
@@ -131,6 +128,7 @@ struct ActionSpec<'a> {
     compensation: Option<&'a str>,
 }
 
+#[allow(clippy::expect_used, reason = "test fixture")]
 fn transition_action(spec: &ActionSpec<'_>) -> ArtifactEnvelope {
     let mut payload = json!({
         "actionId": spec.action_id,
@@ -151,19 +149,24 @@ fn transition_action(spec: &ActionSpec<'_>) -> ArtifactEnvelope {
         },
         "writes": [{ "entityKind": "crm.Contact", "change": "modified" }]
     });
-    if let Some(transition) = spec.transition {
-        payload["effectProgram"] = json!({
-            "kind": "fire_transition",
-            "objectIdField": "contact_id",
-            "objectKind": "crm.Contact",
-            "entityArtifactId": "crm.Contact.entity",
-            "entityArtifactVersion": "1.0.0",
-            "lifecycle": "status",
-            "transition": transition
-        });
-    }
-    if let Some(comp) = spec.compensation {
-        payload["compensation"] = json!({ "actionId": comp });
+    if let Some(object) = payload.as_object_mut() {
+        if let Some(transition) = spec.transition {
+            object.insert(
+                "effectProgram".to_owned(),
+                json!({
+                    "kind": "fire_transition",
+                    "objectIdField": "contact_id",
+                    "objectKind": "crm.Contact",
+                    "entityArtifactId": "crm.Contact.entity",
+                    "entityArtifactVersion": "1.0.0",
+                    "lifecycle": "status",
+                    "transition": transition
+                }),
+            );
+        }
+        if let Some(comp) = spec.compensation {
+            object.insert("compensation".to_owned(), json!({ "actionId": comp }));
+        }
     }
     ArtifactEnvelope {
         ir_version: SUPPORTED_IR_VERSION.to_owned(),
@@ -184,6 +187,7 @@ fn transition_action(spec: &ActionSpec<'_>) -> ArtifactEnvelope {
     }
 }
 
+#[allow(clippy::expect_used, reason = "test fixture")]
 fn refund_create_action(artifact_id: &str, action_id: &str) -> ArtifactEnvelope {
     let payload: Value = json!({
         "actionId": action_id,
