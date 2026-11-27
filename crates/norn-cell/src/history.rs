@@ -12,7 +12,7 @@ use crate::error::CellError;
 use crate::export::ExportRecord;
 use crate::export_journal::ConsumedInput;
 use crate::read::{LedgerEntry, LedgerHead, ObjectRecord, StoreReader, to_i64, to_u64};
-use crate::system::{FACT_VALUES, GENESIS_HASH, INBOX, RECEIPT, RUN, STORE_FORMAT};
+use crate::system::{FACT_VALUES, GENESIS_HASH, RECEIPT, RUN, STORE_FORMAT};
 use crate::{CellStore, CommitOutcome, Model, Receipt};
 
 /// The commitment preimage; absence is a tombstone, not an empty live object.
@@ -2294,35 +2294,13 @@ pub(crate) fn restore_input<E: SqlEngine>(
             members,
             source_evidence,
         } => {
-            if position == 0
-                || record.batch.consumes
-                    != Some(crate::Consumption::Observation {
-                        observation_id: observation_id.clone(),
-                    })
-            {
-                return Err(mismatch());
-            }
-            // inject() assigns a new position; the export must retain the old
-            // position even when unconsumed deliveries left gaps in the inbox.
-            store.conn.execute(
-                &format!("INSERT INTO \"{INBOX}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, NULL)"),
-                params![to_i64(position, "position")?, observation_id, canonical_json(&observed)?],
-            ).map_err(|_invalid| mismatch())?;
-            // OBS-PAGE-1: the page's members, pending again at their old positions.
-            for member in &members {
-                store.conn.execute(
-                    &format!("INSERT INTO \"{INBOX}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, NULL)"),
-                    params![to_i64(member.position, "position")?, member.observation_id, canonical_json(&member.observed)?],
-                ).map_err(|_invalid| mismatch())?;
-            }
-            if !crate::export_journal::restore_source_evidence(
+            crate::export_journal::restore_observation_input(
                 &store.conn,
-                &observation_id,
+                record,
+                (position, &observation_id, &observed),
                 &members,
                 &source_evidence,
-            )? {
-                return Err(mismatch());
-            }
+            )?;
         }
         ConsumedInput::Timer { commit_seq, timer } => {
             let expected = crate::PendingTimer { commit_seq, timer };

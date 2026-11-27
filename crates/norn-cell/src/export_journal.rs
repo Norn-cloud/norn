@@ -206,6 +206,58 @@ pub(crate) fn restore_source_evidence<E: SqlEngine>(
     Ok(true)
 }
 
+/// Restore one consumed observation, its page members, and its exported
+/// `_norn_source_evidence` rows during `rebuild_export_history`.
+pub(crate) fn restore_observation_input<E: SqlEngine>(
+    conn: &E,
+    record: &ExportRecord,
+    (position, observation_id, observed): (u64, &str, &Value),
+    members: &[crate::PendingObservation],
+    source_evidence: &[SourceEvidenceEntry],
+) -> Result<(), CellError> {
+    let seq = record.receipt.body.commit_seq;
+    let mismatch = || CellError::HistoricalValueUnproven(format!("consumed input at commit {seq}"));
+    if position == 0
+        || record.batch.consumes
+            != Some(crate::Consumption::Observation {
+                observation_id: observation_id.to_owned(),
+            })
+    {
+        return Err(mismatch());
+    }
+    let inbox = crate::system::INBOX;
+    conn.execute(
+        &format!(
+            "INSERT INTO \"{inbox}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") \
+             VALUES (?1, ?2, ?3, NULL)"
+        ),
+        params![
+            to_i64(position, "position")?,
+            observation_id,
+            crate::codec::canonical_json(observed)?
+        ],
+    )
+    .map_err(|_invalid| mismatch())?;
+    for member in members {
+        conn.execute(
+            &format!(
+                "INSERT INTO \"{inbox}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") \
+                 VALUES (?1, ?2, ?3, NULL)"
+            ),
+            params![
+                to_i64(member.position, "position")?,
+                member.observation_id.as_str(),
+                crate::codec::canonical_json(&member.observed)?
+            ],
+        )
+        .map_err(|_invalid| mismatch())?;
+    }
+    if !restore_source_evidence(conn, observation_id, members, source_evidence)? {
+        return Err(mismatch());
+    }
+    Ok(())
+}
+
 /// Decode one `ConsumedInput::Observation` preimage without buffering decimals.
 pub(crate) fn decode_observation_input(input: &Value) -> Result<ConsumedInput, String> {
     let row: crate::PendingObservation = norn_ir::runtime::decode(input)?;
