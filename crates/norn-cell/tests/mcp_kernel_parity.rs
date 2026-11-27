@@ -45,13 +45,83 @@ impl ExprKind {
     const fn is_malformed(self) -> bool {
         matches!(self, Self::Malformed)
     }
+}
 
-    const fn is_rejected_at_eval(self) -> bool {
-        matches!(
-            self,
-            Self::Malformed | Self::RootDefaultInput | Self::RootActorSubject
-        )
+fn field_is_optional_at_step(
+    required_mask: [bool; 4],
+    steps: &[(usize, bool)],
+    step_index: usize,
+    field_idx: usize,
+) -> bool {
+    let filled_earlier = steps
+        .get(..step_index)
+        .is_some_and(|prior| prior.iter().any(|&(idx, _)| idx == field_idx));
+    if filled_earlier {
+        return false;
     }
+    let schema_required = required_mask.get(field_idx).copied().unwrap_or(false);
+    let any_optional_derive = steps
+        .iter()
+        .any(|&(idx, input_required)| idx == field_idx && !input_required);
+    !schema_required || any_optional_derive
+}
+
+fn step_is_type_admitted(
+    required_mask: [bool; 4],
+    steps: &[(usize, ExprKind, bool)],
+    step_index: usize,
+    field_idx: usize,
+    kind: ExprKind,
+) -> bool {
+    let skeleton: Vec<(usize, bool)> = steps.iter().map(|&(idx, _, req)| (idx, req)).collect();
+    let is_optional = field_is_optional_at_step(required_mask, &skeleton, step_index, field_idx);
+    match kind {
+        ExprKind::TrimInput => !is_optional,
+        ExprKind::DefaultInput | ExprKind::InputOrActor => is_optional,
+        ExprKind::ActorSubject | ExprKind::Constant => true,
+        ExprKind::Malformed | ExprKind::RootDefaultInput | ExprKind::RootActorSubject => false,
+    }
+}
+
+fn build_type_admitted_steps(
+    required_mask: [bool; 4],
+    field_is_actor: [bool; 4],
+    raw_steps: &[(usize, bool, bool)],
+) -> Vec<(usize, ExprKind, bool)> {
+    let skeleton: Vec<(usize, bool)> = raw_steps
+        .iter()
+        .map(|&(idx, raw_req, _)| {
+            let is_actor = field_is_actor.get(idx).copied().unwrap_or(false);
+            (idx, !is_actor && raw_req)
+        })
+        .collect();
+    raw_steps
+        .iter()
+        .enumerate()
+        .map(|(step_index, &(idx, _, prefer_primary))| {
+            let is_actor = field_is_actor.get(idx).copied().unwrap_or(false);
+            let req = skeleton.get(step_index).is_some_and(|&(_, r)| r);
+            let is_optional = field_is_optional_at_step(required_mask, &skeleton, step_index, idx);
+            let kind = if is_actor {
+                if is_optional && prefer_primary {
+                    ExprKind::InputOrActor
+                } else {
+                    ExprKind::ActorSubject
+                }
+            } else if is_optional {
+                if prefer_primary {
+                    ExprKind::DefaultInput
+                } else {
+                    ExprKind::Constant
+                }
+            } else if prefer_primary {
+                ExprKind::TrimInput
+            } else {
+                ExprKind::Constant
+            };
+            (idx, kind, req)
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -273,6 +343,39 @@ fn check_decimal_wire_parity(
     Ok(())
 }
 
+fn check_preparation_parity(
+    action: &ActionRoot,
+    required_mask: [bool; 4],
+    steps: &[(usize, ExprKind, bool)],
+    projected_required: &BTreeSet<String>,
+    decimal_shape: DecimalShape,
+) -> Result<(), TestCaseError> {
+    let all_admitted = steps
+        .iter()
+        .enumerate()
+        .all(|(i, &(idx, kind, _))| step_is_type_admitted(required_mask, steps, i, idx, kind));
+    let mut valid = RuntimeObject::new();
+    for req in projected_required {
+        valid.insert(req.clone(), RuntimeValue::String(" ok ".to_owned()));
+    }
+    let prepared =
+        prepare_action_input_for_call::<()>(action, &valid, "test.action", "0.1.0", "user:alice");
+    if all_admitted {
+        prop_assert!(
+            prepared.is_ok(),
+            "supplying MCP required keys failed kernel preparation: {prepared:?}"
+        );
+        check_decimal_wire_parity(action, &valid, decimal_shape)?;
+    } else {
+        let refused = matches!(prepared, Err(ActionRefusal::DerivationFailed { .. }));
+        prop_assert!(
+            refused,
+            "kernel accepted non-admitted derivation step: {prepared:?}"
+        );
+    }
+    Ok(())
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(96))]
 
@@ -361,38 +464,122 @@ proptest! {
             );
         }
 
-        // 5. Positive parity + decimal wire parity: on evaluable ZEN without
-        //    contradictory actor-derived + input_required=true steps on the
-        //    same field, supplying `projected_required` succeeds and `amount`
-        //    accepts wire strings (and null iff the schema is nullable) while
-        //    refusing raw JSON numbers.
-        let has_rejected_eval = steps
-            .iter()
-            .any(|(_, kind, _)| kind.is_rejected_at_eval());
+        // 5. Positive parity + decimal wire parity + type-refusal parity:
+        //    without contradictory actor-derived + input_required=true steps
+        //    on the same field, supplying `projected_required` succeeds iff
+        //    every derivation step is type-admitted at its step environment
+        //    (and fails with `DerivationFailed` otherwise).
         let has_contradiction = action
             .derive
             .iter()
             .any(|step| step.input_required && actor_fields.contains(&step.field));
-        let has_unfilled_optional_trim = steps
-            .iter()
-            .any(|(_, kind, req)| !req && matches!(kind, ExprKind::TrimInput));
-        if !has_rejected_eval && !has_contradiction && !has_unfilled_optional_trim {
-            let mut valid = RuntimeObject::new();
-            for req in &projected_required {
-                valid.insert(req.clone(), RuntimeValue::String(" ok ".to_owned()));
-            }
-            let prepared = prepare_action_input_for_call::<()>(
+        if !has_contradiction {
+            check_preparation_parity(
                 &action,
-                &valid,
-                "test.action",
-                "0.1.0",
-                "user:alice",
-            );
-            prop_assert!(
-                prepared.is_ok(),
-                "supplying MCP required keys failed kernel preparation: {prepared:?}"
-            );
-            check_decimal_wire_parity(&action, &valid, decimal_shape)?;
+                required_mask,
+                &steps,
+                &projected_required,
+                decimal_shape,
+            )?;
         }
     }
+
+    #[test]
+    fn mcp_type_admitted_derivations_always_succeed_in_kernel(
+        required_mask in any::<[bool; 4]>(),
+        field_is_actor in any::<[bool; 4]>(),
+        raw_steps in prop::collection::vec((0usize..4, any::<bool>(), any::<bool>()), 0..6),
+        decimal_shape in decimal_shape_strategy(),
+    ) {
+        let steps = build_type_admitted_steps(required_mask, field_is_actor, &raw_steps);
+        let action = build_action(required_mask, &steps, decimal_shape);
+        let actor_fields = actor_derived_fields(&action);
+        let Ok(tool) = action_tool_with_server_filled(&action, &actor_fields) else {
+            return Err(TestCaseError::fail("object action schema must project"));
+        };
+        let Ok(standalone) = action_tool(&action) else {
+            return Err(TestCaseError::fail("standalone projection must succeed"));
+        };
+        prop_assert_eq!(&standalone.input_schema, &tool.input_schema);
+        let (_projected_props, projected_required) = schema_keys(&tool.input_schema);
+        let mut valid = RuntimeObject::new();
+        for req in &projected_required {
+            valid.insert(req.clone(), RuntimeValue::String(" ok ".to_owned()));
+        }
+        let prepared = prepare_action_input_for_call::<()>(
+            &action,
+            &valid,
+            "test.action",
+            "0.1.0",
+            "user:alice",
+        );
+        prop_assert!(
+            prepared.is_ok(),
+            "type-admitted MCP required keys failed kernel preparation: {prepared:?}"
+        );
+        check_decimal_wire_parity(&action, &valid, decimal_shape)?;
+    }
+}
+
+#[test]
+fn kernel_refuses_nullish_coalescing_on_non_optional_or_previously_filled_field() {
+    // Required schema field with input_required=true is non-optional String, so `??` fails typecheck.
+    let required_coalesce = build_action(
+        [true, false, false, false],
+        &[(0, ExprKind::DefaultInput, true)],
+        DecimalShape::Scalar,
+    );
+    let mut input = RuntimeObject::new();
+    input.insert("a".to_owned(), RuntimeValue::String("ok".to_owned()));
+    let res = prepare_action_input_for_call::<()>(
+        &required_coalesce,
+        &input,
+        "test.action",
+        "0.1.0",
+        "user:alice",
+    );
+    assert!(
+        matches!(res, Err(ActionRefusal::DerivationFailed { ref field, .. }) if field == "a"),
+        "expected DerivationFailed for `??` on non-optional required field: {res:?}"
+    );
+
+    // Earlier derivation restores non-optional String before step 1, so step 1 `??` fails typecheck.
+    let refilled_coalesce = build_action(
+        [false, false, false, false],
+        &[
+            (0, ExprKind::Constant, false),
+            (0, ExprKind::DefaultInput, false),
+        ],
+        DecimalShape::Scalar,
+    );
+    let empty = RuntimeObject::new();
+    let res = prepare_action_input_for_call::<()>(
+        &refilled_coalesce,
+        &empty,
+        "test.action",
+        "0.1.0",
+        "user:alice",
+    );
+    assert!(
+        matches!(res, Err(ActionRefusal::DerivationFailed { ref field, .. }) if field == "a"),
+        "expected DerivationFailed for `??` after earlier derivation filled field: {res:?}"
+    );
+
+    // Non-required schema field with input_required=true starts Optional(String), so `trim(...)` fails.
+    let optional_trim = build_action(
+        [false, false, false, false],
+        &[(0, ExprKind::TrimInput, true)],
+        DecimalShape::Scalar,
+    );
+    let res = prepare_action_input_for_call::<()>(
+        &optional_trim,
+        &input,
+        "test.action",
+        "0.1.0",
+        "user:alice",
+    );
+    assert!(
+        matches!(res, Err(ActionRefusal::DerivationFailed { ref field, .. }) if field == "a"),
+        "expected DerivationFailed for `trim(...)` on optional schema field: {res:?}"
+    );
 }
