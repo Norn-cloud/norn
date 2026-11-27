@@ -315,24 +315,32 @@ impl Tokens<'_> {
     }
 }
 
-/// Whether `decimal` survives an IEEE-754 binary64 (`f64`) round-trip without
-/// precision loss (the numeric precision of Norn IR [`norn_ir::ArtifactEnvelope`]).
+/// Whether `decimal` survives the actual Norn IR [`norn_ir::JsonValue`]
+/// (`serde_json` binary64) encode/decode round-trip without precision loss.
 #[must_use]
 pub(crate) fn is_binary64_exact(decimal: norn_ir::Decimal) -> bool {
-    decimal
-        .canonical()
-        .parse::<f64>()
+    let text = decimal.canonical();
+    serde_json::from_str::<norn_ir::JsonValue>(&text)
         .ok()
-        .and_then(|f| norn_ir::Decimal::from_f64_shortest(f).ok())
-        .is_some_and(|rt| rt == decimal)
+        .and_then(|ir| serde_json::to_string(&ir).ok())
+        .and_then(|wire| RuntimeValue::from_json_text(&wire).ok())
+        .is_some_and(|rt| rt == RuntimeValue::Number(decimal))
+}
+
+fn present_runtime_value<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<RuntimeValue>, D::Error> {
+    use serde::Deserialize;
+    RuntimeValue::deserialize(deserializer).map(Some)
 }
 
 /// Deserialize a connector feed's `initial` watermark.
 ///
-/// Accepts either `{ "version": ..., "id": ... }` (refusing JSON numbers that
-/// lose precision in IEEE-754 binary64 IR storage) or `{ "version": ...,
-/// "idDecimal": "..." }` for exact >53-bit decimal initial IDs that survive
-/// IR admission, receipt hashing, and diffing without rounding.
+/// Accepts either `{ "version": ..., "id": ... }` (including explicit `null`,
+/// while refusing JSON numbers that lose precision in Norn IR binary64
+/// storage) or `{ "version": ..., "idDecimal": "..." }` for exact >53-bit
+/// decimal initial IDs that survive IR admission, receipt hashing, and diffing
+/// without rounding.
 pub(crate) fn deserialize_initial_watermark<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<crate::pull::Watermark, D::Error> {
@@ -341,7 +349,7 @@ pub(crate) fn deserialize_initial_watermark<'de, D: serde::Deserializer<'de>>(
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     struct RawInitial {
         version: String,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "present_runtime_value")]
         id: Option<RuntimeValue>,
         #[serde(default)]
         id_decimal: Option<String>,
@@ -398,7 +406,12 @@ pub(crate) fn serialize_initial_watermark<S: serde::Serializer>(
             }
             .serialize(serializer)
         }
-        _ => watermark.serialize(serializer),
+        RuntimeValue::Null
+        | RuntimeValue::Bool(_)
+        | RuntimeValue::Number(_)
+        | RuntimeValue::String(_)
+        | RuntimeValue::Array(_)
+        | RuntimeValue::Object(_) => watermark.serialize(serializer),
     }
 }
 

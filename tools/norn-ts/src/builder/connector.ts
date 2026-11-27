@@ -38,7 +38,11 @@ export interface PullFeed {
   readonly idPath: string
   readonly versionPath: string
   readonly fields: Readonly<Record<string, string>>
-  readonly initial: { readonly version: string; readonly id: string | number }
+  readonly initial:
+    | { readonly version: string; readonly id: string | number | null }
+    | { readonly version: string; readonly idDecimal: string }
+  readonly mode?: "full_snapshot" | "patch"
+  readonly versionKind?: "lexicographical" | "uint64" | "rfc3339" | "opaque"
 }
 
 /** A generic pull profile: the source it observes and its dataset feeds, in order. */

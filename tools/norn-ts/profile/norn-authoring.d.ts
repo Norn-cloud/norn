@@ -1253,7 +1253,11 @@ declare module "@norn/authoring" {
           readonly idPath: string
           readonly versionPath: string
           readonly fields: Readonly<Record<string, string>>
-          readonly initial: { readonly version: string; readonly id: string | number }
+          readonly initial:
+            | { readonly version: string; readonly id: string | number | null }
+            | { readonly version: string; readonly idDecimal: string }
+          readonly mode?: "full_snapshot" | "patch"
+          readonly versionKind?: "lexicographical" | "uint64" | "rfc3339" | "opaque"
         }>
         /** Where an oauth2 (client credentials) access token is sent. */
         readonly token?: { readonly header: string; readonly prefix?: string }

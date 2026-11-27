@@ -919,24 +919,6 @@ mod tests {
             RuntimeValue::from_json_text("9007199254740992.2").expect("exact")
         );
 
-        // Bare >53-bit JSON number `initial.id` refuses fail-closed; exact >53-bit
-        // initial IDs use `initial.idDecimal` (and setting both refuses).
-        let lossy_conn = r#"{"extensions":{"norn.pull/1":{"source":"s","pipeline":"p/1","feeds":[{"dataset":"D","request":{"method":"GET","path":"/d"},"itemsPath":"/data","paging":{"kind":"keyset","size":10},"idPath":"/id","versionPath":"/v","fields":{"id":"/id"},"initial":{"version":"0","id":9007199254740992.1}}]}}}"#;
-        assert!(
-            PullProfile::from_connector_json(lossy_conn).is_err(),
-            "lossy binary64 bare initial.id must refuse fail-closed"
-        );
-        let both_conn = r#"{"extensions":{"norn.pull/1":{"source":"s","pipeline":"p/1","feeds":[{"dataset":"D","request":{"method":"GET","path":"/d"},"itemsPath":"/data","paging":{"kind":"keyset","size":10},"idPath":"/id","versionPath":"/v","fields":{"id":"/id"},"initial":{"version":"0","id":1,"idDecimal":"9007199254740992.1"}}]}}}"#;
-        assert!(PullProfile::from_connector_json(both_conn).is_err());
-        let exact_conn = r#"{"extensions":{"norn.pull/1":{"source":"s","pipeline":"p/1","feeds":[{"dataset":"D","request":{"method":"GET","path":"/d"},"itemsPath":"/data","paging":{"kind":"keyset","size":10},"idPath":"/id","versionPath":"/v","fields":{"id":"/id"},"initial":{"version":"0","idDecimal":"9007199254740992.1"}}]}}}"#;
-        let loaded = PullProfile::from_connector_json(exact_conn)
-            .expect("valid")
-            .expect("profile");
-        assert_eq!(
-            loaded.feeds[0].initial.id,
-            RuntimeValue::from_json_text("9007199254740992.1").expect("exact initial id")
-        );
-
         // Equivalent RFC 3339 spelling (+02:00 vs Z) with the same id did not advance.
         let keyset_rfc = holding_profile(FeedMode::Patch, VersionKind::Rfc3339);
         let saved = BTreeMap::from([(
@@ -959,6 +941,44 @@ mod tests {
             rfc.accept(200, same_instant.to_string().as_bytes()),
             Err(PullError::Bound { .. })
         ));
+    }
+
+    #[test]
+    fn connector_initial_watermark_precision_and_null_id() {
+        // Bare lossy JSON numbers refuse fail-closed (including Serde-rounded
+        // `1000000000000000.1`), explicit `"id": null` stays valid, and exact
+        // >53-bit initial IDs use `initial.idDecimal`.
+        for bad in [
+            r#"{"version":"0","id":9007199254740992.1}"#,
+            r#"{"version":"0","id":1000000000000000.1}"#,
+            r#"{"version":"0","id":null,"idDecimal":"1"}"#,
+        ] {
+            let conn = format!(
+                r#"{{"extensions":{{"norn.pull/1":{{"source":"s","pipeline":"p/1","feeds":[{{"dataset":"D","request":{{"method":"GET","path":"/d"}},"itemsPath":"/data","paging":{{"kind":"keyset","size":10}},"idPath":"/id","versionPath":"/v","fields":{{"id":"/id"}},"initial":{bad}}}]}}}}}}"#
+            );
+            assert!(
+                PullProfile::from_connector_json(&conn).is_err(),
+                "must refuse invalid initial watermark {bad}"
+            );
+        }
+        let null_conn = r#"{"extensions":{"norn.pull/1":{"source":"s","pipeline":"p/1","feeds":[{"dataset":"D","request":{"method":"GET","path":"/d"},"itemsPath":"/data","paging":{"kind":"keyset","size":10},"idPath":"/id","versionPath":"/v","fields":{"id":"/id"},"initial":{"version":"0","id":null}}]}}}"#;
+        assert_eq!(
+            PullProfile::from_connector_json(null_conn)
+                .expect("null id valid")
+                .expect("profile")
+                .feeds[0]
+                .initial
+                .id,
+            RuntimeValue::Null
+        );
+        let exact_conn = r#"{"extensions":{"norn.pull/1":{"source":"s","pipeline":"p/1","feeds":[{"dataset":"D","request":{"method":"GET","path":"/d"},"itemsPath":"/data","paging":{"kind":"keyset","size":10},"idPath":"/id","versionPath":"/v","fields":{"id":"/id"},"initial":{"version":"0","idDecimal":"9007199254740992.1"}}]}}}"#;
+        let loaded = PullProfile::from_connector_json(exact_conn)
+            .expect("valid")
+            .expect("profile");
+        assert_eq!(
+            loaded.feeds[0].initial.id,
+            RuntimeValue::from_json_text("9007199254740992.1").expect("exact initial id")
+        );
     }
 
     #[test]
@@ -1205,9 +1225,12 @@ mod tests {
             )
         };
 
-        // 1. Bare >53-bit JSON number is refused at both kernel-set and provisioning boundaries.
+        // 1. Bare lossy JSON numbers (including Serde-rounded 1000000000000000.1) refuse at admission.
+        let serde_lossy = base_connector.replacen(r#""id": """#, r#""id": 1000000000000000.1"#, 1);
         let (base_json, lossy_tenant) = erpnext_with_sources_raw_json(&lossy_connector);
+        let (_, serde_lossy_tenant) = erpnext_with_sources_raw_json(&serde_lossy);
         assert!(admit_kernel_set_json(&join_all(&base_json, &lossy_tenant)).is_err());
+        assert!(admit_kernel_set_json(&join_all(&base_json, &serde_lossy_tenant)).is_err());
         let base_refs: Vec<&str> = base_json.iter().map(String::as_str).collect();
         let trusted_base = TrustedBase::from_sources(&base_refs).expect("trusted base");
         let lossy_sub = format!(
