@@ -34,9 +34,16 @@
               "from": [
                 "candidate"
               ],
+              "id": "accept_evaluation",
+              "to": "evaluated"
+            },
+            {
+              "from": [
+                "evaluated"
+              ],
               "guardRefusalCode": "core.projection.publication_guard",
               "guards": [
-                "self.contracts_passed and (self.evaluation_revision == self.pinned_dataset_revision)"
+                "((self.contracts_passed ?? false) and (self.evaluation_receipt != null)) and (self.evaluation_revision == self.pinned_dataset_revision)"
               ],
               "id": "promote",
               "to": "production"
@@ -44,6 +51,7 @@
             {
               "from": [
                 "candidate",
+                "evaluated",
                 "production"
               ],
               "id": "retire",
@@ -98,6 +106,9 @@
             "values": [
               {
                 "value": "candidate"
+              },
+              {
+                "value": "evaluated"
               },
               {
                 "value": "production"
@@ -157,18 +168,36 @@
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "evaluation_receipt",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
           "id": "evaluation_revision",
           "type": {
             "kind": "text"
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
           "id": "metric_name",
           "type": {
             "kind": "text"
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
           "id": "metric_value",
           "type": {
             "kind": "decimal",
@@ -176,6 +205,9 @@
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
           "id": "contracts_passed",
           "type": {
             "kind": "boolean"

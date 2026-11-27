@@ -242,14 +242,18 @@ pub(crate) fn bind_cell_scope<E: SqlEngine>(engine: &E, scope: &str) -> Result<(
 /// compares table names: no tenant object type or interface may use it.
 #[must_use]
 pub fn is_reserved_kernel_name(name: &str) -> bool {
-    [norn_kernel::ACTION_CALL_TYPE, norn_kernel::OWNED_ROWS_TYPE]
-        .iter()
-        .any(|reserved| reserved.eq_ignore_ascii_case(name))
+    [
+        norn_kernel::ACTION_CALL_TYPE,
+        norn_kernel::OWNED_ROWS_TYPE,
+        crate::function_receipt::FUNCTION_COMMAND_TYPE,
+    ]
+    .iter()
+    .any(|reserved| reserved.eq_ignore_ascii_case(name))
 }
 
 /// The kernel's own record types a host adds beside a tenant's definitions:
-/// action-call receipts and owned-row manifests. A cell model may carry them
-/// only exactly as defined here.
+/// action-call receipts, owned-row manifests, and Function command state. A
+/// cell model may carry them only exactly as defined here.
 #[must_use]
 pub fn kernel_record_types() -> Vec<ObjectTypeDef> {
     let action_call = (
@@ -282,7 +286,12 @@ pub fn kernel_record_types() -> Vec<ObjectTypeDef> {
         &["parentType", "parentKey", "collectionId"][..],
         &["rowIds"][..],
     );
-    [action_call, owned_rows]
+    let function_command = (
+        crate::function_receipt::FUNCTION_COMMAND_TYPE,
+        &[][..],
+        &["state"][..],
+    );
+    [action_call, owned_rows, function_command]
         .into_iter()
         .map(|(name, text, json)| {
             let typed = text

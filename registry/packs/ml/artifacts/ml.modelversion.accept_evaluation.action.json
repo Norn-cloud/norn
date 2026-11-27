@@ -1,0 +1,83 @@
+{
+  "artifactId": "ml.modelversion.accept_evaluation.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Accept an authenticated model evaluation receipt",
+  "namespace": "ml",
+  "payload": {
+    "access": {
+      "artifactId": "ml.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "ml.modelversion.accept_evaluation",
+    "effectProgram": {
+      "acceptReceipt": {
+        "digestProperty": "evaluation_receipt",
+        "manifestDigest": "sha256:68cdd2a91055b4836d0ebd503f87de810ec26fef55bf1d519762dabdfe325456",
+        "referenceField": "evaluation_receipt",
+        "resultBindings": {
+          "contracts_passed": "contracts_passed",
+          "evaluation_revision": "evaluation_revision",
+          "metric_name": "metric_name",
+          "metric_value": "metric_value"
+        }
+      },
+      "entityArtifactId": "ml.ModelVersion.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "version_id",
+      "objectKind": "ml.ModelVersion",
+      "transition": "accept_evaluation"
+    },
+    "idempotent": false,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "evaluation_receipt": {
+          "type": "string"
+        },
+        "version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version_id",
+        "evaluation_receipt"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Accept an authenticated model evaluation receipt",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "ml.ModelVersion"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/ml/artifacts/ml.modelversion.accept_evaluation.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

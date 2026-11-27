@@ -166,7 +166,9 @@ pub(crate) fn seed_stamped<H: PackHost>(
         trace: None,
     };
     let result = match commit_action(host, catalog, &call, &Seeder) {
-        Ok(ActionOutcome::Committed { .. }) => Ok(()),
+        Ok(ActionOutcome::Committed { .. }) => {
+            sync_post_stamp_fields(host, catalog, object_type, &protected, id, values)?
+        }
         Ok(ActionOutcome::Replayed { .. }) => {
             return Err(format!("seed {name}/{id}: replayed a fresh call key"));
         }
@@ -185,6 +187,88 @@ pub(crate) fn seed_stamped<H: PackHost>(
         before_commit,
         result,
     }))
+}
+
+/// Applies non-protected, non-lifecycle synthesized properties (such as
+/// receipt-bound fields omitted from a create action's input schema) onto a
+/// freshly stamped object so guard-satisfying and guard-violating fixtures
+/// hold the exact state the harness synthesized.
+fn sync_post_stamp_fields<H: PackHost>(
+    host: &mut H,
+    catalog: &TypeCatalog<'_>,
+    object_type: &ObjectTypeDef,
+    protected: &[String],
+    id: &str,
+    values: &JsonObject,
+) -> Result<Seeded<H::Error>, String> {
+    if object_type.immutable {
+        return Ok(Ok(()));
+    }
+    let name = object_type.name.as_str();
+    let fact_key = FactKey::new(name, id);
+    let state = host
+        .load(&fact_key)
+        .map_err(|err| format!("load seeded {name}/{id}: {err}"))?;
+    let Some(stored) = state.values.as_ref() else {
+        return Ok(Ok(()));
+    };
+    let immutable_state = object_type.lifecycles.iter().any(|lc| {
+        stored
+            .get(lc.property.as_str())
+            .and_then(JsonValue::as_str)
+            .is_some_and(|cur| lc.immutable.iter().any(|s| s == cur))
+    });
+    if immutable_state {
+        return Ok(Ok(()));
+    }
+    let protected_set: BTreeSet<&str> = protected.iter().map(String::as_str).collect();
+    let lifecycle_props: BTreeSet<&str> = object_type
+        .lifecycles
+        .iter()
+        .map(|lc| lc.property.as_str())
+        .collect();
+    let key_props: BTreeSet<&str> = object_type
+        .identity
+        .iter()
+        .flat_map(|spec| spec.properties.iter().map(|prop| prop.as_str()))
+        .collect();
+    let mut changes = Vec::new();
+    for (prop, val) in values {
+        let prop_str = prop.as_str();
+        if protected_set.contains(prop_str)
+            || lifecycle_props.contains(prop_str)
+            || key_props.contains(prop_str)
+        {
+            continue;
+        }
+        let current = stored.get(prop_str).unwrap_or(&JsonValue::Null);
+        if current != val {
+            changes.push(norn_kernel::pack_mbt_support::FactChange::Set {
+                object_type: object_type.name.clone(),
+                key: id.to_owned(),
+                property: norn_kernel::pack_mbt_support::PropertyId(prop.clone()),
+                value: val.clone(),
+            });
+        }
+    }
+    if changes.is_empty() {
+        return Ok(Ok(()));
+    }
+    let slice =
+        norn_kernel::load_slice(host, [fact_key]).map_err(|err| format!("load_slice: {err}"))?;
+    let turn = DecisionTurn {
+        id: format!("seed-sync-{name}-{id}-{}", host.ledger_len()),
+        now: host.logical_now(),
+        world: World::Main,
+        consumes: None,
+    };
+    let output = norn_kernel::pack_mbt_support::DecisionOutput {
+        facts: changes,
+        links: Vec::new(),
+        commands: Vec::new(),
+        timers: Vec::new(),
+    };
+    Ok(norn_kernel::commit_decision(host, catalog, &slice, &turn, &output).map(|_| ()))
 }
 
 pub(crate) fn fill_missing_action_input_fields(

@@ -11,9 +11,9 @@
     "interface": {
       "invariants": [
         {
-          "expression": "(self.status != 'production') or (self.contracts_passed and (self.evaluation_revision == self.pinned_dataset_revision))",
+          "expression": "(self.status != 'production') or (((self.contracts_passed ?? false) and (self.evaluation_receipt != null)) and (self.evaluation_revision == self.pinned_dataset_revision))",
           "id": "evaluated_on_pinned_dataset",
-          "message": "A production model version was evaluated on its pinned dataset revision, and every output contract held."
+          "message": "A production model version has an authenticated evaluation receipt on its pinned dataset revision, and every output contract held."
         }
       ],
       "name": "ml.ModelVersionEvidence",
@@ -43,6 +43,9 @@
             "values": [
               {
                 "value": "candidate"
+              },
+              {
+                "value": "evaluated"
               },
               {
                 "value": "production"
@@ -102,18 +105,36 @@
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "evaluation_receipt",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
           "id": "evaluation_revision",
           "type": {
             "kind": "text"
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
           "id": "metric_name",
           "type": {
             "kind": "text"
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
           "id": "metric_value",
           "type": {
             "kind": "decimal",
@@ -121,6 +142,9 @@
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
           "id": "contracts_passed",
           "type": {
             "kind": "boolean"

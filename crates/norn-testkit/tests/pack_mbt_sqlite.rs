@@ -6,22 +6,35 @@
 //! `time`, `org`) plus an Order-to-Cash `SoD` & immutable-terminal pack against
 //! file-backed [`ObservedSqliteCell`] with clean reopen and `verify_ledger()`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use norn_cell::function_receipt::{FUNCTION_COMMAND_TYPE, FUNCTION_PAYLOAD_TYPE};
 use norn_cell::{
     CellError, DomainCoverageRecorder, DomainCoverageSnapshot, Model, ObservedSqliteCell,
     SqliteCell, StoreOptions,
 };
+use norn_ir::function::{
+    Authority, AuthorityKind, CacheOrigin, Digest, ExecutionProvenance, Fencing, FreshnessMode,
+    FunctionInvocation, FunctionOutcome, FunctionReceipt, RelevantStateToken, ResourceUse,
+    RetryCeiling, RunRef, SuccessOutcome, output_manifest_digest,
+};
 use norn_ir::{ArtifactEnvelope, Decimal, RuntimeObject, RuntimeValue};
-use norn_kernel::cell_host::{FactKey, FactState, JsonObject};
+use norn_kernel::cell_host::{
+    FactKey, FactMutation, FactState, FactVersion, FactWrite, JsonObject,
+};
 use norn_kernel::pack_mbt_support::{LawExampleVerdict as Verdict, LawIR, law_content_pin};
+use norn_kernel::receipt_binding::{ReceiptBinding, ReceiptBindingError, ReceiptReference};
+use norn_kernel::result_reconciliation::{
+    CommandState, Completion, DispatchedCommand, InvalidReceipt, ReceiptValidator,
+    ResultAuthorizer, ResultAuthzRequest, ResultChecks, ResultDenial,
+};
 use norn_kernel::{
-    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DecisionRefusal, DueTimer,
-    FactEvent, LinkKey, LinkReadTarget, LinkState, LogicalTime, Observed, OwnedRowsCommitProof,
-    Performed, PredicateObject, PredicateQuery,
+    BoundedFact, CellCommit, CellHost, Command, CommitError, CommitReceipt, DecisionRefusal,
+    DueTimer, Effect, FactEvent, IdempotencyKey, LinkKey, LinkReadTarget, LinkState, LogicalTime,
+    Observed, OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery,
 };
 use norn_testkit::pack_mbt::coverage::{
     DomainCoverage, DomainTransition, ImmutableTarget, PolicyRuleTarget,
@@ -31,11 +44,120 @@ use norn_testkit::pack_mbt::dst::{PackDstConfig, run_pack_dst};
 use norn_testkit::pack_mbt::static_gaps::{StructuralGap, analyze_static_gaps};
 use norn_testkit::pack_mbt::{
     AdmittedPack, EvidenceLevel, LawExampleCase, PackHost, action_call_object_type,
+    function_command_object_type,
 };
 use serde_json::json;
 use tempfile::TempDir;
 
 type BaseCell = SqliteCell<FactEvent, JsonObject, JsonObject>;
+
+const MBT_RECEIPT_EXECUTOR: &str = "pool.mbt-receipt";
+
+struct MbtReceiptContract;
+
+impl ResultAuthorizer for MbtReceiptContract {
+    fn authorize(&self, _request: &ResultAuthzRequest<'_>) -> Result<(), ResultDenial> {
+        Ok(())
+    }
+}
+
+impl ReceiptValidator for MbtReceiptContract {
+    fn validate(
+        &self,
+        _dispatched: &DispatchedCommand,
+        receipt: &FunctionReceipt,
+    ) -> Result<(), InvalidReceipt> {
+        if matches!(receipt.outcome, FunctionOutcome::Success(_)) {
+            Ok(())
+        } else {
+            Err(InvalidReceipt {
+                reason: "expected success receipt".to_owned(),
+            })
+        }
+    }
+}
+
+fn build_mbt_receipt(
+    scope: &str,
+    now_millis: u64,
+    cmd_id: &str,
+    target_key: &str,
+    manifest_digest: &str,
+    summary: JsonObject,
+) -> Result<(DispatchedCommand, FunctionReceipt, JsonObject), String> {
+    let profile = Digest(format!("sha256:{}", "7".repeat(64)));
+    let runtime = Digest(format!("sha256:{}", "5".repeat(64)));
+    let invocation = FunctionInvocation {
+        tenant: scope.to_owned(),
+        world: "main".to_owned(),
+        authority: Authority {
+            kind: AuthorityKind::Service,
+            id: "svc.mbt-receipt".to_owned(),
+        },
+        command_id: cmd_id.to_owned(),
+        run: RunRef {
+            id: target_key.to_owned(),
+            generation: 1,
+        },
+        manifest: Digest(manifest_digest.to_owned()),
+        inputs: BTreeMap::from([(
+            "target".to_owned(),
+            RuntimeValue::String(target_key.to_owned()),
+        )]),
+        blobs: BTreeMap::new(),
+        provenance_commit: 1,
+        dependency: RelevantStateToken::default(),
+        freshness: FreshnessMode::AppendOnly,
+        destination: None,
+        deadline_millis: now_millis.saturating_add(1_000_000),
+        retry: RetryCeiling {
+            max_attempts: 2,
+            max_cost_units: 100,
+        },
+        fencing: Fencing {
+            token: format!("fence-{cmd_id}"),
+            cancellation_generation: 0,
+        },
+    };
+    let dispatched = DispatchedCommand::pin(invocation, profile)
+        .map_err(|err| format!("pin mbt receipt command: {err}"))?;
+    let output_manifest = output_manifest_digest(&[], &summary)
+        .map_err(|err| format!("output_manifest_digest: {err}"))?;
+    let receipt = FunctionReceipt {
+        command_id: dispatched.invocation.command_id.clone(),
+        run: dispatched.invocation.run.clone(),
+        attempt: 1,
+        dispatch: dispatched.dispatch.clone(),
+        manifest: dispatched.invocation.manifest.clone(),
+        execution_profile: dispatched.execution_profile.clone(),
+        input_identity: dispatched.input_identity.clone(),
+        dependency_token: dispatched.dependency_token.clone(),
+        outcome: FunctionOutcome::Success(SuccessOutcome {
+            output_manifest,
+            outputs: Vec::new(),
+            summary,
+        }),
+        provenance: ExecutionProvenance {
+            executor: MBT_RECEIPT_EXECUTOR.to_owned(),
+            placement: "mbt/node-1".to_owned(),
+            runtime,
+        },
+        resources: ResourceUse {
+            cpu_millis: 1,
+            wall_millis: 1,
+            peak_memory_bytes: 0,
+            output_bytes: 0,
+            fuel: None,
+        },
+        cache: CacheOrigin::Miss {},
+    };
+    let encoded_receipt =
+        match norn_ir::runtime::encode(&receipt).map_err(|err| format!("encode receipt: {err}"))? {
+            RuntimeValue::Object(obj) => obj,
+            other => return Err(format!("encoded receipt was not object: {other:?}")),
+        };
+    Ok((dispatched, receipt, encoded_receipt))
+}
 
 /// File-backed [`ObservedSqliteCell`] implementing [`PackHost`] with real
 /// SQLite clean reopen and `verify_ledger()` integrity verification.
@@ -45,6 +167,8 @@ struct SqlitePackHost {
     model: Model,
     scope: String,
     recorder: Arc<DomainCoverageRecorder>,
+    receipt_answers: Arc<Mutex<BTreeMap<String, JsonObject>>>,
+    receipt_seq: u64,
     cell: Option<ObservedSqliteCell<FactEvent, JsonObject, JsonObject>>,
 }
 
@@ -54,6 +178,12 @@ impl SqlitePackHost {
         let db_path = dir.path().join("pack-mbt.sqlite");
         let mut all_types = pack.object_types.clone();
         all_types.push(action_call_object_type());
+        if !all_types
+            .iter()
+            .any(|ty| ty.name.as_str() == FUNCTION_COMMAND_TYPE)
+        {
+            all_types.push(function_command_object_type());
+        }
         let base_model = Model::from_definitions_with_interfaces(
             &all_types,
             &pack.property_types,
@@ -64,14 +194,24 @@ impl SqlitePackHost {
             .with_governing_laws(&pack.law_envelopes)
             .map_err(|err| format!("Model::with_governing_laws: {err}"))?;
         let scope = "org-mbt/dev".to_owned();
-        let inner = BaseCell::open(
+        let receipt_answers: Arc<Mutex<BTreeMap<String, JsonObject>>> =
+            Arc::new(Mutex::new(BTreeMap::new()));
+        let answers_for_perform = Arc::clone(&receipt_answers);
+        let mut inner = BaseCell::open(
             &db_path,
             model.clone(),
             StoreOptions::default(),
             scope.clone(),
-            |cmd| cmd.payload.clone(),
+            move |cmd| {
+                answers_for_perform
+                    .lock()
+                    .ok()
+                    .and_then(|map| map.get(cmd.id.0.as_str()).cloned())
+                    .unwrap_or_else(|| cmd.payload.clone())
+            },
         )
         .map_err(|err| format!("SqliteCell::open: {err}"))?;
+        inner.set_result_authorizer(Some(Box::new(MbtReceiptContract)));
         let cell = inner.into_observed(Arc::clone(&recorder));
         Ok(Self {
             _dir: dir,
@@ -79,6 +219,8 @@ impl SqlitePackHost {
             model,
             scope,
             recorder,
+            receipt_answers,
+            receipt_seq: 0,
             cell: Some(cell),
         })
     }
@@ -134,6 +276,16 @@ impl CellHost for SqlitePackHost {
 
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
         self.cell_ref()?.load_link(key)
+    }
+
+    fn resolve_accepted_receipt(
+        &self,
+        reference: &ReceiptReference,
+        manifest: &Digest,
+    ) -> Result<Option<ReceiptBinding<JsonObject>>, ReceiptBindingError<CellError>> {
+        self.cell_ref()
+            .map_err(ReceiptBindingError::Host)?
+            .resolve_accepted_receipt(reference, manifest)
     }
 
     fn read_predicate(
@@ -259,14 +411,22 @@ impl PackHost for SqlitePackHost {
     fn reopen(&mut self) -> Result<(), String> {
         let prev_now = self.logical_now();
         self.cell = None;
+        let answers_for_perform = Arc::clone(&self.receipt_answers);
         let mut reopened = BaseCell::open(
             &self.db_path,
             self.model.clone(),
             StoreOptions::default(),
             self.scope.clone(),
-            |cmd| cmd.payload.clone(),
+            move |cmd| {
+                answers_for_perform
+                    .lock()
+                    .ok()
+                    .and_then(|map| map.get(cmd.id.0.as_str()).cloned())
+                    .unwrap_or_else(|| cmd.payload.clone())
+            },
         )
         .map_err(|err| format!("clean reopen failed: {err}"))?;
+        reopened.set_result_authorizer(Some(Box::new(MbtReceiptContract)));
         reopened.advance_to(prev_now);
         reopened
             .store()
@@ -275,6 +435,86 @@ impl PackHost for SqlitePackHost {
             .map_err(|err| format!("verify_ledger after reopen failed: {err}"))?;
         self.cell = Some(reopened.into_observed(Arc::clone(&self.recorder)));
         Ok(())
+    }
+
+    fn seed_accepted_receipt(
+        &mut self,
+        target_key: &str,
+        manifest_digest: &str,
+        summary: JsonObject,
+    ) -> Result<Option<String>, String> {
+        self.receipt_seq = self.receipt_seq.saturating_add(1);
+        let cmd_id = format!("mbt-receipt-{target_key}-{}", self.receipt_seq);
+        let (dispatched, receipt, encoded_receipt) = build_mbt_receipt(
+            &self.scope,
+            self.logical_now().as_millis(),
+            &cmd_id,
+            target_key,
+            manifest_digest,
+            summary,
+        )?;
+        if let Ok(mut answers) = self.receipt_answers.lock() {
+            answers.insert(cmd_id.clone(), encoded_receipt);
+        }
+        let state = norn_ir::runtime::encode(&CommandState::dispatched(&dispatched))
+            .map_err(|err| format!("encode command state: {err}"))?;
+        let invocation_val = norn_ir::runtime::encode(&dispatched.invocation)
+            .map_err(|err| format!("encode invocation: {err}"))?;
+        let freshness = dispatched
+            .freshness()
+            .map_err(|err| format!("dispatched freshness: {err}"))?;
+        let cell = self
+            .cell_mut()
+            .map_err(|err| format!("cell_mut: {err}"))?
+            .inner_mut();
+        cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new(FUNCTION_COMMAND_TYPE, cmd_id.as_str()),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: JsonObject::from([("state".to_owned(), state)]),
+                },
+            }],
+            effects: vec![Effect::Perform(Command {
+                id: dispatched.command_id(),
+                generation: dispatched.generation(),
+                idempotency_key: IdempotencyKey(format!("{cmd_id}/1")),
+                freshness,
+                deadline: None,
+                payload: JsonObject::from([
+                    (
+                        "type".to_owned(),
+                        RuntimeValue::String(FUNCTION_PAYLOAD_TYPE.to_owned()),
+                    ),
+                    ("invocation".to_owned(), invocation_val),
+                ]),
+            })],
+            ..CellCommit::empty()
+        })
+        .map_err(|err| format!("enqueue mbt receipt command: {err}"))?;
+        let performed = cell
+            .perform()
+            .map_err(|err| format!("perform mbt receipt command: {err}"))?;
+        if performed.is_none() {
+            return Err(format!("mbt receipt command {cmd_id} did not perform"));
+        }
+        let command = dispatched.command_id();
+        let digest = cell
+            .retain_function_receipt(
+                &dispatched,
+                &Completion {
+                    receipt: &receipt,
+                    command: &command,
+                    generation: dispatched.generation(),
+                    authenticated_executor: Some(MBT_RECEIPT_EXECUTOR),
+                },
+                &ResultChecks {
+                    authorizer: &MbtReceiptContract,
+                    validator: &MbtReceiptContract,
+                },
+            )
+            .map_err(|err| format!("retain mbt receipt: {err}"))?;
+        Ok(Some(digest.0))
     }
 
     fn record_decision_refusal(&self, refusal: &DecisionRefusal<Self::Error>) {

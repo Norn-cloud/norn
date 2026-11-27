@@ -347,6 +347,57 @@ pub trait PackHost: CellHost<Event = FactEvent, Command = JsonObject, Input = Js
         let _ = (object_type, artifact_id);
         None
     }
+
+    /// Seeds a host-authenticated, retained `FunctionReceipt` for `target_key`
+    /// matching `manifest_digest` and carrying `summary`, returning its receipt
+    /// digest (`sha256:...`) to supply to an `acceptReceipt` action.
+    ///
+    /// # Errors
+    ///
+    /// Returns a description if receipt seeding fails.
+    fn seed_accepted_receipt(
+        &mut self,
+        _target_key: &str,
+        _manifest_digest: &str,
+        _summary: JsonObject,
+    ) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+}
+
+/// Builds the platform's synthetic `norn.FunctionCommand` object type required
+/// to persist Function command reconciliation state (`RECEIPT-CONSUME-1`).
+#[must_use]
+pub fn function_command_object_type() -> ObjectTypeDef {
+    ObjectTypeDef {
+        immutable: false,
+        name: ObjectTypeName("norn.FunctionCommand".to_owned()),
+        role: None,
+        description: None,
+        status: ResourceStatus::default(),
+        extends: None,
+        implements: Vec::new(),
+        properties: vec![Property {
+            protected: false,
+            id: PropertyId("state".to_owned()),
+            description: None,
+            property_type: PropertyType::JsonExt { schema: None },
+            constraints: PropertyConstraints {
+                nullable: true,
+                ..PropertyConstraints::default()
+            },
+            default: None,
+            markings: Vec::new(),
+            computed: None,
+        }],
+        links: Vec::new(),
+        owned_collections: Vec::new(),
+        identity: Vec::new(),
+        invariants: Vec::new(),
+        lifecycles: Vec::new(),
+        markings: Vec::new(),
+        accounting_leg: None,
+    }
 }
 
 /// Builds the platform's synthetic `norn.ActionCall` object type required by

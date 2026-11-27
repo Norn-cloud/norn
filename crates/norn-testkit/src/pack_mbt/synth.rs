@@ -599,7 +599,9 @@ fn apply_guard_positive_heuristics(
                 }
             }
             PropertyType::Text { .. } => {
-                if matches!(values.get(id), Some(JsonValue::String(s)) if s.is_empty()) {
+                if matches!(values.get(id), None | Some(JsonValue::Null))
+                    || matches!(values.get(id), Some(JsonValue::String(s)) if s.is_empty())
+                {
                     values.insert(id.to_owned(), JsonValue::String(format!("nonempty-{id}")));
                 }
             }
@@ -615,32 +617,46 @@ fn apply_guard_positive_heuristics(
     }
     for guard in guards {
         let text = guard.as_str();
-        if let Some((lhs, rhs)) = extract_self_equality_pair(text)
-            && !lifecycle_props.contains(lhs.as_str())
-            && !lifecycle_props.contains(rhs.as_str())
-            && let Some(lhs_val) = values.get(&lhs).cloned()
-        {
-            values.insert(rhs, lhs_val);
+        for (lhs, rhs) in extract_self_equality_pairs(text) {
+            if !lifecycle_props.contains(lhs.as_str())
+                && !lifecycle_props.contains(rhs.as_str())
+                && let Some(lhs_val) = values.get(&lhs).cloned()
+            {
+                values.insert(rhs, lhs_val);
+            }
         }
     }
 }
 
-fn extract_self_equality_pair(expr: &str) -> Option<(String, String)> {
-    let (_, rhs_part) = expr.split_once("==")?;
-    let lhs_part = expr.split("==").next()?;
-    let lhs_start = lhs_part.rfind("self.")?;
-    let lhs_name: String = lhs_part
-        .get(lhs_start.saturating_add(5)..)?
-        .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-        .collect();
-    let rhs_start = rhs_part.find("self.")?;
-    let rhs_name: String = rhs_part
-        .get(rhs_start.saturating_add(5)..)?
-        .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-        .collect();
-    (!lhs_name.is_empty() && !rhs_name.is_empty()).then_some((lhs_name, rhs_name))
+fn extract_self_equality_pairs(expr: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    let mut offset = 0;
+    while let Some(rel) = expr.get(offset..).and_then(|tail| tail.find("==")) {
+        let eq_pos = offset.saturating_add(rel);
+        let lhs_part = expr.get(..eq_pos).unwrap_or_default().trim_end();
+        let rhs_part = expr
+            .get(eq_pos.saturating_add(2)..)
+            .unwrap_or_default()
+            .trim_start();
+        if let Some(rhs_rest) = rhs_part.strip_prefix("self.") {
+            let rhs_name: String = rhs_rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            let lhs_rev: String = lhs_part
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            let lhs_name: String = lhs_rev.chars().rev().collect();
+            let lhs_prefix = lhs_part.strip_suffix(lhs_name.as_str()).unwrap_or_default();
+            if lhs_prefix.ends_with("self.") && !lhs_name.is_empty() && !rhs_name.is_empty() {
+                pairs.push((lhs_name, rhs_name));
+            }
+        }
+        offset = eq_pos.saturating_add(2);
+    }
+    pairs
 }
 
 fn shared_property_map(pack: &AdmittedPack) -> BTreeMap<&str, &PropertyTypeDef> {
