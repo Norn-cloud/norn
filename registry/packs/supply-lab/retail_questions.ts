@@ -117,20 +117,20 @@ export const StoreSellThroughWeekly = Norn.question({
   asOf: window, population: { kind: "authorized_objects" },
 })
 
-/** Store-SKU weeks of supply: declared ratio of sums `sum(on_hand_qty) / sum(avg_weekly_sales_qty)` at unique store-SKU-week grain (null when withheld). */
+/** Store-SKU weeks of supply for the reconciled reporting week (`2026-08-31`): declared ratio of sums `sum(on_hand_qty) / sum(avg_weekly_sales_qty)` at unique store-SKU-week grain (null when withheld). */
 export const StoreWeeksOfSupplyWeekly = Norn.question({
   name: "supply.retail.store_weeks_of_supply_weekly", of: StoreCommercialRollup,
   measure: Norn.metricId({ kind: "ratio", of: StoreCommercialRollup, property: "weeks_of_supply", time: "period_end" }),
-  where: [],
+  where: [{ property: "period_week", operator: "eq", value: "2026-08-31" }],
   by: [{ property: "unit" }, { property: "store_id" }, { property: "sku_id" }, { property: "period_end", grain: "week" }],
   asOf: window, population: { kind: "authorized_objects" },
 })
 
-/** Store-SKU GMROI: declared ratio of sums `sum(period_gross_margin) / sum(average_inventory_value)` at unique store-SKU-week grain (null when withheld). */
+/** Store-SKU GMROI for the reconciled reporting week (`2026-08-31`): declared ratio of sums `sum(period_gross_margin) / sum(average_inventory_value)` at unique store-SKU-week grain (null when withheld). */
 export const StoreGmroiWeekly = Norn.question({
   name: "supply.retail.store_gmroi_weekly", of: StoreCommercialRollup,
   measure: Norn.metricId({ kind: "ratio", of: StoreCommercialRollup, property: "gmroi", time: "period_end" }),
-  where: [],
+  where: [{ property: "period_week", operator: "eq", value: "2026-08-31" }],
   by: [{ property: "currency" }, { property: "store_id" }, { property: "sku_id" }, { property: "period_end", grain: "week" }],
   asOf: window, population: { kind: "authorized_objects" },
 })

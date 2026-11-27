@@ -1,5 +1,5 @@
 import { Norn } from "@norn/authoring"
-import { PosSale, StockLot, Store, StoreCommercialRollup, StoreCount } from "./retail.ts"
+import { PosSale, StockLot, StockValuationCut, Store, StoreCommercialRollup, StoreCount } from "./retail.ts"
 
 // Chasm-trap-safe retail commercial KPI transforms: aggregate each fact stream
 // to `(store_id, sku_id, unit, currency)` (or receipt week) first, then join
@@ -272,6 +272,34 @@ export const StoreAvailableCountPositions = Norn.transform({
         { name: "unit", expression: "input.unit" },
         { name: "on_hand_qty", expression: "input.on_hand_qty" },
         { name: "as_of", expression: "input.as_of" },
+      ],
+    },
+  },
+  output: "projected",
+})
+
+/**
+ * Sealed period-end `StockValuationCut` closing quantities and valuations per
+ * `(store_id, sku_id, unit, currency, cut_at)` so historical weekly KPI rollups
+ * reconcile against their own period-end close rather than mutable post-close
+ * current lot balances.
+ */
+export const StoreClosingCutPositions = Norn.transform({
+  id: "supply.retail.store_closing_cut_positions", title: "Sealed store closing cut positions", version: "0.1.0",
+  inputs: { cut: StockValuationCut },
+  nodes: {
+    cut: { op: "scan", input: "cut" },
+    costed_only: { op: "filter", input: "cut", predicate: "input.cost_status == \"costed\"" },
+    projected: {
+      op: "project", input: "costed_only", columns: [
+        { name: "id", expression: "input.id" },
+        { name: "store_id", expression: "input.store_id" },
+        { name: "sku_id", expression: "input.sku_id" },
+        { name: "unit", expression: "input.unit" },
+        { name: "currency", expression: "input.currency" },
+        { name: "cut_at", expression: "input.cut_at" },
+        { name: "remaining_qty", expression: "input.remaining_qty" },
+        { name: "stock_value", expression: "input.stock_value" },
       ],
     },
   },

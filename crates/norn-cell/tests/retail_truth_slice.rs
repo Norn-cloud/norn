@@ -922,15 +922,16 @@ fn seed_sole_cfc1_lots(sole: &mut EntityBook) -> Result<(), String> {
         "planner:omar",
         json!({
             "cut_id": "CUT-S1-2026-08-10", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "currency": "EGP", "cost_status": "costed", "book_epoch": "1970-01-01T00:00:00Z",
-            "cut_at": "2026-08-10T00:00:00Z", "stock_value": "10000"
+            "unit": "each", "currency": "EGP", "cost_status": "costed", "book_epoch": "1970-01-01T00:00:00Z",
+            "cut_at": "2026-08-10T00:00:00Z", "remaining_qty": "100", "stock_value": "10000"
         }),
     )?;
     sole.ok(
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-S1-W1", "remaining_qty": "25", "depleted_qty": "25",
+            "lot_id": "LOT-S1-W1", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "remaining_qty": "25", "depleted_qty": "25",
             "as_of": "2026-09-04T18:00:00Z", "unit_cost": "100", "stock_value": "0"
         }),
     )?;
@@ -938,7 +939,8 @@ fn seed_sole_cfc1_lots(sole: &mut EntityBook) -> Result<(), String> {
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-S1-DEPLETED", "remaining_qty": "0", "depleted_qty": "10",
+            "lot_id": "LOT-S1-DEPLETED", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "remaining_qty": "0", "depleted_qty": "10",
             "as_of": "2026-08-20T09:00:00Z", "unit_cost": "100", "stock_value": "0"
         }),
     )?;
@@ -946,7 +948,8 @@ fn seed_sole_cfc1_lots(sole: &mut EntityBook) -> Result<(), String> {
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-S1-W5", "remaining_qty": "35", "depleted_qty": "5",
+            "lot_id": "LOT-S1-W5", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "remaining_qty": "35", "depleted_qty": "5",
             "as_of": "2026-09-04T18:00:00Z", "unit_cost": "100", "stock_value": "0"
         }),
     )
@@ -1120,15 +1123,16 @@ fn seed_partner_operations(partner: &mut EntityBook) -> Result<(), String> {
         "planner:omar",
         json!({
             "cut_id": "CUT-P1-2026-08-31", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
-            "currency": "USD", "cost_status": "costed", "book_epoch": "1970-01-01T00:00:00Z",
-            "cut_at": "2026-08-31T00:00:00Z", "stock_value": "5000"
+            "unit": "each", "currency": "USD", "cost_status": "costed", "book_epoch": "1970-01-01T00:00:00Z",
+            "cut_at": "2026-08-31T00:00:00Z", "remaining_qty": "20", "stock_value": "5000"
         }),
     )?;
     partner.ok(
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-P1-W3", "remaining_qty": "12", "depleted_qty": "8",
+            "lot_id": "LOT-P1-W3", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
+            "remaining_qty": "12", "depleted_qty": "8",
             "as_of": "2026-09-05T10:00:00Z", "unit_cost": "250", "stock_value": "0"
         }),
     )?;
@@ -2191,7 +2195,8 @@ fn verify_opening_cut_and_lot_date_refusals(sole: &mut EntityBook) -> Result<(),
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-S1-W1", "remaining_qty": "25", "depleted_qty": "25",
+            "lot_id": "LOT-S1-W1", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "remaining_qty": "25", "depleted_qty": "25",
             "as_of": "2026-08-09T18:00:00Z", "unit_cost": "100", "stock_value": "0"
         }),
     )?;
@@ -2200,7 +2205,8 @@ fn verify_opening_cut_and_lot_date_refusals(sole: &mut EntityBook) -> Result<(),
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-S1-W1", "remaining_qty": "30", "depleted_qty": "20",
+            "lot_id": "LOT-S1-W1", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "remaining_qty": "30", "depleted_qty": "20",
             "as_of": "2026-09-05T18:00:00Z", "unit_cost": "100", "stock_value": "0"
         }),
     )?;
@@ -2211,8 +2217,8 @@ fn verify_opening_cut_and_lot_date_refusals(sole: &mut EntityBook) -> Result<(),
         "planner:omar",
         json!({
             "cut_id": "CUT-S1-FORGED-OPEN", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "currency": "EGP", "cost_status": "costed", "book_epoch": "1970-01-01T00:00:00Z",
-            "cut_at": "2026-09-05T00:00:00Z", "stock_value": "10000"
+            "unit": "each", "currency": "EGP", "cost_status": "costed", "book_epoch": "1970-01-01T00:00:00Z",
+            "cut_at": "2026-09-05T00:00:00Z", "remaining_qty": "60", "stock_value": "10000"
         }),
     )?;
     assert_eq!(code, "core.action.precondition", "{msg}");
@@ -2278,8 +2284,8 @@ fn verify_opening_cut_post_sales_refusal() -> Result<(), String> {
         "planner:omar",
         json!({
             "cut_id": "CUT-ISO-POST-SALE", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
-            "currency": "EGP", "cost_status": "costed", "book_epoch": "1970-01-01T00:00:00Z",
-            "cut_at": "2026-08-10T00:00:00Z", "stock_value": "5000"
+            "unit": "each", "currency": "EGP", "cost_status": "costed", "book_epoch": "1970-01-01T00:00:00Z",
+            "cut_at": "2026-08-10T00:00:00Z", "remaining_qty": "50", "stock_value": "5000"
         }),
     )?;
     assert_eq!(code, "core.action.precondition", "{msg}");
@@ -2501,7 +2507,8 @@ fn verify_monotonic_future_and_cutoff_refusals(
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-S1-W1", "remaining_qty": "24", "depleted_qty": "26",
+            "lot_id": "LOT-S1-W1", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "remaining_qty": "24", "depleted_qty": "26",
             "as_of": "2026-09-13T09:00:00Z", "unit_cost": "100", "stock_value": "0"
         }),
     )?;
@@ -2664,6 +2671,16 @@ fn seed_partner_commercial_rollup(partner: &mut EntityBook) -> Result<(), String
         "2026-08-31",
     )
     .ok_or("missing ST-PART-CFC-1 closing stock_value")?;
+    partner.ok(
+        "supply.stock_valuation_cut.record",
+        "planner:omar",
+        json!({
+            "cut_id": "CUT-P1-CLOSE-2026-09-06", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
+            "unit": "each", "currency": "USD", "cost_status": "costed", "book_epoch": "1970-01-01T00:00:00Z",
+            "cut_at": "2026-09-06T23:59:59.999999999Z", "remaining_qty": "12",
+            "stock_value": p1_closing_val.canonical()
+        }),
+    )?;
     partner.ok(
         "supply.store_kpi.record",
         "planner:omar",
@@ -3186,7 +3203,8 @@ fn s1_holding_lot_aging_count_staleness_and_commercial_kpis_withholding() -> Res
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-S1-W1", "remaining_qty": "20", "depleted_qty": "30",
+            "lot_id": "LOT-S1-W1", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "remaining_qty": "20", "depleted_qty": "30",
             "as_of": "2026-09-06T09:00:00Z", "unit_cost": "100", "stock_value": "0",
             "received_at": "2026-09-01T09:00:00Z"
         }),
@@ -3958,8 +3976,6 @@ fn verify_library_combined_view_report(
         "supply.retail.available_count_reconciliation",
         "supply.retail.rollup_sales_reconciliation",
         "supply.retail.rollup_margin_reconciliation",
-        "supply.retail.rollup_on_hand_reconciliation",
-        "supply.retail.rollup_closing_value_reconciliation",
         "supply.retail.store_weeks_of_supply_coverage",
         "supply.retail.store_gmroi_coverage",
     ] {
@@ -4105,14 +4121,27 @@ fn verify_shipped_rollup_stock_staleness(
     partner: &mut EntityBook,
     spec: &CellCoverageSpec,
 ) -> Result<(), String> {
-    // 1b. A lot depletion + matching recount effective before `period_end` must invalidate
-    //     the rollup's closing quantity and valuation until `supply.store_kpi.refresh`.
+    // 1b. Backdating a lot update into a sealed period (`as_of <= closing_cut.cut_at`)
+    //     MUST refuse at the kernel boundary (`sealed_cuts_at_or_after_as_of == 0`).
+    let (code, msg) = partner.refused(
+        "supply.stock_lot.update_balance",
+        "clerk:hana",
+        json!({
+            "lot_id": "LOT-P1-W3", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
+            "remaining_qty": "10", "depleted_qty": "10",
+            "as_of": "2026-09-06T09:00:00Z", "unit_cost": "250", "stock_value": "0"
+        }),
+    )?;
+    assert_eq!(code, "core.action.precondition", "{msg}");
+    // 1c. A post-close lot update (`2026-09-07T08:00:00Z > 2026-09-06T23:59:59.999999999Z`)
+    //     plus matching fresh recount MUST succeed without invalidating the sealed `2026-08-31` close.
     partner.ok(
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-P1-W3", "remaining_qty": "10", "depleted_qty": "10",
-            "as_of": "2026-09-06T09:00:00Z", "unit_cost": "250", "stock_value": "0"
+            "lot_id": "LOT-P1-W3", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
+            "remaining_qty": "10", "depleted_qty": "10",
+            "as_of": "2026-09-07T08:00:00Z", "unit_cost": "250", "stock_value": "0"
         }),
     )?;
     for basis in ["on_hand", "available"] {
@@ -4123,48 +4152,67 @@ fn verify_shipped_rollup_stock_staleness(
                 "store_count_id": format!("ST-PART-CFC-1/SKU-RING-18K/{basis}"),
                 "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
                 "on_hand_qty": "10", "unit": "each", "quantity_basis": basis,
-                "as_of": "2026-09-06T12:00:00Z", "count_source": "store_audit", "count_ref": "AUD-P2-REC"
+                "as_of": "2026-09-07T08:00:00Z", "count_source": "store_audit", "count_ref": "AUD-P2-POST"
             }),
         )?;
     }
-    let stale_stock = evaluate_single_spec_cut(partner, "LE-PARTNER", spec, false)?;
-    assert!(!stale_stock.complete);
-    assert!(stale_stock.answers.is_none());
+    let post_close = evaluate_single_spec_cut(partner, "LE-PARTNER", spec, false)?;
     assert!(
-        !stale_stock
-            .failed_coverage_gates
-            .contains("supply.retail.on_hand_count_reconciliation")
+        post_close.complete,
+        "post-close stock change must not invalidate sealed 2026-08-31 close: {:?}",
+        post_close.failed_coverage_gates
     );
-    assert!(
-        stale_stock
-            .failed_coverage_gates
-            .contains("supply.retail.rollup_on_hand_reconciliation")
-    );
-    assert!(
-        stale_stock
-            .failed_coverage_gates
-            .contains("supply.retail.rollup_closing_value_reconciliation")
-    );
-    partner.ok(
-        "supply.store_kpi.refresh",
+    verify_unsealed_rollup_fails_closing_cut_gates(spec)
+}
+
+fn verify_unsealed_rollup_fails_closing_cut_gates(spec: &CellCoverageSpec) -> Result<(), String> {
+    // 1d. A verified rollup without a matching sealed closing cut MUST fail closed on both
+    //     `rollup_on_hand_reconciliation` and `rollup_closing_value_reconciliation`.
+    let mut unsealed = EntityBook::open(
+        PARTNER_CELL_ID,
+        "org_family_partnership",
+        "prod",
+        "partner-unsealed.sqlite",
+    )?;
+    let mut sole_dummy = EntityBook::open(
+        SOLE_CELL_ID,
+        "org_family_sole_prop",
+        "prod",
+        "sole-unsealed.sqlite",
+    )?;
+    seed_sole_prop(&mut sole_dummy)?;
+    seed_partnership(&mut unsealed)?;
+    seed_partner_operations(&mut unsealed)?;
+    ingest_baseline_entity_feeds(&mut sole_dummy, &mut unsealed)?;
+    unsealed.ok(
+        "supply.store_kpi.record",
         "planner:omar",
         json!({
             "rollup_id": "KPI-ST-PART-CFC-1-W9", "store_id": "ST-PART-CFC-1",
             "sku_id": "SKU-RING-18K", "period_week": "2026-08-31",
             "unit": "each", "currency": "USD", "cost_status": "costed", "count_status": "verified",
             "on_hand_count_id": "ST-PART-CFC-1/SKU-RING-18K/on_hand",
-            "opening_cut_id": "CUT-P1-2026-08-31", "count_ref": "AUD-P2-REC",
-            "count_as_of": "2026-09-06T12:00:00Z", "costed_ref": "COST-RING-1",
+            "opening_cut_id": "CUT-P1-2026-08-31", "count_ref": "AUD-P2",
+            "count_as_of": "2026-09-06T10:00:00Z", "costed_ref": "COST-RING-1",
             "book_epoch": "1970-01-01T00:00:00Z",
             "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T23:59:59.999999999Z",
-            "sales_weeks": 1, "on_hand_qty": "10", "avg_weekly_sales_qty": "10",
-            "weeks_of_supply": "0", "period_gross_margin": "1500",
-            "opening_stock_value": "5000", "closing_stock_value": "2500",
+            "sales_weeks": 1, "on_hand_qty": "12", "avg_weekly_sales_qty": "8",
+            "weeks_of_supply": "0", "period_gross_margin": "1200",
+            "opening_stock_value": "5000", "closing_stock_value": "3000",
             "average_inventory_value": "0", "gmroi": "0"
         }),
     )?;
-    let restored = evaluate_single_spec_cut(partner, "LE-PARTNER", spec, false)?;
-    assert!(restored.complete, "{:?}", restored.failed_coverage_gates);
+    let snap = evaluate_single_spec_cut(&unsealed, "LE-PARTNER", spec, false)?;
+    assert!(!snap.complete);
+    assert!(snap.answers.is_none());
+    assert!(
+        snap.failed_coverage_gates
+            .contains("supply.retail.rollup_on_hand_reconciliation")
+    );
+    assert!(
+        snap.failed_coverage_gates
+            .contains("supply.retail.rollup_closing_value_reconciliation")
+    );
     Ok(())
 }
 
@@ -4427,11 +4475,14 @@ fn verify_non_inlined_and_short_key_disclosure(
     partner: &EntityBook,
     rev_plan: &QuestionPlan,
 ) -> Result<(), String> {
-    // Non-inlined analytics buckets (`member_count.is_some()`) MUST strip unkeyed
-    // `membership_digest` when `!whole_world_values`, both when suppressed and disclosed.
+    // Non-inlined analytics buckets (`member_count.is_some()`) MUST check whole-grain
+    // Population (`ALL_MEMBERS`): `RowAccess::None` refuses fail-closed, and `RowAccess::Count`
+    // strips `membership_digest`, suppresses `< min_disclosed_bucket`, and keys `revision.hash`.
     let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
+    let count_only = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Count);
     let partner_frontier = || Ok((partner.source_cursors.clone(), partner.watermarks.clone()));
     let (partner_key, partner_auth) = legal_entity_read_authority(partner, "LE-PARTNER");
+    let raw_rev = partner.answer("supply.retail.store_revenue_weekly")?;
     for (count, expect_suppressed) in [(1_u64, true), (5_u64, false)] {
         let input = CellViewInput {
             store: partner.cell()?.store(),
@@ -4439,8 +4490,8 @@ fn verify_non_inlined_and_short_key_disclosure(
             authority: &partner_auth,
             context: partner.query_context(),
             handle_key: &TEST_HANDLE_KEY,
-            whole_world_values: false,
-            member_access: &allow_all,
+            whole_world_values: true,
+            member_access: &count_only,
             min_disclosed_bucket: 2,
             required_feeds: &REQUIRED_FEEDS,
             read_frontier: &partner_frontier,
@@ -4471,6 +4522,10 @@ fn verify_non_inlined_and_short_key_disclosure(
             .as_ref()
             .and_then(|a| a.get("supply.retail.store_revenue_weekly"))
             .ok_or("missing non-inlined revenue")?;
+        assert_eq!(
+            rev.revision.hash,
+            keyed_revision_handle(&TEST_HANDLE_KEY, &raw_rev.revision.hash)
+        );
         for row in rev.rows.values() {
             assert_eq!(row.suppressed, expect_suppressed);
             assert!(
@@ -4485,6 +4540,53 @@ fn verify_non_inlined_and_short_key_disclosure(
             }
         }
     }
+    verify_non_inlined_denied_and_short_key(partner, rev_plan)
+}
+
+fn verify_non_inlined_denied_and_short_key(
+    partner: &EntityBook,
+    rev_plan: &QuestionPlan,
+) -> Result<(), String> {
+    let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
+    let hide_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::None);
+    let partner_frontier = || Ok((partner.source_cursors.clone(), partner.watermarks.clone()));
+    let (partner_key, partner_auth) = legal_entity_read_authority(partner, "LE-PARTNER");
+    let denied_non_inlined = CellViewInput {
+        store: partner.cell()?.store(),
+        anchor_key: &partner_key,
+        authority: &partner_auth,
+        context: partner.query_context(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
+        member_access: &hide_all,
+        min_disclosed_bucket: 2,
+        required_feeds: &REQUIRED_FEEDS,
+        read_frontier: &partner_frontier,
+        min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
+        evidence_types: &EVIDENCE_TYPES,
+        evidence_access: &allow_all,
+        coverage_transforms: &[],
+        reconciliation_gates: &[],
+        expected_grain_gates: &[],
+        questions: &[("supply.retail.store_revenue_weekly", rev_plan)],
+    };
+    let denied_res = evaluate_cell_cut(&denied_non_inlined, &mut |_, plan, ctx| {
+        let mut res = partner
+            .cell()
+            .map_err(CellError::Engine)?
+            .store()
+            .evaluate_question(plan, ctx, |_| Ok(true))?;
+        for row in res.rows.values_mut() {
+            row.members.clear();
+            row.member_count = Some(5);
+            row.membership_digest = Some("sha256:raw-unkeyed-digest".to_owned());
+        }
+        Ok(res)
+    });
+    assert!(matches!(
+        denied_res,
+        Err(CellError::ComputeRefused("core.compute.stale_input"))
+    ));
     verify_short_handle_key_refusal(partner, rev_plan)
 }
 
@@ -5004,6 +5106,7 @@ fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> R
     assert_eq!(lib_map_refused.pending_observations, 1);
     assert!(!lib_map_refused.complete);
     assert!(lib_map_refused.answers.is_none());
+    verify_scoped_pending_observations_privacy(sole)?;
     let map_refused = project_entity_frontier(sole, "LE-SOLE", &mut |q| sole.answer(q))?;
     assert_eq!(map_refused.pending_inbox_quarantined, 1);
     assert_eq!(map_refused.entity_net_revenue, None);
@@ -5019,6 +5122,63 @@ fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> R
         }),
     )?;
     assert_eq!(code, "core.action.precondition", "{msg}");
+    Ok(())
+}
+
+fn verify_scoped_pending_observations_privacy(sole: &EntityBook) -> Result<(), String> {
+    // HOST-READ-2: a caller lacking Population on evidence types must NOT observe
+    // quarantined feed observations via `pending_observations`, and unrelated inbox
+    // observations outside `required_feeds` must NOT inflate `pending_observations`.
+    let hide_evidence = |obj: &norn_cell::ObjectRecord| {
+        if EVIDENCE_TYPES.contains(&obj.object_type.as_str()) {
+            Ok(RowAccess::None)
+        } else {
+            Ok(RowAccess::Read)
+        }
+    };
+    let hidden_pending = evaluate_single_library_cut_with_access(sole, "LE-SOLE", &hide_evidence)?;
+    assert_eq!(hidden_pending.pending_observations, 0);
+    let mut clean = EntityBook::open(
+        PARTNER_CELL_ID,
+        "org_family_partnership",
+        "prod",
+        "partner-unrelated-inbox.sqlite",
+    )?;
+    let mut sole_dummy = EntityBook::open(
+        SOLE_CELL_ID,
+        "org_family_sole_prop",
+        "prod",
+        "sole-unrelated-inbox.sqlite",
+    )?;
+    seed_sole_prop(&mut sole_dummy)?;
+    seed_partnership(&mut clean)?;
+    seed_partner_operations(&mut clean)?;
+    seed_partner_commercial_rollup(&mut clean)?;
+    ingest_baseline_entity_feeds(&mut sole_dummy, &mut clean)?;
+    let (_, clean_other) = clean.ingest_feed(&FeedRow {
+        feed_id: "other.unrelated_feed",
+        mapping: "supply.pos_sales.mapping",
+        dataset: "pos_sale_line",
+        source: "other-pos",
+        event: "ev-other-box",
+        record: "OTHER-BOX-1",
+        payload: r#"{"pos_line_id":"OTHER-BOX-1","branch_code":"ST-PART-CFC-1","barcode_sku":"SKU-RING-18K","qty":1,"uom":"BOX","net_amount":100,"ccy":"USD","sold_at":"2026-09-02T15:00:00Z"}"#,
+    })?;
+    assert!(!clean_other);
+    assert_eq!(
+        clean
+            .cell()?
+            .store()
+            .read()
+            .pending_observations()
+            .map_err(|e| format!("pending_observations: {e}"))?
+            .len(),
+        1
+    );
+    let spec = load_retail_coverage_spec()?;
+    let snap = evaluate_single_spec_cut(&clean, "LE-PARTNER", &spec, false)?;
+    assert_eq!(snap.pending_observations, 0);
+    assert!(snap.complete, "{:?}", snap.failed_coverage_gates);
     Ok(())
 }
 

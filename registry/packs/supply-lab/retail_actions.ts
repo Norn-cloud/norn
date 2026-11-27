@@ -144,6 +144,7 @@ const CostedStockLotInput = Schema.Struct({
   unit: Unit,
   received_at: Norn.timestamp("utc"),
   as_of: Norn.timestamp("utc"),
+  cut_horizon: Norn.timestamp("utc"),
   cost_status: CostStatus,
   unit_cost: Norn.decimal(4),
   opening_stock_value: Norn.decimal(6),
@@ -164,6 +165,7 @@ const UncostedStockLotInput = Schema.Struct({
   unit: Unit,
   received_at: Norn.timestamp("utc"),
   as_of: Norn.timestamp("utc"),
+  cut_horizon: Norn.timestamp("utc"),
   cost_status: CostStatus,
   opening_stock_value: Norn.decimal(6),
   depleted_stock_value: Norn.decimal(6),
@@ -174,8 +176,9 @@ const StockLotRef = Schema.Struct({ lot_id: Schema.String })
 
 /**
  * Open a costed store holding lot with its receipt date and custody.
- * Enforces that the lot's legal owner matches its store's owning legal entity
- * and derives `depleted_qty`, immutable `opening_stock_value`, `depleted_stock_value`,
+ * Enforces that the lot's legal owner matches its store's owning legal entity,
+ * refuses backdating into any sealed `StockValuationCut`, and derives
+ * `depleted_qty`, immutable `opening_stock_value`, `depleted_stock_value`,
  * and `stock_value` in the kernel.
  */
 export const RecordStockLot = Norn.action({
@@ -188,7 +191,16 @@ export const RecordStockLot = Norn.action({
     { name: "sku", type: Sku, key: { property: { from: "input", property: "sku_id" } } },
     { name: "owner_entity", type: LegalEntity, key: { property: { from: "store", property: "entity_id" } } },
   ],
+  aggregates: [
+    {
+      name: "sealed_cuts_at_or_after_as_of", type: StockValuationCut,
+      filter: { store_id: "store_id", sku_id: "sku_id" },
+      window: { property: "cut_at", start: "as_of", end: "cut_horizon", startInclusive: true, endInclusive: true },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
+  ],
   derive: [
+    { field: "cut_horizon", inputRequired: false, expression: Norn.expression(CostedStockLotInput, () => "9999-12-31T23:59:59Z") },
     { field: "depleted_qty", inputRequired: false, expression: Norn.expression(CostedStockLotInput, (x) => x.received_qty - x.remaining_qty) },
     { field: "sell_through_rate", inputRequired: false, expression: Norn.expression(CostedStockLotInput, () => 0) },
     { field: "opening_stock_value", inputRequired: false, expression: Norn.expression(CostedStockLotInput, (x) => x.received_qty * x.unit_cost) },
@@ -203,6 +215,7 @@ export const RecordStockLot = Norn.action({
         sku: Schema.Struct({ unit_of_measure: Schema.String }),
         owner_entity: Schema.Struct({ status: Schema.String, functional_currency: Schema.String }),
       }),
+      aggregates: Schema.Struct({ sealed_cuts_at_or_after_as_of: Schema.Int }),
     }),
     (ctx) => ctx.slice.store.status === "active"
       && ctx.slice.owner_entity.status === "active"
@@ -210,7 +223,8 @@ export const RecordStockLot = Norn.action({
       && ctx.input.owner_entity_id === ctx.slice.store.entity_id
       && ctx.input.unit === ctx.slice.sku.unit_of_measure
       && ctx.input.currency === ctx.slice.store.currency
-      && ctx.input.currency === ctx.slice.owner_entity.functional_currency,
+      && ctx.input.currency === ctx.slice.owner_entity.functional_currency
+      && ctx.aggregates.sealed_cuts_at_or_after_as_of === 0,
     { root: "context" },
   )],
   createLinks: [
@@ -235,7 +249,16 @@ export const RecordUncostedStockLot = Norn.action({
     { name: "sku", type: Sku, key: { property: { from: "input", property: "sku_id" } } },
     { name: "owner_entity", type: LegalEntity, key: { property: { from: "store", property: "entity_id" } } },
   ],
+  aggregates: [
+    {
+      name: "sealed_cuts_at_or_after_as_of", type: StockValuationCut,
+      filter: { store_id: "store_id", sku_id: "sku_id" },
+      window: { property: "cut_at", start: "as_of", end: "cut_horizon", startInclusive: true, endInclusive: true },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
+  ],
   derive: [
+    { field: "cut_horizon", inputRequired: false, expression: Norn.expression(UncostedStockLotInput, () => "9999-12-31T23:59:59Z") },
     { field: "depleted_qty", inputRequired: false, expression: Norn.expression(UncostedStockLotInput, (x) => x.received_qty - x.remaining_qty) },
     { field: "sell_through_rate", inputRequired: false, expression: Norn.expression(UncostedStockLotInput, () => 0) },
     { field: "opening_stock_value", inputRequired: false, expression: Norn.expression(UncostedStockLotInput, () => 0) },
@@ -250,6 +273,7 @@ export const RecordUncostedStockLot = Norn.action({
         sku: Schema.Struct({ unit_of_measure: Schema.String }),
         owner_entity: Schema.Struct({ status: Schema.String, functional_currency: Schema.String }),
       }),
+      aggregates: Schema.Struct({ sealed_cuts_at_or_after_as_of: Schema.Int }),
     }),
     (ctx) => ctx.slice.store.status === "active"
       && ctx.slice.owner_entity.status === "active"
@@ -257,7 +281,8 @@ export const RecordUncostedStockLot = Norn.action({
       && ctx.input.owner_entity_id === ctx.slice.store.entity_id
       && ctx.input.unit === ctx.slice.sku.unit_of_measure
       && ctx.input.currency === ctx.slice.store.currency
-      && ctx.input.currency === ctx.slice.owner_entity.functional_currency,
+      && ctx.input.currency === ctx.slice.owner_entity.functional_currency
+      && ctx.aggregates.sealed_cuts_at_or_after_as_of === 0,
     { root: "context" },
   )],
   createLinks: [
@@ -270,19 +295,22 @@ export const RecordUncostedStockLot = Norn.action({
 
 const UpdateStockLotBalanceInput = Schema.Struct({
   lot_id: Schema.String,
+  store_id: Schema.String,
+  sku_id: Schema.String,
   remaining_qty: Norn.decimal(6),
   depleted_qty: Norn.decimal(6),
   as_of: Norn.timestamp("utc"),
+  cut_horizon: Norn.timestamp("utc"),
   unit_cost: Norn.decimal(4),
   depleted_stock_value: Norn.decimal(6),
   stock_value: Norn.decimal(6),
 })
 
 /**
- * Update a costed holding lot's remaining balance and valuation; `received_at`,
- * `received_qty`, `opening_stock_value`, `store_id`, `sku_id`, `owner_entity_id`,
- * `unit`, and `currency` are omitted from the update schema so they remain
- * structurally immutable.
+ * Update a costed holding lot's remaining balance and valuation; refuses
+ * backdating into any sealed `StockValuationCut` (`as_of <= cut_at`) while
+ * keeping `received_at`, `received_qty`, `opening_stock_value`, `store_id`,
+ * `sku_id`, `owner_entity_id`, `unit`, `unit_cost`, and `currency` immutable.
  */
 export const UpdateStockLotBalance = Norn.action({
   id: "supply.stock_lot.update_balance", title: "Update a stock lot balance", version: "0.1.0",
@@ -293,7 +321,16 @@ export const UpdateStockLotBalance = Norn.action({
     { name: "lot", type: StockLot, key: { property: { from: "input", property: "lot_id" } } },
     { name: "store", type: Store, key: { property: { from: "lot", property: "store_id" } } },
   ],
+  aggregates: [
+    {
+      name: "sealed_cuts_at_or_after_as_of", type: StockValuationCut,
+      filter: { store_id: "store_id", sku_id: "sku_id" },
+      window: { property: "cut_at", start: "as_of", end: "cut_horizon", startInclusive: true, endInclusive: true },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
+  ],
   derive: [
+    { field: "cut_horizon", inputRequired: false, expression: Norn.expression(UpdateStockLotBalanceInput, () => "9999-12-31T23:59:59Z") },
     { field: "depleted_stock_value", inputRequired: false, expression: Norn.expression(UpdateStockLotBalanceInput, (x) => x.depleted_qty * x.unit_cost) },
     { field: "stock_value", inputRequired: false, expression: Norn.expression(UpdateStockLotBalanceInput, (x) => x.remaining_qty * x.unit_cost) },
   ],
@@ -302,6 +339,8 @@ export const UpdateStockLotBalance = Norn.action({
       input: UpdateStockLotBalanceInput,
       slice: Schema.Struct({
         lot: Schema.Struct({
+          store_id: Schema.String,
+          sku_id: Schema.String,
           cost_status: Schema.String,
           unit_cost: Schema.NullOr(Norn.decimal(4)),
           received_qty: Norn.decimal(6),
@@ -310,14 +349,18 @@ export const UpdateStockLotBalance = Norn.action({
         }),
         store: Schema.Struct({ status: Schema.String }),
       }),
+      aggregates: Schema.Struct({ sealed_cuts_at_or_after_as_of: Schema.Int }),
     }),
     (ctx) => ctx.slice.store.status === "active"
+      && ctx.input.store_id === ctx.slice.lot.store_id
+      && ctx.input.sku_id === ctx.slice.lot.sku_id
       && ctx.slice.lot.cost_status === "costed"
       && ctx.slice.lot.unit_cost !== null
       && ctx.input.unit_cost === ctx.slice.lot.unit_cost
       && Norn.parseTimestamp(ctx.input.as_of) >= Norn.parseTimestamp(ctx.slice.lot.as_of)
       && ctx.input.depleted_qty >= ctx.slice.lot.depleted_qty
-      && (ctx.input.depleted_qty + ctx.input.remaining_qty) === ctx.slice.lot.received_qty,
+      && (ctx.input.depleted_qty + ctx.input.remaining_qty) === ctx.slice.lot.received_qty
+      && ctx.aggregates.sealed_cuts_at_or_after_as_of === 0,
     { root: "context" },
   )],
   writes: [{ type: StockLot, change: "modified" }],
@@ -616,18 +659,21 @@ const StockValuationCutInput = Schema.Struct({
   cut_id: Schema.String,
   store_id: Schema.String,
   sku_id: Schema.String,
+  unit: Unit,
   currency: Currency,
   cost_status: CostStatus,
   book_epoch: Norn.timestamp("utc"),
   cut_at: Norn.timestamp("utc"),
+  remaining_qty: Norn.decimal(6),
   stock_value: Norn.decimal(6),
 })
 const StockValuationCutRef = Schema.Struct({ cut_id: Schema.String })
 
 /**
- * Capture an immutable (`create_only`) remaining-stock valuation cut at
- * `cut_at` for one `(store_id, sku_id, currency)` population, proving every
- * lot has `received_at <= as_of <= cut_at` and verified unit cost.
+ * Capture an immutable (`create_only`) remaining-stock quantity and valuation
+ * cut at `cut_at` for one `(store_id, sku_id, unit, currency)` population,
+ * proving every lot has `received_at <= as_of <= cut_at`, verified unit cost,
+ * and no post-cutoff sales exist.
  */
 export const RecordStockValuationCut = Norn.action({
   id: "supply.stock_valuation_cut.record", title: "Record immutable stock valuation cut", version: "0.1.0",
@@ -639,6 +685,11 @@ export const RecordStockValuationCut = Norn.action({
     { name: "sku", type: Sku, key: { property: { from: "input", property: "sku_id" } } },
   ],
   aggregates: [
+    {
+      name: "total_remaining_qty", type: StockLot,
+      filter: { store_id: "store_id", sku_id: "sku_id", unit: "unit" },
+      aggregate: { kind: "sum", property: "remaining_qty" }, maxItems: 100,
+    },
     {
       name: "total_stock_value", type: StockLot,
       filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
@@ -677,8 +728,10 @@ export const RecordStockValuationCut = Norn.action({
       input: StockValuationCutInput,
       slice: Schema.Struct({
         store: Schema.Struct({ status: Schema.String, currency: Schema.String }),
+        sku: Schema.Struct({ unit_of_measure: Schema.String }),
       }),
       aggregates: Schema.Struct({
+        total_remaining_qty: Norn.decimal(6),
         total_stock_value: Norn.decimal(6),
         all_lots_count: Schema.Int,
         lots_as_of_by_cut: Schema.Int,
@@ -690,7 +743,9 @@ export const RecordStockValuationCut = Norn.action({
     (ctx) => ctx.slice.store.status === "active"
       && ctx.input.book_epoch === "1970-01-01T00:00:00Z"
       && ctx.input.cost_status === "costed"
+      && ctx.input.unit === ctx.slice.sku.unit_of_measure
       && ctx.input.currency === ctx.slice.store.currency
+      && ctx.input.remaining_qty === ctx.aggregates.total_remaining_qty
       && ctx.input.stock_value === ctx.aggregates.total_stock_value
       && ctx.aggregates.lots_as_of_by_cut === ctx.aggregates.all_lots_count
       && ctx.aggregates.costed_lots_count === ctx.aggregates.all_lots_count

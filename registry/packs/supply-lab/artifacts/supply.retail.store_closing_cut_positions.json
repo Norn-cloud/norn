@@ -1,0 +1,89 @@
+{
+  "artifactId": "supply.retail.store_closing_cut_positions",
+  "dependencies": [
+    {
+      "artifactId": "supply.StockValuationCut.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Sealed store closing cut positions",
+  "namespace": "supply",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "costed_only": {
+          "input": "cut",
+          "op": "filter",
+          "predicate": "input.cost_status == \"costed\""
+        },
+        "cut": {
+          "input": "cut",
+          "op": "scan"
+        },
+        "projected": {
+          "columns": [
+            {
+              "expression": "input.id",
+              "name": "id"
+            },
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.sku_id",
+              "name": "sku_id"
+            },
+            {
+              "expression": "input.unit",
+              "name": "unit"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.cut_at",
+              "name": "cut_at"
+            },
+            {
+              "expression": "input.remaining_qty",
+              "name": "remaining_qty"
+            },
+            {
+              "expression": "input.stock_value",
+              "name": "stock_value"
+            }
+          ],
+          "input": "costed_only",
+          "op": "project"
+        }
+      },
+      "output": "projected"
+    },
+    "inputs": [
+      {
+        "alias": "cut",
+        "artifactId": "supply.StockValuationCut.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "supply.retail.store_closing_cut_positions",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.retail.store_closing_cut_positions.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

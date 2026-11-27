@@ -66,6 +66,23 @@
           }
         },
         {
+          "id": "unit",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "each"
+              },
+              {
+                "value": "kg"
+              },
+              {
+                "value": "l"
+              }
+            ]
+          }
+        },
+        {
           "id": "currency",
           "type": {
             "kind": "enum",
@@ -108,6 +125,19 @@
           "type": {
             "kind": "timestamp",
             "timezone": "utc"
+          }
+        },
+        {
+          "id": "remaining_qty",
+          "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
           }
         },
         {

@@ -137,6 +137,8 @@ const StockLotProps = Schema.Struct({
   received_at: Norn.timestamp("utc"),
   // Valid time of the current remaining balance snapshot.
   as_of: Norn.timestamp("utc"),
+  // Upper UTC horizon used by lot actions to enforce `sealed_cuts_at_or_after_as_of == 0`.
+  cut_horizon: Norn.timestamp("utc"),
   cost_status: CostStatus,
   unit_cost: Schema.NullOr(Norn.decimal(4, { additivity: { kind: "non_additive" } })),
   // Immutable receipt-time lot valuation (`received_qty * unit_cost`) so GMROI opening inventory never uses current cost.
@@ -188,7 +190,7 @@ export const StockLotValidHolds = Norn.example("a partly sold holding lot holds"
   given: {
     lot_id: "LOT-1", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 40, remaining_qty: 18, depleted_qty: 22, sell_through_rate: 0, unit: "each",
-    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z", cut_horizon: "9999-12-31T23:59:59Z",
     cost_status: "costed", unit_cost: 25, opening_stock_value: 1000, depleted_stock_value: 550, stock_value: 450, currency: "EGP",
   },
   expect: "holds",
@@ -198,7 +200,7 @@ export const StockLotNegativeRemainingViolated = Norn.example("a negative lot ba
   given: {
     lot_id: "LOT-2", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 40, remaining_qty: -2, depleted_qty: 42, sell_through_rate: 0, unit: "each",
-    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z", cut_horizon: "9999-12-31T23:59:59Z",
     cost_status: "costed", unit_cost: 25, opening_stock_value: 1000, depleted_stock_value: 1050, stock_value: 0, currency: "EGP",
   },
   expect: "violated",
@@ -208,7 +210,7 @@ export const StockLotOverRemainingViolated = Norn.example("remaining above recei
   given: {
     lot_id: "LOT-3", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 40, remaining_qty: 45, depleted_qty: 0, sell_through_rate: 0, unit: "each",
-    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z", cut_horizon: "9999-12-31T23:59:59Z",
     cost_status: "costed", unit_cost: 25, opening_stock_value: 1000, depleted_stock_value: 0, stock_value: 1125, currency: "EGP",
   },
   expect: "violated",
@@ -235,7 +237,7 @@ export const StockLotMissingCostHolds = Norn.example("an explicitly uncosted lot
   given: {
     lot_id: "LOT-4", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 20, remaining_qty: 20, depleted_qty: 0, sell_through_rate: 0, unit: "each",
-    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z", cut_horizon: "9999-12-31T23:59:59Z",
     cost_status: "missing_cost", unit_cost: null, opening_stock_value: 0, depleted_stock_value: 0, stock_value: 0, currency: "EGP",
   },
   expect: "holds",
@@ -245,7 +247,7 @@ export const StockLotCostedWithoutPriceViolated = Norn.example("a costed lot wit
   given: {
     lot_id: "LOT-5", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 20, remaining_qty: 20, depleted_qty: 0, sell_through_rate: 0, unit: "each",
-    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z", cut_horizon: "9999-12-31T23:59:59Z",
     cost_status: "costed", unit_cost: null, opening_stock_value: 0, depleted_stock_value: 0, stock_value: 0, currency: "EGP",
   },
   expect: "violated",
@@ -267,7 +269,7 @@ export const StockLotPositiveCostHolds = Norn.example("a lot with positive unit 
   given: {
     lot_id: "LOT-6", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 20, remaining_qty: 20, depleted_qty: 0, sell_through_rate: 0, unit: "each",
-    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z", cut_horizon: "9999-12-31T23:59:59Z",
     cost_status: "costed", unit_cost: 25, opening_stock_value: 500, depleted_stock_value: 0, stock_value: 500, currency: "EGP",
   },
   expect: "holds",
@@ -277,7 +279,7 @@ export const StockLotNegativeCostViolated = Norn.example("a lot with negative un
   given: {
     lot_id: "LOT-7", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
     received_qty: 20, remaining_qty: 20, depleted_qty: 0, sell_through_rate: 0, unit: "each",
-    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z", cut_horizon: "9999-12-31T23:59:59Z",
     cost_status: "costed", unit_cost: -10, opening_stock_value: 0, depleted_stock_value: 0, stock_value: 0, currency: "EGP",
   },
   expect: "violated",
@@ -579,24 +581,27 @@ const StockValuationCutProps = Schema.Struct({
   cut_id: Schema.String,
   store_id: Schema.String,
   sku_id: Schema.String,
+  unit: Unit,
   currency: Currency,
   cost_status: CostStatus,
   book_epoch: Norn.timestamp("utc"),
   cut_at: Norn.timestamp("utc"),
+  remaining_qty: Norn.decimal(6, { additivity: { kind: "semi_additive" }, unitSource: ["unit"] }),
   stock_value: Norn.decimal(6, { additivity: { kind: "semi_additive" }, unitSource: ["currency"] }),
 })
 
 /**
- * Immutable governed remaining-stock valuation snapshot captured at
- * `cut_at` (`create_only`) for one `(store_id, sku_id, currency)` population.
- * Anchors opening stock valuation for GMROI so mid-period receipts and
- * pre-period depletions never distort opening stock value.
+ * Immutable governed remaining-stock quantity and valuation snapshot captured at
+ * `cut_at` (`create_only`) for one `(store_id, sku_id, unit, currency)` population.
+ * Anchors opening and period-end closing balances for GMROI and WOS so mid-period
+ * receipts, pre-period depletions, and post-close stock movements never distort
+ * historical period closes.
  */
 export const StockValuationCut = Norn.type({
   name: "supply.StockValuationCut", title: "Stock valuation cut", version: "0.1.0",
   label: { en: "Stock valuation cut", ar: "لقطة تقييم المخزون" },
   properties: StockValuationCutProps,
-  valueLabels: { cost_status: CostStatusLabels },
+  valueLabels: { unit: UnitLabels, cost_status: CostStatusLabels },
   needsReview: ["ar"],
   identity: [
     { name: "primary", properties: ["cut_id"] },
@@ -612,9 +617,11 @@ export const StockValuationCutValid = Norn.law("stock_valuation_cut_valid", {
   on: StockValuationCut,
   must: (self) =>
     self.cost_status === "costed"
+    && self.remaining_qty >= 0
     && self.stock_value >= 0
+    && self.unit === self.sku.unit_of_measure
     && self.currency === self.store.currency,
-  because: "A stock valuation cut must be costed, non-negative, and denominated in its store functional currency.",
+  because: "A stock valuation cut must be costed, non-negative in quantity and value, and match its SKU unit and store functional currency.",
 })
 
 // ----------------------------------------- governed store commercial rollups

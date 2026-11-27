@@ -12,6 +12,27 @@
       "version": "0.1.0"
     },
     "actionId": "supply.stock_lot.record_uncosted",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "sku_id": "sku_id",
+          "store_id": "store_id"
+        },
+        "maxItems": 100,
+        "name": "sealed_cuts_at_or_after_as_of",
+        "objectType": "supply.StockValuationCut",
+        "window": {
+          "end": "cut_horizon",
+          "endInclusive": true,
+          "property": "cut_at",
+          "start": "as_of",
+          "startInclusive": true
+        }
+      }
+    ],
     "createLinks": [
       {
         "link": "store",
@@ -25,6 +46,11 @@
       }
     ],
     "derive": [
+      {
+        "expression": "'9999-12-31T23:59:59Z'",
+        "field": "cut_horizon",
+        "inputRequired": false
+      },
       {
         "expression": "input.received_qty - input.remaining_qty",
         "field": "depleted_qty",
@@ -84,6 +110,9 @@
           "type": "string"
         },
         "custodian_id": {
+          "type": "string"
+        },
+        "cut_horizon": {
           "type": "string"
         },
         "depleted_qty": {
@@ -172,6 +201,7 @@
         "unit",
         "received_at",
         "as_of",
+        "cut_horizon",
         "cost_status",
         "opening_stock_value",
         "depleted_stock_value",
@@ -194,7 +224,7 @@
       "type": "object"
     },
     "preconditions": [
-      "((((((slice.store.status == 'active') and (slice.owner_entity.status == 'active')) and (input.cost_status == 'missing_cost')) and (input.owner_entity_id == slice.store.entity_id)) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.currency == slice.owner_entity.functional_currency)"
+      "(((((((slice.store.status == 'active') and (slice.owner_entity.status == 'active')) and (input.cost_status == 'missing_cost')) and (input.owner_entity_id == slice.store.entity_id)) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.currency == slice.owner_entity.functional_currency)) and (aggregates.sealed_cuts_at_or_after_as_of == 0)"
     ],
     "scopeRequired": [
       "orgId",

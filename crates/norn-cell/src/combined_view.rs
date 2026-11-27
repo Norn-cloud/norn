@@ -350,6 +350,67 @@ fn pending_identities<E: SqlEngine>(store: &CellStore<E>) -> Result<Vec<(u64, St
         .collect())
 }
 
+fn authorized_evidence_types<E: SqlEngine>(
+    input: &CellViewInput<'_, E>,
+) -> Result<BTreeSet<String>, CellError> {
+    let mut allowed = BTreeSet::new();
+    for ty in input.evidence_types {
+        let gate = ObjectRecord {
+            object_type: (*ty).to_owned(),
+            id: ALL_MEMBERS.to_owned(),
+            scope: input.context.scope.clone(),
+            version: 0,
+            values: BTreeMap::new(),
+        };
+        if matches!(
+            (input.evidence_access)(&gate)?,
+            RowAccess::Read | RowAccess::Count
+        ) {
+            allowed.insert((*ty).to_owned());
+        }
+    }
+    Ok(allowed)
+}
+
+/// Count unconsumed inbox observations scoped strictly to `input.required_feeds`
+/// and authorized `input.evidence_types` (`HOST-READ-2`), keeping unrelated or
+/// unauthorized inbox observations invisible to published coverage diagnostics.
+fn count_scoped_pending_observations<E: SqlEngine>(
+    input: &CellViewInput<'_, E>,
+) -> Result<usize, CellError> {
+    let allowed_evidence = authorized_evidence_types(input)?;
+    if allowed_evidence.is_empty() || input.required_feeds.is_empty() {
+        return Ok(0);
+    }
+    let feeds: BTreeSet<&str> = input.required_feeds.iter().copied().collect();
+    let mut count = 0_usize;
+    for obs in input.store.read().pending_observations()? {
+        let bundle = obs.observed.get("input");
+        let feed = bundle
+            .and_then(|b| b.get("input"))
+            .and_then(|i| i.get("connectorInstance"))
+            .and_then(serde_json::Value::as_str);
+        if !feed.is_some_and(|f| feeds.contains(f)) {
+            continue;
+        }
+        let records = bundle
+            .and_then(|b| b.get("records"))
+            .and_then(serde_json::Value::as_array);
+        let visible = records.is_none_or(|rows| {
+            rows.is_empty()
+                || rows.iter().any(|rec| {
+                    rec.get("objectType")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|ty| allowed_evidence.contains(ty))
+                })
+        });
+        if visible {
+            count = count.saturating_add(1);
+        }
+    }
+    Ok(count)
+}
+
 fn check_missing_feeds(
     required_feeds: &[&str],
     cursors: &Frontier,
@@ -847,10 +908,31 @@ fn disclose_query_result<E: SqlEngine>(
                 }
             }
         }
-        if row.member_count.is_some() && !input.whole_world_values {
-            withheld.insert(ALL_MEMBERS.to_owned());
-            any_withheld = true;
-            bucket_restricted = true;
+        if row.member_count.is_some() {
+            let gate = ObjectRecord {
+                object_type: result.grain.as_str().to_owned(),
+                id: ALL_MEMBERS.to_owned(),
+                scope: input.context.scope.clone(),
+                version: 0,
+                values: BTreeMap::new(),
+            };
+            match (input.member_access)(&gate)? {
+                RowAccess::Read => {
+                    if !input.whole_world_values {
+                        withheld.insert(ALL_MEMBERS.to_owned());
+                        any_withheld = true;
+                        bucket_restricted = true;
+                    }
+                }
+                RowAccess::Count => {
+                    withheld.insert(ALL_MEMBERS.to_owned());
+                    any_withheld = true;
+                    bucket_restricted = true;
+                }
+                RowAccess::None => {
+                    return Err(CellError::ComputeRefused("core.compute.stale_input"));
+                }
+            }
         }
         row.withhold(|id| withheld.contains(id), min_bucket);
         if bucket_restricted {
@@ -1002,6 +1084,7 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
         input.evidence_types,
         input.evidence_access,
     )?;
+    let scoped_pending_observations = count_scoped_pending_observations(input)?;
     let pending_after = pending_identities(input.store)?;
     let durable_feeds_after = durable_feed_cut(input.store, input.required_feeds)?;
     let head_after = input.store.verified_head()?;
@@ -1024,7 +1107,7 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
             failed_coverage_gates,
             open_findings,
             withheld_evidence,
-            pending_observations: pending_after.len(),
+            pending_observations: scoped_pending_observations,
             pending_captures: durable_feeds_after.1,
         },
     ))

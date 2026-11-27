@@ -23,6 +23,51 @@
       },
       {
         "label": {
+          "ar": "قطعة",
+          "en": "Each"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StockValuationCut",
+          "property": "unit",
+          "value": "each"
+        }
+      },
+      {
+        "label": {
+          "ar": "كيلوغرام",
+          "en": "Kilogram"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StockValuationCut",
+          "property": "unit",
+          "value": "kg"
+        }
+      },
+      {
+        "label": {
+          "ar": "لتر",
+          "en": "Litre"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StockValuationCut",
+          "property": "unit",
+          "value": "l"
+        }
+      },
+      {
+        "label": {
           "ar": "مسعّر بالتكلفة",
           "en": "Costed"
         },

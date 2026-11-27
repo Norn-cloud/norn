@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "A stock valuation cut must be costed, non-negative, and denominated in its store functional currency.",
+  "name": "A stock valuation cut must be costed, non-negative in quantity and value, and match its SKU unit and store functional currency.",
   "namespace": "supply",
   "payload": {
     "id": "supply.StockValuationCut.stock_valuation_cut_valid",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/supply-lab/retail.ts"
     },
-    "rationale": "A stock valuation cut must be costed, non-negative, and denominated in its store functional currency.",
+    "rationale": "A stock valuation cut must be costed, non-negative in quantity and value, and match its SKU unit and store functional currency.",
     "response": {
-      "expression": "((self.cost_status == 'costed') and (self.stock_value >= 0)) and (self.currency == self.store.currency)",
+      "expression": "((((self.cost_status == 'costed') and (self.remaining_qty >= 0)) and (self.stock_value >= 0)) and (self.unit == self.sku.unit_of_measure)) and (self.currency == self.store.currency)",
       "kind": "predicate"
     },
     "scope": {

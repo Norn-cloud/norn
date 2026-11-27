@@ -139,7 +139,7 @@
     },
     {
       "name": "supply.retail.rollup_on_hand_reconciliation",
-      "expectedTransformId": "supply.retail.store_active_positions",
+      "expectedTransformId": "supply.retail.store_closing_cut_positions",
       "observedTransformId": "supply.retail.store_rollup_sales_operands",
       "keyColumns": [
         "store_id",
@@ -147,12 +147,17 @@
         "unit",
         "currency"
       ],
-      "expectedValueColumn": "derived_on_hand_qty",
+      "expectedValueColumn": "remaining_qty",
       "observedValueColumn": "on_hand_qty",
       "comparison": "eq",
       "observedTimestampColumn": null,
       "maxAgeMs": null,
-      "expectedFilters": [],
+      "expectedFilters": [
+        [
+          "cut_at",
+          "2026-09-06T23:59:59.999999999Z"
+        ]
+      ],
       "observedFilters": [
         [
           "period_week",
@@ -166,7 +171,7 @@
     },
     {
       "name": "supply.retail.rollup_closing_value_reconciliation",
-      "expectedTransformId": "supply.retail.store_active_positions",
+      "expectedTransformId": "supply.retail.store_closing_cut_positions",
       "observedTransformId": "supply.retail.store_rollup_sales_operands",
       "keyColumns": [
         "store_id",
@@ -174,12 +179,17 @@
         "unit",
         "currency"
       ],
-      "expectedValueColumn": "derived_stock_value",
+      "expectedValueColumn": "stock_value",
       "observedValueColumn": "closing_stock_value",
       "comparison": "eq",
       "observedTimestampColumn": null,
       "maxAgeMs": null,
-      "expectedFilters": [],
+      "expectedFilters": [
+        [
+          "cut_at",
+          "2026-09-06T23:59:59.999999999Z"
+        ]
+      ],
       "observedFilters": [
         [
           "period_week",

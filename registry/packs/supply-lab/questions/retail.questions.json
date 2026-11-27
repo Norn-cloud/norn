@@ -393,6 +393,15 @@
       }
     ],
     "calendar": "iso_utc",
+    "filter": [
+      {
+        "operator": "eq",
+        "path": {
+          "property": "period_week"
+        },
+        "value": "2026-08-31"
+      }
+    ],
     "freshness": {
       "kind": "live",
       "maxAgeMs": 60000
@@ -435,6 +444,15 @@
       }
     ],
     "calendar": "iso_utc",
+    "filter": [
+      {
+        "operator": "eq",
+        "path": {
+          "property": "period_week"
+        },
+        "value": "2026-08-31"
+      }
+    ],
     "freshness": {
       "kind": "live",
       "maxAgeMs": 60000

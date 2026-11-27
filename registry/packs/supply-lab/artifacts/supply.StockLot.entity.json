@@ -153,6 +153,13 @@
           }
         },
         {
+          "id": "cut_horizon",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
           "id": "cost_status",
           "type": {
             "kind": "enum",
