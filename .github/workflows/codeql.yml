@@ -9,19 +9,21 @@ on:
     - cron: "23 4 * * 1"
   workflow_dispatch:
 permissions: {}
-# A new push to a pull request cancels the scan of its superseded head. Every
-# other event (main pushes, the weekly schedule, manual runs) gets a group of its
-# own, so nothing else is ever cancelled.
+# A new push to a pull request cancels the scan of its superseded head, and a new push
+# to main supersedes older main scans so a merge batch scans latest main once. Weekly
+# schedules and manual dispatches keep their own run groups (#1951).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && 'main-push' || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 jobs:
   changes:
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
     outputs:
+      languages: ${{ steps.filter.outputs.languages }}
       rust: ${{ steps.filter.outputs.rust }}
     steps:
       - name: Check out merge commit
@@ -30,36 +32,63 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 2
-      - name: Detect Rust-affecting changes
+      - name: Detect language-affecting changes
         id: filter
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
+          all_langs='["javascript-typescript","python","actions"]'
           if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "languages=$all_langs" >> "$GITHUB_OUTPUT"
             echo "rust=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # Rust build-mode:none takes ~25 min on hosted ubuntu-24.04; run it on main pushes,
+          # weekly schedules and manual dispatches rather than starving the 20-slot pool per PR push (#1951).
+          echo "rust=false" >> "$GITHUB_OUTPUT"
           # Pull-request checkouts are refs/pull/<n>/merge (two parents: base and head).
-          # Fail closed (run Rust analysis) if the merge commit shape is unexpected.
+          # Fail closed (run all fast languages) if the merge commit shape is unexpected.
           if ! git rev-parse --verify --quiet HEAD^2 >/dev/null; then
-            echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "languages=$all_langs" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed="$RUNNER_TEMP/codeql-changed-files.z"
           git diff --name-only --no-renames -z HEAD^1 HEAD > "$changed"
-          rust=false
+          js_ts=false
+          py=false
+          actions=false
           while IFS= read -r -d '' path; do
             case "$path" in
-              *.rs|Cargo.toml|*/Cargo.toml|Cargo.lock|*/Cargo.lock|rust-toolchain|rust-toolchain.toml|.cargo/*|crates/*|vendor/*|registry/*|fixtures/*|verification/*|tools/norn-ts/fixtures/*|apps/studio/test/fixtures/*|docs/platform/structured-physics.tsv|.github/workflows/codeql.yml|.github/codeql/*)
-                rust=true
-                break
+              *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|package.json|*/package.json|bun.lock|*/bun.lock|tsconfig*.json|*/tsconfig*.json|.github/workflows/codeql.yml|.github/codeql/*)
+                js_ts=true
+                ;;
+            esac
+            case "$path" in
+              *.py|pyproject.toml|*/pyproject.toml|requirements*.txt|.github/workflows/codeql.yml|.github/codeql/*)
+                py=true
+                ;;
+            esac
+            case "$path" in
+              .github/workflows/*|.github/actions/*|.github/codeql/*)
+                actions=true
                 ;;
             esac
           done < "$changed"
-          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          langs=()
+          [ "$js_ts" = true ] && langs+=('"javascript-typescript"')
+          [ "$py" = true ] && langs+=('"python"')
+          [ "$actions" = true ] && langs+=('"actions"')
+          if [ "${#langs[@]}" -eq 0 ]; then
+            echo 'languages=[]' >> "$GITHUB_OUTPUT"
+          else
+            IFS=,
+            echo "languages=[${langs[*]}]" >> "$GITHUB_OUTPUT"
+          fi
   analyze:
+    needs: changes
+    if: ${{ needs.changes.outputs.languages != '' && fromJSON(needs.changes.outputs.languages)[0] != null }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -69,7 +98,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [javascript-typescript, python, actions]
+        language: ${{ fromJSON(needs.changes.outputs.languages) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -82,8 +111,7 @@ jobs:
         with:
           category: /language:${{ matrix.language }}
   analyze-rust:
-    # Rust build-mode:none takes ~25 min; run it on PRs that touch Rust/Cargo,
-    # embedded Rust inputs, or CodeQL config, and always on main/schedule/dispatch.
+    # Rust build-mode:none takes ~25 min; run it on main pushes, weekly schedules, and manual dispatches.
     needs: changes
     if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-24.04
