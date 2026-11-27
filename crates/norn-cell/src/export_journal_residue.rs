@@ -111,6 +111,7 @@ pub(crate) fn eligible(record: &ExportRecord) -> bool {
         && record.automation_continuation.is_none()
         && record.automation_inline.is_none()
         && record.source_evidence.is_empty()
+        && record.quarantined_observations.is_empty()
         // A result body is shared with the ledger's payload copy only by
         // the packed encoding; such a batch keeps it.
         && !record
@@ -378,6 +379,7 @@ impl ResidueCursor {
             automation_continuation: None,
             automation_inline: None,
             source_evidence: Vec::new(),
+            quarantined_observations: Vec::new(),
         })
     }
 }

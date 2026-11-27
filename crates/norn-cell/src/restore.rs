@@ -162,6 +162,7 @@ impl CellStore<NativeEngine> {
             crate::export_journal::restore_late_source_evidence(
                 &store.conn,
                 seq,
+                &record.quarantined_observations,
                 &record.source_evidence,
             )
             .map_err(|error| {

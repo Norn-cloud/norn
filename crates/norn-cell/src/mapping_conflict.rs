@@ -991,10 +991,11 @@ mod tests {
     use norn_ir::provenance::UtcTimestamp;
     use norn_kernel::Provenance;
 
-    fn sample_bundle_with_reprocess(
+    fn sample_bundle_full(
         source_version: &str,
         event_id: &str,
         recorded_at: &str,
+        diagnostics: Vec<RuntimeValue>,
         reprocesses: Option<String>,
     ) -> Observed<RuntimeValue> {
         let bundle = MappingBundle {
@@ -1018,7 +1019,7 @@ mod tests {
             definitions_digest: "def".into(),
             artifact_pins: Vec::new(),
             records: Vec::new(),
-            diagnostics: Vec::new(),
+            diagnostics,
             derivation: CURRENT_DERIVATION,
             reprocesses,
         };
@@ -1034,12 +1035,29 @@ mod tests {
         }
     }
 
+    fn sample_quarantined(
+        source_version: &str,
+        event_id: &str,
+        recorded_at: &str,
+    ) -> Observed<RuntimeValue> {
+        sample_bundle_full(
+            source_version,
+            event_id,
+            recorded_at,
+            vec![norn_ir::runtime_object! {
+                "code" => "mapping.runtime.invalid_record",
+                "message" => "invalid",
+            }],
+            None,
+        )
+    }
+
     fn sample_bundle(
         source_version: &str,
         event_id: &str,
         recorded_at: &str,
     ) -> Observed<RuntimeValue> {
-        sample_bundle_with_reprocess(source_version, event_id, recorded_at, None)
+        sample_bundle_full(source_version, event_id, recorded_at, Vec::new(), None)
     }
 
     fn open_test_store() -> (CellStore<crate::engine::NativeEngine>, crate::Model) {
@@ -1089,6 +1107,7 @@ mod tests {
 
     fn replay_observation_preimage(
         replayed: &CellStore<crate::engine::NativeEngine>,
+        commit_seq: u64,
         preimage: &RuntimeValue,
     ) -> (usize, usize) {
         let decoded = crate::export_journal::decode_observation_input(preimage).expect("decode");
@@ -1100,6 +1119,11 @@ mod tests {
                 members,
                 source_evidence,
             } => {
+                assert!(crate::export_journal::members_valid(
+                    &observation_id,
+                    &observed,
+                    &members
+                ));
                 let obs_json = crate::codec::canonical_json(&observed).expect("obs json");
                 insert_inbox_row(
                     &replayed.conn,
@@ -1121,6 +1145,7 @@ mod tests {
                 assert!(
                     crate::export_journal::restore_source_evidence(
                         &replayed.conn,
+                        commit_seq,
                         &observation_id,
                         &members,
                         &source_evidence,
@@ -1137,7 +1162,7 @@ mod tests {
     #[test]
     fn unattributed_quarantine_evidence_persists_after_later_reprocess() {
         let (store, _) = open_test_store();
-        let q_obs = sample_bundle("2026-01-01", "ev-q", "2026-01-01T00:00:00Z");
+        let q_obs = sample_quarantined("2026-01-01", "ev-q", "2026-01-01T00:00:00Z");
         let q_json = serde_json::to_string(&q_obs).expect("q json");
         insert_inbox_row(&store.conn, 1, "other:1", "{}", Some(1));
         insert_inbox_row(&store.conn, 2, &q_obs.id.0, &q_json, Some(3));
@@ -1152,7 +1177,7 @@ mod tests {
     #[test]
     fn unattributed_correction_resolves_quarantine_and_survives_export_replay() {
         let (store, model) = open_test_store();
-        let q_obs = sample_bundle("2026-01-01", "ev-q2", "2026-01-01T00:00:00Z");
+        let q_obs = sample_quarantined("2026-01-01", "ev-q2", "2026-01-01T00:00:00Z");
         let c_obs = sample_bundle("2026-01-02", "ev-c", "2026-01-02T00:00:00Z");
         let q_json = serde_json::to_string(&q_obs).expect("q json");
         let c_json = serde_json::to_string(&c_obs).expect("c json");
@@ -1166,19 +1191,31 @@ mod tests {
         let pre = crate::export_journal::consumed_input(&store.read(), Some(&consumed))
             .expect("consumed_input")
             .expect("preimage");
-        let replayed = CellStore::open_in_memory(model).expect("replayed");
-        insert_inbox_row(&replayed.conn, 1, &q_obs.id.0, &q_json, None);
-        insert_evidence_row(&replayed.conn, &q_obs.id.0, "conn.a", 1);
-        assert_eq!(replay_observation_preimage(&replayed, &pre), (0, 1));
-        for conn in [&store.conn, &replayed.conn] {
-            conn.execute(
+        store
+            .conn
+            .execute(
                 &format!(
                     "UPDATE \"{INBOX}\" SET \"consumed_commit_seq\" = 2 WHERE \"observation_id\" = ?1"
                 ),
                 params![c_obs.id.0.as_str()],
             )
             .expect("consume c");
-        }
+        let (q_rows, ev_rows) =
+            crate::export_journal::read_late_source_evidence(&store.conn, 2).expect("late c2");
+        assert_eq!(q_rows.len(), 1);
+        let replayed = CellStore::open_in_memory(model).expect("replayed");
+        crate::export_journal::restore_late_source_evidence(&replayed.conn, 2, &q_rows, &ev_rows)
+            .expect("restore q2");
+        assert_eq!(replay_observation_preimage(&replayed, 2, &pre), (0, 1));
+        replayed
+            .conn
+            .execute(
+                &format!(
+                    "UPDATE \"{INBOX}\" SET \"consumed_commit_seq\" = 2 WHERE \"observation_id\" = ?1"
+                ),
+                params![c_obs.id.0.as_str()],
+            )
+            .expect("consume c on replayed");
         let live = store
             .read()
             .unresolved_quarantined_datasets_at("m.mapping", Some("conn.a"), None)
@@ -1193,11 +1230,12 @@ mod tests {
     #[test]
     fn reprocess_export_replay_preserves_earlier_frontier_quarantine() {
         let (store, model) = open_test_store();
-        let q_obs = sample_bundle("2026-01-01", "ev-rq", "2026-01-01T00:00:00Z");
-        let r_obs = sample_bundle_with_reprocess(
+        let q_obs = sample_quarantined("2026-01-01", "ev-rq", "2026-01-01T00:00:00Z");
+        let r_obs = sample_bundle_full(
             "2026-01-01",
             "ev-rr",
             "2026-01-01T00:00:00Z",
+            Vec::new(),
             Some(q_obs.id.0.clone()),
         );
         let q_json = serde_json::to_string(&q_obs).expect("q json");
@@ -1213,7 +1251,7 @@ mod tests {
             .expect("consumed_input")
             .expect("preimage");
         let replayed = CellStore::open_in_memory(model).expect("replayed");
-        assert_eq!(replay_observation_preimage(&replayed, &pre), (1, 2));
+        assert_eq!(replay_observation_preimage(&replayed, 3, &pre), (1, 2));
         let round_trip = crate::export_journal::consumed_input(&replayed.read(), Some(&consumed))
             .expect("replayed consumed_input")
             .expect("replayed preimage");
@@ -1247,67 +1285,78 @@ mod tests {
     }
 
     #[test]
-    fn late_sibling_attribution_export_replay_resolves_sibling_quarantine() {
+    fn late_sibling_attribution_and_pending_quarantine_survive_empty_replay() {
         let (store, model) = open_test_store();
-        let q_obs = sample_bundle("2026-01-01", "ev-lq", "2026-01-01T00:00:00Z");
+        let q_obs = sample_quarantined("2026-01-01", "ev-lq", "2026-01-01T00:00:00Z");
         let c_obs = sample_bundle("2026-01-02", "ev-lc", "2026-01-02T00:00:00Z");
         let q_json = serde_json::to_string(&q_obs).expect("q json");
         let c_json = serde_json::to_string(&c_obs).expect("c json");
+        insert_inbox_row(&store.conn, 1, &q_obs.id.0, &q_json, None);
+        insert_inbox_row(&store.conn, 2, &c_obs.id.0, &c_json, None);
+        insert_evidence_row(&store.conn, &q_obs.id.0, "conn.b", 1);
+        insert_evidence_row(&store.conn, &c_obs.id.0, "conn.a", 1);
+        let c_consumed = crate::Consumption::Observation {
+            observation_id: c_obs.id.0.clone(),
+        };
+        let c_pre = crate::export_journal::consumed_input(&store.read(), Some(&c_consumed))
+            .expect("c pre")
+            .expect("pre");
+        store
+            .conn
+            .execute(
+                &format!(
+                    "UPDATE \"{INBOX}\" SET \"consumed_commit_seq\" = 2 WHERE \"observation_id\" = ?1"
+                ),
+                params![c_obs.id.0.as_str()],
+            )
+            .expect("consume c");
+        let (q2, ev2) =
+            crate::export_journal::read_late_source_evidence(&store.conn, 2).expect("late c2");
+        assert_eq!(q2.len(), 1);
+        assert_eq!(ev2.len(), 1);
+        // Replay commit 2 onto a completely empty store (no manual q_obs seeding).
         let replayed = CellStore::open_in_memory(model).expect("replayed");
-        for conn in [&store.conn, &replayed.conn] {
-            insert_inbox_row(conn, 1, &q_obs.id.0, &q_json, None);
-            insert_inbox_row(conn, 2, &c_obs.id.0, &c_json, Some(2));
-            insert_evidence_row(conn, &q_obs.id.0, "conn.b", 1);
-            insert_evidence_row(conn, &c_obs.id.0, "conn.a", 1);
-        }
-        insert_evidence_row(&store.conn, &c_obs.id.0, "conn.b", 2);
-        let late = crate::export_journal::read_late_source_evidence(&store.conn, 3).expect("late");
+        crate::export_journal::restore_late_source_evidence(&replayed.conn, 2, &q2, &ev2)
+            .expect("restore c2 quarantine");
+        assert_eq!(replay_observation_preimage(&replayed, 2, &c_pre), (0, 1));
+        replayed
+            .conn
+            .execute(
+                &format!(
+                    "UPDATE \"{INBOX}\" SET \"consumed_commit_seq\" = 2 WHERE \"observation_id\" = ?1"
+                ),
+                params![c_obs.id.0.as_str()],
+            )
+            .expect("consume c replayed");
         assert_eq!(
-            late,
+            crate::export_journal::read_late_source_evidence(&replayed.conn, 2).expect("rt c2"),
+            (q2, ev2)
+        );
+        assert!(
+            replayed
+                .read()
+                .unresolved_quarantined_datasets_at("m.mapping", Some("conn.b"), Some((2, 100)))
+                .expect("replayed f2 before c3")
+                .contains("Party")
+        );
+        // Sibling conn.b captures already-consumed c_obs at clock 2 (exported on commit 3).
+        insert_evidence_row(&store.conn, &c_obs.id.0, "conn.b", 2);
+        let (q3, ev3) =
+            crate::export_journal::read_late_source_evidence(&store.conn, 3).expect("late c3");
+        assert!(q3.is_empty());
+        assert_eq!(
+            ev3,
             vec![crate::export::SourceEvidenceEntry {
                 observation_id: c_obs.id.0.clone(),
                 connection_id: "conn.b".into(),
                 captured_commit_seq: 2,
             }]
         );
-        assert!(
-            replayed
-                .read()
-                .unresolved_quarantined_datasets_at("m.mapping", Some("conn.b"), None)
-                .expect("before restore")
-                .contains("Party")
-        );
-        let bad_seq = [crate::export::SourceEvidenceEntry {
-            observation_id: c_obs.id.0.clone(),
-            connection_id: "conn.b".into(),
-            captured_commit_seq: 1,
-        }];
-        let bad_obs = [crate::export::SourceEvidenceEntry {
-            observation_id: q_obs.id.0.clone(),
-            connection_id: "conn.b".into(),
-            captured_commit_seq: 2,
-        }];
-        assert!(
-            crate::export_journal::restore_late_source_evidence(&replayed.conn, 3, &bad_seq)
-                .is_err()
-        );
-        assert!(
-            crate::export_journal::restore_late_source_evidence(&replayed.conn, 3, &bad_obs)
-                .is_err()
-        );
-        crate::export_journal::restore_late_source_evidence(&replayed.conn, 3, &late)
-            .expect("restore late evidence");
+        crate::export_journal::restore_late_source_evidence(&replayed.conn, 3, &q3, &ev3)
+            .expect("restore c3 late evidence");
         assert_eq!(
-            crate::export_journal::read_late_source_evidence(&replayed.conn, 3)
-                .expect("replayed late"),
-            late
-        );
-        assert!(
-            replayed
-                .read()
-                .unresolved_quarantined_datasets_at("m.mapping", Some("conn.b"), None)
-                .expect("after restore")
-                .is_empty()
+            crate::export_journal::read_late_source_evidence(&replayed.conn, 3).expect("rt c3"),
+            (q3, ev3)
         );
         assert!(
             replayed
@@ -1322,6 +1371,104 @@ mod tests {
                 .unresolved_quarantined_datasets_at("m.mapping", Some("conn.b"), Some((3, 100)))
                 .expect("pinned f3")
                 .is_empty()
+        );
+        assert!(
+            replayed
+                .read()
+                .unresolved_quarantined_datasets_at("m.mapping", Some("conn.b"), None)
+                .expect("live")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn replay_rejects_impossible_source_evidence_and_forged_members() {
+        let (store, _) = open_test_store();
+        let q_obs = sample_quarantined("2026-01-01", "ev-badq", "2026-01-01T00:00:00Z");
+        let c_obs = sample_bundle("2026-01-02", "ev-badc", "2026-01-02T00:00:00Z");
+        let r_obs = sample_bundle_full(
+            "2026-01-01",
+            "ev-badr",
+            "2026-01-01T00:00:00Z",
+            Vec::new(),
+            Some(q_obs.id.0.clone()),
+        );
+        let c_json = serde_json::to_string(&c_obs).expect("c json");
+        insert_inbox_row(&store.conn, 1, &c_obs.id.0, &c_json, Some(2));
+        insert_evidence_row(&store.conn, &c_obs.id.0, "conn.a", 1);
+        // Forged member with matching observation_id but arbitrary observed content.
+        let r_val = norn_ir::runtime::encode(&r_obs).expect("r val");
+        let forged_member = crate::PendingObservation {
+            position: 1,
+            observation_id: q_obs.id.0.clone(),
+            observed: norn_ir::runtime_object! { "bogus" => true },
+        };
+        assert!(!crate::export_journal::members_valid(
+            &r_obs.id.0,
+            &r_val,
+            &[forged_member]
+        ));
+        // Consumed evidence with captured_commit_seq >= consuming commit_seq is refused.
+        let future_ev = [crate::export::SourceEvidenceEntry {
+            observation_id: c_obs.id.0.clone(),
+            connection_id: "conn.a".into(),
+            captured_commit_seq: 2,
+        }];
+        assert!(
+            !crate::export_journal::restore_source_evidence(
+                &store.conn,
+                2,
+                &c_obs.id.0,
+                &[],
+                &future_ev
+            )
+            .expect("future check")
+        );
+        // Late legacy ('', -1) sentinel on an observation that already has named attribution is refused.
+        let forged_legacy = [
+            crate::export::SourceEvidenceEntry {
+                observation_id: c_obs.id.0.clone(),
+                connection_id: String::new(),
+                captured_commit_seq: -1,
+            },
+            crate::export::SourceEvidenceEntry {
+                observation_id: c_obs.id.0.clone(),
+                connection_id: "conn.b".into(),
+                captured_commit_seq: 2,
+            },
+        ];
+        assert!(
+            crate::export_journal::restore_late_source_evidence(
+                &store.conn,
+                3,
+                &[],
+                &forged_legacy
+            )
+            .is_err()
+        );
+        // Late evidence with wrong captured_commit_seq or non-quarantined row is refused.
+        let bad_seq = [crate::export::SourceEvidenceEntry {
+            observation_id: c_obs.id.0.clone(),
+            connection_id: "conn.b".into(),
+            captured_commit_seq: 1,
+        }];
+        assert!(
+            crate::export_journal::restore_late_source_evidence(&store.conn, 3, &[], &bad_seq)
+                .is_err()
+        );
+        let bad_q = [crate::PendingObservation {
+            position: 2,
+            observation_id: c_obs.id.0.clone(),
+            observed: norn_ir::runtime::encode(&c_obs).expect("c val"),
+        }];
+        let bad_q_ev = [crate::export::SourceEvidenceEntry {
+            observation_id: c_obs.id.0,
+            connection_id: "conn.b".into(),
+            captured_commit_seq: 2,
+        }];
+        assert!(
+            crate::export_journal::restore_late_source_evidence(&store.conn, 3, &bad_q, &bad_q_ev)
+                .is_err()
         );
     }
 }

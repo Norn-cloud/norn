@@ -2241,6 +2241,7 @@ impl<E: SqlEngine> CellStore<E> {
             crate::export_journal::restore_late_source_evidence(
                 &store.conn,
                 record.receipt.body.commit_seq,
+                &record.quarantined_observations,
                 &record.source_evidence,
             )?;
             if let Some(install) = &record.definition_install {
