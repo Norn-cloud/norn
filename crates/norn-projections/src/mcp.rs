@@ -176,7 +176,7 @@ fn decimal_wire_object(schema: &mut JsonObject, depth: usize) {
     if is_decimal && let Some(kind) = schema.get_mut("type") {
         match kind {
             JsonValue::String(text) if text == "number" => {
-                *text = "string".to_owned();
+                "string".clone_into(text);
                 rewrote_decimal = true;
             }
             JsonValue::Array(items) => {
@@ -184,7 +184,7 @@ fn decimal_wire_object(schema: &mut JsonObject, depth: usize) {
                     if let JsonValue::String(text) = item
                         && text == "number"
                     {
-                        *text = "string".to_owned();
+                        "string".clone_into(text);
                         rewrote_decimal = true;
                     }
                 }

@@ -361,6 +361,17 @@ fn check_preparation_parity(
     projected_required: &BTreeSet<String>,
     decimal_shape: DecimalShape,
 ) -> Result<(), TestCaseError> {
+    // `$` root expressions evaluate to null in plain ZEN and exist here to test
+    // fail-closed actor-derivation detection in parts 2 and 3.
+    let has_root_expr = steps.iter().any(|(_, kind, _)| {
+        matches!(
+            kind,
+            ExprKind::RootDefaultInput | ExprKind::RootActorSubject
+        )
+    });
+    if has_root_expr {
+        return Ok(());
+    }
     let runtime_fails = steps.iter().any(|(_, kind, _)| kind.is_malformed())
         || has_runtime_null_trim(steps, projected_required);
     let mut valid = RuntimeObject::new();
