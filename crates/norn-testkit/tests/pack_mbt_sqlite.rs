@@ -154,7 +154,13 @@ fn build_mbt_receipt(
     let encoded_receipt =
         match norn_ir::runtime::encode(&receipt).map_err(|err| format!("encode receipt: {err}"))? {
             RuntimeValue::Object(obj) => obj,
-            other => return Err(format!("encoded receipt was not object: {other:?}")),
+            other @ (RuntimeValue::Null
+            | RuntimeValue::Bool(_)
+            | RuntimeValue::Number(_)
+            | RuntimeValue::String(_)
+            | RuntimeValue::Array(_)) => {
+                return Err(format!("encoded receipt was not object: {other:?}"));
+            }
         };
     Ok((dispatched, receipt, encoded_receipt))
 }
