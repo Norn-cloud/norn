@@ -18,7 +18,7 @@
     clippy::panic,
     reason = "ASOF-KNOWLEDGE-1 regression suite"
 )]
-mod asof_reader {
+mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use norn_cell::compute::QueryContext;
@@ -341,7 +341,7 @@ mod asof_reader {
                         "properties": [
                             {"property": "id", "value": "input.id"},
                             {"property": "inspected_qty", "value": "input.inspected_qty"},
-                            {"property": "occurred_at", "value": "input.occurred_at"}
+                            {"property": "occurred_at", "value": "timestamp(input.occurred_at)"}
                         ]
                     }
                 ]
@@ -595,7 +595,7 @@ mod asof_reader {
                     "properties": [
                         {"property": "id", "value": "input.id"},
                         {"property": "amount", "value": "input.amount"},
-                        {"property": "occurred_at", "value": "input.occurred_at"}
+                        {"property": "occurred_at", "value": "timestamp(input.occurred_at)"}
                     ]
                 }]
             }),
