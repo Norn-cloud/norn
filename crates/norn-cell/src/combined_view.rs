@@ -817,8 +817,9 @@ fn evaluate_pinned_questions<E: SqlEngine>(
 }
 
 /// Apply `DATA-VALUES-1` (D52/D53) per-member Values withholding, minimum-bucket
-/// suppression, and keyed revision/finding/lineage handles to one [`QueryResult`]
-/// inside the caller's fenced snapshot.
+/// suppression, `membership_digest` redaction, Population fail-closed checks
+/// (`RowAccess::None`), and keyed revision/finding/lineage handles to one
+/// [`QueryResult`] inside the caller's fenced snapshot.
 fn disclose_query_result<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
     result: &mut QueryResult,
@@ -828,22 +829,33 @@ fn disclose_query_result<E: SqlEngine>(
     let mut any_withheld = false;
     for row in result.rows.values_mut() {
         let mut withheld = BTreeSet::new();
+        let mut bucket_restricted = false;
         for id in row.members.keys() {
-            let readable = reader
+            let access = reader
                 .object(&input.context.world, result.grain.as_str(), id)?
                 .map(|obj| (input.member_access)(&obj))
-                .transpose()?
-                == Some(RowAccess::Read);
-            if !readable {
-                withheld.insert(id.clone());
-                any_withheld = true;
+                .transpose()?;
+            match access {
+                Some(RowAccess::Read) => {}
+                Some(RowAccess::Count) => {
+                    withheld.insert(id.clone());
+                    any_withheld = true;
+                    bucket_restricted = true;
+                }
+                Some(RowAccess::None) | None => {
+                    return Err(CellError::ComputeRefused("core.compute.stale_input"));
+                }
             }
         }
         if row.member_count.is_some() && !input.whole_world_values {
             withheld.insert(ALL_MEMBERS.to_owned());
             any_withheld = true;
+            bucket_restricted = true;
         }
         row.withhold(|id| withheld.contains(id), min_bucket);
+        if bucket_restricted {
+            row.membership_digest = None;
+        }
     }
     let world = input.whole_world_values && !any_withheld;
     let genesis = result.revision.seq == 0 && result.revision.hash == GENESIS_HASH;
@@ -954,6 +966,11 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
     evaluate: &mut impl FnMut(&str, &QuestionPlan, QueryContext) -> Result<QueryResult, CellError>,
 ) -> Result<CellCutSnapshot, CellError> {
+    if input.handle_key.len() < 32 {
+        return Err(CellError::Encoding(
+            "the lineage handle key is shorter than 32 bytes".to_owned(),
+        ));
+    }
     let mut seen_questions = BTreeSet::new();
     for (name, _) in input.questions {
         if !seen_questions.insert(*name) {
@@ -1063,14 +1080,14 @@ fn build_spec_reconciliation_gates<'a, E: SqlEngine>(
                     .transforms
                     .get(&g.observed_transform_id)
                     .ok_or_else(stale)?,
-                key_columns: &key_refs[idx],
+                key_columns: key_refs.get(idx).ok_or_else(stale)?,
                 expected_value_column: g.expected_value_column.as_str(),
                 observed_value_column: g.observed_value_column.as_str(),
                 comparison: g.comparison,
                 observed_timestamp_column: g.observed_timestamp_column.as_deref(),
                 max_age_ms: g.max_age_ms,
-                expected_filters: &expected_filters[idx],
-                observed_filters: &observed_filters[idx],
+                expected_filters: expected_filters.get(idx).ok_or_else(stale)?,
+                observed_filters: observed_filters.get(idx).ok_or_else(stale)?,
                 authorize_expected: binding.authorize_transform,
                 authorize_observed: binding.authorize_transform,
                 row_access: binding.row_access,
@@ -1096,11 +1113,11 @@ fn build_spec_grain_gates<'a, E: SqlEngine>(
                     .transforms
                     .get(&g.expected_transform_id)
                     .ok_or_else(stale)?,
-                expected_columns: &col_refs[idx],
+                expected_columns: col_refs.get(idx).ok_or_else(stale)?,
                 question_name: g.question_name.as_str(),
                 bucket_indices: &g.bucket_indices,
                 require_non_null_value: g.require_non_null_value,
-                required_bucket_filters: &filters[idx],
+                required_bucket_filters: filters.get(idx).ok_or_else(stale)?,
                 authorize_transform: binding.authorize_transform,
                 row_access: binding.row_access,
             })

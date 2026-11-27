@@ -2675,7 +2675,7 @@ fn seed_partner_commercial_rollup(partner: &mut EntityBook) -> Result<(), String
             "on_hand_count_id": "ST-PART-CFC-1/SKU-RING-18K/on_hand", "opening_cut_id": "CUT-P1-2026-08-31", "count_ref": "AUD-P2",
             "count_as_of": "2026-09-06T10:00:00Z", "costed_ref": "COST-RING-1",
             "book_epoch": "1970-01-01T00:00:00Z",
-            "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
+            "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T23:59:59.999999999Z",
             "sales_weeks": 1,
             "on_hand_qty": "12", "avg_weekly_sales_qty": "8", "weeks_of_supply": "0",
             "period_gross_margin": "1200",
@@ -4044,13 +4044,13 @@ fn verify_shipped_phantom_week_and_late_sale_gates() -> Result<(), String> {
             "sold_qty": "1", "unit": "each", "net_revenue": "400", "applied_unit_cost": "250",
             "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
             "cost_status": "costed", "costed_ref": "COST-RING-1",
-            "currency": "USD", "sold_at": "2026-09-08T10:00:00Z"
+            "currency": "USD", "sold_at": "2026-09-07T00:00:00Z"
         }),
     )?;
     let out_of_window = evaluate_single_spec_cut(&partner, "LE-PARTNER", &spec, false)?;
     assert!(
         out_of_window.complete,
-        "out-of-week sale must not invalidate 2026-08-31 rollup: {:?}",
+        "exact next-week boundary sale must not invalidate 2026-08-31 rollup: {:?}",
         out_of_window.failed_coverage_gates
     );
     partner.ok(
@@ -4061,7 +4061,7 @@ fn verify_shipped_phantom_week_and_late_sale_gates() -> Result<(), String> {
             "sold_qty": "2", "unit": "each", "net_revenue": "800", "applied_unit_cost": "250",
             "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
             "cost_status": "costed", "costed_ref": "COST-RING-1",
-            "currency": "USD", "sold_at": "2026-09-03T15:00:00Z"
+            "currency": "USD", "sold_at": "2026-09-06T21:30:00Z"
         }),
     )?;
     let stale_snap = evaluate_single_spec_cut(&partner, "LE-PARTNER", &spec, false)?;
@@ -4088,7 +4088,7 @@ fn verify_shipped_phantom_week_and_late_sale_gates() -> Result<(), String> {
             "opening_cut_id": "CUT-P1-2026-08-31", "count_ref": "AUD-P2",
             "count_as_of": "2026-09-06T10:00:00Z", "costed_ref": "COST-RING-1",
             "book_epoch": "1970-01-01T00:00:00Z",
-            "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
+            "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T23:59:59.999999999Z",
             "sales_weeks": 1, "on_hand_qty": "12", "avg_weekly_sales_qty": "10",
             "weeks_of_supply": "0", "period_gross_margin": "1500",
             "opening_stock_value": "5000", "closing_stock_value": "3000",
@@ -4156,7 +4156,7 @@ fn verify_shipped_rollup_stock_staleness(
             "opening_cut_id": "CUT-P1-2026-08-31", "count_ref": "AUD-P2-REC",
             "count_as_of": "2026-09-06T12:00:00Z", "costed_ref": "COST-RING-1",
             "book_epoch": "1970-01-01T00:00:00Z",
-            "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
+            "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T23:59:59.999999999Z",
             "sales_weeks": 1, "on_hand_qty": "10", "avg_weekly_sales_qty": "10",
             "weeks_of_supply": "0", "period_gross_margin": "1500",
             "opening_stock_value": "5000", "closing_stock_value": "2500",
@@ -4414,11 +4414,116 @@ fn verify_library_cut_population_only_disclosure(
         assert!(row.suppressed, "single-member bucket must suppress");
         assert!(row.value.is_none());
         assert!(row.totals.is_empty());
+        assert!(row.membership_digest.is_none());
         for member in row.members.values() {
             assert!(member.restricted);
             assert!(member.amounts.is_none());
         }
     }
+    verify_non_inlined_and_short_key_disclosure(partner, rev_plan)
+}
+
+fn verify_non_inlined_and_short_key_disclosure(
+    partner: &EntityBook,
+    rev_plan: &QuestionPlan,
+) -> Result<(), String> {
+    // Non-inlined analytics buckets (`member_count.is_some()`) MUST strip unkeyed
+    // `membership_digest` when `!whole_world_values`, both when suppressed and disclosed.
+    let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
+    let partner_frontier = || Ok((partner.source_cursors.clone(), partner.watermarks.clone()));
+    let (partner_key, partner_auth) = legal_entity_read_authority(partner, "LE-PARTNER");
+    for (count, expect_suppressed) in [(1_u64, true), (5_u64, false)] {
+        let input = CellViewInput {
+            store: partner.cell()?.store(),
+            anchor_key: &partner_key,
+            authority: &partner_auth,
+            context: partner.query_context(),
+            handle_key: &TEST_HANDLE_KEY,
+            whole_world_values: false,
+            member_access: &allow_all,
+            min_disclosed_bucket: 2,
+            required_feeds: &REQUIRED_FEEDS,
+            read_frontier: &partner_frontier,
+            min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
+            evidence_types: &EVIDENCE_TYPES,
+            evidence_access: &allow_all,
+            coverage_transforms: &[],
+            reconciliation_gates: &[],
+            expected_grain_gates: &[],
+            questions: &[("supply.retail.store_revenue_weekly", rev_plan)],
+        };
+        let snap = evaluate_cell_cut(&input, &mut |_, plan, ctx| {
+            let mut res = partner
+                .cell()
+                .map_err(CellError::Engine)?
+                .store()
+                .evaluate_question(plan, ctx, |_| Ok(true))?;
+            for row in res.rows.values_mut() {
+                row.members.clear();
+                row.member_count = Some(count);
+                row.membership_digest = Some("sha256:raw-unkeyed-digest".to_owned());
+            }
+            Ok(res)
+        })
+        .map_err(|e| format!("non-inlined evaluate_cell_cut: {e}"))?;
+        let rev = snap
+            .answers
+            .as_ref()
+            .and_then(|a| a.get("supply.retail.store_revenue_weekly"))
+            .ok_or("missing non-inlined revenue")?;
+        for row in rev.rows.values() {
+            assert_eq!(row.suppressed, expect_suppressed);
+            assert!(
+                row.membership_digest.is_none(),
+                "unkeyed membership_digest must be withheld for restricted non-inlined buckets"
+            );
+            if expect_suppressed {
+                assert!(row.value.is_none());
+                assert!(row.totals.is_empty());
+            } else {
+                assert!(row.value.is_some());
+            }
+        }
+    }
+    verify_short_handle_key_refusal(partner, rev_plan)
+}
+
+fn verify_short_handle_key_refusal(
+    partner: &EntityBook,
+    rev_plan: &QuestionPlan,
+) -> Result<(), String> {
+    // D53: handle_key shorter than 32 bytes must refuse fail-closed.
+    let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
+    let partner_frontier = || Ok((partner.source_cursors.clone(), partner.watermarks.clone()));
+    let (partner_key, partner_auth) = legal_entity_read_authority(partner, "LE-PARTNER");
+    let short_key = [0x11_u8; 16];
+    let short_input = CellViewInput {
+        store: partner.cell()?.store(),
+        anchor_key: &partner_key,
+        authority: &partner_auth,
+        context: partner.query_context(),
+        handle_key: &short_key,
+        whole_world_values: false,
+        member_access: &allow_all,
+        min_disclosed_bucket: 2,
+        required_feeds: &REQUIRED_FEEDS,
+        read_frontier: &partner_frontier,
+        min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
+        evidence_types: &EVIDENCE_TYPES,
+        evidence_access: &allow_all,
+        coverage_transforms: &[],
+        reconciliation_gates: &[],
+        expected_grain_gates: &[],
+        questions: &[("supply.retail.store_revenue_weekly", rev_plan)],
+    };
+    let short_res = evaluate_cell_cut(&short_input, &mut |_, plan, ctx| {
+        partner
+            .cell()
+            .map_err(CellError::Engine)?
+            .store()
+            .evaluate_question(plan, ctx, |_| Ok(true))
+    });
+    assert!(matches!(short_res, Err(CellError::Encoding(_))));
     Ok(())
 }
 
@@ -4428,11 +4533,6 @@ fn verify_library_cut_hidden_and_denied_gate(
     entity_tf_plan: &norn_checker::transform::TransformPlan,
 ) -> Result<(), String> {
     let allow_tf = |_: &norn_checker::transform::TransformPlan| Ok(());
-    let deny_tf = |_: &norn_checker::transform::TransformPlan| -> Result<(), CellError> {
-        Err(CellError::Encoding("transform access denied".to_owned()))
-    };
-    let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
-    let count_only = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Count);
     let hide_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::None);
     let partner_frontier = || Ok((partner.source_cursors.clone(), partner.watermarks.clone()));
     let (partner_key, partner_auth) = legal_entity_read_authority(partner, "LE-PARTNER");
@@ -4468,14 +4568,52 @@ fn verify_library_cut_hidden_and_denied_gate(
             .cell()
             .map_err(CellError::Engine)?
             .store()
-            .evaluate_question(plan, ctx, |_| Ok(true))
+            .evaluate_question(plan, ctx, |obj| Ok(hide_all(obj)? != RowAccess::None))
     })
     .map_err(|e| format!("hidden evaluate_cell_cut: {e}"))?;
     assert!(
         hidden_snap.failed_coverage_gates.is_empty(),
         "HOST-READ-2: RowAccess::None must not leak row presence via gate failures"
     );
+    let hidden_rev = hidden_snap
+        .answers
+        .as_ref()
+        .and_then(|a| a.get("supply.retail.store_revenue_weekly"))
+        .ok_or("missing hidden revenue answer")?;
+    assert!(
+        hidden_rev.rows.is_empty(),
+        "HOST-READ-2: hidden rows must never appear in disclosed answers"
+    );
+    // A rogue evaluator returning `RowAccess::None` members must be refused fail-closed.
+    let rogue_hidden = evaluate_cell_cut(&hidden_input, &mut |_, plan, ctx| {
+        partner
+            .cell()
+            .map_err(CellError::Engine)?
+            .store()
+            .evaluate_question(plan, ctx, |_| Ok(true))
+    });
+    assert!(
+        matches!(
+            rogue_hidden,
+            Err(CellError::ComputeRefused("core.compute.stale_input"))
+        ),
+        "evaluator disclosing RowAccess::None member IDs must refuse: {rogue_hidden:?}"
+    );
+    verify_library_cut_denied_transform_gate(partner, rev_plan, entity_tf_plan)
+}
 
+fn verify_library_cut_denied_transform_gate(
+    partner: &EntityBook,
+    rev_plan: &QuestionPlan,
+    entity_tf_plan: &norn_checker::transform::TransformPlan,
+) -> Result<(), String> {
+    let deny_tf = |_: &norn_checker::transform::TransformPlan| -> Result<(), CellError> {
+        Err(CellError::Encoding("transform access denied".to_owned()))
+    };
+    let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
+    let count_only = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Count);
+    let partner_frontier = || Ok((partner.source_cursors.clone(), partner.watermarks.clone()));
+    let (partner_key, partner_auth) = legal_entity_read_authority(partner, "LE-PARTNER");
     let denied_input = CellViewInput {
         store: partner.cell()?.store(),
         anchor_key: &partner_key,

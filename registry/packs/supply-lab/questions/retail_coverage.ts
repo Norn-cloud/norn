@@ -115,7 +115,10 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
       observedTimestampColumn: null,
       maxAgeMs: null,
       expectedFilters: [["period_week", "2026-08-31"]],
-      observedFilters: [["period_week", "2026-08-31"]],
+      observedFilters: [
+        ["period_week", "2026-08-31"],
+        ["period_end", "2026-09-06T23:59:59.999999999Z"],
+      ],
     },
     {
       name: "supply.retail.rollup_margin_reconciliation",
@@ -128,7 +131,10 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
       observedTimestampColumn: null,
       maxAgeMs: null,
       expectedFilters: [["period_week", "2026-08-31"]],
-      observedFilters: [["period_week", "2026-08-31"]],
+      observedFilters: [
+        ["period_week", "2026-08-31"],
+        ["period_end", "2026-09-06T23:59:59.999999999Z"],
+      ],
     },
     {
       name: "supply.retail.rollup_on_hand_reconciliation",
@@ -141,7 +147,10 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
       observedTimestampColumn: null,
       maxAgeMs: null,
       expectedFilters: [],
-      observedFilters: [["period_week", "2026-08-31"]],
+      observedFilters: [
+        ["period_week", "2026-08-31"],
+        ["period_end", "2026-09-06T23:59:59.999999999Z"],
+      ],
     },
     {
       name: "supply.retail.rollup_closing_value_reconciliation",
@@ -154,7 +163,10 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
       observedTimestampColumn: null,
       maxAgeMs: null,
       expectedFilters: [],
-      observedFilters: [["period_week", "2026-08-31"]],
+      observedFilters: [
+        ["period_week", "2026-08-31"],
+        ["period_end", "2026-09-06T23:59:59.999999999Z"],
+      ],
     },
   ],
   expectedGrainGates: [

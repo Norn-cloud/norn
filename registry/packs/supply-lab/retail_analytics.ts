@@ -301,6 +301,7 @@ export const StoreRollupSalesOperands = Norn.transform({
         { name: "unit", expression: "input.unit" },
         { name: "currency", expression: "input.currency" },
         { name: "period_week", expression: "input.period_week" },
+        { name: "period_end", expression: "input.period_end" },
         { name: "implied_sold_qty", expression: "input.avg_weekly_sales_qty * input.sales_weeks" },
         { name: "period_gross_margin", expression: "input.period_gross_margin" },
         { name: "on_hand_qty", expression: "input.on_hand_qty" },

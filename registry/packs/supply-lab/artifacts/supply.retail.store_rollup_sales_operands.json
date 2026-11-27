@@ -44,6 +44,10 @@
               "name": "period_week"
             },
             {
+              "expression": "input.period_end",
+              "name": "period_end"
+            },
+            {
               "expression": "input.avg_weekly_sales_qty * input.sales_weeks",
               "name": "implied_sold_qty"
             },
