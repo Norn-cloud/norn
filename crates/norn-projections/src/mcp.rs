@@ -338,13 +338,15 @@ fn caller_input_schema(action: &ActionRoot, extra_server_filled: &BTreeSet<Strin
 }
 
 /// Whether a ZEN expression references the root identifier `target` (or the
-/// whole-environment root `$`) outside string literals and backtick template
-/// text, and not as a member after `.`.
+/// whole-environment root `$root`) outside string literals and backtick
+/// template text, and not as a member after `.`.
 ///
 /// Mirrors `vendor/zen`'s lexer (`string` and `template_string` have no
 /// backslash escapes, so `'a\' + actor.x` closes the quote and
-/// `` `\${actor.x}` `` opens an interpolation) and `norn_expr::expression_read_paths`
-/// (where `Node::Root` conservatively counts as reading every root variable).
+/// `` `\${actor.x}` `` opens an interpolation; identifier characters include
+/// `$` and `#`, with `$root` parsing to `Node::Root` while bare `$` is
+/// `Node::Identifier("$")`) and `norn_expr::expression_read_paths` (where
+/// `Node::Root` conservatively counts as reading every root variable).
 fn expression_reads_root_ident(expression: &str, target: &str) -> bool {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum TemplateState {
@@ -386,28 +388,28 @@ fn expression_reads_root_ident(expression: &str, target: &str) -> bool {
                 }
             }
             prev_dot = false;
-        } else if ch == '$' {
-            if !prev_dot {
-                return true;
-            }
-            prev_dot = false;
-        } else if ch.is_ascii_alphabetic() || ch == '_' {
+        } else if ch.is_ascii_alphabetic() || matches!(ch, '_' | '$' | '#') {
             let mut ident = String::new();
             ident.push(ch);
             while let Some(&next) = chars.peek() {
-                if next.is_ascii_alphanumeric() || next == '_' {
+                if next.is_ascii_alphanumeric() || matches!(next, '_' | '$' | '#') {
                     ident.push(next);
                     let _consumed = chars.next();
                 } else {
                     break;
                 }
             }
-            if !prev_dot && ident == target {
+            if !prev_dot && (ident == target || ident == "$root") {
                 return true;
             }
             prev_dot = false;
         } else if ch == '.' {
-            prev_dot = true;
+            if chars.peek() == Some(&'.') {
+                let _second_dot = chars.next();
+                prev_dot = false;
+            } else {
+                prev_dot = true;
+            }
         } else if !ch.is_whitespace() {
             prev_dot = false;
         }

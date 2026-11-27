@@ -582,6 +582,7 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
             "owner": {"type": "string"},
             "root_actor": {"type": "string"},
             "root_input": {"type": "string"},
+            "dollar_non_root": {"type": "string"},
             "greeting": {"type": "string"},
             "actor_greeting": {"type": "string"},
             "escaped_template_actor": {"type": "string"},
@@ -593,6 +594,7 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
             "owner",
             "root_actor",
             "root_input",
+            "dollar_non_root",
             "greeting",
             "actor_greeting",
             "escaped_template_actor",
@@ -605,9 +607,11 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
         {"field": "code", "expression": "trim(input.code)", "inputRequired": true},
         {"field": "code", "expression": "input.code ?? 'FALLBACK'", "inputRequired": false},
         {"field": "owner", "expression": "input.owner ?? actor.subjectId", "inputRequired": false},
-        {"field": "root_actor", "expression": "$.actor.subjectId", "inputRequired": false},
-        {"field": "root_input", "expression": "$.input.root_input ?? 'DEFAULT'", "inputRequired": false},
-        {"field": "greeting", "expression": "`Hello actor $5 ${input.greeting}`", "inputRequired": false},
+        {"field": "root_actor", "expression": "$root.actor.subjectId", "inputRequired": false},
+        {"field": "root_input", "expression": "$root.input.root_input ?? 'DEFAULT'", "inputRequired": false},
+        {"field": "dollar_non_root", "expression": "$.input.dollar_non_root ?? 'DEFAULT'", "inputRequired": false},
+        {"field": "dollar_non_root", "expression": "trim(input.dollar_non_root)", "inputRequired": true},
+        {"field": "greeting", "expression": "`Hello actor $root $5 ${input.greeting}`", "inputRequired": false},
         {"field": "actor_greeting", "expression": "`Hello ${actor.subjectId}`", "inputRequired": false},
         {"field": "escaped_template_actor", "expression": "`Hello \\${actor.subjectId}`", "inputRequired": false},
         {"field": "escaped_quote_actor", "expression": "'x\\' + actor.subjectId", "inputRequired": false}
@@ -619,19 +623,23 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
         serde_json::to_value(action_tool_with_server_filled(&action, &extra).expect("projects"))
             .expect("encodes");
     let schema = &tool["inputSchema"];
-    assert_eq!(schema["required"], json!(["code"]));
+    assert_eq!(schema["required"], json!(["code", "dollar_non_root"]));
     assert_eq!(schema["properties"]["code"], json!({"type": "string"}));
+    assert_eq!(
+        schema["properties"]["dollar_non_root"],
+        json!({"type": "string"})
+    );
     assert!(
         schema["properties"].get("owner").is_none(),
         "actor-reading optional derivation is server-filled even when also referencing input"
     );
     assert!(
         schema["properties"].get("root_actor").is_none(),
-        "$.actor optional derivation is server-filled"
+        "$root.actor optional derivation is server-filled"
     );
     assert!(
         schema["properties"].get("root_input").is_none(),
-        "$ whole-environment root fails closed as server-filled, matching kernel actor_derived_fields"
+        "$root whole-environment root fails closed as server-filled, matching kernel actor_derived_fields"
     );
     assert!(
         schema["properties"]["greeting"]["anyOf"].is_array(),

@@ -21,6 +21,7 @@ enum ExprKind {
     TrimInput,
     DefaultInput,
     RootDefaultInput,
+    DollarNonRootInput,
     ActorSubject,
     RootActorSubject,
     InputOrActor,
@@ -33,9 +34,10 @@ impl ExprKind {
         match self {
             Self::TrimInput => format!("trim(input.{field})"),
             Self::DefaultInput => format!("input.{field} ?? 'fallback'"),
-            Self::RootDefaultInput => format!("$.input.{field} ?? 'root-fallback'"),
+            Self::RootDefaultInput => format!("$root.input.{field} ?? 'root-fallback'"),
+            Self::DollarNonRootInput => format!("$.input.{field} ?? 'dollar-fallback'"),
             Self::ActorSubject => "actor.subjectId".to_owned(),
-            Self::RootActorSubject => "$.actor.subjectId".to_owned(),
+            Self::RootActorSubject => "$root.actor.subjectId".to_owned(),
             Self::InputOrActor => format!("input.{field} ?? actor.subjectId"),
             Self::Constant => "'fixed'".to_owned(),
             Self::Malformed => "1 +".to_owned(),
@@ -165,6 +167,7 @@ fn expr_kind_strategy() -> impl Strategy<Value = ExprKind> {
         Just(ExprKind::TrimInput),
         Just(ExprKind::DefaultInput),
         Just(ExprKind::RootDefaultInput),
+        Just(ExprKind::DollarNonRootInput),
         Just(ExprKind::ActorSubject),
         Just(ExprKind::RootActorSubject),
         Just(ExprKind::InputOrActor),
@@ -277,19 +280,17 @@ fn schema_keys(schema: &JsonObject) -> (BTreeSet<String>, BTreeSet<String>) {
     let props = schema
         .get("properties")
         .and_then(JsonValue::as_object)
-        .map(|map| map.keys().cloned().collect())
-        .unwrap_or_default();
+        .map_or_else(BTreeSet::new, |map| map.keys().cloned().collect());
     let required = schema
         .get("required")
         .and_then(JsonValue::as_array)
-        .map(|items| {
+        .map_or_else(BTreeSet::new, |items| {
             items
                 .iter()
                 .filter_map(JsonValue::as_string)
                 .map(str::to_owned)
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     (props, required)
 }
 
@@ -361,12 +362,13 @@ fn check_preparation_parity(
     projected_required: &BTreeSet<String>,
     decimal_shape: DecimalShape,
 ) -> Result<(), TestCaseError> {
-    // `$` root expressions evaluate to null in plain ZEN and exist here to test
-    // fail-closed actor-derivation detection in parts 2 and 3.
+    // `$root` is unsupported by admitted evaluation and `$` is an undeclared
+    // context identifier in standard ZEN; both exist here to test fail-closed
+    // actor-derivation and non-root `$` parity in parts 2, 3, and 4.
     let has_root_expr = steps.iter().any(|(_, kind, _)| {
         matches!(
             kind,
-            ExprKind::RootDefaultInput | ExprKind::RootActorSubject
+            ExprKind::RootDefaultInput | ExprKind::DollarNonRootInput | ExprKind::RootActorSubject
         )
     });
     if has_root_expr {
