@@ -1620,39 +1620,6 @@ pub struct QuantityBatch<T>(
     /// Intents or their corresponding results in declared order.
     pub Vec<T>,
 );
-impl<T> std::ops::Deref for QuantityBatch<T> {
-    type Target = [T];
-    fn deref(&self) -> &[T] {
-        &self.0
-    }
-}
-impl<T> From<T> for QuantityBatch<T> {
-    fn from(value: T) -> Self {
-        Self(vec![value])
-    }
-}
-impl<T: Serialize> Serialize for QuantityBatch<T> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self.0.as_slice() {
-            [one] => one.serialize(serializer),
-            many => many.serialize(serializer),
-        }
-    }
-}
-impl<'de, T: Deserialize<'de>> Deserialize<'de> for QuantityBatch<T> {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Shape<T> {
-            One(T),
-            Many(Vec<T>),
-        }
-        Ok(Self(match Shape::deserialize(deserializer)? {
-            Shape::One(one) => vec![one],
-            Shape::Many(many) => many,
-        }))
-    }
-}
 
 /// The hashed body of a receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
