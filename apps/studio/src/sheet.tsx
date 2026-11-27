@@ -115,7 +115,7 @@ function LifecycleSpecimen({ answers, ...options }: Omit<LifecycleViewOptions, "
     let current = 0
     view.options = {
       document: lifecycleViewDocument as unknown as LifecycleViewDocument,
-      lifecycle: ORDER_LIFECYCLE, title: (options.locale ?? SPECIMEN_LOCALE) === "ar" ? "أمر شراء" : "Purchase order", ...options,
+      lifecycle: ORDER_LIFECYCLE, locale: SPECIMEN_LOCALE, title: (options.locale ?? SPECIMEN_LOCALE) === "ar" ? "أمر شراء" : "Purchase order", ...options,
       // The cell answers the read with the current answer; a later answer arrives on the socket a
       // moment after, as a commit would publish it, and the view reads again.
       read: async () => answers[current] ?? { status: 503, body: undefined },
