@@ -153,7 +153,7 @@ const sideIsland = "sticky top-[8px] flex h-[calc(100svh-16px)] shrink-0 flex-co
 function SidebarRail({ className, ...props }: React.ComponentProps<"div">) {
   const { isMobile } = useSidebar()
   if (isMobile) return null
-  return <div data-slot="sidebar-rail" data-island="nav" className={cn(sideIsland, "w-(--rail-width) items-center", className)} {...props} />
+  return <div data-slot="sidebar-rail" data-shell-island="nav" className={cn(sideIsland, "w-(--rail-width) items-center", className)} {...props} />
 }
 
 /**
@@ -207,7 +207,7 @@ function Sidebar({ className, children, ...props }: React.ComponentProps<"div">)
     <div
       id={SIDEBAR_ID}
       data-slot="sidebar"
-      data-island="nav"
+      data-shell-island="nav"
       data-state={state}
       inert={collapsed}
       aria-hidden={collapsed || undefined}
@@ -289,7 +289,7 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
       data-slot="sidebar-inset"
-      data-island="main"
+      data-shell-island="main"
       className={cn("relative ms-[8px] flex min-h-[calc(100svh-16px)] w-full min-w-0 flex-1 flex-col max-sm:ms-0 max-sm:min-h-svh max-sm:rounded-none max-sm:border-0 max-sm:shadow-none", className)}
       {...props}
     />
