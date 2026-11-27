@@ -637,22 +637,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 }
 
-pub(crate) fn record_source_evidence_in_tx<E: SqlEngine>(
-    conn: &E,
-    observation_id: &str,
-    connection_id: &str,
-) -> Result<(), CellError> {
-    let table = crate::source_cursor::SOURCE_EVIDENCE;
-    conn.execute(
-        &format!(
-            "INSERT OR IGNORE INTO \"{table}\" \
-             (\"observation_id\", \"connection_id\", \"captured_commit_seq\") \
-             VALUES (?1, ?2, (SELECT \"commit_seq\" FROM \"_norn_clock\" WHERE \"id\" = 1))"
-        ),
-        crate::engine::params![observation_id, connection_id],
-    )
-}
-
 #[derive(serde::Serialize)]
 #[serde(untagged)]
 enum RawInputDigest<'a> {
@@ -672,18 +656,31 @@ fn raw_input_digest(value: &RuntimeValue) -> RawInputDigest<'_> {
     }
 }
 
-fn raw_input_matches(retained: &RuntimeValue, delivered: &RuntimeValue) -> bool {
+fn raw_input_matches(
+    retained: &RuntimeValue,
+    delivered: &RuntimeValue,
+    skip_id_keys: bool,
+) -> bool {
+    let ignored = |k: &str| {
+        k == "extracted_at" || (skip_id_keys && matches!(k, "source" | "source_id" | "event_id"))
+    };
     match (retained, delivered) {
         (RuntimeValue::Object(a), RuntimeValue::Object(b)) => {
             a.iter()
-                .filter(|(k, _)| k.as_str() != "extracted_at")
+                .filter(|(k, _)| !ignored(k.as_str()))
                 .all(|(k, v)| b.get(k) == Some(v))
                 && b.keys()
-                    .filter(|k| k.as_str() != "extracted_at")
+                    .filter(|k| !ignored(k.as_str()))
                     .all(|k| a.contains_key(k))
         }
         _ => retained == delivered,
     }
+}
+
+fn raw_str_bytes(raw: &RuntimeValue, key: &str) -> Option<Vec<u8>> {
+    raw.get(key)
+        .and_then(RuntimeValue::as_str)
+        .map(|s| s.as_bytes().to_vec())
 }
 
 #[derive(serde::Serialize)]
@@ -708,6 +705,7 @@ struct SourceRowDigestV3<'a> {
     source: &'a str,
     source_id: &'a str,
     mapping_version: &'a str,
+    identity_bytes: [Option<Vec<u8>>; 3],
     input: RawInputDigest<'a>,
 }
 
@@ -723,7 +721,9 @@ pub(crate) fn source_page_digest_v3(
         mapping: Option<&'a str>,
         input_dataset: Option<&'a str>,
         connector_instance: Option<&'a str>,
+        connector_instance_bytes: Option<Vec<u8>>,
         partition: Option<&'a str>,
+        partition_bytes: Option<Vec<u8>>,
         rows: Vec<SourceRowDigestV3<'a>>,
         expected_previous_cursor: Option<&'a str>,
         next_cursor: Option<&'a str>,
@@ -735,6 +735,11 @@ pub(crate) fn source_page_digest_v3(
             source: raw.provenance.source.as_str(),
             source_id: raw.provenance.source_id.as_str(),
             mapping_version: raw.provenance.mapping_version.as_str(),
+            identity_bytes: [
+                raw_str_bytes(&raw.input, "source"),
+                raw_str_bytes(&raw.input, "source_id"),
+                raw_str_bytes(&raw.input, "event_id"),
+            ],
             input: raw_input_digest(&raw.input),
         })
         .collect();
@@ -744,7 +749,9 @@ pub(crate) fn source_page_digest_v3(
         mapping: input.map(|i| i.mapping.as_str()),
         input_dataset: input.map(|i| i.dataset.as_str()),
         connector_instance: input.map(|i| i.connector_instance.as_str()),
+        connector_instance_bytes: input.map(|i| i.connector_instance.as_bytes().to_vec()),
         partition: input.map(|i| i.partition.as_str()),
+        partition_bytes: input.map(|i| i.partition.as_bytes().to_vec()),
         rows,
         expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
         next_cursor: advance.next_cursor.as_deref(),
@@ -804,6 +811,45 @@ pub(crate) struct LegacyReplayCheck<'a> {
     pub(crate) delivered: Option<&'a [Observed<RuntimeValue>]>,
 }
 
+fn identity_matches(
+    bundle: &MappingBundle,
+    orig_id: Option<&[Vec<u8>; 5]>,
+    input: Option<&crate::mapping_bundle::MappingInput>,
+    delivered: Option<&Observed<RuntimeValue>>,
+) -> bool {
+    if let Some(inp) = input {
+        if bundle.input.dataset != inp.dataset {
+            return false;
+        }
+        let ok = match orig_id {
+            Some(orig) => {
+                inp.connector_instance.as_bytes() == orig[0].as_slice()
+                    && inp.partition.as_bytes() == orig[1].as_slice()
+            }
+            None => {
+                bundle.input.connector_instance == inp.connector_instance
+                    && bundle.input.partition == inp.partition
+            }
+        };
+        if !ok {
+            return false;
+        }
+    }
+    if let Some(raw) = delivered {
+        if let Some(orig) = orig_id
+            && (raw_str_bytes(&raw.input, "source").as_deref() != Some(orig[2].as_slice())
+                || raw_str_bytes(&raw.input, "source_id").as_deref() != Some(orig[3].as_slice())
+                || raw_str_bytes(&raw.input, "event_id").as_deref() != Some(orig[4].as_slice()))
+        {
+            return false;
+        }
+        if !raw_input_matches(&bundle.raw, &raw.input, orig_id.is_some()) {
+            return false;
+        }
+    }
+    true
+}
+
 pub(crate) fn legacy_source_replay_allowed<E: SqlEngine>(
     conn: &E,
     records: &[String],
@@ -822,26 +868,21 @@ pub(crate) fn legacy_source_replay_allowed<E: SqlEngine>(
     let inbox = crate::system::INBOX;
     let mut saw_evidence = false;
     for (idx, id) in records.iter().enumerate() {
-        let encoded: Option<String> = conn.query_optional(
+        let Some(encoded) = conn.query_optional(
             &format!("SELECT \"observed\" FROM \"{inbox}\" WHERE \"observation_id\" = ?1"),
             crate::engine::params![id.as_str()],
-            |row| row.get(0),
-        )?;
-        let Some(encoded) = encoded else {
+            |row| row.get::<String>(0),
+        )?
+        else {
             return Ok(false);
         };
-        let Some(bundle) = crate::mapping_conflict::decode_evidence_bundle(id, &encoded) else {
+        let Some((bundle, orig_id)) =
+            crate::mapping_conflict::decode_evidence_with_identity(id, &encoded)
+        else {
             return Ok(false);
         };
         saw_evidence = true;
         if mapping.is_some_and(|m| bundle.input.mapping != m) {
-            return Ok(false);
-        }
-        if let Some(inp) = check.input
-            && (bundle.input.dataset != inp.dataset
-                || bundle.input.connector_instance != inp.connector_instance
-                || bundle.input.partition != inp.partition)
-        {
             return Ok(false);
         }
         if let Some(pin) = check.active_binding
@@ -852,9 +893,8 @@ pub(crate) fn legacy_source_replay_allowed<E: SqlEngine>(
         {
             return Ok(false);
         }
-        if let Some(raw) = check.delivered.and_then(|rows| rows.get(idx))
-            && !raw_input_matches(&bundle.raw, &raw.input)
-        {
+        let delivered = check.delivered.and_then(|rows| rows.get(idx));
+        if !identity_matches(&bundle, orig_id.as_ref(), check.input, delivered) {
             return Ok(false);
         }
     }

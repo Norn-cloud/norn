@@ -764,7 +764,7 @@ impl<E: SqlEngine> CellStore<E> {
         self.write_tx(|| {
             let (id, new) = self.capture_mapping_bundle(raw, input)?;
             if new {
-                crate::mapping_process::record_source_evidence_in_tx(&self.conn, &id, "")?;
+                crate::source_cursor::record_source_evidence_in_tx(&self.conn, &id, "", true)?;
             }
             Ok((id, new))
         })
@@ -791,7 +791,7 @@ impl<E: SqlEngine> CellStore<E> {
         self.write_tx(|| {
             let inserted = crate::store::inject_observation(&self.conn, &id, &encoded)?;
             if inserted {
-                crate::mapping_process::record_source_evidence_in_tx(&self.conn, &id, "")?;
+                crate::source_cursor::record_source_evidence_in_tx(&self.conn, &id, "", true)?;
             }
             Ok(())
         })?;

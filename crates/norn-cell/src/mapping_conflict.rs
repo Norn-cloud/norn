@@ -723,7 +723,15 @@ fn evidence_matches_scope<E: SqlEngine>(
         let cid: String = row.get(0)?;
         let cap_seq: i64 = row.get(1)?;
         let conn_ok = connection_id.is_none_or(|target| cid == target || cid.is_empty());
-        let frontier_ok = at.is_none_or(|(frontier, _, _)| cap_seq < frontier);
+        let frontier_ok = if cap_seq < 0 {
+            match at {
+                Some((_, _, Some(max_pos))) => position <= max_pos,
+                Some((_, as_of_ms, None)) => recorded_at_le(bundle, as_of_ms),
+                None => true,
+            }
+        } else {
+            at.is_none_or(|(frontier, _, _)| cap_seq < frontier)
+        };
         if conn_ok && frontier_ok {
             return Ok(true);
         }
@@ -735,21 +743,28 @@ fn landed_matches_connection<E: SqlEngine>(
     conn: &E,
     observation_id: &str,
     connection_id: Option<&str>,
+    frontier: Option<i64>,
 ) -> Result<bool, CellError> {
     let Some(target) = connection_id else {
         return Ok(true);
     };
     let table = crate::source_cursor::SOURCE_EVIDENCE;
     let rows = conn.query(
-        &format!("SELECT \"connection_id\" FROM \"{table}\" WHERE \"observation_id\" = ?1"),
+        &format!(
+            "SELECT \"connection_id\", \"captured_commit_seq\" FROM \"{table}\" \
+             WHERE \"observation_id\" = ?1"
+        ),
         params![observation_id],
     )?;
     if rows.is_empty() {
         return Ok(true);
     }
     for values in rows {
-        let cid: String = crate::engine::SqlRow(values).get(0)?;
-        if cid == target || cid.is_empty() {
+        let row = crate::engine::SqlRow(values);
+        let cid: String = row.get(0)?;
+        let cap_seq: i64 = row.get(1)?;
+        let frontier_ok = cap_seq < 0 || frontier.is_none_or(|f| cap_seq < f);
+        if (cid == target || cid.is_empty()) && frontier_ok {
             return Ok(true);
         }
     }
@@ -761,21 +776,30 @@ fn recorded_at_le(bundle: &MappingBundle, as_of_ms: u64) -> bool {
         .is_none_or(|ts| ts <= as_of_ms)
 }
 
-pub(crate) fn decode_evidence_bundle(id: &str, encoded: &str) -> Option<MappingBundle> {
+pub(crate) fn decode_evidence_with_identity(
+    id: &str,
+    encoded: &str,
+) -> Option<(MappingBundle, Option<[Vec<u8>; 5]>)> {
     let observed = serde_json::from_str::<Observed<RuntimeValue>>(encoded).ok()?;
     if id.starts_with("mapping-bundle:") {
-        norn_ir::runtime::decode::<MappingBundle>(&observed.input).ok()
+        norn_ir::runtime::decode::<MappingBundle>(&observed.input)
+            .ok()
+            .map(|b| (b, None))
     } else if id.starts_with("mapping-conflict:") {
         norn_ir::runtime::decode::<MappingConflict>(&observed.input)
             .ok()
-            .map(|c| c.incoming)
+            .map(|c| (c.incoming, None))
     } else if id.starts_with("mapping-identity:") {
         norn_ir::runtime::decode::<crate::mapping_identity::IdentityEvidence>(&observed.input)
             .ok()
-            .map(|i| i.bundle)
+            .map(|i| (i.bundle, Some(i.identity)))
     } else {
         None
     }
+}
+
+fn decode_evidence_bundle(id: &str, encoded: &str) -> Option<MappingBundle> {
+    decode_evidence_with_identity(id, encoded).map(|(bundle, _)| bundle)
 }
 
 fn bundle_superseded_by_newer<E: SqlEngine>(
@@ -834,7 +858,7 @@ fn bundle_superseded_by_newer<E: SqlEngine>(
         let kind_wire = row.get::<Option<String>>(2).ok().flatten();
         if parse_version_parts(&ver, kind_wire.as_deref())
             .is_some_and(|lv| lv.try_cmp(&q_ver) == Ok(std::cmp::Ordering::Greater))
-            && landed_matches_connection(conn, &obs_id, connection_id)?
+            && landed_matches_connection(conn, &obs_id, connection_id, frontier)?
         {
             return Ok(true);
         }

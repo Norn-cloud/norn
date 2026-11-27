@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct IdentityEvidence {
     pub(crate) bundle: MappingBundle,
     // Numeric bytes survive the inbox text profile without changing the spelling proof.
-    identity: [Vec<u8>; 5],
+    pub(crate) identity: [Vec<u8>; 5],
     pub(crate) finding: DataQualityFinding,
 }
 

@@ -2090,4 +2090,161 @@ mod tests {
         let sum_b = run_one(&mut sources, "erpnext.b", T0.saturating_add(20));
         assert_eq!(sum_b.outcome, "ok", "{sum_b:#?}");
     }
+
+    /// Regression 20a: v3 replay distinguishes non-NFC vs NFC identity bytes,
+    /// while legacy v2 replay admits an unchanged non-NFC `mapping-identity:`
+    /// retry and rejects a different NFC spelling.
+    #[test]
+    fn unicode_identity_bytes_fenced_in_v3_and_preserved_in_v2_replay() {
+        let artifacts = rest_artifacts(&[]);
+        let db = TempDb::new("unicode-identity-replay");
+        let dataset = "Party".to_owned();
+        let (base_rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
+        let mut nfd_rows = vec![base_rows[0].clone()];
+        nfd_rows[0].1.partition = "Party-e\u{0301}".into();
+        let mut nfc_rows = nfd_rows.clone();
+        nfc_rows[0].1.partition = "Party-\u{00e9}".into();
+        let delivered: Vec<_> = nfd_rows.iter().map(|(raw, _)| raw.clone()).collect();
+        let (advance, orig_records, v2_digest) = {
+            let host = reopen_native_host(&artifacts, db.path());
+            let lease = host
+                .acquire_source_lease("erpnext.rest", "run-nfd", T0, RUN_LEASE_MS)
+                .expect("lease");
+            let advance = CursorAdvanceSpec {
+                connection_id: "erpnext.rest".into(),
+                dataset: dataset.clone(),
+                lease_id: lease.lease_id.clone(),
+                generation: lease.generation,
+                now_ms: T0.saturating_add(1),
+                expected_previous_cursor: None,
+                next_cursor: Some(next_wm.cursor_json().expect("json")),
+                renew_ttl_ms: Some(RUN_LEASE_MS),
+            };
+            let v2_digest =
+                norn_cell::source_cursor::page_digest_v2(&advance, &delivered).expect("v2");
+            let norn_api::host::SourceCapturePlan::Captured(pending) = host
+                .capture_source_page_planned(&nfd_rows, &advance, 10)
+                .expect("capture non-NFC identity")
+            else {
+                panic!("expected capture");
+            };
+            assert!(pending.records[0].starts_with("mapping-identity:"));
+            host.complete_source_pending("erpnext.rest", &dataset, &pending.page_digest)
+                .expect("complete");
+            // V3 must reject NFC spelling against captured NFD spelling.
+            assert!(matches!(
+                host.capture_source_page_planned(&nfc_rows, &advance, 10),
+                Err(SourceCaptureError::CursorConflict(_))
+            ));
+            (advance, pending.records, v2_digest)
+        };
+        {
+            let engine = NativeEngine::open(db.path(), StoreOptions::default()).expect("sqlite");
+            engine
+                .execute(
+                    "UPDATE \"_norn_source_cursor\" SET \"page_digest\" = ?1 \
+                     WHERE \"connection_id\" = ?2 AND \"dataset\" = ?3",
+                    &[
+                        SqlValue::Text(v2_digest.clone()),
+                        SqlValue::Text("erpnext.rest".into()),
+                        SqlValue::Text(dataset),
+                    ],
+                )
+                .expect("rewrite v2");
+        }
+        let reopened = reopen_native_host(&artifacts, db.path());
+        // Legacy v2 exact retry with unchanged NFD spelling must succeed.
+        let norn_api::host::SourceCapturePlan::Captured(replayed) = reopened
+            .capture_source_page_planned(&nfd_rows, &advance, 10)
+            .expect("v2 exact non-NFC retry must succeed")
+        else {
+            panic!("expected replay");
+        };
+        assert_eq!(replayed.page_digest, v2_digest);
+        assert_eq!(replayed.records, orig_records);
+        // Legacy v2 retry with NFC spelling must conflict.
+        assert!(matches!(
+            reopened.capture_source_page_planned(&nfc_rows, &advance, 10),
+            Err(SourceCaptureError::CursorConflict(_))
+        ));
+    }
+
+    /// Regression 20b: if connection A captured a legacy pre-upgrade quarantine
+    /// (no `_norn_source_evidence` row) and sibling connection B redelivers it
+    /// after upgrade, A must retain unresolved quarantine attribution.
+    #[test]
+    fn legacy_quarantine_redelivered_by_sibling_stays_attributed_to_original_connection() {
+        let artifacts = rest_artifacts(&[]);
+        let db = TempDb::new("legacy-quarantine-sibling");
+        let dataset = "Party".to_owned();
+        let (rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
+        let mut bad_row = rows[0].clone();
+        if let RuntimeValue::Object(obj) = &mut bad_row.0.input {
+            if let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload") {
+                payload.insert("custom_norn_ref".into(), RuntimeValue::Null);
+            }
+            let digest = norn_ir::canonical::HashProfile::Norn1
+                .hash_json(serde_json::to_string(&obj["payload"]).expect("json"))
+                .expect("digest");
+            obj.insert("payload_digest".into(), RuntimeValue::String(digest));
+            obj.insert(
+                "event_id".into(),
+                RuntimeValue::String("legacy-q-sibling-1".into()),
+            );
+        }
+        let cursor_json = next_wm.cursor_json().expect("json");
+        {
+            let host = reopen_native_host(&artifacts, db.path());
+            let lease_a = host
+                .acquire_source_lease("erpnext.a", "run-leg-a", T0, RUN_LEASE_MS)
+                .expect("lease a");
+            let adv_a = CursorAdvanceSpec {
+                connection_id: "erpnext.a".into(),
+                dataset: dataset.clone(),
+                lease_id: lease_a.lease_id.clone(),
+                generation: lease_a.generation,
+                now_ms: T0,
+                expected_previous_cursor: None,
+                next_cursor: Some(cursor_json.clone()),
+                renew_ttl_ms: Some(RUN_LEASE_MS),
+            };
+            let out = host
+                .ingest_source_page(std::slice::from_ref(&bad_row), &adv_a)
+                .expect("capture a");
+            assert!(matches!(out[0].outcome, MappingOutcome::Quarantined(_)));
+            host.release_source_lease("erpnext.a", &lease_a.lease_id, lease_a.generation)
+                .expect("release a");
+        }
+        // Simulate pre-upgrade store where `_norn_source_evidence` was empty.
+        {
+            let engine = NativeEngine::open(db.path(), StoreOptions::default()).expect("sqlite");
+            engine
+                .execute("DELETE FROM \"_norn_source_evidence\"", &[])
+                .expect("clear evidence");
+        }
+        let host = reopen_native_host(&artifacts, db.path());
+        let lease_b = host
+            .acquire_source_lease("erpnext.b", "run-leg-b", T0 + 10, RUN_LEASE_MS)
+            .expect("lease b");
+        let adv_b = CursorAdvanceSpec {
+            connection_id: "erpnext.b".into(),
+            dataset: dataset.clone(),
+            lease_id: lease_b.lease_id.clone(),
+            generation: lease_b.generation,
+            now_ms: T0 + 10,
+            expected_previous_cursor: None,
+            next_cursor: Some(cursor_json),
+            renew_ttl_ms: Some(RUN_LEASE_MS),
+        };
+        let out_b = host
+            .ingest_source_page(&[bad_row], &adv_b)
+            .expect("sibling b redelivers legacy row");
+        assert!(matches!(out_b[0].outcome, MappingOutcome::Quarantined(_)));
+        assert!(
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.a"))
+                .expect("a still quarantined")
+                .contains(&dataset),
+            "sibling B's post-upgrade attribution must not hide legacy quarantine from A"
+        );
+    }
 }

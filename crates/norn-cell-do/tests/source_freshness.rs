@@ -1162,4 +1162,175 @@ mod tests {
             "partial",
         );
     }
+
+    fn erpnext_profile() -> PullProfile {
+        let connector =
+            load_artifact("fixtures/packs/erpnext-rest/artifacts/erpnext.rest.connector.json");
+        let payload = serde_json::to_value(connector.payload.to_json_value()).expect("payload");
+        PullProfile::from_connector(&payload)
+            .expect("valid")
+            .expect("profile")
+    }
+
+    fn ingest_party_row(
+        host: &DevHost<NativeEngine>,
+        conn: &str,
+        obs: norn_kernel::Observed<RuntimeValue>,
+        party_name: &str,
+        ver: &str,
+        now_ms: u64,
+    ) -> Vec<norn_api::host::Ingested> {
+        let input = norn_cell::mapping_bundle::MappingInput {
+            mapping: "erpnext.rest.mapping".into(),
+            dataset: "Party".into(),
+            connector_instance: "sandbox".into(),
+            partition: "Party".into(),
+            recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-12T12:00:01Z".into()),
+        };
+        let prev = host
+            .source_cursors(conn)
+            .expect("cur")
+            .get("Party")
+            .map(|c| c.cursor_json.clone());
+        let lease = host
+            .acquire_source_lease(
+                conn,
+                &format!("run-{conn}-{now_ms}"),
+                now_ms,
+                norn_api::sources::RUN_LEASE_MS,
+            )
+            .expect("lease");
+        let adv = norn_cell::source_cursor::CursorAdvanceSpec {
+            connection_id: conn.into(),
+            dataset: "Party".into(),
+            lease_id: lease.lease_id.clone(),
+            generation: lease.generation,
+            now_ms,
+            expected_previous_cursor: prev,
+            next_cursor: Some(json!({"version": ver, "id": party_name}).to_string()),
+            renew_ttl_ms: Some(norn_api::sources::RUN_LEASE_MS),
+        };
+        let out = host
+            .ingest_source_page(&[(obs, input)], &adv)
+            .expect("ingest");
+        host.release_source_lease(conn, &lease.lease_id, lease.generation)
+            .expect("rel");
+        out
+    }
+
+    #[test]
+    fn pinned_trace_unaffected_by_later_correction_replay_from_sibling() {
+        let (host, principals, scope) = open_hosted(&["erpnext"]);
+        let profile = erpnext_profile();
+        let pages = erpnext_pages(None);
+        sync_named_erpnext(&host, &scope, "erpnext.a", T0, pages.clone(), "ok");
+        sync_named_erpnext(&host, &scope, "erpnext.b", T0, pages.clone(), "ok");
+
+        let party_row = pages["Party"].1["data"][0].clone();
+        let party_name = party_row["name"].as_str().unwrap().to_owned();
+        let mut bad_payload = party_row.clone();
+        bad_payload["custom_norn_ref"] = Value::Null;
+        let bad_obs = norn_api::pull::observation(
+            &profile,
+            &norn_api::pull::Row {
+                dataset: "Party".into(),
+                source_id: party_name.clone(),
+                version: "2026-11-12 20:00:00".into(),
+                payload: RuntimeValue::from_json(bad_payload).expect("rv"),
+            },
+            T0 + 100,
+        )
+        .expect("bad obs");
+        let out_q = ingest_party_row(
+            &host,
+            "erpnext.a",
+            bad_obs,
+            &party_name,
+            "2026-11-12 20:00:00",
+            T0 + 100,
+        );
+        assert!(matches!(
+            out_q[0].outcome,
+            norn_cell::MappingOutcome::Quarantined(_)
+        ));
+
+        // Sibling `erpnext.b` lands a strictly newer correction BEFORE A's answer.
+        let corr_obs = norn_api::pull::observation(
+            &profile,
+            &norn_api::pull::Row {
+                dataset: "Party".into(),
+                source_id: party_name.clone(),
+                version: "2099-01-01 00:00:00".into(),
+                payload: RuntimeValue::from_json(party_row).expect("rv"),
+            },
+            T0 + 110,
+        )
+        .expect("corr obs");
+        let out_b = ingest_party_row(
+            &host,
+            "erpnext.b",
+            corr_obs.clone(),
+            &party_name,
+            "2099-01-01 00:00:00",
+            T0 + 110,
+        );
+        assert!(matches!(
+            out_b[0].outcome,
+            norn_cell::MappingOutcome::Landed | norn_cell::MappingOutcome::AlreadyLanded
+        ));
+        sync_named_erpnext(
+            &host,
+            &scope,
+            "erpnext.a",
+            T0 + 120,
+            BTreeMap::new(),
+            "partial",
+        );
+        sync_named_erpnext(&host, &scope, "erpnext.b", T0 + 120, BTreeMap::new(), "ok");
+
+        let derived = DerivedQuestions::new([7; 32], scope.clone()).with_configured_connections(
+            BTreeMap::from([
+                ("erpnext.a".into(), "erpnext.rest.mapping".into()),
+                ("erpnext.b".into(), "erpnext.rest.mapping".into()),
+            ]),
+        );
+        let runtime = derived.questions(&host).expect("runtime");
+        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+        let q = order_line_question(&metric, 60_000);
+        let ans = eval_question(&host, &principals, &derived, &q);
+        assert_eq!(ans["freshness"], "exact", "{ans}");
+        let frontier = ans["knownAsOf"].as_u64().expect("frontier");
+        let now_ms = ans["nowMs"].as_u64().expect("now");
+        let bucket = ans["rows"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
+
+        // AFTER `frontier`, `erpnext.a` redelivers the exact correction row B landed earlier.
+        ingest_party_row(
+            &host,
+            "erpnext.a",
+            corr_obs,
+            &party_name,
+            "2099-01-01 00:00:00",
+            now_ms + 50,
+        );
+
+        let trace = call_http(
+            &host,
+            &principals,
+            &runtime,
+            "POST",
+            "/v1/questions:trace",
+            &json!({
+                "question": q, "lineageRef": ans["lineageRef"], "bucket": bucket,
+                "knownAsOf": frontier, "nowMs": now_ms,
+            })
+            .to_string(),
+        );
+        assert_eq!(trace.status, 200, "{}", trace.body);
+    }
 }

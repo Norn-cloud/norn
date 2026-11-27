@@ -431,6 +431,41 @@ pub(crate) fn check_capture_precondition<E: SqlEngine>(
 }
 
 /// Insert one pending capture entry inside an already-open `write_tx`.
+pub(crate) fn record_source_evidence_in_tx<E: SqlEngine>(
+    conn: &E,
+    observation_id: &str,
+    connection_id: &str,
+    newly_inserted: bool,
+) -> Result<(), CellError> {
+    if !newly_inserted && !connection_id.is_empty() {
+        let has_any = conn.query_optional(
+            &format!("SELECT 1 FROM \"{SOURCE_EVIDENCE}\" WHERE \"observation_id\" = ?1 LIMIT 1"),
+            params![observation_id],
+            |_| Ok(()),
+        )?;
+        if has_any.is_none() {
+            // Preserve legacy pre-upgrade attribution (`-1` selects causal inbox position).
+            conn.execute(
+                &format!(
+                    "INSERT OR IGNORE INTO \"{SOURCE_EVIDENCE}\" \
+                     (\"observation_id\", \"connection_id\", \"captured_commit_seq\") \
+                     VALUES (?1, '', -1)"
+                ),
+                params![observation_id],
+            )?;
+        }
+    }
+    conn.execute(
+        &format!(
+            "INSERT OR IGNORE INTO \"{SOURCE_EVIDENCE}\" \
+             (\"observation_id\", \"connection_id\", \"captured_commit_seq\") \
+             VALUES (?1, ?2, (SELECT \"commit_seq\" FROM \"_norn_clock\" WHERE \"id\" = 1))"
+        ),
+        params![observation_id, connection_id],
+    )
+}
+
+/// Insert one pending capture entry inside an already-open `write_tx`.
 pub(crate) fn insert_pending_in_tx<E: SqlEngine>(
     conn: &E,
     connection_id: &str,

@@ -190,9 +190,9 @@ impl<E: SqlEngine> CellStore<E> {
             let identity = [connector, partition, source, source_id];
             let (id, new) = self.capture_mapping_bundle(raw, input)?;
             if let Some(cid) = connection_id {
-                crate::mapping_process::record_source_evidence_in_tx(&self.conn, &id, cid)?;
+                crate::source_cursor::record_source_evidence_in_tx(&self.conn, &id, cid, new)?;
             } else if new {
-                crate::mapping_process::record_source_evidence_in_tx(&self.conn, &id, "")?;
+                crate::source_cursor::record_source_evidence_in_tx(&self.conn, &id, "", true)?;
             }
             records.push(id.clone());
             if !id.starts_with("mapping-bundle:") {
