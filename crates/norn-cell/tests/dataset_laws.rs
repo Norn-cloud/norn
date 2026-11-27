@@ -1803,8 +1803,9 @@ fn excepted_row_tree_law_handles_over_124k_rows_with_zero_residue() {
         landed.residue_total, 0,
         "125k rows with row-tree unless law must produce zero residue"
     );
+    assert_eq!(landed.load.rows, 125_000);
     assert_eq!(landed.held_by_rules, 50_000);
-    assert_eq!(landed.load.rows, 75_000);
+    assert_eq!(landed.data.as_ref().expect("data").rows, 75_000);
 }
 
 /// Lane A5.1: first-class `RowPredicate::Coalesce` preserves the fallback when
@@ -2254,13 +2255,13 @@ fn civil_date_and_timestamp_ordering_and_guards_match_per_row() {
         writeln!(
             csv_text,
             "{},{},{},{},{},{},{}",
-            row["id"].as_str().unwrap(),
-            row["start_date"].as_str().unwrap(),
-            row["end_date"].as_str().unwrap(),
+            row["id"].as_str().expect("id"),
+            row["start_date"].as_str().expect("start_date"),
+            row["end_date"].as_str().expect("end_date"),
             row["opt_date"].as_str().unwrap_or(""),
-            row["created_at"].as_str().unwrap(),
-            row["updated_at"].as_str().unwrap(),
-            row["note"].as_str().unwrap(),
+            row["created_at"].as_str().expect("created_at"),
+            row["updated_at"].as_str().expect("updated_at"),
+            row["note"].as_str().expect("note"),
         )
         .expect("csv");
     }
@@ -2275,6 +2276,46 @@ fn civil_date_and_timestamp_ordering_and_guards_match_per_row() {
     assert_eq!(bulk.data, row_trusted);
     assert_eq!(bulk.data, BTreeSet::from([1]));
     assert_eq!(bulk.held, BTreeSet::from([2, 3, 4, 5]));
+
+    // Raw timestamp equality (`self.created_at == self.updated_at`) must fall
+    // back to residue because per-row canonicalizes offsets to UTC before ZEN
+    // runs (`2026-01-01T02:00:00+02:00` == `2026-01-01T00:00:00Z`).
+    let (_dir_raw_ts, mut cell_raw_ts) = support::cell(
+        WINDOW_TYPE,
+        &schema_fields,
+        &[("raw_ts_eq", "error", "self.created_at == self.updated_at")],
+    );
+    let raw_ts_checks = cell_raw_ts
+        .store()
+        .dataset_checks(
+            WINDOW_TYPE,
+            &cell_raw_ts
+                .store()
+                .analytics_table(WINDOW_TYPE)
+                .expect("table"),
+        )
+        .expect("checks");
+    assert!(
+        raw_ts_checks[0].predicate.is_none(),
+        "raw Timestamp equality must not lower directly over un-canonicalized text"
+    );
+    let raw_ts_rows = vec![json!({
+        "id": "w-raw-ts", "start_date": "2026-01-01", "end_date": "2026-01-02",
+        "opt_date": "2026-01-01",
+        "created_at": "2026-01-01T02:00:00+02:00",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "note": "offset-raw-eq"
+    })];
+    let raw_ts_csv = "id,start_date,end_date,opt_date,created_at,updated_at,note\n\
+                      w-raw-ts,2026-01-01,2026-01-02,2026-01-01,2026-01-01T02:00:00+02:00,2026-01-01T00:00:00Z,offset-raw-eq\n";
+    let (raw_ts_findings, raw_ts_held, raw_ts_trusted) =
+        per_row_custom(&mut cell_raw_ts, WINDOW_TYPE, &raw_ts_rows);
+    let raw_ts_bulk = set_based_custom(&cell_raw_ts, WINDOW_TYPE, raw_ts_csv);
+    assert_eq!(raw_ts_bulk.residue, 1);
+    assert_eq!(raw_ts_bulk.findings, raw_ts_findings);
+    assert_eq!(raw_ts_bulk.held, raw_ts_held);
+    assert_eq!(raw_ts_bulk.data, raw_ts_trusted);
+    assert_eq!(raw_ts_bulk.data, BTreeSet::from([1]));
 
     // Year-0000 guard test: DuckDB/DataFusion loaders accept 0000-06-15, while
     // ZEN Temporal::date only admits 0001..=9999 -> must fall back to residue!
@@ -2597,4 +2638,144 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
             Ok(())
         })
         .expect("Per-Row == DuckDB == DataFusion across all batches");
+
+    // Sol 6.2 R1 (Medium 5): DECIMAL(38,12) branch widening overflow (`10^26`
+    // coalesced with `0.000000000001` requires `10^38`) must send the row to
+    // residue in BOTH DuckDB and DataFusion and agree with per-row.
+    const BIG_TYPE: &str = "bench.BigDecimalBranch";
+    let big_fields = vec![
+        Field {
+            id: "id",
+            kind: json!({"kind":"text"}),
+            required: true,
+        },
+        Field {
+            id: "large",
+            kind: json!({"kind":"decimal","scale":0,"unit":{"system":"ucum","code":"1"},
+                "additivity":{"kind":"additive"}}),
+            required: true,
+        },
+    ];
+    let (_big_dir, big_cell) = support::cell(
+        BIG_TYPE,
+        &big_fields,
+        &[(
+            "wide_coalesce",
+            "error",
+            "((self.id == 'null' ? null : self.large) ?? 0.000000000001) > 0",
+        )],
+    );
+    let ten_26 = "100000000000000000000000000";
+    let big_csv = format!("id,large\nb-1,{ten_26}\nb-2,5\n");
+    let big_store = big_cell.store();
+    let big_table = big_store.analytics_table(BIG_TYPE).expect("table");
+    let big_checks = big_store
+        .dataset_checks(BIG_TYPE, &big_table)
+        .expect("checks");
+    let big_req_base = LandRequest {
+        load: LoadRequest {
+            tenant: tenant(),
+            table: big_table,
+            load: "land-big".into(),
+            file: FileSource {
+                url: String::new(),
+                uri: "s3://synthetic/uploads/big".into(),
+                sha256: norn_cell::analytics::hex_digest(big_csv.as_bytes()),
+                format: FileFormat::Csv,
+            },
+            headers: BTreeMap::new(),
+        },
+        pins: big_store
+            .dataset_pins(BIG_TYPE, &BTreeMap::new(), "bench.dataset.mapping@test")
+            .expect("pins"),
+        landing: "landing-big".into(),
+        attempt: String::new(),
+        checks: big_checks,
+        residue_page: 7,
+    };
+    let duck_big_dir = tempfile::tempdir().expect("duck big dir");
+    let duck_big = DuckDbEngine::new(DuckDbSettings {
+        root: duck_big_dir.path().to_path_buf(),
+        memory_limit: "256MB".into(),
+        threads: 1,
+    })
+    .expect("duck");
+    let duck_big_landed = duck_big
+        .land(&big_req_base, |mut f| {
+            f.write_all(big_csv.as_bytes()).expect("csv");
+            Ok(())
+        })
+        .expect("duck land");
+    let df_big_dir = tempfile::tempdir().expect("df big dir");
+    let df_big = DataFusionEngine::new(DataFusionSettings {
+        root: df_big_dir.path().to_path_buf(),
+        memory_limit: "256MB".into(),
+        threads: 1,
+    })
+    .expect("df");
+    let df_big_landed = df_big
+        .land(&big_req_base, |mut f| {
+            f.write_all(big_csv.as_bytes()).expect("csv");
+            Ok(())
+        })
+        .expect("df land");
+    assert_eq!(
+        duck_big_landed.residue_total, 1,
+        "DuckDB sends 10^26 * 10^12 widening overflow to residue"
+    );
+    assert_eq!(
+        df_big_landed.residue_total, 1,
+        "DataFusion matches DuckDB's DECIMAL(38, s) storage bound on branch widening"
+    );
+    assert_eq!(duck_big_landed.residue, df_big_landed.residue);
+    assert_eq!(
+        big_store
+            .residue_findings(BIG_TYPE, &big_req_base.load.table, &duck_big_landed.residue)
+            .expect("per-row settles 10^26 cleanly"),
+        Vec::new()
+    );
+}
+
+/// Sol 6.2 R1 (High 4): `RowPlan::fuel` pays for referenced column key bytes
+/// so parenthesized receivers (`(self).<long_key>`) that compile to ZEN's
+/// metered `Fetch` opcode cannot bypass the S2 per-row fuel bound.
+#[test]
+fn row_plan_fuel_accounts_for_metered_property_key_bytes() {
+    let long_key: &'static str = Box::leak(format!("k_{}", "x".repeat(98)).into_boxed_str());
+    let (_dir, cell) = support::cell_with(
+        "bench.LongKey",
+        &[
+            Field {
+                id: "id",
+                kind: json!({"kind":"text"}),
+                required: true,
+            },
+            Field {
+                id: long_key,
+                kind: json!({"kind":"text"}),
+                required: true,
+            },
+        ],
+        &[],
+        &[(
+            "paren_key",
+            &format!("(self).{long_key} == (self).{long_key}"),
+        )],
+    );
+    let table = cell
+        .store()
+        .analytics_table("bench.LongKey")
+        .expect("table");
+    let checks = cell
+        .store()
+        .dataset_checks("bench.LongKey", &table)
+        .expect("checks");
+    assert!(checks[0].predicate.is_some());
+    let key_bytes = u64::try_from(long_key.len()).expect("len");
+    assert!(
+        checks[0].fuel >= norn_cell::analytics::rule_fuel(3) + 2 * key_bytes,
+        "fuel {} must include both column key lengths ({})",
+        checks[0].fuel,
+        2 * key_bytes
+    );
 }

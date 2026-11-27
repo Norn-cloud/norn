@@ -3446,9 +3446,7 @@ fn lower_leaf(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> 
             let guards = match kind {
                 K::Number(scale) => vec![in_range(&sql, scale)?],
                 K::Text => vec![nfc_guard(&sql)],
-                K::Null | K::Bool | K::DateText | K::TimestampText | K::Date | K::Timestamp => {
-                    Vec::new()
-                }
+                K::Null | K::Bool | K::DateText | K::Date | K::Timestamp => Vec::new(),
             };
             LoweredRule { sql, kind, guards }
         }
@@ -3477,10 +3475,7 @@ fn merge_kinds_sql(left: PredicateKind, right: PredicateKind) -> Option<Predicat
     match (left, right) {
         (K::Null, other) | (other, K::Null) => Some(other),
         (K::Number(a), K::Number(b)) => Some(K::Number(a.max(b))),
-        (K::DateText, K::Text)
-        | (K::Text, K::DateText)
-        | (K::TimestampText, K::Text)
-        | (K::Text, K::TimestampText) => Some(K::Text),
+        (K::DateText, K::Text) | (K::Text, K::DateText) => Some(K::Text),
         (a, b) if a == b => Some(a),
         _ => None,
     }
@@ -3880,18 +3875,21 @@ fn data_fuel(node: &RowPredicate, table: &TableSchema) -> String {
 }
 
 /// ZEN's shallow size of `node`'s value, in SQL: a text's UTF-8 bytes
-/// (`octet_length`), else 1.
+/// (`strlen` in `DuckDB`, which counts UTF-8 bytes while `length` counts
+/// Unicode code points), else 1.
 fn value_size(node: &RowPredicate, table: &TableSchema) -> String {
     use RowPredicate as P;
     match node {
         P::Text(text) => text.len().max(1).to_string(),
         P::Column(id)
-            if matches!(
-                node.kind(table),
-                Some(PredicateKind::Text | PredicateKind::DateText | PredicateKind::TimestampText)
-            ) =>
+            if table.columns.iter().find(|c| c.id == *id).is_some_and(|c| {
+                matches!(
+                    c.kind,
+                    ColumnKind::Text | ColumnKind::Date | ColumnKind::Timestamp
+                )
+            }) =>
         {
-            format!("coalesce(octet_length({}), 0)", ident(id))
+            format!("coalesce(strlen({}), 0)", ident(id))
         }
         P::Coalesce(a, b) | P::Conditional(_, a, b) => format!(
             "greatest({}, {})",
@@ -4222,7 +4220,7 @@ fn residue_candidates_sql(table: &TableSchema) -> String {
             ColumnKind::Text | ColumnKind::Opaque | ColumnKind::Timestamp | ColumnKind::Date
         ) {
             value_bytes.push(format!(
-                "coalesce(octet_length(CAST(d.{} AS VARCHAR)), 0)",
+                "coalesce(strlen(CAST(d.{} AS VARCHAR)), 0)",
                 ident(&column.id)
             ));
         }

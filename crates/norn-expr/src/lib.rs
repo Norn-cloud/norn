@@ -103,5 +103,5 @@ pub use reads::{
     ExpressionReads, expression_element_paths, expression_read_paths, expression_reads,
     unary_test_reads,
 };
-pub use row_tree::{RowArithmetic, RowComparison, RowExpr, row_expression};
+pub use row_tree::{RowArithmetic, RowComparison, RowExpr, law_row_expression, row_expression};
 pub use value::{Number, Value};

@@ -78,7 +78,6 @@ impl Typed<'_> {
                 | PredicateKind::Bool
                 | PredicateKind::Text
                 | PredicateKind::DateText
-                | PredicateKind::TimestampText
                 | PredicateKind::Date
                 | PredicateKind::Timestamp,
             )
@@ -249,10 +248,14 @@ impl Typed<'_> {
         }
     }
 
-    /// A conditional or coalesce branch at the node's own scale.
+    /// A conditional or coalesce branch at the node's own scale, bounded by
+    /// `DECIMAL(38, scale)` storage (`|m| < 10^38`) to match DuckDB's branch
+    /// widening domain exactly.
     fn widen(&self, value: Val, node: &RowPredicate) -> Option<Val> {
         match (value, self.scale_of(node)) {
-            (Val::Num(value), Some(scale)) => Some(Val::Num(value.rescale(scale)?)),
+            (Val::Num(value), Some(scale)) => {
+                Some(Val::Num(value.rescale(scale).filter(Dec::in_storage)?))
+            }
             (value, _) => Some(value),
         }
     }
@@ -317,7 +320,6 @@ impl Typed<'_> {
                     PredicateKind::Null
                     | PredicateKind::Bool
                     | PredicateKind::DateText
-                    | PredicateKind::TimestampText
                     | PredicateKind::Date
                     | PredicateKind::Timestamp,
                 )
@@ -371,10 +373,12 @@ fn value_size(node: &RowPredicate, table: &TableSchema, cells: &[Cell]) -> u128 
     match node {
         P::Text(text) => u128::try_from(text.len().max(1)).unwrap_or(u128::MAX),
         P::Column(id)
-            if matches!(
-                node.kind(table),
-                Some(PredicateKind::Text | PredicateKind::DateText | PredicateKind::TimestampText)
-            ) =>
+            if table.columns.iter().find(|c| c.id == *id).is_some_and(|c| {
+                matches!(
+                    c.kind,
+                    ColumnKind::Text | ColumnKind::Date | ColumnKind::Timestamp
+                )
+            }) =>
         {
             table
                 .columns
@@ -464,7 +468,6 @@ fn type_check<'c>(check: &'c RuleCheck, table: &TableSchema) -> Outcome<Check<'c
             | PredicateKind::Text
             | PredicateKind::Number(_)
             | PredicateKind::DateText
-            | PredicateKind::TimestampText
             | PredicateKind::Date
             | PredicateKind::Timestamp,
         ) => Err(refusal(LAW, format!("a rule whose {what} is not Boolean"))),
@@ -581,7 +584,9 @@ fn decide(check: &Check<'_>, table: &TableSchema, cells: &[Cell], over: bool) ->
             guarded &= typed.guards(condition, cells);
             match typed.eval(condition, cells)? {
                 Val::Bool(flag) => Some(flag),
-                Val::Null | Val::Text(_) | Val::Num(_) => return None,
+                Val::Null | Val::Text(_) | Val::Num(_) | Val::Date(_) | Val::Timestamp(_) => {
+                    return None;
+                }
             }
         }
         None => None,

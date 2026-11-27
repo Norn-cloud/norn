@@ -34,10 +34,10 @@ pub(crate) fn zen_timestamp_key(text: &str) -> Option<(i64, u32)> {
 
 /// Order-isomorphic total nanoseconds since the Unix epoch for `t in i64, 0 <= n < 10^9`.
 #[must_use]
-pub(crate) const fn instant_nanos(secs: i64, nanos: u32) -> i128 {
-    (secs as i128)
+pub(crate) fn instant_nanos(secs: i64, nanos: u32) -> i128 {
+    i128::from(secs)
         .saturating_mul(1_000_000_000)
-        .saturating_add(nanos as i128)
+        .saturating_add(i128::from(nanos))
 }
 
 /// Merge two branch kinds (of `Conditional` or `Coalesce`).
@@ -46,10 +46,7 @@ fn merge_kinds(left: PredicateKind, right: PredicateKind) -> Option<PredicateKin
     match (left, right) {
         (K::Null, other) | (other, K::Null) => Some(other),
         (K::Number(a), K::Number(b)) => Some(K::Number(a.max(b))),
-        (K::DateText, K::Text)
-        | (K::Text, K::DateText)
-        | (K::TimestampText, K::Text)
-        | (K::Text, K::TimestampText) => Some(K::Text),
+        (K::DateText, K::Text) | (K::Text, K::DateText) => Some(K::Text),
         (a, b) if a == b => Some(a),
         _ => None,
     }
@@ -176,21 +173,16 @@ impl RowPredicate {
                 ColumnKind::Text => K::Text,
                 ColumnKind::Boolean => K::Bool,
                 ColumnKind::Date => K::DateText,
-                ColumnKind::Timestamp => K::TimestampText,
-                ColumnKind::Opaque => return None,
+                // Raw timestamp spellings are canonicalized to UTC per-row before ZEN runs;
+                // only `timestamp(...)` compares UTC instants directly in SQL.
+                ColumnKind::Timestamp | ColumnKind::Opaque => return None,
             },
             Self::Not(inner) => {
                 (inner.kind_in(table, false, next)? == K::Bool).then_some(K::Bool)?
             }
             Self::Negate(inner) => match inner.kind_in(table, false, next)? {
                 K::Number(scale) => K::Number(scale),
-                K::Null
-                | K::Bool
-                | K::Text
-                | K::DateText
-                | K::TimestampText
-                | K::Date
-                | K::Timestamp => return None,
+                K::Null | K::Bool | K::Text | K::DateText | K::Date | K::Timestamp => return None,
             },
             Self::Add(a, b) | Self::Subtract(a, b) => {
                 let (x, y) = number(a, b)?;
@@ -207,9 +199,7 @@ impl RowPredicate {
                     | (K::Null, _)
                     | (_, K::Null)
                     | (K::DateText, K::Text)
-                    | (K::Text, K::DateText)
-                    | (K::TimestampText, K::Text)
-                    | (K::Text, K::TimestampText) => true,
+                    | (K::Text, K::DateText) => true,
                     (x, y) => x == y,
                 };
                 same.then_some(K::Bool)?
@@ -256,7 +246,6 @@ impl RowPredicate {
             | K::Text
             | K::Number(_)
             | K::DateText
-            | K::TimestampText
             | K::Date
             | K::Timestamp) => Some(kind),
         }

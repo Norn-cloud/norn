@@ -61,15 +61,38 @@ fn catalog(model: &Model) -> TypeCatalog<'_> {
 }
 
 /// Lower one admitted ZEN source over `self` and count its row-tree nodes
-/// (MANIFEST-LAWS-1 S2) in a single parse.
-fn lower_and_count(source: &str, table: &TableSchema) -> (Option<RowPredicate>, u64) {
+/// plus referenced column key bytes (MANIFEST-LAWS-1 S2) in a single parse.
+fn lower_and_count(source: &str, table: &TableSchema) -> (Option<RowPredicate>, u64, u64) {
     let Some(tree) = norn_kernel::governing_laws::law_row_tree(source) else {
-        return (None, 0);
+        return (None, 0, 0);
     };
     let nodes = tree_nodes(&tree);
+    let key_bytes = column_key_bytes(&tree);
     let predicate = lower(&tree)
         .filter(|lowered| lowered.kind(table) == Some(crate::analytics::PredicateKind::Bool));
-    (predicate, nodes)
+    (predicate, nodes, key_bytes)
+}
+
+/// Sum UTF-8 byte lengths of every `Column(name)` read in `tree`, bounding
+/// ZEN's `Fetch` key-byte charge when a member receiver is parenthesized
+/// (e.g. `(self).long_property_name`).
+fn column_key_bytes(tree: &RowExpr) -> u64 {
+    match tree {
+        RowExpr::Null | RowExpr::Bool(_) | RowExpr::Number(_) | RowExpr::Text(_) => 0,
+        RowExpr::Column(name) => u64::try_from(name.len()).unwrap_or(u64::MAX),
+        RowExpr::Not(inner)
+        | RowExpr::Negate(inner)
+        | RowExpr::CalendarDate(inner)
+        | RowExpr::Timestamp(inner) => column_key_bytes(inner),
+        RowExpr::Arithmetic(_, a, b)
+        | RowExpr::Compare(_, a, b)
+        | RowExpr::And(a, b)
+        | RowExpr::Or(a, b)
+        | RowExpr::Coalesce(a, b) => column_key_bytes(a).saturating_add(column_key_bytes(b)),
+        RowExpr::Conditional(c, a, b) => column_key_bytes(c)
+            .saturating_add(column_key_bytes(a))
+            .saturating_add(column_key_bytes(b)),
+    }
 }
 
 fn tree_nodes(tree: &RowExpr) -> u64 {
@@ -234,11 +257,11 @@ fn fold_exception_tree(
 /// Plan one object/interface invariant over `table`.
 #[must_use]
 pub fn plan_invariant(source: &str, table: &TableSchema) -> RowPlan {
-    let (predicate, nodes) = lower_and_count(source, table);
+    let (predicate, nodes, key_bytes) = lower_and_count(source, table);
     RowPlan {
         condition: None,
         predicate,
-        fuel: rule_fuel(nodes),
+        fuel: rule_fuel(nodes).saturating_add(key_bytes),
     }
 }
 
@@ -256,28 +279,31 @@ fn plan_law(
     invariants: &[(norn_ir::InvariantOwner, &norn_ir::Invariant)],
     table: &TableSchema,
 ) -> Result<RowPlan, CellError> {
-    let (condition, predicate, nodes, extra_fuel) = match &law.response {
+    let (condition, predicate, nodes, key_bytes, extra_fuel) = match &law.response {
         LawResponse::Predicate { expression } => {
-            let (when_cond, cond_nodes) = match &law.condition {
+            let (when_cond, cond_nodes, cond_keys) = match &law.condition {
                 Some(condition) => {
-                    let (lowered, nodes) = lower_and_count(condition.as_str(), table);
-                    (lowered.map(Some), nodes)
+                    let (lowered, nodes, keys) = lower_and_count(condition.as_str(), table);
+                    (lowered.map(Some), nodes, keys)
                 }
-                None => (Some(None), 0),
+                None => (Some(None), 0, 0),
             };
-            let (expr_pred, expr_nodes) = lower_and_count(expression.as_str(), table);
+            let (expr_pred, expr_nodes, expr_keys) = lower_and_count(expression.as_str(), table);
             let mut nodes = expr_nodes.saturating_add(cond_nodes);
+            let mut key_bytes = expr_keys.saturating_add(cond_keys);
             if law.exceptions.is_empty() {
                 match when_cond {
-                    Some(condition) => (condition, expr_pred, nodes, 0),
-                    None => (None, None, nodes, 0),
+                    Some(condition) => (condition, expr_pred, nodes, key_bytes, 0),
+                    None => (None, None, nodes, key_bytes, 0),
                 }
             } else {
                 let mut ex_preds = Vec::with_capacity(law.exceptions.len());
                 let mut all_exceptions_lowered = true;
                 for exception in &law.exceptions {
-                    let (lowered, ex_nodes) = lower_and_count(exception.condition.as_str(), table);
+                    let (lowered, ex_nodes, ex_keys) =
+                        lower_and_count(exception.condition.as_str(), table);
                     nodes = nodes.saturating_add(ex_nodes);
+                    key_bytes = key_bytes.saturating_add(ex_keys);
                     match lowered {
                         Some(pred) => ex_preds.push(pred),
                         None => all_exceptions_lowered = false,
@@ -304,8 +330,8 @@ fn plan_law(
                     None
                 };
                 match folded {
-                    Some((condition, predicate)) => (condition, predicate, nodes, extra),
-                    None => (None, None, nodes, extra),
+                    Some((condition, predicate)) => (condition, predicate, nodes, key_bytes, extra),
+                    None => (None, None, nodes, key_bytes, extra),
                 }
             }
         }
@@ -314,9 +340,9 @@ fn plan_law(
                 .iter()
                 .find(|(_, invariant)| invariant.id.as_str() == invariant_id)
                 .map(|(_, invariant)| invariant.expression.as_str());
-            let (predicate, nodes) =
-                source.map_or((None, 0), |source| lower_and_count(source, table));
-            (None, predicate, nodes, 0)
+            let (predicate, nodes, key_bytes) =
+                source.map_or((None, 0, 0), |source| lower_and_count(source, table));
+            (None, predicate, nodes, key_bytes, 0)
         }
         LawResponse::Action { .. }
         | LawResponse::Transition { .. }
@@ -327,7 +353,9 @@ fn plan_law(
     Ok(RowPlan {
         condition,
         predicate,
-        fuel: rule_fuel(nodes).saturating_add(extra_fuel),
+        fuel: rule_fuel(nodes)
+            .saturating_add(key_bytes)
+            .saturating_add(extra_fuel),
     })
 }
 

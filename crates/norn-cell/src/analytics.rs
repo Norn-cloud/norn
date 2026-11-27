@@ -714,8 +714,6 @@ pub enum PredicateKind {
     Number(u32),
     /// A raw wire `YYYY-MM-DD` date column (compares as string; pass to `date(...)` to order).
     DateText,
-    /// A raw wire RFC 3339 timestamp column (compares as string; pass to `timestamp(...)` to order).
-    TimestampText,
     /// A parsed civil calendar date (`date(...)`).
     Date,
     /// A parsed UTC instant (`timestamp(...)`).
