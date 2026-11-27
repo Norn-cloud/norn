@@ -54,6 +54,17 @@ export interface ActionCreateLink {
 
 export type WriteChange = "created" | "modified" | "deleted"
 
+/** Owner-scoped complete desired set for one source child table (`ActionCommandChildMerge`). */
+export interface ActionCommandChildMerge {
+  readonly field: string
+  readonly ownershipField: string
+  /** ZEN Expression yielding the owner marker written to each desired row. */
+  readonly ownershipValue: string
+  readonly rowKeyField: string
+  /** ZEN Expression yielding the complete desired row array. */
+  readonly rows: string
+}
+
 /** A connector command the action enqueues (ERPNext write-back through perform, #3028). */
 export interface ActionCommand {
   readonly connector: string
@@ -63,6 +74,20 @@ export interface ActionCommand {
   readonly name?: string
   /** Target field → ZEN Expression. */
   readonly fields?: Readonly<Record<string, string>>
+  /** ZEN Expression yielding the expected source version for a guarded update. */
+  readonly expectedModified?: string
+  /** Owner-scoped child-table replacements declared by this command. */
+  readonly childMerges?: ReadonlyArray<ActionCommandChildMerge>
+}
+
+/** Closed UI-facing effect declarations not derivable from writes/commands (`ActionUiEffects`). */
+export interface ActionUiEffects {
+  readonly effectsVersion: "0.1"
+  readonly irreversible?: boolean
+  readonly destructive?: boolean
+  readonly money?: ReadonlyArray<string>
+  readonly errorCodes?: ReadonlyArray<string>
+  readonly resultCodes?: ReadonlyArray<string>
 }
 
 /** The object an effect writes, pinned by its entity artifact identity. */
@@ -169,6 +194,8 @@ export interface ActionDef extends Localized {
    * recorded principal must differ from the verified principal calling.
    */
   readonly independentOf?: ReadonlyArray<string>
+  /** Closed UI-facing effect declarations (`ActionUiEffects`). */
+  readonly uiEffects?: ActionUiEffects
   /** The compensating action's id. */
   readonly compensation?: string
   readonly at?: SourceLocation
@@ -282,7 +309,13 @@ export function lowerAction(def: ActionDef, options: EnvelopeOptions): ActionBui
     ),
     derive: omitEmpty(def.derive.map(({ inputRequired, ...entry }) => (inputRequired === false ? { ...entry, inputRequired } : entry))),
     preconditions: omitEmpty(def.preconditions),
-    commands: omitEmpty(def.commands),
+    commands: omitEmpty(
+      def.commands.map(({ fields, childMerges, ...command }) => ({
+        ...command,
+        ...(fields && Object.keys(fields).length > 0 ? { fields } : {}),
+        ...(childMerges && childMerges.length > 0 ? { childMerges } : {}),
+      })),
+    ),
     createLinks: omitEmpty(def.createLinks ?? []),
     writes: omitEmpty(def.writes),
     effectProgram: def.effect,
@@ -291,6 +324,16 @@ export function lowerAction(def: ActionDef, options: EnvelopeOptions): ActionBui
     compensation: def.compensation === undefined ? undefined : { actionId: def.compensation },
     access: def.access,
     independentOf: omitEmpty(def.independentOf ?? []),
+    uiEffects: def.uiEffects === undefined
+      ? undefined
+      : {
+          effectsVersion: def.uiEffects.effectsVersion,
+          ...(def.uiEffects.irreversible === true ? { irreversible: true } : {}),
+          ...(def.uiEffects.destructive === true ? { destructive: true } : {}),
+          money: omitEmpty(def.uiEffects.money ?? []),
+          errorCodes: omitEmpty(def.uiEffects.errorCodes ?? []),
+          resultCodes: omitEmpty(def.uiEffects.resultCodes ?? []),
+        },
   }
   const artifact = envelope(
     { kind: "action", dependencies: [...pinnedDependencies(def.dependencies, "entity"), ...(def.synchronousRule ? [{ ...def.synchronousRule, kind: "rule", required: true }] : [])], artifactId: `${def.id}.action`, namespace: def.id.slice(0, def.id.indexOf(".")), name: def.title, version: def.version },

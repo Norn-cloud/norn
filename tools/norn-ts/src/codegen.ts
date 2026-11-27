@@ -183,6 +183,7 @@ function schemaType(
   root = false,
   omit: ReadonlySet<string> = new Set(),
   optional: ReadonlySet<string> = new Set(),
+  forceRequired: ReadonlySet<string> = new Set(),
 ): string {
   if (!record(schema)) throw new CodegenError(at, "a schema node is not an object")
   const type = schema["type"]
@@ -214,7 +215,7 @@ function schemaType(
     case "boolean": return "boolean"
     case "null": return "null"
     case "array": return `ReadonlyArray<${schemaType(schema["items"], `${at}/items`, depth, mode)}>`
-    case "object": return objectType(schema, at, depth, mode, omit, optional)
+    case "object": return objectType(schema, at, depth, mode, omit, optional, forceRequired)
     default: throw new CodegenError(at, `schema type ${JSON.stringify(type)} is not in the closed dialect`)
   }
 }
@@ -239,9 +240,18 @@ function unionType(schema: Node, members: readonly unknown[], at: string, depth:
 
 /**
  * A closed object. `omit`: members the caller never sends (actor-derived); `optional`: members a
- * derivation fills when absent. Both apply to the input root only.
+ * derivation fills when absent; `forceRequired`: members a derivation requires the caller to supply
+ * (`inputRequired: true`). All three apply to the input root only.
  */
-function objectType(schema: Node, at: string, depth: number, mode: Mode, omit: ReadonlySet<string>, optional: ReadonlySet<string>): string {
+function objectType(
+  schema: Node,
+  at: string,
+  depth: number,
+  mode: Mode,
+  omit: ReadonlySet<string>,
+  optional: ReadonlySet<string>,
+  forceRequired: ReadonlySet<string>,
+): string {
   if (schema["additionalProperties"] !== false) throw new CodegenError(at, "an object schema is not closed (`additionalProperties: false`)")
   const properties = schema["properties"]
   if (!record(properties)) throw new CodegenError(at, "an object schema has no `properties` object")
@@ -256,7 +266,7 @@ function objectType(schema: Node, at: string, depth: number, mode: Mode, omit: R
     const rendered = schemaType(child, `${at}/properties/${pointer(name)}`, depth + 1, mode)
     if (omit.has(name)) continue
     const comment = schemaDoc(child)
-    const present = required.has(name) && !optional.has(name)
+    const present = (required.has(name) || forceRequired.has(name)) && !optional.has(name)
     lines.push(`${comment === null ? "" : `${pad(depth + 1)}/** ${comment} */\n`}${pad(depth + 1)}readonly ${key(name)}${present ? "" : "?"}: ${rendered}`)
   }
   return lines.length === 0 ? CLOSED_EMPTY : `{\n${lines.join("\n")}\n${pad(depth)}}`
@@ -268,24 +278,42 @@ function objectType(schema: Node, at: string, depth: number, mode: Mode, omit: R
  * it on the expression's parsed ZEN AST (`./zen-reads.ts`): a literal `actor…` path, a `$root`, a
  * closure (or its pointer) or an assignment anywhere, or an expression that does not parse. Such a
  * field is not the caller's to send: the kernel refuses any caller value for it.
+ *
+ * `inputRequired` defaults to `true` and is omitted from canonical IR
+ * (`norn_ir::ActionInputDerivation`). If any step targeting a field requires caller input,
+ * the kernel rejects calls missing that field even if `inputSchema.required` omitted it or
+ * another step had `inputRequired: false`.
  */
+
+const DERIVE_MEMBERS = new Set(["field", "expression", "inputRequired"])
 
 function callerInput(payload: Node, at: string): string {
   const schema = payload["inputSchema"]
   if (!record(schema)) throw new CodegenError(`${at}#/inputSchema`, "the input schema is not an object")
   if (schema["type"] !== "object") throw new CodegenError(`${at}#/inputSchema`, "an action input is not a closed object")
-  const derive = payload["derive"] ?? []
+  const derive = payload["derive"] === undefined ? [] : payload["derive"]
   if (!Array.isArray(derive)) throw new CodegenError(`${at}#/derive`, "`derive` is not a list")
-  const omit = new Set<string>(), optional = new Set<string>()
+  const omit = new Set<string>(), optional = new Set<string>(), requiredByDerive = new Set<string>()
   derive.forEach((step: unknown, index) => {
-    if (!record(step) || typeof step["field"] !== "string" || typeof step["expression"] !== "string" || typeof step["inputRequired"] !== "boolean") {
-      throw new CodegenError(`${at}#/derive/${index}`, "a derivation is not `{ field, expression, inputRequired }`")
+    if (
+      !record(step)
+      || Object.keys(step).some((member) => !DERIVE_MEMBERS.has(member))
+      || typeof step["field"] !== "string"
+      || typeof step["expression"] !== "string"
+      || (step["inputRequired"] !== undefined && typeof step["inputRequired"] !== "boolean")
+    ) {
+      throw new CodegenError(`${at}#/derive/${index}`, "a derivation is not `{ field, expression, inputRequired? }`")
     }
-    if (step["inputRequired"]) return
+    const inputRequired = step["inputRequired"] ?? true
+    if (inputRequired) {
+      requiredByDerive.add(step["field"])
+      return
+    }
     if (mayReadActor(step["expression"])) omit.add(step["field"])
     else optional.add(step["field"])
   })
-  return schemaType(schema, `${at}#/inputSchema`, 2, "input", true, omit, optional)
+  for (const field of requiredByDerive) optional.delete(field)
+  return schemaType(schema, `${at}#/inputSchema`, 2, "input", true, omit, optional, requiredByDerive)
 }
 
 interface Property { readonly id: string; readonly type: unknown; readonly constraints?: unknown; readonly description?: unknown }
