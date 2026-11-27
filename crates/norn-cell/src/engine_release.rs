@@ -94,10 +94,14 @@ pub const CHANNEL: &[StorageVersion] = &[
         version: 10,
         change: "D03 (#1699): _norn_outbox stores the queue each command waits in (`queue`, 'fifo' or 'parked'), set once at enqueue, and the partial index _norn_outbox/queue serves queue selection; upgrading backfills `queue` from each stored command's classification",
     },
+    StorageVersion {
+        version: 11,
+        change: "D1: immutable per-generation outbox ledger (_norn_outbox_record), durable outbox reconciliation (EffectRow::ReconcileOutbox and EffectRow::RecordCompensation), fail-closed same-generation PayloadDiverged, and ambiguous-dispatch reissue gating; upgrading backfills _norn_outbox_record from _norn_outbox, _norn_perform_claim, _norn_run, and restore:perform_fence:*",
+    },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 10;
+pub const STORAGE_VERSION: u32 = 11;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -372,6 +376,9 @@ fn migrate_to<E: SqlEngine>(engine: &E, to: u32) -> Result<(), CellError> {
         // Version 10 (D03, #1699): add and backfill `_norn_outbox.queue`; the
         // schema statements that follow the chain create `_norn_outbox/queue`.
         10 => migrate_v10_outbox_queue(engine),
+        // Version 11 (D1): create and backfill `_norn_outbox_record` from the
+        // cell's existing outbox, claims, runs, and restore fences.
+        11 => crate::outbox_ledger_migrate::migrate_v11_outbox_ledger(engine),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
             engine: STORAGE_VERSION,

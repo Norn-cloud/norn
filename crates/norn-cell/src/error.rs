@@ -523,8 +523,10 @@ pub enum CellError {
         /// The world the store serves.
         found: String,
     },
-    /// D03 (#1699): an enqueue of a pending command was refused: a reissue
-    /// that would move it to another queue. Nothing is written.
+    /// D03 (#1699) / D1: an enqueue of a command was refused by the outbox
+    /// generation ledger (payload divergence, queue change, active restore
+    /// fence, ambiguous dispatch without reconciliation, or terminal state).
+    /// Nothing is written.
     #[error("outbox reissue of `{command_id}` generation {generation} refused: {reason}")]
     OutboxReissueRefused {
         /// The command id.
@@ -533,6 +535,18 @@ pub enum CellError {
         generation: u64,
         /// Why.
         reason: String,
+    },
+    /// D1: an outbox ledger transition (reconciliation, late dispatch-proof
+    /// attachment, or compensation) was refused by [`norn_kernel::world::outbox_ledger::OperationLedger`].
+    /// Nothing is written.
+    #[error("outbox ledger refused `{command_id}` generation {generation}: {refusal}")]
+    OutboxLedgerRefused {
+        /// The command id.
+        command_id: String,
+        /// The targeted generation.
+        generation: u64,
+        /// The typed kernel outbox ledger refusal.
+        refusal: norn_kernel::world::outbox_ledger::OutboxLedgerRefusal,
     },
     /// The ledger hash chain or a receipt does not verify.
     #[error("ledger corrupt at seq {seq}: {reason}")]
