@@ -1,0 +1,132 @@
+{
+  "artifactId": "bi.MetricSlice.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Metric slice",
+  "namespace": "bi",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Observed W3C Data Cube (qb:Slice) measurement linked to bi.CertifiedMetric, carrying exact numerator, denominator, and value so non-additive ratios preserve exact weighted-ratio consistency and refuse zero denominators (BI-ADD-1).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Certified metric contract governing this observed slice.",
+          "id": "metric",
+          "target": "bi.CertifiedMetric"
+        }
+      ],
+      "name": "bi.MetricSlice",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "slice_key",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "additivity",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "additive"
+              },
+              {
+                "value": "semi_additive"
+              },
+              {
+                "value": "non_additive"
+              }
+            ]
+          }
+        },
+        {
+          "id": "unit_code",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "id": "effective_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "known_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "numerator",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit_code"
+            ]
+          }
+        },
+        {
+          "id": "denominator",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit_code"
+            ]
+          }
+        },
+        {
+          "id": "value",
+          "type": {
+            "additivity": {
+              "kind": "non_additive"
+            },
+            "kind": "decimal",
+            "scale": 6
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/bi.MetricSlice.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

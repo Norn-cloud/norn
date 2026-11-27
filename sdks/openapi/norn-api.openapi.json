@@ -18174,6 +18174,13 @@
           "description": {
             "type": "string"
           },
+          "disjointWith": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrInterfaceName"
+            },
+            "description": "Interfaces mutually exclusive with this one; no interface or object type may inherit both. Omitted when empty."
+          },
           "extends": {
             "type": "array",
             "items": {
@@ -18187,6 +18194,13 @@
               "$ref": "#/components/schemas/NornIrInvariant"
             },
             "description": "Invariants every implementing object type satisfies, in addition to\nits own and inherited invariants. Omitted when empty."
+          },
+          "lifecycles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLifecycle"
+            },
+            "description": "Lifecycles every implementing object type and child interface inherits with non-weakening narrowing. Omitted when empty."
           },
           "links": {
             "type": "array",

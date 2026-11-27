@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { Link, useNavigate, useRouterState, useSearch } from "@tanstack/react-router"
 import { ArrowRight, ChevronRight, CircleCheck, CircleHelp, CircleX, Scale, ShieldAlert, ShieldCheck } from "lucide-react"
@@ -6,7 +6,7 @@ import { KpiTile, StatStrip } from "@/components/system/kpi-tile"
 import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
 import { PageHeader } from "@/components/panel"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
-import { NotServed, useMode } from "@/lib/live-transport"
+import { NotServed, retryWorkspace, useMode } from "@/lib/live-transport"
 import { TableCard } from "@/components/system/table-card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -212,6 +212,7 @@ function LiveRules() {
   const search = useSearch({ strict: false }) as { view?: string }
   const navigate = useNavigate()
   const heldOnly = search.view === "held"
+  const queries = useQueryClient()
   const setHeldOnly = (next: boolean) => void navigate({ to: "/rules", search: next ? { view: "held" } as never : {}, replace: true })
 
   const technical = view === "technical"
@@ -228,7 +229,7 @@ function LiveRules() {
       data={catalog}
       error={read.error}
       isFetching={read.isFetching}
-      onRetry={() => void read.refetch()}
+      onRetry={() => void retryWorkspace(queries).then((ok) => { if (ok) void read.refetch({ cancelRefetch: false }) })}
       skeleton="cards"
       loadingLabel="Reading rules"
     >
@@ -300,7 +301,7 @@ function LiveRules() {
                 {system.length > 0 && (
                   <details className="group/system">
                     <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-body text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
-                      <ChevronRight aria-hidden className="size-4 transition-transform group-open/system:rotate-90" />
+                      <ChevronRight aria-hidden className="size-4 transition-transform rtl:rotate-180 group-open/system:rotate-90 rtl:group-open/system:rotate-90" />
                       System rules ({systemRuleCount}): how the platform keeps its own records
                     </summary>
                     <div className="space-y-4 pt-3">
@@ -356,6 +357,7 @@ function LiveRules() {
 }
 
 export function RulesPage() {
+  const queries = useQueryClient()
   const mode = useMode()
   if (mode.data?.kind === "live") return (
     <section className="space-y-5">
@@ -367,7 +369,7 @@ export function RulesPage() {
   if (mode.data?.kind !== "recorded") {
     return mode.isError
       ? <WorkspaceUnavailable error={mode.error} />
-      : <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={() => void mode.refetch()}>{() => null}</LoadState>
+      : <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={() => void retryWorkspace(queries)}>{() => null}</LoadState>
   }
   return <RecordedRules />
 }
@@ -395,7 +397,7 @@ function RecordedRules() {
       {read.data && (
         <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="group/details">
           <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-body text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
-            <ChevronRight aria-hidden className="size-4 transition-transform group-open/details:rotate-90" />Technical details: each goal, the bounds and the tools
+            <ChevronRight aria-hidden className="size-4 transition-transform rtl:rotate-180 group-open/details:rotate-90 rtl:group-open/details:rotate-90" />Technical details: each goal, the bounds and the tools
           </summary>
           <div className="space-y-8 pt-6">
             {read.data.map(({ name, read: { document } }) => <Document key={name} name={name} document={document} />)}

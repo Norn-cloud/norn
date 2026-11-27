@@ -1,0 +1,113 @@
+{
+  "artifactId": "bi.certified_metric.register.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Register a certified metric contract",
+  "namespace": "bi",
+  "payload": {
+    "actionId": "bi.certified_metric.register",
+    "createLinks": [
+      {
+        "link": "owner",
+        "targetIdField": "owner_id",
+        "targetType": "analytics.Analyst"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "bi.CertifiedMetric.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "bi.CertifiedMetric",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "additivity": {
+          "enum": [
+            "additive",
+            "semi_additive",
+            "non_additive"
+          ],
+          "type": "string"
+        },
+        "freshness_sla_ms": {
+          "type": "integer"
+        },
+        "grain": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "metric_name": {
+          "type": "string"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "unit_code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "owner_id",
+        "metric_name",
+        "additivity",
+        "grain",
+        "unit_code",
+        "freshness_sla_ms"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "owner_id"
+          }
+        },
+        "name": "owner",
+        "objectType": "analytics.Analyst"
+      }
+    ],
+    "title": "Register a certified metric contract",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "bi.CertifiedMetric"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/bi.certified_metric.register.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

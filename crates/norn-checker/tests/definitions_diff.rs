@@ -745,3 +745,102 @@ fn additivity_change_summary_bounds_its_rows_and_identifiers() {
         assert!(row["candidate"][field].as_str().unwrap().len() <= 128);
     }
 }
+
+#[test]
+fn detects_interface_lifecycle_narrowing_on_implementers() {
+    let iface = |guards: Value, immutable: Value| {
+        decode(&json!({
+            "irVersion": "0.1",
+            "artifactId": "commerce.OrderContract.interface",
+            "kind": "entity",
+            "namespace": "commerce",
+            "name": "OrderContract",
+            "version": "1.0.0",
+            "lifecycle": "draft",
+            "scope": { "orgId": "org_demo", "environmentId": "dev" },
+            "dependencies": [],
+            "provenance": { "source": "authoring_sdk" },
+            "payload": {
+                "entityVersion": "2.0",
+                "interface": {
+                    "name": "commerce.OrderContract",
+                    "properties": [{
+                        "id": "status",
+                        "type": {
+                            "kind": "enum",
+                            "values": [
+                                { "value": "draft" },
+                                { "value": "submitted" },
+                                { "value": "cancelled" }
+                            ]
+                        }
+                    }],
+                    "lifecycles": [{
+                        "property": "status",
+                        "initial": ["draft"],
+                        "terminal": ["submitted", "cancelled"],
+                        "immutable": immutable,
+                        "transitions": [
+                            { "id": "submit", "from": ["draft"], "to": "submitted", "guards": guards },
+                            { "id": "cancel", "from": ["draft"], "to": "cancelled" }
+                        ]
+                    }]
+                }
+            }
+        }))
+    };
+    let implementer = decode(&json!({
+        "irVersion": "0.1",
+        "artifactId": "commerce.ImplOrder.entity",
+        "kind": "entity",
+        "namespace": "commerce",
+        "name": "ImplOrder",
+        "version": "1.0.0",
+        "lifecycle": "draft",
+        "scope": { "orgId": "org_demo", "environmentId": "dev" },
+        "dependencies": [],
+        "provenance": { "source": "authoring_sdk" },
+        "payload": {
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "commerce.ImplOrder",
+                "implements": ["commerce.OrderContract"],
+                "properties": [
+                    { "id": "total", "type": { "kind": "integer" } },
+                    {
+                        "id": "status",
+                        "type": {
+                            "kind": "enum",
+                            "values": [
+                                { "value": "draft" },
+                                { "value": "submitted" },
+                                { "value": "cancelled" }
+                            ]
+                        },
+                        "default": "draft"
+                    }
+                ]
+            }
+        }
+    }));
+
+    let diff = diff_definition_sets(
+        &[iface(json!([]), json!([])), implementer.clone()],
+        &[
+            iface(json!(["self.total > 0"]), json!(["submitted"])),
+            implementer,
+        ],
+    );
+    assert!(diff.narrowing.iter().any(|item| {
+        item.kind == "lifecycle_guard_added"
+            && item.object_type.as_deref() == Some("commerce.ImplOrder")
+            && item.property.as_deref() == Some("status")
+            && item.ids == vec!["submit".to_owned()]
+    }));
+    assert!(diff.narrowing.iter().any(|item| {
+        item.kind == "lifecycle_immutable_added"
+            && item.object_type.as_deref() == Some("commerce.ImplOrder")
+            && item.property.as_deref() == Some("status")
+            && item.ids == vec!["submitted".to_owned()]
+    }));
+}

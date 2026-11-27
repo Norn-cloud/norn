@@ -8,8 +8,10 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 | Link | Terms | Mapped | Residual | Canon gaps | Non-conforming |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `norn.link.erpnext.canon` | 59 | 40 | 8 | 11 | 0 |
+| `norn.link.frappe-hrms.workforce` | 34 | 34 | 0 | 0 | 0 |
 | `norn.link.odoo.canon` | 42 | 27 | 3 | 11 | 1 |
 | `norn.link.shopify.canon` | 35 | 14 | 5 | 16 | 0 |
+| `norn.link.supply-lab.canon` | 20 | 2 | 2 | 16 | 0 |
 
 ## `norn.link.erpnext.canon`
 
@@ -82,6 +84,59 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 - `norn.erpnext.sales.order.per.billed`
 - `norn.erpnext.sales.order.per.delivered`
 - `norn.erpnext.sales.order.status`
+
+### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
+
+None.
+
+## `norn.link.frappe-hrms.workforce`
+
+`norn.ontology-pack.frappe-hrms` → `norn.ontology-pack.workforce`
+
+### Maps
+
+- `norn.frappe.hrms.additional.salary` equivalent `norn.hr.payroll.adjustment`
+- `norn.frappe.hrms.appraisal` equivalent `norn.hr.performance.appraisal`
+- `norn.frappe.hrms.attendance` subsumes `norn.hr.attendance.event`
+- `norn.frappe.hrms.attendance.request` equivalent `norn.hr.attendance.exception`
+- `norn.frappe.hrms.compensatory.leave.request` equivalent `norn.hr.leave.comp.off`
+- `norn.frappe.hrms.employee.advance` equivalent `norn.hr.expense.advance`
+- `norn.frappe.hrms.employee.checkin` equivalent `norn.hr.attendance.checkin`
+- `norn.frappe.hrms.employee.onboarding` equivalent `norn.hr.talent.onboarding`
+- `norn.frappe.hrms.employee.promotion` subsumed_by `norn.hr.talent.employment.change`
+- `norn.frappe.hrms.employee.separation` equivalent `norn.hr.talent.separation`
+- `norn.frappe.hrms.employee.transfer` subsumed_by `norn.hr.talent.employment.change`
+- `norn.frappe.hrms.expense.claim` equivalent `norn.hr.expense.claim`
+- `norn.frappe.hrms.goal` equivalent `norn.hr.performance.goal`
+- `norn.frappe.hrms.gratuity` equivalent `norn.hr.statutory.gratuity`
+- `norn.frappe.hrms.income.tax.slab` equivalent `norn.hr.statutory.tax.slab`
+- `norn.frappe.hrms.interview` equivalent `norn.hr.talent.interview`
+- `norn.frappe.hrms.job.applicant` equivalent `norn.hr.talent.applicant`
+- `norn.frappe.hrms.job.offer` equivalent `norn.hr.talent.job.offer`
+- `norn.frappe.hrms.job.opening` equivalent `norn.hr.talent.job.opening`
+- `norn.frappe.hrms.leave.allocation` equivalent `norn.hr.leave.allocation`
+- `norn.frappe.hrms.leave.application` equivalent `norn.hr.leave.request`
+- `norn.frappe.hrms.leave.encashment` equivalent `norn.hr.leave.encashment`
+- `norn.frappe.hrms.leave.ledger.entry` equivalent `norn.hr.leave.ledger.entry`
+- `norn.frappe.hrms.leave.policy` equivalent `norn.hr.leave.policy`
+- `norn.frappe.hrms.leave.type` equivalent `norn.hr.leave.type`
+- `norn.frappe.hrms.payroll.entry` equivalent `norn.hr.payroll.run`
+- `norn.frappe.hrms.salary.component` equivalent `norn.hr.payroll.component`
+- `norn.frappe.hrms.salary.slip` equivalent `norn.hr.payroll.payslip`
+- `norn.frappe.hrms.salary.structure` equivalent `norn.hr.payroll.structure`
+- `norn.frappe.hrms.salary.structure.assignment` equivalent `norn.hr.payroll.assignment`
+- `norn.frappe.hrms.shift.assignment` subsumed_by `norn.hr.shift.commitment`
+- `norn.frappe.hrms.shift.type` subsumed_by `norn.hr.roster.shift.template`
+- `norn.frappe.hrms.training.event` equivalent `norn.hr.training.event`
+- `norn.frappe.hrms.training.result` equivalent `norn.hr.training.result`
+
+### Residual (system-specific)
+
+None.
+
+### Missing from the canon
+
+None.
 
 ### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
 
@@ -192,6 +247,43 @@ None.
 - `norn.shopify.refund.create`
 - `norn.shopify.transaction`
 - `norn.shopify.transaction.amount`
+
+### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
+
+None.
+
+## `norn.link.supply-lab.canon`
+
+`norn.ontology-pack.supply-lab` → `norn.ontology-pack.canon`
+
+### Maps
+
+- `norn.supply.guard.movement.nonpositive` subsumed_by `norn.finance.guard.amount.nonpositive`
+- `norn.supply.sku` subsumed_by `norn.core.resource.type`
+
+### Residual (system-specific)
+
+- `norn.supply.supplier.receipt.line`
+- `norn.supply.wms.count`
+
+### Missing from the canon
+
+- `norn.supply.demand.forecast`
+- `norn.supply.demand.observation`
+- `norn.supply.guard.currency.mismatch`
+- `norn.supply.guard.unit.mismatch`
+- `norn.supply.inspection`
+- `norn.supply.inventory.snapshot`
+- `norn.supply.inventory.snapshot.quantity.basis`
+- `norn.supply.order.line`
+- `norn.supply.purchase.order`
+- `norn.supply.purchase.order.supplier`
+- `norn.supply.shipment.receipt`
+- `norn.supply.shipment.receipt.order.line`
+- `norn.supply.shipment.receipt.received.qty`
+- `norn.supply.stock.movement`
+- `norn.supply.stock.movement.qty`
+- `norn.supply.warehouse`
 
 ### Non-conforming source behaviour (breaks a canon law; flagged, never mapped)
 

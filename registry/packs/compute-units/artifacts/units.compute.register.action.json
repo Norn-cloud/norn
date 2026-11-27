@@ -1,0 +1,130 @@
+{
+  "artifactId": "units.compute.register.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Register a compute UCUM unit definition",
+  "namespace": "units",
+  "payload": {
+    "actionId": "units.compute.register",
+    "effectProgram": {
+      "entityArtifactId": "units.compute.UnitDefinition.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "code",
+      "objectKind": "units.compute.UnitDefinition",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "base_code": {
+          "enum": [
+            "s",
+            "By",
+            "{token}",
+            "{input_token}",
+            "{output_token}",
+            "{request}",
+            "{vCPU}.s",
+            "{GPU}.s",
+            "{seat}"
+          ],
+          "type": "string"
+        },
+        "code": {
+          "enum": [
+            "ms",
+            "us",
+            "ns",
+            "bit",
+            "By",
+            "KiBy",
+            "MiBy",
+            "GiBy",
+            "TiBy",
+            "kBy",
+            "MBy",
+            "GBy",
+            "TBy",
+            "{token}",
+            "{input_token}",
+            "{output_token}",
+            "{request}",
+            "{vCPU}.s",
+            "{vCPU}.h",
+            "{GPU}.s",
+            "{GPU}.h",
+            "{seat}"
+          ],
+          "type": "string"
+        },
+        "denominator": {
+          "type": "integer"
+        },
+        "dimension": {
+          "enum": [
+            "time",
+            "information",
+            "compute_count",
+            "compute_time"
+          ],
+          "type": "string"
+        },
+        "numerator": {
+          "type": "integer"
+        },
+        "standard": {
+          "enum": [
+            "ucum-2.2",
+            "iec-80000-13"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "dimension",
+        "base_code",
+        "numerator",
+        "denominator",
+        "standard"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Register a compute UCUM unit definition",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "units.compute.UnitDefinition"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/units.compute.register.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

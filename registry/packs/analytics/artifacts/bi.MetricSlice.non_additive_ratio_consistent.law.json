@@ -1,0 +1,51 @@
+{
+  "artifactId": "bi.MetricSlice.non_additive_ratio_consistent.law",
+  "dependencies": [
+    {
+      "artifactId": "bi.MetricSlice.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "BI-ADD-1: a non-additive ratio slice requires a strictly positive denominator and value within half a scale-6 step of numerator / denominator.",
+  "namespace": "bi",
+  "payload": {
+    "condition": "self.additivity == 'non_additive'",
+    "id": "bi.MetricSlice.non_additive_ratio_consistent",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "bi",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/analytics/analytics.ts"
+    },
+    "rationale": "BI-ADD-1: a non-additive ratio slice requires a strictly positive denominator and value within half a scale-6 step of numerator / denominator.",
+    "response": {
+      "expression": "((self.denominator > 0) and (((self.numerator - (self.value * self.denominator)) * 2000000) <= self.denominator)) and ((((self.value * self.denominator) - self.numerator) * 2000000) <= self.denominator)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "bi.MetricSlice"
+      ],
+      "root": {
+        "id": "bi.MetricSlice",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "bi.MetricSlice"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/bi.MetricSlice.non_additive_ratio_consistent.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

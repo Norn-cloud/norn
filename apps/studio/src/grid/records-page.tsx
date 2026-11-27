@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { Link, useParams, useSearch } from "@tanstack/react-router"
 import { Shapes } from "lucide-react"
 import { useState } from "react"
@@ -8,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { Concept } from "../lib/catalog.ts"
 import { studioScopeKey } from "../lib/definitions.ts"
+import { retryWorkspace } from "../lib/live-transport.ts"
 import { useWorkspace, type ScopedReader } from "../lib/workspace.tsx"
 import { useCatalog } from "../sources.tsx"
 import { LawsPanel } from "../laws.tsx"
@@ -54,6 +56,7 @@ function ScopedRecordsTabs({ concept, reader, initialTab, timeline }: {
 export function RecordsPage() {
   const { type = "" } = useParams({ strict: false })
   const search = useSearch({ strict: false }) as { population?: string }
+  const queries = useQueryClient()
   const { read, catalog } = useCatalog()
   // The records are bound to the workspace the page's mode decided, as `/sources/$type`'s are: a live
   // workspace's tabs read there; a recorded one's grid reads the recording; until the mode is decided
@@ -70,9 +73,9 @@ export function RecordsPage() {
         data={catalog}
         error={read.error}
         isFetching={read.isFetching}
-        // A refusal's Retry reads again; Workspace unavailable owns its own Retry, which decides the
-        // mode again as the shell's would (`WorkspaceUnavailable`).
-        onRetry={() => void read.refetch()}
+        // Route pending/refusal Retry through retryWorkspace so a wedged mode probe or unavailable
+        // cell recovers in one click without refetching against a dead cell (#1774).
+        onRetry={() => void retryWorkspace(queries).then((ok) => { if (ok) void read.refetch({ cancelRefetch: false }) })}
         bone="records-table"
         skeleton="table"
         loadingLabel="Reading records"

@@ -79,6 +79,7 @@ pub mod privacy;
 pub mod privacy_guard;
 /// The generic sans-IO pull engine for declared HTTP sources (`norn.pull/1`).
 pub mod pull;
+mod pull_feed;
 /// Authorized exact question answers and numeric traces.
 pub mod question_routes;
 /// Authorized read services shared by transports.
@@ -87,6 +88,8 @@ pub mod routes;
 pub mod run_routes;
 /// In-cell source sync over the pull engine: claims, steps and run reports.
 pub mod sources;
+/// STEP-PIN-1 (D2): target-definition pinning for parked `norn.action@1` flow steps.
+pub mod step_pin;
 /// TIMER-ALARM-1: the cell's due work (expiries, flow timers, decision deadlines), run from the host's clock.
 pub mod timers;
 /// Native numeric trace schema projections.

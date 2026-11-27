@@ -76,6 +76,8 @@ function bothCommitmentAndClaim(artifacts: ReadonlyArray<Payload>): string[] {
 
 test("no registry type is both a core.Commitment and a core.Claim", () => {
   const compiled = pack()
+  const claim = compiled.artifacts.find((artifact) => (artifact as { artifactId: string }).artifactId === "core.Claim.interface") as { payload?: { interface?: { disjointWith?: string[] } } }
+  expect(claim?.payload?.interface?.disjointWith).toEqual(["core.Commitment"])
   const all = [...compiled.artifacts, ...compiled.baseArtifacts] as Payload[]
   expect(bothCommitmentAndClaim(all)).toEqual([])
   // The check bites: a type implementing both, even through a parent, is found.

@@ -129,6 +129,17 @@ impl StructuralGap {
     }
 }
 
+/// One immutable financial/ledger object type with a verified compensating action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedFinancialReversal {
+    /// Financial or ledger object type name.
+    pub object_type: String,
+    /// Action touching `object_type` that declares the compensation.
+    pub action_id: String,
+    /// Resolved compensating action that structurally reverses `object_type`.
+    pub compensation_action_id: String,
+}
+
 /// Complete output of the Static Structural Gap Detector for one pack.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticGapReport {
@@ -136,6 +147,8 @@ pub struct StaticGapReport {
     pub pack_name: String,
     /// All findings in deterministic order.
     pub gaps: Vec<StructuralGap>,
+    /// Immutable financial/ledger types backed by verified compensating actions.
+    pub verified_financial_reversals: Vec<VerifiedFinancialReversal>,
 }
 
 impl StaticGapReport {
@@ -185,6 +198,7 @@ impl fmt::Display for StaticGapReport {
 #[must_use]
 pub fn analyze_static_gaps(pack: &AdmittedPack) -> StaticGapReport {
     let mut gaps = Vec::new();
+    let mut verified_financial_reversals = Vec::new();
     let extra = [action_call_object_type()];
     let catalog = pack.type_catalog(&extra);
     let written_fields = collect_action_written_fields(pack);
@@ -193,13 +207,20 @@ pub fn analyze_static_gaps(pack: &AdmittedPack) -> StaticGapReport {
     for object_type in &pack.object_types {
         detect_lifecycle_gaps(pack, &catalog, object_type, &transition_actions, &mut gaps);
         detect_orphan_fields(pack, &catalog, object_type, &written_fields, &mut gaps);
-        detect_immutable_financial_reversal_gap(pack, &catalog, object_type, &mut gaps);
+        detect_immutable_financial_reversal_gap(
+            pack,
+            &catalog,
+            object_type,
+            &mut gaps,
+            &mut verified_financial_reversals,
+        );
     }
     detect_high_impact_sod_questions(pack, &mut gaps);
 
     StaticGapReport {
         pack_name: pack.name.clone(),
         gaps,
+        verified_financial_reversals,
     }
 }
 
@@ -291,11 +312,11 @@ fn detect_lifecycle_gaps(
                     state: state.clone(),
                 });
             }
-            let has_outgoing = lifecycle
+            let has_exiting = lifecycle
                 .transitions
                 .iter()
-                .any(|tr| tr.from.iter().any(|src| src == state));
-            if !terminal.contains(state.as_str()) && !has_outgoing {
+                .any(|tr| tr.from.iter().any(|src| src == state) && tr.to != *state);
+            if !terminal.contains(state.as_str()) && !has_exiting {
                 out.push(StructuralGap::DeadEndNonTerminalState {
                     object_type: type_name.to_owned(),
                     lifecycle: prop.to_owned(),
@@ -615,7 +636,10 @@ fn is_financial_or_ledger_type(pack: &AdmittedPack, object_type: &ObjectTypeDef)
 }
 
 enum ReversalCoverage {
-    VerifiedCompensation,
+    VerifiedCompensation {
+        action_id: String,
+        compensation_action_id: String,
+    },
     NameHeuristicOnly(String),
     Missing,
 }
@@ -631,6 +655,25 @@ fn action_touches_type(action: &ActionRoot, object_type: &str) -> bool {
             .is_some_and(|eff| eff.target().object_kind == object_type)
 }
 
+fn action_reverses_type(action: &ActionRoot, object_type: &str) -> bool {
+    action_touches_type(action, object_type)
+        || (action
+            .create_links
+            .iter()
+            .any(|link| link.target_type == object_type)
+            && (!action.writes.is_empty() || action.effect_program.is_some()))
+}
+
+const REVERSAL_KEYWORDS: [&str; 7] = [
+    "reverse",
+    "reversal",
+    "void",
+    "compensat",
+    "refund",
+    "credit_note",
+    "storno",
+];
+
 fn classify_reversal_coverage(pack: &AdmittedPack, object_type: &str) -> ReversalCoverage {
     let mut heuristic_candidate = None;
     for action in &pack.actions {
@@ -642,25 +685,15 @@ fn classify_reversal_coverage(pack: &AdmittedPack, object_type: &str) -> Reversa
                 .actions
                 .iter()
                 .find(|candidate| candidate.root.action_id == comp.action_id)
-            && (action_touches_type(&target_action.root, object_type)
-                || !target_action.root.writes.is_empty()
-                || target_action.root.effect_program.is_some())
+            && action_reverses_type(&target_action.root, object_type)
         {
-            return ReversalCoverage::VerifiedCompensation;
+            return ReversalCoverage::VerifiedCompensation {
+                action_id: action.root.action_id.clone(),
+                compensation_action_id: target_action.root.action_id.clone(),
+            };
         }
         let lower_id = action.root.action_id.to_ascii_lowercase();
-        if heuristic_candidate.is_none()
-            && [
-                "reverse",
-                "reversal",
-                "void",
-                "compensat",
-                "refund",
-                "credit_note",
-                "storno",
-            ]
-            .iter()
-            .any(|kw| lower_id.contains(kw))
+        if heuristic_candidate.is_none() && REVERSAL_KEYWORDS.iter().any(|kw| lower_id.contains(kw))
         {
             heuristic_candidate = Some(action.root.action_id.clone());
         }
@@ -676,6 +709,7 @@ fn detect_immutable_financial_reversal_gap(
     catalog: &TypeCatalog<'_>,
     object_type: &ObjectTypeDef,
     out: &mut Vec<StructuralGap>,
+    verified: &mut Vec<VerifiedFinancialReversal>,
 ) {
     let has_immutable_lifecycle_state = catalog
         .lifecycles(&object_type.name)
@@ -690,7 +724,16 @@ fn detect_immutable_financial_reversal_gap(
         return;
     };
     match classify_reversal_coverage(pack, object_type.name.as_str()) {
-        ReversalCoverage::VerifiedCompensation => {}
+        ReversalCoverage::VerifiedCompensation {
+            action_id,
+            compensation_action_id,
+        } => {
+            verified.push(VerifiedFinancialReversal {
+                object_type: object_type.name.as_str().to_owned(),
+                action_id,
+                compensation_action_id,
+            });
+        }
         ReversalCoverage::NameHeuristicOnly(candidate_action_id) => {
             out.push(StructuralGap::ImmutableFinancialUnverifiedReversal {
                 object_type: object_type.name.as_str().to_owned(),
@@ -711,7 +754,7 @@ fn detect_immutable_financial_reversal_gap(
     }
 }
 
-fn high_impact_reason(action: &ActionRoot) -> Option<String> {
+fn high_impact_reason(action: &ActionRoot, target_is_immutable: bool) -> Option<String> {
     let ui_effects = action.effective_ui_effects();
     if ui_effects.contains(&ActionUiEffect::Irreversible) {
         return Some("declared irreversible uiEffect".to_owned());
@@ -730,13 +773,57 @@ fn high_impact_reason(action: &ActionRoot) -> Option<String> {
     {
         return Some("declared monetary effect".to_owned());
     }
-    let lower = action.action_id.to_ascii_lowercase();
-    for keyword in [
-        "approve", "promote", "retire", "post", "pay", "settle", "payout", "activate", "release",
-        "void", "reverse",
-    ] {
-        if lower.contains(keyword) {
-            return Some(format!("high-impact action verb '{keyword}'"));
+    // Mutable draft creation and host-authenticated receipt confirmations are
+    // not human approval decisions, so skip the name-based heuristic for them
+    // while still flagging CreateOnly writes to immutable records (e.g. posting
+    // an immutable journal entry) and honoring explicit irreversible/destructive/
+    // monetary declarations above (DX-9).
+    if !target_is_immutable
+        && action.quantity_effect.is_none()
+        && matches!(
+            action.effect_program,
+            Some(ActionEffectProgram::UpsertInputObject {
+                write_mode: norn_kernel::pack_mbt_support::UpsertWriteMode::CreateOnly,
+                ..
+            })
+        )
+    {
+        return None;
+    }
+    if matches!(
+        action.effect_program,
+        Some(ActionEffectProgram::FireTransition {
+            accept_receipt: Some(_),
+            ..
+        })
+    ) {
+        return None;
+    }
+    // Match on tokens of the action verb segment (final `.` segment), never on
+    // entity nouns such as `payroll`, `payslip`, or `payout` in earlier segments (DX-9).
+    let verb = action
+        .action_id
+        .rsplit('.')
+        .next()
+        .unwrap_or(action.action_id.as_str())
+        .to_ascii_lowercase();
+    for token in verb.split(['_', '-']) {
+        if matches!(
+            token,
+            "approve"
+                | "promote"
+                | "retire"
+                | "post"
+                | "pay"
+                | "payout"
+                | "dispatch"
+                | "settle"
+                | "activate"
+                | "release"
+                | "void"
+                | "reverse"
+        ) {
+            return Some(format!("high-impact action verb '{token}'"));
         }
     }
     None
@@ -804,8 +891,19 @@ fn action_has_sod_policy(policies: &[AccessIr], action_id: &str) -> bool {
 }
 
 fn detect_high_impact_sod_questions(pack: &AdmittedPack, out: &mut Vec<StructuralGap>) {
+    let immutable_types: BTreeSet<&str> = pack
+        .object_types
+        .iter()
+        .filter(|ty| ty.immutable)
+        .map(|ty| ty.name.as_str())
+        .collect();
     for action in &pack.actions {
-        let Some(reason) = high_impact_reason(&action.root) else {
+        let target_is_immutable = action
+            .root
+            .effect_program
+            .as_ref()
+            .is_some_and(|eff| immutable_types.contains(eff.target().object_kind));
+        let Some(reason) = high_impact_reason(&action.root, target_is_immutable) else {
             continue;
         };
         // ACTOR-INDEPENDENT-1: `independentOf` separates the caller from a
@@ -826,5 +924,76 @@ fn detect_high_impact_sod_questions(pack: &AdmittedPack, out: &mut Vec<Structura
                 ),
             });
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "unit test fixture decoding")]
+mod tests {
+    use norn_kernel::pack_mbt_support::{ActionEffectProgram, ActionRoot, UpsertWriteMode};
+
+    use super::high_impact_reason;
+
+    fn sample_action(action_id: &str, effect: Option<ActionEffectProgram>) -> ActionRoot {
+        let mut root: ActionRoot = serde_json::from_value(serde_json::json!({
+            "actionId": action_id,
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        }))
+        .expect("minimal action root");
+        root.effect_program = effect;
+        root
+    }
+
+    fn create_only(kind: &str, id_field: &str, ver: &str) -> ActionEffectProgram {
+        ActionEffectProgram::UpsertInputObject {
+            object_kind: kind.to_owned(),
+            object_id_field: id_field.to_owned(),
+            entity_artifact_id: format!("{kind}.entity"),
+            entity_artifact_version: ver.to_owned(),
+            write_mode: UpsertWriteMode::CreateOnly,
+        }
+    }
+
+    #[test]
+    fn dx9_skips_create_only_and_noun_matches_and_receipt_confirmations() {
+        let create_payroll = sample_action(
+            "soliman.payroll.create",
+            Some(create_only("soliman.PayrollRun", "id", "0.2.0")),
+        );
+        assert!(high_impact_reason(&create_payroll, false).is_none());
+
+        let post_immutable_journal = sample_action(
+            "gap.journal.post",
+            Some(create_only("gap.JournalEntry", "entry_id", "1.0.0")),
+        );
+        assert!(high_impact_reason(&post_immutable_journal, true).is_some());
+
+        let noun_only = sample_action("soliman.payout.rename", None);
+        assert!(high_impact_reason(&noun_only, false).is_none());
+
+        let receipt_confirm: ActionEffectProgram = serde_json::from_value(serde_json::json!({
+            "kind": "fire_transition", "objectKind": "soliman.PayoutInstruction",
+            "objectIdField": "id", "entityArtifactId": "soliman.PayoutInstruction.entity",
+            "entityArtifactVersion": "0.2.0", "lifecycle": "state", "transition": "confirm_succeeded",
+            "acceptReceipt": {
+                "referenceField": "receipt",
+                "manifestDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "digestProperty": "last_evidence_digest", "resultBindings": {}
+            }
+        }))
+        .expect("receipt transition effect");
+        let confirm = sample_action("soliman.payout.confirm_succeeded", Some(receipt_confirm));
+        assert!(high_impact_reason(&confirm, false).is_none());
+        assert!(
+            high_impact_reason(&sample_action("soliman.payroll.approve", None), false).is_some()
+        );
+        assert!(
+            high_impact_reason(&sample_action("soliman.payout.dispatch_now", None), false)
+                .is_some()
+        );
     }
 }
