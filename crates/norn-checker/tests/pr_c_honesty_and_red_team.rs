@@ -8,6 +8,7 @@ use norn_checker::red_team::analyze_red_team;
 use norn_ir::ArtifactEnvelope;
 use serde_json::{Value, json};
 
+#[allow(clippy::expect_used, reason = "test fixture decoding")]
 fn envelope(kind: &str, artifact_id: &str, name: &str, payload: &Value) -> ArtifactEnvelope {
     serde_json::from_value(json!({
         "irVersion": "0.1",
@@ -31,7 +32,7 @@ fn law_envelope(
     root_kind: &str,
     root_id: &str,
     modality: &str,
-    extra: Value,
+    extra: &Value,
 ) -> ArtifactEnvelope {
     let mut payload = json!({
         "lawVersion": "0.1",
@@ -83,8 +84,10 @@ fn transition_action(
             "transition": transition
         }
     });
-    if !independent_of.is_empty() {
-        payload["independentOf"] = json!(independent_of);
+    if !independent_of.is_empty()
+        && let Some(obj) = payload.as_object_mut()
+    {
+        obj.insert("independentOf".to_owned(), json!(independent_of));
     }
     envelope(
         "action",
@@ -306,7 +309,7 @@ fn law_honesty_distinguishes_enforced_from_declared_only() {
         "entity",
         "hr.Payslip",
         "always",
-        json!({}),
+        &json!({}),
     );
     let eventually = law_envelope(
         "hr.Payout.eventually_settled",
@@ -314,7 +317,7 @@ fn law_honesty_distinguishes_enforced_from_declared_only() {
         "entity",
         "hr.Payout",
         "eventually",
-        json!({}),
+        &json!({}),
     );
     let with_exception = law_envelope(
         "hr.Shift.max_span",
@@ -322,7 +325,7 @@ fn law_honesty_distinguishes_enforced_from_declared_only() {
         "entity",
         "hr.Shift",
         "always",
-        json!({
+        &json!({
             "exceptions": [{
                 "id": "ramadan",
                 "overrides": "hr.Shift.max_span",
@@ -338,7 +341,7 @@ fn law_honesty_distinguishes_enforced_from_declared_only() {
         "app",
         "hr",
         "always",
-        json!({}),
+        &json!({}),
     );
 
     let statuses = classify_law_honesty(&[enforced, eventually, with_exception, app_root]);
