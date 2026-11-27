@@ -595,7 +595,7 @@ fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived
         {"field": "owner", "expression": "input.owner ?? actor.subjectId", "inputRequired": false},
         {"field": "root_actor", "expression": "$.actor.subjectId", "inputRequired": false},
         {"field": "root_input", "expression": "$.input.root_input ?? 'DEFAULT'", "inputRequired": false},
-        {"field": "greeting", "expression": "`Hello ${input.greeting}`", "inputRequired": false},
+        {"field": "greeting", "expression": "`Hello actor $5 ${input.greeting}`", "inputRequired": false},
         {"field": "actor_greeting", "expression": "`Hello ${actor.subjectId}`", "inputRequired": false}
     ]))
     .expect("derivations decode");

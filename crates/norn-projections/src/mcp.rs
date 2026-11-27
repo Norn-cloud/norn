@@ -338,14 +338,36 @@ fn caller_input_schema(action: &ActionRoot, extra_server_filled: &BTreeSet<Strin
 }
 
 /// Whether a ZEN expression references the root identifier `target` (or the
-/// whole-environment root `$`) outside string literals and not as a member
-/// after `.`. Mirrors `norn_expr::expression_read_paths`, where `Node::Root`
-/// conservatively counts as reading every root variable.
+/// whole-environment root `$`) outside string literals and backtick template
+/// text, and not as a member after `.`. Mirrors `norn_expr::expression_read_paths`,
+/// where `Node::Root` conservatively counts as reading every root variable.
 fn expression_reads_root_ident(expression: &str, target: &str) -> bool {
     let mut chars = expression.chars().peekable();
+    scan_expression(&mut chars, target, false, 0)
+}
+
+fn scan_expression(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+    target: &str,
+    stop_at_rbrace: bool,
+    depth: usize,
+) -> bool {
+    if depth >= MAX_SCHEMA_DEPTH {
+        return true;
+    }
     let mut prev_dot = false;
+    let mut brace_depth: usize = 0;
     while let Some(ch) = chars.next() {
-        if ch == '\'' || ch == '"' {
+        if stop_at_rbrace && ch == '}' && brace_depth == 0 {
+            return false;
+        }
+        if ch == '{' {
+            brace_depth = brace_depth.saturating_add(1);
+            prev_dot = false;
+        } else if ch == '}' {
+            brace_depth = brace_depth.saturating_sub(1);
+            prev_dot = false;
+        } else if ch == '\'' || ch == '"' {
             let quote = ch;
             while let Some(inner) = chars.next() {
                 if inner == '\\' {
@@ -355,9 +377,22 @@ fn expression_reads_root_ident(expression: &str, target: &str) -> bool {
                 }
             }
             prev_dot = false;
+        } else if ch == '`' {
+            while let Some(inner) = chars.next() {
+                if inner == '\\' {
+                    let _escaped = chars.next();
+                } else if inner == '`' {
+                    break;
+                } else if inner == '$' && chars.peek() == Some(&'{') {
+                    let _brace = chars.next();
+                    if scan_expression(chars, target, true, depth.saturating_add(1)) {
+                        return true;
+                    }
+                }
+            }
+            prev_dot = false;
         } else if ch == '$' {
-            // `${...}` is a template interpolation opener, not ZEN's whole-environment `$`.
-            if !prev_dot && chars.peek() != Some(&'{') {
+            if !prev_dot {
                 return true;
             }
             prev_dot = false;
