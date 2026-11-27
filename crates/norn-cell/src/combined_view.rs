@@ -12,11 +12,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::cell_id::CellId;
 use norn_ir::data_quality::DataQualityFindingStatus;
+use norn_kernel::FactKey;
+use norn_kernel::authz::CommitBinding;
+use norn_kernel::read_envelope::{
+    AuthorityPin, Completeness, LocalFrontier, ReadContext, ReadFormat, ReadSemantics, ReadToken,
+};
+use norn_kernel::world::pin::SnapshotPin;
 use serde::{Deserialize, Serialize};
 
 use crate::compute::{Freshness, Frontier, QueryContext, QueryResult, Watermark};
 use crate::engine::SqlEngine;
 use crate::error::CellError;
+use crate::read::LedgerHead;
+use crate::snapshot::Main;
 use crate::store::CellStore;
 
 /// Classification of a multi-cell read-only projection (`READ-LOCAL-1`).
@@ -33,6 +41,10 @@ pub enum CombinedViewKind {
 pub struct CellViewInput<'a, E: SqlEngine> {
     /// Cell store to inspect at a single verified read cut.
     pub store: &'a CellStore<E>,
+    /// Anchor object key covered by `authority` for `READ-LOCAL-1` pinning.
+    pub anchor_key: &'a FactKey,
+    /// Authorized PDP binding pinning this cell's read cut (`READ-LOCAL-1`).
+    pub authority: &'a CommitBinding,
     /// Query context pinning world, scope, mapping pin, clock, cursors, and watermarks.
     pub context: QueryContext,
     /// Required feed names whose cursors and watermarks must be complete and fresh.
@@ -64,6 +76,10 @@ pub struct CellCutSnapshot {
     pub definition_version: u64,
     /// Active installed definitions admission receipt digest (or model hash).
     pub definition_pin: String,
+    /// Verified `READ-LOCAL-1` authority pin for this cell's read cut.
+    pub authority_pin: AuthorityPin,
+    /// Verified `READ-LOCAL-1` read token binding frontier, definitions, and authority.
+    pub read_token: ReadToken,
     /// Source cursor frontier pinned to every answer in this cut.
     pub source_cursors: Frontier,
     /// Partition watermarks pinned to every answer in this cut.
@@ -76,8 +92,9 @@ pub struct CellCutSnapshot {
     pub pending_observations: usize,
     /// True only when all answers are complete and fresh with zero open feed issues.
     pub complete: bool,
-    /// Exact question answers keyed by declared question name.
-    pub answers: BTreeMap<String, QueryResult>,
+    /// Exact question answers keyed by declared question name, withheld (`None`)
+    /// whenever `complete` is `false`.
+    pub answers: Option<BTreeMap<String, QueryResult>>,
 }
 
 /// Read-only combined projection across multiple independent cells (`READ-LOCAL-1`).
@@ -167,25 +184,84 @@ fn count_open_findings<E: SqlEngine>(
     Ok(open)
 }
 
+fn capture_cut_anchor<E: SqlEngine>(
+    input: &CellViewInput<'_, E>,
+) -> Result<(SnapshotPin, LedgerHead), CellError> {
+    if input.authority.resource_kind != input.anchor_key.object_type.as_str()
+        || input.authority.resource_id != input.anchor_key.key
+    {
+        return Err(CellError::Encoding(
+            "read authority resource does not match the question".to_owned(),
+        ));
+    }
+    input.store.snapshot::<Main, _>(|snapshot| {
+        let pin = snapshot.pin().clone();
+        if pin.world.encode() != input.context.world {
+            return Err(CellError::ComputeRefused("core.compute.stale_input"));
+        }
+        if snapshot
+            .object(&input.anchor_key.object_type, &input.anchor_key.key)?
+            .is_none()
+        {
+            return Err(CellError::ComputeRefused("core.compute.stale_input"));
+        }
+        Ok((pin, snapshot.head().clone()))
+    })
+}
+
+fn build_read_token(
+    pin: SnapshotPin,
+    authority_pin: AuthorityPin,
+    complete: bool,
+    exact_freshness: bool,
+) -> ReadToken {
+    ReadToken {
+        format: ReadFormat::V1,
+        context: ReadContext {
+            frontier: LocalFrontier {
+                cell: pin.cell,
+                world: pin.world.encode(),
+                revision: pin.revision,
+            },
+            definition_pin: pin.definitions,
+            authority_pin,
+        },
+        completeness: if complete {
+            Completeness::Complete
+        } else {
+            Completeness::Partial
+        },
+        semantics: if exact_freshness {
+            ReadSemantics::Exact
+        } else {
+            ReadSemantics::Stale
+        },
+    }
+}
+
 /// Evaluate one cell's pinned read cut using the supplied question evaluator
 /// (either the cell's exact evaluator or a synced OLAP engine).
 ///
 /// # Errors
-/// Returns `CellError::ComputeRefused("core.compute.stale_input")` if the
-/// ledger head, definition pin, query context, or pending-observation identity
-/// set shifts during evaluation, or propagates underlying store/evaluator errors.
+/// Returns `CellError::Encoding` if `authority` does not match `anchor_key`,
+/// `CellError::SnapshotWorldMismatch` on a fork store,
+/// `CellError::ComputeRefused("core.compute.stale_input")` if the anchor
+/// object is absent or the ledger head, definition pin, query context, or
+/// pending-observation identity set shifts during evaluation, or propagates
+/// underlying store/evaluator errors.
 pub fn evaluate_cell_cut<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
     evaluate: &mut impl FnMut(&str, &QuestionPlan, QueryContext) -> Result<QueryResult, CellError>,
 ) -> Result<CellCutSnapshot, CellError> {
     let stale = || CellError::ComputeRefused("core.compute.stale_input");
-    let cell_id = input.store.cell_id()?.ok_or_else(stale)?;
-    let head_before = input.store.verified_head()?;
-    let (definition_version, definition_pin) =
-        match input.store.read().active_definitions_identity()? {
-            Some(pair) => pair,
-            None => (0, input.store.model().model_hash().to_owned()),
-        };
+    let (pin, head_before) = capture_cut_anchor(input)?;
+    let cell_id = pin.cell.clone();
+    let definition_version = pin.definitions.version;
+    let definition_pin = pin
+        .definitions
+        .admission_receipt
+        .clone()
+        .unwrap_or_else(|| pin.definitions.model_hash.clone());
     let pending_before = pending_identities(input.store)?;
 
     let mut answers = BTreeMap::new();
@@ -226,6 +302,13 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
     let pending_observations = pending_after.len();
     let complete =
         all_fresh && missing_feeds.is_empty() && open_findings == 0 && pending_observations == 0;
+    let authority_pin = AuthorityPin::from(input.authority);
+    let read_token = build_read_token(
+        pin,
+        authority_pin.clone(),
+        complete,
+        all_fresh && missing_feeds.is_empty(),
+    );
 
     Ok(CellCutSnapshot {
         cell_id,
@@ -236,13 +319,15 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
         ledger_hash: head_before.hash,
         definition_version,
         definition_pin,
+        authority_pin,
+        read_token,
         source_cursors: input.context.source_cursors.clone(),
         watermarks: input.context.watermarks.clone(),
         missing_feeds,
         open_findings,
         pending_observations,
         complete,
-        answers,
+        answers: complete.then_some(answers),
     })
 }
 

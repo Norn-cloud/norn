@@ -636,6 +636,17 @@ export const StoreCommercialRollupCountNotFuture = Norn.law("store_commercial_ro
   because: "A verified commercial KPI rollup cannot cite a physical count dated after its period_end cutoff.",
 })
 
+export const StoreCommercialRollupPeriodWeekMatchesEnd = Norn.law("store_commercial_rollup_period_week_matches_end", {
+  on: StoreCommercialRollup,
+  must: (self) =>
+    Norn.byteLength(self.period_week) === 10
+    && Norn.floor(Norn.daysBetween("2024-01-01", self.period_week) / 7) * 7
+      === Norn.daysBetween("2024-01-01", self.period_week)
+    && Norn.secondsBetween(self.period_week + "T00:00:00Z", self.period_end) >= 0
+    && Norn.secondsBetween(self.period_week + "T00:00:00Z", self.period_end) < 604800,
+  because: "Store commercial KPI rollup period_week must equal the canonical UTC ISO-week Monday YYYY-MM-DD containing period_end so store_week_grain uniqueness matches the weekly question bucket.",
+})
+
 export const StoreCommercialRollupRequiresEvidenceLinks = Norn.law("store_commercial_rollup_requires_evidence_links", {
   on: StoreCommercialRollup,
   must: (self) =>

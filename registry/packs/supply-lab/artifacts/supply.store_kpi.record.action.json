@@ -219,7 +219,7 @@
       "type": "object"
     },
     "preconditions": [
-      "((((((((((((slice.store.status == 'active') and (input.count_status == 'verified')) and (input.cost_status == 'costed')) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.store_id == slice.on_hand_count.store_id)) and (input.sku_id == slice.on_hand_count.sku_id)) and (input.unit == slice.on_hand_count.unit)) and (slice.on_hand_count.quantity_basis == 'on_hand')) and (input.count_ref == slice.on_hand_count.count_ref)) and (input.on_hand_qty == slice.on_hand_count.on_hand_qty)) and (input.currency == slice.cost.currency)) and (input.costed_ref == slice.cost.cost_ref)"
+      "(((((((((((((slice.store.status == 'active') and (input.count_status == 'verified')) and (input.cost_status == 'costed')) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.store_id == slice.on_hand_count.store_id)) and (input.sku_id == slice.on_hand_count.sku_id)) and (input.unit == slice.on_hand_count.unit)) and (slice.on_hand_count.quantity_basis == 'on_hand')) and (timestamp(input.count_as_of) == timestamp(slice.on_hand_count.as_of))) and (input.count_ref == slice.on_hand_count.count_ref)) and (input.on_hand_qty == slice.on_hand_count.on_hand_qty)) and (input.currency == slice.cost.currency)) and (input.costed_ref == slice.cost.cost_ref)"
     ],
     "scopeRequired": [
       "orgId",
