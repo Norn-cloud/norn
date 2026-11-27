@@ -28,7 +28,7 @@ mod tests {
     use norn_cell::compute::ivm::IncrementalQuestion;
     use norn_cell::compute::lineage::keyed_cursor_handle;
     use norn_cell::compute::{Freshness, QueryContext, RequiredSources};
-    use norn_cell::engine::NativeEngine;
+    use norn_cell::engine::{NativeEngine, SqlEngine as _, SqlRow, SqlValue};
     use norn_cell::{
         CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model,
         StoreOptions,
@@ -1602,5 +1602,343 @@ mod tests {
             &order_line_question(&metric, 60_000),
         );
         assert_eq!(ans["freshness"], "incomplete", "{ans}");
+    }
+
+    fn commit_sample_order_line(
+        store: &mut CellStore<NativeEngine>,
+        scope: &CellScope,
+        logical_time: u64,
+    ) {
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: scope.key(),
+                logical_time,
+                writes: vec![FactWriteRow::Put {
+                    object_type: "canon.OrderLine".into(),
+                    key: "order-poll-1".into(),
+                    values: BTreeMap::from([
+                        ("status".into(), RuntimeValue::from("promised")),
+                        ("due_at".into(), RuntimeValue::from("2026-08-06T12:00:00Z")),
+                        (
+                            "quantity".into(),
+                            RuntimeValue::Number("5".parse::<Decimal>().unwrap()),
+                        ),
+                        ("unit".into(), RuntimeValue::from("g")),
+                    ]),
+                }],
+                ..CommitBatch::default()
+            })
+            .expect("commit order line");
+    }
+
+    fn commit_connection_poll(
+        store: &mut CellStore<NativeEngine>,
+        scope: &CellScope,
+        conn_id: &str,
+        mapping_id: &str,
+        watermark: &str,
+        logical_time: u64,
+    ) {
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: scope.key(),
+                logical_time,
+                writes: vec![FactWriteRow::Put {
+                    object_type: "source.Connection".into(),
+                    key: conn_id.into(),
+                    values: BTreeMap::from([
+                        ("id".into(), RuntimeValue::from(conn_id)),
+                        ("system".into(), RuntimeValue::from("erpnext")),
+                        ("label".into(), RuntimeValue::from("ERPNext REST")),
+                        (
+                            "target".into(),
+                            RuntimeValue::from("http://erpnext-rest:8000"),
+                        ),
+                        ("auth".into(), RuntimeValue::from("api_key")),
+                        ("status".into(), RuntimeValue::from("ok")),
+                        (
+                            "last_sync_started_at".into(),
+                            RuntimeValue::from("2026-11-12T12:00:00Z"),
+                        ),
+                        (
+                            "last_sync_ended_at".into(),
+                            RuntimeValue::from("2026-11-12T12:00:10Z"),
+                        ),
+                        ("last_trigger".into(), RuntimeValue::from("manual")),
+                        ("watermark".into(), RuntimeValue::from(watermark)),
+                        ("rows_read".into(), RuntimeValue::Number(Decimal::from(0))),
+                        ("rows_landed".into(), RuntimeValue::Number(Decimal::from(0))),
+                        (
+                            "rows_quarantined".into(),
+                            RuntimeValue::Number(Decimal::from(0)),
+                        ),
+                        ("quarantine_reasons".into(), RuntimeValue::from("{}")),
+                        ("last_error_code".into(), RuntimeValue::Null),
+                        ("last_error_message".into(), RuntimeValue::Null),
+                        (
+                            "connector_id".into(),
+                            RuntimeValue::from("erpnext.rest.connector"),
+                        ),
+                        (
+                            "source_schema_id".into(),
+                            RuntimeValue::from("erpnext.rest.source"),
+                        ),
+                        ("mapping_id".into(), RuntimeValue::from(mapping_id)),
+                    ]),
+                }],
+                ..CommitBatch::default()
+            })
+            .expect("commit connection poll");
+    }
+
+    fn seed_order_cursor_binding(
+        store: &mut CellStore<NativeEngine>,
+        conn_id: &str,
+        cursor_json: &str,
+        now_ms: u64,
+    ) {
+        let binding = store
+            .read()
+            .active_mapping_binding("erpnext.rest.mapping")
+            .expect("binding read")
+            .expect("binding present");
+        let lease = store
+            .acquire_source_lease(conn_id, "seed-lease", now_ms, 60_000)
+            .expect("lease");
+        let cursors = BTreeMap::from([(ORDER_DATASET.to_owned(), cursor_json.to_owned())]);
+        store
+            .seed_source_cursors(
+                conn_id,
+                &lease,
+                now_ms,
+                &cursors,
+                Some(("erpnext.rest.mapping", binding.as_str())),
+            )
+            .expect("seed cursors");
+        store
+            .release_source_lease(conn_id, &lease.lease_id, lease.generation)
+            .expect("release");
+    }
+
+    #[test]
+    fn empty_polls_over_4096_without_rebind_preserve_pinned_trace() {
+        const POLL_COUNT: u64 = 4_105;
+        let (mut store, scope) = open_store(&["erpnext"]);
+        let cursor_json = "\"2026-11-12 12:00:00\"";
+        let watermark = json!({ ORDER_DATASET: "2026-11-12 12:00:00" }).to_string();
+        commit_sample_order_line(&mut store, &scope, T0);
+        for step in 1..=POLL_COUNT {
+            commit_connection_poll(
+                &mut store,
+                &scope,
+                "erpnext.rest",
+                "erpnext.rest.mapping",
+                &watermark,
+                T0.saturating_add(step),
+            );
+        }
+        seed_order_cursor_binding(
+            &mut store,
+            "erpnext.rest",
+            cursor_json,
+            T0.saturating_add(POLL_COUNT),
+        );
+        let (host, principals, scope) = wrap_host(store, scope);
+        let derived = DerivedQuestions::new([7; 32], scope);
+        let runtime = derived.questions(&host).expect("runtime");
+        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+        let q = order_line_question(&metric, 60_000);
+        let ans = eval_question(&host, &principals, &derived, &q);
+        assert_eq!(ans["freshness"], "exact", "{ans}");
+        assert_pinned_trace_ok(&host, &principals, &runtime, &q, &ans);
+    }
+
+    #[test]
+    fn empty_polls_over_4096_after_rebind_preserve_pinned_trace_and_reject_stale() {
+        const POLL_COUNT: u64 = 4_105;
+        let prior_watermark = json!({ ORDER_DATASET: "2026-11-12 12:00:00" }).to_string();
+        let advanced_cursor_json = "\"2026-11-12 13:00:00\"";
+        let advanced_watermark = json!({ ORDER_DATASET: "2026-11-12 13:00:00" }).to_string();
+        let eval_now = T0.saturating_add(POLL_COUNT).saturating_add(2);
+
+        // Stale cursor carried over across a mapping rebind must stay incomplete even after >4,096 empty polls.
+        let (mut stale_store, stale_scope) = open_store(&["erpnext"]);
+        commit_sample_order_line(&mut stale_store, &stale_scope, T0);
+        commit_connection_poll(
+            &mut stale_store,
+            &stale_scope,
+            "erpnext.rest",
+            "other.mapping",
+            &prior_watermark,
+            T0.saturating_add(1),
+        );
+        for step in 2..=POLL_COUNT.saturating_add(1) {
+            commit_connection_poll(
+                &mut stale_store,
+                &stale_scope,
+                "erpnext.rest",
+                "erpnext.rest.mapping",
+                &prior_watermark,
+                T0.saturating_add(step),
+            );
+        }
+        let (stale_host, stale_principals, stale_scope) = wrap_host(stale_store, stale_scope);
+        let stale_derived = DerivedQuestions::new([7; 32], stale_scope);
+        let stale_rt = stale_derived
+            .questions_at(&stale_host, eval_now)
+            .expect("stale runtime");
+        let stale_metric = metric_name_for(
+            &stale_host,
+            &stale_principals,
+            &stale_rt,
+            "canon.OrderLine",
+            "quantity",
+        );
+        let stale_ans = eval_question_at(
+            &stale_host,
+            &stale_principals,
+            &stale_derived,
+            ADMIN,
+            eval_now,
+            &order_line_question(&stale_metric, 60_000),
+        );
+        assert_eq!(stale_ans["freshness"], "incomplete", "{stale_ans}");
+
+        // Advancing cursor after rebind and repeating >4,096 empty polls must stay Exact and trace cleanly.
+        let (mut fresh_store, fresh_scope) = open_store(&["erpnext"]);
+        commit_sample_order_line(&mut fresh_store, &fresh_scope, T0);
+        commit_connection_poll(
+            &mut fresh_store,
+            &fresh_scope,
+            "erpnext.rest",
+            "other.mapping",
+            &prior_watermark,
+            T0.saturating_add(1),
+        );
+        for step in 2..=POLL_COUNT.saturating_add(2) {
+            commit_connection_poll(
+                &mut fresh_store,
+                &fresh_scope,
+                "erpnext.rest",
+                "erpnext.rest.mapping",
+                &advanced_watermark,
+                T0.saturating_add(step),
+            );
+        }
+        seed_order_cursor_binding(
+            &mut fresh_store,
+            "erpnext.rest",
+            advanced_cursor_json,
+            eval_now,
+        );
+        let (fresh_host, fresh_principals, fresh_scope) = wrap_host(fresh_store, fresh_scope);
+        let fresh_derived = DerivedQuestions::new([7; 32], fresh_scope);
+        let fresh_rt = fresh_derived.questions(&fresh_host).expect("fresh runtime");
+        let fresh_metric = metric_name_for(
+            &fresh_host,
+            &fresh_principals,
+            &fresh_rt,
+            "canon.OrderLine",
+            "quantity",
+        );
+        let q = order_line_question(&fresh_metric, 60_000);
+        let fresh_ans = eval_question(&fresh_host, &fresh_principals, &fresh_derived, &q);
+        assert_eq!(fresh_ans["freshness"], "exact", "{fresh_ans}");
+        assert_pinned_trace_ok(&fresh_host, &fresh_principals, &fresh_rt, &q, &fresh_ans);
+    }
+
+    fn tamper_connection_snapshot(path: &Path, version: i64, field: &str, replacement: &str) {
+        let engine = NativeEngine::open(path, StoreOptions::default()).expect("sqlite");
+        let rows = engine
+            .query(
+                "SELECT snapshot FROM _norn_fact_values \
+                 WHERE root_type='source.Connection' AND id='erpnext.rest' AND version=?1",
+                &[SqlValue::Integer(version)],
+            )
+            .expect("query snapshot");
+        let raw: String = SqlRow(rows[0].clone()).get(0).expect("snapshot text");
+        let mut parsed: Value = serde_json::from_str(&raw).expect("snapshot json");
+        parsed["values"][field] = Value::String(replacement.to_owned());
+        engine
+            .execute(
+                "UPDATE _norn_fact_values SET snapshot=?1 \
+                 WHERE root_type='source.Connection' AND id='erpnext.rest' AND version=?2",
+                &[
+                    SqlValue::Text(parsed.to_string()),
+                    SqlValue::Integer(version),
+                ],
+            )
+            .expect("update snapshot");
+    }
+
+    fn assert_tampered_eval_refused(
+        version: i64,
+        field: &str,
+        replacement: &str,
+        stale_watermark: &str,
+    ) {
+        let db = tempfile::NamedTempFile::new().expect("temp db");
+        let (mut store, scope) = open_store_at(&["erpnext"], Some(db.path()));
+        commit_sample_order_line(&mut store, &scope, T0);
+        commit_connection_poll(
+            &mut store,
+            &scope,
+            "erpnext.rest",
+            "other.mapping",
+            stale_watermark,
+            T0.saturating_add(1),
+        );
+        for step in 2..=5 {
+            commit_connection_poll(
+                &mut store,
+                &scope,
+                "erpnext.rest",
+                "erpnext.rest.mapping",
+                stale_watermark,
+                T0.saturating_add(step),
+            );
+        }
+        let (host, principals, scope) = wrap_host(store, scope);
+        let derived = DerivedQuestions::new([7; 32], scope);
+        let runtime = derived
+            .questions_at(&host, T0.saturating_add(10))
+            .expect("runtime");
+        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+        let q = order_line_question(&metric, 60_000);
+        let baseline = eval_question_at(
+            &host,
+            &principals,
+            &derived,
+            ADMIN,
+            T0.saturating_add(10),
+            &q,
+        );
+        assert_eq!(baseline["freshness"], "incomplete", "{baseline}");
+
+        tamper_connection_snapshot(db.path(), version, field, replacement);
+        let resp = call_http_as(
+            &host,
+            &principals,
+            &runtime,
+            ADMIN,
+            "POST",
+            "/v1/questions:evaluate",
+            &json!({ "question": q }).to_string(),
+        );
+        assert_ne!(
+            resp.status, 200,
+            "tampered {field} on v{version} must fail receipt authentication: {}",
+            resp.body
+        );
+    }
+
+    #[test]
+    fn tampered_intermediate_connection_snapshot_cannot_forge_historical_cursor_proof() {
+        let stale_watermark = json!({ ORDER_DATASET: "2026-11-12 12:00:00" }).to_string();
+        let forged_watermark = json!({ ORDER_DATASET: "2026-11-12 11:00:00" }).to_string();
+        assert_tampered_eval_refused(3, "watermark", &forged_watermark, &stale_watermark);
+        assert_tampered_eval_refused(1, "mapping_id", "erpnext.rest.mapping", &stale_watermark);
     }
 }

@@ -160,7 +160,7 @@ pub(crate) fn validate_cursor_json(raw: &str) -> Option<String> {
 }
 
 /// Strict parser for a `source.Connection.watermark` JSON string.
-pub(super) fn strict_watermark_text_cursors(raw: &str) -> BTreeMap<String, String> {
+fn strict_watermark_text_cursors(raw: &str) -> BTreeMap<String, String> {
     let Ok(entries) = serde_json::from_str::<BTreeMap<String, &serde_json::value::RawValue>>(raw)
     else {
         return BTreeMap::new();

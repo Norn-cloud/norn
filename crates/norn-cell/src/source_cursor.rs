@@ -34,8 +34,8 @@ pub(crate) const SOURCE_BINDING: &str = "_norn_source_binding";
 pub(crate) const SOURCE_EVIDENCE: &str = "_norn_source_evidence";
 
 /// Additive DDL for source-sync leases, cursors, recovery, mapping bindings,
-/// and capture-position evidence attribution (older engines ignore these).
-pub(crate) const DDL: [&str; 6] = [
+/// capture-position evidence attribution, and historical connection indexes.
+pub(crate) const DDL: [&str; 10] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_source_lease" (
   "connection_id" TEXT NOT NULL PRIMARY KEY,
   "lease_id" TEXT NOT NULL,
@@ -77,6 +77,10 @@ pub(crate) const DDL: [&str; 6] = [
   PRIMARY KEY ("observation_id", "connection_id")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/root_first_version" ON "_norn_fact_values" ("world", "root_type", "commit_seq", "id") WHERE "version" = 1"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/connection_commit" ON "_norn_fact_values" ("world", "id", "commit_seq", "version") WHERE "root_type" = 'source.Connection'"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/connection_mapping" ON "_norn_fact_values" ("world", "id", COALESCE(json_extract("snapshot", '$.values.mapping_id'), ''), "version") WHERE "root_type" = 'source.Connection'"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/connection_nonfailed" ON "_norn_fact_values" ("world", "id", "version") WHERE "root_type" = 'source.Connection' AND COALESCE(json_extract("snapshot", '$.values.status'), '') != 'failed'"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/connection_watermark" ON "_norn_fact_values" ("world", "id", COALESCE(json_extract("snapshot", '$.values.watermark'), ''), "version") WHERE "root_type" = 'source.Connection' AND COALESCE(json_extract("snapshot", '$.values.status'), '') != 'failed'"#,
 ];
 
 /// An active durable lease for one connection's source sync.
