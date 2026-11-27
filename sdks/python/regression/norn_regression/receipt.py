@@ -389,6 +389,12 @@ EVALUATION_ERROR_SCHEMA: dict[str, Any] = {
 def verify_evaluator_artifact_pins(regression_dir: Path | None = None) -> None:
     """Verify every pinned digest in `evaluator_pins.json` and the exact ordered `Dockerfile.evaluator` recipe."""
     root = Path(__file__).resolve().parents[1] if regression_dir is None else Path(regression_dir)
+    trusted_pins_path = Path(__file__).resolve().parent / "evaluator_pins.json"
+    context_pins_path = root / "norn_regression" / "evaluator_pins.json"
+    if not context_pins_path.is_file() or context_pins_path.read_bytes() != trusted_pins_path.read_bytes():
+        raise ValueError(
+            f"build context {context_pins_path} is missing or differs from trusted {trusted_pins_path}"
+        )
     pins = _load_evaluator_pins()
     dockerfile_text = (root / "Dockerfile.evaluator").read_text(encoding="utf-8")
 
@@ -903,12 +909,12 @@ def _decimal_to_exact_fraction(value: Decimal) -> Fraction:
 
 
 def _format_fraction_brief(value: Fraction) -> str:
-    """Format a `Fraction` as O(1) bounded diagnostic text that never raises on huge values."""
-    if value.numerator.bit_length() <= 256 and value.denominator.bit_length() <= 256:
-        return str(value)
-    sign = "-" if value < 0 else ""
-    num_bits = abs(value.numerator).bit_length()
+    """Format a `Fraction` as O(1) bounded diagnostic text that never raises or copies huge integers."""
+    num_bits = value.numerator.bit_length()
     den_bits = value.denominator.bit_length()
+    if num_bits <= 256 and den_bits <= 256:
+        return str(value)
+    sign = "-" if value.numerator < 0 else ""
     return f"{sign}<exact-fraction num_bits={num_bits} den_bits={den_bits}>"
 
 

@@ -15,7 +15,7 @@
     "effectProgram": {
       "acceptReceipt": {
         "digestProperty": "evaluation_receipt",
-        "manifestDigest": "sha256:c4511d5b6567f086be974e6465e93ff37ea1f3c39124f2c21a8c00c8d1ec7ec0",
+        "manifestDigest": "sha256:9e9458beea3d97fc34784e42d6d98ae53343ed38b6f6c5211c71a9a4c7c890c6",
         "referenceField": "evaluation_receipt",
         "resultBindings": {
           "contracts_passed": "contracts_passed",

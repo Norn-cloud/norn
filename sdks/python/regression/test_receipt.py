@@ -627,6 +627,8 @@ class ForecastReceiptTests(unittest.TestCase):
 
         huge_brief = _format_fraction_brief(Fraction(1 << (MAX_CANONICAL_NUMBER_BYTES * 4), 1))
         self.assertIn("<exact-fraction num_bits=", huge_brief)
+        neg_huge_brief = _format_fraction_brief(Fraction(-(1 << (MAX_CANONICAL_NUMBER_BYTES * 4)), 1))
+        self.assertTrue(neg_huge_brief.startswith("-<exact-fraction num_bits="))
 
         wide_val = Decimal("1e5000")
         wide_model = encode_model_artifact(
@@ -669,6 +671,7 @@ class ForecastReceiptTests(unittest.TestCase):
             for drifted in (
                 orig_df.replace("535\n", "535 AS stage\n", 1),
                 orig_df + "COPY\t/etc/passwd\t/app/leak\n",
+                orig_df.replace("RUN useradd --system --uid 10001 evaluator", "RUN useradd --system --uid 0 evaluator", 1),
                 orig_df.replace("USER evaluator", "USER root", 1),
                 orig_df.replace("WORKDIR /app", "WORKDIR /tmp", 1),
                 orig_df.replace("TZ=UTC", "TZ=America/New_York", 1),
@@ -676,6 +679,15 @@ class ForecastReceiptTests(unittest.TestCase):
                 (tmp_root / "Dockerfile.evaluator").write_text(drifted, encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "recipe mismatch"):
                     verify_evaluator_artifact_pins(tmp_root)
+
+            # Restore valid Dockerfile; missing or altered build-context evaluator_pins.json must fail.
+            (tmp_root / "Dockerfile.evaluator").write_text(orig_df, encoding="utf-8")
+            (pkg / "evaluator_pins.json").write_text("{}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "missing or differs from trusted"):
+                verify_evaluator_artifact_pins(tmp_root)
+            (pkg / "evaluator_pins.json").unlink()
+            with self.assertRaisesRegex(ValueError, "missing or differs from trusted"):
+                verify_evaluator_artifact_pins(tmp_root)
 
 
 if __name__ == "__main__":
