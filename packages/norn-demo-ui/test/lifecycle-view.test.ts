@@ -4,7 +4,9 @@ import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
+import { type Clock } from "../../norn-react/src/machine/driver.ts"
 import { type ArrowRoute, type Box, type LifecycleDoc, type LifecycleFinding, type LifecycleViewDocument, type LiveAnswer, type LiveSubscriptionRefusal, type Point, countsFrom, createLifecycleReadController, isFacetsAnswer, layout, lifecycleStateRole, orderLifecycleStates, routeArrow, stepState } from "../src/elements/lifecycle-view.ts"
+import { lifecycleViewArtifact } from "../src/elements/lifecycle-view.widget.ts"
 
 const ORDER: LifecycleDoc = {
   property: "status",
@@ -74,9 +76,13 @@ test("when otherRows > 0, omitted declared states are unlisted rather than count
   expect(counts.states.get("archived")).toEqual({ kind: "unlisted" })
   expect(counts.notes).toEqual(["2 in unlisted values (omitted states are not counted as 0)"])
 
-  const truncatedAr = countsFrom(ORDER, { ...truncated, body: { ...truncated.body, lowerBound: true } }, "ar")
+  const truncatedAr = countsFrom(ORDER, { ...truncated, body: { ...truncated.body, lowerBound: true, scanLimit: 10_000 } }, "ar")
   expect(truncatedAr.states.get("cancelled")).toEqual({ kind: "unlisted" })
-  expect(truncatedAr.notes).toEqual(["٢ على الأقل في قيم غير مدرجة (الحالات غير المدرجة لا تُعدّ صفراً)"])
+  expect(truncatedAr.notes).toEqual([
+    "تم بلوغ حد الفحص (10,000 سجل)؛ الأعداد حدود دنيا",
+    "2 على الأقل في قيم غير مدرجة (الحالات غير المدرجة لا تُعدّ صفراً)",
+  ])
+  for (const note of truncatedAr.notes) expect(note).not.toMatch(/[٠-٩]/)
 })
 
 test("legacy approximate bodies without lowerBound are rejected as invalid facets documents", () => {
@@ -367,6 +373,217 @@ describe("first-snapshot and initial-GET reconciliation", () => {
   })
 })
 
+function fakeClock() {
+  let nextId = 1
+  const pending = new Map<number, { readonly ms: number; readonly callback: () => void }>()
+  const clock: Clock = {
+    setTimeout(callback, ms) {
+      const id = nextId++
+      pending.set(id, { ms, callback })
+      return id
+    },
+    clearTimeout(handle) {
+      pending.delete(handle as number)
+    },
+  }
+  return {
+    clock,
+    pending: () => [...pending.values()],
+    fireAll() {
+      const entries = [...pending.entries()]
+      pending.clear()
+      for (const [, entry] of entries) entry.callback()
+    },
+  }
+}
+
+describe("not_served vs unavailable (DESIGN.md §12.2, §12.4)", () => {
+  test("lifecycle-view.widget.json matches its typed TypeScript authoring source without drift", () => {
+    const expected = `${JSON.stringify(lifecycleViewArtifact(), null, 2)}\n`
+    const actual = readFileSync(join(import.meta.dir, "../src/elements/lifecycle-view.widget.json"), "utf8")
+    expect(actual).toBe(expected)
+  })
+
+  test.each([
+    ["bare 404", { status: 404, body: undefined }],
+    ["coded route.not_found", { status: 404, body: { code: "route.not_found", message: "not served" } }],
+  ])("HTTP 404 (%s) enters terminal not_served with zero retry timers and ignores retry/refresh", async (_label, answer) => {
+    const timers = fakeClock()
+    let readCalls = 0
+    let emitSnapshot!: (next: LiveAnswer) => void
+    const states: string[] = []
+    const controller = createLifecycleReadController({
+      machine: VIEW_MACHINE,
+      clock: timers.clock,
+      read: async () => {
+        readCalls += 1
+        return answer
+      },
+      changes: (listener) => {
+        emitSnapshot = listener
+        return () => {}
+      },
+      onState: (state) => states.push(state),
+    })
+
+    await settle()
+    expect(controller.state()).toBe("not_served")
+    expect(states).toContain("not_served")
+    expect(states).not.toContain("unavailable")
+    expect(readCalls).toBe(1)
+    expect(timers.pending()).toEqual([])
+
+    controller.retry()
+    controller.refresh()
+    emitSnapshot(facetsAnswer(5, "rev-2"))
+    await settle()
+    expect(controller.state()).toBe("not_served")
+    expect(readCalls).toBe(1)
+    expect(timers.pending()).toEqual([])
+    controller.dispose()
+  })
+
+  test("HTTP 503 enters unavailable, arms the 10s retry timer, and recovers on timer or Retry", async () => {
+    const timers = fakeClock()
+    let readCalls = 0
+    const answers: LiveAnswer[] = [
+      { status: 503, body: undefined },
+      facetsAnswer(7),
+    ]
+    const controller = createLifecycleReadController({
+      machine: VIEW_MACHINE,
+      clock: timers.clock,
+      read: async () => answers[readCalls++] ?? facetsAnswer(7),
+      onState: () => {},
+    })
+
+    await settle()
+    expect(controller.state()).toBe("unavailable")
+    expect(readCalls).toBe(1)
+    expect(timers.pending().map((t) => t.ms)).toEqual([10_000])
+
+    timers.fireAll()
+    await settle()
+    expect(controller.state()).toBe("showing")
+    expect(readCalls).toBe(2)
+    expect(draftCountOf(controller.lastAnswer())).toBe(7)
+    controller.dispose()
+  })
+
+  test("early valid socket snapshot arriving before initial GET 404 still enters terminal not_served without a second GET", async () => {
+    const firstGet = deferred<LiveAnswer>()
+    const timers = fakeClock()
+    let readCalls = 0
+    let emitSnapshot!: (answer: LiveAnswer) => void
+    let stopCalls = 0
+
+    const controller = createLifecycleReadController({
+      machine: VIEW_MACHINE,
+      clock: timers.clock,
+      read: () => {
+        readCalls += 1
+        if (readCalls > 1) throw new Error(`unexpected read #${readCalls}`)
+        return firstGet.promise
+      },
+      changes: (listener) => {
+        emitSnapshot = listener
+        return () => { stopCalls += 1 }
+      },
+      onState: () => {},
+    })
+
+    // Hold initial GET, deliver a valid socket snapshot, then resolve initial GET with 404 route.not_found.
+    emitSnapshot(facetsAnswer(2, "rev-2"))
+    expect(controller.state()).toBe("reading")
+
+    firstGet.resolve({ status: 404, body: { code: "route.not_found", message: "not served" } })
+    await settle()
+
+    expect(readCalls).toBe(1)
+    expect(controller.state()).toBe("not_served")
+    expect(timers.pending()).toEqual([])
+    expect(stopCalls).toBe(1)
+    controller.dispose()
+    expect(stopCalls).toBe(1)
+  })
+
+  test("503 -> retry() before 10s -> 404 clears the armed 10s timer and tears down the live subscription immediately without double-stopping on dispose", async () => {
+    const timers = fakeClock()
+    let readCalls = 0
+    let stopCalls = 0
+    const answers: LiveAnswer[] = [
+      { status: 503, body: undefined },
+      { status: 404, body: { code: "route.not_found", message: "not served" } },
+    ]
+
+    const controller = createLifecycleReadController({
+      machine: VIEW_MACHINE,
+      clock: timers.clock,
+      read: async () => answers[readCalls++] ?? { status: 404, body: { code: "route.not_found" } },
+      changes: () => () => { stopCalls += 1 },
+      onState: () => {},
+    })
+
+    await settle()
+    expect(controller.state()).toBe("unavailable")
+    expect(readCalls).toBe(1)
+    expect(timers.pending().map((t) => t.ms)).toEqual([10_000])
+    expect(stopCalls).toBe(0)
+
+    // Retry manually before the 10s timer fires; the retry answers 404 not_served.
+    controller.retry()
+    await settle()
+
+    expect(readCalls).toBe(2)
+    expect(controller.state()).toBe("not_served")
+    expect(timers.pending()).toEqual([])
+    expect(stopCalls).toBe(1)
+
+    // Disposing afterward must not double-invoke the subscription teardown.
+    controller.dispose()
+    expect(stopCalls).toBe(1)
+  })
+
+  test("Refresh from unavailable uses the declared changed transition (not retry)", async () => {
+    const timers = fakeClock()
+    let readCalls = 0
+    let emitRefusal: ((refusal: { code: string; message: string }) => void) | undefined
+    // Strip unavailable-retry from a cloned machine to prove refresh() dispatches `changed`, not `retry`.
+    const machineWithoutUnavailableRetry = {
+      ...VIEW_MACHINE,
+      transitions: VIEW_MACHINE.transitions.filter((t) => t.transitionId !== "unavailable-retry"),
+    }
+    expect(VIEW_MACHINE.transitions.some((t) => t.transitionId === "unavailable-changed" && t.from === "unavailable" && t.on === "changed")).toBe(true)
+
+    const answers: LiveAnswer[] = [
+      { status: 503, body: undefined },
+      facetsAnswer(9),
+    ]
+    const controller = createLifecycleReadController({
+      machine: machineWithoutUnavailableRetry,
+      clock: timers.clock,
+      read: async () => answers[readCalls++] ?? facetsAnswer(9),
+      changes: (_onAnswer, onRefusal) => {
+        emitRefusal = onRefusal
+        return () => {}
+      },
+      onState: () => {},
+    })
+
+    await settle()
+    emitRefusal?.({ code: "live.unavailable", message: "Live updates unavailable" })
+    expect(controller.state()).toBe("unavailable")
+    expect(readCalls).toBe(1)
+
+    controller.refresh()
+    await settle()
+    expect(readCalls).toBe(2)
+    expect(controller.state()).toBe("showing")
+    expect(draftCountOf(controller.lastAnswer())).toBe(9)
+    controller.dispose()
+  })
+})
+
 // A property over generated lifecycles, in both directions: on the board's grid (11rem cards,
 // 4rem between columns) no arrow passes through a card, whichever states a transition joins.
 test("no arrow crosses a card, for any lifecycle the layout can produce", () => {
@@ -434,7 +651,7 @@ if (!pkg && process.env.NORN_CHECKER_WASM_REQUIRED === "1") {
 }
 const withChecker = pkg ? describe : describe.skip
 withChecker("the checker", () => {
-  test("admits the view's machine: no widget.machine.* finding", async () => {
+  test("admits the view's widget artifact with zero Ring-1 findings", async () => {
     const checker = (await import(pathToFileURL(join(pkg!, "norn_checker_wasm.js")).href)) as {
       initSync(options: { module: Uint8Array }): unknown
       checkArtifactSet(artifactsJson: string, contextJson: string): string
@@ -442,7 +659,6 @@ withChecker("the checker", () => {
     checker.initSync({ module: readFileSync(join(pkg!, "norn_checker_wasm_bg.wasm")) })
     const document = readFileSync(join(import.meta.dir, "../src/elements/lifecycle-view.widget.json"), "utf8")
     const result = JSON.parse(checker.checkArtifactSet(`[${document}]`, "null")) as { diagnostics: { diagnostics: { code: string; message: string }[] } }
-    const machine = result.diagnostics.diagnostics.filter((finding) => finding.code.startsWith("widget.machine."))
-    expect(machine).toEqual([])
+    expect(result.diagnostics.diagnostics).toEqual([])
   })
 })

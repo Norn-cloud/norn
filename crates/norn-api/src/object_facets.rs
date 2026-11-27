@@ -256,12 +256,16 @@ pub fn get_object_facets_within<E: SqlEngine>(
     let counted: Vec<&BTreeMap<String, RuntimeValue>> = scan
         .listed
         .iter()
-        .filter(|listed| {
-            listed.readable && object_query::matches(&query.filter, Some(&listed.row.values))
+        .filter_map(|listed| {
+            let values = listed.comparable_values()?;
+            object_query::matches(&query.filter, Some(values)).then_some(values)
         })
-        .map(|listed| &listed.row.values)
         .collect();
-    let withheld = scan.listed.iter().filter(|listed| !listed.readable).count();
+    let withheld = scan
+        .listed
+        .iter()
+        .filter(|listed| !listed.readable())
+        .count();
     Ok(NornObjectFacets {
         object_type: object_type.to_owned(),
         rows: count(counted.len()),

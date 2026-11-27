@@ -42,6 +42,7 @@ test/new-developer.test.ts
 test/ontology-pack.test.ts
 test/pack-link.test.ts
 test/packaging.test.ts
+test/pr-c-scope-key.test.ts
 test/predicate-slice-and-owned-collections.test.ts
 test/principal-inputs.test.ts
 test/profile-corpus.test.ts
