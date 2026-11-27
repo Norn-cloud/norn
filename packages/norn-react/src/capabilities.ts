@@ -244,7 +244,7 @@ type TaintValue =
   | { readonly kind: "root_input" }
   | { readonly kind: "string"; readonly value: string }
   | { readonly kind: "number"; readonly raw: string; readonly dec: ExactDecimal | null }
-  | { readonly kind: "object"; readonly fields: Readonly<Record<string, TaintValue>> }
+  | { readonly kind: "object"; readonly fields: Readonly<Record<string, TaintValue>>; readonly dynamicValues?: TaintValue }
   | { readonly kind: "array"; readonly elements: readonly TaintValue[] }
   | { readonly kind: "union"; readonly members: readonly TaintValue[] }
   | { readonly kind: "other" }
@@ -331,8 +331,10 @@ function accessProperty(receiver: TaintValue, prop: string): TaintValue {
     }
     return acc ?? OTHER
   }
-  if (receiver.kind === "object" && Object.hasOwn(receiver.fields, prop)) {
-    return receiver.fields[prop]!
+  if (receiver.kind === "object") {
+    const known = Object.hasOwn(receiver.fields, prop) ? receiver.fields[prop]! : undefined
+    if (known !== undefined && receiver.dynamicValues !== undefined) return unionTaint(known, receiver.dynamicValues)
+    return known ?? receiver.dynamicValues ?? OTHER
   }
   return OTHER
 }
@@ -353,11 +355,11 @@ function accessIndex(receiver: TaintValue, key: TaintValue): TaintValue {
   if (receiver.kind === "object") {
     const keys = stringLiteralsOf(key)
     if (keys === null) {
-      // Unknown/non-literal key: fail closed by unioning all fields of the object literal.
-      const values = Object.values(receiver.fields)
+      // Unknown/non-literal key: fail closed by unioning all known fields and any dynamic-key values.
+      const values = [...Object.values(receiver.fields), ...(receiver.dynamicValues === undefined ? [] : [receiver.dynamicValues])]
       return values.length === 0 ? OTHER : values.reduce((acc, val) => unionTaint(acc, val))
     }
-    let acc: TaintValue | undefined
+    let acc: TaintValue | undefined = receiver.dynamicValues
     for (const prop of keys) {
       if (!Object.hasOwn(receiver.fields, prop)) continue
       const next = receiver.fields[prop]!
@@ -588,6 +590,7 @@ export function referencesRecordVersion(expression: string): boolean {
       if (isPunct(t0, "{")) {
         eat()
         const fields: Record<string, TaintValue> = Object.create(null) as Record<string, TaintValue>
+        let dynamicValues: TaintValue | undefined
         while (pos < tokens.length && !isPunct(peek(), "}")) {
           const keyToken = peek()
           if (keyToken === undefined) break
@@ -605,6 +608,8 @@ export function referencesRecordVersion(expression: string): boolean {
                     fields[keyName] = fieldVal
                   }
                 }
+              } else {
+                dynamicValues = dynamicValues === undefined ? fieldVal : unionTaint(dynamicValues, fieldVal)
               }
             }
           } else if (keyToken.kind === "ident" || keyToken.kind === "string" || keyToken.kind === "number") {
@@ -629,7 +634,7 @@ export function referencesRecordVersion(expression: string): boolean {
           else break
         }
         if (isPunct(peek(), "}")) eat()
-        return { kind: "object", fields }
+        return dynamicValues === undefined ? { kind: "object", fields } : { kind: "object", fields, dynamicValues }
       }
       if (t0.kind === "template") {
         eat()
