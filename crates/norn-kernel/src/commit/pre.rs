@@ -5,12 +5,12 @@ use crate::cell_host::{
 use crate::commit_check::{CommitModel, CommitView};
 use crate::commit_versions::{CurrentVersion, first_conflict};
 use crate::snapshot_observe::ObservationAuthorization;
-use norn_ir::RuntimeValue;
 use norn_ir::identifier_limits::{
     MAX_ACTION_CALL_ID_BYTES, MAX_LINK_NAME_BYTES, MAX_OBJECT_KEY_BYTES,
     MAX_OBJECT_TYPE_NAME_BYTES, MAX_TOMBSTONE_KEY_BYTES,
 };
 use norn_ir::posting::{AccountingError, AccountingLegIr};
+use norn_ir::{ObjectTypeName, RuntimeValue};
 use std::collections::{BTreeMap, BTreeSet};
 /// Maximum complete outgoing link targets a turn may bind as one adjacency
 /// read. This is the current `norn.limits/1` slice-record ceiling.
@@ -592,4 +592,92 @@ impl<V: CommitView + ?Sized> CurrentVersion<&LinkKey, V::Error> for LinkVersions
     fn current(&mut self, key: &&LinkKey) -> Result<u64, V::Error> {
         Ok(self.view.link_version(&self.model.canonical_link(key))?.0)
     }
+}
+
+pub(crate) fn check_source_markers<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    view: &V,
+    authorization: Option<&ObservationAuthorization>,
+) -> Result<(), CommitError<V::Error>> {
+    for write in commit.writes.iter().filter(|write| {
+        write.key.object_type.as_str() == crate::snapshot_observe::SOURCE_OWNERSHIP_TYPE
+    }) {
+        let retained = view
+            .observed_source_owner(&write.key)
+            .map_err(CommitError::Host)?;
+        let proposed = match &write.mutation {
+            FactMutation::Put { values } => values
+                .get("owner")
+                .and_then(crate::snapshot_observe::ObservedSourceOwner::from_value),
+            FactMutation::Delete => None,
+        };
+        let evidence_unavailable = !view.can_read_observed_source_owners()
+            && view
+                .concrete(&write.key)
+                .map_err(CommitError::Host)?
+                .is_some();
+        let Some(authorization) = authorization else {
+            return Err(CommitError::ObservationAuthorization);
+        };
+        if evidence_unavailable || proposed.is_none() {
+            return Err(CommitError::ObservationAuthorization);
+        }
+        let mut permitted = false;
+        for (scope, owner) in authorization.source_scopes() {
+            if write.key.key != format!("{}/{}", scope.key.object_type.as_str(), scope.key.key)
+                || proposed.as_ref() != Some(owner)
+            {
+                continue;
+            }
+            let guarded = commit.reads.contains(scope)
+                || commit.writes.iter().any(|source_write| {
+                    source_write.key == scope.key && source_write.expected == scope.expected
+                });
+            let materialized = commit.writes.iter().any(|source_write| {
+                source_write.key == scope.key
+                    && source_write.expected == scope.expected
+                    && matches!(source_write.mutation, FactMutation::Put { .. })
+            });
+            // Ownership is authority: a guarded unchanged read of an authored
+            // object (or an observed edit of it) cannot grant outgoing rights.
+            let new_source = view
+                .concrete(&scope.key)
+                .map_err(CommitError::Host)?
+                .is_none();
+            let successor = retained.as_ref().is_some_and(|old| {
+                authorization.permits_source_owner_recreation(&scope.key, old, write)
+            }) && recreates_observed_source(
+                commit,
+                view,
+                &scope.key.object_type,
+                &scope.key.key,
+            )?;
+            permitted |= guarded
+                && (retained.as_ref() == Some(owner)
+                    || materialized && new_source && retained.is_none()
+                    || successor);
+        }
+        if !permitted {
+            return Err(CommitError::ObservationAuthorization);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn recreates_observed_source<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    view: &V,
+    source_type: &ObjectTypeName,
+    source_key: &str,
+) -> Result<bool, CommitError<V::Error>> {
+    let tombstone =
+        crate::snapshot_observe::tombstone_key(&FactKey::new(source_type.as_str(), source_key));
+    Ok(commit
+        .writes
+        .iter()
+        .any(|write| write.key == tombstone && matches!(write.mutation, FactMutation::Delete))
+        && view
+            .concrete(&tombstone)
+            .map_err(CommitError::Host)?
+            .is_some())
 }

@@ -36,6 +36,70 @@ class Suite(unittest.TestCase):
             self.assertEqual(by_test(checks, "variance inflation factor", feature).status, "pass")
         self.assertEqual(by_test(checks, "condition number").status, "pass")
         self.assertAlmostEqual(plots["coefficients"]["x1"], 2.0, delta=0.1)
+        self.assertGreater(plots["r_squared"], 0.7)
+        self.assertLessEqual(plots["r_squared"], 1.0)
+
+    def test_evaluate_forecast_receipt_default_runner_integration(self):
+        from norn_regression.receipt import (
+            FORECAST_EVALUATOR_MANIFEST_DIGEST,
+            dataset_snapshot_blob,
+            encode_model_artifact,
+            evaluate_forecast_receipt,
+        )
+
+        frame = clean(n=400, seed=19)
+        model_bytes = encode_model_artifact(
+            model_id="supply.demand_forecast",
+            target="y",
+            features=["x1", "x2"],
+            intercept="1.5",
+            coefficients={"x1": "2.0", "x2": "-1.0"},
+            contracts={"minRSquared": "0.7"},
+        )
+        invocation, receipt, checks, diagnostics = evaluate_forecast_receipt(
+            frame,
+            model_bytes,
+            "y",
+            ["x1", "x2"],
+            tenant="org_demo/dev",
+            authority_id="svc:evaluator",
+            command_id="cmd-suite-default",
+            version_id="v1",
+            model_id="supply.demand_forecast",
+            evaluation_run="run-eval",
+            dataset_revision="c10",
+            metric_name="r_squared",
+        )
+        self.assertEqual(receipt["manifest"], FORECAST_EVALUATOR_MANIFEST_DIGEST)
+        self.assertEqual(
+            invocation["blobs"]["dataset"],
+            dataset_snapshot_blob(frame, ["y", "x1", "x2"], dataset_revision="c10"),
+        )
+        self.assertGreater(len(checks), 0)
+        summary = receipt["outcome"]["success"]["summary"]
+        self.assertEqual(summary["metric_name"], "r_squared")
+        self.assertGreater(float(summary["metric_value"]), 0.7)
+        self.assertTrue(summary["contracts_passed"])
+        self.assertEqual(diagnostics["n"], 400)
+
+        # Re-running with the dispatched invocation reproduces identical result identity.
+        _, replay_receipt, _, _ = evaluate_forecast_receipt(
+            frame,
+            model_bytes,
+            "y",
+            ["x1", "x2"],
+            tenant="org_demo/dev",
+            authority_id="svc:evaluator",
+            command_id="cmd-suite-default",
+            version_id="v1",
+            model_id="supply.demand_forecast",
+            evaluation_run="run-eval",
+            dataset_revision="c10",
+            metric_name="r_squared",
+            dispatched_invocation=invocation,
+        )
+        self.assertEqual(replay_receipt["dispatch"], receipt["dispatch"])
+        self.assertEqual(replay_receipt["outcome"], receipt["outcome"])
 
     def test_heteroscedastic_data_fails_breusch_pagan(self):
         frame = dataset(n=1500)

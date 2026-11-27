@@ -8,13 +8,15 @@ use norn_ir::ObjectTypeName;
 use norn_kernel::execution_profile::{AtomicOwnership, supports_local};
 use norn_kernel::{
     CellCommit, CellHost, CommitError, CommitModel, CommitView, Consumed, FactExpectation, FactKey,
-    FactVersion, LinkKey, TypeCatalog, check_commit,
+    FactVersion, LinkKey, PredicateQuery, PredicateReadExpectation, PredicateReadMember,
+    TypeCatalog, check_commit,
 };
 use norn_testkit::cell_host::{
     LawCommand, LawEvent, LawInput, MemoryCell, law_command, law_key, law_object_types,
     law_responder,
 };
 use norn_testkit::proptest::prelude::*;
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 
 struct View {
@@ -343,5 +345,209 @@ fn shape_refusal_returns_before_probing_atomic_ownership() {
     assert!(
         matches!(result, Err(CommitError::DuplicateKey { .. })),
         "pre-storage shape refusal must not be overwritten by atomic_ownership, got {result:?}"
+    );
+}
+
+struct ExplicitPredicateView {
+    ownership: AtomicOwnership,
+}
+
+impl CommitView for ExplicitPredicateView {
+    type Error = Infallible;
+
+    fn predicate_ownership(&self, _: &PredicateQuery) -> Result<AtomicOwnership, Infallible> {
+        Ok(self.ownership)
+    }
+
+    fn pending(&self, _: &Consumed) -> Result<bool, Infallible> {
+        Ok(true)
+    }
+
+    fn version(&self, _: &FactKey) -> Result<FactVersion, Infallible> {
+        Ok(FactVersion::ABSENT)
+    }
+
+    fn concrete(&self, _: &FactKey) -> Result<Option<ObjectTypeName>, Infallible> {
+        Ok(None)
+    }
+
+    fn link_version(&self, _: &LinkKey) -> Result<FactVersion, Infallible> {
+        Ok(FactVersion::ABSENT)
+    }
+
+    fn links_of(&self, _: &FactKey) -> Result<Vec<LinkKey>, Infallible> {
+        Ok(Vec::new())
+    }
+
+    fn predicate_members(
+        &self,
+        _: &PredicateQuery,
+        _: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, Infallible> {
+        Ok(Some(Vec::new()))
+    }
+}
+
+struct TypePartitionView {
+    ownership: AtomicOwnership,
+}
+
+impl CommitView for TypePartitionView {
+    type Error = Infallible;
+
+    fn atomic_ownership(&self, _: &FactKey) -> Result<AtomicOwnership, Infallible> {
+        Ok(self.ownership)
+    }
+
+    fn pending(&self, _: &Consumed) -> Result<bool, Infallible> {
+        Ok(true)
+    }
+
+    fn version(&self, _: &FactKey) -> Result<FactVersion, Infallible> {
+        Ok(FactVersion::ABSENT)
+    }
+
+    fn concrete(&self, _: &FactKey) -> Result<Option<ObjectTypeName>, Infallible> {
+        Ok(None)
+    }
+
+    fn link_version(&self, _: &LinkKey) -> Result<FactVersion, Infallible> {
+        Ok(FactVersion::ABSENT)
+    }
+
+    fn links_of(&self, _: &FactKey) -> Result<Vec<LinkKey>, Infallible> {
+        Ok(Vec::new())
+    }
+
+    fn predicate_members(
+        &self,
+        _: &PredicateQuery,
+        _: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, Infallible> {
+        Ok(Some(Vec::new()))
+    }
+}
+
+#[test]
+fn empty_predicate_read_enforces_predicate_ownership() {
+    let types = law_object_types();
+    let catalog = TypeCatalog::new(&types);
+    let model = CommitModel::new(&catalog);
+    let proposal: CellCommit<(), (), ()> = CellCommit {
+        predicate_reads: vec![PredicateReadExpectation {
+            predicate: PredicateQuery {
+                object_type: law_key(1).object_type,
+                filter: BTreeMap::new(),
+                window: None,
+            },
+            members: Vec::new(),
+        }],
+        ..CellCommit::empty()
+    };
+
+    for ownership in [AtomicOwnership::Foreign, AtomicOwnership::Unknown] {
+        let explicit = check_commit(&proposal, &model, &ExplicitPredicateView { ownership });
+        assert!(
+            matches!(explicit, Err(CommitError::AtomicBoundary { .. })),
+            "empty predicate read must refuse {ownership:?} predicate_ownership, got {explicit:?}"
+        );
+        let delegated = check_commit(&proposal, &model, &TypePartitionView { ownership });
+        assert!(
+            matches!(delegated, Err(CommitError::AtomicBoundary { .. })),
+            "empty predicate read must refuse {ownership:?} default atomic_ownership, got {delegated:?}"
+        );
+    }
+
+    check_commit(
+        &proposal,
+        &model,
+        &ExplicitPredicateView {
+            ownership: AtomicOwnership::Local,
+        },
+    )
+    .expect("local predicate ownership admits empty predicate read");
+    check_commit(
+        &proposal,
+        &model,
+        &TypePartitionView {
+            ownership: AtomicOwnership::Local,
+        },
+    )
+    .expect("local default atomic ownership admits empty predicate read");
+}
+
+struct SubtypePredicateView;
+
+impl CommitView for SubtypePredicateView {
+    type Error = Infallible;
+
+    fn predicate_ownership(
+        &self,
+        predicate: &PredicateQuery,
+    ) -> Result<AtomicOwnership, Infallible> {
+        Ok(if predicate.object_type.as_str() == "test.LawChild" {
+            AtomicOwnership::Foreign
+        } else {
+            AtomicOwnership::Local
+        })
+    }
+
+    fn pending(&self, _: &Consumed) -> Result<bool, Infallible> {
+        Ok(true)
+    }
+
+    fn version(&self, _: &FactKey) -> Result<FactVersion, Infallible> {
+        Ok(FactVersion::ABSENT)
+    }
+
+    fn concrete(&self, _: &FactKey) -> Result<Option<ObjectTypeName>, Infallible> {
+        Ok(None)
+    }
+
+    fn link_version(&self, _: &LinkKey) -> Result<FactVersion, Infallible> {
+        Ok(FactVersion::ABSENT)
+    }
+
+    fn links_of(&self, _: &FactKey) -> Result<Vec<LinkKey>, Infallible> {
+        Ok(Vec::new())
+    }
+
+    fn predicate_members(
+        &self,
+        _: &PredicateQuery,
+        _: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, Infallible> {
+        Ok(Some(Vec::new()))
+    }
+}
+
+#[test]
+fn subtype_predicate_read_preserves_subtype_type_for_ownership() {
+    let mut subtype_types = law_object_types();
+    let subtype: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
+        "name": "test.LawChild",
+        "extends": law_key(1).object_type.as_str(),
+        "properties": []
+    }))
+    .expect("valid subtype");
+    subtype_types.push(subtype);
+    let subtype_catalog = TypeCatalog::new(&subtype_types);
+    let subtype_model = CommitModel::new(&subtype_catalog);
+    let subtype_proposal: CellCommit<(), (), ()> = CellCommit {
+        predicate_reads: vec![PredicateReadExpectation {
+            predicate: PredicateQuery {
+                object_type: ObjectTypeName("test.LawChild".to_owned()),
+                filter: BTreeMap::new(),
+                window: None,
+            },
+            members: Vec::new(),
+        }],
+        ..CellCommit::empty()
+    };
+
+    let subtype_result = check_commit(&subtype_proposal, &subtype_model, &SubtypePredicateView);
+    assert!(
+        matches!(subtype_result, Err(CommitError::AtomicBoundary { .. })),
+        "subtype predicate read must preserve subtype object_type for predicate_ownership, got {subtype_result:?}"
     );
 }
