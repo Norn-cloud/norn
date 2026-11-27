@@ -2333,7 +2333,7 @@ pub(crate) fn restore_input<E: SqlEngine>(
             result,
             runs,
         } => {
-            restore_consumed_result(
+            crate::outbox_generations::restore_consumed_result(
                 store,
                 record,
                 position,
@@ -2356,86 +2356,9 @@ pub(crate) fn restore_input<E: SqlEngine>(
     Ok(())
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "replays the decomposed ConsumedInput::Result fields from restore_input"
-)]
-fn restore_consumed_result<E: SqlEngine>(
-    store: &mut CellStore<E>,
-    record: &ExportRecord,
-    position: u64,
-    commit_seq: u64,
-    command: &crate::store::OutboxCommand,
-    result: Option<&Value>,
-    runs: &[crate::RunRecord],
-    mismatch: &dyn Fn() -> CellError,
-) -> Result<(), CellError> {
-    let head = replayed_result(store, position)?.ok_or_else(mismatch)?;
-    let already_settled = head.result.is_some();
-    if head.position != position
-        || head.commit_seq != commit_seq
-        || head.command != *command
-        || result.is_none()
-        || (already_settled && head.result.as_ref() != result)
-    {
-        return Err(mismatch());
-    }
-    // Older generation runs can survive command replacement without
-    // ever having been consumed. Recover the recorded history, without IO.
-    let existing = store.read().runs(&command.command_id)?;
-    if existing.iter().any(|run| !runs.contains(run)) {
-        return Err(mismatch());
-    }
-    restore_run_history(store, record, command, runs, &existing)?;
-    let current: Vec<_> = runs
-        .iter()
-        .filter(|run| run.generation == command.generation)
-        .collect();
-    let valid_current = if already_settled {
-        current.is_empty()
-            || (current.len() == 1
-                && current.first().is_some_and(|run| {
-                    run.attempt == 1
-                        && run.consumed_commit_seq.is_none()
-                        && Some(&run.outcome) == result
-                }))
-    } else {
-        current.len() == 1
-            && current.first().is_some_and(|run| {
-                run.attempt == 1
-                    && run.consumed_commit_seq.is_none()
-                    && Some(&run.outcome) == result
-            })
-    };
-    if !valid_current {
-        return Err(mismatch());
-    }
-    if !already_settled {
-        let world = crate::payload_storage::receipt_world(&store.conn, head.commit_seq)?;
-        let encoded_result = crate::payload_storage::encode_result(
-            &store.conn,
-            &record.batch.scope,
-            &world,
-            result.ok_or_else(mismatch)?,
-        )?;
-        store.conn.execute(
-            "UPDATE \"_norn_outbox\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3",
-            params![encoded_result, command.command_id, to_i64(command.generation, "generation")?],
-        )?;
-    }
-    crate::outbox_ledger::restore_consumed_runs(
-        &store.conn,
-        &command.command_id,
-        command.generation,
-        runs,
-        !already_settled,
-    )?;
-    Ok(())
-}
-
 /// PARKED-1: the pending command a retained result consumption names: a
 /// parked command at its own position, any other only as the FIFO head.
-fn replayed_result<E: SqlEngine>(
+pub(crate) fn replayed_result<E: SqlEngine>(
     store: &CellStore<E>,
     position: u64,
 ) -> Result<Option<crate::read::PendingCommand>, CellError> {
@@ -2450,7 +2373,7 @@ fn replayed_result<E: SqlEngine>(
     Ok((fifo_head == Some(row.position)).then_some(row))
 }
 
-fn restore_run_history<E: SqlEngine>(
+pub(crate) fn restore_run_history<E: SqlEngine>(
     store: &mut CellStore<E>,
     record: &ExportRecord,
     command: &crate::OutboxCommand,

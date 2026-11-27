@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{FactChange, ObjectTypeName, RuntimeValue as Value};
-use norn_kernel::world::outbox::Queue;
 use norn_kernel::{EffectiveValuesError, TypeCatalog};
 use norn_projections::PropertyColumn;
 use norn_projections::sqlite_ddl::{
@@ -26,10 +25,9 @@ use crate::store::{
 };
 use crate::system::{
     INBOX, LEDGER, LINK_CREATION, LINK_VERSIONS, MARKING_CURRENT, MARKING_OCCURRENCE,
-    MARKING_SNAPSHOT, MarkingSlot, MarkingTarget, OUTBOX, PENDING_LINK_INDEX, PERFORM_CLAIM,
-    RECEIPT, RUN, TIMER, VERSIONS, apply_sparse_declassification, ensure_marking_subject,
-    has_marking_snapshot, marking_subject, persist_sparse_marking_rows, query_marking_slot,
-    write_nonempty_marking_slot,
+    MARKING_SNAPSHOT, MarkingSlot, MarkingTarget, OUTBOX, PENDING_LINK_INDEX, RECEIPT, RUN, TIMER,
+    VERSIONS, apply_sparse_declassification, ensure_marking_subject, has_marking_snapshot,
+    marking_subject, persist_sparse_marking_rows, query_marking_slot, write_nonempty_marking_slot,
 };
 
 struct NamingCounterAttribution {
@@ -215,11 +213,11 @@ fn encode_row<'c>(
 }
 
 pub(crate) struct Writer<'a, E: SqlEngine> {
-    conn: &'a E,
-    model: &'a Model,
-    batch: &'a CommitBatch,
-    world: &'a str,
-    commit_seq: u64,
+    pub(crate) conn: &'a E,
+    pub(crate) model: &'a Model,
+    pub(crate) batch: &'a CommitBatch,
+    pub(crate) world: &'a str,
+    pub(crate) commit_seq: u64,
     batch_output_facts: Option<BTreeSet<(String, String, String, u64)>>,
     pending_snapshot_digests: crate::read::PendingDigests,
     /// The effective-values catalog, built once per commit: its effective
@@ -261,7 +259,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             .with_pending_digests(self.commit_seq, &self.pending_snapshot_digests)
     }
 
-    fn commit_seq_sql(&self) -> Result<i64, CellError> {
+    pub(crate) fn commit_seq_sql(&self) -> Result<i64, CellError> {
         to_i64(self.commit_seq, "commit_seq")
     }
 
@@ -3306,218 +3304,6 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     )?;
                 }
             }
-        }
-        Ok(())
-    }
-
-    fn claim_perform(&self, command_id: &str, generation: u64) -> Result<(), CellError> {
-        let generation_sql = to_i64(generation, "generation")?;
-        let head = StoreReader::new(self.conn, self.model).head_command()?;
-        let is_head = head.is_some_and(|head| {
-            head.command.command_id == command_id
-                && head.command.generation == generation
-                && head.result.is_none()
-        });
-        if !is_head {
-            let parked = StoreReader::new(self.conn, self.model)
-                .pending_command(command_id)?
-                .is_some_and(|row| {
-                    row.queue == Queue::Parked && row.command.generation == generation
-                });
-            if parked {
-                return Err(CellError::ParkedClaimUnsupported {
-                    command_id: command_id.to_owned(),
-                    generation,
-                });
-            }
-            return Err(CellError::PerformClaimNotPending {
-                command_id: command_id.to_owned(),
-                generation,
-            });
-        }
-        let known: Option<i64> = self
-            .conn
-            .query_optional(
-                &format!(
-                    "SELECT 1 FROM \"{PERFORM_CLAIM}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2"
-                ),
-                params![command_id, generation_sql],
-                |row| row.get::<i64>(0),
-            )?;
-        if known.is_some() {
-            return Err(CellError::PerformAlreadyClaimed {
-                command_id: command_id.to_owned(),
-                generation,
-            });
-        }
-        let _proof = crate::outbox_ledger::record_dispatched(
-            self.conn,
-            command_id,
-            generation,
-            self.commit_seq,
-        )?;
-        self.conn.execute(
-            &format!(
-                "INSERT INTO \"{PERFORM_CLAIM}\" (\"command_id\", \"generation\", \"commit_seq\") VALUES (?1, ?2, ?3)"
-            ),
-            params![command_id, generation_sql, self.commit_seq_sql()?],
-        )?;
-        Ok(())
-    }
-
-    fn reconcile_outbox(
-        &self,
-        command_id: &str,
-        generation: u64,
-        decision: norn_kernel::world::outbox_ledger::ReconciliationDecision,
-        confirmed_outcome: Option<&Value>,
-        fenced_at: Option<u64>,
-    ) -> Result<(), CellError> {
-        use norn_kernel::world::outbox_ledger::{OutboxLedgerRefusal, ReconciliationDecision};
-        if let ReconciliationDecision::ConfirmedOutcome { ok, outcome_digest } = decision {
-            let pending = StoreReader::new(self.conn, self.model)
-                .pending_command(command_id)?
-                .filter(|row| row.command.generation == generation);
-            if let Some(outcome) = confirmed_outcome {
-                if crate::outbox_ledger::outcome_digest(outcome)? != outcome_digest
-                    || crate::outbox_ledger::outcome_is_ok(outcome) != ok
-                {
-                    return Err(CellError::OutboxLedgerRefused {
-                        command_id: command_id.to_owned(),
-                        generation,
-                        refusal: OutboxLedgerRefusal::OutcomeDiverged,
-                    });
-                }
-            } else if let Some(pending) = &pending {
-                match &pending.result {
-                    Some(existing) => {
-                        if crate::outbox_ledger::outcome_digest(existing)? != outcome_digest
-                            || crate::outbox_ledger::outcome_is_ok(existing) != ok
-                        {
-                            return Err(CellError::OutboxLedgerRefused {
-                                command_id: command_id.to_owned(),
-                                generation,
-                                refusal: OutboxLedgerRefusal::OutcomeDiverged,
-                            });
-                        }
-                    }
-                    // Active head has no stored outcome: `ConfirmedOutcome` must
-                    // carry the payload so `_norn_outbox.result` stays in lockstep
-                    // with `HeadProjection`.
-                    None => {
-                        return Err(CellError::OutboxLedgerRefused {
-                            command_id: command_id.to_owned(),
-                            generation,
-                            refusal: OutboxLedgerRefusal::NotPending,
-                        });
-                    }
-                }
-            }
-        }
-        let (_status, is_active, _head) = crate::outbox_ledger::record_reconciliation(
-            self.conn,
-            command_id,
-            generation,
-            decision,
-            self.commit_seq,
-            fenced_at,
-        )?;
-        if is_active
-            && matches!(decision, ReconciliationDecision::ConfirmedOutcome { .. })
-            && let Some(outcome) = confirmed_outcome
-        {
-            self.project_active_outcome(command_id, generation, outcome)?;
-        }
-        Ok(())
-    }
-
-    fn record_late_outcome(
-        &self,
-        command_id: &str,
-        proof: norn_kernel::world::outbox_ledger::DispatchProof,
-        ok: bool,
-        outcome: &Value,
-    ) -> Result<(), CellError> {
-        let (status, is_active) = crate::outbox_ledger::record_outcome_with_proof(
-            self.conn, command_id, proof, ok, outcome,
-        )?;
-        if status == norn_kernel::world::outbox_ledger::ApplyStatus::Applied && is_active {
-            self.project_active_outcome(command_id, proof.generation, outcome)?;
-        }
-        Ok(())
-    }
-
-    fn project_active_outcome(
-        &self,
-        command_id: &str,
-        generation: u64,
-        outcome: &Value,
-    ) -> Result<(), CellError> {
-        let pending = StoreReader::new(self.conn, self.model)
-            .pending_command(command_id)?
-            .filter(|row| row.command.generation == generation && row.result.is_none());
-        let Some(pending) = pending else {
-            return Ok(());
-        };
-        crate::payload_storage::remember_command(
-            self.conn,
-            command_id,
-            generation,
-            pending.commit_seq,
-        )?;
-        let encoded = crate::payload_storage::encode_result(
-            self.conn,
-            &self.batch.scope,
-            self.world,
-            outcome,
-        )?;
-        let generation_sql = to_i64(generation, "generation")?;
-        self.conn.execute(
-            &format!(
-                "UPDATE \"{OUTBOX}\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3"
-            ),
-            params![encoded, command_id, generation_sql],
-        )?;
-        let attempts: i64 = self.conn.query_row(
-            &format!(
-                "SELECT COUNT(*) FROM \"{RUN}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2"
-            ),
-            params![command_id, generation_sql],
-            |row| row.get::<i64>(0),
-        )?;
-        if attempts == 0 {
-            self.conn.execute(
-                &format!(
-                    "INSERT INTO \"{RUN}\" (\"command_id\", \"generation\", \"attempt\", \"outcome\", \"consumed_commit_seq\") VALUES (?1, ?2, 1, ?3, NULL)"
-                ),
-                params![command_id, generation_sql, encoded],
-            )?;
-        }
-        Ok(())
-    }
-
-    fn record_compensation(
-        &self,
-        command_id: &str,
-        generation: u64,
-        ok: bool,
-        fenced_at: Option<u64>,
-    ) -> Result<(), CellError> {
-        let (_status, compensated) = crate::outbox_ledger::record_compensation(
-            self.conn,
-            command_id,
-            generation,
-            ok,
-            self.commit_seq,
-            fenced_at,
-        )?;
-        if compensated {
-            self.conn.execute(
-                &format!(
-                    "UPDATE \"{OUTBOX}\" SET \"consumed_commit_seq\" = ?1 WHERE \"command_id\" = ?2 AND \"consumed_commit_seq\" IS NULL"
-                ),
-                params![self.commit_seq_sql()?, command_id],
-            )?;
         }
         Ok(())
     }

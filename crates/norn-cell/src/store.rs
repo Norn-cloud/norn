@@ -39,8 +39,8 @@ use crate::read::{
 };
 use crate::system::{
     DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
-    DEFINITION_VERSION, INBOX, MARKING_SNAPSHOT, META, MarkingSlot, MarkingTarget, OUTBOX, RUN,
-    STORE_FORMAT, ensure_marking_subject, query_marking_slot, write_nonempty_marking_slot,
+    DEFINITION_VERSION, INBOX, MARKING_SNAPSHOT, META, MarkingSlot, MarkingTarget, STORE_FORMAT,
+    ensure_marking_subject, query_marking_slot, write_nonempty_marking_slot,
 };
 use crate::write::Writer;
 
@@ -1870,14 +1870,14 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     pub(crate) conn: E,
     pub(crate) transparency: RefCell<crate::transparency::ReceiptLog>,
     pub(crate) instance_identity: Arc<()>,
-    model: Model,
+    pub(crate) model: Model,
     candidate_validator: Cell<Option<CandidateValidator<E>>>,
     #[cfg(feature = "native")]
     pub(crate) export_notify: Arc<Notify>,
     /// The last head this store verified (#2975): verification at open,
     /// then [`Self::verified_head`] extends it over later commits only.
     verified: RefCell<LedgerHead>,
-    source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
+    pub(crate) source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
     pub(crate) mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
     verified_receipts: RefCell<crate::history::VerifiedReceipts>,
     /// Immutable quantity boundary found at open or established by a committed
@@ -3660,266 +3660,6 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<bool, CellError> {
         self.refuse_perform_in_fork()?;
         self.record_head_result(command_id, generation, outcome)
-    }
-
-    /// Durably attach an external outcome verified by `proof` to its original
-    /// generation (`D1`), committing a zero-event `SystemWrite::RecordLateOutcome`
-    /// so the evidence survives export and restore.
-    ///
-    /// Fails closed with [`CellError::OutboxLedgerRefused`] on an invalid
-    /// [`norn_kernel::world::outbox_ledger::DispatchProof`] or conflicting
-    /// outcome. A late outcome for a prior generation attaches only to that
-    /// generation and never mutates the active outbox head.
-    ///
-    /// # Errors
-    ///
-    /// `core.world.perform_forbidden` in a fork; [`CellError::OutboxLedgerRefused`]
-    /// on proof/state refusal; SQL engine or encoding errors.
-    pub fn record_late_outcome(
-        &mut self,
-        scope: &str,
-        logical_time: u64,
-        command_id: &str,
-        proof: norn_kernel::world::outbox_ledger::DispatchProof,
-        ok: bool,
-        outcome: &Value,
-    ) -> Result<CommitOutcome, CellError> {
-        let write = SystemWrite::RecordLateOutcome {
-            command_id: command_id.to_owned(),
-            proof,
-            ok,
-            outcome: outcome.clone(),
-        };
-        let place = At {
-            world: MAIN_WORLD,
-            scope,
-            logical_time,
-        };
-        self.apply_system(&place, write)
-    }
-
-    /// Durably record an outbox reconciliation decision for `(command_id, generation)` (`D1`).
-    ///
-    /// Commits a zero-event `SystemWrite::ReconcileOutbox` recorded in the
-    /// export journal and replayed across restores.
-    ///
-    /// # Errors
-    ///
-    /// `core.world.perform_forbidden` in a fork; [`CellError::OutboxLedgerRefused`]
-    /// if the decision does not apply; store or SQL errors.
-    pub fn reconcile_outbox(
-        &mut self,
-        scope: &str,
-        logical_time: u64,
-        command_id: &str,
-        generation: u64,
-        decision: norn_kernel::world::outbox_ledger::ReconciliationDecision,
-        confirmed_outcome: Option<&Value>,
-    ) -> Result<CommitOutcome, CellError> {
-        let fenced_at = self.perform_fence_generation(command_id)?;
-        let confirmed_outcome = match confirmed_outcome {
-            Some(outcome) => Some(outcome.clone()),
-            None if matches!(
-                decision,
-                norn_kernel::world::outbox_ledger::ReconciliationDecision::ConfirmedOutcome { .. }
-            ) =>
-            {
-                self.read()
-                    .pending_command(command_id)?
-                    .filter(|row| row.command.generation == generation)
-                    .and_then(|row| row.result)
-            }
-            None => None,
-        };
-        let write = SystemWrite::ReconcileOutbox {
-            command_id: command_id.to_owned(),
-            generation,
-            decision,
-            confirmed_outcome,
-            fenced_at,
-        };
-        let place = At {
-            world: MAIN_WORLD,
-            scope,
-            logical_time,
-        };
-        self.apply_system(&place, write)
-    }
-
-    /// Durably record a compensation attempt outcome for `(command_id, generation)` (`D1`).
-    ///
-    /// # Errors
-    ///
-    /// `core.world.perform_forbidden` in a fork; [`CellError::OutboxLedgerRefused`]
-    /// if compensation is not pending; store or SQL errors.
-    pub fn record_outbox_compensation(
-        &mut self,
-        scope: &str,
-        logical_time: u64,
-        command_id: &str,
-        generation: u64,
-        ok: bool,
-    ) -> Result<CommitOutcome, CellError> {
-        let fenced_at = self.perform_fence_generation(command_id)?;
-        let write = SystemWrite::RecordCompensation {
-            command_id: command_id.to_owned(),
-            generation,
-            ok,
-            fenced_at,
-        };
-        let place = At {
-            world: MAIN_WORLD,
-            scope,
-            logical_time,
-        };
-        self.apply_system(&place, write)
-    }
-
-    /// Return the [`norn_kernel::world::outbox_ledger::DispatchProof`] of a
-    /// superseded prior generation that was durably claimed and has no
-    /// attached outcome yet (`D1`).
-    pub(crate) fn pending_late_dispatch_proof(
-        &self,
-        command_id: &str,
-        generation: u64,
-    ) -> Result<Option<norn_kernel::world::outbox_ledger::DispatchProof>, CellError> {
-        crate::outbox_ledger::pending_late_dispatch_proof(&self.conn, command_id, generation)
-    }
-
-    /// Record `outcome` as the head command's result when it has none.
-    pub(crate) fn record_head_result(
-        &self,
-        command_id: &str,
-        generation: u64,
-        outcome: &Value,
-    ) -> Result<bool, CellError> {
-        self.write_tx(|| {
-            let head = StoreReader::new(&self.conn, &self.model)
-                .with_source_disputes(&self.source_disputes)
-                .head_command()?;
-            let is_head = head.as_ref().is_some_and(|head| {
-                head.command.command_id == command_id
-                    && head.command.generation == generation
-                    && head.result.is_none()
-            });
-            if !is_head {
-                return Ok(false);
-            }
-            let head = head.ok_or_else(|| {
-                CellError::Encoding("pending result command disappeared".to_owned())
-            })?;
-            self.store_result(&head, command_id, generation, outcome)
-        })
-    }
-
-    /// Fault fixture: record a parked command's result in its own
-    /// transaction, apart from any consuming commit, as an engine before P3
-    /// did; a file such an engine wrote can still hold one, and recovery
-    /// consumes it with `Settlement::Recorded`. Production records a parked
-    /// result only inside the commit that consumes it.
-    ///
-    /// # Errors
-    ///
-    /// Serialization or SQL engine errors.
-    #[cfg(any(test, feature = "fault-injection"))]
-    #[doc(hidden)]
-    pub fn record_parked_apart(
-        &mut self,
-        command_id: &str,
-        generation: u64,
-        outcome: &Value,
-    ) -> Result<bool, CellError> {
-        self.write_tx(|| self.record_parked_in_tx(command_id, generation, outcome))
-    }
-
-    /// PARKED-1: record the result of a parked command (one the cell resolves
-    /// itself, such as a `norn.decision@1` the cell issued a receipt for) in
-    /// the open transaction. A parked command may complete out of FIFO order,
-    /// but at most once: a second record of the same generation, or of a
-    /// command that is not parked and pending, returns `false` and writes
-    /// nothing.
-    fn record_parked_in_tx(
-        &self,
-        command_id: &str,
-        generation: u64,
-        outcome: &Value,
-    ) -> Result<bool, CellError> {
-        let parked = StoreReader::new(&self.conn, &self.model)
-            .with_source_disputes(&self.source_disputes)
-            .pending_command(command_id)?
-            .filter(|row| {
-                row.queue == norn_kernel::world::outbox::Queue::Parked
-                    && row.command.generation == generation
-                    && row.result.is_none()
-            });
-        let Some(parked) = parked else {
-            return Ok(false);
-        };
-        self.store_result(&parked, command_id, generation, outcome)
-    }
-
-    /// Record `outcome` in `_norn_outbox_record` and project it onto `_norn_outbox` and `_norn_run`.
-    fn store_result(
-        &self,
-        head: &crate::read::PendingCommand,
-        command_id: &str,
-        generation: u64,
-        outcome: &Value,
-    ) -> Result<bool, CellError> {
-        let _status = crate::outbox_ledger::record_active_outcome(
-            &self.conn, command_id, generation, outcome,
-        )?;
-        self.project_result(head, command_id, generation, outcome)?;
-        Ok(true)
-    }
-
-    /// Project an already-admitted active-head `outcome` onto `_norn_outbox` and `_norn_run`.
-    fn project_result(
-        &self,
-        head: &crate::read::PendingCommand,
-        command_id: &str,
-        generation: u64,
-        outcome: &Value,
-    ) -> Result<(), CellError> {
-        crate::payload_storage::remember_command(
-            &self.conn,
-            command_id,
-            generation,
-            head.commit_seq,
-        )?;
-        let outcome = match self.local_export_record(head.commit_seq)? {
-            Some(record) => crate::payload_storage::encode_result(
-                &self.conn,
-                &record.batch.scope,
-                &record.batch.world,
-                outcome,
-            )?,
-            None => canonical_json(outcome)?,
-        };
-        let generation = to_i64(generation, "generation")?;
-        self.conn.execute(
-            &format!(
-                "UPDATE \"{OUTBOX}\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3"
-            ),
-            params![outcome, command_id, generation],
-        )?;
-        let attempts: i64 = self.conn.query_row(
-            &format!(
-                "SELECT COUNT(*) FROM \"{RUN}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2"
-            ),
-            params![command_id, generation],
-            |row| row.get::<i64>(0),
-        )?;
-        let attempt = to_u64(attempts, "attempt")?
-            .checked_add(1)
-            .ok_or(CellError::OutOfRange("attempt"))?;
-        self.conn.execute(
-            &format!(
-                "INSERT INTO \"{RUN}\" (\"command_id\", \"generation\", \"attempt\", \"outcome\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, ?4, NULL)"
-            ),
-            params![command_id, generation, to_i64(attempt, "attempt")?, outcome],
-        )?;
-        Ok(())
     }
 
     /// Ingest one external observation into the inbox, in its own

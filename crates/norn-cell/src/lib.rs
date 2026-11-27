@@ -71,6 +71,7 @@ pub mod mining;
 mod observation_quality;
 mod open_checkpoint;
 pub use open_checkpoint::CheckpointKey;
+mod outbox_generations;
 pub mod outbox_ledger;
 mod outbox_ledger_migrate;
 pub mod provision;
