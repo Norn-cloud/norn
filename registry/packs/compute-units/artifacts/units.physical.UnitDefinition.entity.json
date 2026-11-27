@@ -1,0 +1,137 @@
+{
+  "artifactId": "units.physical.UnitDefinition.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Physical, logistics, and energy ISO 80000 / UCUM unit catalog",
+  "namespace": "units.physical",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Exact ISO 80000 / UCUM 2.2 unit catalog for length (m, cm, mm, km), area (m2), volume (L, mL, m3), and energy (J, kW.h).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "code"
+          ]
+        }
+      ],
+      "name": "units.physical.UnitDefinition",
+      "properties": [
+        {
+          "id": "code",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "m"
+              },
+              {
+                "value": "cm"
+              },
+              {
+                "value": "mm"
+              },
+              {
+                "value": "km"
+              },
+              {
+                "value": "m2"
+              },
+              {
+                "value": "L"
+              },
+              {
+                "value": "mL"
+              },
+              {
+                "value": "m3"
+              },
+              {
+                "value": "J"
+              },
+              {
+                "value": "kW.h"
+              }
+            ]
+          }
+        },
+        {
+          "id": "dimension",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "length"
+              },
+              {
+                "value": "area"
+              },
+              {
+                "value": "volume"
+              },
+              {
+                "value": "energy"
+              }
+            ]
+          }
+        },
+        {
+          "id": "base_code",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "m"
+              },
+              {
+                "value": "m2"
+              },
+              {
+                "value": "m3"
+              },
+              {
+                "value": "J"
+              }
+            ]
+          }
+        },
+        {
+          "id": "numerator",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "denominator",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "standard",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "ucum-2.2"
+              },
+              {
+                "value": "iso-80000"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/units.physical.UnitDefinition.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

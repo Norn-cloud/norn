@@ -1,0 +1,113 @@
+{
+  "artifactId": "units.physical.register.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Register a physical UCUM unit definition",
+  "namespace": "units",
+  "payload": {
+    "actionId": "units.physical.register",
+    "effectProgram": {
+      "entityArtifactId": "units.physical.UnitDefinition.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "code",
+      "objectKind": "units.physical.UnitDefinition",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "base_code": {
+          "enum": [
+            "m",
+            "m2",
+            "m3",
+            "J"
+          ],
+          "type": "string"
+        },
+        "code": {
+          "enum": [
+            "m",
+            "cm",
+            "mm",
+            "km",
+            "m2",
+            "L",
+            "mL",
+            "m3",
+            "J",
+            "kW.h"
+          ],
+          "type": "string"
+        },
+        "denominator": {
+          "type": "integer"
+        },
+        "dimension": {
+          "enum": [
+            "length",
+            "area",
+            "volume",
+            "energy"
+          ],
+          "type": "string"
+        },
+        "numerator": {
+          "type": "integer"
+        },
+        "standard": {
+          "enum": [
+            "ucum-2.2",
+            "iso-80000"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "dimension",
+        "base_code",
+        "numerator",
+        "denominator",
+        "standard"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Register a physical UCUM unit definition",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "units.physical.UnitDefinition"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/units.physical.register.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

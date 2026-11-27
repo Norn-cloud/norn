@@ -293,6 +293,7 @@ fn submission<E: SqlEngine>(
             "a definitions change is at most 1 MiB",
         ));
     }
+    kernel_set::reject_lossy_ir_numbers(body).map_err(Refusal::invalid)?;
     let request: DefinitionsChangeRequest = serde_json::from_str(body).map_err(|error| {
         Refusal::invalid(format!(
             "the request body is not a definitions change: {error}"

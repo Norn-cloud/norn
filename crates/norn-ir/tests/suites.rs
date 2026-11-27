@@ -40,6 +40,8 @@ mod entity_v2_object_types;
 mod entity_v2_property_types;
 #[path = "facts.rs"]
 mod facts;
+#[path = "feed_patch_laws.rs"]
+mod feed_patch_laws;
 #[path = "function_manifest.rs"]
 mod function_manifest;
 #[path = "law_ir.rs"]

@@ -396,6 +396,7 @@ pub fn admit_submission(
             "a provisioning body is at most 1 MiB",
         ));
     }
+    kernel_set::reject_lossy_ir_numbers(body).map_err(Refusal::invalid)?;
     let request: ProvisionRequest = serde_json::from_str(body).map_err(|error| {
         Refusal::invalid(format!(
             "the request body is not a provisioning submission: {error}"

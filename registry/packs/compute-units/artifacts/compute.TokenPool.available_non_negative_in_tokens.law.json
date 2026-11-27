@@ -1,0 +1,50 @@
+{
+  "artifactId": "compute.TokenPool.available_non_negative_in_tokens.law",
+  "dependencies": [
+    {
+      "artifactId": "compute.TokenPool.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A compute.TokenPool is denominated strictly in {token} with non-negative available token balance.",
+  "namespace": "compute",
+  "payload": {
+    "id": "compute.TokenPool.available_non_negative_in_tokens",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "compute",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/compute-units/units.ts"
+    },
+    "rationale": "A compute.TokenPool is denominated strictly in {token} with non-negative available token balance.",
+    "response": {
+      "expression": "((self.unit == '{token}') and (self.currency == null)) and (self.available >= (self.available - self.available))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "compute.TokenPool"
+      ],
+      "root": {
+        "id": "compute.TokenPool",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "compute.TokenPool"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/compute.TokenPool.available_non_negative_in_tokens.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
