@@ -635,6 +635,42 @@ impl<E: SqlEngine> CellStore<E> {
         })
     }
 
+    /// Clear durable dataset cursors for `connection_id` under the active
+    /// fencing lease (used when a connection is rebound to a new mapping so it
+    /// backfills from `feed.initial` instead of inheriting the prior mapping's
+    /// cursors). Refuses if unprocessed pending captures remain.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`], [`CellError::SourceCursorConflict`],
+    /// or store errors.
+    pub fn reset_source_cursors(
+        &mut self,
+        connection_id: &str,
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+    ) -> Result<(), CellError> {
+        self.write_tx(|| {
+            verify_active_lease(&self.conn, connection_id, lease_id, generation, now_ms)?;
+            let pending: Option<String> = self.conn.query_optional(
+                &format!("SELECT \"dataset\" FROM \"{SOURCE_PENDING}\" WHERE \"connection_id\" = ?1 AND \"processed\" = 0 LIMIT 1"),
+                params![connection_id],
+                |row| row.get(0),
+            )?;
+            if let Some(dataset) = pending {
+                return Err(CellError::SourceCursorConflict {
+                    connection_id: connection_id.to_owned(),
+                    dataset,
+                });
+            }
+            self.conn.execute(
+                &format!("DELETE FROM \"{SOURCE_CURSOR}\" WHERE \"connection_id\" = ?1"),
+                params![connection_id],
+            )?;
+            Ok(())
+        })
+    }
+
     /// Persist `_norn_source_cursor` for a complete page whose rows were
     /// already captured and processed one-by-one under `OBS-LINK-DISPUTE-1`
     /// fallback, binding the full-page `digest`, `pages`, and `records` for
@@ -828,13 +864,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 }
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
-    /// SOURCE-CAPTURE-1: acquire or take over an expired durable sync lease
-    /// with a monotonic fencing generation; see
-    /// [`CellStore::acquire_source_lease`].
-    ///
+    /// See [`CellStore::acquire_source_lease`].
     /// # Errors
-    /// [`CellError::SourceLeaseFenced`] if another lease is active, or store
-    /// errors.
+    /// [`CellError::SourceLeaseFenced`] or store errors.
     pub fn acquire_source_lease(
         &mut self,
         connection_id: &str,
@@ -846,9 +878,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .acquire_source_lease(connection_id, lease_id, now_ms, ttl_ms)
     }
 
-    /// SOURCE-CAPTURE-1: release a durable sync lease if `(lease_id, generation)`
-    /// still owns it; see [`CellStore::release_source_lease`].
-    ///
+    /// See [`CellStore::release_source_lease`].
     /// # Errors
     /// Store errors.
     pub fn release_source_lease(
@@ -861,11 +891,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .release_source_lease(connection_id, lease_id, generation)
     }
 
-    /// SOURCE-CAPTURE-1: atomically validate lease + expected previous cursor,
-    /// capture a complete page (or empty terminal page), record pending
-    /// processing state, and advance `_norn_source_cursor` in one SQLite
-    /// transaction; see [`CellStore::capture_source_page`].
-    ///
+    /// See [`CellStore::capture_source_page`].
     /// # Errors
     /// Lease fencing, cursor conflict, framing refusals, or store errors.
     pub fn capture_source_page(
@@ -879,11 +905,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .capture_source_page(raws, input, advance, max_run_rows)
     }
 
-    /// SOURCE-CAPTURE-1: atomically verify the active fencing lease + expected
-    /// cursor, capture one row during `OBS-LINK-DISPUTE-1` fallback, and record
-    /// it in `_norn_source_pending` inside one SQLite transaction; see
-    /// [`CellStore::capture_source_dispute_row`].
-    ///
+    /// See [`CellStore::capture_source_dispute_row`].
     /// # Errors
     /// Lease fencing, cursor conflict, framing refusals, or store errors.
     pub fn capture_source_dispute_row(
@@ -897,10 +919,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .capture_source_dispute_row(raw, input, advance, pending_key)
     }
 
-    /// SOURCE-CAPTURE-1: capture a sync report page while verifying inside the
-    /// same SQLite transaction that any existing lease row for `connection_id`
-    /// still belongs to `(lease_id, generation)` and has not expired at `now_ms`.
-    ///
+    /// See [`CellStore::capture_source_report_checked`].
     /// # Errors
     /// [`CellError::SourceLeaseFenced`], framing refusals, or store errors.
     pub fn capture_source_report_checked(
@@ -913,9 +932,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .capture_source_report_checked(raws, input, lease)
     }
 
-    /// SOURCE-CAPTURE-1: seed legacy dataset cursors under the active fencing
-    /// lease (`INSERT OR IGNORE`); see [`CellStore::seed_source_cursors`].
-    ///
+    /// See [`CellStore::seed_source_cursors`].
     /// # Errors
     /// Lease fencing or store errors.
     pub fn seed_source_cursors(
@@ -930,9 +947,21 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .seed_source_cursors(connection_id, lease_id, generation, now_ms, cursors)
     }
 
-    /// SOURCE-CAPTURE-1: persist `_norn_source_cursor` after one-by-one
-    /// `OBS-LINK-DISPUTE-1` fallback; see [`CellStore::commit_source_page_cursor`].
-    ///
+    /// See [`CellStore::reset_source_cursors`].
+    /// # Errors
+    /// Lease fencing, pending captures conflict, or store errors.
+    pub fn reset_source_cursors(
+        &mut self,
+        connection_id: &str,
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+    ) -> Result<(), CellError> {
+        self.store_mut()
+            .reset_source_cursors(connection_id, lease_id, generation, now_ms)
+    }
+
+    /// See [`CellStore::commit_source_page_cursor`].
     /// # Errors
     /// Lease fencing, cursor conflict, or store errors.
     pub fn commit_source_page_cursor(
@@ -946,10 +975,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .commit_source_page_cursor(advance, digest, pages, records)
     }
 
-    /// SOURCE-CAPTURE-1: remove or mark complete a pending source capture entry
-    /// after all its captured inbox rows have been processed; see
-    /// [`CellStore::complete_source_pending`].
-    ///
+    /// See [`CellStore::complete_source_pending`].
     /// # Errors
     /// Store errors.
     pub fn complete_source_pending(

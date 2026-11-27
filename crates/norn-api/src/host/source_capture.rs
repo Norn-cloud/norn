@@ -161,6 +161,27 @@ impl<E: SqlEngine> DevHost<E> {
         .map_err(SourceCaptureError::from_cell)
     }
 
+    /// Clear durable dataset cursors for `connection_id` under the active
+    /// fencing lease (used when a connection is rebound to a different mapping
+    /// so it backfills from `feed.initial`).
+    ///
+    /// # Errors
+    /// [`SourceCaptureError::LeaseFenced`], [`SourceCaptureError::CursorConflict`],
+    /// or store failure.
+    pub fn reset_source_cursors(
+        &self,
+        connection_id: &str,
+        lease_id: &str,
+        generation: u64,
+        now_ms: u64,
+    ) -> Result<(), SourceCaptureError> {
+        let _epoch = self.definition_read()?;
+        self.observing_raw(|cell| {
+            cell.reset_source_cursors(connection_id, lease_id, generation, now_ms)
+        })?
+        .map_err(SourceCaptureError::from_cell)
+    }
+
     /// Read all durably committed dataset cursors for `connection_id`.
     ///
     /// # Errors

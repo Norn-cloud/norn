@@ -87,6 +87,50 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
         historical::history_ids(self.reader, world, kind, self.cutoff.frontier, max, budget)
     }
 
+    /// Distinct subject IDs of `kind` committed on or before the cutoff
+    /// frontier, deduplicated in SQL so repeated updates to one subject (such
+    /// as routine `source.Connection` sync reports) charge budget only once per
+    /// distinct ID.
+    pub(crate) fn distinct_ids(
+        &self,
+        world: &str,
+        kind: &str,
+        max: usize,
+        budget: &mut DecodeBudget,
+    ) -> Result<(Vec<String>, bool), CellError> {
+        use crate::engine::{SqlRow, params};
+        self.reader.check_history("historical distinct ids")?;
+        let root = self.reader.root_type(kind)?;
+        let cap = max.min(budget.remaining_rows());
+        if cap == 0 || budget.remaining_bytes() < 64 {
+            return Ok((Vec::new(), false));
+        }
+        let limit = i64::try_from(cap.saturating_add(1))
+            .map_err(|_n| refused("core.compute.bound_exceeded"))?;
+        let head = i64::try_from(self.cutoff.frontier)
+            .map_err(|_n| refused("core.compute.bound_exceeded"))?;
+        let rows = self.reader.conn.query(
+            "SELECT DISTINCT id FROM _norn_fact_values \
+             WHERE world=?1 AND root_type=?2 AND commit_seq<=?3 \
+             ORDER BY id LIMIT ?4",
+            params![world, root, head, limit],
+        )?;
+        if rows.len() > cap {
+            return Ok((Vec::new(), false));
+        }
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: String = SqlRow(row).get(0)?;
+            let bytes = u64::try_from(id.len().saturating_add(64))
+                .map_err(|_n| refused("core.compute.bound_exceeded"))?;
+            if !budget.charge_rows(1) || !budget.charge(bytes) {
+                return Ok((Vec::new(), false));
+            }
+            ids.push(id);
+        }
+        Ok((ids, true))
+    }
+
     /// Subjects deleted under another model by the cutoff frontier.
     pub(crate) fn foreign_model_deletions(
         &self,

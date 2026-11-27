@@ -31,14 +31,39 @@ pub(super) enum ActiveCapture {
 /// authoritative; when upgrading a populated legacy cell whose prior syncs only
 /// wrote `source.Connection.watermark`, seed each legacy dataset cursor into
 /// `_norn_source_cursor` under the active fencing lease before planning the
-/// first request.
+/// first request. If `source.Connection.mapping_id` differs from
+/// `config.mapping` (a mapping rebind), clear inherited cursors under the
+/// fencing lease so the rebound mapping pulls from `feed.initial` instead of
+/// skipping rows and stamping an inherited cursor with the new mapping.
 pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     host: &DevHost<E>,
-    connection_id: &str,
+    config: &ConnectionConfig,
     lease: &SourceLease,
     known: Option<BTreeMap<String, Watermark>>,
     now_ms: u64,
 ) -> Result<BTreeMap<String, Watermark>, Failure> {
+    let connection_id = config.id.as_str();
+    let stored_mapping = host
+        .host_object(CONNECTION_TYPE, connection_id)
+        .ok()
+        .flatten()
+        .and_then(|object| {
+            object
+                .get("mapping_id")
+                .and_then(RuntimeValue::as_str)
+                .map(str::to_owned)
+        });
+    if stored_mapping
+        .as_deref()
+        .is_some_and(|m| !m.is_empty() && m != config.mapping)
+    {
+        host.reset_source_cursors(connection_id, &lease.lease_id, lease.generation, now_ms)
+            .map_err(|error| {
+                let (code, message) = error.code_and_message();
+                fail(code, message)
+            })?;
+        return Ok(BTreeMap::new());
+    }
     let cursors = host
         .source_cursors(connection_id)
         .map_err(|r| fail("source.ingest", r.message))?;

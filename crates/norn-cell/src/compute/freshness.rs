@@ -252,10 +252,29 @@ fn mapping_datasets_for_plan(
     required
 }
 
-/// Required `(source_id -> (expected_mapping_id, datasets))` bindings for one
-/// plan, keeping each connection bound to the mapping it is required to serve
-/// so a rebound connection cannot satisfy a new mapping with an old report.
-type RequiredBindings = BTreeMap<String, (String, BTreeSet<String>)>;
+/// Disjoint required source bindings for one plan: real connections (each
+/// pinned to its expected `mapping_id`) kept strictly separate from unconnected
+/// fallback mappings so a real connection whose ID equals another mapping's ID
+/// can never swallow or satisfy that unconnected mapping.
+#[derive(Default)]
+struct RequiredBindings {
+    connected: BTreeMap<String, (String, BTreeSet<String>)>,
+    unconnected: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl RequiredBindings {
+    fn is_empty(&self) -> bool {
+        self.connected.is_empty() && self.unconnected.is_empty()
+    }
+
+    fn unconnected_key(&self, mapping_id: &str) -> String {
+        if self.connected.contains_key(mapping_id) {
+            format!("unconnected:{mapping_id}")
+        } else {
+            mapping_id.to_owned()
+        }
+    }
+}
 
 fn assemble_required_bindings(
     mapping_datasets: BTreeMap<String, BTreeSet<String>>,
@@ -280,11 +299,12 @@ fn assemble_required_bindings(
                 .insert(conn.id.clone());
         }
     }
-    let mut required: RequiredBindings = BTreeMap::new();
+    let mut required = RequiredBindings::default();
     for (mapping_id, datasets) in mapping_datasets {
         if let Some(conn_ids) = by_mapping.get(&mapping_id) {
             for conn_id in conn_ids {
                 required
+                    .connected
                     .entry(conn_id.clone())
                     .or_insert_with(|| (mapping_id.clone(), BTreeSet::new()))
                     .1
@@ -292,9 +312,9 @@ fn assemble_required_bindings(
             }
         } else {
             required
-                .entry(mapping_id.clone())
-                .or_insert_with(|| (mapping_id, BTreeSet::new()))
-                .1
+                .unconnected
+                .entry(mapping_id)
+                .or_default()
                 .extend(datasets);
         }
     }
@@ -302,12 +322,16 @@ fn assemble_required_bindings(
 }
 
 fn bindings_to_required(bindings: RequiredBindings) -> RequiredSources {
-    RequiredSources(
-        bindings
-            .into_iter()
-            .map(|(source, (_, datasets))| (source, datasets))
-            .collect(),
-    )
+    let mut out: BTreeMap<String, BTreeSet<String>> = bindings
+        .connected
+        .iter()
+        .map(|(source, (_, datasets))| (source.clone(), datasets.clone()))
+        .collect();
+    for (mapping_id, datasets) in &bindings.unconnected {
+        let key = bindings.unconnected_key(mapping_id);
+        out.entry(key).or_default().extend(datasets.iter().cloned());
+    }
+    RequiredSources(out)
 }
 
 impl<E: SqlEngine> CellStore<E> {
@@ -367,7 +391,7 @@ impl<E: SqlEngine> CellStore<E> {
                           target_world: &str,
                           budget: &mut DecodeBudget|
          -> Result<Vec<ObjectRecord>, CellError> {
-            let (ids, complete) = as_of.population_ids(
+            let (ids, complete) = as_of.distinct_ids(
                 target_world,
                 CONNECTION_TYPE,
                 MAX_HISTORICAL_CONNECTIONS,
@@ -435,12 +459,12 @@ impl<E: SqlEngine> CellStore<E> {
         configured: &BTreeMap<String, String>,
     ) -> Result<(RequiredBindings, Vec<ObjectRecord>), CellError> {
         let Some(active) = self.definitions_at(cutoff)? else {
-            return Ok((BTreeMap::new(), Vec::new()));
+            return Ok((RequiredBindings::default(), Vec::new()));
         };
         let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&active.canonical_set)?;
         let mapping_datasets = mapping_datasets_for_plan(self.model(), &artifacts, plan);
         if mapping_datasets.is_empty() {
-            return Ok((BTreeMap::new(), Vec::new()));
+            return Ok((RequiredBindings::default(), Vec::new()));
         }
         let connections = match cutoff {
             Some(point) => self.historical_connection_objects(world, point, now_ms)?,
@@ -534,7 +558,13 @@ impl<E: SqlEngine> CellStore<E> {
             .map(|record| (record.id.clone(), record))
             .collect();
         let mut snapshot = SourceFreshnessSnapshot::default();
-        for (source_id, (expected_mapping, datasets)) in &bindings {
+        for mapping_id in bindings.unconnected.keys() {
+            snapshot
+                .source_cursors
+                .entry(bindings.unconnected_key(mapping_id))
+                .or_default();
+        }
+        for (source_id, (expected_mapping, datasets)) in &bindings.connected {
             snapshot
                 .source_cursors
                 .entry(source_id.clone())
@@ -588,7 +618,13 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<SourceFreshnessSnapshot, CellError> {
         let reader = self.read();
         let mut snapshot = SourceFreshnessSnapshot::default();
-        for (source_id, (expected_mapping, datasets)) in bindings {
+        for mapping_id in bindings.unconnected.keys() {
+            snapshot
+                .source_cursors
+                .entry(bindings.unconnected_key(mapping_id))
+                .or_default();
+        }
+        for (source_id, (expected_mapping, datasets)) in &bindings.connected {
             snapshot
                 .source_cursors
                 .entry(source_id.clone())

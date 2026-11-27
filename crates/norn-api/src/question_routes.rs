@@ -271,9 +271,7 @@ fn answer_plan<E: SqlEngine>(
     let checked_version = check_snapshot(host, cell.store(), plan, &world_name, historical)?;
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
-    let mut withheld_sources = false;
-    let mut visible =
-        |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld, &mut withheld_sources);
+    let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
     let outcome = match snapshot.cutoff {
         Some(cutoff) => runtime
             .evaluate_known_at(cell.store(), plan, snapshot.context, cutoff, &mut visible)
@@ -301,8 +299,8 @@ fn answer_plan<E: SqlEngine>(
     let answer = outcome.map_err(Refusal::from_compute)?;
     project_answer(
         (host, runtime, cell.store()),
-        (actor, key, plan),
-        (&withheld, withheld_sources),
+        (actor, question, key, plan),
+        &withheld,
         answer,
     )
 }
@@ -409,20 +407,15 @@ pub(crate) fn plan_sources<E: SqlEngine>(
 }
 
 /// Population decides membership; a member without Values is recorded so its
-/// bucket's amounts are withheld (DATA-VALUES-1), and a member without Sources
-/// records result-wide cursor keying (DATA-SOURCES-1).
+/// bucket's amounts are withheld (DATA-VALUES-1).
 fn visible_recording(
     row: &ObjectRecord,
     permits: &dyn Fn(&ObjectRecord, ReadCapability) -> Result<bool, CellError>,
     withheld: &mut BTreeSet<String>,
-    withheld_sources: &mut bool,
 ) -> Result<bool, CellError> {
     let member = permits(row, Population)?;
     if member && !permits(row, Values)? {
         withheld.insert(row.id.clone());
-    }
-    if member && !*withheld_sources && !permits(row, Sources)? {
-        *withheld_sources = true;
     }
     Ok(member)
 }
@@ -586,7 +579,6 @@ fn trace_plan<E: SqlEngine>(
     }
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
-    let mut withheld_sources = false;
     let matches = |internal: &str| lineage_handle_matches(key, internal, lineage);
     let disclosure = LineageDisclosure {
         values: &mut |row| permits(row, Values),
@@ -601,7 +593,7 @@ fn trace_plan<E: SqlEngine>(
             frontier,
             &matches,
             bucket,
-            |row| visible_recording(row, &permits, &mut withheld, &mut withheld_sources),
+            |row| visible_recording(row, &permits, &mut withheld),
             disclosure,
         ),
         None => cell.store().trace_question_matching(
@@ -609,7 +601,7 @@ fn trace_plan<E: SqlEngine>(
             snapshot.context,
             &matches,
             bucket,
-            |row| visible_recording(row, &permits, &mut withheld, &mut withheld_sources),
+            |row| visible_recording(row, &permits, &mut withheld),
             disclosure,
         ),
     };
@@ -628,9 +620,9 @@ fn trace_plan<E: SqlEngine>(
     let trace = outcome.map_err(Refusal::from_compute)?;
     project_trace(
         (host, runtime, cell.store()),
-        (actor, &world_name, plan),
+        (actor, question, &world_name, plan),
         (key, lineage),
-        (&withheld, withheld_sources),
+        &withheld,
         trace,
     )
 }
@@ -657,7 +649,7 @@ fn mapped<E: SqlEngine>(
     }
     Ok(access)
 }
-fn allowed<E: SqlEngine>(
+pub(crate) fn allowed<E: SqlEngine>(
     host: &DevHost<E>,
     runtime: &dyn QuestionRuntime<E>,
     actor: &str,

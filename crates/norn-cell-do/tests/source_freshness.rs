@@ -473,7 +473,7 @@ mod tests {
                         ("due_at".into(), RuntimeValue::from("2026-08-06T12:00:00Z")),
                         (
                             "quantity".into(),
-                            RuntimeValue::Decimal("5".parse::<Decimal>().unwrap()),
+                            RuntimeValue::Number("5".parse::<Decimal>().unwrap()),
                         ),
                         ("unit".into(), RuntimeValue::from("g")),
                     ]),
@@ -543,9 +543,12 @@ mod tests {
 
         // Direct CellStore::evaluate_question and IncrementalQuestion (IVM) with
         // empty source_cursors also fail closed to Incomplete.
-        let plan = runtime
-            .admit(&serde_json::from_value(q).unwrap(), 100)
-            .expect("plan");
+        let plan = AdHocQuestions::<NativeEngine>::admit(
+            &runtime,
+            &serde_json::from_value(q).unwrap(),
+            100,
+        )
+        .expect("plan");
         let (store, store_scope) = open_store(&["erpnext"]);
         let required = store
             .required_sources_for_plan(MAIN_WORLD, &plan)

@@ -709,7 +709,7 @@ fn begin<E: SqlEngine>(
             let (code, message) = error.code_and_message();
             fail(code, message)
         })?;
-    let watermarks = capture::load_and_seed_watermarks(host, &config.id, &lease, known, now_ms)?;
+    let watermarks = capture::load_and_seed_watermarks(host, config, &lease, known, now_ms)?;
     let pending = capture::load_pending_captures(host, &config.id)?;
     run.lease = Some(lease);
     run.watermark_from = watermark_text(&watermarks);
