@@ -1,0 +1,64 @@
+{
+  "artifactId": "compute.quota_hold.consume.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Consume a compute quota hold",
+  "namespace": "compute",
+  "payload": {
+    "actionId": "compute.quota_hold.consume",
+    "effectProgram": {
+      "entityArtifactId": "compute.QuotaHold.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "compute.QuotaHold",
+      "transition": "consume"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Consume a compute quota hold",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "compute.QuotaHold"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/compute.quota_hold.consume.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

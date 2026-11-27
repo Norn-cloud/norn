@@ -1,0 +1,17 @@
+{
+  "sha256": "98554e51e6280244d3a1cf13dfd5ed76318f8459d91a0bcb899e8451c6a311f5",
+  "origin": "authored",
+  "category": "generic-proof",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

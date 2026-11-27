@@ -1,0 +1,159 @@
+{
+  "artifactId": "compute.quota_hold.place.action",
+  "dependencies": [
+    {
+      "artifactId": "units.compute.UnitDefinition.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Place a compute quota hold",
+  "namespace": "compute",
+  "payload": {
+    "actionId": "compute.quota_hold.place",
+    "createLinks": [
+      {
+        "link": "resource",
+        "targetIdField": "resource_id",
+        "targetType": "compute.TokenPool"
+      },
+      {
+        "link": "holder",
+        "targetIdField": "holder_id",
+        "targetType": "compute.Agent"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "compute.QuotaHold.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "compute.QuotaHold",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "holder_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "quantity": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6,
+            "unit": {
+              "code": "{token}",
+              "system": "ucum"
+            }
+          },
+          "type": "number"
+        },
+        "quota_scope": {
+          "enum": [
+            "rate_limit",
+            "budget_lock",
+            "gpu_reservation"
+          ],
+          "type": "string"
+        },
+        "resource_id": {
+          "type": "string"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "resource_id",
+        "holder_id",
+        "quantity",
+        "unit",
+        "currency",
+        "expires_at",
+        "quota_scope"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((input.quantity > 0) and (input.currency == null)) and (input.unit != null)) and ((input.unit ?? '') == slice.resource.unit)) and (input.quantity <= slice.resource.available)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "resource_id"
+          }
+        },
+        "name": "resource",
+        "objectType": "compute.TokenPool"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "holder_id"
+          }
+        },
+        "name": "holder",
+        "objectType": "compute.Agent"
+      }
+    ],
+    "title": "Place a compute quota hold",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "compute.QuotaHold"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/compute.quota_hold.place.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
