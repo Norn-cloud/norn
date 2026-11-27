@@ -335,6 +335,79 @@ fn add_function_receipt_table(image: &mut Value) {
             "rows": [],
         }),
     );
+    add_source_cursor_tables(image);
+}
+
+/// SOURCE-CAPTURE-1 adds the durable source lease and cursor tables, empty on
+/// every older cell. Older engines ignore them, so they need no storage version.
+fn add_source_cursor_tables(image: &mut Value) {
+    let schema = image["schema"].as_array_mut().expect("schema");
+    schema.push(serde_json::json!({
+        "type": "table",
+        "name": "_norn_source_lease",
+        "table": "_norn_source_lease",
+        "sql": "CREATE TABLE \"_norn_source_lease\" (\n  \"connection_id\" TEXT NOT NULL PRIMARY KEY,\n  \"lease_id\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"acquired_at_ms\" INTEGER NOT NULL,\n  \"expires_at_ms\" INTEGER NOT NULL\n)",
+    }));
+    schema.push(serde_json::json!({
+        "type": "table",
+        "name": "_norn_source_cursor",
+        "table": "_norn_source_cursor",
+        "sql": "CREATE TABLE \"_norn_source_cursor\" (\n  \"connection_id\" TEXT NOT NULL,\n  \"dataset\" TEXT NOT NULL,\n  \"cursor_json\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"page_digest\" TEXT NOT NULL,\n  \"pages_json\" TEXT NOT NULL,\n  \"records_json\" TEXT NOT NULL,\n  \"updated_at_ms\" INTEGER NOT NULL,\n  PRIMARY KEY (\"connection_id\", \"dataset\")\n)",
+    }));
+    schema.push(serde_json::json!({
+        "type": "table",
+        "name": "_norn_source_pending",
+        "table": "_norn_source_pending",
+        "sql": "CREATE TABLE \"_norn_source_pending\" (\n  \"connection_id\" TEXT NOT NULL,\n  \"dataset\" TEXT NOT NULL,\n  \"page_digest\" TEXT NOT NULL,\n  \"pages_json\" TEXT NOT NULL,\n  \"records_json\" TEXT NOT NULL,\n  \"captured_at_ms\" INTEGER NOT NULL,\n  \"processed\" INTEGER NOT NULL DEFAULT 0,\n  PRIMARY KEY (\"connection_id\", \"dataset\", \"page_digest\")\n)",
+    }));
+    let tables = image["tables"].as_object_mut().expect("tables");
+    tables.insert(
+        "_norn_source_lease".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "connection_id",
+                "lease_id",
+                "generation",
+                "acquired_at_ms",
+                "expires_at_ms"
+            ],
+            "rows": [],
+        }),
+    );
+    tables.insert(
+        "_norn_source_cursor".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "connection_id",
+                "dataset",
+                "cursor_json",
+                "generation",
+                "page_digest",
+                "pages_json",
+                "records_json",
+                "updated_at_ms"
+            ],
+            "rows": [],
+        }),
+    );
+    tables.insert(
+        "_norn_source_pending".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "connection_id",
+                "dataset",
+                "page_digest",
+                "pages_json",
+                "records_json",
+                "captured_at_ms",
+                "processed"
+            ],
+            "rows": [],
+        }),
+    );
 }
 
 /// The marking history storage version (storage version 5, #1547) adds the
@@ -2135,6 +2208,7 @@ fn upgraded_v8_image(mut expected: Value) -> Result<Value, Box<dyn std::error::E
     expected["storage"] = STORAGE_VERSION.into();
     add_export_context_table(&mut expected);
     add_outbox_queue(&mut expected);
+    add_source_cursor_tables(&mut expected);
     by_name(&mut expected);
     Ok(expected)
 }

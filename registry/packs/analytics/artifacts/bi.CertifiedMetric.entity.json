@@ -1,0 +1,154 @@
+{
+  "artifactId": "bi.CertifiedMetric.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Certified metric",
+  "namespace": "bi",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Governed BI metric contract declaring exact additivity, W3C Data Cube grain, UCUM unit code, freshness SLA, and LIFE-SOUND-1..8 certification lifecycle.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "resting",
+              "state": "certified"
+            },
+            {
+              "outcome": "cancelled",
+              "state": "deprecated"
+            }
+          ],
+          "immutable": [
+            "deprecated"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "deprecated"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "certify",
+              "to": "certified"
+            },
+            {
+              "from": [
+                "draft",
+                "certified"
+              ],
+              "id": "deprecate",
+              "to": "deprecated"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Accountable owner of this certified metric contract.",
+          "id": "owner",
+          "target": "analytics.Analyst"
+        }
+      ],
+      "name": "bi.CertifiedMetric",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "metric_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "additivity",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "additive"
+              },
+              {
+                "value": "semi_additive"
+              },
+              {
+                "value": "non_additive"
+              }
+            ]
+          }
+        },
+        {
+          "id": "grain",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "unit_code",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "id": "freshness_sla_ms",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "certified"
+              },
+              {
+                "value": "deprecated"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/bi.CertifiedMetric.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

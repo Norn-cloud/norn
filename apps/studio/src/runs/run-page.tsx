@@ -4,6 +4,7 @@ import { CheckCircle2, Circle, Hourglass, Loader2, MinusCircle, Play, Radio, Wor
 import { useRef } from "react"
 import { CopyId } from "@/components/copy-id"
 import { EmptyState } from "@/components/system/panel"
+import { PropRow, Props } from "@/components/system/props"
 import { StatusDot, type DotTone } from "@/components/system/status-dot"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -133,12 +134,12 @@ export function RunPage() {
       </header>
       {run.steps === undefined && (
         <section aria-label="Run" className="grid gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
-          <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-2 text-body">
-            <dt className="text-muted-foreground">State</dt><dd>{run.state === null ? <span className="text-muted-foreground">Ended (the run object is gone)</span> : <code className="text-meta"><bdi dir="ltr">{run.state}</bdi></code>}</dd>
-            <dt className="text-muted-foreground">Flow</dt><dd>{runTitle(run)} <span className="text-meta text-muted-foreground">v{run.flow.version}</span></dd>
-            <dt className="text-muted-foreground">Generation</dt><dd className="tabular-nums">{run.generation}</dd>
-            <dt className="text-muted-foreground">Updated</dt><dd>{new Date(run.updatedAtMs).toLocaleString(dateLocale, { dateStyle: "medium", timeStyle: "medium" })}</dd>
-          </dl>
+          <Props>
+            <PropRow label="State">{run.state === null ? <span className="text-muted-foreground">Ended (the run object is gone)</span> : <code className="text-meta"><bdi dir="ltr">{run.state}</bdi></code>}</PropRow>
+            <PropRow label="Flow">{runTitle(run)} <span className="text-meta text-muted-foreground">v{run.flow.version}</span></PropRow>
+            <PropRow label="Generation" tabular>{run.generation}</PropRow>
+            <PropRow label="Updated">{new Date(run.updatedAtMs).toLocaleString(dateLocale, { dateStyle: "medium", timeStyle: "medium" })}</PropRow>
+          </Props>
           <p className="rounded-lg border border-dashed border-node-border px-3 py-2 text-meta text-muted-foreground">Step details are coming soon: this cell doesn't send a run's steps yet.</p>
         </section>
       )}

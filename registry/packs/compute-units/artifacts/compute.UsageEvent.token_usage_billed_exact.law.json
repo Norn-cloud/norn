@@ -1,0 +1,51 @@
+{
+  "artifactId": "compute.UsageEvent.token_usage_billed_exact.law",
+  "dependencies": [
+    {
+      "artifactId": "compute.UsageEvent.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "VAL-RATE: `{token}` usage events satisfy billed_amount == rate_per_token * token_quantity exactly.",
+  "namespace": "compute",
+  "payload": {
+    "condition": "self.unit == '{token}'",
+    "id": "compute.UsageEvent.token_usage_billed_exact",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "compute",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/compute-units/units.ts"
+    },
+    "rationale": "VAL-RATE: `{token}` usage events satisfy billed_amount == rate_per_token * token_quantity exactly.",
+    "response": {
+      "expression": "self.billed_amount == (self.rate_per_token * self.token_quantity)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "compute.UsageEvent"
+      ],
+      "root": {
+        "id": "compute.UsageEvent",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "compute.UsageEvent"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/compute.UsageEvent.token_usage_billed_exact.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

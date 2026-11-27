@@ -22,6 +22,8 @@ mod action_effect_program;
 mod action_firing;
 #[path = "action_slice_set.rs"]
 mod action_slice_set;
+#[path = "analytics_and_units.rs"]
+mod analytics_and_units;
 #[path = "artifact_set.rs"]
 mod artifact_set;
 #[path = "check_receipt.rs"]
@@ -120,6 +122,8 @@ mod ontology_registry;
 mod owned_collections;
 #[path = "path_mapping.rs"]
 mod path_mapping;
+#[path = "pr_c_honesty_and_red_team.rs"]
+mod pr_c_honesty_and_red_team;
 #[path = "predicate_slice_and_links.rs"]
 mod predicate_slice_and_links;
 #[path = "principal_inputs.rs"]

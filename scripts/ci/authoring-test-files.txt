@@ -1,6 +1,7 @@
 test/action-access.test.ts
 test/action-input-labels.test.ts
 test/action-nullable.test.ts
+test/analytics-and-units.test.ts
 test/apply.test.ts
 test/authoring-sdk.test.ts
 test/authoring-shell.test.ts
@@ -41,6 +42,7 @@ test/new-developer.test.ts
 test/ontology-pack.test.ts
 test/pack-link.test.ts
 test/packaging.test.ts
+test/pr-c-scope-key.test.ts
 test/predicate-slice-and-owned-collections.test.ts
 test/principal-inputs.test.ts
 test/profile-corpus.test.ts
@@ -67,3 +69,4 @@ test/transform.test.ts
 test/translation-validation.test.ts
 test/vertical-fixture.test.ts
 test/widget-builder.test.ts
+test/workforce-frappe-hrms.test.ts

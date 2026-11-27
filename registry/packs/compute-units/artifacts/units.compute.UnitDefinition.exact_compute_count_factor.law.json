@@ -1,0 +1,51 @@
+{
+  "artifactId": "units.compute.UnitDefinition.exact_compute_count_factor.law",
+  "dependencies": [
+    {
+      "artifactId": "units.compute.UnitDefinition.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "UNITS-SCALE-1: countable AI/compute units carry exact 1/1 identity factors to their own canonical bases.",
+  "namespace": "units",
+  "payload": {
+    "condition": "self.dimension == 'compute_count'",
+    "id": "units.compute.UnitDefinition.exact_compute_count_factor",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "units.compute",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/compute-units/units.ts"
+    },
+    "rationale": "UNITS-SCALE-1: countable AI/compute units carry exact 1/1 identity factors to their own canonical bases.",
+    "response": {
+      "expression": "((self.numerator == 1) and (self.denominator == 1)) and ((((((self.code == '{token}') and (self.base_code == '{token}')) or ((self.code == '{input_token}') and (self.base_code == '{input_token}'))) or ((self.code == '{output_token}') and (self.base_code == '{output_token}'))) or ((self.code == '{request}') and (self.base_code == '{request}'))) or ((self.code == '{seat}') and (self.base_code == '{seat}')))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "units.compute.UnitDefinition"
+      ],
+      "root": {
+        "id": "units.compute.UnitDefinition",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "units.compute.UnitDefinition"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/units.compute.UnitDefinition.exact_compute_count_factor.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

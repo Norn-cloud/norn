@@ -1,0 +1,69 @@
+{
+  "abi": "norn.function-abi/1",
+  "bounds": {
+    "maxCpuMillis": 500,
+    "maxDecodedBytes": 65536,
+    "maxInputBytes": 65536,
+    "maxMemoryBytes": 16777216,
+    "maxOutputBytes": 4096,
+    "maxWallMillis": 1000
+  },
+  "cache": "action_cache",
+  "capabilities": [],
+  "dependencyClosure": {
+    "digest": "sha256:4aded7823cc2e191264417d3f237b74d62f4cd17d2396d0a0a1f4b8af635e112",
+    "entries": [
+      {
+        "digest": "sha256:314c10b42a41570c1ee9f3526e0338086323aff517b2d2698a923ce6051efa65",
+        "kind": "asset",
+        "name": "analytics-diagnostics-rules-v1"
+      }
+    ]
+  },
+  "determinism": {
+    "qualified_wasm": {
+      "floatPolicy": "canonical_nan",
+      "freshInstance": true,
+      "fuel": 10000000,
+      "importClosure": [],
+      "maxModuleBytes": 4194304,
+      "maxStackBytes": 1048576,
+      "simd": false,
+      "threads": false
+    }
+  },
+  "errorSchema": {
+    "digest": "sha256:4ea7789c63be3a99f00bcb7ccd370f6a47e40760cf5eb2c8bea3a804957ebb97",
+    "id": "norn.function.error",
+    "version": 1
+  },
+  "functionId": "analytics.study.diagnostics",
+  "implementation": {
+    "digest": "sha256:c3014ea84c4c41b3d3f522b793e45c1bceaf3ae4de59a3521c909e72e1be7a16",
+    "entryPoint": "evaluate_diagnostics",
+    "format": "wasm_module",
+    "locator": null
+  },
+  "inputSchema": {
+    "digest": "sha256:ba5c78dfd7655bdf6ff9e17b4666b868c3bd4434036b8dc57a2b4a8a6f3809ca",
+    "id": "analytics.study.diagnostics-input",
+    "version": 1
+  },
+  "outputSchema": {
+    "digest": "sha256:f19caae92751140a0602f26ca1a241d8c5b96619770a3c511d6ae7ac30f39de5",
+    "id": "analytics.study.diagnostics-output",
+    "version": 1
+  },
+  "platform": {
+    "arch": "wasm32",
+    "os": "none"
+  },
+  "retention": "ledger",
+  "runtime": {
+    "digest": "sha256:a0198cff775e4ab78371b0ce027929db16f21f9574226f59927ad49c6abc5bc0",
+    "id": "wasmtime",
+    "version": "38.0.4"
+  },
+  "steps": [],
+  "version": 1
+}
