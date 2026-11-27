@@ -38,16 +38,17 @@ mod witness_seed;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_kernel::cell_host::{JsonObject, JsonValue};
+use norn_kernel::cell_host::{FactKey, JsonObject, JsonValue};
 use norn_kernel::pack_mbt_support::MappingIr;
 use norn_kernel::pack_mbt_support::{
-    AccessIr, ActionRoot, ArtifactEnvelope, ArtifactPayload, EntityRoot, InterfaceDef,
-    LawExampleVerdict as Verdict, LawIR, ObjectTypeDef, ObjectTypeName, PolicyRoot, Property,
-    PropertyConstraints, PropertyId, PropertyType, PropertyTypeDef, ResourceStatus,
+    AccessIr, ActionRoot, ArtifactEnvelope, ArtifactPayload, DecisionOutput, EntityRoot,
+    FactChange, InterfaceDef, LawExampleVerdict as Verdict, LawIR, ObjectTypeDef, ObjectTypeName,
+    PolicyRoot, Property, PropertyConstraints, PropertyId, PropertyType, PropertyTypeDef,
+    ResourceStatus, TransitionId,
 };
 use norn_kernel::{
-    CellHost, DecisionRefusal, FactEvent, LogicalTime, TransitionGuard, TypeCatalog,
-    transition_guards,
+    CellHost, DecisionRefusal, DecisionTurn, FactEvent, LogicalTime, TransitionGuard, TypeCatalog,
+    World, commit_decision, load_slice, transition_guards,
 };
 
 /// Honest evidence classification for verification outputs (`AGENTS.md`, `#1656`).
@@ -348,6 +349,59 @@ pub trait PackHost: CellHost<Event = FactEvent, Command = JsonObject, Input = Js
         let _ = (object_type, artifact_id);
         None
     }
+
+    /// Seeds a host-authenticated, retained `FunctionReceipt` for `target_key`
+    /// matching `manifest_digest` and carrying `summary`, returning its receipt
+    /// digest (`sha256:...`) to supply to an `acceptReceipt` action.
+    ///
+    /// # Errors
+    ///
+    /// Returns a description if receipt seeding fails.
+    fn seed_accepted_receipt(
+        &mut self,
+        _target_key: &str,
+        _manifest_digest: &str,
+        _summary: JsonObject,
+    ) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+}
+
+/// Builds the platform's synthetic `norn.FunctionCommand` object type required
+/// to persist Function command reconciliation state (`RECEIPT-CONSUME-1`).
+#[must_use]
+pub fn function_command_object_type() -> ObjectTypeDef {
+    ObjectTypeDef {
+        immutable: false,
+        name: ObjectTypeName("norn.FunctionCommand".to_owned()),
+        role: None,
+        description: None,
+        status: ResourceStatus::default(),
+        extends: None,
+        implements: Vec::new(),
+        properties: vec![Property {
+            protected: false,
+            origin: None,
+            immutable_after_create: false,
+            id: PropertyId("state".to_owned()),
+            description: None,
+            property_type: PropertyType::JsonExt { schema: None },
+            constraints: PropertyConstraints {
+                nullable: true,
+                ..PropertyConstraints::default()
+            },
+            default: None,
+            markings: Vec::new(),
+            computed: None,
+        }],
+        links: Vec::new(),
+        owned_collections: Vec::new(),
+        identity: Vec::new(),
+        invariants: Vec::new(),
+        lifecycles: Vec::new(),
+        markings: Vec::new(),
+        accounting_leg: None,
+    }
 }
 
 /// Builds the platform's synthetic `norn.ActionCall` object type required by
@@ -504,6 +558,212 @@ pub(crate) fn resolve_property_type_chain<'a>(
     ty
 }
 
+fn commit_fact_decision<H: PackHost>(
+    host: &mut H,
+    catalog: &TypeCatalog<'_>,
+    ty_name: &str,
+    id: &str,
+    change: FactChange,
+    turn_id: String,
+) -> Result<(), DecisionRefusal<H::Error>> {
+    let slice = load_slice(host, [FactKey::new(ty_name, id)]).map_err(DecisionRefusal::Host)?;
+    let output = DecisionOutput {
+        facts: vec![change],
+        links: Vec::new(),
+        commands: Vec::new(),
+        timers: Vec::new(),
+    };
+    let turn = DecisionTurn {
+        id: turn_id,
+        now: host.logical_now(),
+        world: World::Main,
+        consumes: None,
+    };
+    commit_decision(host, catalog, &slice, &turn, &output).map(|_| ())
+}
+
+pub(crate) fn fire_transition_decision<H: PackHost>(
+    host: &mut H,
+    catalog: &TypeCatalog<'_>,
+    ty_name: &str,
+    prop: &str,
+    id: &str,
+    transition_id: &str,
+    turn_nonce: u64,
+) -> Result<(), DecisionRefusal<H::Error>> {
+    commit_fact_decision(
+        host,
+        catalog,
+        ty_name,
+        id,
+        FactChange::Transition {
+            object_type: ObjectTypeName(ty_name.to_owned()),
+            key: id.to_owned(),
+            lifecycle: PropertyId(prop.to_owned()),
+            transition: TransitionId(transition_id.to_owned()),
+        },
+        format!("tr-{id}-{transition_id}-{turn_nonce}"),
+    )
+}
+
+pub(crate) fn set_property_decision<H: PackHost>(
+    host: &mut H,
+    catalog: &TypeCatalog<'_>,
+    ty_name: &str,
+    id: &str,
+    prop: &str,
+    value: JsonValue,
+    turn_nonce: u64,
+) -> Result<(), DecisionRefusal<H::Error>> {
+    commit_fact_decision(
+        host,
+        catalog,
+        ty_name,
+        id,
+        FactChange::Set {
+            object_type: ObjectTypeName(ty_name.to_owned()),
+            key: id.to_owned(),
+            property: PropertyId(prop.to_owned()),
+            value,
+        },
+        format!("set-{id}-{prop}-{turn_nonce}"),
+    )
+}
+
+fn take_self_ident(s: &str) -> Option<(String, &str)> {
+    let rest = s.strip_prefix("self.")?;
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    (!name.is_empty()).then(|| (name.clone(), rest.get(name.len()..).unwrap_or_default()))
+}
+
+fn unwrap_self_group(group: &str) -> Option<String> {
+    let (name, tail) = take_self_ident(group.trim())?;
+    let rest = tail.trim_start();
+    (rest.is_empty() || rest.starts_with("??")).then_some(name)
+}
+
+fn is_op_boundary(s: &str, lhs: bool) -> bool {
+    let t = if lhs { s.trim_end() } else { s.trim_start() };
+    let toks = if lhs {
+        ["&&", "||", "(", ","]
+    } else {
+        ["&&", "||", ")", ","]
+    };
+    t.is_empty()
+        || toks.iter().any(|k| {
+            if lhs {
+                t.ends_with(k)
+            } else {
+                t.starts_with(k)
+            }
+        })
+}
+
+fn find_matching_open(inner: &str) -> Option<usize> {
+    let mut stack = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in inner.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '(' => stack.push(idx),
+            ')' => {
+                stack.pop()?;
+            }
+            _ => {}
+        }
+    }
+    quote.is_none().then(|| stack.pop()).flatten()
+}
+
+fn find_matching_close(inner: &str) -> Option<usize> {
+    let mut depth: usize = 1;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in inner.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '(' => depth = depth.saturating_add(1),
+            ')' if depth == 1 => return Some(idx),
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn extract_lhs_self_prop(lhs_part: &str) -> Option<String> {
+    let trimmed = lhs_part.trim_end();
+    if let Some(inner) = trimmed.strip_suffix(')') {
+        let open = find_matching_open(inner)?;
+        return is_op_boundary(inner.get(..open).unwrap_or_default(), true)
+            .then(|| unwrap_self_group(inner.get(open.saturating_add(1)..).unwrap_or_default()))
+            .flatten();
+    }
+    let rev: String = trimmed
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    let name: String = rev.chars().rev().collect();
+    let before = trimmed.strip_suffix(name.as_str())?.strip_suffix("self.")?;
+    (!name.is_empty() && is_op_boundary(before, true)).then_some(name)
+}
+
+fn extract_rhs_self_prop(rhs_part: &str) -> Option<String> {
+    let trimmed = rhs_part.trim_start();
+    if let Some(inner) = trimmed.strip_prefix('(') {
+        let close = find_matching_close(inner)?;
+        let after = inner.get(close.saturating_add(1)..).unwrap_or_default();
+        return is_op_boundary(after, false)
+            .then(|| unwrap_self_group(inner.get(..close).unwrap_or_default()))
+            .flatten();
+    }
+    let (name, tail) = take_self_ident(trimmed)?;
+    is_op_boundary(tail, false).then_some(name)
+}
+
+pub(crate) fn extract_self_equality_pairs(expr: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    let mut offset = 0;
+    while let Some(rel) = expr.get(offset..).and_then(|tail| tail.find("==")) {
+        let eq_pos = offset.saturating_add(rel);
+        let lhs = expr.get(..eq_pos).unwrap_or_default();
+        let rhs = expr.get(eq_pos.saturating_add(2)..).unwrap_or_default();
+        if !lhs.ends_with(['!', '='])
+            && !rhs.starts_with('=')
+            && let (Some(l), Some(r)) = (extract_lhs_self_prop(lhs), extract_rhs_self_prop(rhs))
+        {
+            pairs.push((l, r));
+        }
+        offset = eq_pos.saturating_add(2);
+    }
+    pairs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,5 +846,54 @@ mod tests {
         let plan = coverage::DomainCoveragePlan::from_pack(&pack);
         assert!(plan.transitions.is_empty());
         assert_eq!(plan.immutable_targets.len(), 1);
+    }
+
+    #[test]
+    fn extract_self_equality_pairs_handles_coalesce_and_rejects_compound_exprs() {
+        assert_eq!(
+            extract_self_equality_pairs(
+                "self.evaluation_revision !== null && self.pinned_dataset_revision == (self.evaluation_revision ?? '') && self.evaluated_artifact_sha256 !== null && self.artifact_sha256 == (self.evaluated_artifact_sha256 ?? '')"
+            ),
+            vec![
+                (
+                    "pinned_dataset_revision".to_owned(),
+                    "evaluation_revision".to_owned()
+                ),
+                (
+                    "artifact_sha256".to_owned(),
+                    "evaluated_artifact_sha256".to_owned()
+                ),
+            ]
+        );
+        assert_eq!(
+            extract_self_equality_pairs("(self.a ?? '') == self.b"),
+            vec![("a".to_owned(), "b".to_owned())]
+        );
+        assert_eq!(
+            extract_self_equality_pairs("self.a == (self.b ?? ')')"),
+            vec![("a".to_owned(), "b".to_owned())]
+        );
+        assert_eq!(
+            extract_self_equality_pairs("(self.a ?? '(') == self.b"),
+            vec![("a".to_owned(), "b".to_owned())]
+        );
+        assert_eq!(
+            extract_self_equality_pairs(
+                r#"self.x !== ')' && (self.a ?? '\')') == (self.b ?? "(\"")"#
+            ),
+            vec![("a".to_owned(), "b".to_owned())]
+        );
+        for expr in [
+            "self.a == (self.b ?? ')') + 1",
+            "self.a == (self.b + 1)",
+            "self.a == (self.b ?? 0) + 1",
+            "self.a == self.b + 1",
+            "1 + self.a == self.b",
+            "(self.a + 1) == self.b",
+            "self.a !== (self.b ?? '')",
+            "self.a == (self.b ?? f(1)) + 1",
+        ] {
+            assert_eq!(extract_self_equality_pairs(expr), Vec::new(), "{expr}");
+        }
     }
 }

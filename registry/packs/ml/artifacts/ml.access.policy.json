@@ -36,6 +36,30 @@
       },
       {
         "actions": [
+          "ml.modelversion.accept_evaluation"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "member",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "ml.ModelVersion",
+        "ruleId": "accept_evaluation",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
           "ml.modelversion.promote"
         ],
         "allOf": [

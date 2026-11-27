@@ -3,8 +3,12 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 
-use norn_ir::{RuntimeValue, runtime};
-use norn_kernel::FactEvent;
+use norn_ir::provenance::{InstanceProvenance, MappingVersion, SourceRecordRef, UtcTimestamp};
+use norn_ir::{
+    DataQualityFinding, DataQualityFindingStatus, DataQualityOutcome, DataQualityRuleRef,
+    DataQualitySeverity, DataQualitySubject, ObjectTypeName, RuntimeValue, runtime,
+};
+use norn_kernel::{FactEvent, ObservationEvent};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -195,5 +199,159 @@ fn allocation_value_and_scope_keep_their_narrow_types() -> TestResult {
             assert!(runtime::decode::<FactEvent>(&RuntimeValue::Object(malformed)).is_err());
         }
     }
+    Ok(())
+}
+
+fn sample_provenance() -> InstanceProvenance {
+    InstanceProvenance {
+        source: SourceRecordRef::new("ERPNext", "OrderLine/line-1"),
+        mapping_version: MappingVersion("erpnext.norn_core@0.2.0".to_owned()),
+        source_fields: Vec::new(),
+        markings: Vec::new(),
+        transform: None,
+        observed_at: None,
+        recorded_at: UtcTimestamp("2026-10-01T00:00:00Z".to_owned()),
+        upstream: Vec::new(),
+    }
+}
+
+fn observation_event_jsons() -> Result<Vec<String>, Box<dyn Error>> {
+    let prov = serde_json::to_string(&sample_provenance())?;
+    let finding = DataQualityFinding {
+        schema_version: 2,
+        id: "dq-1".to_owned(),
+        dedupe_key: "dedupe-1".to_owned(),
+        evidence_digest: None,
+        rule_ref: DataQualityRuleRef::Builtin {
+            id: "test.rule".to_owned(),
+            version: "1".to_owned(),
+        },
+        subjects: vec![DataQualitySubject::new(
+            ObjectTypeName("test.OrderLine".to_owned()),
+            "line-1",
+        )],
+        severity: DataQualitySeverity::Warning,
+        message: "Quantity out of range".to_owned(),
+        outcome: DataQualityOutcome::NotSatisfied,
+        provenance: Vec::new(),
+        first_seen: UtcTimestamp("2026-10-01T00:00:00Z".to_owned()),
+        last_seen: UtcTimestamp("2026-10-01T00:00:00Z".to_owned()),
+        status: DataQualityFindingStatus::Open,
+        links: BTreeMap::new(),
+        values: BTreeMap::from([(
+            "amount".to_owned(),
+            RuntimeValue::from_json_text("0.1234567890123456789012345678")?,
+        )]),
+    };
+    let finding_json = serde_json::to_string(&finding)?;
+    Ok(vec![
+        format!(
+            r#"{{"op":"observed_fact","event":{{"op":"created","key":{KEY},"values":{EXACT}}},"provenance":{prov}}}"#
+        ),
+        format!(
+            r#"{{"op":"observed_fact","event":{{"op":"set","key":{KEY},"property":"amount","value":0.1234567890123456789012345678}},"provenance":{prov}}}"#
+        ),
+        format!(
+            r#"{{"op":"observed_transition","key":{KEY},"property":"status","transition":"submit","from":"draft","to":"submitted","synthesized":"snapshot_catch_up","provenance":{prov}}}"#
+        ),
+        format!(r#"{{"op":"data_quality_finding","fact":{finding_json}}}"#),
+        format!(r#"{{"op":"observed_deleted","key":{KEY},"tombstoned":true,"provenance":{prov}}}"#),
+        format!(r#"{{"op":"observed_recreated","key":{KEY},"provenance":{prov}}}"#),
+    ])
+}
+
+#[test]
+fn observation_event_variants_round_trip_exact_numbers_and_closed_wire() -> TestResult {
+    let samples = observation_event_jsons()?;
+    let mut known_fields = BTreeMap::new();
+    for text in &samples {
+        let expected = RuntimeValue::from_json_text(text)?;
+        let event: ObservationEvent = serde_json::from_str(text)?;
+        assert_eq!(runtime::encode(&event)?, expected, "wire changed: {text}");
+        let replayed: ObservationEvent = runtime::decode(&expected)?;
+        assert_eq!(replayed, event);
+        known_fields.extend(
+            expected
+                .as_object()
+                .ok_or("observation event must be an object")?
+                .clone(),
+        );
+    }
+    known_fields.insert("unknownField".to_owned(), RuntimeValue::Bool(true));
+
+    for text in &samples {
+        let record = RuntimeValue::from_json_text(text)?;
+        let fields = record
+            .as_object()
+            .ok_or("observation event must be an object")?;
+        for name in fields.keys() {
+            let mut missing = fields.clone();
+            missing.remove(name);
+            assert!(
+                runtime::decode::<ObservationEvent>(&RuntimeValue::Object(missing)).is_err(),
+                "accepted missing {name}: {text}"
+            );
+            let mut nulled = fields.clone();
+            nulled.insert(name.clone(), RuntimeValue::Null);
+            assert!(
+                runtime::decode::<ObservationEvent>(&RuntimeValue::Object(nulled)).is_err(),
+                "accepted null {name}: {text}"
+            );
+        }
+        for (name, value) in &known_fields {
+            if fields.contains_key(name) {
+                continue;
+            }
+            for extra in [value.clone(), RuntimeValue::Null] {
+                let mut extended = fields.clone();
+                extended.insert(name.clone(), extra);
+                assert!(
+                    runtime::decode::<ObservationEvent>(&RuntimeValue::Object(extended)).is_err(),
+                    "accepted extra {name}: {text}"
+                );
+            }
+        }
+    }
+
+    for malformed in [
+        "null",
+        r#"["observed_recreated"]"#,
+        r#"{"op":"unknown_variant"}"#,
+    ] {
+        assert!(serde_json::from_str::<ObservationEvent>(malformed).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn tagged_events_serialize_decimals_honestly_with_serde_json_to_value() -> TestResult {
+    let prov = serde_json::to_string(&sample_provenance())?;
+    let exact_binary_fact: FactEvent = serde_json::from_str(&format!(
+        r#"{{"op":"set","key":{KEY},"property":"amount","value":42.25}}"#
+    ))?;
+    let fact_val = serde_json::to_value(&exact_binary_fact)?;
+    assert_eq!(
+        fact_val.get("value").and_then(serde_json::Value::as_f64),
+        Some(42.25)
+    );
+
+    let exact_binary_obs: ObservationEvent = serde_json::from_str(&format!(
+        r#"{{"op":"observed_fact","event":{{"op":"set","key":{KEY},"property":"amount","value":42.25}},"provenance":{prov}}}"#
+    ))?;
+    let obs_val = serde_json::to_value(&exact_binary_obs)?;
+    assert_eq!(
+        obs_val
+            .get("event")
+            .and_then(|event| event.get("value"))
+            .and_then(serde_json::Value::as_f64),
+        Some(42.25)
+    );
+
+    // High-precision decimals that f64 cannot represent exactly must error on
+    // `serde_json::to_value` rather than silently rounding or leaking RawValue.
+    let high_precision_obs: ObservationEvent = serde_json::from_str(&format!(
+        r#"{{"op":"observed_fact","event":{{"op":"set","key":{KEY},"property":"amount","value":0.1234567890123456789012345678}},"provenance":{prov}}}"#
+    ))?;
+    assert!(serde_json::to_value(&high_precision_obs).is_err());
     Ok(())
 }
