@@ -1112,21 +1112,22 @@ mod tests {
             checkpoint_key: Some(key),
             ..StoreOptions::default()
         };
-        let empty = || CommitBatch {
+        let with_event = || CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: "s".to_owned(),
+            events: vec![norn_ir::RuntimeValue::Null],
             ..CommitBatch::default()
         };
         let dir = tempfile::tempdir().map_err(|error| CellError::Engine(error.to_string()))?;
         let main_path = dir.path().join("main.sqlite");
         let mut main = CellStore::open(&main_path, model.clone(), opts())?;
-        main.commit(&empty())?;
+        main.commit(&with_event())?;
         let id = main
             .cell_id()?
             .ok_or_else(|| CellError::Engine("main is bound".to_owned()))?;
         let base = main.verified_head()?;
         let mut fork = main.fork("decision-1", &base)?;
-        fork.commit(&empty())?;
+        fork.commit(&with_event())?;
         let fork_path = dir.path().join("fork.sqlite");
         fork.conn.backup_to_file(&fork_path)?;
         drop(fork);
