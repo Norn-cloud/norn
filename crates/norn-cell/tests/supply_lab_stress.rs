@@ -202,6 +202,9 @@ struct Stress {
     cell: Cell,
     tick: u64,
     calls: u64,
+    /// Every committed governed call, in order: what `norn seed` replays
+    /// (`registry/packs/supply-lab/seed/supply.calls.json`).
+    committed: Vec<Value>,
 }
 
 impl Stress {
@@ -217,6 +220,7 @@ impl Stress {
             cell,
             tick: 0,
             calls: 0,
+            committed: Vec::new(),
         })
     }
 
@@ -247,6 +251,7 @@ impl Stress {
             .definitions
             .action(action)
             .ok_or_else(|| format!("no action {action}"))?;
+        let sent = input.clone();
         let input: JsonObject =
             serde_json::from_value(input).map_err(|e| format!("{action} input: {e}"))?;
         // One catalog, guards bound by construction: no second model, no forgotten guard.
@@ -274,7 +279,10 @@ impl Stress {
         };
         Ok(
             match commit_action(&mut self.cell, &catalog, &call, &Allow) {
-                Ok(ActionOutcome::Committed { .. }) => Outcome::Committed,
+                Ok(ActionOutcome::Committed { .. }) => {
+                    self.committed.push(json!({"actor": actor, "action": action, "idempotencyKey": key, "input": sent}));
+                    Outcome::Committed
+                }
                 Ok(ActionOutcome::Replayed { .. }) => Outcome::Replayed,
                 Err(refusal) => Outcome::Refused(refusal.code().to_owned(), refusal.to_string()),
             },
@@ -622,6 +630,32 @@ fn seeded() -> Result<Stress, String> {
     movements(&mut stress, "MV", &ISSUES)?;
     purchasing(&mut stress)?;
     Ok(stress)
+}
+
+/// The reference seeding, as the calls a dev cell replays: `norn init
+/// --template supply-lab` copies this file into the project and `norn seed`
+/// sends each call as its actor, a named local principal holding the role the
+/// pack's access policy names (DEV-PRINCIPALS-1). Generated from `seeded()`,
+/// never written by hand; `NORN_PACKS_UPDATE=1` regenerates it.
+#[test]
+fn seed_calls_are_the_reference_seeding() -> Result<(), String> {
+    let stress = seeded()?;
+    let document = json!({ "format": "norn-calls/1", "calls": stress.committed });
+    let path = repo().join("registry/packs/supply-lab/seed/supply.calls.json");
+    let text = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&document).map_err(|e| format!("{e}"))?
+    );
+    if std::env::var("NORN_PACKS_UPDATE").as_deref() == Ok("1") {
+        fs::create_dir_all(path.parent().ok_or("no parent")?).map_err(|e| format!("{e}"))?;
+        fs::write(&path, &text).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    let committed = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    assert_eq!(
+        committed, text,
+        "the seed is the reference seeding; regenerate with NORN_PACKS_UPDATE=1"
+    );
+    Ok(())
 }
 
 // ---------------------------------------------------------------- questions

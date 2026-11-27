@@ -12,15 +12,15 @@ import type { LinkPage, ObjectReads, ObjectRecord, SourceLineage } from "../tran
 import type { DecidedScope } from "../workspace.tsx"
 import type { ObjectFindings } from "../../evidence/review.ts"
 
-type CellLinkPage = { readonly objectType: string; readonly id: string; readonly items: LinkPage["items"]; readonly next?: string | null; readonly counts?: LinkCounts | null }
+export type CellLinkPage = { readonly objectType: string; readonly id: string; readonly items: LinkPage["items"]; readonly next?: string | null; readonly counts?: LinkCounts | null }
 
 /** The cell's link page (`next` cursor) in the shape the pages read (`hasMore`), with its counts when it sends them. */
-function linkPage(read: Read<CellLinkPage>): Read<CountedLinkPage> {
+export function linkPage(read: Read<CellLinkPage>): Read<CountedLinkPage> {
   const { objectType, id, items, next, counts } = read.document
   return { ...read, document: { objectType, id, items, hasMore: typeof next === "string", ...counts ? { counts } : {} } }
 }
 
-const objectPath = (objectType: string, id: string, leaf?: string) =>
+export const objectPath = (objectType: string, id: string, leaf?: string) =>
   `/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}${leaf ? `/${leaf}` : ""}`
 
 /** The recorded object with its links and lineage; `null` when the recording has none. */

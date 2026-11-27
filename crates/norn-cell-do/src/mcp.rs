@@ -1134,7 +1134,9 @@ fn catalog_summary(
 }
 
 /// `norn_catalog` with `detail: full`: the route's document with only the
-/// artifacts the caller named.
+/// artifacts the caller named. The host's built-in pages are not the
+/// workspace's definitions (the summary lists none of them), so none is
+/// returned, even when named.
 fn catalog_full(mut catalog: RuntimeValue, names: &[String]) -> RuntimeValue {
     if let Some(RuntimeValue::Array(artifacts)) = catalog
         .as_object_mut()
@@ -1151,6 +1153,8 @@ fn catalog_full(mut catalog: RuntimeValue, names: &[String]) -> RuntimeValue {
     if let Some(root) = catalog.as_object_mut() {
         // The full admission receipt restates every artifact; the digest names it.
         root.remove("receipt");
+        // Studio's built-in pages are the host's, served for Studio to draw records with.
+        root.remove("builtins");
     }
     catalog
 }

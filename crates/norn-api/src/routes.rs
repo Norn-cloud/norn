@@ -67,6 +67,10 @@ pub struct DefsResponse {
     /// Admitted semantic documents, preserving exact numeric values.
     #[schema(schema_with = artifacts_schema)]
     pub artifacts: Vec<Box<RawValue>>,
+    /// Studio's built-in pages this host serves for ids `artifacts` does not hold
+    /// (`builtin_pages`): in no revision and no receipt, admitted by both checker rings when the
+    /// host was built. A definition the workspace installed with a built-in's id replaces it.
+    pub builtins: Vec<crate::builtin_pages::BuiltinDefinition>,
     /// Live record counts by object type, under the caller's own visibility:
     /// each is the total `GET /v1/objects/{type}` reports on its first page,
     /// through the same gates, counted to at most 500 visible records
@@ -279,6 +283,9 @@ fn defs_response(set: InstalledDefinitionSet, scope: &CellScope) -> Result<DefsR
     let receipt = set
         .admission_receipt
         .ok_or_else(|| Refusal::host("missing receipt"))?;
+    let artifacts: Vec<Box<RawValue>> =
+        serde_json::from_str(&set.canonical_set).map_err(Refusal::host)?;
+    let builtins = crate::builtin_pages::served(&artifacts).map_err(Refusal::host)?;
     Ok(DefsResponse {
         admitted: true,
         version: set.version,
@@ -296,7 +303,8 @@ fn defs_response(set: InstalledDefinitionSet, scope: &CellScope) -> Result<DefsR
         diagnostics: None,
         registry: set.registry,
         base_artifact_ids,
-        artifacts: serde_json::from_str(&set.canonical_set).map_err(Refusal::host)?,
+        artifacts,
+        builtins,
         object_counts: BTreeMap::new(),
     })
 }
@@ -337,7 +345,8 @@ pub(crate) fn admit_retained(
         tenant: None,
     };
     let limits = ResourceLimitProfile::norn_limits_v1();
-    let checked = norn_checker::check_artifact_set_with_verified_receipt(
+    // Both rings, as the set was admitted: a retained widget is judged by the UI laws.
+    let checked = norn_ui_checker::check_artifact_set_with_verified_receipt(
         &sources,
         &context,
         &limits,
@@ -466,12 +475,17 @@ mod tests {
         scope::CellScope,
     };
     use norn_cell::{CellStore, InstalledDefinitionInput, Model, engine::NativeEngine};
-    use norn_checker::{EntityArtifactSetContext, ReceiptSources, check_artifact_set_with_receipt};
+    use norn_checker::{EntityArtifactSetContext, ReceiptSources};
     use norn_ir::ResourceLimitProfile;
+    use norn_ui_checker::check_artifact_set_with_receipt;
     use std::collections::BTreeSet;
 
     const SOURCE: &str = include_str!("../../../fixtures/ir/retail-reorder-routing.rule.json");
     fn host() -> DevHost<NativeEngine> {
+        host_with(&[SOURCE])
+    }
+    /// A host whose one installed revision is `sources`, admitted by both rings.
+    fn host_with(texts: &[&str]) -> DevHost<NativeEngine> {
         let scope = CellScope {
             org_id: "org_demo".into(),
             environment_id: "dev".into(),
@@ -481,7 +495,10 @@ mod tests {
             base: &[],
             tenant: None,
         };
-        let sources = [RuntimeValue::from_json_text(SOURCE).unwrap()];
+        let sources: Vec<RuntimeValue> = texts
+            .iter()
+            .map(|text| RuntimeValue::from_json_text(text).unwrap())
+            .collect();
         let checked = check_artifact_set_with_receipt(
             &ReceiptSources::new(&sources, &[]).unwrap(),
             &context,
@@ -490,7 +507,7 @@ mod tests {
         .unwrap();
         assert!(checked.receipt.admitted);
         let input = InstalledDefinitionInput {
-            canonical_set: format!("[{SOURCE}]"),
+            canonical_set: format!("[{}]", texts.join(",")),
             registry: vec!["synthetic.library@1.0.0".into()],
             receipt_sha256: checked.receipt.content_sha256().unwrap(),
             admission_receipt: Some(
@@ -599,6 +616,59 @@ mod tests {
             );
         }
         assert_eq!(calls.load(Ordering::Relaxed), 3);
+    }
+    /// A workspace that installed no Studio page (here one retail rule) is still served Studio's
+    /// record page, built in, beside its own definitions and outside their receipt.
+    #[test]
+    fn a_workspace_without_studio_definitions_is_served_the_record_page() {
+        use crate::builtin_pages::{PAGES, RECORD_PAGE_ID};
+        let host = host().with_authorizer(Fixture);
+        let served = get_defs(&host, &query(), Some("reviewer@demo")).unwrap();
+        assert_eq!(
+            served.artifacts.len(),
+            1,
+            "the workspace's own revision is unchanged"
+        );
+        let [page] = served.builtins.as_slice() else {
+            panic!("expected one built-in page, got {}", served.builtins.len());
+        };
+        let envelope: serde_json::Value = serde_json::from_str(page.artifact.get()).unwrap();
+        assert_eq!(envelope["artifactId"], RECORD_PAGE_ID);
+        assert_eq!(envelope["kind"], "widget");
+        let committed = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../registry/studio/artifacts/norn.studio.record.widget.json"),
+        )
+        .unwrap();
+        assert_eq!(
+            envelope,
+            serde_json::from_str::<serde_json::Value>(&committed).unwrap()
+        );
+        assert_eq!(
+            page.sha256,
+            crate::uploads::sha256_hex(committed.as_bytes())
+        );
+        assert_eq!(PAGES.len(), 1);
+        let wire: serde_json::Value = serde_json::to_value(&served).unwrap();
+        assert_eq!(
+            wire["builtins"][0]["artifact"]["artifactId"],
+            RECORD_PAGE_ID
+        );
+        assert_eq!(wire["builtins"][0]["sha256"], page.sha256.as_str());
+    }
+    /// A workspace that installed its own record page is served that one, and no built-in.
+    #[test]
+    fn a_workspace_record_page_replaces_the_builtin() {
+        let page = crate::builtin_pages::PAGES[0].1;
+        let host = host_with(&[SOURCE, page.trim()]).with_authorizer(Fixture);
+        let served = get_defs(&host, &query(), Some("reviewer@demo")).unwrap();
+        assert_eq!(served.artifacts.len(), 2);
+        assert!(served.artifacts.iter().any(|artifact| {
+            artifact
+                .get()
+                .contains(crate::builtin_pages::RECORD_PAGE_ID)
+        }));
+        assert!(served.builtins.is_empty(), "the installed page wins");
     }
     #[test]
     fn admitted_document_and_missing_version_preserve_cell_state() {

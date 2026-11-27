@@ -12,6 +12,7 @@ mod actions;
 mod bindings;
 mod child_grid;
 mod composition;
+mod context;
 mod effects;
 mod forms;
 mod handling;
@@ -51,10 +52,6 @@ pub(crate) const MAX_WIDGET_NODE_DEPTH: usize = 64;
 
 /// Maximum composed baseline page expansions permitted per widget check pass.
 pub(crate) const MAX_COMPOSITION_EXPANSIONS: usize = 128;
-
-pub(super) fn is_nonblank_locale_text(text: &norn_ir::LocaleText) -> bool {
-    !text.0.is_empty() && text.0.values().all(|value| !value.trim().is_empty())
-}
 
 pub(super) type ActionCacheKey<'a> = (&'a str, &'a str, [Option<&'a str>; 5]);
 
@@ -428,6 +425,9 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
         self.check_overrides();
         self.check_effect_laws();
         self.check_value_handling();
+        self.check_context_reads();
+        self.check_messages();
+        self.check_island_states();
     }
 
     fn resolve_property(

@@ -14,7 +14,7 @@ use norn_ir::{
 
 use super::child_grid::child_grid_component;
 use super::types::{property_type, type_fits_schema, types_compatible};
-use super::{ActionSurface, FormInputInitialization, Usage, UxChecker, is_nonblank_locale_text};
+use super::{ActionSurface, FormInputInitialization, Usage, UxChecker};
 
 #[derive(Default)]
 struct FieldTargetCounts<'a> {
@@ -84,14 +84,17 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn check_field_presentation(&mut self, field: &WidgetFieldPresentation, path: &str) {
-        if !is_nonblank_locale_text(&field.label) {
+        if field.label.is_blank() {
             self.error(
                 &format!("{path}/label"),
                 "field label must contain nonblank localized text",
             );
         }
         if let Some(help) = &field.help
-            && help.0.values().any(|value| value.trim().is_empty())
+            && help
+                .entries()
+                .iter()
+                .any(|(_, value)| value.trim().is_empty())
         {
             self.error(
                 &format!("{path}/help"),
