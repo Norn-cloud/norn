@@ -422,40 +422,43 @@ impl<E: SqlEngine> CellStore<E> {
         if !self.has_connection_type() || cutoff.frontier == 0 {
             return Ok(Vec::new());
         }
-        let reader = self.read();
-        let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
-        let mut budget = DecodeBudget::new(&limits);
-        let mut as_of = AsOfReader::open(&reader, cutoff, now_ms, &mut budget)?;
-        let read_world = |as_of: &mut AsOfReader<'_, '_, E>,
-                          target_world: &str,
-                          budget: &mut DecodeBudget|
-         -> Result<Vec<ObjectRecord>, CellError> {
-            let (ids, complete) = as_of.distinct_ids(
-                target_world,
-                CONNECTION_TYPE,
-                MAX_HISTORICAL_CONNECTIONS,
-                budget,
-            )?;
-            if !complete {
-                return Err(super::refused("core.compute.bound_exceeded"));
-            }
-            let mut out = Vec::with_capacity(ids.len());
-            for id in ids {
-                match as_of.connection_record(target_world, &id, budget)? {
-                    BudgetedRead::Found(record) => out.push(record),
-                    BudgetedRead::Missing => {}
-                    BudgetedRead::Exhausted => {
-                        return Err(super::refused("core.compute.bound_exceeded"));
+        self.conn.transaction(|| {
+            let reader = self.read();
+            let limits =
+                ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+            let mut budget = DecodeBudget::new(&limits);
+            let mut as_of = AsOfReader::open(&reader, cutoff, now_ms, &mut budget)?;
+            let read_world = |as_of: &mut AsOfReader<'_, '_, E>,
+                              target_world: &str,
+                              budget: &mut DecodeBudget|
+             -> Result<Vec<ObjectRecord>, CellError> {
+                let (ids, complete) = as_of.distinct_ids(
+                    target_world,
+                    CONNECTION_TYPE,
+                    MAX_HISTORICAL_CONNECTIONS,
+                    budget,
+                )?;
+                if !complete {
+                    return Err(super::refused("core.compute.bound_exceeded"));
+                }
+                let mut out = Vec::with_capacity(ids.len());
+                for id in ids {
+                    match as_of.connection_record(target_world, &id, budget)? {
+                        BudgetedRead::Found(record) => out.push(record),
+                        BudgetedRead::Missing => {}
+                        BudgetedRead::Exhausted => {
+                            return Err(super::refused("core.compute.bound_exceeded"));
+                        }
                     }
                 }
+                Ok(out)
+            };
+            let mut objects = read_world(&mut as_of, world, &mut budget)?;
+            if objects.is_empty() && world != MAIN_WORLD {
+                objects = read_world(&mut as_of, MAIN_WORLD, &mut budget)?;
             }
-            Ok(out)
-        };
-        let mut objects = read_world(&mut as_of, world, &mut budget)?;
-        if objects.is_empty() && world != MAIN_WORLD {
-            objects = read_world(&mut as_of, MAIN_WORLD, &mut budget)?;
-        }
-        Ok(objects)
+            Ok(objects)
+        })
     }
 
     /// Read one `source.Connection` record at live head (`historical == None`)
@@ -473,8 +476,8 @@ impl<E: SqlEngine> CellStore<E> {
         if !self.has_connection_type() {
             return Ok(None);
         }
-        let reader = self.read();
         let Some((frontier, now_ms)) = historical else {
+            let reader = self.read();
             if let Some(rec) = reader.object(world, CONNECTION_TYPE, source_id)? {
                 return Ok(Some(rec));
             }
@@ -487,25 +490,29 @@ impl<E: SqlEngine> CellStore<E> {
         if frontier == 0 {
             return Ok(None);
         }
-        let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
-        let mut budget = DecodeBudget::new(&limits);
-        let cutoff = KnowledgeCutoff {
-            frontier,
-            recorded_at: LogicalTime::from_millis(now_ms),
-        };
-        let mut as_of = AsOfReader::open(&reader, cutoff, now_ms, &mut budget)?;
-        match as_of.connection_record(world, source_id, &mut budget)? {
-            BudgetedRead::Found(record) => return Ok(Some(record)),
-            BudgetedRead::Exhausted => return Ok(None),
-            BudgetedRead::Missing => {}
-        }
-        if world != MAIN_WORLD
-            && let BudgetedRead::Found(record) =
-                as_of.connection_record(MAIN_WORLD, source_id, &mut budget)?
-        {
-            return Ok(Some(record));
-        }
-        Ok(None)
+        self.conn.transaction(|| {
+            let reader = self.read();
+            let limits =
+                ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
+            let mut budget = DecodeBudget::new(&limits);
+            let cutoff = KnowledgeCutoff {
+                frontier,
+                recorded_at: LogicalTime::from_millis(now_ms),
+            };
+            let mut as_of = AsOfReader::open(&reader, cutoff, now_ms, &mut budget)?;
+            match as_of.connection_record(world, source_id, &mut budget)? {
+                BudgetedRead::Found(record) => return Ok(Some(record)),
+                BudgetedRead::Exhausted => return Ok(None),
+                BudgetedRead::Missing => {}
+            }
+            if world != MAIN_WORLD
+                && let BudgetedRead::Found(record) =
+                    as_of.connection_record(MAIN_WORLD, source_id, &mut budget)?
+            {
+                return Ok(Some(record));
+            }
+            Ok(None)
+        })
     }
 
     fn definitions_at(

@@ -90,11 +90,10 @@ pub(super) fn historical_record<E: SqlEngine>(
 }
 
 /// O(1) authenticated `source.Connection` incarnation at `cutoff` via
-/// `_norn_fact_values/connection_commit`, gated on both the fixed-root
-/// invariant (`root_type("source.Connection") == "source.Connection"`) and
-/// verified history at the current storage revision (no unverified external
-/// SQLite writes). Falls back to [`historical_record`] whenever either
-/// invariant cannot be established.
+/// `_norn_fact_values/key_frontier` across all roots, gated on verified
+/// history at the pinned snapshot (failing closed on unverified external
+/// writes). Falls back to [`historical_record`] whenever a cross-root or
+/// same-commit ambiguity could allow another root to supersede the candidate.
 pub(super) fn historical_connection_record<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     history: &mut crate::history::HistoryRead<'_, '_, E>,
@@ -106,39 +105,51 @@ pub(super) fn historical_connection_record<E: SqlEngine>(
 ) -> Result<BudgetedRead, CellError> {
     let conn_type = super::freshness::CONNECTION_TYPE;
     reader.check_history("as-of reads")?;
-    if reader.root_type(conn_type)? != conn_type || reader.has_unverified_external_writes()? {
-        return historical_record(history, world, conn_type, id, cutoff, model, budget);
+    if reader.has_unverified_external_writes()? {
+        return Err(CellError::Verifying("as-of reads"));
     }
     let head =
         i64::try_from(cutoff.frontier).map_err(|_n| refused("core.compute.bound_exceeded"))?;
-    let Some(ver) = reader.conn.query_optional(
-        "SELECT version FROM _norn_fact_values INDEXED BY \"_norn_fact_values/connection_commit\" \
-         WHERE world=?1 AND root_type='source.Connection' AND id=?2 AND commit_seq<=?3 \
-         ORDER BY commit_seq DESC, version DESC LIMIT 1",
+    let rows = reader.conn.query(
+        "SELECT root_type, version, commit_seq FROM _norn_fact_values \
+         INDEXED BY \"_norn_fact_values/key_frontier\" \
+         WHERE world=?1 AND id=?2 AND commit_seq<=?3 \
+         ORDER BY commit_seq DESC, root_type DESC, version DESC LIMIT 2",
         params![world, id, head],
-        |row| row.get::<i64>(0),
-    )?
-    else {
-        let other_root = reader
-            .conn
-            .query_optional(
-                "SELECT 1 FROM _norn_fact_values INDEXED BY \"_norn_fact_values/key_frontier\" \
-                 WHERE world=?1 AND id=?2 AND commit_seq<=?3 LIMIT 1",
-                params![world, id, head],
-                |_| Ok(()),
-            )?
-            .is_some();
-        if other_root {
-            return historical_record(history, world, conn_type, id, cutoff, model, budget);
-        }
+    )?;
+    let Some(first) = rows.first() else {
         return Ok(BudgetedRead::Missing);
     };
-    let ver_u64 = u64::try_from(ver).map_err(|_err| CellError::OutOfRange("fact version"))?;
-    let Some(proof) = history.evidence(world, conn_type, id, ver_u64, budget)? else {
+    let first = SqlRow(first.clone());
+    let top_root: String = first.get(0)?;
+    let top_ver: i64 = first.get(1)?;
+    let top_seq: i64 = first.get(2)?;
+    let same_commit_other_root = match rows.get(1) {
+        Some(second) => {
+            let second = SqlRow(second.clone());
+            let second_root: String = second.get(0)?;
+            let second_seq: i64 = second.get(2)?;
+            second_seq == top_seq && second_root != top_root
+        }
+        None => false,
+    };
+    if top_root != conn_type || same_commit_other_root {
+        return historical_record(history, world, conn_type, id, cutoff, model, budget);
+    }
+    let ver_u64 = u64::try_from(top_ver).map_err(|_err| CellError::OutOfRange("fact version"))?;
+    let Some(proof) = history.evidence(world, &top_root, id, ver_u64, budget)? else {
         return Ok(BudgetedRead::Exhausted);
     };
     if proof.receipt().body.logical_time > cutoff.recorded_at.as_millis() {
         return Err(CellError::TemporalLeakage);
+    }
+    if !proof
+        .snapshot()
+        .lineage
+        .iter()
+        .any(|name| name == conn_type)
+    {
+        return historical_record(history, world, conn_type, id, cutoff, model, budget);
     }
     evidence_to_record(&proof, model)
 }
