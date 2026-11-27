@@ -121,7 +121,7 @@ fn old_result_never_settles_new_generation_and_attaches_to_original_via_dispatch
     assert_eq!(head_before.generation, 2);
     assert_eq!(head_before.state, OutboxState::Requested);
     assert_eq!(head_before.outcome, None);
-    assert_eq!(ledger.prior_confirmed_successes(), [] as [u64; 0]);
+    assert_eq!(ledger.prior_confirmed_successes(), Vec::<u64>::new());
 
     let gen1_proof = DispatchProof {
         operation: op,
