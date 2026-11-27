@@ -508,5 +508,5 @@ test("R3 Finding 3: CustomThemeDialog renders Apply disabled on initial render b
   )
   const applyButton = markup.match(/<button[^>]*>[^<]*Use for this workspace<\/button>/)
   expect(applyButton).not.toBeNull()
-  expect(applyButton![0]).toContain("disabled")
+  expect(applyButton![0]).toMatch(/\sdisabled(?:=""|\s|>)/)
 })
