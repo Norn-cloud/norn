@@ -339,6 +339,14 @@ impl<'a> EntityIndex<'a> {
                 out,
             );
         }
+        for (i, target) in def.disjoint_with.iter().enumerate() {
+            self.check_named(
+                artifact,
+                target.as_str(),
+                &format!("/payload/interface/disjointWith/{i}"),
+                out,
+            );
+        }
         for (i, link) in def.links.iter().enumerate() {
             self.check_named(
                 artifact,
