@@ -2695,17 +2695,22 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
             (
                 "short_circuit_or",
                 "error",
-                "true or (self.large != (self.id == 'null-big' ? null : self.small))",
+                "self.id == 'null-big' or (self.large != (self.id == 'null-big' ? null : self.small))",
+            ),
+            (
+                "short_circuit_and",
+                "error",
+                "not (self.id != 'null-big' and (self.large == (self.id == 'null-big' ? null : self.small)))",
             ),
         ],
     );
     let ten_26 = "100000000000000000000000000";
-    // Row 1 (`b-1`): `10^26` overflows `DECIMAL(38,12)` across all 4 rules -> residue.
-    // Row 2 (`null`): `COALESCE(NULL, 0.000000000001)` passes `wide_coalesce`,
-    //   `no_silent_round_to_zero`, and `nullable_mixed_eq`, and fails ONLY `wide_compare` in SQL.
-    // Row 3 (`null-big`): `10^26 != (true ? null : small)` overflows `DECIMAL(38,12)`
-    //   even though RHS is dynamically `null` -> residue on BOTH DuckDB and DataFusion!
-    // Row 4 (`b-4`): `5` -> all 4 pass in SQL with 0 residue.
+    // Row 1 (`b-1`): `10^26` overflows `DECIMAL(38,12)` across all 6 rules -> residue (6 rules).
+    // Row 2 (`null`): `COALESCE(NULL, 0.000000000001)` passes 5 rules and fails ONLY `wide_compare` in SQL.
+    // Row 3 (`null-big`): `short_circuit_or` and `short_circuit_and` both short-circuit on their
+    //   row-dependent LHS (`self.id == 'null-big'` / `self.id != 'null-big'`) with 0 residue in BOTH
+    //   DuckDB and DataFusion, while the other 4 rules overflow `DECIMAL(38,12)` -> residue (4 rules).
+    // Row 4 (`b-4`): `5` -> all 6 pass in SQL with 0 residue.
     let big_csv = format!(
         "id,large,small\n\
          b-1,{ten_26},0.000000000001\n\
@@ -2771,10 +2776,10 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
     );
     assert_eq!(
         df_big_landed.residue_total, 2,
-        "DataFusion matches DuckDB's DECIMAL(38, s) storage bound on branch, comparison, and nullable equality"
+        "DataFusion matches DuckDB's DECIMAL(38, s) storage bound on branch, comparison, and short-circuit logicals"
     );
     assert_eq!(duck_big_landed.residue, df_big_landed.residue);
-    assert_eq!(duck_big_landed.residue[0].rules.len(), 4);
+    assert_eq!(duck_big_landed.residue[0].rules.len(), 6);
     assert_eq!(duck_big_landed.residue[1].rules.len(), 4);
     // Row 2 (`null`) must be held ONLY by `wide_compare` (`0 > 0.000000000001`),
     // NOT by `wide_coalesce`, `no_silent_round_to_zero`, or `nullable_mixed_eq`.

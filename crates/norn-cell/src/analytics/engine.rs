@@ -3750,6 +3750,30 @@ fn lower_conditional(
     })
 }
 
+/// Short-circuiting Boolean `AND` / `OR` via ordered `CASE`: `DuckDB` evaluates
+/// both sides of raw `AND` / `OR` eagerly in projections, whereas ZEN and
+/// `DataFusion` evaluate left to right.
+fn lower_logical(
+    is_and: bool,
+    a: &RowPredicate,
+    b: &RowPredicate,
+    table: &TableSchema,
+) -> Outcome<LoweredRule> {
+    let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
+    let mut guards = a.guards;
+    guards.extend(b.guards);
+    let template = if is_and {
+        "(CASE ({}) WHEN TRUE THEN {} WHEN FALSE THEN FALSE END)"
+    } else {
+        "(CASE ({}) WHEN TRUE THEN TRUE WHEN FALSE THEN {} END)"
+    };
+    Ok(LoweredRule {
+        sql: Frag::fmt(template, &[&a.sql, &b.sql]),
+        kind: PredicateKind::Bool,
+        guards,
+    })
+}
+
 fn lower_node(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> {
     use PredicateKind as K;
     use RowPredicate as P;
@@ -3761,14 +3785,6 @@ fn lower_node(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> 
             kind,
             guards,
         }
-    };
-    let binary = |op: &str, a: &RowPredicate, b: &RowPredicate, kind: K| -> Outcome<LoweredRule> {
-        Ok(combine(
-            op,
-            lower_node(a, table)?,
-            lower_node(b, table)?,
-            kind,
-        ))
     };
     let compare = |op: &str, a: &RowPredicate, b: &RowPredicate| -> Outcome<LoweredRule> {
         let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
@@ -3827,8 +3843,7 @@ fn lower_node(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> 
         P::LessOrEqual(a, b) => compare("<=", a, b)?,
         P::Greater(a, b) => compare(">", a, b)?,
         P::GreaterOrEqual(a, b) => compare(">=", a, b)?,
-        P::And(a, b) => binary("AND", a, b, K::Bool)?,
-        P::Or(a, b) => binary("OR", a, b, K::Bool)?,
+        P::And(a, b) | P::Or(a, b) => lower_logical(matches!(node, P::And(..)), a, b, table)?,
         P::Coalesce(a, b) => lower_coalesce(a, b, table)?,
         P::Conditional(c, a, b) => lower_conditional(c, a, b, table)?,
         P::Date(inner) => lower_temporal(inner, table, true)?,
