@@ -62,6 +62,24 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
         plan: &QuestionPlan,
         actor: &str,
     ) -> Result<QuestionSnapshot, Refusal>;
+    /// Resolve the frontier for either a live read (`answered == None`) or a
+    /// pinned `:trace` (`answered == Some((frontier, now_ms))`), reconstructing
+    /// historical source cursors/watermarks at `frontier` when pinned.
+    /// # Errors
+    /// Unavailable or unauthenticated dependencies refuse rather than being fabricated.
+    fn snapshot_at(
+        &self,
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        actor: &str,
+        answered: Option<(u64, u64)>,
+    ) -> Result<QuestionSnapshot, Refusal> {
+        let mut snapshot = self.snapshot(store, plan, actor)?;
+        if let Some((_, now)) = answered {
+            snapshot.context.now_ms = now;
+        }
+        Ok(snapshot)
+    }
     /// Map trusted principal/resource inputs without reading cell data. For a collection,
     /// resource ID is the question name and type is its grain; rows use their actual ID/type.
     /// # Errors
@@ -281,7 +299,7 @@ fn answer_plan<E: SqlEngine>(
     let answer = outcome.map_err(Refusal::from_compute)?;
     project_answer(
         (host, runtime, cell.store()),
-        (actor, key),
+        (actor, key, plan),
         &withheld,
         answer,
     )
@@ -345,6 +363,42 @@ pub(crate) fn world_values<E: SqlEngine>(
                         })
                 })
         })
+}
+
+/// DATA-SOURCES-1: whether `actor` holds the independent `Sources` capability
+/// over every object type `plan` touches (its grain, linked time targets, and
+/// `source.Connection` when present in the model). Raw connector cursors may
+/// contain upstream record IDs and versions, so only such a reader sees them
+/// unkeyed; everyone else receives keyed cursor handles.
+pub(crate) fn plan_sources<E: SqlEngine>(
+    host: &DevHost<E>,
+    runtime: &dyn QuestionRuntime<E>,
+    store: &CellStore<E>,
+    actor: &str,
+    plan: &QuestionPlan,
+) -> bool {
+    let mut types = BTreeSet::from([plan.grain().as_str()]);
+    for sum in plan.sums() {
+        if let Some(link) = &sum.time_link {
+            types.insert(link.target_type.as_str());
+        }
+    }
+    if store.model().has_type("source.Connection") {
+        types.insert("source.Connection");
+    }
+    types.into_iter().all(|name| {
+        runtime
+            .collection_access(host.scope(), actor, Sources, name)
+            .is_ok_and(|access| {
+                access.principal().subject_id == actor
+                    && access.resource().object_type == name
+                    && access.resource().id == name
+                    && host.read_permitted(&ReadRequest {
+                        capability: Sources,
+                        access: &access,
+                    })
+            })
+    })
 }
 
 /// Population decides membership; a member without Values is recorded so its
@@ -506,7 +560,7 @@ fn trace_plan<E: SqlEngine>(
     answered: Option<(u64, u64)>,
 ) -> Result<DisclosedTrace, Refusal> {
     let cell = host.cell()?;
-    let mut snapshot = runtime.snapshot(cell.store(), plan, actor)?;
+    let snapshot = runtime.snapshot_at(cell.store(), plan, actor, answered)?;
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
@@ -526,19 +580,17 @@ fn trace_plan<E: SqlEngine>(
         source: &mut |row| permits(row, Sources),
     };
     let outcome = match answered {
-        // The answer as it was given: recomputed from its commit, at its clock.
-        Some((frontier, now)) => {
-            snapshot.context.now_ms = now;
-            cell.store().trace_question_answered_matching(
-                plan,
-                snapshot.context,
-                frontier,
-                &matches,
-                bucket,
-                |row| visible_recording(row, &permits, &mut withheld),
-                disclosure,
-            )
-        }
+        // The answer as it was given: recomputed from its commit, at its clock
+        // and historical connector frontier.
+        Some((frontier, _now)) => cell.store().trace_question_answered_matching(
+            plan,
+            snapshot.context,
+            frontier,
+            &matches,
+            bucket,
+            |row| visible_recording(row, &permits, &mut withheld),
+            disclosure,
+        ),
         None => cell.store().trace_question_matching(
             plan,
             snapshot.context,
@@ -563,7 +615,7 @@ fn trace_plan<E: SqlEngine>(
     let trace = outcome.map_err(Refusal::from_compute)?;
     project_trace(
         (host, runtime, cell.store()),
-        (actor, &world_name),
+        (actor, &world_name, plan),
         (key, lineage),
         &withheld,
         trace,

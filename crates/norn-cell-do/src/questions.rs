@@ -52,6 +52,7 @@ pub struct DerivedQuestions {
     handle_key: Vec<u8>,
     scope: CellScope,
     label: String,
+    configured_connections: BTreeMap<String, String>,
     cache: Mutex<Option<Arc<Derived>>>,
 }
 
@@ -64,6 +65,7 @@ impl DerivedQuestions {
             handle_key: handle_key.to_vec(),
             scope,
             label: "dev".into(),
+            configured_connections: BTreeMap::new(),
             cache: Mutex::new(None),
         }
     }
@@ -76,6 +78,7 @@ impl DerivedQuestions {
             handle_key: handle_key.to_vec(),
             scope,
             label: "dev".into(),
+            configured_connections: BTreeMap::new(),
             cache: Mutex::new(None),
         })
     }
@@ -88,14 +91,38 @@ impl DerivedQuestions {
         self
     }
 
-    /// The question runtime for `host`'s active revision, to pass to
-    /// [`crate::server::handle_with`] for one request.
+    /// Register host-configured `(connection_id -> mapping_id)` bindings so
+    /// every configured connector sharing a mapping is required even before
+    /// its first sync writes a `source.Connection` record.
+    #[must_use]
+    pub fn with_configured_connections(mut self, connections: BTreeMap<String, String>) -> Self {
+        self.configured_connections = connections;
+        self
+    }
+
+    /// The question runtime for `host`'s active revision, using only the cell's
+    /// durable clock and connector heartbeats (`now_ms == 0`).
     ///
     /// # Errors
     /// The active revision cannot be read, or its metric space does not derive.
     pub fn questions<E: SqlEngine>(
         &self,
         host: &DevHost<E>,
+    ) -> Result<DerivedRuntime<'_>, Refusal> {
+        self.questions_at(host, 0)
+    }
+
+    /// The question runtime for `host`'s active revision observed at wall-clock
+    /// `now_ms` (Unix milliseconds; `0` falls back to durable store clocks),
+    /// ensuring an idle cell with a paused connector ages from `Exact` to
+    /// `Fresh` and `Stale` without requiring new commits.
+    ///
+    /// # Errors
+    /// The active revision cannot be read, or its metric space does not derive.
+    pub fn questions_at<E: SqlEngine>(
+        &self,
+        host: &DevHost<E>,
+        now_ms: u64,
     ) -> Result<DerivedRuntime<'_>, Refusal> {
         let active = host.active_definitions()?;
         let receipt = active
@@ -113,6 +140,7 @@ impl DerivedQuestions {
         Ok(DerivedRuntime {
             metrics: self,
             derived,
+            request_now_ms: (now_ms > 0).then_some(now_ms),
         })
     }
 }
@@ -167,6 +195,7 @@ pub const MAX_BUCKETS: usize = 5_000;
 pub struct DerivedRuntime<'m> {
     metrics: &'m DerivedQuestions,
     derived: Arc<Derived>,
+    request_now_ms: Option<u64>,
 }
 
 /// The object type a read of `resource` is governed by: a derived sum's
@@ -214,12 +243,10 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
         ))
     }
     /// The cell's own frontier: its main world, the caller as the population,
-    /// the active revision as the mapping pin, the cell's persisted clock, and
-    /// real connector cursors/watermarks/heartbeats for every external source
+    /// the active revision as the mapping pin, the cell's persisted clock
+    /// advanced by the trusted request clock (`request_now_ms`), and real
+    /// connector cursors/watermarks/heartbeats for every external source
     /// feeding the question's types (QUERY-FRESH-1).
-    /// The clock is derived strictly from durable store state (never wall
-    /// clock) so a `:trace` of the same answer rebuilds the exact same
-    /// frontier until the cell commits or syncs again.
     fn snapshot(
         &self,
         store: &CellStore<E>,
@@ -228,7 +255,11 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
     ) -> Result<QuestionSnapshot, Refusal> {
         let clock_floor = store.read().clock_floor().map_err(Refusal::from_compute)?;
         let freshness = store
-            .source_freshness_snapshot(norn_cell::MAIN_WORLD, plan)
+            .source_freshness_snapshot_with_configured(
+                norn_cell::MAIN_WORLD,
+                plan,
+                &self.metrics.configured_connections,
+            )
             .map_err(Refusal::from_compute)?;
         Ok(QuestionSnapshot {
             context: QueryContext {
@@ -237,7 +268,42 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
                 population_pin: format!("{}:{actor}", self.metrics.label),
                 authorization_epoch: 1,
                 mapping_pin: format!("{}:{}", self.metrics.label, self.derived.receipt),
-                now_ms: clock_floor.max(freshness.max_heartbeat_ms),
+                now_ms: clock_floor
+                    .max(freshness.max_heartbeat_ms)
+                    .max(self.request_now_ms.unwrap_or(0)),
+                source_cursors: freshness.source_cursors,
+                watermarks: freshness.watermarks,
+            },
+            cutoff: None,
+        })
+    }
+    fn snapshot_at(
+        &self,
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        actor: &str,
+        answered: Option<(u64, u64)>,
+    ) -> Result<QuestionSnapshot, Refusal> {
+        let Some((frontier, now)) = answered else {
+            return self.snapshot(store, plan, actor);
+        };
+        let freshness = store
+            .source_freshness_snapshot_at(
+                norn_cell::MAIN_WORLD,
+                plan,
+                frontier,
+                now,
+                &self.metrics.configured_connections,
+            )
+            .map_err(Refusal::from_compute)?;
+        Ok(QuestionSnapshot {
+            context: QueryContext {
+                world: norn_cell::MAIN_WORLD.to_owned(),
+                scope: self.metrics.scope.key(),
+                population_pin: format!("{}:{actor}", self.metrics.label),
+                authorization_epoch: 1,
+                mapping_pin: format!("{}:{}", self.metrics.label, self.derived.receipt),
+                now_ms: now,
                 source_cursors: freshness.source_cursors,
                 watermarks: freshness.watermarks,
             },

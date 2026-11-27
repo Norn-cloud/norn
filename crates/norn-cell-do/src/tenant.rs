@@ -856,7 +856,7 @@ impl<E: SqlEngine> Tenant<E> {
                 let derived = match (&serving.questions, &self.derived) {
                     // A revision whose metrics do not derive publishes none.
                     (None, Some(derived)) => derived
-                        .questions(&serving.host)
+                        .questions_at(&serving.host, request.now.saturating_mul(1_000))
                         .ok()
                         .filter(|runtime| !AdHocQuestions::<E>::definitions(runtime).is_empty()),
                     _ => None,

@@ -254,7 +254,13 @@ impl<E: SqlEngine> CellStore<E> {
             Source::Dataset { .. } => None,
         };
         let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
-        let required_sources = self.required_sources_for_plan(&context.world, plan)?;
+        let required_sources = self.required_sources_for_plan_at(
+            &context.world,
+            plan,
+            cutoff,
+            context.now_ms,
+            &BTreeMap::new(),
+        )?;
         let request = EvaluateRequest {
             tenant: tenant.clone(),
             source,
@@ -494,8 +500,7 @@ impl<E: SqlEngine> CellStore<E> {
             (context, exclusions),
             &required_sources,
             revision,
-            query_pin,
-            definition_pin,
+            (query_pin, definition_pin),
             &BTreeMap::new(),
         )?;
         result.rows = rows;

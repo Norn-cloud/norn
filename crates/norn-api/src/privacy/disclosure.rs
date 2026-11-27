@@ -16,14 +16,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 
 use norn_cell::compute::lineage::{
-    NumericTrace, keyed_finding_handle, keyed_lineage_handle, keyed_receipt_handle,
-    keyed_revision_handle,
+    ContributionSource, NumericTrace, keyed_cursor_handle, keyed_finding_handle,
+    keyed_lineage_handle, keyed_receipt_handle, keyed_revision_handle,
 };
 use norn_cell::compute::{HistoricalQuestionResult, QueryResult};
 use norn_cell::reactive::DecodeBudget;
 use norn_cell::source_provenance::InstanceSourceProvenance;
 use norn_cell::system::GENESIS_HASH;
 use norn_cell::{CellError, CellStore, MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine};
+use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::{DataQualityFinding, FactRef, MaskPolicy, RuntimeValue};
 use serde::Serialize;
 
@@ -41,7 +42,7 @@ use crate::objects::{
     NornAppliedQuery, NornLinkCounts, NornLinkEdge, NornObjectLinkPage, NornObjectPage,
     NornObjectQueryPage, NornObjectRecord, NornQueriedRecord, NornQueryTotal,
 };
-use crate::question_routes::{QuestionAnswer, QuestionRuntime, world_values};
+use crate::question_routes::{QuestionAnswer, QuestionRuntime, plan_sources, world_values};
 use crate::refusal::Refusal;
 use crate::transform_routes::{
     NornMaterialization, NornTransformColumn, NornTransformLineage, NornTransformMember,
@@ -511,15 +512,36 @@ fn withhold_cutoff_receipt(
     Ok(())
 }
 
+/// DATA-SOURCES-1: key raw connector cursors (`source_cursors` and
+/// `watermarks.observed`) whenever the caller lacks the independent `Sources`
+/// grant, preventing disclosure of upstream record IDs and versions while
+/// keeping freshness, completeness, heartbeat, and cursor equality intact.
+fn withhold_source_cursors(result: &mut QueryResult, key: &[u8], sources_granted: bool) {
+    if sources_granted {
+        return;
+    }
+    for partitions in result.context.source_cursors.values_mut() {
+        for cursor in partitions.values_mut() {
+            *cursor = keyed_cursor_handle(key, cursor);
+        }
+    }
+    for partitions in result.context.watermarks.values_mut() {
+        for watermark in partitions.values_mut() {
+            watermark.observed = keyed_cursor_handle(key, &watermark.observed);
+        }
+    }
+}
+
 /// Project one evaluated [`QuestionAnswer`] under D53 bucket suppression,
-/// keyed handles, and cutoff-receipt keying.
+/// keyed handles, cutoff-receipt keying, and `Sources`-gated cursor keying.
 pub(crate) fn project_answer<E: SqlEngine>(
     (host, runtime, store): (&DevHost<E>, &dyn QuestionRuntime<E>, &CellStore<E>),
-    (actor, key): (&str, &[u8]),
+    (actor, key, plan): (&str, &[u8], &QuestionPlan),
     withheld: &BTreeSet<String>,
     mut answer: QuestionAnswer,
 ) -> Result<DisclosedAnswer, Refusal> {
     let world = withheld.is_empty() && world_values(host, runtime, store, actor);
+    let sources_granted = plan_sources(host, runtime, store, actor, plan);
     let result = match &mut answer {
         QuestionAnswer::Live(result) => result,
         QuestionAnswer::Historical(historical) => {
@@ -529,17 +551,18 @@ pub(crate) fn project_answer<E: SqlEngine>(
     };
     withhold_ledger_head(result, key, world);
     withhold_exclusions(result, key, world);
+    withhold_source_cursors(result, key, sources_granted);
     withhold_values(result, withheld, runtime.min_disclosed_bucket());
     result.lineage_ref = keyed_lineage_handle(key, &result.lineage_ref);
     Ok(DisclosedAnswer { inner: answer })
 }
 
 /// Project one evaluated [`NumericTrace`] under PRIVACY-1 contribution
-/// redaction (`fact_digest`, `source`, projected `values`), keyed receipt and
-/// ledger handles, and D53 bucket suppression.
+/// redaction (`fact_digest`, `source`, projected `values`), keyed receipt,
+/// cursor, and ledger handles, and D53 bucket suppression.
 pub(crate) fn project_trace<E: SqlEngine>(
     (host, runtime, store): (&DevHost<E>, &dyn QuestionRuntime<E>, &CellStore<E>),
-    (actor, world_name): (&str, &str),
+    (actor, world_name, plan): (&str, &str, &QuestionPlan),
     (key, lineage): (&[u8], &str),
     withheld: &BTreeSet<String>,
     mut trace: NumericTrace,
@@ -551,8 +574,14 @@ pub(crate) fn project_trace<E: SqlEngine>(
         &mut trace.contributions,
     )?;
     let world = !any_marked && withheld.is_empty() && world_values(host, runtime, store, actor);
+    let sources_granted = plan_sources(host, runtime, store, actor, plan)
+        && !trace
+            .contributions
+            .iter()
+            .any(|c| matches!(c.source, ContributionSource::Restricted));
     withhold_ledger_head(&mut trace.result, key, world);
     withhold_exclusions(&mut trace.result, key, world);
+    withhold_source_cursors(&mut trace.result, key, sources_granted);
     if !world {
         for receipt in trace
             .contributions

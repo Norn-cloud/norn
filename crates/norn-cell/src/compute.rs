@@ -546,14 +546,19 @@ impl<E: SqlEngine> CellStore<E> {
             };
             let (query_pin, definition_pin) =
                 self.question_pins(plan, cutoff.filter(|_| !answered))?;
-            let required = self.required_sources_for_plan(&context.world, plan)?;
+            let required = self.required_sources_for_plan_at(
+                &context.world,
+                plan,
+                cutoff,
+                context.now_ms,
+                &BTreeMap::new(),
+            )?;
             let mut result = materialize(
                 plan,
                 (context, collected.exclusions),
                 &required,
                 revision,
-                query_pin,
-                definition_pin,
+                (query_pin, definition_pin),
                 &collected.contributions,
             )?;
             result.unlinked = collected.unlinked;
@@ -793,8 +798,7 @@ pub(crate) fn materialize(
     population: QuestionPopulation,
     required: &RequiredSources,
     revision: LedgerHead,
-    query_pin: String,
-    definition_pin: String,
+    pins: (String, String),
     contributions: &Contributions,
 ) -> Result<QueryResult, CellError> {
     let mut totals = Totals::default();
@@ -806,27 +810,26 @@ pub(crate) fn materialize(
         population,
         required,
         revision,
-        query_pin,
-        definition_pin,
+        pins,
         contributions,
         &totals,
     )
 }
 
 #[allow(
-    clippy::too_many_arguments,
-    reason = "internal envelope builder: plan, population, required sources, pins, and totals"
+    clippy::too_many_lines,
+    reason = "one envelope: buckets, ratios, null counts, coverage and lineage"
 )]
 pub(crate) fn finish(
     plan: &QuestionPlan,
     population: QuestionPopulation,
     required: &RequiredSources,
     revision: LedgerHead,
-    query_pin: String,
-    definition_pin: String,
+    pins: (String, String),
     contributions: &Contributions,
     totals: &Totals,
 ) -> Result<QueryResult, CellError> {
+    let (query_pin, definition_pin) = pins;
     let (context, exclusions) = population;
     let totals_in = totals;
     let mut grouped: BTreeMap<String, Bucket> = BTreeMap::new();

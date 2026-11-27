@@ -265,6 +265,15 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
     ) -> Result<QuestionSnapshot, Refusal> {
         self.inner.snapshot(store, plan, actor)
     }
+    fn snapshot_at(
+        &self,
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        actor: &str,
+        answered: Option<(u64, u64)>,
+    ) -> Result<QuestionSnapshot, Refusal> {
+        self.inner.snapshot_at(store, plan, actor, answered)
+    }
     fn access(
         &self,
         scope: &CellScope,
