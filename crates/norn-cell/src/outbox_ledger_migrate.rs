@@ -115,7 +115,14 @@ fn index_journal_enqueues<E: SqlEngine>(engine: &E) -> Result<JournalIndex, Cell
                 continue;
             };
             let entry = index.entry(command.command_id.clone()).or_default();
-            if entry.contains_key(&command.generation) {
+            // Mirror v10/v11 outbox admission in commit order: only strictly
+            // advancing generations are accepted; duplicate or skipped-back
+            // stale enqueues (e.g. 0 -> 2 -> 1) are ignored as no-ops.
+            if entry
+                .keys()
+                .next_back()
+                .is_some_and(|&max_gen| command.generation <= max_gen)
+            {
                 continue;
             }
             entry.insert(

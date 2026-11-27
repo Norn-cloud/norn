@@ -408,10 +408,13 @@ async fn v10_in_place_upgrade_matches_export_restore_for_unclaimed_prior_enqueue
     let src_path = dir.path().join("unclaimed-src.sqlite");
     let mut src = open_cell(&src_path)?;
     let g0 = make_command("unclaimed-1", 0, 10, None)?;
-    let g1 = make_command("unclaimed-1", 1, 20, None)?;
+    let g2 = make_command("unclaimed-1", 2, 20, None)?;
+    let stale_g1 = make_command("unclaimed-1", 1, 15, None)?;
     enqueue_cmd(&mut src, g0.clone())?;
-    // Replace gen 0 BEFORE any claim/dispatch so `_norn_perform_claim` has no gen-0 row.
-    enqueue_cmd(&mut src, g1)?;
+    // Replace gen 0 -> gen 2 BEFORE any claim/dispatch, then journal a skipped
+    // stale gen 1 that v10 outbox admission ignores as a no-op.
+    enqueue_cmd(&mut src, g2)?;
+    enqueue_cmd(&mut src, stale_g1)?;
     let (mut exp, bindings) = export_cell(&src, &dir.path().join("unclaimed-exp")).await?;
     drop(src);
 
@@ -458,8 +461,11 @@ async fn v10_in_place_upgrade_matches_export_restore_for_unclaimed_prior_enqueue
         restored_ledger.generation(0).map(|r| r.payload_digest)
     );
     assert!(upgraded_ledger.generation(0).is_some());
+    assert!(upgraded_ledger.generation(1).is_none());
+    assert!(restored_ledger.generation(1).is_none());
 
-    // Both upgraded and restored stores reject a divergent gen-0 replay.
+    // Both upgraded and restored stores reject a divergent gen-0 replay,
+    // and treat a later divergent skipped gen-1 replay identically as a no-op.
     let diverged = make_command("unclaimed-1", 0, 999, None)?;
     assert!(matches!(
         enqueue_cmd(&mut upgraded, diverged.clone()),
@@ -475,6 +481,9 @@ async fn v10_in_place_upgrade_matches_export_restore_for_unclaimed_prior_enqueue
             ..
         }))
     ));
+    let skipped_replay = make_command("unclaimed-1", 1, 888, None)?;
+    enqueue_cmd(&mut upgraded, skipped_replay.clone())?;
+    enqueue_cmd(&mut restored, skipped_replay)?;
     // Identical gen-0 replay remains an idempotent no-op on both.
     enqueue_cmd(&mut upgraded, g0.clone())?;
     enqueue_cmd(&mut restored, g0)?;
