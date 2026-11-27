@@ -271,7 +271,10 @@ function stringLiteralsOf(value: TaintValue): readonly string[] {
 
 function templateStringsOf(value: TaintValue): readonly string[] | null {
   if (value.kind === "string") return [value.value]
-  if (value.kind === "number") return [Number.isFinite(value.num) ? String(value.num) : value.raw]
+  if (value.kind === "number") {
+    const cleaned = value.raw.replace(/_/g, "")
+    return [cleaned.endsWith(".") ? cleaned.slice(0, -1) : cleaned]
+  }
   if (value.kind === "union") {
     const out: string[] = []
     for (const member of value.members) {
@@ -353,7 +356,7 @@ export function referencesRecordVersion(expression: string): boolean {
     const parseExpr = (): TaintValue => parseTernary()
 
     const parseTernary = (): TaintValue => {
-      const cond = parseNullishOr()
+      const cond = parseOr()
       if (isPunct(peek(), "?")) {
         eat()
         const consequent = parseExpr()
@@ -367,12 +370,15 @@ export function referencesRecordVersion(expression: string): boolean {
       return cond
     }
 
-    const parseNullishOr = (): TaintValue => {
+    // Precedence matches vendor/zen parser/constants.rs:
+    // 10 or/||, 15 and/&&, 20 comparisons/in, 30 +/-, 50 unary !/not,
+    // 60 * / %, 70 ** (right-assoc), 80 ??, 200 unary +/-.
+    const parseOr = (): TaintValue => {
       let left = parseAnd()
       while (true) {
         const t0 = peek()
         const t1 = peek(1)
-        if ((isPunct(t0, "?") && isPunct(t1, "?")) || (isPunct(t0, "|") && isPunct(t1, "|"))) {
+        if (isPunct(t0, "|") && isPunct(t1, "|")) {
           eat()
           eat()
           left = unionTaint(left, parseAnd())
@@ -447,17 +453,34 @@ export function referencesRecordVersion(expression: string): boolean {
       return left
     }
 
+    const decimalScale = (raw: string): number => {
+      const dot = raw.indexOf(".")
+      if (dot < 0 || raw.includes("e") || raw.includes("E")) return -1
+      return raw.length - dot - 1
+    }
+
+    const formatNumberResult = (n: number, scale: number): TaintValue => {
+      if (!Number.isFinite(n)) return OTHER
+      if (scale >= 0 && scale <= 12 && Number.isSafeInteger(Math.round(n * 10 ** scale))) {
+        return { kind: "number", raw: scale === 0 ? String(Math.round(n)) : n.toFixed(scale), num: n }
+      }
+      return { kind: "number", raw: String(n), num: n }
+    }
+
     const parseAdditive = (): TaintValue => {
-      let left = parseMultiplicative()
+      let left = parseNot()
       while (isPunct(peek(), "+") || isPunct(peek(), "-")) {
         const op = eat()!
         const opChar = op.kind === "punct" ? op.value : ""
-        const right = parseMultiplicative()
+        const right = parseNot()
         if (opChar === "+" && left.kind === "string" && right.kind === "string") {
           left = { kind: "string", value: left.value + right.value }
         } else if (left.kind === "number" && right.kind === "number") {
           const n = opChar === "+" ? left.num + right.num : left.num - right.num
-          left = Number.isFinite(n) ? { kind: "number", raw: String(n), num: n } : OTHER
+          const s1 = decimalScale(left.raw)
+          const s2 = decimalScale(right.raw)
+          const scale = s1 >= 0 && s2 >= 0 ? Math.max(s1, s2) : -1
+          left = formatNumberResult(n, scale)
         } else {
           left = OTHER
         }
@@ -465,22 +488,33 @@ export function referencesRecordVersion(expression: string): boolean {
       return left
     }
 
+    const parseNot = (): TaintValue => {
+      const t0 = peek()
+      if (isPunct(t0, "!") || isIdent(t0, "not")) {
+        eat()
+        parseNot()
+        return OTHER
+      }
+      return parseMultiplicative()
+    }
+
     const parseMultiplicative = (): TaintValue => {
-      let left = parseUnary()
-      while (isPunct(peek(), "*") || isPunct(peek(), "/") || isPunct(peek(), "%") || isPunct(peek(), "**")) {
+      let left = parseExponent()
+      while (isPunct(peek(), "*") || isPunct(peek(), "/") || isPunct(peek(), "%")) {
         const op = eat()!
         const opChar = op.kind === "punct" ? op.value : ""
-        const right = parseUnary()
+        const right = parseExponent()
         if (left.kind === "number" && right.kind === "number") {
           const n =
             opChar === "*"
               ? left.num * right.num
               : opChar === "/"
                 ? left.num / right.num
-                : opChar === "%"
-                  ? left.num % right.num
-                  : left.num ** right.num
-          left = Number.isFinite(n) ? { kind: "number", raw: String(n), num: n } : OTHER
+                : left.num % right.num
+          const s1 = decimalScale(left.raw)
+          const s2 = decimalScale(right.raw)
+          const scale = opChar === "*" && s1 >= 0 && s2 >= 0 ? s1 + s2 : -1
+          left = formatNumberResult(n, scale)
         } else {
           left = OTHER
         }
@@ -488,15 +522,42 @@ export function referencesRecordVersion(expression: string): boolean {
       return left
     }
 
-    const parseUnary = (): TaintValue => {
+    const parseExponent = (): TaintValue => {
+      const base = parseNullish()
+      if (isPunct(peek(), "**")) {
+        eat()
+        const exp = parseExponent()
+        if (base.kind === "number" && exp.kind === "number") {
+          const n = base.num ** exp.num
+          const s1 = decimalScale(base.raw)
+          const scale = s1 === 0 && Number.isInteger(exp.num) && exp.num >= 0 ? 0 : -1
+          return formatNumberResult(n, scale)
+        }
+        return OTHER
+      }
+      return base
+    }
+
+    const parseNullish = (): TaintValue => {
+      let left = parseUnarySign()
+      while (isPunct(peek(), "?") && isPunct(peek(1), "?")) {
+        eat()
+        eat()
+        left = unionTaint(left, parseUnarySign())
+      }
+      return left
+    }
+
+    const parseUnarySign = (): TaintValue => {
       const t0 = peek()
-      if (isPunct(t0, "!") || isPunct(t0, "-") || isPunct(t0, "+") || isIdent(t0, "not")) {
+      if (isPunct(t0, "-") || isPunct(t0, "+")) {
         const op = eat()!
         const opChar = op.kind === "punct" ? op.value : ""
-        const operand = parseUnary()
-        if ((opChar === "-" || opChar === "+") && operand.kind === "number") {
+        const operand = parseUnarySign()
+        if (operand.kind === "number") {
           const n = opChar === "-" ? -operand.num : operand.num
-          return Number.isFinite(n) ? { kind: "number", raw: String(n), num: n } : OTHER
+          const raw = opChar === "-" ? (operand.raw.startsWith("-") ? operand.raw.slice(1) : `-${operand.raw}`) : operand.raw
+          return Number.isFinite(n) ? { kind: "number", raw, num: n } : OTHER
         }
         return OTHER
       }
