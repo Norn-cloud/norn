@@ -327,7 +327,10 @@ impl Catalog {
         let mut remedies: BTreeMap<String, Vec<String>> = BTreeMap::new();
         if questions.is_some() {
             for (_, action) in callable.map_or_default(|callable| callable.actions) {
-                let Ok(mut tool) = norn_projections::mcp::action_tool(&action) else {
+                let actor_fields = norn_kernel::actor_derived_fields(&action);
+                let Ok(mut tool) =
+                    norn_projections::mcp::action_tool_with_server_filled(&action, &actor_fields)
+                else {
                     continue;
                 };
                 let name = tool_name(&action.action_id, &actions, &tools);
