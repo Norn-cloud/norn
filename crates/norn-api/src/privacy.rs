@@ -973,6 +973,16 @@ fn result_sources_granted<E: SqlEngine>(
             if !check(&rec)? {
                 return Ok(false);
             }
+            if !disclosure::linked_time_target_sources_granted(
+                &reader,
+                &result.context.world,
+                plan,
+                id,
+                historical.is_some(),
+                &check,
+            )? {
+                return Ok(false);
+            }
         }
     }
     Ok(true)

@@ -685,12 +685,6 @@ fn begin<E: SqlEngine>(
     known: Option<BTreeMap<String, Watermark>>,
     now_ms: u64,
 ) -> Result<Next, Failure> {
-    let (profile, payload, expected_binding) = capture::load_connector_profile(host, config)?;
-    run.mapping_binding = Some(expected_binding.clone());
-    let token = client_credentials(&payload, secrets, config)?;
-    if token.is_none() {
-        run.auth = auth_headers(&payload, secrets, config)?;
-    }
     let lease = host
         .acquire_source_lease(&config.id, &run.id, now_ms, RUN_LEASE_MS)
         .map_err(|error| {
@@ -698,6 +692,12 @@ fn begin<E: SqlEngine>(
             fail(code, message)
         })?;
     run.lease = Some(lease.clone());
+    let (profile, payload, expected_binding) = capture::load_connector_profile(host, config)?;
+    run.mapping_binding = Some(expected_binding.clone());
+    let token = client_credentials(&payload, secrets, config)?;
+    if token.is_none() {
+        run.auth = auth_headers(&payload, secrets, config)?;
+    }
     let pending = capture::load_pending_captures(host, &config.id)?;
     let (watermarks, raw_cursors, drain_only) = capture::load_and_seed_watermarks(
         host,

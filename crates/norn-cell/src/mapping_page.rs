@@ -425,9 +425,7 @@ impl<E: SqlEngine> CellStore<E> {
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
         self.write_tx(|| {
-            if let Some((connection_id, lease_id, generation, now_ms)) = lease
-                && self.read().source_lease(connection_id)?.is_some()
-            {
+            if let Some((connection_id, lease_id, generation, now_ms)) = lease {
                 crate::source_cursor::verify_active_lease(
                     &self.conn,
                     connection_id,

@@ -287,6 +287,22 @@ pub(super) fn report_rows<E: SqlEngine>(
         .as_ref()
         .map_or((None, None), |(c, m)| (Some(c.as_str()), Some(m.as_str())));
     let mut rows = Vec::new();
+    // Emit `sync_run` before `connection` so a fault or quarantine on the run
+    // record never leaves a final `ok` heartbeat published on `source.Connection`.
+    if ended.is_some() {
+        rows.push((
+            "sync_run",
+            run.id.clone(),
+            norn_ir::runtime_object! {
+                "id" => run.id.as_str(), "connection_id" => config.id.as_str(), "trigger" => run.trigger.as_str(),
+                "run_by" => run.actor.as_str(), "started_at" => started, "ended_at" => ended,
+                "outcome" => summary.outcome, "watermark_from" => run.watermark_from.as_str(), "watermark_to" => watermark,
+                "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
+                "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
+                "error_code" => error_code, "error_message" => error_message,
+            },
+        ));
+    }
     if !run.drain_only {
         let status = if ended.is_none() {
             "syncing"
@@ -312,20 +328,6 @@ pub(super) fn report_rows<E: SqlEngine>(
             "mapping_id" => mapping_id.as_str(),
         };
         rows.push(("connection", config.id.clone(), connection));
-    }
-    if ended.is_some() {
-        rows.push((
-            "sync_run",
-            run.id.clone(),
-            norn_ir::runtime_object! {
-                "id" => run.id.as_str(), "connection_id" => config.id.as_str(), "trigger" => run.trigger.as_str(),
-                "run_by" => run.actor.as_str(), "started_at" => started, "ended_at" => ended,
-                "outcome" => summary.outcome, "watermark_from" => run.watermark_from.as_str(), "watermark_to" => watermark,
-                "rows_read" => summary.rows_read, "rows_landed" => summary.rows_landed,
-                "rows_quarantined" => summary.rows_quarantined, "quarantine_reasons" => reasons.as_str(),
-                "error_code" => error_code, "error_message" => error_message,
-            },
-        ));
     }
     rows
 }
@@ -425,16 +427,15 @@ pub(super) fn is_lease_superseded<E: SqlEngine>(
         }
     }
     let Some(held) = run.lease.as_ref() else {
-        return false;
+        return !config.connector.is_empty();
     };
     match host.source_lease(&config.id) {
-        Err(_) => true,
+        Err(_) | Ok(None) => true,
         Ok(Some(current)) => {
             current.lease_id != held.lease_id
                 || current.generation != held.generation
                 || now_ms >= current.expires_at_ms
         }
-        Ok(None) => false,
     }
 }
 

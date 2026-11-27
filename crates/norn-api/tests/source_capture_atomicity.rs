@@ -1735,4 +1735,63 @@ mod tests {
             "failed report must never bless legacy cursors"
         );
     }
+
+    /// Regression 16: a second `Sources` instance with missing auth secrets is
+    /// fenced at lease acquisition before auth runs and never overwrites an
+    /// active worker's `source.Connection`.
+    #[test]
+    fn preflight_auth_failure_requires_lease_and_cannot_clobber_active_worker() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let mut worker_a = rest_sources(ERPNEXT_CONFIG);
+        worker_a
+            .claim("erpnext.rest", Trigger::Manual, "user:worker-a@demo", T0)
+            .expect("claim a");
+        let Step::Request(_) = worker_a.step(&host, "erpnext.rest", None, T0) else {
+            panic!("worker A must acquire lease and issue first request");
+        };
+        let conn_before = host
+            .host_object("source.Connection", "erpnext.rest")
+            .expect("read")
+            .expect("worker A connection");
+        assert_eq!(
+            conn_before.get("status").and_then(RuntimeValue::as_str),
+            Some("syncing")
+        );
+
+        let mut worker_b = Sources::with_allowed_hosts(
+            &cell_scope(),
+            ERPNEXT_CONFIG,
+            &BTreeMap::new(),
+            SANDBOX_HOSTS,
+        )
+        .expect("no secrets");
+        worker_b
+            .claim(
+                "erpnext.rest",
+                Trigger::Manual,
+                "user:worker-b@demo",
+                T0.saturating_add(1),
+            )
+            .expect("claim b");
+        let Step::Done(summary_b) =
+            worker_b.step(&host, "erpnext.rest", None, T0.saturating_add(1))
+        else {
+            panic!("worker B must fail immediately when lease is held");
+        };
+        assert_eq!(summary_b.outcome, "failed");
+        assert_eq!(
+            summary_b.error.as_ref().map(|(c, _)| c.as_str()),
+            Some("source.lease_fenced"),
+            "lease check must precede auth failure: {summary_b:#?}"
+        );
+        let conn_after = host
+            .host_object("source.Connection", "erpnext.rest")
+            .expect("read")
+            .expect("connection after b");
+        assert_eq!(
+            conn_after.get("status").and_then(RuntimeValue::as_str),
+            Some("syncing"),
+            "fenced worker B must not overwrite worker A's syncing status"
+        );
+    }
 }

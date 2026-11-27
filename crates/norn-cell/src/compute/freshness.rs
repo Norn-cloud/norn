@@ -658,23 +658,27 @@ impl<E: SqlEngine> CellStore<E> {
             let Some(conn) = connections.get(source_id) else {
                 continue;
             };
-            let mapping_matches = conn_matches_mapping_binding(
-                &reader,
-                world,
-                conn,
-                &req.mapping_id,
-                &req.binding_key,
-            )?;
-            let conn_healthy = mapping_matches
-                && conn.values.get("status").and_then(RuntimeValue::as_str) == Some("ok");
             let heartbeat_ms = conn
                 .values
                 .get("last_sync_ended_at")
                 .and_then(RuntimeValue::as_str)
                 .and_then(parse_rfc3339_ms);
             let cursors = strict_connection_cursors(conn);
+            let req_cursors: BTreeMap<String, String> = req
+                .datasets
+                .iter()
+                .filter_map(|ds| cursors.get(ds).map(|cj| (ds.clone(), cj.clone())))
+                .collect();
+            let conn_healthy = !req_cursors.is_empty()
+                && connection_history_proves_cursors_at(
+                    &reader,
+                    world,
+                    conn,
+                    (&req.mapping_id, &req.binding_key),
+                    &req_cursors,
+                )?;
             for dataset in &req.datasets {
-                let Some(cursor_json) = cursors.get(dataset).cloned() else {
+                let Some(cursor_json) = req_cursors.get(dataset).cloned() else {
                     continue;
                 };
                 if conn_healthy && let Some(hb) = heartbeat_ms {
@@ -720,9 +724,15 @@ impl<E: SqlEngine> CellStore<E> {
                 .or_default();
             let conn = connections.get(source_id);
             let bound_mapping = reader.source_mapping_binding(source_id)?;
-            let binding_matches = bound_mapping
-                .as_deref()
-                .is_none_or(|bound| bound == req.binding_key.as_str());
+            let binding_matches = match bound_mapping.as_deref() {
+                Some(bound) => bound == req.binding_key.as_str(),
+                None => reader.legacy_cursors_match_mapping_binding(
+                    world,
+                    source_id,
+                    &req.mapping_id,
+                    &req.binding_key,
+                )?,
+            };
             let conn_matches = conn
                 .map(|c| {
                     conn_matches_mapping_binding(
@@ -818,55 +828,58 @@ impl<E: SqlEngine> crate::StoreReader<'_, E> {
         binding: (&str, &str),
         required: &BTreeMap<String, String>,
     ) -> Result<bool, CellError> {
-        connection_history_proves_cursors(self, world, source_id, binding, required)
+        if !self.model().has_type(CONNECTION_TYPE) {
+            return Ok(false);
+        }
+        let Some(conn) = self.object(world, CONNECTION_TYPE, source_id)? else {
+            return Ok(false);
+        };
+        connection_history_proves_cursors_at(self, world, &conn, binding, required)
     }
 }
 
-fn connection_history_proves_cursors<E: SqlEngine>(
+fn connection_history_proves_cursors_at<E: SqlEngine>(
     reader: &crate::StoreReader<'_, E>,
     world: &str,
-    source_id: &str,
+    conn: &ObjectRecord,
     binding: (&str, &str),
     required: &BTreeMap<String, String>,
 ) -> Result<bool, CellError> {
     use crate::engine::{SqlRow, params};
     let (mapping_id, expected_binding) = binding;
-    if required.is_empty() || !reader.model().has_type(CONNECTION_TYPE) {
-        return Ok(false);
-    }
-    let Some(conn) = reader.object(world, CONNECTION_TYPE, source_id)? else {
-        return Ok(false);
-    };
-    if conn.values.get("status").and_then(RuntimeValue::as_str) != Some("ok")
-        || !conn_matches_mapping_binding(reader, world, &conn, mapping_id, expected_binding)?
+    if required.is_empty()
+        || conn.values.get("status").and_then(RuntimeValue::as_str) != Some("ok")
+        || !conn_matches_mapping_binding(reader, world, conn, mapping_id, expected_binding)?
     {
         return Ok(false);
     }
-    let latest_cursors = strict_connection_cursors(&conn);
+    let latest_cursors = strict_connection_cursors(conn);
     if required
         .iter()
         .any(|(ds, cj)| latest_cursors.get(ds) != Some(cj))
     {
         return Ok(false);
     }
+    let max_ver =
+        i64::try_from(conn.version).map_err(|_| CellError::OutOfRange("connection version"))?;
     let mut hist_world = world;
     let mut rows = reader.conn.query(
         "SELECT version, commit_seq FROM _norn_fact_values \
-         WHERE world=?1 AND root_type=?2 AND id=?3 ORDER BY version ASC LIMIT 4097",
-        params![world, CONNECTION_TYPE, source_id],
+         WHERE world=?1 AND root_type=?2 AND id=?3 AND version<=?4 ORDER BY version DESC LIMIT 4097",
+        params![world, CONNECTION_TYPE, conn.id.as_str(), max_ver],
     )?;
     if rows.is_empty() && world != MAIN_WORLD {
         hist_world = MAIN_WORLD;
         rows = reader.conn.query(
             "SELECT version, commit_seq FROM _norn_fact_values \
-             WHERE world=?1 AND root_type=?2 AND id=?3 ORDER BY version ASC LIMIT 4097",
-            params![MAIN_WORLD, CONNECTION_TYPE, source_id],
+             WHERE world=?1 AND root_type=?2 AND id=?3 AND version<=?4 ORDER BY version DESC LIMIT 4097",
+            params![MAIN_WORLD, CONNECTION_TYPE, conn.id.as_str(), max_ver],
         )?;
     }
     if rows.len() > MAX_HISTORICAL_CONNECTIONS {
         return Ok(false);
     }
-    let mut remaining: BTreeMap<&str, &str> = required
+    let mut active: BTreeMap<&str, &str> = required
         .iter()
         .map(|(ds, cj)| (ds.as_str(), cj.as_str()))
         .collect();
@@ -878,31 +891,29 @@ fn connection_history_proves_cursors<E: SqlEngine>(
         ) else {
             return Ok(false);
         };
-        let Some(hist) = reader.object_at_version(hist_world, CONNECTION_TYPE, source_id, ver)?
+        let Some(hist) = reader.object_at_version(hist_world, CONNECTION_TYPE, &conn.id, ver)?
         else {
-            continue;
+            return Ok(true);
         };
         let hist_cursors = strict_connection_cursors(&hist);
-        let matched: Vec<&str> = remaining
-            .iter()
-            .filter_map(|(&ds, &cj)| {
-                (hist_cursors.get(ds).map(String::as_str) == Some(cj)).then_some(ds)
-            })
-            .collect();
-        if matched.is_empty() {
-            continue;
+        let is_failed = hist.values.get("status").and_then(RuntimeValue::as_str) == Some("failed");
+        if !is_failed {
+            active.retain(|&ds, &cj| hist_cursors.get(ds).map(String::as_str) == Some(cj));
+            if active.is_empty() {
+                return Ok(true);
+            }
         }
-        if !commit_seq_matches_mapping_binding(reader, seq, mapping_id, expected_binding)? {
+        let carries_active = active
+            .iter()
+            .any(|(&ds, &cj)| hist_cursors.get(ds).map(String::as_str) == Some(cj));
+        if carries_active
+            && (hist.values.get("mapping_id").and_then(RuntimeValue::as_str) != Some(mapping_id)
+                || !commit_seq_matches_mapping_binding(reader, seq, mapping_id, expected_binding)?)
+        {
             return Ok(false);
         }
-        for ds in matched {
-            remaining.remove(ds);
-        }
-        if remaining.is_empty() {
-            return Ok(true);
-        }
     }
-    Ok(remaining.is_empty())
+    Ok(true)
 }
 
 fn commit_seq_matches_mapping_binding<E: SqlEngine>(

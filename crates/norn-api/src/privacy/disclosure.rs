@@ -929,3 +929,39 @@ pub(crate) fn project_transform_lineage<E: SqlEngine>(
         },
     }
 }
+
+/// DATA-SOURCES-1: row-level `Sources` check for the linked time target of one
+/// evaluated grain member (`METRIC-GRAIN-LINK-1`). Fails closed on historical
+/// linked targets or unreadable/ambiguous links.
+pub(crate) fn linked_time_target_sources_granted<E: SqlEngine>(
+    reader: &norn_cell::StoreReader<'_, E>,
+    world: &str,
+    plan: &norn_checker::metric::compute::QuestionPlan,
+    member_id: &str,
+    historical: bool,
+    check: &dyn Fn(&norn_cell::ObjectRecord) -> Result<bool, Refusal>,
+) -> Result<bool, Refusal> {
+    let Some(link) = plan.time_link() else {
+        return Ok(true);
+    };
+    if historical {
+        return Ok(false);
+    }
+    let Ok(Some(targets)) = reader.link_targets(
+        world,
+        plan.grain().as_str(),
+        link.link.as_str(),
+        member_id,
+        2,
+        65_536,
+    ) else {
+        return Ok(false);
+    };
+    let [target_id] = targets.as_slice() else {
+        return Ok(false);
+    };
+    let Ok(Some(target_rec)) = reader.object(world, link.target_type.as_str(), target_id) else {
+        return Ok(false);
+    };
+    check(&target_rec)
+}

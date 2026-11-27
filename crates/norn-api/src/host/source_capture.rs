@@ -407,17 +407,19 @@ impl<E: SqlEngine> DevHost<E> {
                 expected_binding,
                 lease.map(|(c, l, g, _)| (c, l, g)),
             )?;
-            if let Some((connection_id, lease_id, generation, now_ms)) = lease
-                && let Some(current) = cell.store().read().source_lease(connection_id)?
-                && (current.lease_id != lease_id
-                    || current.generation != generation
-                    || now_ms >= current.expires_at_ms)
-            {
-                return Err(CellError::SourceLeaseFenced {
-                    connection_id: connection_id.to_owned(),
-                    lease_id: lease_id.to_owned(),
-                    generation,
-                });
+            if let Some((connection_id, lease_id, generation, now_ms)) = lease {
+                let active = cell.store().read().source_lease(connection_id)?;
+                if !active.is_some_and(|current| {
+                    current.lease_id == lease_id
+                        && current.generation == generation
+                        && now_ms < current.expires_at_ms
+                }) {
+                    return Err(CellError::SourceLeaseFenced {
+                        connection_id: connection_id.to_owned(),
+                        lease_id: lease_id.to_owned(),
+                        generation,
+                    });
+                }
             }
             let Some((_, first_input)) = rows.first() else {
                 return Ok(());
@@ -438,10 +440,24 @@ impl<E: SqlEngine> DevHost<E> {
                 let captured =
                     cell.capture_source_report_checked(std::slice::from_ref(raw), input, lease)?;
                 for (page_id, _) in &captured.pages {
-                    let _outcomes = cell.process_mapping_page(page_id)?;
+                    if let Some(outcomes) = cell.process_mapping_page(page_id)? {
+                        for (_, outcome) in outcomes {
+                            if let MappingOutcome::Quarantined(reasons) = outcome {
+                                return Err(CellError::Engine(format!(
+                                    "source report quarantined: {reasons:?}"
+                                )));
+                            }
+                        }
+                    }
                 }
                 for record_id in &captured.records {
-                    let _outcome = cell.process_mapping_outcome(record_id)?;
+                    if let MappingOutcome::Quarantined(reasons) =
+                        cell.process_mapping_outcome(record_id)?
+                    {
+                        return Err(CellError::Engine(format!(
+                            "source report quarantined: {reasons:?}"
+                        )));
+                    }
                 }
             }
             Ok::<(), CellError>(())
