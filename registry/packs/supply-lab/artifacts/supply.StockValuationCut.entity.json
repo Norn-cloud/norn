@@ -121,6 +121,7 @@
           }
         },
         {
+          "default": "2026-01-12T00:00:00Z",
           "id": "cut_at",
           "type": {
             "kind": "timestamp",

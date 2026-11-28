@@ -90,6 +90,7 @@
           }
         },
         {
+          "default": "2026-01-12",
           "id": "period_week",
           "type": {
             "kind": "text"
@@ -214,6 +215,7 @@
           }
         },
         {
+          "default": "2026-01-12T00:00:00Z",
           "id": "period_start",
           "type": {
             "kind": "timestamp",
@@ -228,6 +230,7 @@
           }
         },
         {
+          "default": "1",
           "id": "sales_weeks",
           "type": {
             "kind": "integer"

@@ -2510,10 +2510,11 @@ impl<E: SqlEngine> CellStore<E> {
                 let observation_id: String = row.get(0)?;
                 let encoded: String = row.get(1)?;
                 let observed: norn_kernel::Observed<norn_ir::RuntimeValue> =
-                    serde_json::from_str(&encoded).map_err(|_| CellError::MappingBundleMismatch)?;
+                    serde_json::from_str(&encoded)
+                        .map_err(|_err| CellError::MappingBundleMismatch)?;
                 let bundle: crate::mapping_bundle::MappingBundle =
                     norn_ir::runtime::decode(&observed.input)
-                        .map_err(|_| CellError::MappingBundleMismatch)?;
+                        .map_err(|_err| CellError::MappingBundleMismatch)?;
                 if observed.id.0 != observation_id
                     || observation_id != format!("mapping-bundle:{}", bundle.digest)
                 {

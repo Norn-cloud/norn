@@ -861,7 +861,11 @@ fn action_environment_with(
     }
     let slice_record = "exact.action.slice".to_owned();
     records.insert(slice_record.clone(), slice);
-    let aggregates = aggregate_types(action, &records)?;
+    let aggregates = if catalog.is_some() {
+        aggregate_types(action, &records)?
+    } else {
+        BTreeMap::new()
+    };
     let aggregate_record = "exact.action.aggregates".to_owned();
     let declares_aggregates = !aggregates.is_empty();
     if declares_aggregates {
@@ -1327,5 +1331,49 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn action_derivation_environment_skips_sum_aggregates_without_catalog() {
+        let raw = serde_json::json!({
+            "actionVersion": "0.1",
+            "actionId": "example.rollup.record",
+            "name": "Record rollup",
+            "inputSchema": {
+                "type": "object",
+                "required": ["amount", "derived_total"],
+                "properties": {
+                    "amount": { "type": "integer" },
+                    "derived_total": { "type": "integer" }
+                },
+                "additionalProperties": false
+            },
+            "outputSchema": {
+                "type": "object",
+                "required": ["amount"],
+                "properties": { "amount": { "type": "integer" } },
+                "additionalProperties": false
+            },
+            "aggregates": [{
+                "name": "sum_qty",
+                "objectType": "example.Line",
+                "filter": {},
+                "aggregate": { "kind": "sum", "property": "qty" },
+                "maxItems": 10
+            }],
+            "derive": [{
+                "field": "derived_total",
+                "inputRequired": false,
+                "expression": "input.amount * 2"
+            }],
+            "preconditions": [],
+            "writes": []
+        });
+        let action: norn_ir::ActionRoot =
+            serde_json::from_value(raw).expect("valid action root fixture");
+        let env = super::action_derivation_environment(&action, 0)
+            .expect("derivation environment must not require catalog for sum aggregates");
+        assert!(!env.variables().contains_key("aggregates"));
+        assert!(super::action_environment(&action, None, 1).is_ok());
     }
 }

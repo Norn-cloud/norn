@@ -606,9 +606,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             )?
             .ok_or(CellError::MappingBundleMismatch)?;
         let observed: Observed<RuntimeValue> =
-            serde_json::from_str(&encoded).map_err(|_| CellError::MappingBundleMismatch)?;
+            serde_json::from_str(&encoded).map_err(|_err| CellError::MappingBundleMismatch)?;
         let bundle: MappingBundle = norn_ir::runtime::decode(&observed.input)
-            .map_err(|_| CellError::MappingBundleMismatch)?;
+            .map_err(|_err| CellError::MappingBundleMismatch)?;
         if observed.id.0 != observation_id
             || observation_id != format!("mapping-bundle:{}", bundle.digest)
         {
@@ -687,7 +687,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 continue;
             }
             let [object_type, subject_key]: [String; 2] = serde_json::from_str(&subject_json)
-                .map_err(|_| CellError::MappingBundleMismatch)?;
+                .map_err(|_err| CellError::MappingBundleMismatch)?;
             if !self.subject_matches_readable_active(&object_type, &subject_key, readable_map) {
                 continue;
             }

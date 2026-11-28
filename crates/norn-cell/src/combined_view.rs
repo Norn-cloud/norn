@@ -770,7 +770,11 @@ fn instant_fresh(value: Option<&RuntimeValue>, now_ms: u64, max_age_ms: u64) -> 
     let Ok(now_secs) = i64::try_from(now_ms / 1_000) else {
         return false;
     };
-    let now_nanos = u32::try_from((now_ms % 1_000) * 1_000_000).unwrap_or(0);
+    let now_nanos = now_ms
+        .checked_rem(1_000)
+        .and_then(|ms| ms.checked_mul(1_000_000))
+        .and_then(|ns| u32::try_from(ns).ok())
+        .unwrap_or(0);
     if (secs, nanos) > (now_secs, now_nanos) {
         return false;
     }
@@ -778,7 +782,11 @@ fn instant_fresh(value: Option<&RuntimeValue>, now_ms: u64, max_age_ms: u64) -> 
     let Ok(min_secs) = i64::try_from(min_ms / 1_000) else {
         return false;
     };
-    let min_nanos = u32::try_from((min_ms % 1_000) * 1_000_000).unwrap_or(0);
+    let min_nanos = min_ms
+        .checked_rem(1_000)
+        .and_then(|ms| ms.checked_mul(1_000_000))
+        .and_then(|ns| u32::try_from(ns).ok())
+        .unwrap_or(0);
     (secs, nanos) >= (min_secs, min_nanos)
 }
 

@@ -69,6 +69,7 @@
           }
         },
         {
+          "default": "0",
           "id": "on_hand_qty",
           "type": {
             "additivity": {
