@@ -2,11 +2,12 @@
 //! expansion budgets (`schema.ts`, `assignable.ts`, and `budget.ts`).
 
 use std::collections::BTreeSet;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{Map, Value};
 
 use super::canonical::{compact_canonical_json, escaped_json_string_len, js_number_len};
+use super::types::CompilerInstant;
 use super::value_schema::{ObjectSchema, ValueSchema};
 use super::value_types::DecimalType;
 
@@ -299,17 +300,17 @@ struct Cost {
 pub(crate) struct ExpansionBudget {
     pack_limits: ExpansionLimits,
     limits: ExpansionLimits,
-    started: Instant,
+    started: CompilerInstant,
     work: usize,
     output: usize,
     pending_bytes: usize,
 }
 
 impl ExpansionBudget {
-    /// Creates a budget anchored at an explicit [`Instant`] whose `limits` also
+    /// Creates a budget anchored at an explicit [`CompilerInstant`] whose `limits` also
     /// act as the immutable pack-wide ceiling.
     #[must_use]
-    pub(crate) const fn with_started(limits: ExpansionLimits, started: Instant) -> Self {
+    pub(crate) const fn with_started(limits: ExpansionLimits, started: CompilerInstant) -> Self {
         Self {
             pack_limits: limits,
             limits,
@@ -590,11 +591,9 @@ impl ExpansionBudget {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-
     use serde_json::json;
 
-    use super::{ExpansionBudget, ExpansionLimits};
+    use super::{CompilerInstant, ExpansionBudget, ExpansionLimits};
 
     #[test]
     fn output_budget_charges_escaped_bytes_for_control_heavy_strings() {
@@ -606,7 +605,7 @@ mod tests {
                 output_bytes: 100,
                 millis: None,
             },
-            Instant::now(),
+            CompilerInstant::now(),
         );
         assert!(budget.assert_value(&json!(raw)).is_err());
 
@@ -616,7 +615,7 @@ mod tests {
                 output_bytes: 300,
                 millis: None,
             },
-            Instant::now(),
+            CompilerInstant::now(),
         );
         assert!(generous.assert_value(&json!(raw)).is_ok());
     }
@@ -629,7 +628,7 @@ mod tests {
                 output_bytes: 200,
                 millis: Some(1_000),
             },
-            Instant::now(),
+            CompilerInstant::now(),
         );
         budget.begin_module(ExpansionLimits {
             work: 9_999,

@@ -5,7 +5,7 @@
 //! `exactNumber` / `checkClosure` / `diagnostic` from `compiler/index.ts`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
@@ -342,12 +342,46 @@ fn count_ast_nodes(
     Ok(())
 }
 
+/// Cooperative wall-clock anchor safe on both native targets and `wasm32`.
+///
+/// On `wasm32-unknown-unknown`, `std::time::Instant::now` panics at runtime;
+/// `CompilerInstant` degrades to a zero-elapsed anchor there while
+/// deterministic work, node, depth, and output-byte budgets remain enforced.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CompilerInstant {
+    #[cfg(not(target_arch = "wasm32"))]
+    inner: std::time::Instant,
+}
+
+impl CompilerInstant {
+    #[must_use]
+    pub(crate) fn now() -> Self {
+        Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            inner: std::time::Instant::now(),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn elapsed(self) -> Duration {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.inner.elapsed()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = self;
+            Duration::ZERO
+        }
+    }
+}
+
 /// Parses a TypeScript numeric literal into an exact JSON [`Number`], refusing
 /// non-finite, unsafe-integer, or precision-losing decimals (`exactNumber` in `index.ts`).
 pub(crate) fn exact_number(
     sf: P<SourceFile>,
     node: P<Node>,
-    started: Instant,
+    started: CompilerInstant,
     max_millis: u64,
     negate: bool,
 ) -> Result<Number, CompileError> {

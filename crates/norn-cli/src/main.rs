@@ -1,5 +1,6 @@
 //! Native entrypoint for the same checker ABI used by typed TypeScript authoring.
 use std::io::{BufRead as _, Read as _, Write as _};
+mod authoring;
 mod cell;
 #[cfg(test)]
 mod cli_contract;
@@ -8,7 +9,7 @@ mod explain;
 mod mcp;
 mod remote;
 mod source;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -26,6 +27,40 @@ struct Cli {
     command: Command,
 }
 
+#[derive(Debug, Args)]
+pub(crate) struct CheckArgs {
+    /// JSON array emitted by typed authoring.
+    #[arg(
+        long,
+        conflicts_with = "source",
+        requires = "context",
+        required_unless_present = "source"
+    )]
+    pub(crate) artifacts: Option<PathBuf>,
+    /// Checker context JSON, containing the explicit tenant scope (required with `--artifacts`, optional with `--source`).
+    #[arg(long, required_unless_present = "source")]
+    pub(crate) context: Option<PathBuf>,
+    /// `TypeScript` (`.ts`) or Python (`.py`) authoring file or directory to compile and check in-process.
+    #[arg(
+        long,
+        conflicts_with = "artifacts",
+        required_unless_present = "artifacts"
+    )]
+    pub(crate) source: Option<PathBuf>,
+    /// Explicit organization scope for `--source` compilation (`scope.orgId`; pair with `--env`, or omit both to use `norn.json` scope).
+    #[arg(long, requires_all = ["source", "env"])]
+    pub(crate) org: Option<String>,
+    /// Explicit environment scope for `--source` compilation (`scope.environmentId`; pair with `--org`, or omit both to use `norn.json` scope).
+    #[arg(long, requires_all = ["source", "org"])]
+    pub(crate) env: Option<String>,
+    /// Promote `NORN-AUTHORING-UNSAFE-ZEN` warnings to hard errors when compiling `--source`.
+    #[arg(long, requires = "source")]
+    pub(crate) forbid_unsafe_zen: bool,
+    /// Optional path to `tools/norn-ts` containing pinned `node_modules/effect` and `node_modules/typescript`.
+    #[arg(long, requires = "source")]
+    pub(crate) tool_root: Option<PathBuf>,
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Explain an action, law or concept through the shared checker.
@@ -38,6 +73,16 @@ enum Command {
     Cell(cell::CellArgs),
     /// Read a configured source and print sealed raw observations.
     Source(source::SourceArgs),
+    /// Compile typed `TypeScript` (`.ts`) or Python (`.py`) authoring sources to canonical JSON IR.
+    Compile(authoring::CompileArgs),
+    /// Format typed `TypeScript` (`.ts`, `.tsx`) and Python (`.py`) authoring sources in-process.
+    Fmt(authoring::FmtArgs),
+    /// Check a `TypeScript` authoring file against the `norn-effect` profile.
+    Profile(authoring::ProfileArgs),
+    /// Compile standalone `Norn.question` declarations from a `TypeScript` module.
+    Question(authoring::QuestionArgs),
+    /// Compile standalone `Norn.dashboard` declarations from a `TypeScript` module.
+    Dashboard(authoring::DashboardArgs),
     /// List the available human operations and their input schemas.
     #[command(
         long_about = "List the available human operations and their input schemas. Returns tools and a catalogDigest, with at most 32 tools per page. Follow nextCursor using --cursor until it is absent. A cursor is bound to this working directory and catalog; restart without it after a revision. Only installed backends appear; discovery never installs definitions."
@@ -47,18 +92,11 @@ enum Command {
         #[arg(long)]
         cursor: Option<String>,
     },
-    /// Check a JSON artifact array using the shared checker and resource limits.
+    /// Check a JSON artifact array or native authoring source using the shared checker and resource limits.
     #[command(
-        long_about = "Check a JSON artifact array using the shared checker and resource limits. Read artifacts and context from local files. Author ordinary typed source, compile it with the authoring CLI, then check its output. A refused report retains diagnostic codes, source locations, remediation and receipt/profile pins. Edit the named source and compile/check again; checking never installs definitions."
+        long_about = "Check a JSON artifact array or native TypeScript/Python authoring source using the shared checker and resource limits. Pass --artifacts <FILE> --context <FILE> for compiled IR, or --source <PATH> [--org <ID> --env <ID>] to compile and check in-process (supply both --org and --env, or omit both to read scope from norn.json). A refused report retains diagnostic codes, source locations, remediation and receipt/profile pins. Checking never installs definitions."
     )]
-    Check {
-        /// JSON array emitted by typed authoring.
-        #[arg(long)]
-        artifacts: PathBuf,
-        /// Checker context JSON, containing the explicit tenant scope.
-        #[arg(long)]
-        context: PathBuf,
-    },
+    Check(CheckArgs),
     /// Evaluate an admitted decision, with its sub-decision closure, over
     /// JSON-lines stdin.
     Eval {
@@ -195,26 +233,90 @@ fn run_eval(
     Ok((String::new(), refused == 0))
 }
 
-fn run(command: Command) -> Result<(String, bool), String> {
+pub(crate) fn run_check_args(args: &CheckArgs) -> authoring::CommandOutput {
+    if let Some(source_path) = &args.source {
+        if args.artifacts.is_some() {
+            return authoring::CommandOutput::usage_or_io_error(
+                "--artifacts and --source cannot be combined",
+            );
+        }
+        if args.org.is_some() != args.env.is_some() {
+            return authoring::CommandOutput::usage_or_io_error(
+                "--org and --env must be supplied together with --source (or omit both when checking a norn.json project)",
+            );
+        }
+        return authoring::execute_check_source(&authoring::CheckSourceRequest {
+            source: source_path,
+            context: args.context.as_deref(),
+            org: args.org.as_deref(),
+            env: args.env.as_deref(),
+            forbid_unsafe_zen: args.forbid_unsafe_zen,
+            tool_root: args.tool_root.as_deref(),
+        });
+    }
+    let Some(artifacts_path) = &args.artifacts else {
+        return authoring::CommandOutput::usage_or_io_error(
+            "specify either --artifacts <FILE> --context <FILE> or --source <PATH> [--org <ID> --env <ID>]",
+        );
+    };
+    if args.org.is_some()
+        || args.env.is_some()
+        || args.forbid_unsafe_zen
+        || args.tool_root.is_some()
+    {
+        return authoring::CommandOutput::usage_or_io_error(
+            "--org, --env, --forbid-unsafe-zen, and --tool-root require --source",
+        );
+    }
+    let Some(context_path) = &args.context else {
+        return authoring::CommandOutput::usage_or_io_error(
+            "--context is required with --artifacts",
+        );
+    };
+    legacy_to_output(run_check(artifacts_path, context_path))
+}
+
+fn legacy_to_output(result: Result<(String, bool), String>) -> authoring::CommandOutput {
+    match result {
+        Ok((document, true)) => authoring::CommandOutput::ok(document),
+        Ok((document, false)) => authoring::CommandOutput::refused(document),
+        Err(error) => authoring::CommandOutput {
+            stdout: String::new(),
+            stderr: format!("norn: {error}"),
+            exit_code: 1,
+        },
+    }
+}
+
+fn run(command: Command) -> authoring::CommandOutput {
     match command {
-        Command::Explain(args) => explain::execute(&args),
-        Command::Mcp => mcp::serve(),
-        Command::Capabilities { cursor } => mcp::capabilities(cursor.as_deref()),
-        Command::Remote(args) => remote::execute(&args),
-        Command::Cell(args) => cell::execute(&args),
-        Command::Source(args) => source::execute(&args),
-        Command::Openapi => norn_api::openapi::openapi_json()
-            .map(|document| (document, true))
-            .map_err(|error| error.to_string()),
+        Command::Explain(args) => legacy_to_output(explain::execute(&args)),
+        Command::Mcp => legacy_to_output(mcp::serve()),
+        Command::Capabilities { cursor } => legacy_to_output(mcp::capabilities(cursor.as_deref())),
+        Command::Remote(args) => legacy_to_output(remote::execute(&args)),
+        Command::Cell(args) => legacy_to_output(cell::execute(&args)),
+        Command::Source(args) => legacy_to_output(source::execute(&args)),
+        Command::Compile(args) => authoring::execute_compile(&args),
+        Command::Fmt(args) => authoring::execute_fmt(&args),
+        Command::Profile(args) => authoring::execute_profile(&args),
+        Command::Question(args) => authoring::execute_question(&args),
+        Command::Dashboard(args) => authoring::execute_dashboard(&args),
+        Command::Openapi => legacy_to_output(
+            norn_api::openapi::openapi_json()
+                .map(|document| (document, true))
+                .map_err(|error| error.to_string()),
+        ),
         Command::Eval {
             defs,
             org,
             env,
             rule,
             units,
-        } => run_eval(&defs, &org, &env, &rule, units),
-        Command::SourceDigest { dir } => source_digest(&dir).map(|document| (document, true)),
-        Command::Check { artifacts, context } => run_check(&artifacts, &context),
+        } => legacy_to_output(run_eval(&defs, &org, &env, &rule, units)),
+        Command::SourceDigest { dir } => {
+            legacy_to_output(source_digest(&dir).map(|document| (document, true)))
+        }
+        Command::Check(args) => run_check_args(&args),
     }
 }
 
@@ -449,21 +551,21 @@ fn source_digest(root: &Path) -> Result<String, String> {
 }
 
 fn main() -> ExitCode {
-    match run(Cli::parse().command) {
-        Ok((document, accepted)) => {
-            if (!document.is_empty() && writeln!(std::io::stdout().lock(), "{document}").is_err())
-                || !accepted
-            {
-                ExitCode::FAILURE
-            } else {
-                ExitCode::SUCCESS
-            }
-        }
-        Err(error) => {
-            let _written = writeln!(std::io::stderr().lock(), "norn: {error}");
-            ExitCode::FAILURE
+    let output = run(Cli::parse().command);
+    if !output.stderr.is_empty() {
+        let _written = writeln!(std::io::stderr().lock(), "{}", output.stderr);
+    }
+    if !output.stdout.is_empty() {
+        let write_result = if output.stdout.ends_with('\n') {
+            write!(std::io::stdout().lock(), "{}", output.stdout)
+        } else {
+            writeln!(std::io::stdout().lock(), "{}", output.stdout)
+        };
+        if write_result.is_err() {
+            return ExitCode::FAILURE;
         }
     }
+    ExitCode::from(output.exit_code)
 }
 
 #[cfg(test)]

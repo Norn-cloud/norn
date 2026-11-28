@@ -3,7 +3,7 @@
 //! Ports the core helpers of `tools/norn-ts/src/compiler/definitions.ts`.
 
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -19,7 +19,8 @@ use super::expr::TemporalKind;
 use super::flow_source_map::SourceLocation;
 use super::schema::{ProjectedProperty, SchemaProjection};
 use super::types::{
-    CompileError, CompilerLimits, DependencyPin, is_string_literal_like, source_location_of,
+    CompileError, CompilerInstant, CompilerLimits, DependencyPin, is_string_literal_like,
+    source_location_of,
 };
 use super::value_schema::ValueSchema;
 
@@ -241,7 +242,7 @@ pub(crate) struct DefCompilerConfig<'a> {
     pub(crate) effect_dist_prefix: Option<&'a str>,
     pub(crate) vfs: &'a BoundedVfs,
     pub(crate) program: &'static Program,
-    pub(crate) started: Instant,
+    pub(crate) started: CompilerInstant,
     pub(crate) limits: CompilerLimits,
     pub(crate) tool_root: &'a str,
     pub(crate) forbid_unsafe_zen: bool,
@@ -253,7 +254,7 @@ pub(crate) struct DefinitionCompiler<'a> {
     pub(crate) effect_dist_prefix: Option<&'a str>,
     pub(crate) vfs: &'a BoundedVfs,
     pub(crate) program: &'static Program,
-    pub(crate) started: Instant,
+    pub(crate) started: CompilerInstant,
     pub(crate) limits: CompilerLimits,
     pub(crate) tool_root: &'a str,
     pub(crate) forbid_unsafe_zen: bool,

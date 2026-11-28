@@ -215,6 +215,8 @@ pub const CRATES: &[CrateRule] = &[
         Ring::One,
         &[
             "norn-api",
+            "norn-authoring",
+            "norn-authoring-py",
             "norn-checker-wasm",
             "norn-ir",
             "norn-expr",

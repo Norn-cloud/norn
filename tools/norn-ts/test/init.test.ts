@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { compilePack, checkPack } from "../src/pack.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { parseProject, readProject } from "../src/project.ts"
-import { projectDependencies } from "../src/init.ts"
+import { assertNoCiScaffoldFiles, normalizeScaffoldPath, projectDependencies, validateScaffoldFiles } from "../src/init.ts"
 import { checker } from "./checker.ts"
 
 async function run(args: string[]) {
@@ -25,7 +25,21 @@ test("init_writes_exact_tree", async () => {
     expect(readdirSync(dir, { recursive: true }).sort()).toEqual([".gitignore", "AGENTS.md", "norn.json", "package.json", "src", "src/product.ts", "tsconfig.json"].sort())
     expect(readFileSync(join(dir, ".gitignore"), "utf8")).toBe(".norn/\nnode_modules/\n")
     expect(readFileSync(join(dir, "src/product.ts"), "utf8")).toBe(readFileSync(join(TOOL_ROOT, "templates/starter/src/product.ts"), "utf8").replaceAll("__NAMESPACE__", "shop"))
-    expect(readFileSync(join(dir, "AGENTS.md"), "utf8").split("\n")).toHaveLength(30)
+    const agents = readFileSync(join(dir, "AGENTS.md"), "utf8")
+    expect(agents.split("\n")).toHaveLength(35)
+    expect(agents).toContain("zero CI")
+    expect(agents).toContain(".github/workflows/")
+    expect(() => assertNoCiScaffoldFiles({ "norn.json": "{}" })).not.toThrow()
+    expect(() => assertNoCiScaffoldFiles({ ".github/workflows/ci.yml": "name: ci" })).toThrow("zero CI")
+    expect(() => assertNoCiScaffoldFiles({ "src/../.github/workflows/ci.yml": "name: ci" })).toThrow("zero CI")
+    expect(() => assertNoCiScaffoldFiles({ ".GITHUB\\workflows\\ci.yml": "name: ci" })).toThrow("zero CI")
+    expect(() => assertNoCiScaffoldFiles({ "../outside.txt": "nope" })).toThrow("outside project root")
+    expect(() => assertNoCiScaffoldFiles({ "/etc/passwd": "nope" })).toThrow("invalid path")
+    expect(() => assertNoCiScaffoldFiles({ "": "nope" })).toThrow("invalid path")
+    expect(() => assertNoCiScaffoldFiles({ ".": "nope" })).toThrow("outside project root")
+    expect(() => assertNoCiScaffoldFiles({ "..": "nope" })).toThrow("outside project root")
+    expect(() => validateScaffoldFiles({ "src/a.ts": "1", "./src/a.ts": "2" })).toThrow("duplicate")
+    expect(normalizeScaffoldPath("./src/nested/../product.ts")).toBe("src/product.ts")
     expect(JSON.parse(readFileSync(join(dir, "tsconfig.json"), "utf8"))).toEqual({ extends: "@norn/cli/tsconfig.authoring.json", include: ["src/**/*.ts"] })
     expect(JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))).toEqual({ name: "shop", private: true, type: "module", dependencies: projectDependencies() })
     expect(readProject(join(dir, "src")).root).toBe(dir)

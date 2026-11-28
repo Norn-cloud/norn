@@ -15,6 +15,8 @@ norn-ir = { path = "../norn-ir" }
 norn-expr = { path = "../norn-expr" }
 norn-decisions = { path = "../norn-decisions" }
 norn-api = { path = "../norn-api" }
+norn-authoring = { path = "../norn-authoring" }
+norn-authoring-py = { path = "../norn-authoring-py" }
 norn-checker-wasm = { path = "../norn-checker-wasm" }
 clap = { version = "4.6.7", features = ["derive"] }
 serde_json = "1.0.150"
