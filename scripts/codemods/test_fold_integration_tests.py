@@ -125,6 +125,18 @@ class AllowRatchetTests(unittest.TestCase):
         )
         self.assertTrue(
             fold.uses_extern_crate(
+                "const S: &str = stringify!(use foo::bar as geo;);\nfn f() { let _ = geo::Point::new(0.0, 0.0); }\n",
+                "geo",
+            )
+        )
+        self.assertTrue(
+            fold.uses_extern_crate(
+                "#[geo::some]\nfn f() {}\n",
+                "geo",
+            )
+        )
+        self.assertTrue(
+            fold.uses_extern_crate(
                 "use norn_builtins::geo::{self as g};\nfn f() { let _ = geo::Point::new(0.0, 0.0); }\n",
                 "geo",
             )

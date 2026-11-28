@@ -452,6 +452,8 @@ def _scan_use_statement(
         kind, start, end = tokens[cursor]
         if kind == "punct":
             ch = text[start:end]
+            if ch in (")", "]"):
+                return False, False, cursor - 1
             if ch == ";":
                 if (
                     allow_local_binding
@@ -548,45 +550,40 @@ def uses_extern_crate(text: str, name: str) -> bool:
     has_inline_mod = False
     has_bare_path = False
     brace_depth = 0
+    paren_depth = 0
+    bracket_depth = 0
     stmt_has_attr = False
     idx = 0
     while idx < len(tokens):
         kind, start, end = tokens[idx]
         if kind == "punct":
             ch = text[start:end]
-            if brace_depth == 0 and ch == "#":
+            at_top = brace_depth == 0 and paren_depth == 0 and bracket_depth == 0
+            if at_top and ch == "#":
                 # Outer attribute `#[...]` on the upcoming top-level item/use statement.
-                # Inner `#![...]` is crate/module-level and does not gate subsequent items.
+                # Keep scanning tokens inside `[...]` so attribute paths like `#[geo::some]`
+                # are still inspected for external-crate references.
                 if (
                     idx + 1 < len(tokens)
                     and tokens[idx + 1][0] == "punct"
                     and text[tokens[idx + 1][1] : tokens[idx + 1][2]] == "["
                 ):
                     stmt_has_attr = True
-                    bracket_depth = 0
-                    cursor = idx + 1
-                    while cursor < len(tokens):
-                        tk_kind, tk_s, tk_e = tokens[cursor]
-                        if tk_kind == "punct":
-                            bch = text[tk_s:tk_e]
-                            if bch == "[":
-                                bracket_depth += 1
-                            elif bch == "]":
-                                bracket_depth -= 1
-                                if bracket_depth == 0:
-                                    idx = cursor + 1
-                                    break
-                        cursor += 1
-                    else:
-                        idx = len(tokens)
-                    continue
-            if ch == "{":
+            elif ch == "{":
                 brace_depth += 1
             elif ch == "}":
                 brace_depth = max(0, brace_depth - 1)
-                if brace_depth == 0:
+                if brace_depth == 0 and paren_depth == 0 and bracket_depth == 0:
                     stmt_has_attr = False
-            elif ch == ";" and brace_depth == 0:
+            elif ch == "(":
+                paren_depth += 1
+            elif ch == ")":
+                paren_depth = max(0, paren_depth - 1)
+            elif ch == "[":
+                bracket_depth += 1
+            elif ch == "]":
+                bracket_depth = max(0, bracket_depth - 1)
+            elif ch == ";" and at_top:
                 stmt_has_attr = False
             idx += 1
             continue
@@ -619,18 +616,19 @@ def uses_extern_crate(text: str, name: str) -> bool:
             idx += 1
             continue
         if raw_word == "use":
+            at_top = brace_depth == 0 and paren_depth == 0 and bracket_depth == 0
             refs_extern, binds_local, end_idx = _scan_use_statement(
                 text,
                 tokens,
                 idx,
                 name,
-                allow_local_binding=(brace_depth == 0 and not stmt_has_attr),
+                allow_local_binding=(at_top and not stmt_has_attr),
             )
             if refs_extern:
                 return True
             if binds_local:
                 locally_imported = True
-            if brace_depth == 0:
+            if at_top:
                 stmt_has_attr = False
             idx = end_idx + 1
             continue
