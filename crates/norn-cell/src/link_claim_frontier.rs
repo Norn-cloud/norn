@@ -111,13 +111,7 @@ impl Default for ClaimSourceMeta {
         Self {
             source_version: String::new(),
             version_kind: VersionKind::Lexicographical,
-            event_keys: [
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-            ],
+            event_keys: std::array::from_fn(|_| String::new()),
         }
     }
 }
