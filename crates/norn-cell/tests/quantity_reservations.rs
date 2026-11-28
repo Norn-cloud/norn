@@ -616,7 +616,7 @@ fn reserve_full_post_and_in_transit_loss_are_conserved() {
             .expect("reservation")
             .expect("record")
             .status,
-        "posted"
+        norn_kernel::quantity::ReservationStatus::Posted
     );
     refused(
         &mut cell,
@@ -2086,7 +2086,7 @@ fn lazy_deadline_refuses_post_and_scheduled_expiry_consumes_timer_atomically() {
             .expect("read")
             .expect("reservation")
             .status,
-        "expired"
+        norn_kernel::quantity::ReservationStatus::Expired
     );
     let receipt = cell
         .store()
