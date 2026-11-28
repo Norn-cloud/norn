@@ -62,18 +62,18 @@ fn payload_json(artifact: &ArtifactEnvelope) -> Result<Value, ProjectionError> {
 
 fn decode_error(
     artifact_id: &str,
-    kind: ArtifactKind,
+    kind: &ArtifactKind,
     error: &serde_json::Error,
 ) -> ProjectionError {
     ProjectionError::Invalid(format!(
         "failed to decode {} artifact `{artifact_id}`: {error}",
-        kind_name(&kind)
+        kind_name(kind)
     ))
 }
 
 macro_rules! decode_payload {
     ($id:expr, $kind:expr, $payload:expr $(,)?) => {
-        serde_json::from_value($payload).map_err(|error| decode_error($id, $kind, &error))
+        serde_json::from_value($payload).map_err(|error| decode_error($id, &$kind, &error))
     };
 }
 

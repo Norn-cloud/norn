@@ -346,6 +346,24 @@ pub fn compute_ripple_effects_with_budget(
             Err(refusal) => return RippleReport::unknown_budget(root_list, refusal),
         };
 
+    let ripples = build_ripple_entries(reached, &universe, &projected, &triggered_by, &best_via);
+
+    RippleReport {
+        status: RippleStatus::Exact,
+        roots: root_list,
+        ripples,
+        budget_exceeded: None,
+        reason: None,
+    }
+}
+
+fn build_ripple_entries(
+    reached: BTreeSet<String>,
+    universe: &Universe,
+    projected: &ProjectedGraph,
+    triggered_by: &BTreeMap<String, BTreeSet<String>>,
+    best_via: &BTreeMap<String, Vec<String>>,
+) -> Vec<RippleEntry> {
     let mut ripples = Vec::with_capacity(reached.len());
     for artifact_id in reached {
         let kind = universe
@@ -359,7 +377,7 @@ pub fn compute_ripple_effects_with_budget(
         let via = best_via
             .get(&artifact_id)
             .map_or_else(|| vec![artifact_id.clone()], Clone::clone);
-        let impact_kind = classify_impact(&artifact_id, &via, &universe, &projected);
+        let impact_kind = classify_impact(&artifact_id, &via, universe, projected);
         ripples.push(RippleEntry {
             artifact_id,
             kind,
@@ -374,14 +392,7 @@ pub fn compute_ripple_effects_with_budget(
             .cmp(&right.via.len())
             .then_with(|| left.artifact_id.cmp(&right.artifact_id))
     });
-
-    RippleReport {
-        status: RippleStatus::Exact,
-        roots: root_list,
-        ripples,
-        budget_exceeded: None,
-        reason: None,
-    }
+    ripples
 }
 
 type PathTraceResult = (
