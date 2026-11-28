@@ -312,6 +312,8 @@ run_phase() {
       (cd packages/norn-demo-ui && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
       (cd packages/norn-react && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
       (cd apps/studio && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test && bun run build)
+      (cd apps/sidekick-bridge && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun test)
+      (cd tools/norn-proofs && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun test --test-name-pattern 'generated_solver|check_ts_rejects')
       # TIMER-ALARM-1: the Durable Object's wake rules; OLAP-01: what connections receive (no dependencies).
       (cd apps/norn-cell-do && bun test ./wake.test.mjs ./worker.test.mjs ./connect_vars.test.mjs)
       python3 verification/coverage-v1/negative_canaries.py --workflow-contract
@@ -324,6 +326,7 @@ run_phase() {
       python3 scripts/ci/test_python_isolation.py
       python3 scripts/proof_enrollment.py
       python3 scripts/test_proof_enrollment.py
+      python3 scripts/test_generated_proofs.py
       python3 scripts/ci/test_implementation_receipts.py
       python3 scripts/ci/test_contract_diff.py
       python3 scripts/ci/contract_diff.py --ci
@@ -333,6 +336,14 @@ run_phase() {
       python3 scripts/test_standards_atlas.py
       python3 scripts/importers/test_owl_sources.py
       python3 scripts/metrics/test_metrics.py
+      python3 scripts/metrics/test_unit_economics.py
+      python3 scripts/release/test_install.py
+      python3 apps/norn-cell-do/conformance/test_conformance.py
+      PYTHONPATH="$PWD/sdks/python/regression" python3 sdks/python/regression/test_receipt.py
+      PYTHONPATH="$PWD/tools/norn-py" python3 -m unittest discover -s tools/norn-py/tests -t tools/norn-py/tests
+      bash scripts/ci/ascent-no-clock-dependency-tree.sh --self-test
+      python3 scripts/ci/check_test_wiring.py
+      python3 scripts/ci/test_check_test_wiring.py
       python3 scripts/ci/test_infisical_oidc.py
       lint_workflows
       cargo xtask ci policy
@@ -510,9 +521,26 @@ PY
       python3 scripts/test_kernel_inline_verus.py
       scripts/bootstrap-verification-tools.sh --verus-only
       bash scripts/verify-kernel-inline-verus.sh all
+      bash scripts/verify-kernel-overlay-verus.sh all
       crates/norn-skeleton-guard/scripts/zen-dependency-tree.sh
-      crates/norn-skeleton-guard/scripts/baseline-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
-      crates/norn-checker/scripts/non-code-literals-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
+      cargo fetch --locked
+      bash scripts/ci/ascent-no-clock-dependency-tree.sh
+      if [[ ${CI:-} == true || ${GITHUB_ACTIONS:-} == true ]]; then
+        : "${NORN_CI_BASE:?guards: NORN_CI_BASE must be set in CI}"
+      fi
+      local base_ref="${NORN_CI_BASE:-origin/main}"
+      local base_sha head_sha
+      base_sha="$(git rev-parse --verify "${base_ref}^{commit}")" || {
+        printf 'guards: cannot resolve comparison base %s\n' "$base_ref" >&2
+        exit 1
+      }
+      head_sha="$(git rev-parse --verify HEAD^{commit})"
+      if [[ $base_sha == "$head_sha" ]]; then
+        printf 'guards: comparison base %s resolves to HEAD (%s); refusing self-comparison\n' "$base_ref" "$head_sha" >&2
+        exit 1
+      fi
+      crates/norn-skeleton-guard/scripts/baseline-shrink-only.sh "$base_sha"
+      crates/norn-checker/scripts/non-code-literals-shrink-only.sh "$base_sha"
       rustup toolchain install nightly-2026-08-18 --profile minimal --no-self-update
       ensure_tool cargo-public-api 0.52.0 cargo-public-api
       crates/norn-skeleton-guard/scripts/public-api-boundary.sh nightly-2026-08-18
@@ -576,9 +604,10 @@ PY
       export NORN_CHECKER_WASM_PKG="$CARGO_TARGET_DIR/norn-checker-wasm/pkg"
       cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1
       node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
-      # @norn/react against the checker (#1762): its capability walk is the checker's, the matrix
-      # fixture is admitted, and the machine runtime evaluates in the checker's engine.
+      # @norn/react and @norn/demo-ui against the checker (#1762, #1864): capability walks,
+      # matrix fixtures, decision sheet and lifecycle view machines evaluate in the real WASM checker.
       (cd packages/norn-react && export NORN_CHECKER_WASM_REQUIRED=1 && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun test)
+      (cd packages/norn-demo-ui && export NORN_CHECKER_WASM_REQUIRED=1 && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun test)
       # TENANT-ISOLATION-1 (S8): the cell Worker's boundary over its real Wasm gate, built as it ships.
       cargo build --locked -p norn-cell-do --lib --target wasm32-unknown-unknown --profile wasm-release
       wasm-bindgen "${CARGO_TARGET_DIR:-$PWD/target}/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
@@ -638,19 +667,22 @@ PY
       (
         cd apps/studio
         bun install --frozen-lockfile --ignore-scripts --backend copyfile
-        # The checker-admission case needs the WASM package built above, so it runs here,
-        # not in the cheap phase, and is required: a missing package fails it, never skips.
+        # The checker-admission cases need the WASM package built above, so they run here,
+        # not in the cheap phase, and are required: a missing package fails them, never skips.
         decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\n' "$decision"; exit 1; }
         printf '%s\n' "$decision"
         # The step proves nothing unless that named case ran and passed: skipped, renamed or deleted fails.
         grep -qxE '\(pass\) the checker admits what a drawn decision lowers to \[[0-9.]+m?s\]' <<< "$decision" || { printf 'browser: the checker-admission case did not run and pass\n' >&2; exit 1; }
+        canvas=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/canvas.test.ts 2>&1) || { printf '%s\n' "$canvas"; exit 1; }
+        printf '%s\n' "$canvas"
+        grep -qxE '\(pass\) the checker finds the stuck state a deleted step leaves \[[0-9.]+m?s\]' <<< "$canvas" || { printf 'browser: the checker-backed canvas case did not run and pass\n' >&2; exit 1; }
         bun run build
         # "No tests found" must fail: a broken testDir or testMatch is never a pass.
         listed=$(bunx playwright test --list | sed -n 's/^Total: \([0-9][0-9]*\) tests\{0,1\} in .*/\1/p')
         [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\n' >&2; exit 1; }
         # A suite of only skipped rows must fail too: require at least one executed test.
         report="$upstream/playwright.json"
-        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json
+        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --forbid-only --reporter=list,json
         ran=$(python3 -c 'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))' "$report")
         [[ $ran -gt 0 ]] || { printf 'browser: Playwright ran no tests (every row skipped)\n' >&2; exit 1; }
       )
@@ -658,9 +690,13 @@ PY
     formal)
       export CI=true
       use_jsonschema
+      local tool_root
+      tool_root="$(realpath -m "${NORN_VERIFICATION_TOOL_ROOT:-$PWD/target/verification-tools}")"
+      export NORN_VERIFICATION_TOOL_ROOT="$tool_root"
       scripts/bootstrap-verification-tools.sh
       scripts/bootstrap-ontology-tools.sh
       scripts/bootstrap-rust-extraction-tools.sh
+      (cd tools/norn-proofs && bun install --frozen-lockfile --ignore-scripts --backend copyfile && NORN_VERIFICATION_TOOL_ROOT="$tool_root" bun test)
       scripts/verify-promoted-subsystems.sh full
       ;;
     rivet-conformance)

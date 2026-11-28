@@ -1478,6 +1478,18 @@ where
         }))
     }
 
+    /// FORK-SIMULATE-1 (single-head atomic variant): record an already-encoded
+    /// simulated result for the exact `(command_id, generation)` read by the
+    /// caller, without re-reading the outbox head.
+    pub(crate) fn record_simulated_head(
+        &mut self,
+        command_id: &str,
+        generation: u64,
+        outcome: &Value,
+    ) -> Result<bool, CellError> {
+        self.store.record_simulated(command_id, generation, outcome)
+    }
+
     /// Admit one domain-neutral proposal and its ordered partition postings.
     /// All fact/link and quantity fences share one store transaction. Failure in
     /// any partition publishes nothing. The trusted caller supplies authorization.
