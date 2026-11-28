@@ -23,17 +23,17 @@
 //! typed strict-error and budget details, input binding and schema checks,
 //! sub-decision closure admission, and the engine pin.
 
-mod support;
+use super::support;
 
 use std::collections::BTreeMap;
 
+use super::support::{admit_fixture, binding, member, num, read_json, repo_root, rule, run, value};
 use norn_decisions::{
     AdmissionError, AdmittedDecision, DecisionError, ENGINE_TAG, StrictSite, evaluate,
     evaluate_explained_with_fact_check,
 };
 use norn_expr::{EvaluationBudget, Value};
 use serde_json::{Value as Json, json};
-use support::{admit_fixture, binding, member, num, read_json, repo_root, rule, run, value};
 
 fn corpus(name: &str) -> Json {
     read_json(

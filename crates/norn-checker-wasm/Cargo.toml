@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 description = "checker ABI: JSON-in/JSON-out WASM bindings over norn-checker (ring 1; see AGENTS.md)"
+# Every integration test is a module of tests/suites.rs, one binary
+# (scripts/codemods/fold_integration_tests.py).
+autotests = false
 
 [lib]
 path = "src/lib.rs"
@@ -39,12 +42,8 @@ name = "parity"
 required-features = ["checker"]
 
 [[test]]
-name = "admit_question"
-required-features = ["checker"]
-
-[[test]]
-name = "restatement"
-required-features = ["checker"]
+name = "suites"
+path = "tests/suites.rs"
 
 [lints]
 workspace = true

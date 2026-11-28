@@ -45,9 +45,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SUITE = "suites"
 # Every multi-binary workspace crate whose integration tests can fold cleanly.
-# Remaining multi-binary crates outside this list:
-# - `norn-checker-wasm`: `parity` binary is pinned by name (`--test parity -- --test-threads=1`)
-#   in `GATE_FILES` (`scripts/ci/core.sh` and `verification/coverage-v1/validate.py`).
+# Remaining non-folded targets:
+# - `norn-checker-wasm::parity`: pinned by name (`--test parity -- --test-threads=1`)
+#   in `GATE_FILES` (`scripts/ci/core.sh` and `verification/coverage-v1/validate.py`);
+#   its other integration tests fold into `tests/suites.rs`.
 # - `norn-skeleton-guard`: standalone `GATE_DIRECTORIES` workspace; `gate_source_errors` refuses
 #   `#[path = ...]` in gated sources and `baseline-shrink-only.sh` blocks moving `tests/*.rs`.
 CRATES = (
@@ -58,6 +59,7 @@ CRATES = (
     "norn-cell",
     "norn-cell-do",
     "norn-checker",
+    "norn-checker-wasm",
     "norn-datalog",
     "norn-decisions",
     "norn-expr",
@@ -67,6 +69,9 @@ CRATES = (
     "norn-projections",
     "norn-testkit",
 )
+# Explicit `[[test]]` binaries that stay standalone while the rest of their
+# crate folds into `tests/suites.rs`.
+PINNED_TARGETS: frozenset[tuple[str, str]] = frozenset({("norn-checker-wasm", "parity")})
 TARGET_KEYS = {"name", "path", "required-features", "cfg", "comments"}
 MODULE_ATTRIBUTES = {"allow", "deny", "warn", "forbid", "expect", "cfg", "cfg_attr", "doc"}
 RESERVED = {"std", "core", "alloc", "test", "proc_macro", SUITE}
@@ -153,7 +158,7 @@ class Crate:
     def foldable(self) -> list[dict]:
         folded = []
         for name, target in sorted(self.targets.items()):
-            if name == SUITE:
+            if name == SUITE or (self.name, name) in PINNED_TARGETS:
                 continue
             path = target.get("path", f"tests/{name}.rs")
             if path != f"tests/{name}.rs":
@@ -175,10 +180,51 @@ class Crate:
         return names
 
 
+SHARED_SUPPORT_HEADER = "// Shared test support, compiled once for every suite in this binary."
+
+
+def split_suites_sections(text: str) -> tuple[list[str], list[str]]:
+    """Split an existing `tests/suites.rs` into `(shared_support_lines, suite_mod_lines)`."""
+    lines = text.splitlines()
+    try:
+        start = lines.index(SHARED_SUPPORT_HEADER)
+    except ValueError:
+        return [], lines
+    end = start
+    while end < len(lines) and lines[end].strip():
+        if lines[end].lstrip().startswith("#!["):
+            raise Refused(f"tests/{SUITE}.rs: inner attribute not allowed in shared support block")
+        end += 1
+    return lines[start:end], lines[end:]
+
+
+def parse_shared_support(text: str) -> list[str]:
+    """Return the hoisted shared test-support block from an existing `tests/suites.rs`."""
+    return split_suites_sections(text)[0]
+
+
+def shared_support_names(lines: list[str]) -> set[str]:
+    """Return module and re-export names bound in the shared support block."""
+    names: set[str] = set()
+    for line in lines:
+        mod_match = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?mod ([A-Za-z0-9_]+);$", line)
+        if mod_match:
+            names.add(mod_match[1])
+            continue
+        use_as = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use .+\s+as\s+([A-Za-z0-9_]+);$", line)
+        if use_as:
+            names.add(use_as[1])
+            continue
+        use_tail = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use .+::([A-Za-z0-9_]+);$", line)
+        if use_tail:
+            names.add(use_tail[1])
+    return names
+
+
 def parse_suites(text: str) -> dict[str, dict]:
     """The cfg and comments above each module of an existing `tests/suites.rs`."""
     found: dict[str, dict] = {}
-    lines = text.splitlines()
+    _, lines = split_suites_sections(text)
     for index, line in enumerate(lines):
         match = re.match(r"^mod ([a-z0-9_]+);$", line)
         if not match:
@@ -215,7 +261,7 @@ _RUST_CHAR_LITERAL = re.compile(
     r"b?'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]+\}|.)|[^'\\\n])'"
 )
 # Fixed baseline of pre-existing folded crates whose `tests/suites.rs` carry the legacy
-# `#![allow(dead_code, unreachable_pub, clippy::duplicate_mod)]` block. Newly folded crates
+# `#![allow(dead_code, unreachable_pub, ...)]` block. Newly folded crates
 # must stay allow-free; adding `#![allow(...)]` to a non-baseline suite fails `--check`.
 LEGACY_SUITE_ALLOW_CRATES: frozenset[str] = frozenset(
     {
@@ -229,6 +275,17 @@ LEGACY_SUITE_ALLOW_CRATES: frozenset[str] = frozenset(
         "norn-ir",
         "norn-kernel",
         "norn-projections",
+    }
+)
+# Subset of `LEGACY_SUITE_ALLOW_CRATES` whose `tests/suites.rs` still compile a
+# module more than once (e.g. DuckDB + DataFusion parity suites). Crates outside
+# this set must not allow `clippy::duplicate_mod`.
+LEGACY_DUPLICATE_MOD_CRATES: frozenset[str] = frozenset(
+    {
+        "norn-cell",
+        "norn-cell-do",
+        "norn-checker",
+        "norn-kernel",
     }
 )
 CODEMOD_SELF_FILES: frozenset[str] = frozenset(
@@ -675,7 +732,17 @@ def _needs_suite_allows(crate: Crate) -> bool:
     return crate.name in LEGACY_SUITE_ALLOW_CRATES
 
 
-def suites_source(crate: Crate, folded: list[dict], comments: dict[str, list[str]]) -> str:
+def _needs_duplicate_mod_allow(crate: Crate) -> bool:
+    """Keep `clippy::duplicate_mod` strictly on crates that still have duplicate modules."""
+    return crate.name in LEGACY_DUPLICATE_MOD_CRATES
+
+
+def suites_source(
+    crate: Crate,
+    folded: list[dict],
+    comments: dict[str, list[str]],
+    shared_support: list[str] | None = None,
+) -> str:
     header = f"""//! `{crate.name}`'s integration tests, built as one test binary.
 //!
 //! Each `tests/<name>.rs` is the module `<name>` here, so nextest names a test
@@ -687,13 +754,23 @@ def suites_source(crate: Crate, folded: list[dict], comments: dict[str, list[str
 //! keeps this list and every reference to it in step.
 """
     if _needs_suite_allows(crate):
-        header += """#![allow(
+        if _needs_duplicate_mod_allow(crate):
+            header += """#![allow(
     dead_code,
     unreachable_pub,
     clippy::duplicate_mod,
     reason = "each suite keeps the visibility and the shared helpers it had as its own test binary"
 )]
 """
+        else:
+            header += """#![allow(
+    dead_code,
+    unreachable_pub,
+    reason = "each suite keeps the visibility it had as its own test binary"
+)]
+"""
+    if shared_support:
+        header += "\n" + "\n".join(shared_support) + "\n"
     body = []
     for target in folded:
         name = target["name"]
@@ -1038,10 +1115,13 @@ def main() -> int:
             for path in sorted(crate.tests.rglob("*.rs"))
             if path.name != f"{SUITE}.rs"
         }
+        suites = crate.tests / f"{SUITE}.rs"
+        shared_support = parse_shared_support(suites.read_text()) if suites.exists() else []
+        support_names = shared_support_names(shared_support)
         for target in targets:
             name = target["name"]
-            if name in hard_reserved:
-                raise Refused(f"{crate.name}: module {name} would shadow a reserved or crate name")
+            if name in hard_reserved or name in support_names:
+                raise Refused(f"{crate.name}: module {name} would shadow a reserved, crate, or shared-support name")
             if name in externs and any(uses_extern_crate(src, name) for src in test_sources.values()):
                 raise Refused(f"{crate.name}: module {name} would shadow a used extern crate")
             folded[(crate.name, name)] = crate.name
@@ -1051,8 +1131,7 @@ def main() -> int:
                 writes[path] = source
         manifest, comments = edit_manifest(crate, targets)
         writes[crate.manifest_path] = manifest
-        suites = crate.tests / f"{SUITE}.rs"
-        writes[suites] = suites_source(crate, targets, comments)
+        writes[suites] = suites_source(crate, targets, comments, shared_support=shared_support)
 
     for relative in tracked():
         if relative.startswith(FROZEN) or relative in CODEMOD_SELF_FILES:

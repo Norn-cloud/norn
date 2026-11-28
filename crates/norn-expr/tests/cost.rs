@@ -28,10 +28,9 @@
 //! generated soundness checks in `tests/check.rs` and `tests/corpus.rs`
 //! evaluate every admitted expression under a budget of exactly its estimate.
 
-mod support;
-
 use std::collections::BTreeMap;
 
+use super::support::{env_for, roomy_limits, within_slice_limits};
 use norn_expr::check::{StructuralLimits, codes};
 use norn_expr::{
     CostEstimate, EnvOptions, EvaluationBudget, ExprError, Expression, Number, RootCostBounds,
@@ -39,7 +38,6 @@ use norn_expr::{
     check_unary_with,
 };
 use norn_ir::ResourceLimitProfile;
-use support::{env_for, roomy_limits, within_slice_limits};
 
 const SKU: &str = "retail.Sku";
 const ORDER: &str = "commerce.SalesOrder";

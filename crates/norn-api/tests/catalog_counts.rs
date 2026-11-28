@@ -12,12 +12,8 @@
     missing_docs,
     reason = "catalog count correspondence"
 )]
-#[path = "../../norn-cell/tests/query_support/mod.rs"]
-mod query_support;
 
-#[path = "support/hosted_read.rs"]
-mod hosted_read;
-use hosted_read::Mapping;
+use super::hosted_read::Mapping;
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::object_query::ObjectQueryParams;
@@ -28,11 +24,11 @@ use norn_api::routes::object_counts;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
 // #1485 S6: fixtures write through the kernel path, never the raw door.
+use super::query_support::governed::GovernedCommit as _;
+use super::query_support::{CLOCK, TYPE, object_type};
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD};
 use norn_ir::RuntimeValue as V;
 use proptest::prelude::*;
-use query_support::governed::GovernedCommit as _;
-use query_support::{CLOCK, TYPE, object_type};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 

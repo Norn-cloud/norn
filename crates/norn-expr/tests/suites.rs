@@ -10,9 +10,19 @@
 #![allow(
     dead_code,
     unreachable_pub,
-    clippy::duplicate_mod,
-    reason = "each suite keeps the visibility and the shared helpers it had as its own test binary"
+    reason = "each suite keeps the visibility it had as its own test binary"
 )]
+
+// Shared test support, compiled once for every suite in this binary.
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "shared expression fixture helpers use test-only panics and bounded size casts"
+)]
+mod support;
 
 #[path = "build_support.rs"]
 mod build_support;

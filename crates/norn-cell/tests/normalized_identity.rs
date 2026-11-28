@@ -6,7 +6,7 @@
     missing_docs,
     reason = "native identity conformance fixtures"
 )]
-mod common;
+use super::common;
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, Model, SqliteCell, StoreOptions};
 use norn_ir::{

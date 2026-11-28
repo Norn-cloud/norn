@@ -11,7 +11,7 @@
 //! stage, so an unsealed write riding an observed commit can neither move a
 //! lifecycle nor carry a protected value.
 
-mod common;
+use super::common;
 
 use norn_cell::export::Exporter;
 use norn_cell::{CellStore, InstalledDefinitionInput, Model, SqliteCell, StoreOptions};

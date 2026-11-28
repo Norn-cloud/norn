@@ -41,8 +41,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 // #1485 S6: fixtures write through the kernel path, never the raw door.
-#[path = "../../norn-cell/tests/support/governed.rs"]
-mod governed;
+use super::governed;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signer, SigningKey};

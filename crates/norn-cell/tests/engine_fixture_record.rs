@@ -31,8 +31,7 @@
 
 use crate::engine::SqlEngine as _;
 
-#[path = "support/engine_fixture.rs"]
-mod engine_fixture;
+use super::engine_fixture;
 
 #[test]
 #[ignore = "records a fixture for a later engine's upgrade test; run on the release it records"]

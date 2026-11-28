@@ -22,15 +22,13 @@
 //! `norn-zen/7` temporal interval and DST resolution conformance tests (#1584),
 //! and the Allen-relation and civil-day laws of `verification/owl-time-v1` (#1713).
 
-mod support;
-
+use super::support::{Model, fields, roomy_limits};
 use norn_expr::check::{CHECKER_PROFILE, codes};
 use norn_expr::{
     EnvOptions, EvaluationBudget, ExprError, Expression, Number, Type, Value, ZenTypeEnv,
     check_expression_with,
 };
 use norn_ir::TimezonePolicy;
-use support::{Model, fields, roomy_limits};
 
 const OUTSIDE: &[&str] = &[codes::UNSUPPORTED_CONSTRUCT, codes::SYNTAX];
 

@@ -10,9 +10,15 @@
 #![allow(
     dead_code,
     unreachable_pub,
-    clippy::duplicate_mod,
-    reason = "each suite keeps the visibility and the shared helpers it had as its own test binary"
+    reason = "each suite keeps the visibility it had as its own test binary"
 )]
+
+// Shared test support, compiled once for every suite in this binary.
+#[path = "support/hosted_read.rs"]
+mod hosted_read;
+#[path = "../../norn-cell/tests/query_support/mod.rs"]
+mod query_support;
+use query_support::governed;
 
 #[path = "answer_contract.rs"]
 mod answer_contract;

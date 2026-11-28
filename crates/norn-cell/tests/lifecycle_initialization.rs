@@ -8,7 +8,7 @@
 //! initialization. A refused first write leaves no effect: no row, no
 //! version, no ledger entry.
 
-mod common;
+use super::common;
 
 use norn_cell::SqliteCell;
 use norn_ir::{DecisionOutput, FactChange, ObjectTypeName, PropertyId, TransitionId};

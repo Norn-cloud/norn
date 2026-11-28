@@ -6,7 +6,7 @@
 )]
 #![cfg(feature = "native")]
 
-mod common;
+use super::common;
 
 use norn_cell::CellError;
 use norn_cell::engine::{

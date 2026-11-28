@@ -7,7 +7,8 @@
     missing_docs,
     reason = "native restatement scenarios"
 )]
-mod query_support;
+
+use super::query_support::*;
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{
     CellStore, CommitBatch, CommitPoint, KnowledgeCutoff, MAIN_WORLD, Model, SqliteCell,
@@ -24,7 +25,6 @@ use norn_kernel::{
     ACTION_CALL_TYPE, ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, DecisionTurn,
     FactEvent, LogicalTime, TypeCatalog, World, commit_action,
 };
-use query_support::*;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},

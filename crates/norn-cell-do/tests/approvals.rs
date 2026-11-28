@@ -13,14 +13,13 @@
     reason = "dispatch correspondence"
 )]
 
-#[path = "support/step_cell.rs"]
-mod step_cell;
-use norn_cell::engine::SqlEngine;
-use serde_json::{Value, json};
-use step_cell::{
+use super::step_cell;
+use super::step_cell::{
     APPROVER, Cell, FLOW_ID, MELT_ACTION, MEMBER, NOW, OPERATOR, SCOPE, call, call_at, call_with,
     cell, melt_body,
 };
+use norn_cell::engine::SqlEngine;
+use serde_json::{Value, json};
 
 const APPROVAL_ID: &str = "ops.melt_approval";
 

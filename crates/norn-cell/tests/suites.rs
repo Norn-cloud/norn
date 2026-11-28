@@ -14,6 +14,14 @@
     reason = "each suite keeps the visibility and the shared helpers it had as its own test binary"
 )]
 
+// Shared test support, compiled once for every suite in this binary.
+mod common;
+#[cfg(all(feature = "duckdb", feature = "native"))]
+#[path = "support/dataset_cell.rs"]
+mod dataset_cell;
+mod quantity_support;
+mod query_support;
+
 #[cfg(all(feature = "duckdb", feature = "native"))]
 #[path = "analytics_backend.rs"]
 mod analytics_backend;

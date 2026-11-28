@@ -15,12 +15,10 @@
 //! - Exports (`export_objects` sealed `DisclosedExportPermit` fail-closed gate)
 
 #[cfg(not(target_arch = "wasm32"))]
-#[path = "../../norn-cell/tests/support/governed.rs"]
-mod governed;
+use super::governed;
 
 #[cfg(not(target_arch = "wasm32"))]
-#[path = "support/hosted_read.rs"]
-mod hosted_read;
+use super::hosted_read;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(

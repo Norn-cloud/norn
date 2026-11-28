@@ -337,13 +337,10 @@ fn a_cursor_at_the_cursor_bound_reaches_the_route() {
     assert_eq!(body["diagnostics"][0]["code"], "query.cursor_invalid");
 }
 
-#[path = "../../norn-cell/tests/support/governed.rs"]
-mod governed;
-
 /// Studio serves these exact refusals for queries against its typed grid.
 #[test]
 fn studio_object_refusals_match_the_served_routes() {
-    use governed::GovernedCommit as _;
+    use super::governed::GovernedCommit as _;
     use norn_cell::{CommitBatch, FactWriteRow, MAIN_WORLD};
     use serde_json::json;
 

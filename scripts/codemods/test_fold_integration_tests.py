@@ -97,6 +97,7 @@ class AllowRatchetTests(unittest.TestCase):
             "norn-authoring",
             "norn-builtins",
             "norn-canonical",
+            "norn-checker-wasm",
             "norn-datalog",
             "norn-testkit",
         ):
@@ -105,6 +106,62 @@ class AllowRatchetTests(unittest.TestCase):
             generated = fold.suites_source(crate, crate.foldable(), {})
             self.assertNotIn("#![allow(", generated)
         self.assertTrue(fold._needs_suite_allows(fold.Crate("norn-api")))
+
+    def test_deduplicated_crates_drop_duplicate_mod_allow(self) -> None:
+        for crate_dir in (
+            "norn-api",
+            "norn-decisions",
+            "norn-expr",
+            "norn-formats",
+            "norn-ir",
+            "norn-projections",
+        ):
+            crate = fold.Crate(crate_dir)
+            self.assertFalse(fold._needs_duplicate_mod_allow(crate))
+            generated = fold.suites_source(crate, crate.foldable(), {})
+            self.assertNotIn("clippy::duplicate_mod", generated)
+        for crate_dir in ("norn-cell", "norn-cell-do", "norn-checker", "norn-kernel"):
+            crate = fold.Crate(crate_dir)
+            self.assertTrue(fold._needs_duplicate_mod_allow(crate))
+            generated = fold.suites_source(crate, crate.foldable(), {})
+            self.assertIn("clippy::duplicate_mod", generated)
+
+    def test_pinned_target_stays_outside_foldable_targets(self) -> None:
+        crate = fold.Crate("norn-checker-wasm")
+        names = [target["name"] for target in crate.foldable()]
+        self.assertNotIn("parity", names)
+        self.assertEqual(names, ["admit_question", "restatement"])
+
+    def test_shared_support_block_roundtrips_and_rejects_inner_attrs(self) -> None:
+        sample = (
+            "//! header\n"
+            "#![allow(\n"
+            "    dead_code,\n"
+            "    unreachable_pub,\n"
+            "    reason = \"each suite keeps the visibility it had as its own test binary\"\n"
+            ")]\n\n"
+            f"{fold.SHARED_SUPPORT_HEADER}\n"
+            "#[allow(\n"
+            "    clippy::expect_used,\n"
+            "    reason = \"shared fixture\"\n"
+            ")]\n"
+            "#[path = \"support/hosted_read.rs\"]\n"
+            "mod hosted_read;\n"
+            "use hosted_read::Mapping;\n\n"
+            "#[cfg(feature = \"native\")]\n"
+            "#[path = \"alpha.rs\"]\n"
+            "mod alpha;\n"
+        )
+        support = fold.parse_shared_support(sample)
+        self.assertEqual(support[0], fold.SHARED_SUPPORT_HEADER)
+        self.assertEqual(fold.shared_support_names(support), {"hosted_read", "Mapping"})
+        parsed = fold.parse_suites(sample)
+        self.assertEqual(list(parsed.keys()), ["alpha"])
+        self.assertEqual(parsed["alpha"]["cfg"], 'feature = "native"')
+
+        bad = f"{fold.SHARED_SUPPORT_HEADER}\n#![allow(warnings)]\nmod support;\n"
+        with self.assertRaises(fold.Refused):
+            fold.parse_shared_support(bad)
 
     def test_uses_extern_crate_detects_real_shadowing_but_allows_local_module_import(self) -> None:
         self.assertTrue(fold.uses_extern_crate("use geo::Point;\n", "geo"))

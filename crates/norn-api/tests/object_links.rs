@@ -11,9 +11,7 @@
     reason = "object link correspondence"
 )]
 
-#[path = "support/hosted_read.rs"]
-mod hosted_read;
-use hosted_read::Mapping;
+use super::hosted_read::Mapping;
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::object_links::LINK_COUNT_BOUND;
@@ -23,9 +21,8 @@ use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
 // #1485 S6: fixtures write through the kernel path, never the raw door.
-#[path = "../../norn-cell/tests/support/governed.rs"]
-mod governed;
-use governed::GovernedCommit as _;
+
+use super::governed::GovernedCommit as _;
 use norn_cell::{CellStore, CommitBatch, LinkChange, MAIN_WORLD, Model};
 use norn_ir::FactChange;
 use std::collections::BTreeMap;

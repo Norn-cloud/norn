@@ -3,9 +3,9 @@
     missing_docs,
     reason = "exact wire conformance assertions"
 )]
+use super::query_support;
 use norn_cell::compute::{Frontier, Member, QueryRow};
 use norn_ir::{Decimal, RuntimeValue};
-mod query_support;
 use std::collections::BTreeMap;
 
 #[test]

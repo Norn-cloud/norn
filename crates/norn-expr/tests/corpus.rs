@@ -36,7 +36,7 @@
 //! A unary row's subject type is derived from its `$` value; a standard row
 //! is checked against `json`.
 
-mod support;
+use super::support;
 
 use std::fmt::Write as _;
 

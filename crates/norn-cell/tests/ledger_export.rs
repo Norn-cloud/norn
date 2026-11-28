@@ -8,7 +8,7 @@
 
 //! Per-commit export, independent integrity verification, and interrupted-upload recovery.
 
-mod common;
+use super::common;
 
 use norn_cell::export::{Exporter, MANIFEST_PATH, object_path};
 use norn_cell::test_door::TestCommit as _;

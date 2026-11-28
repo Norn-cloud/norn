@@ -5,14 +5,14 @@
     missing_docs,
     reason = "native delta conformance"
 )]
-mod query_support;
+
+use super::query_support::*;
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{
     CommitBatch, KnowledgeCutoff,
     compute::{Engine, QueryContext, ivm::IncrementalQuestion},
 };
 use norn_kernel::LogicalTime;
-use query_support::*;
 
 /// [`query_support::load_batch`], committed raw (this suite is compiled in
 /// the crate, #1485 S6).

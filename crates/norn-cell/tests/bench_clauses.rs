@@ -9,8 +9,7 @@
     missing_docs,
     reason = "benchmark scenarios"
 )]
-#[path = "stress_purchase.rs"]
-mod stress;
+use super::stress_purchase as stress;
 use norn_checker::{EntityArtifactSetContext, check_artifact_set};
 use norn_ir::{ArtifactEnvelope, DiagnosticSeverity};
 use norn_kernel::{ActionOutcome, TypeCatalog};

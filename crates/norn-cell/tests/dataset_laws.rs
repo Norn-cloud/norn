@@ -17,14 +17,14 @@
     reason = "set-based versus per-row correspondence"
 )]
 
-#[path = "support/dataset_cell.rs"]
-mod support;
+use super::dataset_cell as support;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::io::Write as _;
 
 use super::analytics_backend::{Engine, Settings};
+use super::dataset_cell::{Cell, Field};
 use norn_cell::analytics::{
     FileFormat, FileSource, LandRequest, LandResponse, LoadRequest, ResidueRow, SettleRequest,
     StoreRequest, StoredObject, TenantId,
@@ -34,7 +34,6 @@ use norn_ir::RuntimeValue as Value;
 use norn_kernel::{LogicalTime, ObservationId, Observed, Provenance};
 use proptest::strategy::Strategy as _;
 use serde_json::json;
-use support::{Cell, Field};
 
 const TYPE: &str = "bench.RetailLine";
 const FIELDS: [&str; 8] = [

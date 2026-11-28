@@ -14,9 +14,7 @@
     reason = "Studio fixture correspondence: one synthetic shop is built in one function"
 )]
 
-#[path = "support/hosted_read.rs"]
-mod hosted_read;
-use hosted_read::Mapping;
+use super::hosted_read::Mapping;
 use norn_api::authz::{AccessRequest, Authorizer, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::refusal::Refusal;
@@ -27,9 +25,8 @@ use norn_api::transform_routes::{
 };
 use norn_cell::engine::NativeEngine;
 // #1485 S6: fixtures write through the kernel path, never the raw door.
-#[path = "../../norn-cell/tests/support/governed.rs"]
-mod governed;
-use governed::GovernedCommit as _;
+
+use super::governed::GovernedCommit as _;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, MAIN_WORLD};
 use norn_ir::{Decimal, ObjectTypeDef, RuntimeValue as V};
 use norn_kernel::LogicalTime;

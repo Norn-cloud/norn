@@ -7,7 +7,7 @@
     missing_docs,
     reason = "integration tests"
 )]
-mod support;
+use super::support;
 use norn_formats::{
     SchemaImporter,
     xsd::{XsdConfig, XsdFile, XsdReader},

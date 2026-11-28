@@ -30,15 +30,13 @@
 //! The stale result (a late attempt) and the duplicate result (a redelivery)
 //! must emit nothing and leave the Run where it was.
 
-mod support;
-
 use std::collections::BTreeMap;
 
+use super::support::{binding, member, read_json, repo_root, run, value};
 use norn_decisions::AdmittedDecision;
 use norn_expr::{EvaluationBudget, Value};
 use norn_ir::RuleRoot;
 use serde_json::{Value as Json, json};
-use support::{binding, member, read_json, repo_root, run, value};
 
 fn to_json(value: &Value) -> Json {
     match value {

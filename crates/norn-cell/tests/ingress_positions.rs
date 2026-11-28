@@ -1,7 +1,7 @@
 #![cfg(feature = "native")]
 #![allow(clippy::expect_used, missing_docs, reason = "integration-test crate")]
 
-mod common;
+use super::common;
 
 use norn_cell::engine::{MAX_SAFE_INTEGER, NativeEngine, SqlEngine, SqlValue};
 use norn_cell::store::MAX_OBSERVATION_BYTES;

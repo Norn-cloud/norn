@@ -8,12 +8,9 @@
     missing_docs,
     reason = "object read correspondence"
 )]
-#[path = "../../norn-cell/tests/query_support/mod.rs"]
-mod query_support;
+use super::query_support;
 
-#[path = "support/hosted_read.rs"]
-mod hosted_read;
-use hosted_read::Mapping;
+use super::hosted_read::Mapping;
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::object_routes::{ObjectAccess, get_object, get_object_page};
@@ -21,10 +18,10 @@ use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
 // #1485 S6: fixtures write through the kernel path, never the raw door.
+use super::query_support::governed::GovernedCommit as _;
+use super::query_support::{TYPE, capture_quality, fixture, fixture_writes, put};
 use norn_cell::{CellStore, CommitBatch, MAIN_WORLD, Model, ObjectRecord};
 use norn_kernel::authz::AccessRequest as PdpRequest;
-use query_support::governed::GovernedCommit as _;
-use query_support::{TYPE, capture_quality, fixture, fixture_writes, put};
 use serde_json::json;
 use std::collections::BTreeMap;
 

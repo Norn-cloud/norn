@@ -5,11 +5,11 @@
     missing_docs,
     reason = "retained engine answer documents"
 )]
-mod query_support;
+
+use super::query_support::*;
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CommitBatch, KnowledgeCutoff};
 use norn_kernel::LogicalTime;
-use query_support::*;
 
 /// [`query_support::load_batch`], committed raw (this suite is compiled in
 /// the crate, #1485 S6).

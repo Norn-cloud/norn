@@ -16,8 +16,7 @@ use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::server::{self, Response};
 use serde_json::{Value, json};
 
-#[path = "support/tools_list.rs"]
-mod tools_list;
+use super::tools_list;
 
 const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
 const VIEWER: Option<&str> = Some("Bearer fixture:admin@demo");

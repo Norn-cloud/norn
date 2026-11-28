@@ -9,7 +9,7 @@
 //! transfer requester and releasing custodian. The fixture is generated from
 //! `tools/norn-ts/fixtures/decisions/governed-create.source.ts`.
 
-mod quantity_support;
+use super::quantity_support;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

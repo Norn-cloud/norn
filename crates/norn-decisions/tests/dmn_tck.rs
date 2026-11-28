@@ -31,14 +31,12 @@
 //! writes). A passing subset is evidence for the FEEL-free decision-table
 //! subset, not DMN or FEEL conformance.
 
-mod support;
-
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use super::support::{admit_fixture, check_fixture, read_json, run, value};
 use norn_expr::EvaluationBudget;
 use serde_json::Value as Json;
-use support::{admit_fixture, check_fixture, read_json, run, value};
 
 fn dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dmn_tck")

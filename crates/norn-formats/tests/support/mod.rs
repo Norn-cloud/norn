@@ -122,6 +122,17 @@ pub(crate) fn check_conformance<I: SchemaImporter>(
     let first = importer.import(source, config);
     let second = importer.import(source, config);
 
+    let ids = check_determinism_and_canonical(&first, &second);
+    check_loss_report(importer, source, config, &first, &ids);
+    check_pins(&first);
+    check_artifact_layers(&first, schema_prefix);
+    first
+}
+
+fn check_determinism_and_canonical(
+    first: &SchemaImport,
+    second: &SchemaImport,
+) -> BTreeSet<String> {
     // 1. Determinism: byte-identical canonical output.
     let first_json = first.canonical_json().expect("canonical JSON");
     let second_json = second.canonical_json().expect("canonical JSON");
@@ -150,7 +161,16 @@ pub(crate) fn check_conformance<I: SchemaImporter>(
         .filter(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
         .collect();
     assert_eq!(errors.len(), 0, "importer errors: {errors:#?}");
+    ids
+}
 
+fn check_loss_report<I: SchemaImporter>(
+    importer: &I,
+    source: I::Source<'_>,
+    config: &I::Config,
+    first: &SchemaImport,
+    ids: &BTreeSet<String>,
+) {
     // 4. Loss report: zero findings, zero unexplained, closed drop reasons,
     //    and it round-trips through its typed form.
     let inventory = importer.inventory(source, config);
@@ -191,19 +211,23 @@ pub(crate) fn check_conformance<I: SchemaImporter>(
             | Disposition::Unexplained => None,
         })
         .collect();
-    for id in &ids {
+    for id in ids {
         assert!(
             targeted.contains(id.as_str()),
             "{id} is the target of no source element"
         );
     }
+}
 
+fn check_pins(first: &SchemaImport) {
     // 5. Pins: every input pinned; tables pinned when evaluated.
     assert_ne!(first.provenance.inputs, []);
     if first.provenance.evaluator.is_some() {
         assert_ne!(first.provenance.tables, [], "evaluator without table pins");
     }
+}
 
+fn check_artifact_layers(first: &SchemaImport, schema_prefix: &str) {
     // 6. Artifact-set checker: zero findings per layer.
     let schema = first
         .source_schema_envelope(schema_prefix)
@@ -239,5 +263,4 @@ pub(crate) fn check_conformance<I: SchemaImporter>(
         );
         base.extend(layer.artifacts.iter().cloned());
     }
-    first
 }

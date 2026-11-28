@@ -7,8 +7,8 @@
     missing_docs,
     reason = "native acceptance assertions"
 )]
-mod query_support;
 
+use super::query_support::*;
 use norn_cell::compute::{Engine, QueryContext, QueryResult, ivm::IncrementalQuestion};
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{
@@ -17,7 +17,6 @@ use norn_cell::{
 use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::{Decimal, FactRef};
 use norn_kernel::LogicalTime;
-use query_support::*;
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
