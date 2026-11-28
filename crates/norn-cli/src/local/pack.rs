@@ -2,18 +2,20 @@
 //!
 //! Loads compiled JSON artifact files/directories (bounded, no symlinks) or
 //! compiles `.ts`/`.py` authoring sources in-process via `norn-authoring` /
-//! `norn-authoring-py`, merging optional repeatable `--base` packs cleanly.
+//! `norn-authoring-py`, keeping `--base` layers strictly separate from tenant
+//! app artifacts and enforcing one aggregate byte budget across all packs.
 
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
+use norn_ir::RuntimeValue;
 use serde_json::value::RawValue;
 
 use crate::authoring::{AuthoringFailure, compile_source_artifacts};
 use crate::cell::{read_file_or_json_dir_bounded, read_regular_file_bounded};
 
-const MAX_PACK_BYTES: u64 = 16 * 1024 * 1024;
+pub(super) const MAX_PACK_BYTES: u64 = 16 * 1024 * 1024;
+const AGGREGATE_BUDGET_LABEL: &str = "16 MiB aggregate pack input limit";
 
 /// Failure classifying pack loading errors between compiler diagnostics (exit `1`)
 /// and usage/IO failures (exit `2`).
@@ -38,59 +40,122 @@ pub(crate) enum PackInput {
     Artifacts(PathBuf),
 }
 
-/// Load a JSON artifact file (array or single envelope) or directory of `*.json`
-/// envelopes as exact [`RawValue`]s preserving numeric tokens.
-pub(crate) fn load_json_artifacts(path: &Path) -> Result<Vec<Box<RawValue>>, PackLoadError> {
-    let raw = read_file_or_json_dir_bounded(path, MAX_PACK_BYTES, "16 MiB pack input limit")
+/// Separate loaded `--base` and tenant app artifact layers.
+///
+/// Keeping both layers distinct ensures tenant app packs always flow through
+/// `apply_definitions` and can never enter trusted base provisioning or spoof
+/// reserved `core.*`/`std.*` namespaces.
+#[derive(Debug, Default)]
+pub(crate) struct LoadedPacks {
+    pub(crate) base_artifacts: Vec<Box<RawValue>>,
+    pub(crate) app_artifacts: Vec<Box<RawValue>>,
+}
+
+fn charge_budget(budget: &mut u64, bytes: usize, origin: &Path) -> Result<(), PackLoadError> {
+    let used = u64::try_from(bytes)
+        .map_err(|err| PackLoadError::Io(format!("{}: {err}", origin.display())))?;
+    *budget = budget.checked_sub(used).ok_or_else(|| {
+        PackLoadError::Io(format!(
+            "{}: combined packs exceed {AGGREGATE_BUDGET_LABEL}",
+            origin.display()
+        ))
+    })?;
+    Ok(())
+}
+
+fn load_json_artifacts_budgeted(
+    path: &Path,
+    budget: &mut u64,
+) -> Result<Vec<Box<RawValue>>, PackLoadError> {
+    let raw = read_file_or_json_dir_bounded(path, *budget, AGGREGATE_BUDGET_LABEL)
         .map_err(PackLoadError::Io)?;
+    charge_budget(budget, raw.len(), path)?;
     parse_raw_artifact_list(&raw, path)
 }
 
-/// Compile a `.ts`/`.py` source file, directory, or `norn.json` project into exact [`RawValue`]s.
-pub(crate) fn load_source_artifacts(
+fn load_source_artifacts_budgeted(
     path: &Path,
     org: &str,
     env: &str,
+    budget: &mut u64,
 ) -> Result<Vec<Box<RawValue>>, PackLoadError> {
+    if *budget == 0 {
+        return Err(PackLoadError::Io(format!(
+            "{}: combined packs exceed {AGGREGATE_BUDGET_LABEL}",
+            path.display()
+        )));
+    }
     let compiled = compile_source_artifacts(path, org, env)?;
+    charge_budget(budget, compiled.len(), path)?;
     parse_raw_artifact_list(&compiled, path)
 }
 
-/// Auto-detect whether a `--base` path is authoring sources (`.ts`/`.py`/`norn.json`)
-/// or JSON artifacts, and load it accordingly.
-pub(crate) fn load_auto_pack(
+fn load_auto_pack_budgeted(
     path: &Path,
     org: &str,
     env: &str,
+    budget: &mut u64,
 ) -> Result<Vec<Box<RawValue>>, PackLoadError> {
     if is_authoring_target(path)? {
-        load_source_artifacts(path, org, env)
+        load_source_artifacts_budgeted(path, org, env, budget)
     } else {
-        load_json_artifacts(path)
+        load_json_artifacts_budgeted(path, budget)
     }
 }
 
-/// Load all repeatable `--base` packs followed by the optional app pack,
-/// deduplicating by `artifactId` across packs (later pack wins) while keeping
-/// any intra-pack duplicates intact for the real admission gate to diagnose.
-pub(crate) fn load_combined_packs(
+/// Load all repeatable `--base` packs and the optional app pack under one shared
+/// 16 MiB aggregate byte budget, keeping base and app layers strictly separate
+/// and refusing duplicate `artifactId`s in `--base` packs fail-closed.
+pub(crate) fn load_packs(
     base_paths: &[PathBuf],
     app_pack: Option<&PackInput>,
     org: &str,
     env: &str,
-) -> Result<Vec<Box<RawValue>>, PackLoadError> {
-    let mut layers: Vec<Vec<Box<RawValue>>> = Vec::new();
+) -> Result<LoadedPacks, PackLoadError> {
+    load_packs_with_budget(base_paths, app_pack, org, env, MAX_PACK_BYTES)
+}
+
+/// Load repeatable `--base` packs and the optional app pack under an explicit
+/// aggregate byte budget `total_budget`.
+pub(super) fn load_packs_with_budget(
+    base_paths: &[PathBuf],
+    app_pack: Option<&PackInput>,
+    org: &str,
+    env: &str,
+    total_budget: u64,
+) -> Result<LoadedPacks, PackLoadError> {
+    let mut budget = total_budget;
+    let mut base_artifacts = Vec::new();
+    let mut seen_base_ids = BTreeSet::new();
     for base_path in base_paths {
-        layers.push(load_auto_pack(base_path, org, env)?);
+        let loaded = load_auto_pack_budgeted(base_path, org, env, &mut budget)?;
+        for raw in loaded {
+            let Some(id) = artifact_id_of(&raw) else {
+                return Err(PackLoadError::Io(format!(
+                    "{}: base artifact envelope must declare string artifactId",
+                    base_path.display()
+                )));
+            };
+            if !seen_base_ids.insert(id.clone()) {
+                return Err(PackLoadError::Io(format!(
+                    "{}: duplicate base artifactId `{id}`",
+                    base_path.display()
+                )));
+            }
+            base_artifacts.push(raw);
+        }
     }
-    if let Some(app) = app_pack {
-        let artifacts = match app {
-            PackInput::Source(path) => load_source_artifacts(path, org, env)?,
-            PackInput::Artifacts(path) => load_json_artifacts(path)?,
-        };
-        layers.push(artifacts);
-    }
-    merge_pack_layers(layers)
+    let app_artifacts = match app_pack {
+        None => Vec::new(),
+        Some(PackInput::Source(path)) => {
+            load_source_artifacts_budgeted(path, org, env, &mut budget)?
+        }
+        Some(PackInput::Artifacts(path)) => load_json_artifacts_budgeted(path, &mut budget)?,
+    };
+    Ok(LoadedPacks {
+        base_artifacts,
+        app_artifacts,
+    })
 }
 
 /// Load one step/request pack from either a `source` or `artifacts` path.
@@ -99,9 +164,10 @@ pub(crate) fn load_pack_input(
     org: &str,
     env: &str,
 ) -> Result<Vec<Box<RawValue>>, PackLoadError> {
+    let mut budget = MAX_PACK_BYTES;
     match input {
-        PackInput::Source(path) => load_source_artifacts(path, org, env),
-        PackInput::Artifacts(path) => load_json_artifacts(path),
+        PackInput::Source(path) => load_source_artifacts_budgeted(path, org, env, &mut budget),
+        PackInput::Artifacts(path) => load_json_artifacts_budgeted(path, &mut budget),
     }
 }
 
@@ -121,10 +187,12 @@ pub(crate) fn encode_definitions_change_body(
     }
 }
 
-/// Read a single bounded regular JSON file (refusing symlinks) and parse as [`Value`].
-pub(crate) fn read_json_file(path: &Path, label: &str) -> Result<Value, String> {
+/// Read a single bounded regular JSON file (refusing symlinks) as an exact
+/// [`RuntimeValue`], preserving full decimal precision without `f64` rounding.
+pub(crate) fn read_runtime_json_file(path: &Path, label: &str) -> Result<RuntimeValue, String> {
     let text = read_regular_file_bounded(path, MAX_PACK_BYTES, label)?;
-    serde_json::from_str(&text).map_err(|err| format!("{}: invalid JSON: {err}", path.display()))
+    RuntimeValue::from_json_text(&text)
+        .map_err(|err| format!("{}: invalid JSON: {err}", path.display()))
 }
 
 fn parse_raw_artifact_list(raw: &str, origin: &Path) -> Result<Vec<Box<RawValue>>, PackLoadError> {
@@ -190,37 +258,12 @@ fn is_authoring_target(path: &Path) -> Result<bool, PackLoadError> {
 }
 
 fn artifact_id_of(raw: &RawValue) -> Option<String> {
-    serde_json::from_str::<Value>(raw.get())
+    RuntimeValue::from_json_text(raw.get())
         .ok()
         .and_then(|value| {
             value
                 .get("artifactId")
-                .and_then(Value::as_str)
+                .and_then(RuntimeValue::as_str)
                 .map(str::to_owned)
         })
-}
-
-fn merge_pack_layers(layers: Vec<Vec<Box<RawValue>>>) -> Result<Vec<Box<RawValue>>, PackLoadError> {
-    // Track which later layer overrides a given artifactId so cross-layer
-    // overrides replace cleanly while intra-layer duplicates remain untouched.
-    let mut last_layer_by_id: BTreeMap<String, usize> = BTreeMap::new();
-    for (layer_idx, layer) in layers.iter().enumerate() {
-        for raw in layer {
-            if let Some(id) = artifact_id_of(raw) {
-                last_layer_by_id.insert(id, layer_idx);
-            }
-        }
-    }
-    let mut merged = Vec::new();
-    for (layer_idx, layer) in layers.into_iter().enumerate() {
-        for raw in layer {
-            if let Some(id) = artifact_id_of(&raw)
-                && last_layer_by_id.get(&id).copied() != Some(layer_idx)
-            {
-                continue;
-            }
-            merged.push(raw);
-        }
-    }
-    Ok(merged)
 }

@@ -1,22 +1,24 @@
 //! `norn dev`: loopback-only HTTP/1.1 local development cell over `LocalCell`.
 //!
 //! Refuses non-loopback bind addresses fail-closed, bounds request head and body
-//! sizes (`MAX_BODY_BYTES = 2 MiB`), requires explicit scope and actor/role
-//! credentials on every non-`/health` route, and dispatches directly to the real
-//! `norn-api` services.
+//! sizes (`MAX_BODY_BYTES = 2 MiB`), enforces a whole-request deadline, requires
+//! a per-server local session secret (`NORN_DEV_TOKEN` or cryptographically
+//! random ephemeral token) on every HTTP request, rejects duplicate or
+//! conflicting authority/scope headers fail-closed (`400`), and dispatches
+//! directly to the real `norn-api` services.
 
 use std::collections::BTreeMap;
 use std::io::{BufReader, Write as _};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::Args;
 use norn_api::actions::{ActionAnswer, ActionQuery};
 use norn_api::authz::read_denied;
 use norn_api::cell_definitions::{APPLY_PATH, PLAN_PATH};
-use norn_api::local_cell::{LocalActor, LocalCell};
+use norn_api::local_cell::LocalCell;
 use norn_api::object_query::ObjectQueryParams;
 use norn_api::refusal::Refusal;
 use norn_api::routes::DefinitionsQuery;
@@ -26,9 +28,13 @@ use serde_json::{Map, Value};
 use crate::authoring::CommandOutput;
 
 use super::boot_local_cell;
+use super::dev_auth::{
+    DEV_TOKEN_ENV, DevAuth, authenticate_dev_session, extract_actor, single_header,
+    validate_request_headers,
+};
 use super::http_wire::{
     HttpRequest, HttpResponse, disclosed_ok, encoded_json_response, method_not_allowed,
-    parse_query, percent_decode, read_http_request, refusal_response, synthetic_refusal,
+    parse_query, percent_decode_path, read_http_request, refusal_response, synthetic_refusal,
     write_http_response,
 };
 use super::pack::PackInput;
@@ -75,10 +81,15 @@ pub(super) fn parse_loopback_bind(bind: &str) -> Result<SocketAddr, String> {
     Ok(addr)
 }
 
-/// Execute `norn dev`: verify loopback bind, boot the local cell, and serve HTTP/1.1.
+/// Execute `norn dev`: verify loopback bind, generate/load session token, boot
+/// the local cell, and serve HTTP/1.1.
 pub(crate) fn execute_dev(args: &DevArgs) -> CommandOutput {
     let addr = match parse_loopback_bind(&args.bind) {
         Ok(addr) => addr,
+        Err(err) => return CommandOutput::usage_or_io_error(&err),
+    };
+    let auth = match DevAuth::from_env_or_generate() {
+        Ok(auth) => auth,
         Err(err) => return CommandOutput::usage_or_io_error(&err),
     };
     let app_pack = if let Some(source) = &args.source {
@@ -106,18 +117,34 @@ pub(crate) fn execute_dev(args: &DevArgs) -> CommandOutput {
         }
     };
     let bound = listener.local_addr().unwrap_or(addr);
+    let mode = if args.db.is_some() {
+        "sqlite"
+    } else {
+        "in-memory"
+    };
+    let token_banner = if auth.from_env() {
+        "<from NORN_DEV_TOKEN environment>"
+    } else {
+        auth.token()
+    };
+    let mut stderr = std::io::stderr().lock();
     let _written = writeln!(
-        std::io::stderr().lock(),
-        "norn dev listening on http://{bound} (org={}, env={})",
-        args.org,
-        args.env
+        stderr,
+        "norn dev listening on http://{bound} (org={}, env={}, storage={mode})",
+        args.org, args.env
     );
-    serve_listener(&listener, &cell);
+    let _written = writeln!(
+        stderr,
+        "norn dev trust model: loopback-only; every request requires X-Norn-Dev-Token or Authorization: Bearer <token>; X-Norn-Actor + X-Norn-Roles simulate callers only after token auth"
+    );
+    let _written = writeln!(stderr, "{DEV_TOKEN_ENV}={token_banner}");
+    drop(stderr);
+    serve_listener(&listener, &cell, &auth);
     CommandOutput::ok(String::new())
 }
 
 /// Serve incoming HTTP/1.1 connections on `listener` until it closes.
-pub(super) fn serve_listener(listener: &TcpListener, cell: &LocalCell) {
+pub(super) fn serve_listener(listener: &TcpListener, cell: &LocalCell, auth: &DevAuth) {
     let active = AtomicUsize::new(0);
     std::thread::scope(|scope| {
         for stream in listener.incoming().flatten() {
@@ -128,7 +155,7 @@ pub(super) fn serve_listener(listener: &TcpListener, cell: &LocalCell) {
             let _spawned = std::thread::Builder::new()
                 .name("norn-dev-http".to_owned())
                 .spawn_scoped(scope, move || {
-                    let _handled = handle_connection(&stream, cell);
+                    let _handled = handle_connection(&stream, cell, auth);
                     drop(slot);
                 });
         }
@@ -163,21 +190,49 @@ impl Drop for ThreadSlot<'_> {
     }
 }
 
-/// Handle one bounded HTTP/1.1 request on `stream` and close cleanly.
-pub(super) fn handle_connection(stream: &TcpStream, cell: &LocalCell) -> std::io::Result<()> {
-    stream.set_read_timeout(Some(IO_TIMEOUT))?;
-    stream.set_write_timeout(Some(IO_TIMEOUT))?;
+/// Handle one bounded HTTP/1.1 request on `stream` under the default 30s whole-request deadline.
+pub(super) fn handle_connection(
+    stream: &TcpStream,
+    cell: &LocalCell,
+    auth: &DevAuth,
+) -> std::io::Result<()> {
+    handle_connection_with_timeout(stream, cell, auth, IO_TIMEOUT)
+}
+
+/// Handle one bounded HTTP/1.1 request on `stream` under an explicit whole-request `timeout`.
+pub(super) fn handle_connection_with_timeout(
+    stream: &TcpStream,
+    cell: &LocalCell,
+    auth: &DevAuth,
+    timeout: Duration,
+) -> std::io::Result<()> {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| std::io::Error::other("request deadline overflow"))?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
     stream.set_nodelay(true)?;
     let mut reader = BufReader::new(stream);
-    let response = match read_http_request(&mut reader) {
-        Ok(request) => dispatch_http_request(cell, &request),
+    let response = match read_http_request(&mut reader, deadline) {
+        Ok(request) => dispatch_http_request(cell, auth, &request),
         Err(resp) => resp,
     };
     write_http_response(stream, &response)
 }
 
-/// Dispatch one parsed HTTP/1.1 request against `cell`.
-pub(super) fn dispatch_http_request(cell: &LocalCell, req: &HttpRequest) -> HttpResponse {
+/// Dispatch one parsed HTTP/1.1 request against `cell` after validating headers
+/// and authenticating the local session secret.
+pub(super) fn dispatch_http_request(
+    cell: &LocalCell,
+    auth: &DevAuth,
+    req: &HttpRequest,
+) -> HttpResponse {
+    if let Err(resp) = validate_request_headers(&req.headers) {
+        return resp;
+    }
+    if let Err(resp) = authenticate_dev_session(&req.headers, auth) {
+        return resp;
+    }
     if req.path == "/health" {
         if req.method != "GET" {
             return method_not_allowed("GET");
@@ -301,7 +356,7 @@ fn route_action(cell: &LocalCell, req: &HttpRequest, raw_segment: &str) -> HttpR
     if stripped.is_empty() || stripped.contains('/') {
         return refusal_response(&Refusal::invalid("actionId path segment is invalid"));
     }
-    let action_id = match percent_decode(stripped) {
+    let action_id = match percent_decode_path(stripped) {
         Ok(id) => id,
         Err(err) => return refusal_response(&Refusal::invalid(err)),
     };
@@ -331,7 +386,7 @@ fn route_objects(cell: &LocalCell, req: &HttpRequest, rest: &str) -> HttpRespons
     let parts: Vec<&str> = rest.split('/').collect();
     match parts.as_slice() {
         [raw_type] if !raw_type.is_empty() => {
-            let object_type = match percent_decode(raw_type) {
+            let object_type = match percent_decode_path(raw_type) {
                 Ok(ty) => ty,
                 Err(err) => return refusal_response(&Refusal::invalid(err)),
             };
@@ -347,10 +402,13 @@ fn route_objects(cell: &LocalCell, req: &HttpRequest, rest: &str) -> HttpRespons
             }
         }
         [raw_type, raw_id] if !raw_type.is_empty() && !raw_id.is_empty() => {
-            let (object_type, id) = match (percent_decode(raw_type), percent_decode(raw_id)) {
-                (Ok(ty), Ok(id)) => (ty, id),
-                (Err(err), _) | (_, Err(err)) => return refusal_response(&Refusal::invalid(err)),
-            };
+            let (object_type, id) =
+                match (percent_decode_path(raw_type), percent_decode_path(raw_id)) {
+                    (Ok(ty), Ok(id)) => (ty, id),
+                    (Err(err), _) | (_, Err(err)) => {
+                        return refusal_response(&Refusal::invalid(err));
+                    }
+                };
             match cell.get_object(&scope, actor.as_ref(), &object_type, &id) {
                 Ok(record) => disclosed_ok(&record),
                 Err(refusal) => refusal_response(&refusal),
@@ -371,16 +429,12 @@ fn extract_scope_and_query(
 ) -> Result<(ScopeQuery, BTreeMap<String, String>), HttpResponse> {
     let query_map =
         parse_query(&req.query).map_err(|err| refusal_response(&Refusal::invalid(err)))?;
-    let header_org = req
-        .headers
-        .get("x-norn-org-id")
-        .or_else(|| req.headers.get("x-norn-org"))
-        .cloned();
-    let header_env = req
-        .headers
-        .get("x-norn-environment-id")
-        .or_else(|| req.headers.get("x-norn-env"))
-        .cloned();
+    let header_org = single_header(&req.headers, "x-norn-org-id")
+        .or_else(|| single_header(&req.headers, "x-norn-org"))
+        .map(str::to_owned);
+    let header_env = single_header(&req.headers, "x-norn-environment-id")
+        .or_else(|| single_header(&req.headers, "x-norn-env"))
+        .map(str::to_owned);
     let query_org = query_map.get("orgId").cloned();
     let query_env = query_map.get("environmentId").cloned();
     if let (Some(q), Some(h)) = (&query_org, &header_org)
@@ -400,37 +454,4 @@ fn extract_scope_and_query(
         },
         query_map,
     ))
-}
-
-/// Extract explicit dev actor + roles from headers; fails closed (`None`) if absent or incomplete.
-fn extract_actor(headers: &BTreeMap<String, String>) -> Option<LocalActor> {
-    if let Some(actor_id) = headers.get("x-norn-actor") {
-        let trimmed = actor_id.trim();
-        let roles_raw = headers.get("x-norn-roles")?;
-        let roles = parse_role_list(roles_raw);
-        if trimmed.is_empty() || roles.is_empty() {
-            return None;
-        }
-        return Some(LocalActor::new(trimmed, roles));
-    }
-    if let Some(auth) = headers.get("authorization")
-        && let Some(token) = auth.strip_prefix("Bearer ")
-        && let Some(rest) = token.trim().strip_prefix("dev:")
-        && let Some((actor_id, roles_raw)) = rest.split_once(':')
-    {
-        let trimmed = actor_id.trim();
-        let roles = parse_role_list(roles_raw);
-        if !trimmed.is_empty() && !roles.is_empty() {
-            return Some(LocalActor::new(trimmed, roles));
-        }
-    }
-    None
-}
-
-fn parse_role_list(raw: &str) -> Vec<String> {
-    raw.split(',')
-        .map(str::trim)
-        .filter(|role| !role.is_empty())
-        .map(str::to_owned)
-        .collect()
 }

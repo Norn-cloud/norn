@@ -7,6 +7,7 @@ use norn_api::cell_definitions::{ApplyOutcome, DefinitionsApplied, DefinitionsPl
 use norn_api::privacy::{DisclosedObjectQueryPage, DisclosedQueriedObject, serialize_disclosed};
 use norn_api::refusal::Refusal;
 use norn_api::routes::DefsResponse;
+use norn_ir::{RuntimeObject, RuntimeValue};
 use serde_json::{Map, Value};
 
 use super::format_refusal;
@@ -29,48 +30,57 @@ pub(super) struct StepExpect {
     pub(super) replayed: Option<bool>,
     pub(super) object_type: Option<String>,
     pub(super) object_id: Option<String>,
-    pub(super) output_contains: Option<Map<String, Value>>,
+    pub(super) output_contains: Option<RuntimeObject>,
     pub(super) withheld: Option<bool>,
-    pub(super) fields: Option<Map<String, Value>>,
+    pub(super) fields: Option<RuntimeObject>,
     pub(super) count: Option<usize>,
     pub(super) min_count: Option<usize>,
 }
 
-/// Exact decimal equality across JSON number tokens and exact decimal strings.
-pub(super) fn exact_decimal_eq(left: &Value, right: &Value) -> bool {
-    let parse_dec = |val: &Value| match val {
-        Value::String(text) => norn_ir::Decimal::parse(text).ok(),
-        Value::Number(num) => norn_ir::Decimal::parse(&num.to_string()).ok(),
-        Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
-    };
-    matches!((parse_dec(left), parse_dec(right)), (Some(a), Some(b)) if a == b)
+/// Return true if `actual` matches `expected` using exact `RuntimeValue`
+/// semantics: exact normalized `Decimal` equality for numbers, exact byte-for-byte
+/// string equality for strings (never coercing strings to decimals), element-wise
+/// matching for arrays, and recursive subset matching for objects.
+pub(super) fn values_match(actual: &RuntimeValue, expected: &RuntimeValue) -> bool {
+    match expected {
+        RuntimeValue::Null => actual.is_null(),
+        RuntimeValue::Bool(exp) => actual.as_bool() == Some(*exp),
+        RuntimeValue::Number(exp) => actual.as_decimal() == Some(exp),
+        RuntimeValue::String(exp) => actual.as_str() == Some(exp.as_str()),
+        RuntimeValue::Array(exp) => actual.as_array().is_some_and(|act| {
+            act.len() == exp.len()
+                && act
+                    .iter()
+                    .zip(exp.iter())
+                    .all(|(av, ev)| values_match(av, ev))
+        }),
+        RuntimeValue::Object(exp) => actual.as_object().is_some_and(|act| {
+            exp.iter()
+                .all(|(k, v)| act.get(k).is_some_and(|av| values_match(av, v)))
+        }),
+    }
 }
 
-/// Return true if `actual` matches `expected` (with exact-decimal equivalence
-/// and recursive object-subset matching).
-pub(super) fn values_match(actual: &Value, expected: &Value) -> bool {
-    if actual == expected || exact_decimal_eq(actual, expected) {
-        return true;
-    }
-    if let (Value::Object(act), Value::Object(exp)) = (actual, expected) {
-        return exp
-            .iter()
-            .all(|(k, v)| act.get(k).is_some_and(|av| values_match(av, v)));
-    }
-    false
+fn render_runtime_value(value: &RuntimeValue) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_err| format!("{value:?}"))
 }
 
 /// Return `None` when every `(k, v)` in `subset` matches in `actual`, else a mismatch message.
-pub(super) fn object_contains(actual: &Value, subset: &Map<String, Value>) -> Option<String> {
+pub(super) fn object_contains(actual: &RuntimeValue, subset: &RuntimeObject) -> Option<String> {
     let Some(act_obj) = actual.as_object() else {
-        return Some(format!("expected JSON object, got {actual}"));
+        return Some(format!(
+            "expected JSON object, got {}",
+            render_runtime_value(actual)
+        ));
     };
     for (key, expected) in subset {
         match act_obj.get(key) {
             None => return Some(format!("missing expected field `{key}`")),
             Some(found) if !values_match(found, expected) => {
                 return Some(format!(
-                    "field `{key}` mismatch: expected {expected}, got {found}"
+                    "field `{key}` mismatch: expected {}, got {}",
+                    render_runtime_value(expected),
+                    render_runtime_value(found)
                 ));
             }
             Some(_) => {}
@@ -201,17 +211,13 @@ pub(super) fn check_plan_result(
                 ));
             }
             if let Some(expected_ripples) = &expect.ripple_ids {
-                let actual: Vec<&str> = plan
-                    .ripples
-                    .as_ref()
-                    .map(|report| {
-                        report
-                            .ripples
-                            .iter()
-                            .map(|entry| entry.artifact_id.as_str())
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let actual: Vec<&str> = plan.ripples.as_ref().map_or_else(Vec::new, |report| {
+                    report
+                        .ripples
+                        .iter()
+                        .map(|entry| entry.artifact_id.as_str())
+                        .collect()
+                });
                 for needed in expected_ripples {
                     if !actual.contains(&needed.as_str()) {
                         return Err(format!(
@@ -304,7 +310,7 @@ pub(super) fn check_action_result(
                 ));
             }
             if let Some(subset) = &expect.output_contains {
-                let wire = serde_json::to_value(&receipt).map_err(|err| err.to_string())?;
+                let wire = norn_ir::runtime::encode(&receipt)?;
                 if let Some(mismatch) = object_contains(&wire, subset) {
                     return Err(format!("outputContains failed: {mismatch}"));
                 }
@@ -340,8 +346,8 @@ pub(super) fn check_get_object_result(
             }
             if let Some(fields) = &expect.fields {
                 let raw = serialize_disclosed(&record).map_err(|err| format_refusal(&err))?;
-                let wire: Value = serde_json::from_str(&raw).map_err(|err| err.to_string())?;
-                let values = wire.get("values").unwrap_or(&Value::Null);
+                let wire = RuntimeValue::from_json_text(&raw).map_err(|err| err.to_string())?;
+                let values = wire.get("values").unwrap_or(&RuntimeValue::Null);
                 if let Some(mismatch) = object_contains(values, fields) {
                     return Err(format!("fields assertion failed: {mismatch}"));
                 }

@@ -11,7 +11,8 @@ use norn_api::local_cell::{LocalActor, LocalCell};
 use norn_api::object_query::ObjectQueryParams;
 use norn_api::routes::DefinitionsQuery;
 use norn_api::scope::ScopeQuery;
-use serde_json::{Map, Value};
+use norn_ir::{RuntimeObject, RuntimeValue};
+use serde_json::Value;
 
 use crate::authoring::CommandOutput;
 
@@ -80,7 +81,7 @@ pub(super) struct ActionStep {
     pub(super) actor: Option<LocalActor>,
     pub(super) scope: StepScope,
     pub(super) version: Option<u64>,
-    pub(super) input: Value,
+    pub(super) input: RuntimeValue,
     pub(super) expect: StepExpect,
 }
 
@@ -377,11 +378,17 @@ fn load_step_pack(
     })
 }
 
-fn encode_action_body(input: &Value, idempotency_key: &str) -> Result<String, String> {
-    let mut map = Map::new();
+pub(super) fn encode_action_body(
+    input: &RuntimeValue,
+    idempotency_key: &str,
+) -> Result<String, String> {
+    let mut map = RuntimeObject::new();
     map.insert("input".to_owned(), input.clone());
-    map.insert("idempotencyKey".to_owned(), Value::from(idempotency_key));
-    serde_json::to_string(&Value::Object(map)).map_err(|err| err.to_string())
+    map.insert(
+        "idempotencyKey".to_owned(),
+        RuntimeValue::String(idempotency_key.to_owned()),
+    );
+    serde_json::to_string(&RuntimeValue::Object(map)).map_err(|err| err.to_string())
 }
 
 fn collect_scenario_files(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {

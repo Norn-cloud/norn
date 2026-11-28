@@ -1,11 +1,15 @@
 //! Strict fail-closed parser for `norn test` declarative JSON scenarios.
+//!
+//! Decodes scenario files through [`norn_ir::RuntimeValue::from_json_text`] so
+//! exact numeric/decimal tokens are preserved without `f64` rounding and
+//! duplicate JSON keys are refused fail-closed.
 
 use std::path::{Path, PathBuf};
 
 use norn_api::local_cell::LocalActor;
-use serde_json::{Map, Value};
+use norn_ir::{RuntimeObject, RuntimeValue};
 
-use super::pack::{PackInput, read_json_file};
+use super::pack::{PackInput, read_runtime_json_file};
 use super::scenario::{
     ActionStep, ApplyStep, DefsStep, GetObjectStep, ListObjectsStep, PlanStep, Scenario,
     ScenarioStep, StepScope, TestArgs,
@@ -16,7 +20,7 @@ const MAX_SCENARIO_BYTES: &str = "16 MiB scenario file limit";
 
 /// Load and strictly validate one scenario JSON file.
 pub(super) fn load_scenario(path: &Path, args: &TestArgs) -> Result<Scenario, String> {
-    let raw = read_json_file(path, MAX_SCENARIO_BYTES)?;
+    let raw = read_runtime_json_file(path, MAX_SCENARIO_BYTES)?;
     let obj = raw
         .as_object()
         .ok_or_else(|| format!("{}: scenario root must be a JSON object", path.display()))?;
@@ -62,7 +66,7 @@ pub(super) fn load_scenario(path: &Path, args: &TestArgs) -> Result<Scenario, St
     }
     let steps_val = obj
         .get("steps")
-        .and_then(Value::as_array)
+        .and_then(RuntimeValue::as_array)
         .ok_or_else(|| format!("{}: `steps` must be a JSON array", path.display()))?;
     let mut steps = Vec::with_capacity(steps_val.len());
     for (idx, step_val) in steps_val.iter().enumerate() {
@@ -103,7 +107,7 @@ fn resolve_rel(base_dir: &Path, raw: &str) -> PathBuf {
     }
 }
 
-fn parse_pack_object(val: &Value, base_dir: &Path) -> Result<PackInput, String> {
+fn parse_pack_object(val: &RuntimeValue, base_dir: &Path) -> Result<PackInput, String> {
     let obj = val
         .as_object()
         .ok_or_else(|| "`pack` must be an object with `source` or `artifacts`".to_owned())?;
@@ -120,7 +124,7 @@ fn parse_pack_object(val: &Value, base_dir: &Path) -> Result<PackInput, String> 
     }
 }
 
-fn parse_step(val: &Value, base_dir: &Path, ctx: &str) -> Result<ScenarioStep, String> {
+fn parse_step(val: &RuntimeValue, base_dir: &Path, ctx: &str) -> Result<ScenarioStep, String> {
     let obj = val
         .as_object()
         .ok_or_else(|| format!("{ctx}: step must be a JSON object"))?;
@@ -142,7 +146,7 @@ fn parse_step(val: &Value, base_dir: &Path, ctx: &str) -> Result<ScenarioStep, S
     }
 }
 
-fn parse_defs_step(obj: &Map<String, Value>, ctx: &str) -> Result<ScenarioStep, String> {
+fn parse_defs_step(obj: &RuntimeObject, ctx: &str) -> Result<ScenarioStep, String> {
     reject_unknown_keys(
         obj,
         &["op", "actor", "org", "env", "version", "expect"],
@@ -167,7 +171,7 @@ fn parse_defs_step(obj: &Map<String, Value>, ctx: &str) -> Result<ScenarioStep, 
 }
 
 fn parse_plan_step(
-    obj: &Map<String, Value>,
+    obj: &RuntimeObject,
     base_dir: &Path,
     ctx: &str,
 ) -> Result<ScenarioStep, String> {
@@ -197,7 +201,7 @@ fn parse_plan_step(
 }
 
 fn parse_apply_step(
-    obj: &Map<String, Value>,
+    obj: &RuntimeObject,
     base_dir: &Path,
     ctx: &str,
 ) -> Result<ScenarioStep, String> {
@@ -231,7 +235,7 @@ fn parse_apply_step(
     })))
 }
 
-fn parse_action_step(obj: &Map<String, Value>, ctx: &str) -> Result<ScenarioStep, String> {
+fn parse_action_step(obj: &RuntimeObject, ctx: &str) -> Result<ScenarioStep, String> {
     let allowed = [
         "op",
         "actionId",
@@ -270,7 +274,7 @@ fn parse_action_step(obj: &Map<String, Value>, ctx: &str) -> Result<ScenarioStep
     })))
 }
 
-fn parse_get_object_step(obj: &Map<String, Value>, ctx: &str) -> Result<ScenarioStep, String> {
+fn parse_get_object_step(obj: &RuntimeObject, ctx: &str) -> Result<ScenarioStep, String> {
     reject_unknown_keys(
         obj,
         &["op", "type", "id", "actor", "org", "env", "expect"],
@@ -293,23 +297,31 @@ fn parse_get_object_step(obj: &Map<String, Value>, ctx: &str) -> Result<Scenario
     })))
 }
 
-fn parse_list_objects_step(obj: &Map<String, Value>, ctx: &str) -> Result<ScenarioStep, String> {
+fn parse_list_objects_step(obj: &RuntimeObject, ctx: &str) -> Result<ScenarioStep, String> {
     let allowed = [
         "op", "type", "actor", "org", "env", "limit", "sort", "filter", "expect",
     ];
     reject_unknown_keys(obj, &allowed, ctx)?;
     let limit = match obj.get("limit") {
         None => None,
-        Some(Value::Number(num)) => Some(num.to_string()),
-        Some(Value::String(text)) => Some(text.clone()),
-        Some(Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_)) => {
+        Some(RuntimeValue::Number(num)) => Some(num.canonical()),
+        Some(RuntimeValue::String(text)) => Some(text.clone()),
+        Some(
+            RuntimeValue::Null
+            | RuntimeValue::Bool(_)
+            | RuntimeValue::Array(_)
+            | RuntimeValue::Object(_),
+        ) => {
             return Err(format!("{ctx}: `limit` must be an integer or string"));
         }
     };
     let filter = match obj.get("filter") {
         None => None,
-        Some(Value::String(text)) => Some(text.clone()),
-        Some(val) => Some(val.to_string()),
+        Some(RuntimeValue::String(text)) => Some(text.clone()),
+        Some(val) => Some(
+            serde_json::to_string(val)
+                .map_err(|err| format!("{ctx}: invalid `filter` JSON: {err}"))?,
+        ),
     };
     Ok(ScenarioStep::ListObjects(Box::new(ListObjectsStep {
         object_type: req_string(obj, "type", ctx)?,
@@ -326,11 +338,7 @@ fn parse_list_objects_step(obj: &Map<String, Value>, ctx: &str) -> Result<Scenar
     })))
 }
 
-fn parse_step_pack(
-    obj: &Map<String, Value>,
-    base_dir: &Path,
-    ctx: &str,
-) -> Result<PackInput, String> {
+fn parse_step_pack(obj: &RuntimeObject, base_dir: &Path, ctx: &str) -> Result<PackInput, String> {
     match (
         opt_string(obj, "source", ctx)?,
         opt_string(obj, "artifacts", ctx)?,
@@ -343,14 +351,14 @@ fn parse_step_pack(
     }
 }
 
-fn parse_step_scope(obj: &Map<String, Value>, ctx: &str) -> Result<StepScope, String> {
+fn parse_step_scope(obj: &RuntimeObject, ctx: &str) -> Result<StepScope, String> {
     Ok(StepScope {
         org: opt_string(obj, "org", ctx)?,
         env: opt_string(obj, "env", ctx)?,
     })
 }
 
-fn parse_opt_actor(obj: &Map<String, Value>, ctx: &str) -> Result<Option<LocalActor>, String> {
+fn parse_opt_actor(obj: &RuntimeObject, ctx: &str) -> Result<Option<LocalActor>, String> {
     let Some(val) = obj.get("actor") else {
         return Ok(None);
     };
@@ -362,7 +370,7 @@ fn parse_opt_actor(obj: &Map<String, Value>, ctx: &str) -> Result<Option<LocalAc
     let user_id = req_string(actor_obj, "userId", &actor_ctx)?;
     let roles_val = actor_obj
         .get("roles")
-        .and_then(Value::as_array)
+        .and_then(RuntimeValue::as_array)
         .ok_or_else(|| format!("{actor_ctx}: `roles` must be an array of strings"))?;
     let mut roles = Vec::with_capacity(roles_val.len());
     for (idx, item) in roles_val.iter().enumerate() {
@@ -374,11 +382,7 @@ fn parse_opt_actor(obj: &Map<String, Value>, ctx: &str) -> Result<Option<LocalAc
     Ok(Some(LocalActor::new(user_id, roles)))
 }
 
-fn parse_expect(
-    obj: &Map<String, Value>,
-    allowed: &[&str],
-    ctx: &str,
-) -> Result<StepExpect, String> {
+fn parse_expect(obj: &RuntimeObject, allowed: &[&str], ctx: &str) -> Result<StepExpect, String> {
     let Some(val) = obj.get("expect") else {
         return Ok(StepExpect::default());
     };
@@ -410,11 +414,7 @@ fn parse_expect(
     })
 }
 
-fn reject_unknown_keys(
-    obj: &Map<String, Value>,
-    allowed: &[&str],
-    ctx: &str,
-) -> Result<(), String> {
+fn reject_unknown_keys(obj: &RuntimeObject, allowed: &[&str], ctx: &str) -> Result<(), String> {
     let mut unknown: Vec<&str> = obj
         .keys()
         .map(String::as_str)
@@ -427,14 +427,22 @@ fn reject_unknown_keys(
     Err(format!("{ctx}: unknown field(s): {}", unknown.join(", ")))
 }
 
-fn req_string(obj: &Map<String, Value>, key: &str, ctx: &str) -> Result<String, String> {
+fn value_as_u64(val: &RuntimeValue) -> Option<u64> {
+    let dec = val.as_decimal()?;
+    if !dec.is_integer() {
+        return None;
+    }
+    dec.canonical().parse::<u64>().ok()
+}
+
+fn req_string(obj: &RuntimeObject, key: &str, ctx: &str) -> Result<String, String> {
     obj.get(key)
-        .and_then(Value::as_str)
+        .and_then(RuntimeValue::as_str)
         .map(str::to_owned)
         .ok_or_else(|| format!("{ctx}: `{key}` must be a string"))
 }
 
-fn opt_string(obj: &Map<String, Value>, key: &str, ctx: &str) -> Result<Option<String>, String> {
+fn opt_string(obj: &RuntimeObject, key: &str, ctx: &str) -> Result<Option<String>, String> {
     obj.get(key)
         .map(|v| {
             v.as_str()
@@ -444,7 +452,7 @@ fn opt_string(obj: &Map<String, Value>, key: &str, ctx: &str) -> Result<Option<S
         .transpose()
 }
 
-fn opt_bool(obj: &Map<String, Value>, key: &str, ctx: &str) -> Result<Option<bool>, String> {
+fn opt_bool(obj: &RuntimeObject, key: &str, ctx: &str) -> Result<Option<bool>, String> {
     obj.get(key)
         .map(|v| {
             v.as_bool()
@@ -453,22 +461,21 @@ fn opt_bool(obj: &Map<String, Value>, key: &str, ctx: &str) -> Result<Option<boo
         .transpose()
 }
 
-fn req_u64(obj: &Map<String, Value>, key: &str, ctx: &str) -> Result<u64, String> {
+fn req_u64(obj: &RuntimeObject, key: &str, ctx: &str) -> Result<u64, String> {
     obj.get(key)
-        .and_then(Value::as_u64)
+        .and_then(value_as_u64)
         .ok_or_else(|| format!("{ctx}: `{key}` must be a non-negative integer"))
 }
 
-fn opt_u64(obj: &Map<String, Value>, key: &str, ctx: &str) -> Result<Option<u64>, String> {
+fn opt_u64(obj: &RuntimeObject, key: &str, ctx: &str) -> Result<Option<u64>, String> {
     obj.get(key)
         .map(|v| {
-            v.as_u64()
-                .ok_or_else(|| format!("{ctx}: `{key}` must be a non-negative integer"))
+            value_as_u64(v).ok_or_else(|| format!("{ctx}: `{key}` must be a non-negative integer"))
         })
         .transpose()
 }
 
-fn opt_usize(obj: &Map<String, Value>, key: &str, ctx: &str) -> Result<Option<usize>, String> {
+fn opt_usize(obj: &RuntimeObject, key: &str, ctx: &str) -> Result<Option<usize>, String> {
     opt_u64(obj, key, ctx)?
         .map(|n| {
             usize::try_from(n)
@@ -478,7 +485,7 @@ fn opt_usize(obj: &Map<String, Value>, key: &str, ctx: &str) -> Result<Option<us
 }
 
 fn opt_string_vec(
-    obj: &Map<String, Value>,
+    obj: &RuntimeObject,
     key: &str,
     ctx: &str,
 ) -> Result<Option<Vec<String>>, String> {
@@ -500,11 +507,7 @@ fn opt_string_vec(
         .map(Some)
 }
 
-fn opt_object(
-    obj: &Map<String, Value>,
-    key: &str,
-    ctx: &str,
-) -> Result<Option<Map<String, Value>>, String> {
+fn opt_object(obj: &RuntimeObject, key: &str, ctx: &str) -> Result<Option<RuntimeObject>, String> {
     obj.get(key)
         .map(|v| {
             v.as_object()

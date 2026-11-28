@@ -1,11 +1,14 @@
 //! Embedded native local cell runtime shared by `norn test` and `norn dev`.
 //!
 //! Wraps [`DevHost<NativeEngine>`](crate::host::DevHost) with a deterministic
-//! [`ManualClock`], fail-closed scope and role-based authorization, and real
+//! [`ManualClock`], fail-closed scope and `AccessIR` authorization, and real
 //! `norn-api` route dispatch (`get_defs`, `plan_definitions`, `apply_definitions`,
 //! `call_action`, `get_object_query`, `get_queried_object`).
 
+mod access_eval;
 mod policy;
+#[cfg(test)]
+mod tests;
 
 pub use policy::LocalActor;
 
@@ -17,7 +20,6 @@ use http::StatusCode;
 use norn_cell::engine::NativeEngine;
 use norn_cell::{CellStore, InstalledDefinitionInput, StoreOptions};
 use norn_ir::ArtifactEnvelope;
-use serde::Deserialize;
 use serde_json::value::RawValue;
 
 use crate::action_admission::Serving;
@@ -36,50 +38,47 @@ use crate::refusal::{Refusal, RefusalDiagnostic};
 use crate::routes::{DefinitionsQuery, DefsResponse, get_defs};
 use crate::scope::{CellScope, ScopeQuery};
 
-use self::policy::{
-    LocalDisclosure, LocalObjectAccess, LocalPolicy, PolicySnapshot, STANDARD_ROLES, with_actor,
-};
+use self::access_eval::PolicySnapshot;
+use self::policy::{LocalDisclosure, LocalObjectAccess, LocalPolicy, STANDARD_ROLES, with_actor};
 
 /// Deterministic default starting timestamp (`2026-01-01T00:00:00Z`).
 pub const DEFAULT_LOCAL_CLOCK_MS: u64 = 1_767_225_600_000;
 
 const LOCAL_OWNER_ACTOR: &str = "local:owner";
 
-#[derive(Deserialize)]
-struct ArtifactIdProbe {
-    #[serde(rename = "artifactId")]
-    artifact_id: Option<String>,
+/// Separate startup pack layers for [`LocalCell`].
+///
+/// Trusted `--base` artifacts enter initial base provisioning (with duplicate
+/// `artifactId`s refused fail-closed), while tenant app artifacts always pass
+/// through [`LocalCell::apply_definitions`] and can never enter the trusted base.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LocalCellPacks<'a> {
+    /// Trusted base artifacts (`--base`) provisioned into the initial revision.
+    pub base_artifacts: &'a [Box<RawValue>],
+    /// Tenant app artifacts installed via `apply_definitions`.
+    pub app_artifacts: &'a [Box<RawValue>],
 }
 
-fn partition_initial_artifacts(
+fn decode_base_artifacts(
     raw_artifacts: &[Box<RawValue>],
-) -> Result<(Vec<ArtifactEnvelope>, Vec<Box<RawValue>>), Refusal> {
-    let mut base = Vec::new();
-    let mut tenant = Vec::new();
-    let mut base_ids = BTreeSet::new();
+) -> Result<Vec<ArtifactEnvelope>, Refusal> {
+    let mut base = Vec::with_capacity(raw_artifacts.len());
+    let mut seen_ids = BTreeSet::new();
     for raw in raw_artifacts {
-        let probe: ArtifactIdProbe = serde_json::from_str(raw.get()).map_err(|error| {
-            Refusal::invalid(format!("artifact envelope is not valid JSON: {error}"))
-        })?;
-        let id = probe
-            .artifact_id
-            .ok_or_else(|| Refusal::invalid("an artifact envelope must declare artifactId"))?;
-        if kernel_set::is_reserved(&id) {
-            if !base_ids.insert(id) {
-                continue;
-            }
-            let rv = norn_ir::RuntimeValue::from_json_text(raw.get()).map_err(|error| {
-                Refusal::invalid(format!("reserved artifact JSON invalid: {error}"))
-            })?;
-            let envelope: ArtifactEnvelope = norn_ir::runtime::decode(&rv).map_err(|error| {
-                Refusal::invalid(format!("reserved artifact decode failed: {error}"))
-            })?;
-            base.push(envelope);
-        } else {
-            tenant.push(raw.clone());
+        kernel_set::reject_lossy_ir_numbers(raw.get()).map_err(Refusal::invalid)?;
+        let rv = norn_ir::RuntimeValue::from_json_text(raw.get())
+            .map_err(|error| Refusal::invalid(format!("base artifact JSON invalid: {error}")))?;
+        let envelope: ArtifactEnvelope = norn_ir::runtime::decode(&rv)
+            .map_err(|error| Refusal::invalid(format!("base artifact decode failed: {error}")))?;
+        if !seen_ids.insert(envelope.artifact_id.clone()) {
+            return Err(Refusal::invalid(format!(
+                "duplicate base artifactId `{}`",
+                envelope.artifact_id
+            )));
         }
+        base.push(envelope);
     }
-    Ok((base, tenant))
+    Ok(base)
 }
 
 fn kernel_refusal_to_refusal(refusal: KernelRefusal) -> Refusal {
@@ -168,47 +167,51 @@ pub struct LocalCell {
     kinds: DefinitionKinds,
     disclosure: LocalDisclosure,
     policies: Arc<RwLock<PolicySnapshot>>,
+    /// Serializes definitions apply + policy snapshot refresh against all reads
+    /// and action calls so no request can observe a new revision under stale
+    /// authorization rules.
+    definitions_epoch: RwLock<()>,
 }
 
 impl LocalCell {
     /// Boot an in-memory local cell for `scope` at deterministic `clock_ms` and
-    /// install `initial_artifacts` through the real admission and apply gates.
+    /// install `packs` through the real admission and apply gates.
     ///
     /// # Errors
-    /// Returns a [`Refusal`] when `scope` is blank, the store fails, or initial
-    /// definition admission/install refuses.
+    /// Returns a [`Refusal`] when `scope` is blank, the store fails, base
+    /// artifacts repeat an id, or definition admission/install refuses.
     pub fn open_in_memory(
         scope: CellScope,
         clock_ms: u64,
-        initial_artifacts: &[Box<RawValue>],
+        packs: &LocalCellPacks<'_>,
     ) -> Result<Self, Refusal> {
         let engine = NativeEngine::open_in_memory().map_err(Refusal::host)?;
-        Self::open_engine(engine, scope, clock_ms, initial_artifacts)
+        Self::open_engine(engine, scope, clock_ms, packs)
     }
 
     /// Boot or reopen a file-backed `SQLite` local cell at `db_path` for `scope`.
     ///
     /// # Errors
     /// Returns a [`Refusal`] when `scope` is blank, the `SQLite` database cannot be
-    /// opened, or initial definition admission/install refuses.
+    /// opened, base artifacts repeat an id, or definition admission/install refuses.
     pub fn open_file(
         db_path: &Path,
         scope: CellScope,
         clock_ms: u64,
-        initial_artifacts: &[Box<RawValue>],
+        packs: &LocalCellPacks<'_>,
     ) -> Result<Self, Refusal> {
         let engine = NativeEngine::open(db_path, StoreOptions::default()).map_err(Refusal::host)?;
-        Self::open_engine(engine, scope, clock_ms, initial_artifacts)
+        Self::open_engine(engine, scope, clock_ms, packs)
     }
 
     fn open_engine(
         engine: NativeEngine,
         scope: CellScope,
         clock_ms: u64,
-        initial_artifacts: &[Box<RawValue>],
+        packs: &LocalCellPacks<'_>,
     ) -> Result<Self, Refusal> {
         scope.admit(Some(&scope.org_id), Some(&scope.environment_id))?;
-        let (base, tenant) = partition_initial_artifacts(initial_artifacts)?;
+        let base = decode_base_artifacts(packs.base_artifacts)?;
         let store = open_or_provision_store(engine, &scope, &base, clock_ms)?;
         let policies = Arc::new(RwLock::new(PolicySnapshot::default()));
         let policy = LocalPolicy {
@@ -228,11 +231,12 @@ impl LocalCell {
             kinds,
             disclosure,
             policies,
+            definitions_epoch: RwLock::new(()),
         };
         cell.refresh_policies()?;
-        if !tenant.is_empty() {
+        if !packs.app_artifacts.is_empty() {
             let expected = cell.active_definitions_version()?.unwrap_or(1);
-            let body = encode_apply_body(&tenant, expected);
+            let body = encode_apply_body(packs.app_artifacts, expected);
             let scope_query = ScopeQuery {
                 org_id: Some(scope.org_id),
                 environment_id: Some(scope.environment_id),
@@ -243,16 +247,31 @@ impl LocalCell {
         Ok(cell)
     }
 
-    fn refresh_policies(&self) -> Result<(), Refusal> {
-        let snapshot = match self.host.active_definitions()? {
-            Some(active) => PolicySnapshot::from_canonical_set(&active.canonical_set)?,
-            None => PolicySnapshot::default(),
-        };
+    fn write_policy_snapshot(&self, snapshot: PolicySnapshot) {
         match self.policies.write() {
             Ok(mut slot) => *slot = snapshot,
             Err(poisoned) => *poisoned.into_inner() = snapshot,
         }
-        Ok(())
+    }
+
+    fn refresh_policies(&self) -> Result<(), Refusal> {
+        let computed = self
+            .host
+            .active_definitions()
+            .and_then(|active| match active {
+                Some(installed) => PolicySnapshot::from_canonical_set(&installed.canonical_set),
+                None => Ok(PolicySnapshot::default()),
+            });
+        match computed {
+            Ok(snapshot) => {
+                self.write_policy_snapshot(snapshot);
+                Ok(())
+            }
+            Err(err) => {
+                self.write_policy_snapshot(PolicySnapshot::fail_closed());
+                Err(err)
+            }
+        }
     }
 
     /// Physical scope bound to this cell.
@@ -280,6 +299,7 @@ impl LocalCell {
     /// # Errors
     /// Store or synchronization failure.
     pub fn active_definitions_version(&self) -> Result<Option<u64>, Refusal> {
+        let _epoch = self.definitions_epoch.read().map_err(Refusal::host)?;
         self.host.active_definitions_version()
     }
 
@@ -292,6 +312,7 @@ impl LocalCell {
         query: &DefinitionsQuery,
         actor: Option<&LocalActor>,
     ) -> Result<DefsResponse, Refusal> {
+        let _epoch = self.definitions_epoch.read().map_err(Refusal::host)?;
         let actor_id = actor.map(|caller| caller.user_id.as_str());
         with_actor(actor, || get_defs(&self.host, query, actor_id))
     }
@@ -306,13 +327,16 @@ impl LocalCell {
         actor: Option<&LocalActor>,
         body: &str,
     ) -> Result<DefinitionsPlan, Refusal> {
+        let _epoch = self.definitions_epoch.read().map_err(Refusal::host)?;
         let actor_id = actor.map(|caller| caller.user_id.as_str());
         with_actor(actor, || {
             plan_definitions(&self.host, scope, actor_id, &self.kinds, body)
         })
     }
 
-    /// Apply a planned definitions change (`POST /v1/cell/definitions:apply`).
+    /// Apply a planned definitions change (`POST /v1/cell/definitions:apply`),
+    /// refreshing the active authorization snapshot atomically under the same
+    /// exclusive definitions epoch lock.
     ///
     /// # Errors
     /// Scope, authorization, stale-version, checker, or live-law refusal.
@@ -322,6 +346,7 @@ impl LocalCell {
         actor: Option<&LocalActor>,
         body: &str,
     ) -> Result<DefinitionsApplied, Refusal> {
+        let _epoch = self.definitions_epoch.write().map_err(Refusal::host)?;
         let actor_id = actor.map(|caller| caller.user_id.as_str());
         let now_ms = self.clock_ms();
         let applied = with_actor(actor, || {
@@ -353,6 +378,7 @@ impl LocalCell {
         {
             return Err(crate::actions::action_denied());
         }
+        let _epoch = self.definitions_epoch.read().map_err(Refusal::host)?;
         let actor_id = actor.map(|caller| caller.user_id.as_str());
         let request = decode_action_request(body)?;
         let now = self.clock.now();
@@ -380,6 +406,7 @@ impl LocalCell {
         object_type: &str,
         params: &ObjectQueryParams,
     ) -> Result<DisclosedObjectQueryPage, Refusal> {
+        let _epoch = self.definitions_epoch.read().map_err(Refusal::host)?;
         let actor_id = actor.map(|caller| caller.user_id.as_str());
         with_actor(actor, || {
             get_object_query(
@@ -404,6 +431,7 @@ impl LocalCell {
         object_type: &str,
         id: &str,
     ) -> Result<DisclosedQueriedObject, Refusal> {
+        let _epoch = self.definitions_epoch.read().map_err(Refusal::host)?;
         let actor_id = actor.map(|caller| caller.user_id.as_str());
         with_actor(actor, || {
             get_queried_object(

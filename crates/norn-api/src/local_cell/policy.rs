@@ -6,8 +6,6 @@ use std::sync::{Arc, RwLock};
 
 use norn_cell::engine::NativeEngine;
 use norn_cell::{CellStore, ObjectRecord};
-use norn_ir::access::{AccessCondition, AccessRule, PolicyRoot};
-use norn_ir::{ActionRoot, ArtifactKind};
 use norn_kernel::authz::{
     ActorKind, Binding, ResourceInput, ScopeKey, UnboundProfile, VerifiedPrincipal,
 };
@@ -20,11 +18,12 @@ use crate::authz::{
     AccessRequest, Authorizer, DenyAll, Operation, ReadCapability, ReadRequest,
     RefusalDetailRequest, read_denied,
 };
-use crate::kernel_set;
 use crate::object_routes::ObjectAccess;
 use crate::question_routes::{DEFAULT_MIN_DISCLOSED_BUCKET, QuestionRuntime, QuestionSnapshot};
 use crate::refusal::{Refusal, codes};
 use crate::scope::CellScope;
+
+use super::access_eval::{EvalStage, PolicySnapshot, kernel_scope_matches_cell};
 
 pub(super) const LOCAL_ROLE_TABLE: &str = "norn-local-roles/1";
 pub(super) const STANDARD_ROLES: [&str; 4] = ["viewer", "member", "admin", "owner"];
@@ -63,13 +62,13 @@ impl LocalActor {
             && self.roles.iter().all(|role| !role.trim().is_empty())
     }
 
-    fn has_any(&self, allowed: &[&str]) -> bool {
+    pub(super) fn has_any(&self, allowed: &[&str]) -> bool {
         self.roles
             .iter()
             .any(|held| allowed.iter().any(|candidate| held == candidate))
     }
 
-    fn has_any_owned(&self, allowed: &[String]) -> bool {
+    pub(super) fn has_any_owned(&self, allowed: &[String]) -> bool {
         self.roles.iter().any(|held| allowed.contains(held))
     }
 }
@@ -84,112 +83,20 @@ impl Drop for ActorGuard {
     fn drop(&mut self) {
         let previous = self.0.take();
         ACTIVE_ACTOR.with(|slot| {
-            *slot.borrow_mut() = previous;
+            let _replaced = slot.replace(previous);
         });
     }
 }
 
 pub(super) fn with_actor<T>(actor: Option<&LocalActor>, run: impl FnOnce() -> T) -> T {
     let next = actor.filter(|candidate| candidate.is_valid()).cloned();
-    let previous = ACTIVE_ACTOR.with(|slot| slot.borrow_mut().replace(next));
+    let previous = ACTIVE_ACTOR.with(|slot| slot.replace(next));
     let _guard = ActorGuard(previous);
     run()
 }
 
-fn current_actor() -> Option<LocalActor> {
+pub(super) fn current_actor() -> Option<LocalActor> {
     ACTIVE_ACTOR.with(|slot| slot.borrow().clone())
-}
-
-/// Role conditions extracted from active `AccessIR` policies for governed actions.
-#[derive(Debug, Default)]
-pub(super) struct PolicySnapshot {
-    /// For each action that declares an `access` policy, the list of rules' role
-    /// allowlists (`Some(roles)` for a `RoleCondition`, `None` for a rule with no
-    /// role conjunct). An empty outer `Vec` means the action's access policy was
-    /// missing or had no matching rule (fail closed).
-    governed: BTreeMap<String, Vec<Option<Vec<String>>>>,
-}
-
-impl PolicySnapshot {
-    pub(super) fn from_canonical_set(canonical_set: &str) -> Result<Self, Refusal> {
-        let artifacts = kernel_set::retained_artifacts(canonical_set).map_err(Refusal::host)?;
-        let mut policies: BTreeMap<&str, Vec<AccessRule>> = BTreeMap::new();
-        for artifact in &artifacts {
-            if artifact.kind() != ArtifactKind::Policy {
-                continue;
-            }
-            let decoded = serde_json::to_value(artifact.payload.to_json_value())
-                .and_then(serde_json::from_value::<PolicyRoot>);
-            if let Ok(PolicyRoot::Access(access)) = decoded {
-                policies.insert(artifact.artifact_id.as_str(), access.rules);
-            }
-        }
-        let mut governed = BTreeMap::new();
-        for artifact in &artifacts {
-            if artifact.kind() != ArtifactKind::Action {
-                continue;
-            }
-            let Ok(action) = serde_json::to_value(artifact.payload.to_json_value())
-                .and_then(serde_json::from_value::<ActionRoot>)
-            else {
-                continue;
-            };
-            let Some(access_ref) = action.access else {
-                continue;
-            };
-            let allowlists = policies
-                .get(access_ref.artifact_id.as_str())
-                .map_or_else(Vec::new, |rules| {
-                    extract_action_allowlists(rules, &action.action_id)
-                });
-            governed.insert(action.action_id, allowlists);
-        }
-        Ok(Self { governed })
-    }
-
-    fn allows_action(&self, actor: &LocalActor, action_id: &str) -> bool {
-        if let Some(rules) = self.governed.get(action_id) {
-            return rules.iter().any(|required| match required {
-                Some(roles) => actor.has_any_owned(roles),
-                None => actor.has_any(&STANDARD_ROLES),
-            });
-        }
-        actor.has_any(&["member", "admin", "owner"])
-    }
-}
-
-fn extract_action_allowlists(rules: &[AccessRule], action_id: &str) -> Vec<Option<Vec<String>>> {
-    let mut allowlists = Vec::new();
-    for rule in rules {
-        if !rule.actions.iter().any(|id| id == action_id) {
-            continue;
-        }
-        let role_lists: Vec<&[String]> = rule
-            .all_of
-            .iter()
-            .filter_map(|cond| match cond {
-                AccessCondition::Role(role) => Some(role.any_of.as_slice()),
-                AccessCondition::Rel(_)
-                | AccessCondition::Context(_)
-                | AccessCondition::Resource(_)
-                | AccessCondition::Marking(_)
-                | AccessCondition::Entitlement(_) => None,
-            })
-            .collect();
-        if role_lists.is_empty() {
-            allowlists.push(None);
-        } else if let Some(first) = role_lists.first() {
-            let intersected: Vec<String> = first
-                .iter()
-                .filter(|role| role_lists.iter().all(|list| list.contains(role)))
-                .cloned()
-                .collect();
-            if !intersected.is_empty() {
-                allowlists.push(Some(intersected));
-            }
-        }
-    }
-    allowlists
 }
 
 pub(super) struct LocalPolicy {
@@ -204,11 +111,19 @@ impl LocalPolicy {
         (active.is_valid() && active.user_id == expected).then_some(active)
     }
 
-    fn allows_action(&self, actor: &LocalActor, action_id: &str) -> bool {
+    fn authorize_action(
+        &self,
+        actor: &LocalActor,
+        action_id: &str,
+        stage: &EvalStage<'_>,
+    ) -> Result<(), String> {
         let Ok(snapshot) = self.policies.read() else {
-            return false;
+            return Err(format!(
+                "{}: local policy lock poisoned",
+                codes::AUTHZ_DENIED
+            ));
         };
-        snapshot.allows_action(actor, action_id)
+        snapshot.authorize_action(actor, action_id, stage)
     }
 }
 
@@ -227,7 +142,15 @@ impl Authorizer for LocalPolicy {
             | Operation::ManageConnection(_)
             | Operation::RevokeConnectionGrant(_) => actor.has_any(&["admin", "owner"]),
             Operation::ProvisionCell => actor.has_any(&["owner"]),
-            Operation::CallAction(action_id) => self.allows_action(&actor, action_id),
+            Operation::CallAction(action_id) => self
+                .authorize_action(
+                    &actor,
+                    action_id,
+                    &EvalStage::PreStorage {
+                        scope: request.scope,
+                    },
+                )
+                .is_ok(),
             Operation::StartRun(_) => actor.has_any(&["member", "admin", "owner"]),
             Operation::Decide { roles, .. } => {
                 actor.has_any(&STANDARD_ROLES) && actor.has_any_owned(roles)
@@ -254,25 +177,33 @@ impl Authorizer for LocalPolicy {
     }
 
     fn action(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        let denied = || ActionDenial::Forbidden {
-            reason: codes::AUTHZ_DENIED.to_owned(),
-        };
         let Some(actor) = Self::active_matching(Some(request.actor)) else {
-            return Err(denied());
+            return Err(ActionDenial::Forbidden {
+                reason: codes::AUTHZ_DENIED.to_owned(),
+            });
         };
-        if self.allows_action(&actor, &request.action.action_id) {
-            Ok(())
-        } else {
-            Err(denied())
-        }
+        let stage = EvalStage::Kernel {
+            cell_scope: &self.scope,
+            request_scope: request.scope,
+            target_type: request.target.object_type.as_str(),
+            target_values: request.target_values,
+        };
+        self.authorize_action(&actor, &request.action.action_id, &stage)
+            .map_err(|reason| ActionDenial::Forbidden { reason })
     }
 
     fn action_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
         let Some(actor) = Self::active_matching(Some(request.actor)) else {
             return Err(ActionDenial::Invisible);
         };
+        if kernel_scope_matches_cell(&self.scope, request.scope).is_err() {
+            return Err(ActionDenial::Invisible);
+        }
+        let pre_storage = EvalStage::PreStorage { scope: &self.scope };
         if actor.has_any(&["member", "admin", "owner"])
-            || self.allows_action(&actor, &request.action.action_id)
+            || self
+                .authorize_action(&actor, &request.action.action_id, &pre_storage)
+                .is_ok()
         {
             Ok(())
         } else {
@@ -287,8 +218,14 @@ impl Authorizer for LocalPolicy {
         let Some(actor) = Self::active_matching(Some(request.actor)) else {
             return Err(ActionDenial::Invisible);
         };
+        if kernel_scope_matches_cell(&self.scope, request.scope).is_err() {
+            return Err(ActionDenial::Invisible);
+        }
+        let pre_storage = EvalStage::PreStorage { scope: &self.scope };
         if actor.has_any(&["member", "admin", "owner"])
-            || self.allows_action(&actor, &request.action.action_id)
+            || self
+                .authorize_action(&actor, &request.action.action_id, &pre_storage)
+                .is_ok()
         {
             Ok(())
         } else {

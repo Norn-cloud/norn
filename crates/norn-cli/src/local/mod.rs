@@ -2,8 +2,9 @@
 //!
 //! Both commands boot the real `norn-api` [`LocalCell`] over `DevHost<NativeEngine>`
 //! with deterministic [`ManualClock`](norn_api::clock::ManualClock), fail-closed scope and
-//! role authorization, and real checker + kernel admission gates.
+//! `AccessIR` authorization, and real checker + kernel admission gates.
 
+mod dev_auth;
 mod dev_server;
 mod http_wire;
 mod pack;
@@ -16,7 +17,7 @@ mod tests;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use norn_api::local_cell::{DEFAULT_LOCAL_CLOCK_MS, LocalCell};
+use norn_api::local_cell::{DEFAULT_LOCAL_CLOCK_MS, LocalCell, LocalCellPacks};
 use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
 
@@ -25,7 +26,7 @@ use crate::authoring::CommandOutput;
 pub(crate) use dev_server::{DevArgs, execute_dev};
 pub(crate) use scenario::{TestArgs, execute_test};
 
-use self::pack::{PackInput, PackLoadError, load_combined_packs};
+use self::pack::{PackInput, PackLoadError, load_packs};
 
 /// Startup failure distinguishing refusal/diagnostics (exit `1`) from usage/IO (exit `2`).
 pub(crate) enum BootFailure {
@@ -42,8 +43,9 @@ impl BootFailure {
     }
 }
 
-/// Boot a [`LocalCell`] (in-memory or SQLite-backed) and install any base + app
-/// packs through the real admission and `apply_definitions` gates.
+/// Boot a [`LocalCell`] (in-memory or `SQLite`-backed) and install any `--base`
+/// and app packs as separate layers through the real admission and
+/// `apply_definitions` gates.
 pub(crate) fn boot_local_cell(
     org: &str,
     env: &str,
@@ -57,19 +59,22 @@ pub(crate) fn boot_local_cell(
             "--org and --env must be non-empty scope identifiers".to_owned(),
         ));
     }
-    let artifacts =
-        load_combined_packs(base_paths, app_pack, org, env).map_err(|err| match err {
-            PackLoadError::Diagnostics(doc) => BootFailure::Refused(doc),
-            PackLoadError::Io(msg) => BootFailure::Io(msg),
-        })?;
+    let loaded = load_packs(base_paths, app_pack, org, env).map_err(|err| match err {
+        PackLoadError::Diagnostics(doc) => BootFailure::Refused(doc),
+        PackLoadError::Io(msg) => BootFailure::Io(msg),
+    })?;
+    let packs = LocalCellPacks {
+        base_artifacts: &loaded.base_artifacts,
+        app_artifacts: &loaded.app_artifacts,
+    };
     let scope = CellScope {
         org_id: org.to_owned(),
         environment_id: env.to_owned(),
     };
     let start_ms = clock_ms.unwrap_or(DEFAULT_LOCAL_CLOCK_MS);
     let opened = match db_path {
-        Some(path) => LocalCell::open_file(path, scope, start_ms, &artifacts),
-        None => LocalCell::open_in_memory(scope, start_ms, &artifacts),
+        Some(path) => LocalCell::open_file(path, scope, start_ms, &packs),
+        None => LocalCell::open_in_memory(scope, start_ms, &packs),
     };
     opened.map_err(|refusal| BootFailure::Refused(format_refusal(&refusal)))
 }

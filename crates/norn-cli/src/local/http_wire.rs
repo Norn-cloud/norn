@@ -1,8 +1,14 @@
-//! Bounded HTTP/1.1 wire codec and response helpers for `norn dev`.
+//! Bounded, strict HTTP/1.1 wire codec and response helpers for `norn dev`.
+//!
+//! Enforces strict CRLF line endings, RFC 9110 header name tokens (rejecting
+//! whitespace before `:`), ASCII-digit-only `Content-Length` with duplicate
+//! refusal, `Transfer-Encoding` refusal, whole-request deadlines across all
+//! reads, and distinct path vs query percent-decoding.
 
 use std::collections::BTreeMap;
-use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+use std::io::{BufRead as _, BufReader, ErrorKind, Read as _, Write as _};
 use std::net::TcpStream;
+use std::time::Instant;
 
 use norn_api::privacy::{DisclosedDocument, serialize_disclosed};
 use norn_api::refusal::Refusal;
@@ -14,13 +20,13 @@ const MAX_HEAD_BYTES: usize = 16 * 1024;
 const MAX_HEADERS: usize = 64;
 const BODY_CHUNK: usize = 8 * 1024;
 
-/// One parsed bounded HTTP/1.1 request.
+/// One parsed bounded HTTP/1.1 request preserving duplicate header values.
 #[derive(Debug, Clone)]
 pub(super) struct HttpRequest {
     pub(super) method: String,
     pub(super) path: String,
     pub(super) query: String,
-    pub(super) headers: BTreeMap<String, String>,
+    pub(super) headers: BTreeMap<String, Vec<String>>,
     pub(super) body: String,
 }
 
@@ -31,7 +37,8 @@ pub(super) struct HttpResponse {
     pub(super) body: String,
 }
 
-/// Parse URL query string (`k=v&...`) with percent-decoding; duplicate keys refuse.
+/// Parse URL query string (`k=v&...`) with query percent-decoding (`+` -> space);
+/// duplicate keys refuse.
 pub(super) fn parse_query(raw: &str) -> Result<BTreeMap<String, String>, String> {
     let mut map = BTreeMap::new();
     if raw.is_empty() {
@@ -42,8 +49,8 @@ pub(super) fn parse_query(raw: &str) -> Result<BTreeMap<String, String>, String>
             continue;
         }
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-        let key = percent_decode(k)?;
-        let val = percent_decode(v)?;
+        let key = percent_decode_query(k)?;
+        let val = percent_decode_query(v)?;
         if map.insert(key.clone(), val).is_some() {
             return Err(format!("duplicate query parameter `{key}`"));
         }
@@ -51,8 +58,17 @@ pub(super) fn parse_query(raw: &str) -> Result<BTreeMap<String, String>, String>
     Ok(map)
 }
 
-/// Decode `%XX` and `+` sequences in a URL path segment or query component.
-pub(super) fn percent_decode(input: &str) -> Result<String, String> {
+/// Decode `%XX` hex escapes in a URL path segment ONLY (literal `+` stays `+`).
+pub(super) fn percent_decode_path(input: &str) -> Result<String, String> {
+    percent_decode_impl(input, false)
+}
+
+/// Decode `%XX` hex escapes and `+` -> space in an `application/x-www-form-urlencoded` query component.
+pub(super) fn percent_decode_query(input: &str) -> Result<String, String> {
+    percent_decode_impl(input, true)
+}
+
+fn percent_decode_impl(input: &str, plus_as_space: bool) -> Result<String, String> {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut idx = 0_usize;
@@ -68,7 +84,7 @@ pub(super) fn percent_decode(input: &str) -> Result<String, String> {
                 .ok_or_else(|| "invalid percent-encoding".to_owned())?;
             out.push(hi.wrapping_shl(4) | lo);
             idx = idx.saturating_add(3);
-        } else if byte == b'+' {
+        } else if plus_as_space && byte == b'+' {
             out.push(b' ');
             idx = idx.saturating_add(1);
         } else {
@@ -91,27 +107,57 @@ const fn hex_nibble(byte: u8) -> Option<u8> {
     }
 }
 
-/// Read one bounded HTTP/1.1 request from `reader` (refusing chunked transfer and > 2 MiB bodies).
+/// RFC 9110 `tchar` token byte predicate (rejects whitespace, colon, and controls).
+const fn is_tchar(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
+}
+
+fn has_disallowed_header_value_byte(val: &str) -> bool {
+    val.bytes()
+        .any(|b| (b.is_ascii_control() && b != b'\t') || b == 0x7f)
+}
+
+fn update_read_deadline(stream: &TcpStream, deadline: Instant) -> Result<(), HttpResponse> {
+    let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+        return Err(request_timeout_response());
+    };
+    if remaining.is_zero() {
+        return Err(request_timeout_response());
+    }
+    stream
+        .set_read_timeout(Some(remaining))
+        .map_err(|err| refusal_response(&Refusal::invalid(format!("read timeout error: {err}"))))
+}
+
+/// Read one bounded, strict HTTP/1.1 request from `reader` before `deadline`.
 pub(super) fn read_http_request(
     reader: &mut BufReader<&TcpStream>,
+    deadline: Instant,
 ) -> Result<HttpRequest, HttpResponse> {
-    let (method, target, headers) = read_head(reader)?;
+    let (method, target, headers) = read_head(reader, deadline)?;
     if headers.contains_key("transfer-encoding") {
         return Err(refusal_response(&Refusal::invalid(
             "transfer-encoding is not supported; send content-length",
         )));
     }
-    let content_length = match headers.get("content-length") {
-        None => 0_usize,
-        Some(raw) => {
-            let Ok(parsed) = raw.trim().parse::<usize>() else {
-                return Err(refusal_response(&Refusal::invalid(
-                    "invalid content-length header",
-                )));
-            };
-            parsed
-        }
-    };
+    let content_length = parse_content_length(&headers)?;
     if content_length > MAX_BODY_BYTES {
         return Err(synthetic_refusal(
             413,
@@ -121,7 +167,7 @@ pub(super) fn read_http_request(
             "norn dev accepts request bodies up to 2 MiB",
         ));
     }
-    let body = read_exact_body(reader, content_length)?;
+    let body = read_exact_body(reader, content_length, deadline)?;
     let (path, query) = target.split_once('?').unwrap_or((target.as_str(), ""));
     Ok(HttpRequest {
         method,
@@ -132,29 +178,36 @@ pub(super) fn read_http_request(
     })
 }
 
-fn read_head(
-    reader: &mut BufReader<&TcpStream>,
-) -> Result<(String, String, BTreeMap<String, String>), HttpResponse> {
-    let mut total = 0_usize;
-    let mut line_buf = Vec::new();
-    let request_line = read_header_line(reader, &mut line_buf, &mut total)?;
-    let mut parts = request_line.split_whitespace();
-    let (Some(method), Some(target), Some(version), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
+fn parse_content_length(headers: &BTreeMap<String, Vec<String>>) -> Result<usize, HttpResponse> {
+    let Some(values) = headers.get("content-length") else {
+        return Ok(0);
+    };
+    let [raw] = values.as_slice() else {
         return Err(refusal_response(&Refusal::invalid(
-            "malformed HTTP/1.1 request line",
+            "duplicate content-length headers are not allowed",
         )));
     };
-    if !matches!(version, "HTTP/1.1" | "HTTP/1.0") {
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
         return Err(refusal_response(&Refusal::invalid(
-            "unsupported HTTP version",
+            "invalid content-length header: must be ASCII digits",
         )));
     }
-    let mut headers = BTreeMap::new();
+    raw.parse::<usize>()
+        .map_err(|_err| refusal_response(&Refusal::invalid("invalid content-length header")))
+}
+
+fn read_head(
+    reader: &mut BufReader<&TcpStream>,
+    deadline: Instant,
+) -> Result<(String, String, BTreeMap<String, Vec<String>>), HttpResponse> {
+    let mut total = 0_usize;
+    let mut line_buf = Vec::new();
+    let request_line = read_header_line(reader, &mut line_buf, &mut total, deadline)?;
+    let (method, target) = parse_request_line(&request_line)?;
+    let mut headers: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut count = 0_usize;
     loop {
-        let line = read_header_line(reader, &mut line_buf, &mut total)?;
+        let line = read_header_line(reader, &mut line_buf, &mut total, deadline)?;
         if line.is_empty() {
             break;
         }
@@ -162,64 +215,132 @@ fn read_head(
         if count > MAX_HEADERS {
             return Err(refusal_response(&Refusal::invalid("too many HTTP headers")));
         }
+        if line.starts_with([' ', '\t']) {
+            return Err(refusal_response(&Refusal::invalid(
+                "obsolete folded HTTP headers are not allowed",
+            )));
+        }
         let Some((name, val)) = line.split_once(':') else {
             return Err(refusal_response(&Refusal::invalid(
                 "malformed HTTP header line",
             )));
         };
-        let lower = name.trim().to_ascii_lowercase();
-        let value = val.trim().to_owned();
-        if lower == "content-length"
-            && let Some(prev) = headers.get(&lower)
-            && prev != &value
-        {
+        if name.is_empty() || !name.bytes().all(is_tchar) {
             return Err(refusal_response(&Refusal::invalid(
-                "conflicting content-length headers",
+                "invalid HTTP header name (no whitespace before colon)",
             )));
         }
-        headers.insert(lower, value);
+        if has_disallowed_header_value_byte(val) {
+            return Err(refusal_response(&Refusal::invalid(
+                "HTTP header value contains control characters",
+            )));
+        }
+        let lower = name.to_ascii_lowercase();
+        let value = val.trim_matches([' ', '\t']).to_owned();
+        headers.entry(lower).or_default().push(value);
     }
-    Ok((method.to_owned(), target.to_owned(), headers))
+    Ok((method, target, headers))
+}
+
+fn parse_request_line(request_line: &str) -> Result<(String, String), HttpResponse> {
+    let mut parts = request_line.split(' ');
+    let (Some(method), Some(target), Some(version), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(refusal_response(&Refusal::invalid(
+            "malformed HTTP/1.1 request line",
+        )));
+    };
+    if method.is_empty() || !method.bytes().all(is_tchar) {
+        return Err(refusal_response(&Refusal::invalid(
+            "invalid HTTP request method",
+        )));
+    }
+    if !target.starts_with('/') || target.bytes().any(|b| b.is_ascii_control() || b == 0x7f) {
+        return Err(refusal_response(&Refusal::invalid(
+            "invalid HTTP request target",
+        )));
+    }
+    if !matches!(version, "HTTP/1.1" | "HTTP/1.0") {
+        return Err(refusal_response(&Refusal::invalid(
+            "unsupported HTTP version",
+        )));
+    }
+    Ok((method.to_owned(), target.to_owned()))
 }
 
 fn read_header_line(
     reader: &mut BufReader<&TcpStream>,
     buf: &mut Vec<u8>,
     total: &mut usize,
+    deadline: Instant,
 ) -> Result<String, HttpResponse> {
     buf.clear();
-    let remaining = MAX_HEAD_BYTES.saturating_sub(*total).saturating_add(1);
-    let read = reader
-        .by_ref()
-        .take(u64::try_from(remaining).unwrap_or(u64::MAX))
-        .read_until(b'\n', buf)
-        .map_err(|err| refusal_response(&Refusal::invalid(format!("unreadable head: {err}"))))?;
-    if read == 0 {
-        return Err(refusal_response(&Refusal::invalid(
-            "unexpected EOF while reading HTTP request head",
-        )));
-    }
-    *total = total.saturating_add(read);
-    if *total > MAX_HEAD_BYTES {
-        return Err(refusal_response(&Refusal::invalid(
-            "HTTP request head exceeds 16 KiB bound",
-        )));
+    loop {
+        update_read_deadline(reader.get_ref(), deadline)?;
+        let available = match reader.fill_buf() {
+            Ok(slice) => slice,
+            Err(err) if err.kind() == ErrorKind::Interrupted => continue,
+            Err(err) if matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                return Err(request_timeout_response());
+            }
+            Err(err) => {
+                return Err(refusal_response(&Refusal::invalid(format!(
+                    "unreadable head: {err}"
+                ))));
+            }
+        };
+        if available.is_empty() {
+            return Err(refusal_response(&Refusal::invalid(
+                "unexpected EOF while reading HTTP request head",
+            )));
+        }
+        let remaining_cap = MAX_HEAD_BYTES.saturating_sub(*total).saturating_add(1);
+        let take_len = match available.iter().position(|&b| b == b'\n') {
+            Some(pos) => pos.saturating_add(1).min(remaining_cap),
+            None => available.len().min(remaining_cap),
+        };
+        if let Some(chunk) = available.get(..take_len) {
+            buf.extend_from_slice(chunk);
+        }
+        reader.consume(take_len);
+        *total = total.saturating_add(take_len);
+        if *total > MAX_HEAD_BYTES {
+            return Err(refusal_response(&Refusal::invalid(
+                "HTTP request head exceeds 16 KiB bound",
+            )));
+        }
+        if buf.ends_with(b"\n") {
+            break;
+        }
     }
     let Ok(text) = std::str::from_utf8(buf) else {
         return Err(refusal_response(&Refusal::invalid(
             "HTTP head is not valid UTF-8",
         )));
     };
-    Ok(text.trim_end_matches(['\r', '\n']).to_owned())
+    let Some(line) = text.strip_suffix("\r\n") else {
+        return Err(refusal_response(&Refusal::invalid(
+            "HTTP/1.1 lines must end with CRLF",
+        )));
+    };
+    if line.contains('\r') {
+        return Err(refusal_response(&Refusal::invalid(
+            "bare CR is not allowed in HTTP/1.1 head",
+        )));
+    }
+    Ok(line.to_owned())
 }
 
 fn read_exact_body(
     reader: &mut BufReader<&TcpStream>,
     length: usize,
+    deadline: Instant,
 ) -> Result<String, HttpResponse> {
     let mut body = Vec::with_capacity(length.min(BODY_CHUNK));
     let mut chunk = vec![0_u8; BODY_CHUNK];
     while body.len() < length {
+        update_read_deadline(reader.get_ref(), deadline)?;
         let want = length.saturating_sub(body.len()).min(BODY_CHUNK);
         let Some(slice) = chunk.get_mut(..want) else {
             break;
@@ -235,7 +356,10 @@ fn read_exact_body(
                     body.extend_from_slice(filled);
                 }
             }
-            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) if err.kind() == ErrorKind::Interrupted => {}
+            Err(err) if matches!(err.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                return Err(request_timeout_response());
+            }
             Err(err) => {
                 return Err(refusal_response(&Refusal::invalid(format!(
                     "failed reading request body: {err}"
@@ -279,6 +403,7 @@ const fn status_reason(status: u16) -> &'static str {
         403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        408 => "Request Timeout",
         409 => "Conflict",
         413 => "Payload Too Large",
         422 => "Unprocessable Content",
@@ -287,6 +412,17 @@ const fn status_reason(status: u16) -> &'static str {
         503 => "Service Unavailable",
         _ => "Status",
     }
+}
+
+/// Return a `408 Request Timeout` refusal document.
+pub(super) fn request_timeout_response() -> HttpResponse {
+    synthetic_refusal(
+        408,
+        "request.timeout",
+        "limit",
+        "request timed out",
+        "the HTTP request did not complete within the host deadline",
+    )
 }
 
 /// Convert a pre-serialized JSON string result into an [`HttpResponse`].
@@ -327,7 +463,7 @@ pub(super) fn method_not_allowed(allowed: &str) -> HttpResponse {
     )
 }
 
-/// Construct a `norn/refusal@2` response for transport-level refusals (404/405/413).
+/// Construct a `norn/refusal@2` response for transport-level refusals (401/404/405/408/413).
 pub(super) fn synthetic_refusal(
     status: u16,
     code: &str,
