@@ -42,29 +42,49 @@ test("fmt_preserves_semantics", async () => {
       changed.push(relativePath)
       writeFileSync(join(after, relativePath), formatted)
     }
-    // One module's canonical artifact set, in its own process.
-    const program = `
+    // Persistent worker pool (capped at 4 so sharded CI runs don't oversubscribe
+    // cores): each worker imports the compiler once and compiles every assigned
+    // module through a fresh `compilePack` TypeScript Program.
+    const workerProgram = `
       import { toJson } from ${JSON.stringify(join(TOOL_ROOT, "src/canonical.ts"))}
       import { compilePack } from ${JSON.stringify(join(TOOL_ROOT, "src/pack.ts"))}
-      const [root, file] = process.argv.slice(-2)
-      const compiled = compilePack(root, { scope: { orgId: "org_demo", environmentId: "dev" }, modules: [file], root })
-      const artifacts = compiled.ok ? compiled.artifacts.map(value => JSON.stringify(toJson(value))).sort() : []
-      process.stdout.write(JSON.stringify({ ok: compiled.ok, artifacts }))`
-    const compileIn = async (root: string, relativePath: string) => {
-      const child = Bun.spawn(["bun", "-e", program, root, join(root, relativePath)], { stdout: "pipe", stderr: "pipe" })
-      const [text, status] = await Promise.all([new Response(child.stdout).text(), child.exited])
-      if (status !== 0) throw new Error(`${relativePath}: compile exited ${status}: ${await new Response(child.stderr).text()}`)
-      return JSON.parse(text) as { ok: boolean; artifacts: string[] }
-    }
-    const jobs = changed.flatMap(path => [() => compileIn(before, path), () => compileIn(after, path)])
+      const jobs = JSON.parse(await Bun.stdin.text()) as Array<{ index: number; relativePath: string; root: string; file: string }>
+      const out = jobs.map(({ index, relativePath, root, file }) => {
+        try {
+          const compiled = compilePack(root, { scope: { orgId: "org_demo", environmentId: "dev" }, modules: [file], root })
+          const artifacts = compiled.ok ? compiled.artifacts.map(value => JSON.stringify(toJson(value))).sort() : []
+          return { index, ok: compiled.ok, artifacts }
+        } catch (error) {
+          throw new Error(\`\${relativePath}: \${error instanceof Error ? error.stack ?? error.message : String(error)}\`)
+        }
+      })
+      process.stdout.write(JSON.stringify(out))`
+    const jobs = changed.flatMap((relativePath, index) => [
+      { index: 2 * index, relativePath, root: before, file: join(before, relativePath) },
+      { index: 2 * index + 1, relativePath, root: after, file: join(after, relativePath) },
+    ])
     const results: Array<{ ok: boolean; artifacts: string[] }> = new Array(jobs.length)
-    let next = 0
-    await Promise.all(Array.from({ length: Math.max(1, availableParallelism()) }, async () => {
-      while (next < jobs.length) {
-        const index = next++
-        results[index] = await jobs[index]!()
-      }
-    }))
+    if (jobs.length > 0) {
+      const workerCount = Math.min(jobs.length, Math.max(1, Math.min(4, availableParallelism())))
+      const buckets: Array<typeof jobs> = Array.from({ length: workerCount }, () => [])
+      jobs.forEach((job, index) => { buckets[index % workerCount]!.push(job) })
+      const bunBin = Bun.which("bun") ?? "bun"
+      await Promise.all(buckets.map(async (bucket) => {
+        const child = Bun.spawn([bunBin, "-e", workerProgram], {
+          stdin: new Blob([JSON.stringify(bucket)]),
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        const [text, errText, status] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ])
+        if (status !== 0) throw new Error(`fmt worker exited ${status}: ${errText}`)
+        const batch = JSON.parse(text) as Array<{ index: number; ok: boolean; artifacts: string[] }>
+        for (const item of batch) results[item.index] = { ok: item.ok, artifacts: item.artifacts }
+      }))
+    }
     let compiled = 0
     changed.forEach((path, index) => {
       const [was, now] = [results[2 * index]!, results[2 * index + 1]!]
