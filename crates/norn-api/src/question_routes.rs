@@ -1,4 +1,7 @@
 //! HOST-READ-1 / QUERY-ENGINE-1: admitted questions through the shared read authority.
+mod fork;
+pub use fork::get_fork_answer;
+
 use crate::{
     authz::{
         ReadCapability::{self, Population, Sources, Values},
@@ -15,7 +18,7 @@ use crate::{
 use norn_cell::{
     CellError, CellStore, KnowledgeCutoff, ObjectRecord,
     compute::{
-        HistoricalQuestionResult, QueryContext, QueryResult,
+        ForkQuestionResult, HistoricalQuestionResult, QueryContext, QueryResult,
         lineage::{LineageDisclosure, keyed_receipt_handle, lineage_handle_matches},
     },
     engine::SqlEngine,
@@ -129,6 +132,19 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
         visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<norn_cell::compute::HistoricalQuestionResult, CellError> {
         store.evaluate_question_known_at(plan, context, cutoff, visible)
+    }
+    /// Core 08 (`WORLD-ISOLATE-1`, `FORK-PIN-1`): evaluate an admitted plan
+    /// inside a forked store under its durable [`norn_cell::ForkPin`].
+    /// # Errors
+    /// A typed world/compute refusal, or a host engine failure.
+    fn evaluate_in_fork(
+        &self,
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<ForkQuestionResult, CellError> {
+        store.evaluate_question_in_fork(plan, context, visible)
     }
 }
 
@@ -244,6 +260,9 @@ fn answer_plan<E: SqlEngine>(
     key: &[u8],
 ) -> Result<DisclosedAnswer, Refusal> {
     let cell = host.cell()?;
+    if cell.store().fork_pin().is_some() {
+        return Err(Refusal::from_compute(CellError::ForkInvalidWorld));
+    }
     let snapshot = runtime.snapshot(cell.store(), plan, actor)?;
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
