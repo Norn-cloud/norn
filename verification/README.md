@@ -14,7 +14,7 @@ Formal models and proofs for parts of Norn, and the scripts that check them. Thi
 | `semantics-v1/` | Shared Lean semantics (`NornSem`) and checker proofs, with pinned statements and axioms |
 | `exact-arith-v1/` | Lean proofs over Aeneas extractions of the exact decimal, rational and ledger arithmetic |
 | `authz-v1/`, `ontology-v1/`, `linear-conservation-v1/`, `query-compute-v1/`, `specialisation-v1/`, `quantity-batch-atomicity-v1/`, `quantity-unit-dimension-v1/`, `core-physics-v1/` | Lean proofs and Quint models for one subsystem each |
-| `owl-time-v1/` | Lean reference proof of Allen's thirteen interval relations over half-open intervals, a Kani harness over the Rust classifier in `crates/norn-expr/src/temporal/allen.rs`, and the list of temporal boundary laws with their evidence (`README.md`) |
+| `owl-time-v1/` | Lean reference proof of Allen's thirteen interval relations over half-open intervals, paired with the inline Verus proof over `crates/norn-expr/src/temporal/allen_core.rs` (`scripts/verify-owl-time-inline-verus.sh`), and the list of temporal boundary laws with their evidence (`README.md`) |
 | `data-lineage-v1/` | Lean reference proofs for `registry/packs/data/`: `DATA-CAUSAL-1` monotonic knowledge-time transitivity, conditional `DATA-ACYCLIC-1` (with 2-cycle witness), `TIME-ALLEN-1` partition slice (mirroring `owl-time-v1`), `BFO-DISJOINT-1` (`GRAPH-ROLE-1`), and target `DECLARED-DISJOINT` |
 | `cell-protocol-v1/` | Hand-written Quint models of cell protocols, TLC liveness harnesses, traces and `results.json`. Not a promoted gate. |
 | `canonical-values-v1/`, `cell-profile-v1/`, `ordered-fold-v1/`, `parameters/`, `values-v1/` | Kani harnesses and contracts. Crates include some of them under `#[cfg(kani)]`. |
@@ -42,9 +42,9 @@ What the gates use:
 | Lean | `*-lean` gates, plus the proofs inside the Aeneas gates |
 | Quint + Apalache | `*-quint` gates (bounded model checks, mostly `--max-steps 8`) and `*-quint-typecheck` |
 | Charon + Aeneas | nine `*-correspondence` gates. Each extracts production Rust and proves the Lean translation against a spec (`scripts/verify-*-aeneas.sh`). |
-| Kani | `kernel-version-kani` (five direct-source version harnesses), `quantity-kani` (`stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs`), `owl-time-allen-kani` (`owl-time-v1/allen_kani.rs`) |
+| Kani | `kernel-version-kani` (five direct-source version harnesses; `secondLensGate` for `has_committed_deletion`), `quantity-kani` (`stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs`) |
 | F* (via hax) | `artifact-governance-rust-extraction` (`scripts/verify-artifact-governance-extraction.sh`) |
-| Verus | `kernel-inline-verus` checks the successor and committed-deletion predicates in the shipped version module and runs their two mutants |
+| Verus | `kernel-inline-verus` checks the successor and committed-deletion predicates in the shipped version module and runs their two mutants; `owl-time-allen-verus` checks Allen's 13 interval relations in `crates/norn-expr/src/temporal/allen_core.rs` with D107 VIR/THIR comparison and four mutants |
 
 ## Quint/Apalache execution policy
 

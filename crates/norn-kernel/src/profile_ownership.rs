@@ -17,3 +17,25 @@ pub enum AtomicOwnership {
 pub const fn supports_local(ownership: AtomicOwnership) -> bool {
     matches!(ownership, AtomicOwnership::Local)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{AtomicOwnership, supports_local};
+
+    #[test]
+    fn supports_local_accepts_only_local_ownership() {
+        let all = [
+            AtomicOwnership::Local,
+            AtomicOwnership::Foreign,
+            AtomicOwnership::Unknown,
+        ];
+        for ownership in all {
+            match ownership {
+                AtomicOwnership::Local => assert!(supports_local(ownership)),
+                AtomicOwnership::Foreign | AtomicOwnership::Unknown => {
+                    assert!(!supports_local(ownership));
+                }
+            }
+        }
+    }
+}

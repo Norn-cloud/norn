@@ -19,6 +19,7 @@ use jiff::tz::{AmbiguousOffset, TimeZone};
 use jiff::{Span, Timestamp};
 
 mod allen;
+mod allen_core;
 
 pub use self::allen::{AllenRelation, allen_relation};
 pub use crate::tzdb::{

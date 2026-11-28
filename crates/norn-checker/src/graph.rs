@@ -136,4 +136,61 @@ mod tests {
             vec![BTreeSet::from([0, 1]), BTreeSet::from([3])]
         );
     }
+
+    #[test]
+    fn topological_order_matches_reachability_on_all_sixteen_two_vertex_graphs() {
+        for mask in 0_u8..16 {
+            let bits = [
+                [mask & 1 != 0, mask & 2 != 0],
+                [mask & 4 != 0, mask & 8 != 0],
+            ];
+            let edges: BTreeMap<usize, BTreeSet<usize>> = (0..2)
+                .map(|i| {
+                    let row = bits.get(i).copied().unwrap_or([false; 2]);
+                    let targets = (0..2)
+                        .filter(|&j| row.get(j).copied().unwrap_or(false))
+                        .collect();
+                    (i, targets)
+                })
+                .collect();
+            let mut reach = bits;
+            for k in 0..2 {
+                for i in 0..2 {
+                    for j in 0..2 {
+                        let via_k = reach
+                            .get(i)
+                            .and_then(|row| row.get(k))
+                            .copied()
+                            .unwrap_or(false)
+                            && reach
+                                .get(k)
+                                .and_then(|row| row.get(j))
+                                .copied()
+                                .unwrap_or(false);
+                        if let Some(cell) = reach.get_mut(i).and_then(|row| row.get_mut(j)) {
+                            *cell |= via_k;
+                        }
+                    }
+                }
+            }
+            let has_cycle = (0..2).any(|i| {
+                reach
+                    .get(i)
+                    .and_then(|row| row.get(i))
+                    .copied()
+                    .unwrap_or(false)
+            });
+            let (order, blocked) = topological_order(&edges, |i| i);
+            assert_eq!(blocked.is_empty(), !has_cycle, "mask {mask}");
+            if blocked.is_empty() {
+                assert_eq!(order.len(), 2, "mask {mask}");
+                for (index, node) in order.iter().enumerate() {
+                    let prefix = order.get(..index).unwrap_or(&[]);
+                    for dependency in edges.get(node).into_iter().flatten() {
+                        assert!(prefix.contains(dependency), "mask {mask}");
+                    }
+                }
+            }
+        }
+    }
 }

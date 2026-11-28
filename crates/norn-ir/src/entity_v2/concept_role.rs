@@ -1,9 +1,8 @@
 //! GRAPH-ROLE-1: roles are declared or inherited; they are never inferred.
 //!
-//! This file has no dependencies: the standalone Kani harness
-//! (`verification/kernel-l1/concept_role_kani.rs`) compiles it directly, and
-//! it compiles unchanged in every configuration of this crate. The wire
-//! encoding lives in the sibling `concept_role_wire` module.
+//! This file has no dependencies so it compiles unchanged in every
+//! configuration of this crate. The wire encoding lives in the sibling
+//! `concept_role_wire` module.
 
 /// Semantic role of an ordinary concept, independent of lifecycle presence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -41,5 +40,56 @@ impl ConceptRole {
             (Some(local), Some(parent)) if local != parent => Err(RoleConflict::Declared),
             _ => Ok(declared.or(parent).unwrap_or(Self::Thing)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ConceptRole, RoleConflict};
+
+    #[test]
+    fn role_meet_refuses_exactly_conflict_or_mismatch_up_to_four_parents() {
+        let declared_choices = [None, Some(ConceptRole::Thing), Some(ConceptRole::Happening)];
+        let mask_counts: [(usize, u8); 5] = [(0, 1), (1, 2), (2, 4), (3, 8), (4, 16)];
+        let bit_masks: [u8; 4] = [1, 2, 4, 8];
+        let mut checked = 0_usize;
+
+        for declared in declared_choices {
+            for (len, total_masks) in mask_counts {
+                for mask in 0..total_masks {
+                    let mut inherited = Vec::with_capacity(len);
+                    for &bit_mask in bit_masks.iter().take(len) {
+                        let is_happening = (mask & bit_mask) != 0;
+                        inherited.push(if is_happening {
+                            ConceptRole::Happening
+                        } else {
+                            ConceptRole::Thing
+                        });
+                    }
+                    let thing = inherited.contains(&ConceptRole::Thing);
+                    let happening = inherited.contains(&ConceptRole::Happening);
+                    let result = ConceptRole::resolve(declared, &inherited);
+                    if thing && happening {
+                        assert_eq!(result, Err(RoleConflict::Inherited));
+                    } else if (declared == Some(ConceptRole::Happening) && thing)
+                        || (declared == Some(ConceptRole::Thing) && happening)
+                    {
+                        assert_eq!(result, Err(RoleConflict::Declared));
+                    } else {
+                        assert_eq!(
+                            result,
+                            Ok(declared.unwrap_or(if happening {
+                                ConceptRole::Happening
+                            } else {
+                                ConceptRole::Thing
+                            }))
+                        );
+                    }
+                    checked = checked.saturating_add(1);
+                }
+            }
+        }
+
+        assert_eq!(checked, 93);
     }
 }

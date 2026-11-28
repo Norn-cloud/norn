@@ -288,25 +288,6 @@ HARNESSES
             return 1
           }
           ;;
-        owl-time-allen-kani)
-          local clean_kani_log
-          clean_kani_log="$(sed -E $'s/\x1b\\[[0-9;?]*[ -\\/]*[@-~]//g' "$log_path")"
-          if ! diff -u - <(sed -n 's/^Checking harness \(.*\)\.\.\.$/\1/p' <<<"$clean_kani_log" | LC_ALL=C sort) <<'HARNESSES'
-before_during_and_meets_compose
-exactly_one_relation_holds_and_the_classifier_returns_it
-improper_intervals_have_no_relation
-sharing_an_instant_is_the_half_open_overlap_test
-the_converse_holds_for_the_swapped_intervals
-HARNESSES
-          then
-            printf '[fail] %s did not verify the exact pinned Kani harnesses\n' "$gate_id" >&2
-            return 1
-          fi
-          grep -Fx 'Complete - 5 successfully verified harnesses, 0 failures, 5 total.' <<<"$clean_kani_log" > /dev/null || {
-            printf '[fail] %s missing expected 5-harness Kani completion summary\n' "$gate_id" >&2
-            return 1
-          }
-          ;;
         kernel-v2-quantity-ledger)
           local clean_quint_log expected_test
           clean_quint_log="$(sed -E $'s/\x1b\\[[0-9;?]*[ -\\/]*[@-~]//g' "$log_path")"
@@ -741,13 +722,10 @@ run_gate full quantity-kani \
     KANI_HOME=target/verification-tools/kani-home \
     kani --fail-fast --output-format terse --target-dir "$result_root/kani-target" \
     verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs
-run_gate full owl-time-allen-kani \
-  "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/owl-time-v1/allen_kani.rs" \
+run_gate full owl-time-allen-verus \
+  "bash scripts/verify-owl-time-inline-verus.sh all" \
   command \
-  env RUSTUP_HOME=target/verification-tools/rustup \
-    KANI_HOME=target/verification-tools/kani-home \
-    kani --fail-fast --output-format terse --target-dir "$result_root/kani-target" \
-    verification/owl-time-v1/allen_kani.rs
+  bash scripts/verify-owl-time-inline-verus.sh all
 
 run_gate full ontology-runtime-rust \
   "cargo test --locked -p norn-checker --test suites -- ontology_pack:: ontology_registry:: quantity_unit_ontology_pack::" \

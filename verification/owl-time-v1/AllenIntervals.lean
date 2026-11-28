@@ -20,8 +20,9 @@ Proved here, for every pair of proper intervals:
 Instants are `Int`. The theorems use only the order of the instants, so they
 apply to any carrier that embeds in `Int` in order, such as a canonical UTC
 ordering key counted in nanoseconds. This file does not prove correspondence
-to the Rust classifier in `crates/norn-expr/src/temporal/allen.rs`; the bounded
-check of that code is `allen_kani.rs` beside this file. Calendar arithmetic,
+to the Rust classifier in `crates/norn-expr/src/temporal/allen.rs`; the inline
+Verus proof over its pure core lives in `crates/norn-expr/src/temporal/allen_core.rs`
+(`scripts/verify-owl-time-inline-verus.sh`). Calendar arithmetic,
 timezone rules and DST resolution are outside this file.
 -/
 namespace Norn.Verification.OwlTime

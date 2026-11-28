@@ -63,7 +63,7 @@ The `version_kani.rs` harness imports the production deletion/successor core ove
 
 Evidence expected: structural codec/schema checks; runtime-enforced uniqueness/reference constraints; sampled transport/replay correspondence; generated arithmetic side conditions over the same exact-number semantics. Do not infer universal identity correctness from a hash function.
 
-The ledger's allocation-free decimal core (`quantity_ledger/decimal.rs`) preserves exact coefficient/scale value while removing trailing zeros, and refuses power-of-ten overflow. Proptests cover arbitrary `i128` coefficients and `u8` scales. The standalone `verification/canonical-values-v1/decimal_kani.rs` harness imports those production functions directly: normalization uses signed 8-bit coefficients and scales 0–2; multiplier checks use exponents 0–6 plus the overflow boundary 39. These bounded implementation checks do not prove the full ledger, runtime Decimal parser, rounding semantics or temporal evaluator. Run each harness on Boat with a 300-second bound; an absent verdict remains unknown.
+The ledger's allocation-free decimal core (`quantity_ledger/decimal.rs`) preserves exact coefficient/scale value while removing trailing zeros, and refuses power-of-ten overflow. Promoted Aeneas/Lean correspondence proofs (`exact-arith-correspondence` → `verification/exact-arith-v1/DecimalProof.lean`: `canonical_parts_correct`, `canonical_parts_unique`, `checked_pow10_correct`) prove those functions over all `i128` coefficients and `u8` scales/exponents; proptests and an exhaustive `0..=u8::MAX` multiplier test also run in `norn-checker`. These implementation proofs do not prove the full ledger, runtime Decimal parser, rounding semantics or temporal evaluator.
 
 ## Named acceptance scenarios
 

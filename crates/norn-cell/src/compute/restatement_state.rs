@@ -22,6 +22,34 @@ pub(super) const fn select(phase: Phase, previous: bool, candidate: bool) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn approval_does_not_publish_and_absence_refuses_all_sixteen_states() {
+        let phases = [
+            Phase::Building,
+            Phase::Ready,
+            Phase::Approved,
+            Phase::Active,
+        ];
+        for phase in phases {
+            for previous in [false, true] {
+                for candidate in [false, true] {
+                    let selected = select(phase, previous, candidate);
+                    match phase {
+                        Phase::Active => {
+                            assert_eq!(selected == Some(Selection::Candidate), candidate);
+                            assert_ne!(selected, Some(Selection::Previous));
+                        }
+                        Phase::Building | Phase::Ready | Phase::Approved => {
+                            assert_ne!(selected, Some(Selection::Candidate));
+                            assert_eq!(selected == Some(Selection::Previous), previous);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     proptest::proptest! {
         #[test]
         fn only_activation_exposes_a_present_candidate(phase in 0u8..4,previous in proptest::bool::ANY,candidate in proptest::bool::ANY) {

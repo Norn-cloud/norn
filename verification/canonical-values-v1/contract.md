@@ -45,10 +45,8 @@ calendar policy or generated arithmetic proof is established by this cut.
 The codec proptest generates signed 64-bit whole parts and six-digit
 fractions: numeric and string inputs must yield identical canonical storage,
 and decode/JSON round trips must preserve their exact value.
-`diagnostic_kani.rs` asserts classification of the three production error variants
-against the canonical diagnostic adapter, including absence for malformed JSON.
-Its intended scope is classification and absence of panic, not the
-heap-backed arbitrary-length decimal/JSON parser or evaluator arithmetic.
-
-Run the production-adapter harness with `cargo kani -p norn-checker --tests
---harness numeric_refusals_have_the_canonical_code --output-format terse`.
+`property_codec::tests::runtime_error_code_classifies_every_variant` exhaustively
+checks classification of all three production `RuntimeValueError` variants
+against `runtime_error_code`, including absence for malformed JSON. Its scope is
+classification and absence of panic, not the heap-backed arbitrary-length
+decimal/JSON parser or evaluator arithmetic.

@@ -53,7 +53,7 @@ proofs for the constitutional `data` ontology pack
    Self-contained partition slice mirroring
    [`verification/owl-time-v1/AllenIntervals.lean`](../owl-time-v1/AllenIntervals.lean)
    (already checked by `owl-time-allen-lean`, which also proves the classifier,
-   converse dualities, scheduling compositions, and pairs with `allen_kani.rs`):
+   converse dualities, scheduling compositions, and pairs with `owl-time-allen-verus`):
    every pair of proper half-open intervals `[startsAt, endsAt)` satisfies
    *exactly one* of Allen's 13 relations.
 4. **`BFO-DISJOINT-1` (`GRAPH-ROLE-1`) & Target `DECLARED-DISJOINT`**:
