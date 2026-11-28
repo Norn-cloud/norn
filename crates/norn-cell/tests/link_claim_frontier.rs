@@ -3937,3 +3937,155 @@ fn admitted_definitions_normal_install_applies_delete_and_reopens() {
             .is_some()
     );
 }
+
+fn legacy_model_without_tombstone(artifacts: &[ArtifactEnvelope]) -> norn_cell::Model {
+    let mut types: Vec<norn_ir::ObjectTypeDef> = Vec::new();
+    let mut interfaces: Vec<norn_ir::InterfaceDef> = Vec::new();
+    let mut properties: Vec<norn_ir::PropertyTypeDef> = Vec::new();
+    for artifact in artifacts {
+        let payload = serde_json::to_value(artifact).expect("artifact")["payload"].clone();
+        if let Some(value) = payload.get("objectType") {
+            types.push(serde_json::from_value(value.clone()).expect("object"));
+        }
+        if let Some(value) = payload.get("interface") {
+            interfaces.push(serde_json::from_value(value.clone()).expect("interface"));
+        }
+        if let Some(value) = payload.get("propertyTypes") {
+            properties.extend(
+                serde_json::from_value::<Vec<norn_ir::PropertyTypeDef>>(value.clone())
+                    .expect("properties"),
+            );
+        }
+    }
+    types.extend(norn_cell::kernel_record_types());
+    norn_cell::Model::from_definitions_with_interfaces(&types, &properties, &interfaces)
+        .expect("legacy model")
+        .with_governing_laws(artifacts)
+        .expect("laws")
+}
+
+fn open_reopened_legacy_cell_without_tombstone(path: &Path) -> Cell {
+    let mut artifacts = mapped_cell::fixture_artifacts();
+    edit_artifact(&mut artifacts, "erpnext.three.mapping", |a| {
+        let order = a["payload"]["maps"]
+            .as_array_mut()
+            .expect("maps")
+            .iter_mut()
+            .find(|m| m["id"] == "order")
+            .expect("order map");
+        order["lifecycles"][0]["onDelete"] = json!("cancelled");
+    });
+    artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+
+    let legacy_model = legacy_model_without_tombstone(&artifacts);
+    assert!(
+        !legacy_model.has_type(norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE),
+        "legacy pre-B5 model omits norn.ObservedTombstone"
+    );
+    let mut store =
+        CellStore::open(path, legacy_model.clone(), StoreOptions::default()).expect("open");
+    store.bind("scope", "org_demo/dev").expect("scope");
+    store
+        .install_definitions(
+            legacy_model.clone(),
+            norn_cell::InstalledDefinitionInput {
+                canonical_set: String::from_utf8(
+                    norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set"),
+                )
+                .expect("utf8"),
+                registry: vec![],
+                receipt_sha256: norn_ir::canonical::domain_hash_hex(
+                    b"norn.test.receipt\0",
+                    &"legacy-no-tombstone",
+                )
+                .expect("receipt digest"),
+                admission_receipt: None,
+                readmission: None,
+                diff: json!({}),
+                installed_at: 1_793_702_400_000,
+                layout: None,
+            },
+            None,
+            "org_demo/dev",
+        )
+        .expect("install legacy model");
+    drop(store);
+
+    let reopened =
+        CellStore::open(path, legacy_model, StoreOptions::default()).expect("reopen legacy");
+    SqliteCell::new(reopened, "org_demo/dev", |_| BTreeMap::new()).expect("cell")
+}
+
+/// #1028 / #1931: A reopened legacy pre-B5 cell whose model omits
+/// `norn.ObservedTombstone` still processes absent-subject and reachable
+/// `onDelete` lifecycle deletes cleanly, while failing closed on deletes that
+/// require writing a tombstone.
+#[test]
+fn reopened_legacy_cell_without_tombstone_supports_absent_and_on_delete_refuses_tombstone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut cell =
+        open_reopened_legacy_cell_without_tombstone(&dir.path().join("legacy_no_tombstone.sqlite"));
+
+    // 1. Absent-subject delete succeeds without reading norn.ObservedTombstone.
+    let absent = party_ref_row("P-ABSENT", "demo/party/absent", "Absent", None);
+    let (raw_abs, in_abs) = raw_event(&cell, "erpnext", &absent, "e-abs", "1", "delete", "p1");
+    let (abs_id, _) = cell
+        .inject_mapping_bundle(&raw_abs, &in_abs)
+        .expect("inject absent");
+    assert!(
+        cell.process_mapping_bundle(&abs_id)
+            .expect("absent delete succeeds")
+    );
+
+    // 2. Reachable `onDelete` lifecycle delete transitions OrderLine to `cancelled`.
+    let snapshot = fixture("erpnext")["snapshot"]
+        .as_array()
+        .expect("snapshot")
+        .clone();
+    let order_row = snapshot
+        .iter()
+        .find(|row| row["dataset"] == "Sales Order Item")
+        .expect("Sales Order Item row");
+    let order_key = order_row["record"]["custom_norn_ref"]
+        .as_str()
+        .expect("order key");
+    capture_kind(&mut cell, "erpnext", order_row, "eo1", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", order_row, "eo2", "2", "delete", "p1");
+    let order_obj = cell
+        .store()
+        .read()
+        .object(MAIN_WORLD, "canon.OrderLine", order_key)
+        .expect("read order")
+        .expect("order exists");
+    assert_eq!(
+        order_obj
+            .values
+            .get("status")
+            .and_then(RuntimeValue::as_str),
+        Some("cancelled"),
+        "reachable onDelete transitions without norn.ObservedTombstone"
+    );
+
+    // 3. Tombstone-requiring delete on a live Party still fails closed.
+    let live = party_ref_row("P-LIVE", "demo/party/live", "Live", None);
+    capture_kind(&mut cell, "erpnext", &live, "ep1", "1", "upsert", "p1");
+    let (raw_del, in_del) = raw_event(&cell, "erpnext", &live, "ep2", "2", "delete", "p1");
+    let (del_id, _) = cell
+        .inject_mapping_bundle(&raw_del, &in_del)
+        .expect("inject live del");
+    let err = cell
+        .process_mapping_bundle(&del_id)
+        .expect_err("tombstone write without norn.ObservedTombstone must fail closed");
+    assert!(
+        matches!(
+            err,
+            CellError::ObservationCommit(ref inner)
+                if matches!(
+                    inner.as_ref(),
+                    norn_kernel::CommitError::Host(CellError::UnknownObjectType(ty))
+                        if ty == norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE
+                )
+        ),
+        "expected UnknownObjectType(norn.ObservedTombstone), got: {err:?}"
+    );
+}

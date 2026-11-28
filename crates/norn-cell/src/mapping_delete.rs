@@ -74,20 +74,23 @@ pub(crate) fn prepare_mapping_deletes<E: SqlEngine>(
     {
         return Ok(());
     }
+    let has_tombstone = reader
+        .model()
+        .has_type(norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE);
     for delete in &bundle.deletes {
         let key = FactKey::new(delete.object_type.as_str(), &delete.key);
         let slice = delete_slice(reader, &key)?;
-        let prepared = prepare_observed_delete(
-            catalog,
-            &slice,
-            turn,
-            ObservedDelete {
-                key: &key,
-                lifecycles: &delete.lifecycle_snapshots,
-                provenance: &delete.provenance,
-            },
-        )
-        .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
+        let del = ObservedDelete {
+            key: &key,
+            lifecycles: &delete.lifecycle_snapshots,
+            provenance: &delete.provenance,
+        };
+        let mut prepared = prepare_observed_delete(catalog, &slice, turn, del)
+            .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
+        if !has_tombstone {
+            let ty = norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE;
+            prepared.reads.retain(|r| r.key.object_type.as_str() != ty);
+        }
         prepared
             .append_to(commit, authorization)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
