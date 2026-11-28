@@ -211,7 +211,7 @@ fn standalone_callbacks_enforce_ast_node_and_depth_budgets_before_recursion() ->
 }
 
 #[test]
-fn standalone_lambda_validate_and_lower_share_exact_budget_boundaries() -> TestResult {
+fn standalone_lambda_validate_and_lower_share_exact_budget_boundaries() {
     let boundary_src = "lambda s: s.hours > 0";
     for max_nodes in 1..=20 {
         let limits = SandboxLimits {
@@ -257,7 +257,6 @@ fn standalone_lambda_validate_and_lower_share_exact_budget_boundaries() -> TestR
             assert_eq!(le.code(), CODE_UNBOUNDED);
         }
     }
-    Ok(())
 }
 
 #[test]
