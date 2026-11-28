@@ -403,6 +403,8 @@ run_phase() {
       python3 scripts/test_demo_scenarios.py
       python3 scripts/standards_atlas.py --check
       python3 scripts/test_standards_atlas.py
+      python3 scripts/feature_map.py check
+      python3 scripts/test_feature_map.py
       python3 scripts/importers/test_owl_sources.py
       python3 scripts/metrics/test_metrics.py
       python3 scripts/metrics/test_unit_economics.py

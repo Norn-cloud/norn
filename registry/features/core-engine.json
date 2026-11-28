@@ -1,0 +1,448 @@
+{
+  "schemaVersion": 1,
+  "stopGap": {
+    "status": "stop-gap",
+    "retirementTrigger": "Retire once TARGET Norn authoring (concept({ ... }), pinned packs) hosts the feature ontology natively in a Norn cell."
+  },
+  "domain": "core-engine",
+  "title": "Core Engine & IR Semantics",
+  "summary": "Canonical IR artifact kinds, exact value/quantity physics, concept graph/ontology, authorization, rules/decisions, laws/deontics, transactions/timers, and governed artifact lifecycle.",
+  "features": [
+    {
+      "id": "core-artifact-governance",
+      "title": "Governed artifact lifecycle, settings, packs, and labels",
+      "domain": "core-engine",
+      "specContracts": [
+        "docs/spec/core/06-composition-config.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "checked-proof",
+      "surfaces": [
+        "gate:artifact-direct-write-predicate-runtime",
+        "gate:artifact-governance-active-pointer-lean",
+        "gate:artifact-governance-active-pointer-quint",
+        "gate:artifact-governance-active-pointer-quint-typecheck",
+        "gate:artifact-governance-checker-receipt-lean",
+        "gate:artifact-governance-lean",
+        "gate:artifact-governance-quint",
+        "gate:artifact-governance-quint-typecheck",
+        "gate:artifact-governance-rust-extraction",
+        "ir:business_pack",
+        "ir:customization",
+        "ir:labels",
+        "ir:setting"
+      ],
+      "sourcePaths": [
+        "crates/norn-ir/src/lib.rs",
+        "crates/norn-ir/src/business_pack.rs",
+        "crates/norn-ir/src/customization.rs",
+        "crates/norn-ir/src/labels.rs",
+        "crates/norn-ir/src/setting.rs",
+        "crates/norn-checker/src/parameter.rs",
+        "crates/norn-checker/src/labels.rs",
+        "crates/norn-checker/src/receipt.rs"
+      ],
+      "invariants": [
+        "artifact-direct-write-predicate-runtime",
+        "artifact-governance-active-pointer-lean",
+        "artifact-governance-active-pointer-quint",
+        "artifact-governance-active-pointer-quint-typecheck",
+        "artifact-governance-checker-receipt-lean",
+        "artifact-governance-lean",
+        "artifact-governance-quint",
+        "artifact-governance-quint-typecheck",
+        "artifact-governance-rust-extraction"
+      ],
+      "probe": {
+        "drive": "Inspect `direct_artifact_write_allowed` in `crates/norn-ir/src/lib.rs`, run `norn check --source tools/norn-ts/fixtures/quickstart --org example --env local`, and verify direct Approved/Active writes are refused unless routed through governed admission and install.",
+        "observableEndState": "Checker returns `admitted: true` with a deterministic `receiptSha256` for draft/proposed definitions, while direct persistence of Approved/Active authority-bearing artifacts is refused.",
+        "gotchas": [
+          "Numeric settings (`valueType: \"number\"`) require exact `DecimalLiteral` strings (`PARAM-EXACT-1`), never binary64 numbers.",
+          "Labels (`ir:labels`) never participate in definition identity digests."
+        ]
+      }
+    },
+    {
+      "id": "core-authorization-and-policies",
+      "title": "Fail-closed scope and action authorization",
+      "domain": "core-engine",
+      "specContracts": [
+        "docs/spec/core/05-laws-authority.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "checked-proof",
+      "surfaces": [
+        "gate:authority-quint",
+        "gate:authority-quint-typecheck",
+        "gate:authorization-authority-commit-lean",
+        "gate:authorization-commit-quint",
+        "gate:authorization-commit-quint-typecheck",
+        "gate:authorization-lean",
+        "gate:authorization-scope-exactness-lean",
+        "gate:authorization-scope-exactness-quint",
+        "gate:authorization-scope-exactness-quint-typecheck",
+        "ir:policy"
+      ],
+      "sourcePaths": [
+        "crates/norn-authz/src/pdp.rs",
+        "crates/norn-authz/src/admit.rs",
+        "crates/norn-authz/src/grants.rs",
+        "crates/norn-kernel/src/authz.rs",
+        "crates/norn-kernel/src/authz_action.rs",
+        "crates/norn-ir/src/access.rs"
+      ],
+      "invariants": [
+        "authority-quint",
+        "authority-quint-typecheck",
+        "authorization-authority-commit-lean",
+        "authorization-commit-quint",
+        "authorization-commit-quint-typecheck",
+        "authorization-lean",
+        "authorization-scope-exactness-lean",
+        "authorization-scope-exactness-quint",
+        "authorization-scope-exactness-quint-typecheck"
+      ],
+      "probe": {
+        "drive": "Start a local `norn dev` cell with a named restricted principal (`norn.json` `dev.principals`), invoke a governed action with a missing role or mismatched org/env scope, then retry as an authorized principal.",
+        "observableEndState": "Unauthorized or out-of-scope requests fail closed with structured refusal diagnostics and leave cell state unchanged; authorized requests commit and return a receipt.",
+        "gotchas": [
+          "The default loopback developer principal holds all roles (`DEV-LOOPBACK-1`); always test denials with a declared restricted principal or reviewer."
+        ]
+      }
+    },
+    {
+      "id": "core-derived-views-and-models",
+      "title": "Derived views, predictive models, and checked UI widgets",
+      "domain": "core-engine",
+      "specContracts": [
+        "docs/spec/core/03-query-compute.md",
+        "docs/spec/core/08-worlds-projections.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "bounded",
+      "surfaces": [
+        "gate:kernel-v2-projection-trust",
+        "gate:kernel-v2-projection-trust-typecheck",
+        "ir:derived",
+        "ir:model",
+        "ir:widget"
+      ],
+      "sourcePaths": [
+        "crates/norn-ir/src/view.rs",
+        "crates/norn-ir/src/model.rs",
+        "crates/norn-ir/src/widget.rs",
+        "crates/norn-ir/src/widget_ux.rs",
+        "crates/norn-ui-checker/src/lib.rs",
+        "crates/norn-checker/src/model.rs",
+        "crates/norn-projections/src/lib.rs"
+      ],
+      "invariants": [
+        "kernel-v2-projection-trust",
+        "kernel-v2-projection-trust-typecheck",
+        "checker:crates/norn-ui-checker/src/lib.rs"
+      ],
+      "probe": {
+        "drive": "Compile a fixture containing derived views, model metadata, and `W.widget` definitions via `norn compile`, then admit via `norn check` and verify `norn-ui-checker` Ring-1 admission rules.",
+        "observableEndState": "Admitted derived views remain pure/recompute-on-read with no IO, predictive models stay opaque outside authority paths, and invalid widget bindings fail admission deterministically.",
+        "gotchas": [
+          "Projection correspondence across exact cell, IVM, and OLAP backends is tracked per backend profile; never treat a single-backend pass as full projection correspondence."
+        ]
+      }
+    },
+    {
+      "id": "core-laws-and-deontics",
+      "title": "Scoped temporal laws, deontic norms, and exception precedence",
+      "domain": "core-engine",
+      "specContracts": [
+        "docs/spec/core/05-laws-authority.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "checked-proof",
+      "surfaces": [
+        "gate:law-exceptions-correspondence",
+        "gate:norm-precedence-decision-correspondence",
+        "gate:preservation-correspondence",
+        "ir:law"
+      ],
+      "sourcePaths": [
+        "crates/norn-ir/src/verification.rs",
+        "crates/norn-ir/src/deontic.rs",
+        "crates/norn-checker/src/verification.rs",
+        "crates/norn-checker/src/deontic.rs",
+        "crates/norn-checker/src/law_exceptions.rs",
+        "crates/norn-checker/src/norm_precedence.rs",
+        "crates/norn-kernel/src/governing_laws.rs"
+      ],
+      "invariants": [
+        "law-exceptions-correspondence",
+        "norm-precedence-decision-correspondence",
+        "preservation-correspondence"
+      ],
+      "probe": {
+        "drive": "Compile and check a pack defining `Norn.law`, `Norn.obligation`, `Norn.prohibition`, and `Norn.permission` via `norn check --source <pack>`, then inspect `norn explain law <id> --defs <artifacts> --format json`.",
+        "observableEndState": "Checker admits sound laws and rejects weakened inherited interface laws (`law.model.weakens_inherited`); `norn explain` reports explicit proof status without fabricating verified claims.",
+        "gotchas": [
+          "Defeasible `unless` runtime commit evaluation and `severity: { override }` remain explicitly tracked engine gaps (`core.laws.unsupported_semantics`); report them honestly."
+        ]
+      }
+    },
+    {
+      "id": "core-ontology-and-mappings",
+      "title": "Concept graph, relations, connectors, source schemas, and mappings",
+      "domain": "core-engine",
+      "specContracts": [
+        "docs/spec/core/02-concept-graph.md",
+        "docs/spec/core/07-world-boundary.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "checked-proof",
+      "surfaces": [
+        "gate:ontology-authority-lean",
+        "gate:ontology-closed-entity-ir-rust",
+        "gate:ontology-mapping-provenance-lean",
+        "gate:ontology-mapping-provenance-quint",
+        "gate:ontology-mapping-provenance-quint-typecheck",
+        "gate:ontology-model",
+        "gate:ontology-relation-authority-quint",
+        "gate:ontology-relation-authority-quint-typecheck",
+        "gate:ontology-runtime-rust",
+        "gate:ontology-semantic-differential",
+        "ir:connector",
+        "ir:defined_concept",
+        "ir:entity",
+        "ir:mapping",
+        "ir:relation",
+        "ir:source_schema"
+      ],
+      "sourcePaths": [
+        "crates/norn-ir/src/entity.rs",
+        "crates/norn-ir/src/defined_concept.rs",
+        "crates/norn-ir/src/connector.rs",
+        "crates/norn-ir/src/source_schema.rs",
+        "crates/norn-ir/src/mapping.rs",
+        "crates/norn-checker/src/ontology.rs",
+        "crates/norn-checker/src/mapping.rs",
+        "crates/norn-checker/src/source_schema.rs",
+        "crates/norn-cell/src/mapping_process.rs"
+      ],
+      "invariants": [
+        "ontology-authority-lean",
+        "ontology-closed-entity-ir-rust",
+        "ontology-mapping-provenance-lean",
+        "ontology-mapping-provenance-quint",
+        "ontology-mapping-provenance-quint-typecheck",
+        "ontology-model",
+        "ontology-relation-authority-quint",
+        "ontology-relation-authority-quint-typecheck",
+        "ontology-runtime-rust",
+        "ontology-semantic-differential"
+      ],
+      "probe": {
+        "drive": "Compile `tools/norn-ts/fixtures/core` with `norn compile tools/norn-ts/fixtures/core --org org_demo --env dev --out <tmp>/core.json` and run `norn check --artifacts <tmp>/core.json --context <tmp>/context.json`.",
+        "observableEndState": "Entity, relation, defined_concept, connector, source_schema, and mapping artifacts match canonical JSON IR (`fixtures/ir/synthetic-contact.source_schema.json`, `fixtures/ir/synthetic-rows.mapping.json`) and pass checker admission.",
+        "gotchas": [
+          "Imported source rows remain evidence until promoted by a checked mapping/action; invalid rows quarantine as replay-stable `DataQualityFinding` records."
+        ]
+      }
+    },
+    {
+      "id": "core-quantity-ledger",
+      "title": "Exact quantity ledger, reservations, batches, units, and Cala boundary",
+      "domain": "core-engine",
+      "specContracts": [
+        "docs/spec/core/01-values-identity.md",
+        "docs/spec/core/04-transactions-effects.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "checked-proof",
+      "surfaces": [
+        "gate:cala-boundary",
+        "gate:core-value-ledger-lean",
+        "gate:core-value-ledger-quint",
+        "gate:core-value-ledger-quint-typecheck",
+        "gate:exact-arith-correspondence",
+        "gate:generic-posting-runtime",
+        "gate:kernel-v2-quantity-ledger",
+        "gate:kernel-v2-quantity-ledger-typecheck",
+        "gate:quantity-authority-lean",
+        "gate:quantity-authority-quint",
+        "gate:quantity-authority-quint-typecheck",
+        "gate:quantity-authority-runtime-unit",
+        "gate:quantity-batch-lean",
+        "gate:quantity-batch-quint",
+        "gate:quantity-batch-quint-typecheck",
+        "gate:quantity-kani",
+        "gate:quantity-lean",
+        "gate:quantity-quint",
+        "gate:quantity-quint-typecheck",
+        "gate:quantity-reservation-lean",
+        "gate:quantity-reservation-quint",
+        "gate:quantity-reservation-quint-typecheck",
+        "gate:quantity-runtime",
+        "gate:quantity-unit-dimension-lean",
+        "gate:quantity-unit-dimension-quint",
+        "gate:quantity-unit-dimension-quint-typecheck"
+      ],
+      "sourcePaths": [
+        "crates/norn-ir/src/quantity_ledger.rs",
+        "crates/norn-ir/src/exact_sum.rs",
+        "crates/norn-ir/src/posting.rs",
+        "crates/norn-checker/src/quantity_ledger.rs",
+        "crates/norn-checker/src/unit_admission.rs",
+        "crates/norn-kernel/src/quantity.rs",
+        "crates/norn-kernel/src/action_quantity.rs",
+        "crates/norn-cell/src/quantity.rs"
+      ],
+      "invariants": [
+        "cala-boundary",
+        "core-value-ledger-lean",
+        "core-value-ledger-quint",
+        "core-value-ledger-quint-typecheck",
+        "exact-arith-correspondence",
+        "generic-posting-runtime",
+        "kernel-v2-quantity-ledger",
+        "kernel-v2-quantity-ledger-typecheck",
+        "quantity-authority-lean",
+        "quantity-authority-quint",
+        "quantity-authority-quint-typecheck",
+        "quantity-authority-runtime-unit",
+        "quantity-batch-lean",
+        "quantity-batch-quint",
+        "quantity-batch-quint-typecheck",
+        "quantity-kani",
+        "quantity-lean",
+        "quantity-quint",
+        "quantity-quint-typecheck",
+        "quantity-reservation-lean",
+        "quantity-reservation-quint",
+        "quantity-reservation-quint-typecheck",
+        "quantity-runtime",
+        "quantity-unit-dimension-lean",
+        "quantity-unit-dimension-quint",
+        "quantity-unit-dimension-quint-typecheck"
+      ],
+      "probe": {
+        "drive": "Inspect the Lean/Quint/Kani gate definitions in `verification/coverage-v1/promoted-gates.json` for `quantity-ledger` and `core-physics`, and drive a balanced posting + over-reservation refusal against a local `norn dev` cell hosting an inventory/accounting pack.",
+        "observableEndState": "Balanced exact decimal postings commit atomically with conserved totals; unbalanced, unit-mismatched, or over-reserved mutations refuse with zero partial writes.",
+        "gotchas": [
+          "Never use binary64 JSON numbers for quantities or money; exact string decimals are enforced at codec and storage boundaries."
+        ]
+      }
+    },
+    {
+      "id": "core-rules-and-decisions",
+      "title": "Deterministic RuleIR decision tables and ZEN expression evaluation",
+      "domain": "core-engine",
+      "specContracts": [
+        "docs/spec/core/03-query-compute.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "checked-proof",
+      "surfaces": [
+        "gate:kernel-decider-correspondence",
+        "ir:rule"
+      ],
+      "sourcePaths": [
+        "crates/norn-ir/src/rule.rs",
+        "crates/norn-ir/src/jdm.rs",
+        "crates/norn-decisions/src/evaluate.rs",
+        "crates/norn-decisions/src/admit.rs",
+        "crates/norn-kernel/src/decider.rs",
+        "crates/norn-checker/src/jdm_profile.rs",
+        "crates/norn-checker/src/table_analysis.rs"
+      ],
+      "invariants": [
+        "kernel-decider-correspondence",
+        "checker:crates/norn-checker/src/table_analysis.rs"
+      ],
+      "probe": {
+        "drive": "Pipe JSON-lines inputs into `norn eval --defs <defs-dir> --org <org> --env <env> --rule <rule-id> --units 1000000` for an admitted RuleIR decision table (including a `UNIQUE` multi-match case).",
+        "observableEndState": "Deterministic JSON-lines output emits `{\"ok\":true,\"closureDigest\":...,\"output\":...}` for valid inputs and refuses multi-match `UNIQUE` or budget-exhausted inputs with `\"ok\":false`.",
+        "gotchas": [
+          "Modulo `%` and host callbacks are rejected by `norn-zen/7`; default outputs apply only when zero rows match."
+        ]
+      }
+    },
+    {
+      "id": "core-transactions-and-timers",
+      "title": "Atomic cell commits, lifecycle transitions, approval fencing, and hosted timers",
+      "domain": "core-engine",
+      "specContracts": [
+        "docs/spec/core/04-transactions-effects.md",
+        "docs/spec/core/07-world-boundary.md"
+      ],
+      "status": "implemented",
+      "evidenceTier": "checked-proof",
+      "surfaces": [
+        "gate:approval-fencing-quint",
+        "gate:approval-fencing-quint-typecheck",
+        "gate:hosted-timers-conformance",
+        "gate:hosted-timers-progress-quint",
+        "gate:hosted-timers-progress-sim",
+        "gate:hosted-timers-quint",
+        "gate:hosted-timers-quint-typecheck",
+        "gate:hosted-timers-variants",
+        "gate:kernel-binding-correspondence",
+        "gate:kernel-commit-order-correspondence",
+        "gate:kernel-inline-verus",
+        "gate:kernel-l1-reference",
+        "gate:kernel-l1-version-correspondence",
+        "gate:kernel-v2-commit-admission",
+        "gate:kernel-v2-commit-admission-typecheck",
+        "gate:kernel-v2-commit-conformance",
+        "gate:kernel-version-kani",
+        "gate:transition-closed-custom-effect-lean",
+        "gate:transition-closed-custom-effect-quint",
+        "gate:transition-closed-custom-effect-quint-typecheck",
+        "gate:transition-domain-authority-lean",
+        "gate:transition-domain-authority-quint",
+        "gate:transition-domain-authority-quint-typecheck",
+        "gate:transition-lean",
+        "ir:action"
+      ],
+      "sourcePaths": [
+        "crates/norn-ir/src/action.rs",
+        "crates/norn-kernel/src/commit_check.rs",
+        "crates/norn-kernel/src/commit_order.rs",
+        "crates/norn-kernel/src/commit_versions.rs",
+        "crates/norn-kernel/src/version_check.rs",
+        "crates/norn-kernel/src/timer_schedule.rs",
+        "crates/norn-cell/src/engine.rs",
+        "crates/norn-cell/src/outbox_ledger.rs"
+      ],
+      "invariants": [
+        "approval-fencing-quint",
+        "approval-fencing-quint-typecheck",
+        "hosted-timers-conformance",
+        "hosted-timers-progress-quint",
+        "hosted-timers-progress-sim",
+        "hosted-timers-quint",
+        "hosted-timers-quint-typecheck",
+        "hosted-timers-variants",
+        "kernel-binding-correspondence",
+        "kernel-commit-order-correspondence",
+        "kernel-inline-verus",
+        "kernel-l1-reference",
+        "kernel-l1-version-correspondence",
+        "kernel-v2-commit-admission",
+        "kernel-v2-commit-admission-typecheck",
+        "kernel-v2-commit-conformance",
+        "kernel-version-kani",
+        "transition-closed-custom-effect-lean",
+        "transition-closed-custom-effect-quint",
+        "transition-closed-custom-effect-quint-typecheck",
+        "transition-domain-authority-lean",
+        "transition-domain-authority-quint",
+        "transition-domain-authority-quint-typecheck",
+        "transition-lean"
+      ],
+      "probe": {
+        "drive": "Submit an action with an idempotency key to a local `norn dev` cell (`POST /v1/actions/{actionId}`), replay the same idempotency key with identical and conflicting payloads, and verify stale-version CAS refusal.",
+        "observableEndState": "First call commits atomically and returns a receipt; identical replay returns the original receipt without duplicate effects; conflicting payload or stale revision refuses with state unchanged.",
+        "gotchas": [
+          "Approval decisions are fenced against requester self-approval and stale revision; test with a distinct `--as reviewer` principal."
+        ]
+      }
+    }
+  ]
+}
