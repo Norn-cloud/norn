@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tsrs_ast::{Kind, Node, NodeFlags, is_const_type_reference};
 use tsrs_checker::Checker;
@@ -16,7 +16,7 @@ use tsrs_core::P;
 use crate::BoundedVfs;
 use crate::checker::resolve::{node_text, resolve_symbol};
 
-use super::types::{CompileError, CompilerLimits, is_string_literal_like};
+use super::types::{CompileError, CompilerInstant, CompilerLimits, is_string_literal_like};
 use super::value_types::PropertyType;
 
 pub(crate) const MAX_SCHEMA_DEPTH: usize = 32;
@@ -97,7 +97,7 @@ pub(crate) struct SchemaProjection<'a> {
     intrinsics_module: &'a str,
     effect_dist_prefix: Option<&'a str>,
     vfs: &'a BoundedVfs,
-    started: Instant,
+    started: CompilerInstant,
     max_millis: u64,
     pub(crate) max_expanded: usize,
     pub(crate) max_output_bytes: usize,
@@ -112,7 +112,7 @@ impl<'a> SchemaProjection<'a> {
         intrinsics_module: &'a str,
         effect_dist_prefix: Option<&'a str>,
         vfs: &'a BoundedVfs,
-        started: Instant,
+        started: CompilerInstant,
         limits: CompilerLimits,
     ) -> Self {
         Self {

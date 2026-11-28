@@ -5,7 +5,7 @@
 //! information, without ever importing or executing authored code.
 
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::Value;
 use tsrs_ast::{Kind, Node, SourceFile, Symbol, SymbolFlags, get_source_file_of_node};
@@ -23,7 +23,9 @@ use super::flow_source_map::{
     FLOW_MAX_ROWS, FlowDef, FlowSourceMapAnnotation, FlowSourceMapStepKind, FnRef, SourceLocation,
     Step, TaggedErrorDecl,
 };
-use super::types::{CompileError, CompilerLimits, SchemaBudget, check_closure, source_location_of};
+use super::types::{
+    CompileError, CompilerInstant, CompilerLimits, SchemaBudget, check_closure, source_location_of,
+};
 use super::value_schema::{BudgetExceeded, ExpansionBudget, ValueSchema};
 
 /// Lexical symbol → compiled expression environment.
@@ -72,7 +74,7 @@ pub(crate) struct SyntaxConfig<'a> {
     pub(crate) vfs: &'a BoundedVfs,
     pub(crate) program: &'static Program,
     pub(crate) source: P<SourceFile>,
-    pub(crate) started: Instant,
+    pub(crate) started: CompilerInstant,
     pub(crate) limits: CompilerLimits,
     pub(crate) source_root: &'a str,
     pub(crate) tool_root: &'a str,
@@ -97,7 +99,7 @@ pub(crate) struct SyntaxCompiler<'a> {
     pub(crate) vfs: &'a BoundedVfs,
     pub(crate) program: &'static Program,
     pub(crate) source: P<SourceFile>,
-    pub(crate) started: Instant,
+    pub(crate) started: CompilerInstant,
     pub(crate) limits: CompilerLimits,
     pub(crate) source_root: &'a str,
     pub(crate) tool_root: &'a str,

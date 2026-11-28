@@ -3881,6 +3881,8 @@ dependencies = [
  "clap",
  "futures-util",
  "norn-api",
+ "norn-authoring",
+ "norn-authoring-py",
  "norn-checker-wasm",
  "norn-decisions",
  "norn-expr",
