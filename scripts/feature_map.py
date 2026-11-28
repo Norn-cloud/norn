@@ -1273,6 +1273,7 @@ def _markdown_heading_slugs(text: str) -> set[str]:
         if not heading_match:
             continue
         raw = heading_match.group(1)
+        raw = re.sub(r"<!--.*?-->", "", raw)
         raw = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", raw)
         normalized = re.sub(r"[^a-z0-9 _\t-]", "", raw.lower()).strip()
         normalized = re.sub(r"\t", " ", normalized)

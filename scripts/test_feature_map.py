@@ -451,6 +451,8 @@ Action requests carry `idempotencyKey` in the JSON body.
 
 ## Heading After Indented Comment
 
+## Real <!-- note -->
+
 \t## tab-indented-code-heading
 
     ## space-indented-code-heading
@@ -476,6 +478,7 @@ Action requests carry `idempotencyKey` in the JSON body.
                 "law:docs/spec/core/01-values-identity.md#spec",
                 "law:docs/spec/core/01-values-identity.md#action-wire-contract",
                 "law:docs/spec/core/01-values-identity.md#heading-after-indented-comment",
+                "law:docs/spec/core/01-values-identity.md#real",
             ]
         )
         _write_domain(self.tmp, [feat_ok])
