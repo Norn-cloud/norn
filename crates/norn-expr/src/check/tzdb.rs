@@ -194,6 +194,105 @@ pub fn check_expression_under_in(
             limits: &limits,
             root_bounds: None,
             exact_enabled: false,
+            allow_narrowed_null_checks: false,
+            assumed: &assumed,
+            tzdb,
+        },
+    )
+    .map(|(checked, _)| checked.into_inferred())
+}
+
+/// [`check_expression`] for an already-validated interface expression re-checked
+/// against a concrete specializing subtype whose properties may validly narrow
+/// `T? -> T`: non-null operands in `x == null`, `x != null`, and `x ?? fallback`
+/// remain admitted while literal `null` checks and mismatched fallbacks are
+/// still refused.
+///
+/// # Errors
+///
+/// Every [`Diagnostic`] found.
+pub fn check_inherited_expression(
+    expr: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+) -> Result<InferredType, Vec<Diagnostic>> {
+    check_inherited_expression_in(expr, env, expected, TzdbBundle::default_bundle())
+}
+
+/// [`check_inherited_expression`] against an explicit versioned [`TzdbBundle`].
+///
+/// # Errors
+///
+/// Every [`Diagnostic`] found.
+pub fn check_inherited_expression_in(
+    expr: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+    tzdb: &TzdbBundle,
+) -> Result<InferredType, Vec<Diagnostic>> {
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    check_guarded(
+        expr,
+        env,
+        expected,
+        &CheckOptions {
+            limits: &limits,
+            root_bounds: None,
+            exact_enabled: false,
+            allow_narrowed_null_checks: true,
+            assumed: &[],
+            tzdb,
+        },
+    )
+    .map(|(checked, _)| checked.into_inferred())
+}
+
+/// [`check_expression_under`] for an already-validated interface expression
+/// re-checked against a concrete specializing subtype that may validly narrow
+/// `T? -> T`.
+///
+/// # Errors
+///
+/// Every [`Diagnostic`] found.
+pub fn check_inherited_expression_under(
+    expr: &Expression,
+    condition: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+) -> Result<InferredType, Vec<Diagnostic>> {
+    check_inherited_expression_under_in(
+        expr,
+        condition,
+        env,
+        expected,
+        TzdbBundle::default_bundle(),
+    )
+}
+
+/// [`check_inherited_expression_under`] against an explicit versioned
+/// [`TzdbBundle`].
+///
+/// # Errors
+///
+/// Every [`Diagnostic`] found.
+pub fn check_inherited_expression_under_in(
+    expr: &Expression,
+    condition: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+    tzdb: &TzdbBundle,
+) -> Result<InferredType, Vec<Diagnostic>> {
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let assumed = condition_null_guards(condition);
+    check_guarded(
+        expr,
+        env,
+        expected,
+        &CheckOptions {
+            limits: &limits,
+            root_bounds: None,
+            exact_enabled: false,
+            allow_narrowed_null_checks: true,
             assumed: &assumed,
             tzdb,
         },

@@ -550,6 +550,26 @@
       "message": "هذه الهوية حُذفت؛ استعدها صراحةً أو استخدم هوية جديدة",
       "review": "needs_review"
     },
+    "core.laws.constitutional_defeat": {
+      "message": "التعريف التابع يحاول إضعاف أو إخفاء أو استثناء أو إسقاط قانون دستوري أساسي",
+      "review": "needs_review"
+    },
+    "core.laws.enrollment_gap": {
+      "message": "المفهوم المتخصص أخفق في تسجيل قانون دستوري أساسي منطبق ضمن إغلاق القانون الفعّال الخاص به",
+      "review": "needs_review"
+    },
+    "core.laws.missing_required_link_binding": {
+      "message": "إجراء الإنشاء لمفهوم متخصص من النواة يغفل ربط رابط أساسي مطلوب",
+      "review": "needs_review"
+    },
+    "core.laws.preservation_unknown": {
+      "message": "فحص الحفاظ المحدود على القانون الأساسي استنفد ميزانية الاستكشاف المحدودة",
+      "review": "needs_review"
+    },
+    "core.laws.preservation_violated": {
+      "message": "كاتب أو انتقال دورة حياة يخالف قانون دستوري أساسي موروث",
+      "review": "needs_review"
+    },
     "core.laws.stale_evidence": {
       "message": "هوية الدليل تختلف عن الهدف المُولَّد الحالي أو عن تثبيت النتيجة المحفوظ بشكل مستقل",
       "review": "needs_review"

@@ -1,0 +1,7 @@
+{
+  "code": "core.laws.enrollment_gap",
+  "message": "specializing concept failed to enroll an applicable core constitutional law in its effective law closure",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}
