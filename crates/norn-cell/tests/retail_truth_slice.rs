@@ -1672,9 +1672,9 @@ fn verify_pos_lineage(
         })
         .collect();
     assert!(
-        resolved_records.contains("ST-SOLE-CFC-1/POS-1")
-            && resolved_records.contains("ST-SOLE-CFC-1/POS-2")
-            && resolved_records.contains("ST-SOLE-CFC-1/POS-BAD"),
+        resolved_records.contains("pos_sale_line/ST-SOLE-CFC-1/POS-1")
+            && resolved_records.contains("pos_sale_line/ST-SOLE-CFC-1/POS-2")
+            && resolved_records.contains("pos_sale_line/ST-SOLE-CFC-1/POS-BAD"),
         "expected resolved POS source records, got {resolved_records:?}"
     );
 
