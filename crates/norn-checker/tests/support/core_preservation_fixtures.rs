@@ -263,6 +263,7 @@ pub(crate) fn boolean_entity_envelope(
     })
 }
 
+#[allow(clippy::indexing_slicing, reason = "test fixture JSON mutation")]
 pub(crate) fn sync_links_rule(
     artifact_id: &str,
     rule_id: &str,
@@ -342,6 +343,7 @@ pub(crate) fn sync_links_rule(
     rule
 }
 
+#[allow(clippy::indexing_slicing, reason = "test fixture JSON mutation")]
 pub(crate) fn custom_widened_hold_interface() -> Value {
     let mut custom_iface =
         read_json(&repo_root().join("registry/core/artifacts/core.Hold.interface.json"));
@@ -363,6 +365,7 @@ pub(crate) fn custom_widened_hold_interface() -> Value {
     custom_iface
 }
 
+#[allow(clippy::indexing_slicing, reason = "test fixture JSON mutation")]
 pub(crate) fn zero_hold_literal_rule() -> Value {
     let mut rule =
         read_json(&repo_root().join("fixtures/rule-ir-v2/valid/purchase-order-approval.rule.json"));
@@ -430,7 +433,8 @@ pub(crate) fn zero_hold_literal_rule() -> Value {
 
 #[allow(
     clippy::expect_used,
-    reason = "test action fixture arrays must be present"
+    clippy::indexing_slicing,
+    reason = "test action fixture arrays and JSON mutation"
 )]
 pub(crate) fn pack_with_place_sync_rule(
     rule_artifact_id: &str,
