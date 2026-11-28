@@ -16,11 +16,14 @@
 //! - [`ProfileChecker`]: faithful Rust port of `tools/norn-ts/src/check.ts`
 //!   enforcing the `norn-effect` positive grammar, symbol identity checks,
 //!   import closure checks, and `NORN-FLOW-*` diagnostics.
+//! - [`extract_relative_module_specifiers`]: `tsrs_parser`-backed static
+//!   relative module specifier extraction for `.ts` and `.tsx` sources.
 
 mod checker;
 mod compiler;
 mod error;
 mod fmt;
+mod imports;
 mod profile;
 mod program;
 mod vfs;
@@ -41,14 +44,16 @@ pub use compiler::{
     RetainedDefinitionDoc, RetryDelay, RetryPolicy, Rounding, SchemaLabels, SourceLocation,
     StatementError, StepLimitKind, StepLimits, TaggedErrorDecl, TextFormat, TimezonePolicy,
     UnitRef, ValueSchema, ValueSchemasCompileOutcome, canonical_json, compact_canonical_json,
-    compile_dashboards_program, compile_definitions_program, compile_definitions_vfs,
-    compile_flow_program, compile_flow_vfs, compile_questions_program,
-    compile_value_schemas_program, flow_limits, from_statement, lexical_bounds, may_read_actor,
-    norn_canonical_hash, norn1_sha256, parse_sentence, parse_statement, render_flow_limits,
-    render_sentence, serialize_statement, to_canonical_json, to_statement,
+    compile_dashboards_program, compile_dashboards_vfs, compile_definitions_program,
+    compile_definitions_vfs, compile_flow_program, compile_flow_vfs, compile_questions_program,
+    compile_questions_vfs, compile_value_schemas_program, flow_limits, from_statement,
+    lexical_bounds, may_read_actor, norn_canonical_hash, norn1_sha256, parse_sentence,
+    parse_statement, render_flow_limits, render_sentence, serialize_statement, to_canonical_json,
+    to_statement,
 };
 pub use error::AuthoringError;
-pub use fmt::{format_source, norn_format_settings};
+pub use fmt::{format_source, format_source as format_ts, norn_format_settings};
+pub use imports::extract_relative_module_specifiers;
 pub use profile::{
     AdmittedSymbol, AllowedImports, DiagnosticDoc, INTRINSICS_DTS, PROFILE_JSON, PackagePin,
     Profile, ProfilePins, RejectedConstruct, RejectedModule, RejectedSymbol, SymbolContext,

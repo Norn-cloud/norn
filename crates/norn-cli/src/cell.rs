@@ -206,7 +206,7 @@ fn read_file_bounded(
 
 /// Read one regular file without following final symlinks or blocking on FIFOs.
 #[cfg(unix)]
-pub(super) fn read_regular_file_bounded(
+pub(crate) fn read_regular_file_bounded(
     path: &Path,
     limit: u64,
     label: &str,
@@ -231,7 +231,7 @@ pub(super) fn read_regular_file_bounded(
 
 /// Read one regular file without following symlinks (non-Unix fallback).
 #[cfg(not(unix))]
-pub(super) fn read_regular_file_bounded(
+pub(crate) fn read_regular_file_bounded(
     path: &Path,
     limit: u64,
     label: &str,

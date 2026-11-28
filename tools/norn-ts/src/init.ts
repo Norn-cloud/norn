@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
-import { basename, dirname, join, resolve } from "node:path"
+import { basename, dirname, join, posix, resolve } from "node:path"
 import { buildInfo, type BuildInfo } from "./build-info.ts"
 import { TOOL_ROOT } from "./profile.ts"
 import { ProjectError, parseProject, type DevPrincipal, type Project } from "./project.ts"
@@ -21,6 +21,55 @@ export function projectDependencies(mode: "repository" | "published" = distribut
   const authoring = build?.packages["@norn/authoring"]
   if (!cli || !authoring) throw new ProjectError("cli.setup.unpublished", "Published distribution is unavailable; run init from the repository.", 3)
   return { "@norn/cli": cli, "@norn/authoring": authoring, ...pinned }
+}
+
+/** Normalizes and validates one scaffold-relative file path, rejecting traversal, absolute paths, and `.github` segments. */
+export function normalizeScaffoldPath(rawPath: string): string {
+  const slashed = rawPath.replaceAll("\\", "/")
+  if (slashed.length === 0 || slashed.includes("\0") || slashed.startsWith("/") || /^[A-Za-z]:/.test(slashed)) {
+    throw new Error(`Refusing to scaffold invalid path "${rawPath}": scaffold paths must be non-empty relative paths.`)
+  }
+  const normalized = posix.normalize(slashed)
+  if (
+    normalized.length === 0 ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.startsWith("/") ||
+    normalized.endsWith("/")
+  ) {
+    throw new Error(`Refusing to scaffold path outside project root "${rawPath}".`)
+  }
+  const segments = normalized.split("/")
+  for (const segment of segments) {
+    if (segment.length === 0 || segment === "." || segment === "..") {
+      throw new Error(`Refusing to scaffold invalid path segment in "${rawPath}".`)
+    }
+    if (segment.toLowerCase() === ".github") {
+      throw new Error(`Refusing to scaffold CI file "${rawPath}": downstream Norn apps verify locally/in-browser with zero CI.`)
+    }
+  }
+  return normalized
+}
+
+/** Validates and normalizes scaffold files once so guards and disk writes operate on the exact same paths. */
+export function validateScaffoldFiles(files: Readonly<Record<string, string>>): Array<readonly [string, string]> {
+  const seen = new Set<string>()
+  const validated: Array<readonly [string, string]> = []
+  for (const [rawPath, content] of Object.entries(files)) {
+    const relPath = normalizeScaffoldPath(rawPath)
+    if (seen.has(relPath)) {
+      throw new Error(`Refusing duplicate scaffold path "${rawPath}" (normalizes to "${relPath}").`)
+    }
+    seen.add(relPath)
+    validated.push([relPath, content])
+  }
+  return validated
+}
+
+/** Fail-closed guard: downstream Norn apps verify locally/in-browser with zero CI and must never scaffold `.github/` files. */
+export function assertNoCiScaffoldFiles(files: Readonly<Record<string, string>>): void {
+  validateScaffoldFiles(files)
 }
 
 export async function init(args: readonly string[]): Promise<void> {
@@ -138,16 +187,17 @@ async function initProject(args: readonly string[]): Promise<void> {
   }
   Object.assign(files, packs?.files)
   if (template === "starter") files["src/product.ts"] = readFileSync(join(TOOL_ROOT, "templates/starter/src/product.ts"), "utf8").replaceAll("__NAMESPACE__", namespace)
+  const validatedFiles = validateScaffoldFiles(files)
   mkdirSync(join(target, "src"), { recursive: true })
   const written: string[] = []
   try {
-    for (const [path, content] of Object.entries(files)) {
-      mkdirSync(dirname(join(target, path)), { recursive: true })
-      writeFileSync(join(target, path), content, { flag: "wx" })
-      written.push(path)
+    for (const [relPath, content] of validatedFiles) {
+      mkdirSync(dirname(join(target, relPath)), { recursive: true })
+      writeFileSync(join(target, relPath), content, { flag: "wx" })
+      written.push(relPath)
     }
   } catch (error) {
-    for (const path of written) rmSync(join(target, path))
+    for (const relPath of written) rmSync(join(target, relPath))
     throw new ProjectError("cli.project.io", `Cannot write project; check directory permissions. ${String(error)}`, 3)
   }
   if (!flags.includes("--no-install")) {
@@ -156,6 +206,6 @@ async function initProject(args: readonly string[]): Promise<void> {
   }
   const load = packs ? packs.data.map((path) => ` --load ${path}`).join("") : ""
   const seed = packs?.seeded ? " (then, while it serves: bunx norn seed)" : ""
-  const result = { created: directory, manifest, files: Object.keys(files), next: `cd ${directory} && bunx norn dev${load}${seed}` }
+  const result = { created: directory, manifest, files: validatedFiles.map(([relPath]) => relPath), next: `cd ${directory} && bunx norn dev${load}${seed}` }
   process.stdout.write(flags.includes("--json") ? json(result) : `created ${directory}/ (norn-project/1, scope org=${manifest.scope.orgId} env=${manifest.scope.environmentId})\n${template === "starter" ? `  src/product.ts   ${namespace}.Product, ${namespace}.product.add\n` : ""}${packs ? `  definitions/     the packs (${packs.sources.length} sources)\n${packs.data.length > 0 ? "  data/            their synthetic exports, snapshot and incremental rows\n" : ""}${packs.seeded ? "  seed/            the calls norn seed replays\n" : ""}` : ""}next: ${result.next}\n`)
 }
