@@ -1,0 +1,57 @@
+{
+  "artifactId": "core.ValuedEvent.effects_balance.law",
+  "dependencies": [
+    {
+      "artifactId": "core.ValuedEvent.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "core.ValuedLedgerEffect.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Signed ledger effects valuing an economic event net to zero",
+  "namespace": "core",
+  "payload": {
+    "condition": "len(self.effects) > 0",
+    "id": "core.ValuedEvent.effects_balance",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "core",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/core/src/rea.ts"
+    },
+    "rationale": "Every valued economic event whose ledger effects are posted together must balance to zero (core.law.value_conservation); per-leg currency uniformity is enforced by core.ValuedLedgerEffect.currency_matches_event.",
+    "response": {
+      "expression": "sum(map(self.effects, #.amount)) == 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "core.ValuedEvent"
+      ],
+      "root": {
+        "id": "core.ValuedEvent",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "core.ValuedEvent"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.ValuedEvent.effects_balance.law.json"
+  },
+  "scope": {},
+  "version": "0.2.0"
+}

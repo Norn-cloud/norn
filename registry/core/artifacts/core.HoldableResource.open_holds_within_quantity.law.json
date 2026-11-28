@@ -1,0 +1,57 @@
+{
+  "artifactId": "core.HoldableResource.open_holds_within_quantity.law",
+  "dependencies": [
+    {
+      "artifactId": "core.HoldableResource.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "core.Hold.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Open holds against a resource never exceed its available quantity",
+  "namespace": "core",
+  "payload": {
+    "condition": "len(self.holds) > 0",
+    "id": "core.HoldableResource.open_holds_within_quantity",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "core",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/core/src/rea.ts"
+    },
+    "rationale": "The sum of open hold quantities against a holdable resource may never exceed the resource's quantity (core.law.escrow_non_negative).",
+    "response": {
+      "expression": "sum(map(self.holds, #.status == 'open' ? #.quantity : 0)) <= self.quantity",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "core.HoldableResource"
+      ],
+      "root": {
+        "id": "core.HoldableResource",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "core.HoldableResource"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.HoldableResource.open_holds_within_quantity.law.json"
+  },
+  "scope": {},
+  "version": "0.2.0"
+}

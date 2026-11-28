@@ -166,7 +166,8 @@ export const Mapping = Norn.mapping({
       target: {type: OrderLine, interface: Commitment},
       subject: "input.custom_norn_ref",
       sourceRecord: "'erpnext/demo/Sales Order Item/' + input.name",
-      properties: [{property: "quantity", value: "input.quantity"}, {property: "unit", value: "input.unit"}, {property: "currency", value: "null"}, {property: "status", value: "'promised'"}, {property: "due_at", value: "timestamp(input.due_at)"}],
+      properties: [{property: "quantity", value: "input.quantity"}, {property: "unit", value: "input.unit"}, {property: "currency", value: "null"}, {property: "due_at", value: "timestamp(input.due_at)"}],
+      lifecycles: [{property: "status", state: "'promised'"}],
       links: [{link: "provider", targetMap: "party", key: "input.provider_ref"}, {link: "receiver", targetMap: "party", key: "input.receiver_ref"}, {link: "resource", targetMap: "holding", key: "input.holding_ref"}]
     },
     {
