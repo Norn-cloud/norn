@@ -46,12 +46,14 @@ ROOT = Path(__file__).resolve().parents[2]
 SUITE = "suites"
 # Every multi-binary workspace crate whose integration tests can fold cleanly.
 # Remaining multi-binary crates outside this list:
-# - `norn-checker-wasm`: `parity` binary is driven by name from Node (`parity.mjs`).
-# - `norn-builtins`: hashed by `BUILTIN-PIN-1` (`registry/builtins/norn-builtins.json`).
-# - `norn-skeleton-guard`: standalone `GATE_DIRECTORIES` workspace (requires `/approve-gates`).
+# - `norn-checker-wasm`: `parity` binary is pinned by name (`--test parity -- --test-threads=1`)
+#   in `GATE_FILES` (`scripts/ci/core.sh` and `verification/coverage-v1/validate.py`).
+# - `norn-skeleton-guard`: standalone `GATE_DIRECTORIES` workspace; `gate_source_errors` refuses
+#   `#[path = ...]` in gated sources and `baseline-shrink-only.sh` blocks moving `tests/*.rs`.
 CRATES = (
     "norn-api",
     "norn-authoring",
+    "norn-builtins",
     "norn-canonical",
     "norn-cell",
     "norn-cell-do",
@@ -404,6 +406,90 @@ def has_code_crate_path(text: str) -> bool:
         if kind == "ident" and text[start:end] == "crate":
             if idx + 1 < len(tokens) and tokens[idx + 1][0] == "::":
                 return True
+    return False
+
+
+def uses_extern_crate(text: str, name: str) -> bool:
+    """Return True if `text` may resolve `name` to an external crate from the extern prelude.
+
+    Declaring `mod <name>;` in `tests/suites.rs` shadows an identically named dependency in
+    `use <name>...` paths across the crate. It is safe only when no test file imports `<name>`
+    from the root/extern prelude and every bare `<name>::` use is locally shadowed by a
+    `use <other>::...::<name>` import at file scope (with no inline `mod` blocks).
+    """
+    tokens = _tokenize_rust_code(text)
+    locally_imported = False
+    has_inline_mod = False
+    has_bare_path = False
+    brace_depth = 0
+    for idx, (kind, start, end) in enumerate(tokens):
+        if kind == "punct":
+            ch = text[start:end]
+            if ch == "{":
+                brace_depth += 1
+            elif ch == "}":
+                brace_depth = max(0, brace_depth - 1)
+            continue
+        if kind != "ident":
+            continue
+        word = text[start:end]
+        if word == "mod":
+            # Inline `mod foo { ... }` starts a new scope where bare `<name>::` reaches extern prelude.
+            cursor = idx + 1
+            if cursor < len(tokens) and tokens[cursor][0] == "ident":
+                if cursor + 1 < len(tokens) and tokens[cursor + 1][0] == "punct" and text[tokens[cursor + 1][1]:tokens[cursor + 1][2]] == "{":
+                    has_inline_mod = True
+            continue
+        if word == "use":
+            # Root `use <name>` or `use ::<name>` reaches the extern crate.
+            if idx + 1 < len(tokens):
+                nxt = tokens[idx + 1]
+                if nxt[0] == "ident" and text[nxt[1]:nxt[2]] == name:
+                    return True
+                if nxt[0] == "::" and idx + 2 < len(tokens) and tokens[idx + 2][0] == "ident" and text[tokens[idx + 2][1]:tokens[idx + 2][2]] == name:
+                    return True
+            continue
+        if word != name:
+            continue
+        prev = tokens[idx - 1] if idx > 0 else None
+        nxt = tokens[idx + 1] if idx + 1 < len(tokens) else None
+        if prev is not None and prev[0] == "::":
+            # Top-level `...::<name>::{self, ...}` or `...::<name>;` imports `<name>` locally.
+            if idx >= 2 and tokens[idx - 2][0] == "ident":
+                if brace_depth == 0:
+                    if nxt is not None and nxt[0] == "punct" and text[nxt[1]:nxt[2]] == ";":
+                        locally_imported = True
+                    elif (
+                        nxt is not None
+                        and nxt[0] == "::"
+                        and idx + 2 < len(tokens)
+                        and tokens[idx + 2][0] == "punct"
+                        and text[tokens[idx + 2][1]:tokens[idx + 2][2]] == "{"
+                    ):
+                        # Check if `self` is directly inside the brace list of `...::<name>::{ ... }`.
+                        depth = 0
+                        cursor = idx + 2
+                        while cursor < len(tokens):
+                            tk_kind, tk_s, tk_e = tokens[cursor]
+                            if tk_kind == "punct":
+                                ch = text[tk_s:tk_e]
+                                if ch == "{":
+                                    depth += 1
+                                elif ch == "}":
+                                    depth -= 1
+                                    if depth == 0:
+                                        break
+                            elif depth == 1 and tk_kind == "ident" and text[tk_s:tk_e] == "self":
+                                locally_imported = True
+                                break
+                            cursor += 1
+            else:
+                # Leading `::<name>` explicitly targets the extern prelude.
+                return True
+        elif nxt is not None and nxt[0] == "::":
+            has_bare_path = True
+    if has_bare_path and (not locally_imported or has_inline_mod):
+        return True
     return False
 
 
@@ -788,13 +874,23 @@ def main() -> int:
         if not targets:
             continue
         check_helpers(crate)
-        externs = crate.extern_names() | RESERVED
+        crate_ident = crate.name.replace("-", "_")
+        hard_reserved = RESERVED | {crate_ident}
+        externs = crate.extern_names()
+        test_sources = {
+            path: path.read_text()
+            for path in sorted(crate.tests.rglob("*.rs"))
+            if path.name != f"{SUITE}.rs"
+        }
         for target in targets:
-            if target["name"] in externs:
-                raise Refused(f"{crate.name}: module {target['name']} would shadow a crate name")
-            folded[(crate.name, target["name"])] = crate.name
-            source = check_file(crate, target["name"])
-            path = crate.tests / f"{target['name']}.rs"
+            name = target["name"]
+            if name in hard_reserved:
+                raise Refused(f"{crate.name}: module {name} would shadow a reserved or crate name")
+            if name in externs and any(uses_extern_crate(src, name) for src in test_sources.values()):
+                raise Refused(f"{crate.name}: module {name} would shadow a used extern crate")
+            folded[(crate.name, name)] = crate.name
+            source = check_file(crate, name)
+            path = crate.tests / f"{name}.rs"
             if source != path.read_text():
                 writes[path] = source
         manifest, comments = edit_manifest(crate, targets)

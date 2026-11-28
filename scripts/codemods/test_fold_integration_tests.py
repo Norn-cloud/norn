@@ -93,12 +93,42 @@ class RustCratePathRewriteTests(unittest.TestCase):
 
 class AllowRatchetTests(unittest.TestCase):
     def test_new_folded_crates_refuse_legacy_suite_allows(self) -> None:
-        for crate_dir in ("norn-authoring", "norn-canonical", "norn-datalog", "norn-testkit"):
+        for crate_dir in (
+            "norn-authoring",
+            "norn-builtins",
+            "norn-canonical",
+            "norn-datalog",
+            "norn-testkit",
+        ):
             crate = fold.Crate(crate_dir)
             self.assertFalse(fold._needs_suite_allows(crate))
             generated = fold.suites_source(crate, crate.foldable(), {})
             self.assertNotIn("#![allow(", generated)
         self.assertTrue(fold._needs_suite_allows(fold.Crate("norn-api")))
+
+    def test_uses_extern_crate_detects_real_shadowing_but_allows_local_module_import(self) -> None:
+        self.assertTrue(fold.uses_extern_crate("use geo::Point;\n", "geo"))
+        self.assertTrue(fold.uses_extern_crate("use ::geo::Point;\n", "geo"))
+        self.assertTrue(fold.uses_extern_crate("fn f() { let _ = geo::Point::new(0.0, 0.0); }\n", "geo"))
+        self.assertTrue(
+            fold.uses_extern_crate(
+                "use norn_builtins::geo::{self, Foo};\nmod inner { fn f() { geo::call(); } }\n",
+                "geo",
+            )
+        )
+        self.assertFalse(
+            fold.uses_extern_crate(
+                "use norn_builtins::geo::{self, Foo};\nfn f() { geo::call(); }\n",
+                "geo",
+            )
+        )
+        self.assertTrue(
+            fold.uses_extern_crate(
+                "fn a() { use norn_builtins::geo; }\nfn b() { let _ = geo::Point::new(0.0, 0.0); }\n",
+                "geo",
+            )
+        )
+        self.assertFalse(fold.uses_extern_crate("use std::path::Path;\nfn f() {}\n", "geo"))
 
 
 class CommandAndFilterRewriteTests(unittest.TestCase):
