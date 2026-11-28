@@ -1,0 +1,123 @@
+{
+  "artifactId": "clearing.entry.record.action",
+  "dependencies": [
+    {
+      "artifactId": "core.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "std.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "draft",
+  "name": "Record REA ClearingEntry bound to settled payment",
+  "namespace": "clearing",
+  "payload": {
+    "access": {
+      "artifactId": "clearing.usd.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "clearing.entry.record",
+    "createLinks": [
+      {
+        "link": "event",
+        "targetIdField": "event_id",
+        "targetType": "clearing.PaymentInstruction"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "clearing.ClearingEntry.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "clearing.ClearingEntry",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "account_code": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "event_id",
+        "account_code",
+        "amount",
+        "currency"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.payment.status == 'settled') and (input.account_code != '')"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "event_id"
+          }
+        },
+        "name": "payment",
+        "objectType": "clearing.PaymentInstruction"
+      }
+    ],
+    "title": "Record REA ClearingEntry bound to settled payment",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "clearing.ClearingEntry"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_clear"
+  },
+  "version": "0.1.0"
+}

@@ -1,0 +1,95 @@
+{
+  "artifactId": "clearing.ClearingEntry.entity",
+  "dependencies": [
+    {
+      "artifactId": "core.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "std.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "draft",
+  "name": "Single-currency USD clearing ledger effect",
+  "namespace": "clearing",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.LedgerEffect"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "event",
+          "target": "clearing.PaymentInstruction"
+        }
+      ],
+      "name": "clearing.ClearingEntry",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "event_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "account_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "amount",
+          "type": {
+            "kind": "ref",
+            "name": "core.money_amount"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_clear"
+  },
+  "version": "0.1.0"
+}

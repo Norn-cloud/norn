@@ -97,6 +97,8 @@ mod receipt_consume;
 mod retail_truth_slice;
 #[path = "retained_definitions.rs"]
 mod retained_definitions;
+#[path = "single_currency_clearing.rs"]
+mod single_currency_clearing;
 #[path = "source_agreement.rs"]
 mod source_agreement;
 #[path = "stress_purchase.rs"]

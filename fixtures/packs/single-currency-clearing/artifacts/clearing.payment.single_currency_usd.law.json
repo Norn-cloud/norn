@@ -1,0 +1,54 @@
+{
+  "artifactId": "clearing.payment.single_currency_usd.law",
+  "dependencies": [
+    {
+      "artifactId": "clearing.PaymentInstruction.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "draft",
+  "name": "Every payment instruction clears strictly in USD with positive amount",
+  "namespace": "clearing",
+  "payload": {
+    "condition": "true",
+    "id": "clearing.payment.single_currency_usd",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "clearing",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+    },
+    "rationale": "Single-currency USD clearing book admits strictly positive USD instructions only.",
+    "response": {
+      "expression": "(self.currency ?? '') == 'USD' and self.unit == null and self.quantity > 0 and self.message_profile == 'pacs.008.001.10' and self.amount_minor != ''",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "clearing.PaymentInstruction"
+      ],
+      "root": {
+        "id": "clearing.PaymentInstruction",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "clearing.PaymentInstruction"
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_clear"
+  },
+  "version": "0.1.0"
+}

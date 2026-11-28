@@ -1,0 +1,169 @@
+{
+  "artifactId": "clearing.hold.record.action",
+  "dependencies": [
+    {
+      "artifactId": "core.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "std.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "draft",
+  "name": "Record REA LiquidityHold bound to reserved payment",
+  "namespace": "clearing",
+  "payload": {
+    "access": {
+      "artifactId": "clearing.usd.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "clearing.hold.record",
+    "createLinks": [
+      {
+        "link": "resource",
+        "targetIdField": "resource_id",
+        "targetType": "clearing.LiquidityBook"
+      },
+      {
+        "link": "holder",
+        "targetIdField": "holder_id",
+        "targetType": "clearing.Participant"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "clearing.LiquidityHold.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "clearing.LiquidityHold",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "holder_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "payment_id": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "string"
+        },
+        "resource_id": {
+          "type": "string"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "payment_id",
+        "resource_id",
+        "holder_id",
+        "quantity",
+        "unit",
+        "currency",
+        "expires_at"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.payment.status == 'reserved') and ((slice.payment.reservation_id ?? '') == input.id)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "payment_id"
+          }
+        },
+        "name": "payment",
+        "objectType": "clearing.PaymentInstruction"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "resource_id"
+          }
+        },
+        "name": "resource",
+        "objectType": "clearing.LiquidityBook"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "holder_id"
+          }
+        },
+        "name": "holder",
+        "objectType": "clearing.Participant"
+      }
+    ],
+    "title": "Record REA LiquidityHold bound to reserved payment",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "clearing.LiquidityHold"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_clear"
+  },
+  "version": "0.1.0"
+}

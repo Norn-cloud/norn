@@ -1,0 +1,223 @@
+{
+  "artifactId": "clearing.LiquidityHold.entity",
+  "dependencies": [
+    {
+      "artifactId": "core.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "std.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "draft",
+  "name": "Clearing liquidity hold",
+  "namespace": "clearing",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Hold"
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "completed",
+              "state": "consumed"
+            },
+            {
+              "outcome": "compensated",
+              "state": "released"
+            },
+            {
+              "outcome": "cancelled",
+              "state": "expired"
+            }
+          ],
+          "immutable": [
+            "released",
+            "consumed",
+            "expired"
+          ],
+          "initial": [
+            "open"
+          ],
+          "property": "status",
+          "terminal": [
+            "released",
+            "consumed",
+            "expired"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "open"
+              ],
+              "id": "consume",
+              "to": "consumed"
+            },
+            {
+              "from": [
+                "open"
+              ],
+              "id": "release",
+              "to": "released"
+            },
+            {
+              "from": [
+                "open"
+              ],
+              "id": "expire",
+              "to": "expired"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "resource",
+          "target": "clearing.LiquidityBook"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "holder",
+          "target": "clearing.Participant"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "secures",
+          "target": "core.Commitment"
+        }
+      ],
+      "name": "clearing.LiquidityHold",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "payment_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "resource_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "holder_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "open",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "open"
+              },
+              {
+                "value": "released"
+              },
+              {
+                "value": "consumed"
+              },
+              {
+                "value": "expired"
+              }
+            ]
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
+            "kind": "ref",
+            "name": "core.quantity",
+            "unitSource": [
+              "unit",
+              "currency"
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "expires_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_clear"
+  },
+  "version": "0.1.0"
+}

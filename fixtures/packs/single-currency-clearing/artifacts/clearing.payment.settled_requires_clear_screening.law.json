@@ -1,0 +1,54 @@
+{
+  "artifactId": "clearing.payment.settled_requires_clear_screening.law",
+  "dependencies": [
+    {
+      "artifactId": "clearing.PaymentInstruction.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "draft",
+  "name": "Settled payments require an authenticated clear AML/sanctions screening receipt",
+  "namespace": "clearing",
+  "payload": {
+    "condition": "true",
+    "id": "clearing.payment.settled_requires_clear_screening",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "clearing",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+    },
+    "rationale": "No payment instruction may settle without a clear screening decision and receipt digest.",
+    "response": {
+      "expression": "self.status != 'settled' or ((self.screening_decision ?? '') == 'clear' and self.screening_digest != null)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "clearing.PaymentInstruction"
+      ],
+      "root": {
+        "id": "clearing.PaymentInstruction",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "clearing.PaymentInstruction"
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_clear"
+  },
+  "version": "0.1.0"
+}

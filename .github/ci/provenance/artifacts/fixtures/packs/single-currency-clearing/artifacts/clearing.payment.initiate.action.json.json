@@ -1,0 +1,19 @@
+{
+  "sha256": "6878416b2e87dba69dc7c130676ec73c567887c01b8f55c8a5cb4778f12ab62e",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "fixtures/packs/scans/scans.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}

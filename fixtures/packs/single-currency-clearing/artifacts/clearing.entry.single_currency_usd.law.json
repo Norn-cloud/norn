@@ -1,0 +1,54 @@
+{
+  "artifactId": "clearing.entry.single_currency_usd.law",
+  "dependencies": [
+    {
+      "artifactId": "clearing.ClearingEntry.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "draft",
+  "name": "Every clearing ledger effect is denominated in USD",
+  "namespace": "clearing",
+  "payload": {
+    "condition": "true",
+    "id": "clearing.entry.single_currency_usd",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "clearing",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+    },
+    "rationale": "Single-currency clearing entries must carry currency USD.",
+    "response": {
+      "expression": "self.currency == 'USD'",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "clearing.ClearingEntry"
+      ],
+      "root": {
+        "id": "clearing.ClearingEntry",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "clearing.ClearingEntry"
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_clear"
+  },
+  "version": "0.1.0"
+}

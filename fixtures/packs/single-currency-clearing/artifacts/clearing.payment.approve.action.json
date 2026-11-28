@@ -1,0 +1,74 @@
+{
+  "artifactId": "clearing.payment.approve.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "draft",
+  "name": "Approve payment instruction (checker, independent of maker)",
+  "namespace": "clearing",
+  "payload": {
+    "access": {
+      "artifactId": "clearing.usd.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "clearing.payment.approve",
+    "effectProgram": {
+      "entityArtifactId": "clearing.PaymentInstruction.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "clearing.PaymentInstruction",
+      "transition": "approve"
+    },
+    "idempotent": true,
+    "independentOf": [
+      "maker_id"
+    ],
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Approve payment instruction (checker, independent of maker)",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "clearing.PaymentInstruction"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_clear"
+  },
+  "version": "0.1.0"
+}

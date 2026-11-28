@@ -1,0 +1,146 @@
+{
+  "artifactId": "clearing.payment.settle.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "draft",
+  "name": "Settle payment with screening receipt and reservation capture",
+  "namespace": "clearing",
+  "payload": {
+    "access": {
+      "artifactId": "clearing.usd.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "clearing.payment.settle",
+    "effectProgram": {
+      "acceptReceipt": {
+        "digestProperty": "screening_digest",
+        "manifestDigest": "sha256:4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a",
+        "referenceField": "screening_receipt",
+        "resultBindings": {
+          "screening_decision": "decision"
+        }
+      },
+      "entityArtifactId": "clearing.PaymentInstruction.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "clearing.PaymentInstruction",
+      "setFields": {
+        "posting_id": "posting_id"
+      },
+      "transition": "settle"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "balance_versions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "account": {
+                "type": "string"
+              },
+              "layer": {
+                "type": "string"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "account",
+              "unit",
+              "layer",
+              "version"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "posting_id": {
+          "type": "string"
+        },
+        "reservation_id": {
+          "type": "string"
+        },
+        "screening_receipt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "screening_receipt",
+        "reservation_id",
+        "posting_id",
+        "balance_versions"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((slice.payment.reservation_id ?? '') != '') and (input.reservation_id == (slice.payment.reservation_id ?? ''))"
+    ],
+    "quantityEffect": {
+      "balanceVersionsField": "balance_versions",
+      "ledgerId": "clearing_usd",
+      "operation": {
+        "kind": "post_reservation",
+        "postingIdField": "posting_id",
+        "reservationIdField": "reservation_id"
+      }
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "id"
+          }
+        },
+        "name": "payment",
+        "objectType": "clearing.PaymentInstruction"
+      }
+    ],
+    "title": "Settle payment with screening receipt and reservation capture",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "clearing.PaymentInstruction"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_clear"
+  },
+  "version": "0.1.0"
+}

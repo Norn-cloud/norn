@@ -1,0 +1,71 @@
+{
+  "artifactId": "clearing.payment.reject.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "draft",
+  "name": "Reject payment instruction",
+  "namespace": "clearing",
+  "payload": {
+    "access": {
+      "artifactId": "clearing.usd.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "clearing.payment.reject",
+    "effectProgram": {
+      "entityArtifactId": "clearing.PaymentInstruction.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "clearing.PaymentInstruction",
+      "transition": "reject"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Reject payment instruction",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "clearing.PaymentInstruction"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_clear"
+  },
+  "version": "0.1.0"
+}
