@@ -1459,3 +1459,113 @@ fn dispute_resolve_reject_contested_clear_restores_surviving_claim() {
         .verify_frontier_equivalence()
         .expect("frontier equivalence after rejecting contested clear");
 }
+
+/// #1549 / OBS-LINK-DISPUTE-1: When two distinct events in the same contribution
+/// are BOTH disputed (`d1` on `e1` and `d2` on `e2`), rejecting `d2` must NOT
+/// release `e1`'s edge while `d1` remains open; resolving `d1` afterwards
+/// publishes (on accept-first) or removes (on reject) cleanly.
+#[test]
+fn dispute_resolve_reject_keeps_disputed_survivor_frozen_until_its_dispute_resolves() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut cell = setup_with(
+        &dir.path().join("two_events_disputed.sqlite"),
+        referring_parties,
+    );
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    let a_e2 = party_ref_row("P-A", "demo/party/a", "A e2", Some("demo/party/c"));
+    let a_e2_bad = party_ref_row("P-A", "demo/party/a", "A e2 bad", Some("demo/party/c"));
+    let a_e1 = party_ref_row("P-A", "demo/party/a", "A e1", Some("demo/party/b"));
+    let a_e1_bad = party_ref_row("P-A", "demo/party/a", "A e1 bad", Some("demo/party/b"));
+
+    // Land `e2` (version 2) and late `e1` (version 1) before targets exist so
+    // neither edge is published yet, then open disputes on BOTH `e1` and `e2`.
+    capture_kind(&mut cell, "erpnext", &a_e2, "e2", "2", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &a_e1, "e1", "1", "upsert", "p1");
+    let (r1, i1) = raw_event(&cell, "erpnext", &a_e1_bad, "e1", "1", "upsert", "p1");
+    let (d1, ins1) = cell.inject_mapping_bundle(&r1, &i1).expect("dispute d1");
+    let (r2, i2) = raw_event(&cell, "erpnext", &a_e2_bad, "e2", "2", "upsert", "p1");
+    let (d2, ins2) = cell.inject_mapping_bundle(&r2, &i2).expect("dispute d2");
+    assert!(ins1 && ins2);
+
+    // Targets arrive while both disputes are open -> edges remain held.
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &c, "ec", "1", "upsert", "p1");
+    assert!(refers_targets(&cell, "demo/party/a").is_empty());
+
+    // Reject `d2` -> `e1` is STILL disputed by `d1`, so edge `-> B` MUST stay frozen!
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: d2,
+        decision: DisputeDecision::Reject,
+        actor: "ops:ivan".into(),
+        reason: "reject e2".into(),
+    })
+    .expect("reject d2");
+    assert!(
+        refers_targets(&cell, "demo/party/a").is_empty(),
+        "OBS-LINK-DISPUTE-1: rejecting d2 must not publish e1's edge while d1 is open"
+    );
+
+    // Now reject `d1` as well -> no real surviving claims remain, edge stays absent.
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: d1,
+        decision: DisputeDecision::Reject,
+        actor: "ops:ivan".into(),
+        reason: "reject e1 too".into(),
+    })
+    .expect("reject d1");
+    assert!(refers_targets(&cell, "demo/party/a").is_empty());
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence after rejecting both disputes");
+}
+
+/// #1549 / #1028: Accepting a `kind == "delete"` correction when the conflicting
+/// v2 upsert was still pending withdraws the deleting source's earlier v1 edge!
+#[test]
+fn dispute_resolve_accept_delete_correction_withdraws_earlier_v1_edge() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut cell = setup_with(
+        &dir.path().join("delete_correction_pending_v2.sqlite"),
+        referring_parties,
+    );
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", Some("demo/party/b"));
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", Some("demo/party/b"));
+
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &a_v1, "e1", "1", "upsert", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+
+    // Capture v2 upsert WITHOUT processing it, then capture conflicting v2 delete.
+    let (r_up, i_up) = raw_event(&cell, "erpnext", &a_v2, "e2", "2", "upsert", "p1");
+    let (_pending_v2, _) = cell.inject_mapping_bundle(&r_up, &i_up).expect("inject v2");
+    let (r_del, i_del) = raw_event(&cell, "erpnext", &a_v2, "e2", "2", "delete", "p1");
+    let (conflict_id, inserted) = cell
+        .inject_mapping_bundle(&r_del, &i_del)
+        .expect("inject v2 delete conflict");
+    assert!(inserted && conflict_id.starts_with("mapping-conflict:"));
+
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: conflict_id,
+        decision: DisputeDecision::AcceptSecondAsCorrection,
+        actor: "ops:judy".into(),
+        reason: "delete supersedes pending v2 and withdraws v1 edge".into(),
+    })
+    .expect("resolve with delete correction");
+
+    assert!(
+        refers_targets(&cell, "demo/party/a").is_empty(),
+        "delete correction must withdraw earlier v1 edge even when v2 upsert was pending"
+    );
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence after delete correction");
+}

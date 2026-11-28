@@ -305,8 +305,19 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         bundle: &MappingBundle,
         batch_history: &BTreeMap<String, Vec<(norn_ir::SourceVersion, String, ObservedLinkClaim)>>,
     ) -> Result<Vec<ObservedLinkClaim>, CellError> {
-        let scope = bundle.source_scope()?;
         let obs_id = format!("mapping-bundle:{}", bundle.digest);
+        self.delete_withdrawal_claims_for_obs(bundle, &obs_id, batch_history)
+    }
+
+    /// Emit `target: None` withdrawal claims under `obs_id` for every active
+    /// contribution owned by `bundle`'s source scope on deleted subjects.
+    pub(crate) fn delete_withdrawal_claims_for_obs(
+        &self,
+        bundle: &MappingBundle,
+        obs_id: &str,
+        batch_history: &BTreeMap<String, Vec<(norn_ir::SourceVersion, String, ObservedLinkClaim)>>,
+    ) -> Result<Vec<ObservedLinkClaim>, CellError> {
+        let scope = bundle.source_scope()?;
         let mut withdrawals = Vec::new();
         for delete in &bundle.deletes {
             let mut seen_contributions = BTreeSet::new();
@@ -335,7 +346,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 let mut provenance = delete.provenance.clone();
                 provenance.transform = Some(format!("{}.{}", delete.map, existing.role.as_str()));
                 withdrawals.push(ObservedLinkClaim {
-                    observation_id: obs_id.clone(),
+                    observation_id: obs_id.to_owned(),
                     source_scope: existing.source_scope,
                     source_type: existing.source_type,
                     source_key: existing.source_key,
@@ -764,6 +775,15 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 return Err(CellError::UnsupportedMappingProfile);
             }
             let before = links.len();
+            // OBS-LINK-DISPUTE-1: a contribution with ANY non-superseded
+            // disputed claim stays frozen even if a sibling non-disputed
+            // carry-forward claim in the same contribution agrees on its target.
+            let disputed_contributions: BTreeSet<&str> = group
+                .iter()
+                .zip(&ranked)
+                .filter(|(e, s)| **s != Standing::Superseded && e.disputed)
+                .map(|(e, _)| e.contribution.as_str())
+                .collect();
             for (entry, standing) in group.iter().zip(&ranked) {
                 let Some(to) = target(entry) else { continue };
                 let key = LinkKey::new(source.clone(), role.as_str(), to.clone());
@@ -774,7 +794,11 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     .any(|(o, s)| *s != Standing::Superseded && target(o).as_ref() == Some(&to));
                 let mutation = match standing {
                     Standing::Current
-                        if !entry.disputed && !exists && present(source)? && present(&to)? =>
+                        if !entry.disputed
+                            && !disputed_contributions.contains(entry.contribution.as_str())
+                            && !exists
+                            && present(source)?
+                            && present(&to)? =>
                     {
                         LinkMutation::Add {
                             values: model

@@ -326,6 +326,13 @@ pub(crate) fn record_dispute_resolutions_in_tx<E: SqlEngine>(
             .get("disputeId")
             .and_then(Value::as_str)
             .ok_or_else(|| CellError::Encoding("dispute_resolved missing disputeId".to_owned()))?;
+        if !(dispute_id.starts_with("mapping-conflict:")
+            || dispute_id.starts_with("mapping-identity:"))
+        {
+            return Err(CellError::Encoding(format!(
+                "dispute_resolved requires a mapping dispute id, got {dispute_id}"
+            )));
+        }
         let consumed_id = match consumed {
             Some(crate::store::Consumption::Observation { observation_id }) => {
                 Some(observation_id.as_str())
@@ -439,8 +446,8 @@ pub(crate) fn frontier_has_drift<E: SqlEngine>(
         &format!(
             "SELECT \"claim_id\", \"contribution_id\", \"source_scope\", \"source_type\", \
                     \"source_key\", \"role\", \"target_type\", \"target_key\", \"observation_id\", \
-                    \"commit_seq\", \"source_version\", \"version_kind\", \"event_keys_json\", \
-                    \"active\", \"claim_json\" \
+                    \"commit_seq\", \"claim_ordinal\", \"source_version\", \"version_kind\", \
+                    \"event_keys_json\", \"active\", \"claim_json\" \
              FROM \"{LINK_CLAIM_FRONTIER}\" ORDER BY \"claim_id\""
         ),
         params![],
@@ -449,14 +456,14 @@ pub(crate) fn frontier_has_drift<E: SqlEngine>(
         return Ok(true);
     }
     let mut expected_by_id = BTreeMap::new();
-    for (id, commit_seq, _, claim) in expected_claims {
-        expected_by_id.insert(id, (commit_seq, claim));
+    for (id, commit_seq, ordinal, claim) in expected_claims {
+        expected_by_id.insert(id, (commit_seq, ordinal, claim));
     }
     let mut meta_cache: BTreeMap<String, ClaimSourceMeta> = BTreeMap::new();
     for raw in stored_claims {
         let row = SqlRow(raw);
         let id: String = row.get(0)?;
-        let Some((exp_seq, exp_claim)) = expected_by_id.get(&id) else {
+        let Some((exp_seq, exp_ordinal, exp_claim)) = expected_by_id.get(&id) else {
             return Ok(true);
         };
         if !meta_cache.contains_key(&exp_claim.observation_id) {
@@ -484,11 +491,12 @@ pub(crate) fn frontier_has_drift<E: SqlEngine>(
                 == exp_claim.target.as_ref().map(|t| t.key.as_str())
             && row.get::<String>(8)? == exp_claim.observation_id
             && u64::try_from(row.get::<i64>(9)?).ok() == Some(*exp_seq)
-            && row.get::<String>(10)? == exp_meta.source_version
-            && row.get::<String>(11)? == exp_meta.version_kind.as_str()
-            && row.get::<String>(12)? == exp_event_keys_json
-            && row.get::<i64>(13)? == exp_active
-            && row.get::<String>(14)? == exp_json;
+            && u64::try_from(row.get::<i64>(10)?).ok() == Some(*exp_ordinal)
+            && row.get::<String>(11)? == exp_meta.source_version
+            && row.get::<String>(12)? == exp_meta.version_kind.as_str()
+            && row.get::<String>(13)? == exp_event_keys_json
+            && row.get::<i64>(14)? == exp_active
+            && row.get::<String>(15)? == exp_json;
         if !matches {
             return Ok(true);
         }
@@ -513,7 +521,7 @@ pub(crate) fn decode_claims_from_fact_values<E: SqlEngine>(
         &format!(
             "SELECT \"id\", \"commit_seq\", \"snapshot\" FROM \"{FACT_VALUES}\" \
              WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"version\" = 1 \
-             ORDER BY \"commit_seq\", \"id\""
+             ORDER BY \"commit_seq\", \"rowid\""
         ),
         params![
             crate::MAIN_WORLD,
@@ -590,6 +598,13 @@ fn expected_dispute_resolutions<E: SqlEngine>(
             .get("disputeId")
             .and_then(Value::as_str)
             .ok_or_else(|| CellError::Encoding("dispute_resolved missing disputeId".to_owned()))?;
+        if !(dispute_id.starts_with("mapping-conflict:")
+            || dispute_id.starts_with("mapping-identity:"))
+        {
+            return Err(CellError::Encoding(format!(
+                "dispute_resolved requires a mapping dispute id, got {dispute_id}"
+            )));
+        }
         let consumed_matches = matches!(
             body.consumed.as_ref(),
             Some(crate::store::Consumption::Observation { observation_id })

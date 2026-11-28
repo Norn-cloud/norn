@@ -22,8 +22,8 @@ use std::collections::BTreeSet;
 use norn_ir::mapping::ObservedLinkClaim;
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::{
-    CellCommit, CommitModel, DecisionTurn, ObservationAuthorization, ObservationEvent, Observed,
-    TypeCatalog,
+    CellCommit, CommitModel, CommitView, DecisionTurn, ObservationAuthorization, ObservationEvent,
+    Observed, TypeCatalog,
 };
 use serde::{Deserialize, Serialize};
 
@@ -397,6 +397,24 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     }
                     fresh_claims.push((claim, event_keys.clone()));
                 }
+                // For `kind == "delete"` corrections, withdraw every active
+                // contribution owned by `incoming`'s source scope on deleted
+                // subjects (including earlier v1 claims when a conflicting v2
+                // upsert was still pending).
+                for mut withdrawal in self.delete_withdrawal_claims_for_obs(
+                    &incoming,
+                    dispute_id,
+                    &std::collections::BTreeMap::new(),
+                )? {
+                    let contribution = withdrawal.contribution_id()?;
+                    if !covered_contributions.insert(contribution.clone()) {
+                        continue;
+                    }
+                    let active = self.active_claims_for_contribution(&contribution)?;
+                    withdrawal.supersedes = active.into_iter().map(|r| r.claim_id).collect();
+                    scope.sources.insert(withdrawal.source_key.clone());
+                    fresh_claims.push((withdrawal, event_keys.clone()));
+                }
                 // Withdraw any active claims of the disputed event whose
                 // contribution was NOT re-asserted by the incoming correction
                 // (e.g. a correction that removes a link or deletes the record).
@@ -443,19 +461,39 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     let Some(first) = disputed_rows.first() else {
                         continue;
                     };
-                    let disputed_ids: BTreeSet<String> =
+                    let mut supersedes: BTreeSet<String> =
                         disputed_rows.iter().map(|r| r.claim_id.clone()).collect();
                     let all_active = self.active_claims_for_contribution(&contribution_id)?;
-                    let surviving: Vec<_> = all_active
-                        .into_iter()
-                        .filter(|r| !disputed_ids.contains(&r.claim_id))
-                        .collect();
-                    // If an undisputed surviving active claim exists in this
-                    // contribution (all agreeing on one target), carry that
-                    // surviving target on the superseding claim so the
-                    // survivor stays `Standing::Current` instead of becoming
-                    // contested against a `target: None` withdrawal.
-                    let surviving_targets: BTreeSet<_> = surviving
+                    let mut real_surviving = Vec::new();
+                    let mut reject_carry_ids = Vec::new();
+                    for r in all_active {
+                        if supersedes.contains(&r.claim_id) {
+                            continue;
+                        }
+                        let is_reject_carry =
+                            (r.claim.observation_id.starts_with("mapping-conflict:")
+                                || r.claim.observation_id.starts_with("mapping-identity:"))
+                                && self
+                                    .dispute_resolution(&r.claim.observation_id)?
+                                    .is_some_and(|rec| rec.decision == "reject");
+                        if is_reject_carry {
+                            reject_carry_ids.push(r.claim_id);
+                        } else {
+                            real_surviving.push(r);
+                        }
+                    }
+                    // If real surviving active claims exist in this contribution
+                    // (all agreeing on one target), carry that surviving target
+                    // on the superseding claim so the survivor stays
+                    // `Standing::Current` instead of contesting against `None`
+                    // (and if the survivor is itself still disputed,
+                    // `disputed_contributions` keeps the contribution frozen
+                    // under OBS-LINK-DISPUTE-1). If no real survivor remains,
+                    // also supersede any prior `reject` carry-forward rows.
+                    if real_surviving.is_empty() {
+                        supersedes.extend(reject_carry_ids);
+                    }
+                    let surviving_targets: BTreeSet<_> = real_surviving
                         .iter()
                         .map(|r| {
                             r.claim
@@ -465,7 +503,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                         })
                         .collect();
                     let replacement_target = if surviving_targets.len() == 1 {
-                        surviving.first().and_then(|r| r.claim.target.clone())
+                        real_surviving.first().and_then(|r| r.claim.target.clone())
                     } else {
                         None
                     };
@@ -477,7 +515,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                         role: first.claim.role.clone(),
                         target: replacement_target,
                         provenance: first.claim.provenance.clone(),
-                        supersedes: disputed_ids,
+                        supersedes,
                     };
                     scope.sources.insert(withdrawal.source_key.clone());
                     fresh_claims.push((withdrawal, event_keys.clone()));

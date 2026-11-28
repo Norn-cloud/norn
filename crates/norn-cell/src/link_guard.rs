@@ -92,20 +92,31 @@ impl LinkGuardMode {
 /// Verify mapping bundle evidence, exact pending page/bundle consumption, and
 /// `mapping_link_plan` (both link writes and fresh claim writes) inside the
 /// commit transaction. This is the ONLY constructor of [`VerifiedMappingProof`].
-pub(crate) fn verify_mapping_links<E: 'static, C, I, S: SqlEngine>(
+pub(crate) fn verify_mapping_links<E: serde::Serialize + 'static, C, I, S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     commit: &CellCommit<E, C, I>,
     mapped: &[crate::mapping_bundle::MappingBundle],
     dispute_resolve: Option<crate::mapping_dispute_resolve::DisputeResolveProof<'_>>,
 ) -> Result<Option<VerifiedMappingProof>, CommitError<CellError>> {
-    // Reject any attempt to emit `ObservationEvent::DisputeResolved` outside
-    // the governed `resolve_mapping_dispute` path (including public `CellHost::commit_observed`).
+    // Reject any attempt to emit a `dispute_resolved` event (whether typed
+    // `ObservationEvent::DisputeResolved` or any custom `E: Serialize` with
+    // `op == "dispute_resolved"`) outside `resolve_mapping_dispute`.
     let has_dispute_event = commit.events.iter().any(|event| {
         let any: &dyn std::any::Any = event;
-        matches!(
+        if matches!(
             any.downcast_ref::<norn_kernel::ObservationEvent>(),
             Some(norn_kernel::ObservationEvent::DisputeResolved { .. })
-        )
+        ) {
+            return true;
+        }
+        serde_json::to_value(event)
+            .ok()
+            .and_then(|v| {
+                v.get("op")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|op| op == "dispute_resolved")
+            })
+            .unwrap_or(false)
     });
     if has_dispute_event && dispute_resolve.is_none() {
         return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
