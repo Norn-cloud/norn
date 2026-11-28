@@ -79,6 +79,12 @@ class WasmPackageReuse(unittest.TestCase):
         self.assertEqual(result["test_build_seconds"], 100)
         self.assertEqual(result["task_seconds"]["test/heavy-1"], 30)
 
+    def test_legacy_unsharded_browser_first_nets_wasm_and_later_task_reuses_it(self):
+        result = table(bundle(("phase/browser", 350, {WASM_BUILT: 300}), ("phase/integration-wasm", 50, {})))
+        self.assertEqual(result["wasm_pkg_seconds"], 300)
+        self.assertEqual(result["task_seconds"]["phase/browser"], 50)
+        self.assertEqual(result["task_seconds"]["phase/integration-wasm"], 50)
+
     def test_authoring_after_a_built_package_keeps_its_whole_time(self):
         result = table(bundle(("phase/integration-wasm", 380, {WASM_BUILT: 300}),
                               ("phase/integration-authoring", 500, {})))

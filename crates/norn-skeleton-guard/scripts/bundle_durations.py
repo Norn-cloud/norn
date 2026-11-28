@@ -50,7 +50,7 @@ PRUNED = re.compile(rf"^(?:##\[notice\]|::notice::)pruned target before {TASK};"
 TEST_BUILT = re.compile(r"^\s*Finished `test` profile ")
 WASM_BUILT = re.compile(r"^@norn/checker-wasm \S+ size report ")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
-WASM_FIRST = ("phase/browser-1", "phase/browser-2", "phase/integration-wasm")
+WASM_FIRST = ("phase/browser", "phase/browser-1", "phase/browser-2", "phase/integration-wasm")
 WASM_AFTER_NATIVE = ("phase/integration-authoring",)
 TEST_AFTER_PREREQ = ("phase/guards",)
 
