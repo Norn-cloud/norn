@@ -3641,6 +3641,14 @@ impl<E: SqlEngine> CellStore<E> {
                     Some(crate::engine_release::STORAGE_VERSION)
                 }
             };
+            let allow_dispute_resolution = match origin {
+                CommitOrigin::Retained(_) => true,
+                CommitOrigin::Host(_) | CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
+                    mapping_proof.is_some_and(
+                        crate::link_guard::VerifiedMappingProof::allows_dispute_resolution,
+                    )
+                }
+            };
             if effective_batch.world == MAIN_WORLD
                 && record_storage_version
                     .is_some_and(|v| v >= crate::link_claim_frontier::FRONTIER_STORAGE_VERSION)
@@ -3650,6 +3658,7 @@ impl<E: SqlEngine> CellStore<E> {
                     commit_seq,
                     &receipt.hash,
                     effective_batch.consumes.as_ref(),
+                    allow_dispute_resolution,
                     &entries,
                 )?;
             }

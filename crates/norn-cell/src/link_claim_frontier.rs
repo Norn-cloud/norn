@@ -317,6 +317,7 @@ pub(crate) fn record_dispute_resolutions_in_tx<E: SqlEngine>(
     commit_seq: u64,
     receipt_hash: &str,
     consumed: Option<&crate::store::Consumption>,
+    allow_dispute_resolution: bool,
     entries: &[crate::read::LedgerEntry],
 ) -> Result<(), CellError> {
     let commit_seq_i64 = to_i64(commit_seq, "dispute resolution commit_seq")?;
@@ -324,6 +325,9 @@ pub(crate) fn record_dispute_resolutions_in_tx<E: SqlEngine>(
         let event = &entry.event;
         if event.get("op").and_then(Value::as_str) != Some("dispute_resolved") {
             continue;
+        }
+        if !allow_dispute_resolution {
+            return Err(CellError::UnsupportedMappingProfile);
         }
         let dispute_id = event
             .get("disputeId")

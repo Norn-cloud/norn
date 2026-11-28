@@ -106,9 +106,9 @@ pub struct DisputeResolutionOutcome {
 
 /// Unforgeable crate-private proof minted exclusively by
 /// [`SqliteCell::resolve_mapping_dispute`] and verified inside the commit
-/// transaction by `link_guard::verify_mapping_links`. Prevents generic
-/// `CellHost::commit` and `CellHost::commit_observed` callers from forging a
-/// dispute resolution.
+/// transaction by `link_guard::verify_links`. Prevents generic
+/// `CellHost::commit`, `SqliteCell::attributed`, `CellHost::commit_observed`,
+/// and direct `CellStore::commit` callers from forging a dispute resolution.
 #[derive(Clone, Copy)]
 pub(crate) struct DisputeResolveProof<'a> {
     dispute_id: &'a str,

@@ -23,17 +23,26 @@ use crate::read::{LinkRecord, StoreReader, decode_row, query_projected};
 use crate::store::LinkChange;
 use crate::system::{LINK_CREATION, LINK_VERSIONS};
 
-/// Unforgeable proof constructed ONLY by [`verify_mapping_links`] inside a
-/// commit transaction after verifying every mapping bundle, exact pending
-/// page/bundle consumption, and exact `mapping_link_plan` equality.
+/// Unforgeable proof constructed ONLY by [`verify_links`] inside a commit
+/// transaction after verifying every mapping bundle, exact pending page/bundle
+/// consumption, and exact `mapping_link_plan` equality (or a governed dispute
+/// resolution with `DisputeResolveProof`).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct VerifiedMappingProof(());
+pub(crate) struct VerifiedMappingProof {
+    dispute_resolved: bool,
+}
 
 impl VerifiedMappingProof {
     /// Consumes the in-transaction proof to confirm static mapping link exemption.
     pub(crate) const fn exempt_link_read_markings(self) -> bool {
-        let () = self.0;
+        let _ = self.dispute_resolved;
         true
+    }
+
+    /// Whether this proof authorizes persisting a governed `dispute_resolved`
+    /// event into `_norn_dispute_resolution`.
+    pub(crate) const fn allows_dispute_resolution(self) -> bool {
+        self.dispute_resolved
     }
 }
 
@@ -92,28 +101,21 @@ impl LinkGuardMode {
 /// Verify mapping bundle evidence, exact pending page/bundle consumption, and
 /// `mapping_link_plan` (both link writes and fresh claim writes) inside the
 /// commit transaction. This is the ONLY constructor of [`VerifiedMappingProof`].
-pub(crate) fn verify_mapping_links<E: serde::Serialize + 'static, C, I, S: SqlEngine>(
+pub(crate) fn verify_links<E, C, I, S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     commit: &CellCommit<E, C, I>,
+    batch: &crate::store::CommitBatch,
     mapped: &[crate::mapping_bundle::MappingBundle],
     dispute_resolve: Option<crate::mapping_dispute_resolve::DisputeResolveProof<'_>>,
 ) -> Result<Option<VerifiedMappingProof>, CommitError<CellError>> {
-    // Reject any `dispute_resolved` event outside `resolve_mapping_dispute`.
-    let has_dispute_event = commit.events.iter().any(|event| {
-        let any: &dyn std::any::Any = event;
-        matches!(
-            any.downcast_ref::<norn_kernel::ObservationEvent>(),
-            Some(norn_kernel::ObservationEvent::DisputeResolved { .. })
-        ) || serde_json::to_value(event)
-            .ok()
-            .and_then(|v| {
-                v.get("op")
-                    .and_then(serde_json::Value::as_str)
-                    .map(|s| s == "dispute_resolved")
-            })
-            .unwrap_or(false)
-    });
-    if has_dispute_event && dispute_resolve.is_none() {
+    // Reject any `dispute_resolved` event (including attached/bookkeeping events
+    // in `batch.events`) outside `resolve_mapping_dispute`.
+    let dispute_events: Vec<&norn_ir::RuntimeValue> = batch
+        .events
+        .iter()
+        .filter(|e| e.get("op").and_then(norn_ir::RuntimeValue::as_str) == Some("dispute_resolved"))
+        .collect();
+    if !dispute_events.is_empty() && dispute_resolve.is_none() {
         return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
     }
     // OBS-EVIDENCE-1: preparation cannot authorize a bundle disputed before BEGIN.
@@ -153,13 +155,13 @@ pub(crate) fn verify_mapping_links<E: serde::Serialize + 'static, C, I, S: SqlEn
             return Err(CommitError::Host(CellError::SourceEvidenceChanged));
         }
     } else if !mapped.is_empty()
-        || (commit.consumes.is_some() && (has_dispute_event || dispute_resolve.is_some()))
+        || (commit.consumes.is_some() && (!dispute_events.is_empty() || dispute_resolve.is_some()))
     {
         return Err(CommitError::Host(CellError::MappingBundleMismatch));
     }
     if mapped.is_empty() {
         if let Some(proof) = dispute_resolve {
-            return verify_dispute_resolution_links(reader, commit, proof);
+            return verify_dispute_resolution_links(reader, commit, &dispute_events, proof);
         }
         return Ok(None);
     }
@@ -172,7 +174,9 @@ pub(crate) fn verify_mapping_links<E: serde::Serialize + 'static, C, I, S: SqlEn
     if plan.links != commit.links || !fresh_claim_writes_match(reader, &plan.fresh, commit)? {
         return Err(CommitError::Host(CellError::SourceEvidenceChanged));
     }
-    Ok(Some(VerifiedMappingProof(())))
+    Ok(Some(VerifiedMappingProof {
+        dispute_resolved: false,
+    }))
 }
 
 fn fresh_claim_writes_match<E, C, I, S: SqlEngine>(
@@ -208,9 +212,10 @@ fn fresh_claim_writes_match<E, C, I, S: SqlEngine>(
     Ok(actual == expected)
 }
 
-fn verify_dispute_resolution_links<E: 'static, C, I, S: SqlEngine>(
+fn verify_dispute_resolution_links<E, C, I, S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     commit: &CellCommit<E, C, I>,
+    dispute_events: &[&norn_ir::RuntimeValue],
     proof: crate::mapping_dispute_resolve::DisputeResolveProof<'_>,
 ) -> Result<Option<VerifiedMappingProof>, CommitError<CellError>> {
     let dispute_id = proof.dispute_id();
@@ -225,23 +230,15 @@ fn verify_dispute_resolution_links<E: 'static, C, I, S: SqlEngine>(
     if !consumes_ok {
         return Err(CommitError::Host(CellError::MappingBundleMismatch));
     }
-    let matches_event = commit.events.iter().any(|event| {
-        let any: &dyn std::any::Any = event;
-        let Some(norn_kernel::ObservationEvent::DisputeResolved {
-            dispute_id: id,
-            decision,
-            actor,
-            reason,
-        }) = any.downcast_ref::<norn_kernel::ObservationEvent>()
-        else {
-            return false;
-        };
-        id == dispute_id
-            && decision == proof.decision().as_str()
-            && actor == proof.actor()
-            && reason == proof.reason()
-    });
-    if !matches_event {
+    let [event] = dispute_events else {
+        return Err(CommitError::Host(CellError::MappingBundleMismatch));
+    };
+    let field = |k| event.get(k).and_then(norn_ir::RuntimeValue::as_str);
+    if field("disputeId") != Some(dispute_id)
+        || field("decision") != Some(proof.decision().as_str())
+        || field("actor") != Some(proof.actor())
+        || field("reason") != Some(proof.reason())
+    {
         return Err(CommitError::Host(CellError::MappingBundleMismatch));
     }
     if proof.decision() == crate::mapping_dispute_resolve::DisputeDecision::AcceptSecondAsCorrection
@@ -258,7 +255,9 @@ fn verify_dispute_resolution_links<E: 'static, C, I, S: SqlEngine>(
     if plan.links != commit.links || !fresh_claim_writes_match(reader, &plan.fresh, commit)? {
         return Err(CommitError::Host(CellError::SourceEvidenceChanged));
     }
-    Ok(Some(VerifiedMappingProof(())))
+    Ok(Some(VerifiedMappingProof {
+        dispute_resolved: true,
+    }))
 }
 
 /// The committed state of link `key` as the kernel sees it (O(1) point lookup).

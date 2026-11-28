@@ -13,9 +13,11 @@ use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::export::{EXPORT_FORMAT, ExportRecord, SourceEvidenceEntry};
 #[cfg(all(test, feature = "native"))]
+pub(crate) use crate::export_evidence::read_late_source_evidence;
+#[cfg(all(test, feature = "native"))]
 pub(crate) use crate::export_evidence::{members_valid, restore_source_evidence};
 pub(crate) use crate::export_evidence::{
-    read_late_source_evidence, read_source_evidence, reprocessed_target,
+    read_late_source_evidence_for_version, read_source_evidence, reprocessed_target,
     restore_late_source_evidence, restore_observation_input,
 };
 use crate::model::Model;
@@ -295,7 +297,8 @@ pub(crate) fn record<E: SqlEngine>(
     for entry in &entries {
         reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
     }
-    let (pending_observations, source_evidence) = read_late_source_evidence(engine, commit_seq)?;
+    let (pending_observations, source_evidence) =
+        read_late_source_evidence_for_version(engine, commit_seq, storage_version)?;
     let bindings = bindings(engine)?;
     let export = ExportRecord {
         format: EXPORT_FORMAT.to_owned(),

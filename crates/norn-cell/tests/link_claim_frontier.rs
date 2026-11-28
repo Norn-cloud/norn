@@ -2146,3 +2146,328 @@ fn accept_first_two_unattributed_conflicts_same_pending_first_replays_cleanly() 
         "pending first capture survives rebuild cleanly"
     );
 }
+
+/// #1549: Neither public `SqliteCell::attributed` (standalone or piggybacked onto
+/// another resolution) nor direct `CellStore::commit` may persist a
+/// `dispute_resolved` event without an in-transaction `DisputeResolveProof`.
+#[test]
+fn attached_and_direct_store_cannot_forge_dispute_resolution() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("forge_attached_direct.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+
+    // Legacy generically-consumed conflict with still-pending first capture.
+    let a1 = party_ref_row(
+        "P-A",
+        "demo/party/a",
+        "A First Pending",
+        Some("demo/party/b"),
+    );
+    let a2 = party_ref_row("P-A", "demo/party/a", "A Conflict", None);
+    let (raw_a1, input_a1) = raw_event(&cell, "erpnext", &a1, "ea", "1", "upsert", "p1");
+    let mapping_id = input_a1.mapping.clone();
+    let (first_a, _) = cell
+        .inject_mapping_bundle(&raw_a1, &input_a1)
+        .expect("inject a1");
+    let (raw_a2, input_a2) = raw_event(&cell, "erpnext", &a2, "ea", "1", "upsert", "p1");
+    let (conflict_a, _) = cell
+        .inject_mapping_bundle(&raw_a2, &input_a2)
+        .expect("inject conflict a");
+
+    // A second normal pending conflict used to test piggybacking via `attributed`.
+    let d1 = party_ref_row("P-D", "demo/party/d", "D1", None);
+    let d2 = party_ref_row("P-D", "demo/party/d", "D2", None);
+    capture_kind(&mut cell, "erpnext", &d1, "ed", "1", "upsert", "p1");
+    let (raw_d2, input_d2) = raw_event(&cell, "erpnext", &d2, "ed", "1", "upsert", "p1");
+    let (conflict_d, _) = cell
+        .inject_mapping_bundle(&raw_d2, &input_d2)
+        .expect("inject conflict d");
+
+    let model = cell.store().model().clone();
+    drop(cell);
+    {
+        let conn = rusqlite::Connection::open(&path).expect("sqlite");
+        conn.execute(
+            "UPDATE \"_norn_inbox\" SET \"consumed_commit_seq\" = 1 WHERE \"observation_id\" = ?1",
+            rusqlite::params![&conflict_a],
+        )
+        .expect("mark legacy consumed");
+    }
+    let store = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
+    let mut cell = SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+
+    let forged_event = norn_ir::runtime_object! {
+        "op" => "dispute_resolved",
+        "disputeId" => conflict_a.clone(),
+        "decision" => "reject",
+        "actor" => "attacker",
+        "reason" => "forged",
+    };
+
+    // 1. Standalone `SqliteCell::attributed` with empty commit must fail closed.
+    let err_standalone = cell.attributed(vec![forged_event.clone()], |c| {
+        norn_kernel::CellHost::commit(c, norn_kernel::CellCommit::empty())
+    });
+    assert!(
+        err_standalone.is_err(),
+        "public SqliteCell::attributed must refuse forged dispute_resolved event"
+    );
+
+    // 2. Piggybacking a forged `dispute_resolved` onto a real resolution must fail closed.
+    let err_piggyback = cell.attributed(vec![forged_event.clone()], |c| {
+        c.resolve_mapping_dispute(DisputeResolutionInput {
+            dispute_id: conflict_d.clone(),
+            decision: DisputeDecision::AcceptFirst,
+            actor: "ops:ravi".into(),
+            reason: "legitimate d".into(),
+        })
+    });
+    assert!(
+        err_piggyback.is_err(),
+        "extra attached dispute_resolved event on another resolution must fail closed"
+    );
+
+    // 3. Direct low-level `CellStore::commit` without proof must fail closed.
+    let next_time = cell
+        .store()
+        .read()
+        .receipt_at(cell.store().export_commit_count().expect("seq"))
+        .expect("receipt")
+        .map_or(1, |r| r.body.logical_time.saturating_add(1));
+    let err_direct = cell.store().commit(&norn_cell::CommitBatch {
+        world: MAIN_WORLD.into(),
+        scope: "org_demo/dev".into(),
+        logical_time: next_time,
+        events: vec![forged_event],
+        ..norn_cell::CommitBatch::default()
+    });
+    assert!(
+        matches!(err_direct, Err(CellError::UnsupportedMappingProfile)),
+        "direct CellStore::commit must refuse forged dispute_resolved event, got {err_direct:?}"
+    );
+
+    // Quarantine, resolution index, and pending first capture all remain untouched.
+    assert!(
+        cell.store()
+            .read()
+            .dispute_resolution(&conflict_a)
+            .expect("res a")
+            .is_none()
+    );
+    assert!(
+        cell.store()
+            .read()
+            .dispute_resolution(&conflict_d)
+            .expect("res d")
+            .is_none()
+    );
+    assert!(
+        cell.store()
+            .read()
+            .pending_observation(&first_a)
+            .expect("first a still pending")
+            .is_some()
+    );
+    assert!(
+        !cell
+            .store()
+            .read()
+            .unresolved_quarantined_datasets(&mapping_id, None)
+            .expect("quarantined")
+            .is_empty()
+    );
+}
+
+/// #1549: A pre-v13 export record that generically consumed an unattributed
+/// conflict without exporting its unattributed pending first capture must still
+/// replay cleanly, must NOT suppress exporting that first capture at a later
+/// v13 `accept-first` resolution, and a third conflict resolved afterwards must
+/// still deduplicate and rebuild end-to-end.
+#[test]
+fn pre_v13_generic_conflict_consumption_replays_and_v13_accept_first_exports_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let source_path = dir.path().join("pre_v13_source.sqlite");
+    let upgraded_path = dir.path().join("pre_v13_upgraded.sqlite");
+    let mut cell = setup_with(&source_path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+
+    let a1 = party_ref_row("P-A", "demo/party/a", "First Pending", Some("demo/party/b"));
+    let a2 = party_ref_row("P-A", "demo/party/a", "Conflict 1", None);
+    let a3 = party_ref_row("P-A", "demo/party/a", "Conflict 2", None);
+    let a4 = party_ref_row("P-A", "demo/party/a", "Conflict 3", None);
+    let (r1, i1) = raw_event(&cell, "erpnext", &a1, "e1", "1", "upsert", "p1");
+    let (first_id, _) = cell.inject_mapping_bundle(&r1, &i1).expect("inject first");
+    let (r2, i2) = raw_event(&cell, "erpnext", &a2, "e1", "1", "upsert", "p1");
+    let (c1, _) = cell.inject_mapping_bundle(&r2, &i2).expect("inject c1");
+    let (r3, i3) = raw_event(&cell, "erpnext", &a3, "e1", "1", "upsert", "p1");
+    let (c2, _) = cell.inject_mapping_bundle(&r3, &i3).expect("inject c2");
+    let (r4, i4) = raw_event(&cell, "erpnext", &a4, "e1", "1", "upsert", "p1");
+    let (c3, _) = cell.inject_mapping_bundle(&r4, &i4).expect("inject c3");
+
+    let model = cell.store().model().clone();
+    drop(cell);
+    let pending_rows: Vec<(i64, String, String)> = {
+        let conn = rusqlite::Connection::open(&source_path).expect("sqlite");
+        for id in [&first_id, &c1, &c2, &c3] {
+            conn.execute(
+                "DELETE FROM \"_norn_source_evidence\" WHERE \"observation_id\" = ?1",
+                rusqlite::params![id],
+            )
+            .expect("strip evidence");
+        }
+        [&first_id, &c2, &c3]
+            .into_iter()
+            .map(|id| {
+                conn.query_row(
+                    "SELECT \"position\", \"observation_id\", \"observed\" \
+                     FROM \"_norn_inbox\" WHERE \"observation_id\" = ?1",
+                    rusqlite::params![id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("read inbox row")
+            })
+            .collect()
+    };
+
+    // Commit generic consumption of `c1`, then re-stamp that record as a pre-v13
+    // (`storage_version = Some(12)`) export without `first_id` in `pending_observations`.
+    let store =
+        CellStore::open(&source_path, model.clone(), StoreOptions::default()).expect("open");
+    let next_time = store
+        .read()
+        .receipt_at(store.export_commit_count().expect("seq"))
+        .expect("receipt")
+        .map_or(1, |r| r.body.logical_time.saturating_add(1));
+    store
+        .commit(&norn_cell::CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: "org_demo/dev".into(),
+            logical_time: next_time,
+            consumes: Some(norn_cell::Consumption::Observation {
+                observation_id: c1.clone(),
+            }),
+            ..norn_cell::CommitBatch::default()
+        })
+        .expect("generic consume c1");
+    let cell = SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    let (mut pre_records, _) = export_records_and_head(&cell);
+    drop(cell);
+    let last_pre = pre_records.last_mut().expect("last pre");
+    last_pre.storage_version = Some(12);
+    last_pre.pending_observations.clear();
+    let pre_seq = last_pre.receipt.body.commit_seq;
+    let pre_head = last_pre.hash().expect("pre head");
+
+    // 1. Pre-v13 generic conflict consumption WITHOUT `first_id` must replay cleanly.
+    let rebuilt_pre = CellStore::rebuild_export_history(
+        NativeEngine::open(&upgraded_path, StoreOptions::default()).expect("open upgraded"),
+        &pre_records,
+        &pre_head,
+    )
+    .expect("pre-v13 generic conflict consumption without first capture must replay");
+    drop(rebuilt_pre);
+
+    // 2. Restore the unattributed pending rows (`first_id`, `c2`, `c3`) on the
+    //    upgraded v13 cell and resolve `c2`, `c3`, and legacy-consumed `c1`.
+    {
+        let conn = rusqlite::Connection::open(&upgraded_path).expect("sqlite upgraded");
+        for (pos, id, observed) in &pending_rows {
+            conn.execute(
+                "INSERT INTO \"_norn_inbox\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") \
+                 VALUES (?1, ?2, ?3, NULL)",
+                rusqlite::params![pos, id, observed],
+            )
+            .expect("insert pending row");
+        }
+    }
+    let upgraded_store =
+        CellStore::open(&upgraded_path, model, StoreOptions::default()).expect("reopen upgraded");
+    let mut upgraded = SqliteCell::new(upgraded_store, "org_demo/dev", |_| BTreeMap::new())
+        .expect("upgraded cell");
+
+    let res_c2 = upgraded
+        .resolve_mapping_dispute(DisputeResolutionInput {
+            dispute_id: c2.clone(),
+            decision: DisputeDecision::AcceptFirst,
+            actor: "ops:sara".into(),
+            reason: "first v13 accept-first after pre-v13 generic c1".into(),
+        })
+        .expect("resolve c2");
+    let res_c3 = upgraded
+        .resolve_mapping_dispute(DisputeResolutionInput {
+            dispute_id: c3.clone(),
+            decision: DisputeDecision::AcceptFirst,
+            actor: "ops:sara".into(),
+            reason: "second v13 accept-first".into(),
+        })
+        .expect("resolve c3");
+    let res_c1 = upgraded
+        .resolve_mapping_dispute(DisputeResolutionInput {
+            dispute_id: c1.clone(),
+            decision: DisputeDecision::AcceptFirst,
+            actor: "ops:sara".into(),
+            reason: "governed resolution of legacy-consumed c1".into(),
+        })
+        .expect("resolve legacy c1");
+
+    let (full_records, full_head) = export_records_and_head(&upgraded);
+    let rec_pre = full_records
+        .iter()
+        .find(|r| r.receipt.body.commit_seq == pre_seq)
+        .expect("rec pre");
+    let rec_c2 = full_records
+        .iter()
+        .find(|r| r.receipt.body.commit_seq == res_c2.commit_seq)
+        .expect("rec c2");
+    let rec_c3 = full_records
+        .iter()
+        .find(|r| r.receipt.body.commit_seq == res_c3.commit_seq)
+        .expect("rec c3");
+    assert!(rec_pre.pending_observations.is_empty());
+    assert_eq!(
+        rec_c2
+            .pending_observations
+            .iter()
+            .filter(|p| p.observation_id == first_id)
+            .count(),
+        1,
+        "pre-v13 generic consumption must not suppress exporting first capture at v13 accept-first"
+    );
+    assert_eq!(
+        rec_c3
+            .pending_observations
+            .iter()
+            .filter(|p| p.observation_id == first_id)
+            .count(),
+        0,
+        "subsequent v13 accept-first must deduplicate after c2 exported first capture"
+    );
+
+    let rebuilt_full = CellStore::rebuild_export_history(
+        NativeEngine::open_in_memory().expect("mem"),
+        &full_records,
+        &full_head,
+    )
+    .expect("full pre-v13 + upgraded v13 history rebuilds cleanly");
+    assert!(
+        rebuilt_full
+            .read()
+            .pending_observation(&first_id)
+            .expect("pending")
+            .is_some()
+    );
+    assert_eq!(
+        rebuilt_full
+            .read()
+            .dispute_resolution(&c1)
+            .expect("res c1")
+            .expect("present")
+            .commit_seq,
+        res_c1.commit_seq
+    );
+}
