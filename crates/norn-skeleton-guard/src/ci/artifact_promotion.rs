@@ -180,7 +180,7 @@ fn parse_authority_bearing_decl(tokens: &[TT], fn_idx: usize) -> Result<TokenStr
         && is_ident(p, "pub")
         && is_ident(o, "open")
         && is_ident(s, "spec")
-        && params.delimiter() == Delimiter::Paren
+        && params.delimiter() == Delimiter::Parenthesis
         && matches!(ps, [k, c, t] if is_ident(k, "kind") && is_punct(c, ':', None) && is_ident(t, "ArtifactKind"))
         && is_punct(d, '-', Some(Spacing::Joint))
         && is_punct(g, '>', None)
