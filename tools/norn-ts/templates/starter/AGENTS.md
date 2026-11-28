@@ -27,3 +27,8 @@ Fix the reported source location and check again.
 Never bypass admission or weaken a law.
 Keep changes inside src/ when authoring the application.
 Unknown evidence is not proof.
+
+## Native Rust & zero CI
+
+Norn apps compile, format, and check locally or in-browser via native Rust `norn` (`norn compile`, `norn fmt [--check]`, `norn check --source`) with zero CI.
+Do not add `.github/workflows/` CI pipelines to a Norn app; `norn check --source` refuses them.

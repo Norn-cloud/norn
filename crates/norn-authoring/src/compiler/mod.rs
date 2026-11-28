@@ -56,7 +56,6 @@ mod zen_parser;
 pub(crate) mod zen_reads;
 
 use std::collections::BTreeMap;
-use std::time::Instant;
 
 use serde_json::Value;
 use tsrs_ast::{Node, SourceFile};
@@ -71,7 +70,7 @@ use self::def_helpers::{DefCompilerConfig, DefinitionCompiler};
 use self::def_mapping::bind_compiled_source_schemas;
 use self::flow_syntax::{SyntaxCompiler, SyntaxConfig};
 use self::lower_flow::{BuildDiagnostic, LowerFlowOptions, LowerFlowOutcome, lower_flow};
-use self::types::{check_closure, diagnostic_for_node, relative_virtual_path};
+use self::types::{CompilerInstant, check_closure, diagnostic_for_node, relative_virtual_path};
 use self::value_schema::{BudgetExceeded, ExpansionBudget, ExpansionLimits};
 
 pub use self::canonical::{
@@ -269,7 +268,7 @@ pub enum ValueSchemasCompileOutcome {
     },
 }
 
-fn new_budget(limits: CompilerLimits, started: Instant) -> ExpansionBudget {
+fn new_budget(limits: CompilerLimits, started: CompilerInstant) -> ExpansionBudget {
     ExpansionBudget::with_started(
         ExpansionLimits {
             work: limits.max_expansion_work,
@@ -294,7 +293,7 @@ pub fn compile_flow_program(
     files: &[&str],
     options: &FlowCompileOptions,
 ) -> Result<Vec<FlowCompileOutcome>, AuthoringError> {
-    let started = Instant::now();
+    let started = CompilerInstant::now();
     let limits = options.limits.clamped();
     let reports = profile_checker.check_program(program, files)?;
     let mut expansion = new_budget(limits, started);
@@ -326,7 +325,7 @@ fn compile_one_flow_file(
     sf: P<SourceFile>,
     options: &FlowCompileOptions,
     limits: CompilerLimits,
-    started: Instant,
+    started: CompilerInstant,
     expansion: &mut ExpansionBudget,
 ) -> FlowCompileOutcome {
     let raw_program = program.raw_program();
@@ -425,7 +424,7 @@ pub fn compile_definitions_program(
     files: &[&str],
     options_for: impl Fn(&str) -> DefinitionsCompileOptions,
 ) -> Result<Vec<DefinitionsCompileOutcome>, AuthoringError> {
-    let started = Instant::now();
+    let started = CompilerInstant::now();
     let reports = profile_checker.check_program(program, files)?;
     let mut expansion = new_budget(CompilerLimits::default(), started);
 
@@ -472,7 +471,7 @@ fn compile_one_definitions_file(
     program: &AuthoringProgram,
     sf: P<SourceFile>,
     opts: &DefinitionsCompileOptions,
-    started: Instant,
+    started: CompilerInstant,
     expansion: &mut ExpansionBudget,
 ) -> DefinitionsCompileOutcome {
     let raw_program = program.raw_program();
@@ -567,7 +566,7 @@ pub fn compile_questions_program(
     file: &str,
     limits: CompilerLimits,
 ) -> Result<QuestionsCompileOutcome, AuthoringError> {
-    let started = Instant::now();
+    let started = CompilerInstant::now();
     let limits = limits.clamped();
     let reports = profile_checker.check_program(program, &[file])?;
     if let Some(report) = reports.into_iter().next()
@@ -605,6 +604,26 @@ pub fn compile_questions_program(
     }
 }
 
+/// Builds a fresh [`AuthoringProgram`] over `vfs` and compiles standalone `Norn.question`
+/// definitions in `file`.
+///
+/// # Errors
+///
+/// Returns [`AuthoringError`] if program construction fails or `file` is missing or invalid.
+pub fn compile_questions_vfs(
+    profile_checker: &ProfileChecker,
+    vfs: BoundedVfs,
+    file: &str,
+    effect_dist_prefix: Option<&str>,
+    limits: CompilerLimits,
+) -> Result<QuestionsCompileOutcome, AuthoringError> {
+    let mut program = AuthoringProgram::new(vfs, &[file], profile_checker.profile().clone())?;
+    if let Some(prefix) = effect_dist_prefix {
+        program = program.with_effect_dist_prefix(prefix);
+    }
+    compile_questions_program(profile_checker, &program, file, limits)
+}
+
 /// Compiles standalone `Norn.dashboard` definitions in `file`.
 ///
 /// # Errors
@@ -616,7 +635,7 @@ pub fn compile_dashboards_program(
     file: &str,
     limits: CompilerLimits,
 ) -> Result<DashboardsCompileOutcome, AuthoringError> {
-    let started = Instant::now();
+    let started = CompilerInstant::now();
     let limits = limits.clamped();
     let reports = profile_checker.check_program(program, &[file])?;
     if let Some(report) = reports.into_iter().next()
@@ -654,6 +673,26 @@ pub fn compile_dashboards_program(
     }
 }
 
+/// Builds a fresh [`AuthoringProgram`] over `vfs` and compiles standalone `Norn.dashboard`
+/// definitions in `file`.
+///
+/// # Errors
+///
+/// Returns [`AuthoringError`] if program construction fails or `file` is missing or invalid.
+pub fn compile_dashboards_vfs(
+    profile_checker: &ProfileChecker,
+    vfs: BoundedVfs,
+    file: &str,
+    effect_dist_prefix: Option<&str>,
+    limits: CompilerLimits,
+) -> Result<DashboardsCompileOutcome, AuthoringError> {
+    let mut program = AuthoringProgram::new(vfs, &[file], profile_checker.profile().clone())?;
+    if let Some(prefix) = effect_dist_prefix {
+        program = program.with_effect_dist_prefix(prefix);
+    }
+    compile_dashboards_program(profile_checker, &program, file, limits)
+}
+
 /// Compiles every exported top-level Effect Schema const in `file` to its closed [`ValueSchema`].
 ///
 /// # Errors
@@ -665,7 +704,7 @@ pub fn compile_value_schemas_program(
     file: &str,
     limits: CompilerLimits,
 ) -> Result<ValueSchemasCompileOutcome, AuthoringError> {
-    let started = Instant::now();
+    let started = CompilerInstant::now();
     let limits = limits.clamped();
     let reports = profile_checker.check_program(program, &[file])?;
     if let Some(report) = reports.into_iter().next()
