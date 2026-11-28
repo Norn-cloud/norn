@@ -91,7 +91,7 @@ test("home: a key number the server refuses leaves Home, and the server's reason
     await page.emulateMedia({ colorScheme: scheme })
     await expect(page.locator("html")).toHaveClass(scheme === "dark" ? /\bdark\b/ : /^(?!.*\bdark\b).*$/)
     await keyNumbers.scrollIntoViewIfNeeded()
-    await page.screenshot({ path: info.outputPath(`home-refused-number-${scheme}.png`), animations: "disabled" })
+    if (process.env.SHOTS) await page.screenshot({ path: info.outputPath(`home-refused-number-${scheme}.png`), animations: "disabled" })
   }
 })
 
