@@ -641,7 +641,7 @@ export const Ticket = Norn.type({
 
         let ws = ScratchWorkspace::new("explain-positional-order");
         let output = crate::mcp_tools::call_tool("norn.explain", args, &ws.0).unwrap();
-        assert!(!output.is_error, "norn.explain failed: {output:?}");
+        assert!(!output.is_error, "norn.explain failed: {:?}", output.value);
         let text = output
             .value
             .as_object()
@@ -704,7 +704,8 @@ export const Ticket = Norn.type({
         .unwrap();
         assert!(
             !with_scope.is_error,
-            "confined check with explicit scope failed: {with_scope:?}"
+            "confined check with explicit scope failed: {:?}",
+            with_scope.value
         );
         assert_eq!(
             with_scope

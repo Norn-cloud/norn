@@ -84,7 +84,7 @@ fn mount_pinned_packages(
     let Some(tool_root) = discover_tool_root(start, explicit_tool_root, boundary_root)
         .map_err(AuthoringFailure::Io)?
     else {
-        let _stub_files = vfs.mount_embedded_effect_stub(profile).map_err(|err| {
+        let _ = vfs.mount_embedded_effect_stub(profile).map_err(|err| {
             AuthoringFailure::Io(format!(
                 "failed to mount embedded offline `effect` declarations: {err} (pass --tool-root pointing to tools/norn-ts)"
             ))
@@ -98,7 +98,7 @@ fn mount_pinned_packages(
             effect_dir.display()
         )));
     }
-    let _effect_files = vfs
+    let _ = vfs
         .mount_pinned_effect_dir(&effect_dir, profile)
         .map_err(|err| {
             AuthoringFailure::Io(format!(

@@ -133,7 +133,7 @@ pub(crate) fn build_context_json(
         return match context_path {
             Some(path) => {
                 let raw = read_file(path)?;
-                let _validated = parse_strict_context_object(path, &raw)?;
+                drop(parse_strict_context_object(path, &raw)?);
                 Ok(raw)
             }
             None => Ok("{}".to_owned()),

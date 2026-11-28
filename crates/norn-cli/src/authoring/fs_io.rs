@@ -740,10 +740,39 @@ fn has_pinned_effect(root: &Path) -> bool {
 }
 
 fn has_pinned_effect_within(root: &Path, canonical_bound: &Path) -> bool {
-    let pkg = root.join("node_modules/effect/package.json");
-    std::fs::symlink_metadata(&pkg).is_ok_and(|meta| meta.is_file())
-        && std::fs::canonicalize(&pkg)
-            .is_ok_and(|canonical_pkg| canonical_pkg.starts_with(canonical_bound))
+    let Ok(rel_root) = root.strip_prefix(canonical_bound) else {
+        return false;
+    };
+    let mut cursor = canonical_bound.to_path_buf();
+    for component in rel_root.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(seg) => {
+                cursor.push(seg);
+                let Ok(meta) = std::fs::symlink_metadata(&cursor) else {
+                    return false;
+                };
+                if meta.file_type().is_symlink() || !meta.is_dir() {
+                    return false;
+                }
+            }
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return false,
+        }
+    }
+    for dir_seg in ["node_modules", "effect"] {
+        cursor.push(dir_seg);
+        let Ok(meta) = std::fs::symlink_metadata(&cursor) else {
+            return false;
+        };
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            return false;
+        }
+    }
+    cursor.push("package.json");
+    let Ok(meta) = std::fs::symlink_metadata(&cursor) else {
+        return false;
+    };
+    !meta.file_type().is_symlink() && meta.is_file()
 }
 
 fn discover_tool_root_confined(
