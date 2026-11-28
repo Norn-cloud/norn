@@ -14,6 +14,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use norn_ir::jdm::JdmExecutionMode;
 use norn_ir::{
     ActionCreateLink, ActionEffectProgram, ActionRoot, ArtifactEnvelope, ArtifactKind,
     InterfaceDef, InterfaceName, JdmNode, JsonValue, UpsertWriteMode,
@@ -290,9 +291,26 @@ fn unconditional_links_expression(rule: &ArtifactEnvelope) -> Option<String> {
             return None;
         }
         if let Some(JdmNode::ExpressionNode { content, .. }) = nodes.get(current) {
-            for expr in &content.expressions {
-                if expr.key == "links" {
-                    last_links_expr = Some(expr.value.clone());
+            let trimmed_output = content.output_path.as_deref().map(str::trim);
+            let top_level_output = trimmed_output.is_none_or(str::is_empty);
+            let overwrites_links_path =
+                trimmed_output.is_some_and(|path| path == "links" || path.starts_with("links."));
+            if !content.pass_through.unwrap_or(false) || overwrites_links_path {
+                last_links_expr = None;
+            }
+            let top_level_input = content
+                .input_field
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty);
+            let single_mode = content
+                .execution_mode
+                .is_none_or(|mode| mode == JdmExecutionMode::Single);
+            if top_level_output && top_level_input && single_mode {
+                for expr in &content.expressions {
+                    if expr.key == "links" {
+                        last_links_expr = Some(expr.value.as_str().to_owned());
+                    }
                 }
             }
         }

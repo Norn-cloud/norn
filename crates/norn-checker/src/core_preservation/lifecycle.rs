@@ -273,6 +273,13 @@ fn check_one_lifecycle(
                         laws: post_failed,
                         fact: transition.is_fact(),
                     });
+                } else {
+                    unknown_exits.push(UnknownExit {
+                        from,
+                        transition: transition.id.as_str().to_owned(),
+                        laws: post_failed,
+                        fact: transition.is_fact(),
+                    });
                 }
                 continue;
             }
