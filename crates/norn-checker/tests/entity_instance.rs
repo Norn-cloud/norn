@@ -186,7 +186,7 @@ fn property_and_computed_markings_accumulate_from_shared_types_and_interfaces() 
 fn computed_property_preserves_protected_origin_and_immutable_after_create() {
     let artifacts = envelopes(&[r#"{
           "artifactId":"test.guarded","irVersion":"0.1","kind":"entity","lifecycle":"active",
-          "name":"Guarded","namespace":"test","scope":{},"version":"0.1.0",
+          "name":"Guarded","namespace":"test","scope":{},"version":"0.1.0","dependencies":[],
           "provenance":{"source":"system"},
           "payload":{"entityVersion":"2.0","objectType":{
             "name":"test.Guarded","properties":[

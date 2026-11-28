@@ -79,8 +79,14 @@ impl<'de> Deserialize<'de> for ReservationStatus {
             }
 
             fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
-                ReservationStatus::try_from(value)
-                    .map_err(|_| E::unknown_variant(value, &["open", "posted", "void", "expired"]))
+                if let Ok(status) = ReservationStatus::try_from(value) {
+                    Ok(status)
+                } else {
+                    Err(E::unknown_variant(
+                        value,
+                        &["open", "posted", "void", "expired"],
+                    ))
+                }
             }
         }
 

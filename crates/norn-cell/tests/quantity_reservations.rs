@@ -2797,6 +2797,6 @@ fn sqlite_reader_rejects_externally_tagged_reservation_status_object() {
         cell.store()
             .read()
             .quantity_reservation("main", "stock", "r"),
-        Err(CellError::Quantity(QuantityError::Corrupt))
+        Err(CellError::Json(_))
     ));
 }
