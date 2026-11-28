@@ -1407,7 +1407,7 @@ fn s1_two_entity_non_commingling_and_custody_separation() -> Result<(), String> 
             "entity_kind": "corporation", "book_code": "BOOK-OTHER-EGP", "functional_currency": "EGP"
         }),
     )?;
-    assert_eq!(code, "core.action.precondition", "{msg}");
+    assert_eq!(code, "action.precondition_failed", "{msg}");
     sole.refused(
         "supply.stock_lot.record",
         "clerk:hana",
@@ -2233,7 +2233,7 @@ fn verify_opening_cut_and_lot_date_refusals(sole: &mut EntityBook) -> Result<(),
             "as_of": "2026-08-09T18:00:00Z", "unit_cost": "100", "stock_value": "0"
         }),
     )?;
-    assert_eq!(code, "core.action.precondition", "{msg}");
+    assert_eq!(code, "action.precondition_failed", "{msg}");
     let (code, msg) = sole.refused(
         "supply.stock_lot.update_balance",
         "clerk:hana",
@@ -2243,7 +2243,7 @@ fn verify_opening_cut_and_lot_date_refusals(sole: &mut EntityBook) -> Result<(),
             "as_of": "2026-09-05T18:00:00Z", "unit_cost": "100", "stock_value": "0"
         }),
     )?;
-    assert_eq!(code, "core.action.precondition", "{msg}");
+    assert_eq!(code, "action.precondition_failed", "{msg}");
     // 0c. Opening cut after depletion refuses original receipt value (10000 != remaining 6000).
     let (code, msg) = sole.refused(
         "supply.stock_valuation_cut.record",
@@ -2254,7 +2254,7 @@ fn verify_opening_cut_and_lot_date_refusals(sole: &mut EntityBook) -> Result<(),
             "cut_at": "2026-09-05T00:00:00Z", "remaining_qty": "60", "stock_value": "10000"
         }),
     )?;
-    assert_eq!(code, "core.action.precondition", "{msg}");
+    assert_eq!(code, "action.precondition_failed", "{msg}");
     // 0c-bis. Isolated post-cutoff-sale test: all lots have `as_of <= cut_at` and matching
     // `stock_value = 5000`, so ONLY `sales_by_cut_count < all_sales_count` triggers refusal.
     verify_opening_cut_post_sales_refusal()?;
@@ -2321,7 +2321,7 @@ fn verify_opening_cut_post_sales_refusal() -> Result<(), String> {
             "cut_at": "2026-08-10T00:00:00Z", "remaining_qty": "50", "stock_value": "5000"
         }),
     )?;
-    assert_eq!(code, "core.action.precondition", "{msg}");
+    assert_eq!(code, "action.precondition_failed", "{msg}");
     Ok(())
 }
 
@@ -2452,7 +2452,7 @@ fn verify_store_kpi_rollup_stale_and_backdate_refusals(
             "average_inventory_value": "0", "gmroi": "0"
         }),
     )?;
-    assert_eq!(code, "core.action.precondition", "{msg}");
+    assert_eq!(code, "action.precondition_failed", "{msg}");
     verify_monotonic_count_and_cutoff_refusals((
         s1_on_hand,
         s1_margin,
@@ -2503,7 +2503,7 @@ fn verify_monotonic_count_and_cutoff_refusals(
             "average_inventory_value": "0", "gmroi": "0"
         }),
     )?;
-    assert_eq!(code, "core.action.precondition", "{msg}");
+    assert_eq!(code, "action.precondition_failed", "{msg}");
     // 2. Backdating `RecountStore.as_of` below current `count.as_of` refuses monotonically.
     let (code, msg) = scratch.refused(
         "supply.store_count.recount",
@@ -2515,7 +2515,7 @@ fn verify_monotonic_count_and_cutoff_refusals(
             "count_source": "pos_cycle_count", "count_ref": "CC-102-BACK"
         }),
     )?;
-    assert_eq!(code, "core.action.precondition", "{msg}");
+    assert_eq!(code, "action.precondition_failed", "{msg}");
     verify_monotonic_future_and_cutoff_refusals(
         &mut scratch,
         (s1_on_hand, s1_margin, s1_opening_val, s1_closing_val),
@@ -2583,7 +2583,7 @@ fn verify_monotonic_future_and_cutoff_refusals(
             "average_inventory_value": "0", "gmroi": "0"
         }),
     )?;
-    assert_eq!(code, "core.action.precondition", "{msg}");
+    assert_eq!(code, "action.precondition_failed", "{msg}");
     Ok(())
 }
 
@@ -2652,7 +2652,7 @@ fn verify_store_kpi_rollup_operand_refusals(
                 "average_inventory_value": "0", "gmroi": "0"
             }),
         )?;
-        assert_eq!(code, "core.action.precondition", "{rollup_id}: {msg}");
+        assert_eq!(code, "action.precondition_failed", "{rollup_id}: {msg}");
     }
     Ok(())
 }
@@ -2680,7 +2680,7 @@ fn verify_store_kpi_rollup_refusals(
             "average_inventory_value": "0", "gmroi": "0"
         }),
     )?;
-    assert_eq!(code, "core.action.precondition", "{msg}");
+    assert_eq!(code, "action.precondition_failed", "{msg}");
     verify_store_kpi_rollup_operand_refusals(
         sole,
         (s1_on_hand, s1_margin, s1_opening_val, s1_closing_val),
@@ -4186,7 +4186,7 @@ fn verify_shipped_rollup_stock_staleness(
             "as_of": "2026-09-06T09:00:00Z", "unit_cost": "250", "stock_value": "0"
         }),
     )?;
-    assert_eq!(code, "core.action.precondition", "{msg}");
+    assert_eq!(code, "action.precondition_failed", "{msg}");
     // 1c. A post-close lot update (`2026-09-07T08:00:00Z > 2026-09-06T23:59:59.999999999Z`)
     //     plus matching fresh recount MUST succeed without invalidating the sealed `2026-08-31` close.
     partner.ok(
@@ -5077,14 +5077,14 @@ fn verify_mismatched_promotion_refused(sole: &mut EntityBook) -> Result<(), Stri
             "5",
             "800",
             "2026-09-02T14:05:00Z",
-            "core.action.precondition",
+            "action.precondition_failed",
         ),
         (
             "SALE-TAMPER-REV",
             "4",
             "999",
             "2026-09-02T14:05:00Z",
-            "core.action.precondition",
+            "action.precondition_failed",
         ),
         (
             "SALE-TAMPER-TS",
@@ -5217,7 +5217,7 @@ fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> R
             "entity_kind": "corporation", "book_code": "BOOK-ROGUE-EGP", "functional_currency": "EGP"
         }),
     )?;
-    assert_eq!(code, "core.action.precondition", "{msg}");
+    assert_eq!(code, "action.precondition_failed", "{msg}");
     Ok(())
 }
 
