@@ -1954,7 +1954,36 @@ pub fn prepare_observed_snapshot(
             ));
         }
     }
-    let facts = property_changes(key, &original_for_changes, values);
+    let mut seen = std::collections::BTreeSet::new();
+    for snapshot in lifecycles {
+        if snapshot.provenance.source != provenance.source
+            || snapshot.provenance.mapping_version != provenance.mapping_version
+            || snapshot.provenance.observed_at != provenance.observed_at
+        {
+            return Err(invalid(
+                &snapshot.property,
+                "lifecycle evidence must cite the same source snapshot",
+            ));
+        }
+        if !seen.insert(snapshot.property.clone()) {
+            return Err(invalid(
+                &snapshot.property,
+                "the snapshot repeats a lifecycle property",
+            ));
+        }
+    }
+    let initial_values = read_findings::seed_initial_lifecycle_states(
+        catalog,
+        key,
+        &original_for_changes,
+        values,
+        lifecycles,
+    );
+    let facts = property_changes(
+        key,
+        &original_for_changes,
+        initial_values.as_ref().unwrap_or(values),
+    );
     let ordinary = prepare_observed_properties::<Infallible>(catalog, slice, turn, &facts)
         .map_err(|error| ObservationRefusal::Properties(Box::new(error)))?;
     let mut current = effective_original.clone().unwrap_or_default();
@@ -1975,23 +2004,7 @@ pub fn prepare_observed_snapshot(
             provenance: provenance.clone(),
         })
         .collect();
-    let mut seen = std::collections::BTreeSet::new();
     for snapshot in lifecycles {
-        if snapshot.provenance.source != provenance.source
-            || snapshot.provenance.mapping_version != provenance.mapping_version
-            || snapshot.provenance.observed_at != provenance.observed_at
-        {
-            return Err(invalid(
-                &snapshot.property,
-                "lifecycle evidence must cite the same source snapshot",
-            ));
-        }
-        if !seen.insert(snapshot.property.clone()) {
-            return Err(invalid(
-                &snapshot.property,
-                "the snapshot repeats a lifecycle property",
-            ));
-        }
         reconcile(catalog, key, &mut current, snapshot, &turn.id, &mut events)?;
         check_observation_event_limit(events.len())?;
     }

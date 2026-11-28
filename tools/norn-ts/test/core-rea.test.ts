@@ -21,11 +21,41 @@ function fromModule(compiled: ReturnType<typeof pack>, module: string) {
   return compiled.artifacts.filter((artifact) => compiled.sources.get((artifact as { artifactId: string }).artifactId)?.endsWith(module))
 }
 
-const PRIMITIVES = ["core.Agent", "core.AgentRole", "core.Claim", "core.Commitment", "core.Conversion", "core.EconomicEvent", "core.Exchange", "core.Hold", "core.LedgerEffect", "core.Process", "core.Resource"]
+const PRIMITIVES = [
+  "core.Agent",
+  "core.AgentRole",
+  "core.Claim",
+  "core.Commitment",
+  "core.Conversion",
+  "core.EconomicEvent",
+  "core.Exchange",
+  "core.Hold",
+  "core.HoldableResource",
+  "core.LedgerEffect",
+  "core.Process",
+  "core.Resource",
+  "core.ReversibleEvent",
+  "core.ValuedEvent",
+  "core.ValuedLedgerEffect",
+]
 
-test("the core physics pack declares exactly its primitives", () => {
+const CORE_LAWS = [
+  "core.EconomicEvent.reversal_matches_original",
+  "core.Hold.measure_matches_resource",
+  "core.HoldableResource.open_holds_within_quantity",
+  "core.ReversibleEvent.no_reversal_of_reversal",
+  "core.ReversibleEvent.reversal_flag_requires_link",
+  "core.ValuedEvent.effects_balance",
+  "core.ValuedLedgerEffect.currency_matches_event",
+]
+
+test("the core physics pack declares exactly its primitives and executable core laws", () => {
   const ids = fromModule(pack(), "rea.ts").map((artifact) => (artifact as { artifactId: string }).artifactId).sort()
-  expect(ids).toEqual(PRIMITIVES.map((name) => `${name}.interface`))
+  const expected = [
+    ...PRIMITIVES.map((name) => `${name}.interface`),
+    ...CORE_LAWS.map((name) => `${name}.law`),
+  ].sort()
+  expect(ids).toEqual(expected)
 })
 
 test("checked-in core physics artifacts are exactly the compiler's output", () => {

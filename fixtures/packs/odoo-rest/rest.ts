@@ -376,9 +376,9 @@ export const RestMapping = Norn.mapping({
         {property: "quantity", value: "input.quantity"},
         {property: "unit", value: "input.unit"},
         {property: "currency", value: "null"},
-        {property: "status", value: "'promised'"},
         {property: "due_at", value: "timestamp(input.due_at)"}
       ],
+      lifecycles: [{property: "status", state: "'promised'"}],
       links: [
         {link: "provider", targetMap: "party", key: "input.provider_ref"},
         {link: "receiver", targetMap: "party", key: "input.receiver_ref"},

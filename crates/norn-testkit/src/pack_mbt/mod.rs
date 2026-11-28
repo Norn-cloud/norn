@@ -42,9 +42,9 @@ use norn_kernel::cell_host::{FactKey, JsonObject, JsonValue};
 use norn_kernel::pack_mbt_support::MappingIr;
 use norn_kernel::pack_mbt_support::{
     AccessIr, ActionRoot, ArtifactEnvelope, ArtifactPayload, DecisionOutput, EntityRoot,
-    FactChange, InterfaceDef, LawExampleVerdict as Verdict, LawIR, ObjectTypeDef, ObjectTypeName,
-    PolicyRoot, Property, PropertyConstraints, PropertyId, PropertyType, PropertyTypeDef,
-    ResourceStatus, TransitionId,
+    FactChange, InterfaceDef, LawExampleVerdict as Verdict, LawIR, Lifecycle, ObjectTypeDef,
+    ObjectTypeName, PolicyRoot, Property, PropertyConstraints, PropertyId, PropertyType,
+    PropertyTypeDef, ResourceStatus, TransitionId, ZenExpression,
 };
 use norn_kernel::{
     CellHost, DecisionRefusal, DecisionTurn, FactEvent, LogicalTime, TransitionGuard, TypeCatalog,
@@ -558,6 +558,113 @@ pub(crate) fn resolve_property_type_chain<'a>(
     ty
 }
 
+pub(crate) fn effective_lifecycles<'a>(
+    pack: &'a AdmittedPack,
+    object_type: &'a ObjectTypeDef,
+) -> Vec<&'a Lifecycle> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    let chain = object_type_ancestors(pack, object_type);
+    for def in &chain {
+        for lc in &def.lifecycles {
+            if seen.insert(lc.property.as_str()) {
+                out.push(lc);
+            }
+        }
+    }
+    for owner in object_type_interfaces(pack, &chain) {
+        for lc in &owner.lifecycles {
+            if seen.insert(lc.property.as_str()) {
+                out.push(lc);
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn effective_invariants(
+    pack: &AdmittedPack,
+    object_type: &ObjectTypeDef,
+) -> Vec<ZenExpression> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    let chain = object_type_ancestors(pack, object_type);
+    for def in &chain {
+        for inv in &def.invariants {
+            if seen.insert(inv.id.as_str()) {
+                out.push(inv.expression.clone());
+            }
+        }
+    }
+    for owner in object_type_interfaces(pack, &chain) {
+        for inv in &owner.invariants {
+            if seen.insert(inv.id.as_str()) {
+                out.push(inv.expression.clone());
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn type_matches_target(
+    pack: &AdmittedPack,
+    candidate: &ObjectTypeDef,
+    target_name: &str,
+) -> bool {
+    let chain = object_type_ancestors(pack, candidate);
+    if chain.iter().any(|def| def.name.as_str() == target_name) {
+        return true;
+    }
+    if chain.iter().any(|def| {
+        def.implements
+            .iter()
+            .any(|name| name.as_str() == target_name)
+    }) {
+        return true;
+    }
+    object_type_interfaces(pack, &chain)
+        .into_iter()
+        .any(|owner| owner.name.as_str() == target_name)
+}
+
+pub(crate) fn resolve_concrete_link_target<'a>(
+    pack: &'a AdmittedPack,
+    target_name: &str,
+) -> Option<&'a ObjectTypeDef> {
+    pack.object_types
+        .iter()
+        .find(|ty| ty.name.as_str() == target_name)
+        .or_else(|| {
+            pack.object_types
+                .iter()
+                .find(|ty| type_matches_target(pack, ty, target_name))
+        })
+}
+
+pub(crate) fn format_zero_decimal(scale: u64) -> String {
+    if scale == 0 {
+        return "0".to_owned();
+    }
+    let digits = usize::try_from(scale.min(28)).unwrap_or(2);
+    format!("0.{}", "0".repeat(digits))
+}
+
+pub(crate) fn format_decimal(whole: i64, scale: u64, with_fraction: bool) -> String {
+    if scale == 0 {
+        return whole.to_string();
+    }
+    let digits = usize::try_from(scale.min(28)).unwrap_or(2);
+    if !with_fraction {
+        return format!("{whole}.{}", "0".repeat(digits));
+    }
+    let mut frac = String::with_capacity(digits);
+    frac.push('5');
+    for _ in 1..digits {
+        frac.push('0');
+    }
+    format!("{whole}.{frac}")
+}
+
 fn commit_fact_decision<H: PackHost>(
     host: &mut H,
     catalog: &TypeCatalog<'_>,
@@ -846,6 +953,59 @@ mod tests {
         let plan = coverage::DomainCoveragePlan::from_pack(&pack);
         assert!(plan.transitions.is_empty());
         assert_eq!(plan.immutable_targets.len(), 1);
+    }
+
+    #[test]
+    fn synthesize_object_satisfies_interface_invariants_and_skips_inherited_lifecycle() {
+        let iface: InterfaceDef = serde_json::from_value(json!({
+            "name": "t.MeasuredCommitment",
+            "properties": [
+                { "id": "status", "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "requested" }, { "value": "fulfilled" }] } },
+                { "id": "unit", "constraints": { "nullable": true }, "type": { "kind": "text" } },
+                { "id": "currency", "constraints": { "nullable": true }, "type": { "kind": "text" } }
+            ],
+            "invariants": [{
+                "id": "single_measure",
+                "expression": "((self.unit != null) and (self.currency == null)) or ((self.unit == null) and (self.currency != null))",
+                "message": "either unit or currency"
+            }],
+            "lifecycles": [{
+                "property": "status",
+                "initial": ["requested"],
+                "terminal": ["fulfilled"],
+                "immutable": ["fulfilled"],
+                "transitions": [{ "id": "fulfil", "from": ["requested"], "to": "fulfilled" }]
+            }]
+        }))
+        .expect("interface decodes");
+        let obj: ObjectTypeDef = serde_json::from_value(json!({
+            "name": "t.Line",
+            "implements": ["t.MeasuredCommitment"],
+            "properties": [
+                { "id": "status", "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "requested" }, { "value": "fulfilled" }] } },
+                { "id": "note", "type": { "kind": "text" } },
+                { "id": "unit", "constraints": { "nullable": true }, "type": { "kind": "text" } },
+                { "id": "currency", "constraints": { "nullable": true }, "type": { "kind": "text" } }
+            ]
+        }))
+        .expect("object decodes");
+        let pack = AdmittedPack {
+            name: "inv".to_owned(),
+            object_types: vec![obj],
+            interfaces: vec![iface],
+            ..AdmittedPack::default()
+        };
+        let line = pack.object_types.first().expect("line type");
+        let values = synth::synthesize_object(&pack, line, "l1", 1);
+        assert_eq!(
+            values.get("status").and_then(JsonValue::as_str),
+            Some("requested")
+        );
+        let unit_null = matches!(values.get("unit"), Some(JsonValue::Null));
+        let currency_null = matches!(values.get("currency"), Some(JsonValue::Null));
+        assert_ne!(unit_null, currency_null);
+        let mutation = synth::pick_non_lifecycle_mutation(&pack, line, &values, 2);
+        assert_eq!(mutation.as_ref().map(|(id, _)| id.as_str()), Some("note"));
     }
 
     #[test]

@@ -909,9 +909,25 @@ fn real_canon_pack_runs_static_gap_and_mbt_cleanly() -> Result<(), String> {
         StructuralGap::DeadEndNonTerminalState { object_type, .. }
         | StructuralGap::UnreachableState { object_type, .. }
         | StructuralGap::ImmutableFinancialMissingReversal { object_type, .. }
-        | StructuralGap::ImmutableFinancialUnverifiedReversal { object_type, .. }
-        | StructuralGap::TransitionWithoutAction { object_type, .. } => {
+        | StructuralGap::ImmutableFinancialUnverifiedReversal { object_type, .. } => {
             object_type.starts_with("canon.")
+        }
+        // `canon.OrderLine` inherits the active `core.Commitment` lifecycle
+        // (`promise`, `fulfil`, `cancel`, `breach`) while `canon` itself is a
+        // pure observation pack with zero actions; any other `canon.*`
+        // transition-without-action finding remains a defect.
+        StructuralGap::TransitionWithoutAction {
+            object_type,
+            lifecycle,
+            transition_id,
+        } => {
+            object_type.starts_with("canon.")
+                && !(object_type == "canon.OrderLine"
+                    && lifecycle == "status"
+                    && matches!(
+                        transition_id.as_str(),
+                        "promise" | "fulfil" | "cancel" | "breach"
+                    ))
         }
         StructuralGap::OrphanField { .. } | StructuralGap::HighImpactActionMissingSod { .. } => {
             false
