@@ -292,9 +292,22 @@ class CommandAndFilterRewriteTests(unittest.TestCase):
             f'#![allow(unused_imports)] use std::sync::Once;\n{fold.SHARED_SUPPORT_HEADER}\nmod h;\n',
             f'{fold.SHARED_SUPPORT_HEADER}\nmod h;\n\n#[cfg(test)] #[test] fn smoke() {{}}\n#[path = "a.rs"]\nmod a;\n',
             f'{fold.SHARED_SUPPORT_HEADER}\nmod h;\n\n#[path = "a.rs"]\n#[cfg(feature = "extra")] mod a;\n',
+            '#! [allow(\n dead_code\n) ]\n#[test]\nfn smoke() {}\n/*\n)]\n//! */\n#[path = "a.rs"]\nmod a;\n',
+            '#[allow(\n dead_code\n) ]\n#[test]\nfn smoke() {}\n/*\n)]\n//! */\n#[path = "a.rs"]\nmod a;\n',
+            '#!allow_bad\n',
+            '#[cfg(test)] #[test] fn smoke() {} #[cfg(test)]\n#[path = "a.rs"]\nmod a;\n',
+            '#[cfg(feature = "a")]\n#[path = "a.rs"]\nmod a;\n#[cfg(not(feature = "a"))]\n#[path = "a.rs"]\nmod a;\n',
         ):
             with self.assertRaises(fold.Refused):
                 fold.split_suites_sections(bad)
+        with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(
+                '#![allow(\n dead_code\n) ]\n#[test]\nfn smoke() {}\n/*\n)]\n//! */\n#[path = "a.rs"]\nmod a;\n'
+            )
+        with self.assertRaises(fold.Refused):
+            fold.shared_support_names(
+                [fold.SHARED_SUPPORT_HEADER, "use helpers::first; use helpers::second;"]
+            )
 
     def test_pinned_target_requires_explicit_manifest_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -210,9 +210,12 @@ def _consume_header(lines: list[str]) -> int:
                 if inner == ")]":
                     idx += 1
                     break
-                if ")]" in inner:
+                if not (
+                    re.fullmatch(r"[A-Za-z_][A-Za-z0-9_:]*,", inner)
+                    or re.fullmatch(r'reason = "[^"\n]*"(?:,)?', inner)
+                ):
                     raise Refused(
-                        f"tests/{SUITE}.rs: trailing code after `#![allow(...)]` ({inner!r})"
+                        f"tests/{SUITE}.rs: unexpected line inside `#![allow(...)]` ({inner!r})"
                     )
                 idx += 1
             else:
@@ -233,6 +236,7 @@ def _validate_suite_entries(rest: list[str]) -> None:
     """
     idx = 0
     n = len(rest)
+    seen_suites: set[str] = set()
     while idx < n:
         stripped = rest[idx].strip()
         if not stripped:
@@ -240,7 +244,7 @@ def _validate_suite_entries(rest: list[str]) -> None:
             continue
         while idx < n and rest[idx].startswith("//") and not rest[idx].startswith("//!"):
             idx += 1
-        if idx < n and re.fullmatch(r"#\[cfg\([^\n]+\)\]", rest[idx]):
+        if idx < n and re.fullmatch(r"#\[cfg\([^\]\n]+\)\]", rest[idx]):
             idx += 1
         if idx >= n:
             raise Refused(f"tests/{SUITE}.rs: trailing comments/attributes without a suite module")
@@ -250,6 +254,11 @@ def _validate_suite_entries(rest: list[str]) -> None:
                 f"tests/{SUITE}.rs: unexpected line outside shared support block ({rest[idx]!r})"
             )
         suite_name = path_match[1]
+        if suite_name in seen_suites:
+            raise Refused(
+                f"tests/{SUITE}.rs: duplicate suite entry `mod {suite_name};` would collapse during regeneration"
+            )
+        seen_suites.add(suite_name)
         idx += 1
         if idx >= n or rest[idx] != f"mod {suite_name};":
             found = rest[idx] if idx < n else "<eof>"
@@ -327,7 +336,13 @@ def shared_support_names(lines: list[str]) -> set[str]:
             names.add(mod_match[1])
             continue
         if re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use\b", cursor):
-            if "{" in cursor or "}" in cursor or "*" in cursor or not cursor.endswith(";"):
+            if (
+                "{" in cursor
+                or "}" in cursor
+                or "*" in cursor
+                or cursor.count(";") != 1
+                or not cursor.endswith(";")
+            ):
                 raise Refused(
                     f"tests/{SUITE}.rs: shared support block only supports single-item `use` statements ({stripped!r})"
                 )
