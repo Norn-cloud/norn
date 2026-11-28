@@ -332,12 +332,12 @@ fn bounded_json_writer_aborts_mid_serialization_before_exceeding_limit() -> Test
 
     let write_res = {
         let mut writer = BoundedJsonWriter::new("test output", &mut buf, &mut budget);
-        serde_json::to_writer(&mut writer, &oversized)
+        super::fs_io::write_canonical_json_value(&mut writer, &oversized)
     };
     assert!(
         write_res
             .as_ref()
-            .is_err_and(|err| err.to_string().contains("output limit")),
+            .is_err_and(|err| err.contains("output limit")),
         "expected bounded writer overflow error, got: {write_res:?}"
     );
     assert!(

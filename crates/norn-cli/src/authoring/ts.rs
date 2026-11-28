@@ -19,8 +19,8 @@ use serde_json::{Value, json};
 use super::AuthoringFailure;
 use super::atomic_io::write_file_atomic;
 use super::fs_io::{
-    BoundedJsonArray, BoundedJsonWriter, InvocationBudget, LoadedFile, SourceLang,
-    classify_source_file, discover_tool_root, display_posix_path,
+    BoundedJsonArray, InvocationBudget, LoadedFile, SourceLang, classify_source_file,
+    discover_tool_root, display_posix_path,
 };
 use super::trusted_dir::{TrustedDir, open_regular_file_pinned};
 
@@ -626,14 +626,17 @@ pub(crate) fn run_profile(
         .check_vfs(mounted.vfs, &root_slices, mounted.effect_dist_prefix)
         .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
     let clean = reports.iter().all(|report| report.diagnostics.is_empty());
-    let mut buf = Vec::new();
-    {
-        let mut writer = BoundedJsonWriter::new("profile output", &mut buf, &mut budget);
-        serde_json::to_writer(&mut writer, &reports)
-            .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
+    let mut array = BoundedJsonArray::new();
+    for report in &reports {
+        let value =
+            serde_json::to_value(report).map_err(|err| AuthoringFailure::Io(err.to_string()))?;
+        array
+            .push_value("profile output", &value, &mut budget)
+            .map_err(AuthoringFailure::Io)?;
     }
-    let rendered = String::from_utf8(buf)
-        .map_err(|err| AuthoringFailure::Io(format!("profile output: invalid UTF-8: {err}")))?;
+    let rendered = array
+        .finish("profile output", &mut budget)
+        .map_err(AuthoringFailure::Io)?;
     Ok((rendered, clean))
 }
 

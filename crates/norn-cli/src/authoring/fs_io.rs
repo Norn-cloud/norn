@@ -355,6 +355,62 @@ fn js_key_cmp(left: &str, right: &str) -> std::cmp::Ordering {
     }
 }
 
+fn hex_nibble(nibble: u8) -> u8 {
+    if nibble < 10 {
+        b'0'.saturating_add(nibble)
+    } else {
+        b'a'.saturating_add(nibble.saturating_sub(10))
+    }
+}
+
+/// Streams an RFC 8259 JSON string into `writer` without `serde_json::to_writer`.
+pub(crate) fn write_json_string(
+    writer: &mut BoundedJsonWriter<'_>,
+    text: &str,
+) -> Result<(), String> {
+    writer.write_all(b"\"").map_err(|err| err.to_string())?;
+    let bytes = text.as_bytes();
+    let mut start = 0_usize;
+    for (idx, &byte) in bytes.iter().enumerate() {
+        let escaped: Option<&[u8]> = match byte {
+            b'"' => Some(b"\\\""),
+            b'\\' => Some(b"\\\\"),
+            0x08 => Some(b"\\b"),
+            0x0c => Some(b"\\f"),
+            b'\n' => Some(b"\\n"),
+            b'\r' => Some(b"\\r"),
+            b'\t' => Some(b"\\t"),
+            0x00..=0x1f => None,
+            _ => continue,
+        };
+        if let Some(chunk) = bytes.get(start..idx)
+            && !chunk.is_empty()
+        {
+            writer.write_all(chunk).map_err(|err| err.to_string())?;
+        }
+        if let Some(seq) = escaped {
+            writer.write_all(seq).map_err(|err| err.to_string())?;
+        } else {
+            let esc = [
+                b'\\',
+                b'u',
+                b'0',
+                b'0',
+                hex_nibble(byte >> 4),
+                hex_nibble(byte & 0x0f),
+            ];
+            writer.write_all(&esc).map_err(|err| err.to_string())?;
+        }
+        start = idx.saturating_add(1);
+    }
+    if let Some(tail) = bytes.get(start..)
+        && !tail.is_empty()
+    {
+        writer.write_all(tail).map_err(|err| err.to_string())?;
+    }
+    writer.write_all(b"\"").map_err(|err| err.to_string())
+}
+
 fn write_canonical_json_value_at(
     writer: &mut BoundedJsonWriter<'_>,
     value: &serde_json::Value,
@@ -377,9 +433,7 @@ fn write_canonical_json_value_at(
                 .write_all(rendered.as_bytes())
                 .map_err(|err| err.to_string())
         }
-        serde_json::Value::String(text) => {
-            serde_json::to_writer(&mut *writer, text).map_err(|err| err.to_string())
-        }
+        serde_json::Value::String(text) => write_json_string(writer, text),
         serde_json::Value::Array(items) => {
             writer.write_all(b"[").map_err(|err| err.to_string())?;
             let next_depth = depth.saturating_add(1);
@@ -404,7 +458,7 @@ fn write_canonical_json_value_at(
                 if idx > 0 {
                     writer.write_all(b",").map_err(|err| err.to_string())?;
                 }
-                serde_json::to_writer(&mut *writer, key).map_err(|err| err.to_string())?;
+                write_json_string(writer, key)?;
                 writer.write_all(b":").map_err(|err| err.to_string())?;
                 write_canonical_json_value_at(writer, val, next_depth)?;
             }

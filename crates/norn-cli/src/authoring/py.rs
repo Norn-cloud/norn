@@ -14,6 +14,7 @@ use serde_json::json;
 use super::AuthoringFailure;
 use super::fs_io::{
     BoundedJsonArray, BoundedJsonWriter, InvocationBudget, LoadedFile, display_posix_path,
+    write_json_string,
 };
 
 fn format_py_error_json(error: &PyAuthoringError) -> String {
@@ -58,9 +59,7 @@ fn write_py_json_value(
         JsonValue::Number(raw) => writer
             .write_all(raw.as_bytes())
             .map_err(|err| err.to_string()),
-        JsonValue::String(text) => {
-            serde_json::to_writer(&mut *writer, text).map_err(|err| err.to_string())
-        }
+        JsonValue::String(text) => write_json_string(writer, text),
         JsonValue::Array(items) => {
             writer.write_all(b"[").map_err(|err| err.to_string())?;
             for (idx, item) in items.iter().enumerate() {
@@ -80,7 +79,7 @@ fn write_py_json_value(
                 if idx > 0 {
                     writer.write_all(b",").map_err(|err| err.to_string())?;
                 }
-                serde_json::to_writer(&mut *writer, key).map_err(|err| err.to_string())?;
+                write_json_string(writer, key)?;
                 writer.write_all(b":").map_err(|err| err.to_string())?;
                 write_py_json_value(val, writer)?;
             }
