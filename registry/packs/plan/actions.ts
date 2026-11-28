@@ -1,23 +1,131 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
-import { OrderLine, PurchaseOrder, ShipmentReceipt } from "../supply-lab/supply.ts"
-import { LegalEntity, Store } from "../supply-lab/retail.ts"
+import { OrderLine, PurchaseOrder, ShipmentReceipt, Sku } from "../supply-lab/supply.ts"
+import { LegalEntity, PosSale, Store, UnitCost } from "../supply-lab/retail.ts"
 import {
-  OtbEnvelope, OtbPoBinding, PlanLine, PlanSpreadTarget, PlanVersion, PublishedForecast,
+  ActivePlanLine, OtbEnvelope, OtbPoBinding, PlanLine, PlanSpreadTarget, PlanVersion,
+  PoDestination, PublishedForecast, SkuProfile,
 } from "./plan.ts"
 
 // Governed writers and access rules for the S2 Plan & Open-to-Buy pack.
-// Every server-derived input field (`fromCaller` / `inputRequired: false`) obeys
-// ORIGIN-DATAFLOW-1: callers omit them and the kernel derives/stamps them.
+// Every server-derived input field (`fromCaller` / `commitTime` / `inputRequired: false`)
+// obeys ORIGIN-DATAFLOW-1: callers omit them and the kernel derives/stamps them.
 
 const Scope = ["orgId", "environmentId"] as const
 const Access = { artifactId: "plan.access.policy", version: "0.1.0" } as const
 const Currency = Schema.Literals(["EGP", "USD", "EUR"])
 const PlanUnit = Schema.Literals(["each", "kg", "l", "g"])
 const SupplyUnit = Schema.Literals(["each", "kg", "l"])
+const SupplyCategory = Schema.Literals(["dry_goods", "chilled", "pharma", "spares"])
 const RoundingRule = Schema.Literals(["largest_remainder", "last_bucket_remainder", "exact_no_remainder"])
 const EnvelopeKind = Schema.Literals(["planned", "unplanned"])
 const CoreUnitsDep = [{ artifactId: "core.units", version: "1.0.0", kind: "entity" as const }]
+
+// ----------------------------------------- governed SKU & PO grain writers
+
+const SkuProfileInput = Schema.Struct({
+  sku_id: Schema.String,
+  category: SupplyCategory,
+  brand: Schema.String,
+  unit_of_measure: SupplyUnit,
+})
+const SkuProfileRef = Schema.Struct({ sku_id: Schema.String })
+
+/** Register a governed SKU merchandise profile (brand + catalog category/unit). */
+export const RegisterSkuProfile = Norn.action({
+  id: "plan.sku_profile.register", title: "Register a SKU merchandise profile", version: "0.1.0",
+  label: { en: "Register SKU profile", ar: "تسجيل ملف الصنف التجاري" },
+  input: SkuProfileInput, output: SkuProfileRef,
+  scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
+  slice: [
+    { name: "sku", type: Sku, key: { property: { from: "input", property: "sku_id" } } },
+  ],
+  derive: [
+    {
+      field: "category", inputRequired: false,
+      expression: Norn.expression(
+        Schema.Struct({ slice: Schema.Struct({ sku: Schema.Struct({ category: SupplyCategory }) }) }),
+        (ctx) => ctx.slice.sku.category,
+        { root: "context" },
+      ),
+    },
+    {
+      field: "unit_of_measure", inputRequired: false,
+      expression: Norn.expression(
+        Schema.Struct({ slice: Schema.Struct({ sku: Schema.Struct({ unit_of_measure: SupplyUnit }) }) }),
+        (ctx) => ctx.slice.sku.unit_of_measure,
+        { root: "context" },
+      ),
+    },
+  ],
+  createLinks: [
+    { link: "sku", targetType: Sku, targetIdField: "sku_id" },
+  ],
+  writes: [{ type: SkuProfile, change: "created" }],
+  effect: { kind: "upsert_input_object", type: SkuProfile, objectIdField: "sku_id", writeMode: { kind: "create_only" } },
+})
+
+const PoDestinationInput = Schema.Struct({
+  po_id: Schema.String,
+  store_id: Schema.String,
+  entity_id: Schema.String,
+  plan_month: Schema.String,
+  period_month_date: Norn.date(),
+  currency: Currency,
+})
+const PoDestinationRef = Schema.Struct({ po_id: Schema.String })
+
+/** Bind a draft `supply.PurchaseOrder` to its governed destination store, entity, and plan month. */
+export const AssignPoDestination = Norn.action({
+  id: "plan.po_destination.assign", title: "Assign a purchase order destination grain", version: "0.1.0",
+  label: { en: "Assign PO destination", ar: "تعيين وجهة أمر الشراء" },
+  input: PoDestinationInput, output: PoDestinationRef,
+  scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
+  slice: [
+    { name: "order", type: PurchaseOrder, key: { property: { from: "input", property: "po_id" } } },
+    { name: "store", type: Store, key: { property: { from: "input", property: "store_id" } } },
+    { name: "owner_entity", type: LegalEntity, key: { property: { from: "input", property: "entity_id" } } },
+  ],
+  derive: [
+    {
+      field: "currency", inputRequired: false,
+      expression: Norn.expression(
+        Schema.Struct({ slice: Schema.Struct({ order: Schema.Struct({ currency: Currency }) }) }),
+        (ctx) => ctx.slice.order.currency,
+        { root: "context" },
+      ),
+    },
+    {
+      field: "period_month_date", inputRequired: false,
+      expression: Norn.expression(PoDestinationInput, (x) => Norn.parseDate(x.plan_month + "-01")),
+    },
+  ],
+  preconditions: [Norn.expression(
+    Schema.Struct({
+      input: PoDestinationInput,
+      slice: Schema.Struct({
+        order: Schema.Struct({ status: Schema.String, currency: Schema.String }),
+        store: Schema.Struct({ status: Schema.String, entity_id: Schema.String, currency: Schema.String }),
+        owner_entity: Schema.Struct({ status: Schema.String, functional_currency: Schema.String }),
+      }),
+    }),
+    (ctx) =>
+      ctx.slice.order.status === "draft"
+      && ctx.slice.store.status === "active"
+      && ctx.slice.owner_entity.status === "active"
+      && ctx.input.entity_id === ctx.slice.store.entity_id
+      && ctx.slice.order.currency === ctx.slice.store.currency
+      && ctx.slice.order.currency === ctx.slice.owner_entity.functional_currency,
+    { root: "context" },
+  )],
+  createLinks: [
+    { link: "order", targetType: PurchaseOrder, targetIdField: "po_id" },
+    { link: "store", targetType: Store, targetIdField: "store_id" },
+    { link: "owner_entity", targetType: LegalEntity, targetIdField: "entity_id" },
+  ],
+  writes: [{ type: PoDestination, change: "created" }],
+  effect: { kind: "upsert_input_object", type: PoDestination, objectIdField: "po_id", writeMode: { kind: "create_only" } },
+})
 
 // ------------------------------------------------ PlanVersion lifecycle writers
 
@@ -51,18 +159,25 @@ const UpdatePlanVersionDraftInput = Schema.Struct({
   recorded_at: Norn.timestamp("utc"),
 })
 const PlanVersionRef = Schema.Struct({ plan_version_id: Schema.String })
+const GovernPlanVersionInput = Schema.Struct({
+  plan_version_id: Schema.String,
+  sealed_status: Schema.String,
+})
 const SupersedePlanVersionInput = Schema.Struct({
   plan_version_id: Schema.String,
   successor_version_id: Schema.String,
 })
 
-/** Create an initial draft PlanVersion (revision 1, no predecessor). */
+/** Create an initial draft PlanVersion (revision 1, authenticated commit clock). */
 export const CreatePlanVersion = Norn.action({
   id: "plan.version.create", title: "Create a draft plan version", version: "0.1.0",
   label: { en: "Create plan version", ar: "إنشاء إصدار خطة" },
   input: CreatePlanVersionInput, output: PlanVersionRef,
   scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
   fromCaller: ["created_by"],
+  derive: [
+    { field: "recorded_at", inputRequired: false, expression: Norn.commitTime() },
+  ],
   slice: [
     { name: "owner_entity", type: LegalEntity, key: { property: { from: "input", property: "entity_id" } } },
   ],
@@ -85,7 +200,7 @@ export const CreatePlanVersion = Norn.action({
 
 /**
  * Create a new draft PlanVersion that links cleanly to a prior `locked`
- * PlanVersion without mutating locked history.
+ * PlanVersion without mutating locked history, stamping authenticated commit time.
  */
 export const CreateSupersedingPlanVersion = Norn.action({
   id: "plan.version.create_revision", title: "Create a superseding draft plan version", version: "0.1.0",
@@ -93,6 +208,9 @@ export const CreateSupersedingPlanVersion = Norn.action({
   input: CreateRevisionInput, output: PlanVersionRef,
   scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
   fromCaller: ["created_by"],
+  derive: [
+    { field: "recorded_at", inputRequired: false, expression: Norn.commitTime() },
+  ],
   slice: [
     { name: "owner_entity", type: LegalEntity, key: { property: { from: "input", property: "entity_id" } } },
     { name: "prior", type: PlanVersion, key: { property: { from: "input", property: "supersedes_version_id" } } },
@@ -127,17 +245,23 @@ export const CreateSupersedingPlanVersion = Norn.action({
 })
 
 /**
- * Update bitemporal window metadata on an editable PlanVersion.
- * Refuses post-lock mutation via the lifecycle `immutable: ["locked", "superseded"]`
- * contract (`lifecycle.immutable_state`).
+ * Update bitemporal window metadata strictly while `PlanVersion.status === "draft"`
+ * (`writeMode: { kind: "draft_only", lifecycle: "status", state: "draft" }`):
+ * refuses post-submit, post-approve, post-lock, and post-supersede mutations.
  */
 export const UpdatePlanVersionDraft = Norn.action({
   id: "plan.version.update_draft", title: "Update a draft plan version", version: "0.1.0",
   label: { en: "Update draft plan version", ar: "تحديث مسودة الخطة" },
   input: UpdatePlanVersionDraftInput, output: PlanVersionRef,
   scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
+  derive: [
+    { field: "recorded_at", inputRequired: false, expression: Norn.commitTime() },
+  ],
   writes: [{ type: PlanVersion, change: "modified" }],
-  effect: { kind: "upsert_input_object", type: PlanVersion, objectIdField: "plan_version_id", writeMode: { kind: "update_only" } },
+  effect: {
+    kind: "upsert_input_object", type: PlanVersion, objectIdField: "plan_version_id",
+    writeMode: { kind: "draft_only", lifecycle: "status", state: "draft" },
+  },
 })
 
 export const SubmitPlanVersion = Norn.action({
@@ -149,22 +273,54 @@ export const SubmitPlanVersion = Norn.action({
   effect: { kind: "fire_transition", type: PlanVersion, objectIdField: "plan_version_id", lifecycle: "status", transition: "submit" },
 })
 
-/** Separation of duties: the principal who drafted a plan version cannot approve it. */
+/**
+ * Separation of duties (`independentOf: ["created_by"]`) + fenced spread seal
+ * check (`total_spreads === sealed_spreads` + `PlanVersionSpreadsSealed` law).
+ */
 export const ApprovePlanVersion = Norn.action({
   id: "plan.version.approve", title: "Approve a submitted plan version", version: "0.1.0",
   label: { en: "Approve plan version", ar: "اعتماد إصدار الخطة" },
-  input: PlanVersionRef, output: PlanVersionRef,
+  input: GovernPlanVersionInput, output: PlanVersionRef,
   scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
+  derive: [
+    { field: "sealed_status", inputRequired: false, expression: Norn.expression(GovernPlanVersionInput, () => "sealed") },
+  ],
+  aggregates: [
+    { name: "total_spreads", type: PlanSpreadTarget, filter: { plan_version_id: "plan_version_id" }, aggregate: { kind: "count" }, maxItems: 100 },
+    { name: "sealed_spreads", type: PlanSpreadTarget, filter: { plan_version_id: "plan_version_id", status: "sealed_status" }, aggregate: { kind: "count" }, maxItems: 100 },
+  ],
+  preconditions: [Norn.expression(
+    Schema.Struct({
+      aggregates: Schema.Struct({ total_spreads: Schema.Int, sealed_spreads: Schema.Int }),
+    }),
+    (ctx) => ctx.aggregates.total_spreads === ctx.aggregates.sealed_spreads,
+    { root: "context" },
+  )],
   writes: [{ type: PlanVersion, change: "modified" }],
   effect: { kind: "fire_transition", type: PlanVersion, objectIdField: "plan_version_id", lifecycle: "status", transition: "approve" },
   independentOf: ["created_by"],
 })
 
+/** Lock an approved PlanVersion once all spreads remain sealed and conserved. */
 export const LockPlanVersion = Norn.action({
   id: "plan.version.lock", title: "Lock an approved plan version", version: "0.1.0",
   label: { en: "Lock plan version", ar: "إقفال إصدار الخطة" },
-  input: PlanVersionRef, output: PlanVersionRef,
+  input: GovernPlanVersionInput, output: PlanVersionRef,
   scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
+  derive: [
+    { field: "sealed_status", inputRequired: false, expression: Norn.expression(GovernPlanVersionInput, () => "sealed") },
+  ],
+  aggregates: [
+    { name: "total_spreads", type: PlanSpreadTarget, filter: { plan_version_id: "plan_version_id" }, aggregate: { kind: "count" }, maxItems: 100 },
+    { name: "sealed_spreads", type: PlanSpreadTarget, filter: { plan_version_id: "plan_version_id", status: "sealed_status" }, aggregate: { kind: "count" }, maxItems: 100 },
+  ],
+  preconditions: [Norn.expression(
+    Schema.Struct({
+      aggregates: Schema.Struct({ total_spreads: Schema.Int, sealed_spreads: Schema.Int }),
+    }),
+    (ctx) => ctx.aggregates.total_spreads === ctx.aggregates.sealed_spreads,
+    { root: "context" },
+  )],
   writes: [{ type: PlanVersion, change: "modified" }],
   effect: { kind: "fire_transition", type: PlanVersion, objectIdField: "plan_version_id", lifecycle: "status", transition: "lock" },
 })
@@ -209,8 +365,12 @@ const SpreadTargetInput = Schema.Struct({
   category: Schema.String,
   brand: Schema.String,
   plan_month: Schema.String,
+  period_month_date: Norn.date(),
   currency: Currency,
   rounding_rule: RoundingRule,
+  bucket_count: Schema.Int,
+  allocation_quantum_cost: Norn.decimal(6),
+  target_remainder_quanta: Schema.Int,
   target_sales_retail: Norn.decimal(6),
   target_sales_cost: Norn.decimal(6),
   target_receipts_cost: Norn.decimal(6),
@@ -232,6 +392,16 @@ export const CreateSpreadTarget = Norn.action({
   slice: [
     { name: "version", type: PlanVersion, key: { property: { from: "input", property: "plan_version_id" } } },
     { name: "owner_entity", type: LegalEntity, key: { property: { from: "input", property: "entity_id" } } },
+  ],
+  derive: [
+    {
+      field: "period_month_date", inputRequired: false,
+      expression: Norn.expression(SpreadTargetInput, (x) => Norn.parseDate(x.plan_month + "-01")),
+    },
+    {
+      field: "target_rounding_remainder_cost", inputRequired: false,
+      expression: Norn.expression(SpreadTargetInput, (x) => x.target_remainder_quanta * x.allocation_quantum_cost),
+    },
   ],
   preconditions: [Norn.expression(
     Schema.Struct({
@@ -258,9 +428,9 @@ export const CreateSpreadTarget = Norn.action({
 })
 
 /**
- * Seal a top-down spread target once its child `PlanLine`s sum exactly to every
- * parent target measure and explicit rounding remainder (`TXN-PHANTOM` fenced
- * via `aggregates` + `SpreadTargetConservation` law).
+ * Seal a top-down spread target once its child `PlanLine`s cover every bucket
+ * and sum exactly to every parent measure, quantum base, and explicit rounding
+ * remainder (`TXN-PHANTOM` fenced via `aggregates` + `SpreadTargetConservation`).
  */
 export const SealSpreadTarget = Norn.action({
   id: "plan.spread_target.seal", title: "Seal a top-down plan spread target", version: "0.1.0",
@@ -273,6 +443,7 @@ export const SealSpreadTarget = Norn.action({
   ],
   aggregates: [
     { name: "child_count", type: PlanLine, filter: { spread_target_id: "spread_target_id" }, aggregate: { kind: "count" }, maxItems: 50 },
+    { name: "sum_base_receipts_cost", type: PlanLine, filter: { spread_target_id: "spread_target_id" }, aggregate: { kind: "sum", property: "spread_base_receipts_cost" }, maxItems: 50 },
     { name: "sum_sales_retail", type: PlanLine, filter: { spread_target_id: "spread_target_id" }, aggregate: { kind: "sum", property: "planned_sales_retail" }, maxItems: 50 },
     { name: "sum_sales_cost", type: PlanLine, filter: { spread_target_id: "spread_target_id" }, aggregate: { kind: "sum", property: "planned_sales_cost" }, maxItems: 50 },
     { name: "sum_receipts_cost", type: PlanLine, filter: { spread_target_id: "spread_target_id" }, aggregate: { kind: "sum", property: "planned_receipts_cost" }, maxItems: 50 },
@@ -287,6 +458,7 @@ export const SealSpreadTarget = Norn.action({
     Schema.Struct({
       slice: Schema.Struct({
         target: Schema.Struct({
+          bucket_count: Schema.Int,
           target_sales_retail: Norn.decimal(6),
           target_sales_cost: Norn.decimal(6),
           target_receipts_cost: Norn.decimal(6),
@@ -300,6 +472,7 @@ export const SealSpreadTarget = Norn.action({
       }),
       aggregates: Schema.Struct({
         child_count: Schema.Int,
+        sum_base_receipts_cost: Norn.decimal(6),
         sum_sales_retail: Norn.decimal(6),
         sum_sales_cost: Norn.decimal(6),
         sum_receipts_cost: Norn.decimal(6),
@@ -312,7 +485,8 @@ export const SealSpreadTarget = Norn.action({
       }),
     }),
     (ctx) =>
-      ctx.aggregates.child_count > 0
+      ctx.aggregates.child_count === ctx.slice.target.bucket_count
+      && (ctx.aggregates.sum_base_receipts_cost + ctx.slice.target.target_rounding_remainder_cost) === ctx.slice.target.target_receipts_cost
       && ctx.aggregates.sum_sales_retail === ctx.slice.target.target_sales_retail
       && ctx.aggregates.sum_sales_cost === ctx.slice.target.target_sales_cost
       && ctx.aggregates.sum_receipts_cost === ctx.slice.target.target_receipts_cost
@@ -336,6 +510,7 @@ const StandalonePlanLineInput = Schema.Struct({
   category: Schema.String,
   brand: Schema.String,
   plan_month: Schema.String,
+  period_month_date: Norn.date(),
   period_start: Norn.timestamp("utc"),
   as_of: Norn.timestamp("utc"),
   currency: Currency,
@@ -349,6 +524,10 @@ const StandalonePlanLineInput = Schema.Struct({
   planned_markdowns_cost: Norn.decimal(6),
   planned_markdowns_retail: Norn.decimal(6),
   planned_fine_metal_g: Norn.decimal(6, { unit: { system: "ucum", code: "g" } }),
+  spread_bucket_index: Schema.Int,
+  spread_base_quanta: Schema.Int,
+  spread_remainder_quanta: Schema.Int,
+  spread_base_receipts_cost: Norn.decimal(6),
   spread_remainder_cost: Norn.decimal(6),
   planned_eom_stock_cost: Norn.decimal(6),
   planned_eom_stock_retail: Norn.decimal(6),
@@ -363,6 +542,7 @@ const SpreadPlanLineInput = Schema.Struct({
   category: Schema.String,
   brand: Schema.String,
   plan_month: Schema.String,
+  period_month_date: Norn.date(),
   period_start: Norn.timestamp("utc"),
   as_of: Norn.timestamp("utc"),
   currency: Currency,
@@ -376,6 +556,10 @@ const SpreadPlanLineInput = Schema.Struct({
   planned_markdowns_cost: Norn.decimal(6),
   planned_markdowns_retail: Norn.decimal(6),
   planned_fine_metal_g: Norn.decimal(6, { unit: { system: "ucum", code: "g" } }),
+  spread_bucket_index: Schema.Int,
+  spread_base_quanta: Schema.Int,
+  spread_remainder_quanta: Schema.Int,
+  spread_base_receipts_cost: Norn.decimal(6),
   spread_remainder_cost: Norn.decimal(6),
   planned_eom_stock_cost: Norn.decimal(6),
   planned_eom_stock_retail: Norn.decimal(6),
@@ -395,6 +579,14 @@ export const RecordPlanLine = Norn.action({
     { name: "owner_entity", type: LegalEntity, key: { property: { from: "input", property: "entity_id" } } },
     { name: "store", type: Store, key: { property: { from: "input", property: "store_id" } } },
   ],
+  derive: [
+    { field: "period_month_date", inputRequired: false, expression: Norn.expression(StandalonePlanLineInput, (x) => Norn.parseDate(x.plan_month + "-01")) },
+    { field: "spread_bucket_index", inputRequired: false, expression: Norn.expression(StandalonePlanLineInput, () => 0) },
+    { field: "spread_base_quanta", inputRequired: false, expression: Norn.expression(StandalonePlanLineInput, () => 0) },
+    { field: "spread_remainder_quanta", inputRequired: false, expression: Norn.expression(StandalonePlanLineInput, () => 0) },
+    { field: "spread_base_receipts_cost", inputRequired: false, expression: Norn.expression(StandalonePlanLineInput, (x) => x.planned_receipts_cost) },
+    { field: "spread_remainder_cost", inputRequired: false, expression: Norn.expression(StandalonePlanLineInput, () => 0) },
+  ],
   preconditions: [Norn.expression(
     Schema.Struct({
       input: StandalonePlanLineInput,
@@ -408,7 +600,6 @@ export const RecordPlanLine = Norn.action({
       ctx.slice.version.status === "draft"
       && ctx.slice.owner_entity.status === "active"
       && ctx.slice.store.status === "active"
-      && ctx.input.spread_remainder_cost === 0
       && ctx.input.entity_id === ctx.slice.version.entity_id
       && ctx.input.entity_id === ctx.slice.store.entity_id
       && ctx.input.currency === ctx.slice.version.currency
@@ -436,6 +627,42 @@ export const RecordSpreadPlanLine = Norn.action({
     { name: "spread_target", type: PlanSpreadTarget, key: { property: { from: "input", property: "spread_target_id" } } },
     { name: "owner_entity", type: LegalEntity, key: { property: { from: "input", property: "entity_id" } } },
     { name: "store", type: Store, key: { property: { from: "input", property: "store_id" } } },
+  ],
+  derive: [
+    { field: "period_month_date", inputRequired: false, expression: Norn.expression(SpreadPlanLineInput, (x) => Norn.parseDate(x.plan_month + "-01")) },
+    {
+      field: "spread_base_receipts_cost", inputRequired: false,
+      expression: Norn.expression(
+        Schema.Struct({
+          input: Schema.Struct({ spread_base_quanta: Schema.Int }),
+          slice: Schema.Struct({ spread_target: Schema.Struct({ allocation_quantum_cost: Norn.decimal(6) }) }),
+        }),
+        (ctx) => ctx.input.spread_base_quanta * ctx.slice.spread_target.allocation_quantum_cost,
+        { root: "context" },
+      ),
+    },
+    {
+      field: "spread_remainder_cost", inputRequired: false,
+      expression: Norn.expression(
+        Schema.Struct({
+          input: Schema.Struct({ spread_remainder_quanta: Schema.Int }),
+          slice: Schema.Struct({ spread_target: Schema.Struct({ allocation_quantum_cost: Norn.decimal(6) }) }),
+        }),
+        (ctx) => ctx.input.spread_remainder_quanta * ctx.slice.spread_target.allocation_quantum_cost,
+        { root: "context" },
+      ),
+    },
+    {
+      field: "planned_receipts_cost", inputRequired: false,
+      expression: Norn.expression(
+        Schema.Struct({
+          input: Schema.Struct({ spread_base_quanta: Schema.Int, spread_remainder_quanta: Schema.Int }),
+          slice: Schema.Struct({ spread_target: Schema.Struct({ allocation_quantum_cost: Norn.decimal(6) }) }),
+        }),
+        (ctx) => (ctx.input.spread_base_quanta + ctx.input.spread_remainder_quanta) * ctx.slice.spread_target.allocation_quantum_cost,
+        { root: "context" },
+      ),
+    },
   ],
   preconditions: [Norn.expression(
     Schema.Struct({
@@ -473,6 +700,154 @@ export const RecordSpreadPlanLine = Norn.action({
   ],
   writes: [{ type: PlanLine, change: "created" }],
   effect: { kind: "upsert_input_object", type: PlanLine, objectIdField: "plan_line_id", writeMode: { kind: "create_only" } },
+})
+
+// ------------------------------------ ActivePlanLine baseline + PosSale restate
+
+const ActiveBaselineInput = Schema.Struct({
+  slot_id: Schema.String,
+  plan_version_id: Schema.String,
+  plan_line_id: Schema.String,
+  entity_id: Schema.String,
+  store_id: Schema.String,
+  category: SupplyCategory,
+  brand: Schema.String,
+  plan_month: Schema.String,
+  period_month_date: Norn.date(),
+  currency: Currency,
+  unit: SupplyUnit,
+})
+const BaselineRef = Schema.Struct({ slot_id: Schema.String })
+
+/** Activate a locked PlanLine as the active baseline for `Actual - Plan` variance. */
+export const ActivatePlanBaseline = Norn.action({
+  id: "plan.baseline.activate", title: "Activate a locked plan line baseline", version: "0.1.0",
+  label: { en: "Activate plan baseline", ar: "تفعيل سطر الخطة المعتمد" },
+  input: ActiveBaselineInput, output: BaselineRef,
+  scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
+  slice: [
+    { name: "version", type: PlanVersion, key: { property: { from: "input", property: "plan_version_id" } } },
+    { name: "plan_line", type: PlanLine, key: { property: { from: "input", property: "plan_line_id" } } },
+    { name: "owner_entity", type: LegalEntity, key: { property: { from: "input", property: "entity_id" } } },
+    { name: "store", type: Store, key: { property: { from: "input", property: "store_id" } } },
+  ],
+  derive: [
+    { field: "brand", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ plan_line: Schema.Struct({ brand: Schema.String }) }) }), (ctx) => ctx.slice.plan_line.brand, { root: "context" }) },
+    { field: "plan_month", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ plan_line: Schema.Struct({ plan_month: Schema.String }) }) }), (ctx) => ctx.slice.plan_line.plan_month, { root: "context" }) },
+    { field: "period_month_date", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ plan_line: Schema.Struct({ period_month_date: Norn.date() }) }) }), (ctx) => ctx.slice.plan_line.period_month_date, { root: "context" }) },
+    { field: "currency", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ plan_line: Schema.Struct({ currency: Currency }) }) }), (ctx) => ctx.slice.plan_line.currency, { root: "context" }) },
+  ],
+  preconditions: [Norn.expression(
+    Schema.Struct({
+      input: ActiveBaselineInput,
+      slice: Schema.Struct({
+        version: Schema.Struct({ status: Schema.String }),
+        plan_line: Schema.Struct({
+          plan_version_id: Schema.String, entity_id: Schema.String, store_id: Schema.String,
+          category: Schema.String, unit: Schema.String,
+        }),
+      }),
+    }),
+    (ctx) =>
+      ctx.slice.version.status === "locked"
+      && ctx.input.plan_version_id === ctx.slice.plan_line.plan_version_id
+      && ctx.input.entity_id === ctx.slice.plan_line.entity_id
+      && ctx.input.store_id === ctx.slice.plan_line.store_id
+      && ctx.input.category === ctx.slice.plan_line.category
+      && ctx.input.unit === ctx.slice.plan_line.unit,
+    { root: "context" },
+  )],
+  createLinks: [
+    { link: "plan_version", targetType: PlanVersion, targetIdField: "plan_version_id" },
+    { link: "plan_line", targetType: PlanLine, targetIdField: "plan_line_id" },
+    { link: "owner_entity", targetType: LegalEntity, targetIdField: "entity_id" },
+    { link: "store", targetType: Store, targetIdField: "store_id" },
+  ],
+  writes: [{ type: ActivePlanLine, change: "created" }],
+  effect: { kind: "upsert_input_object", type: ActivePlanLine, objectIdField: "slot_id", writeMode: { kind: "create_only" } },
+})
+
+const RestatePosSaleInput = Schema.Struct({
+  sale_id: Schema.String,
+  store_id: Schema.String,
+  sku_id: Schema.String,
+  sold_qty: Norn.decimal(6),
+  unit: SupplyUnit,
+  net_revenue: Norn.decimal(6),
+  applied_unit_cost: Norn.decimal(4),
+  cogs_amount: Norn.decimal(6),
+  gross_margin: Norn.decimal(6),
+  gross_margin_rate: Norn.decimal(6),
+  cost_status: Schema.Literals(["costed", "missing_cost"]),
+  costed_ref: Schema.String,
+  currency: Currency,
+  sold_at: Norn.timestamp("utc"),
+})
+const PosSaleRef = Schema.Struct({ sale_id: Schema.String })
+
+/**
+ * Governed late correction / restatement of an existing `supply.PosSale`
+ * contribution (`update_only` on the same `sale_id`), preserving prior
+ * knowledge-time incarnations for `AsOfReader` (`#1888`).
+ */
+export const RestatePosSale = Norn.action({
+  id: "plan.pos_sale.restate", title: "Restate an existing POS sale contribution", version: "0.1.0",
+  label: { en: "Restate POS sale", ar: "إعادة بيان سطر المبيعات" },
+  input: RestatePosSaleInput, output: PosSaleRef,
+  scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
+  slice: [
+    { name: "sale", type: PosSale, key: { property: { from: "input", property: "sale_id" } } },
+    { name: "cost", type: UnitCost, key: { property: { from: "sale", property: "sku_id" } } },
+  ],
+  derive: [
+    { field: "store_id", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ sale: Schema.Struct({ store_id: Schema.String }) }) }), (ctx) => ctx.slice.sale.store_id, { root: "context" }) },
+    { field: "sku_id", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ sale: Schema.Struct({ sku_id: Schema.String }) }) }), (ctx) => ctx.slice.sale.sku_id, { root: "context" }) },
+    { field: "unit", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ sale: Schema.Struct({ unit: SupplyUnit }) }) }), (ctx) => ctx.slice.sale.unit, { root: "context" }) },
+    { field: "currency", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ sale: Schema.Struct({ currency: Currency }) }) }), (ctx) => ctx.slice.sale.currency, { root: "context" }) },
+    { field: "cost_status", inputRequired: false, expression: Norn.expression(RestatePosSaleInput, () => "costed") },
+    { field: "costed_ref", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ cost: Schema.Struct({ cost_ref: Schema.String }) }) }), (ctx) => ctx.slice.cost.cost_ref, { root: "context" }) },
+    { field: "applied_unit_cost", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ cost: Schema.Struct({ unit_cost: Norn.decimal(4) }) }) }), (ctx) => ctx.slice.cost.unit_cost, { root: "context" }) },
+    {
+      field: "cogs_amount", inputRequired: false,
+      expression: Norn.expression(
+        Schema.Struct({
+          input: Schema.Struct({ sold_qty: Norn.decimal(6) }),
+          slice: Schema.Struct({ cost: Schema.Struct({ unit_cost: Norn.decimal(4) }) }),
+        }),
+        (ctx) => ctx.input.sold_qty * ctx.slice.cost.unit_cost,
+        { root: "context" },
+      ),
+    },
+    {
+      field: "gross_margin", inputRequired: false,
+      expression: Norn.expression(
+        Schema.Struct({
+          input: Schema.Struct({ sold_qty: Norn.decimal(6), net_revenue: Norn.decimal(6) }),
+          slice: Schema.Struct({ cost: Schema.Struct({ unit_cost: Norn.decimal(4) }) }),
+        }),
+        (ctx) => ctx.input.net_revenue - (ctx.input.sold_qty * ctx.slice.cost.unit_cost),
+        { root: "context" },
+      ),
+    },
+    { field: "gross_margin_rate", inputRequired: false, expression: Norn.expression(RestatePosSaleInput, () => 0) },
+  ],
+  preconditions: [Norn.expression(
+    Schema.Struct({
+      input: RestatePosSaleInput,
+      slice: Schema.Struct({
+        sale: Schema.Struct({ cost_status: Schema.String, currency: Schema.String }),
+        cost: Schema.Struct({ currency: Schema.String }),
+      }),
+    }),
+    (ctx) =>
+      ctx.slice.sale.cost_status === "costed"
+      && ctx.slice.sale.currency === ctx.slice.cost.currency
+      && ctx.input.sold_qty > 0
+      && ctx.input.net_revenue >= 0,
+    { root: "context" },
+  )],
+  writes: [{ type: PosSale, change: "modified" }],
+  effect: { kind: "upsert_input_object", type: PosSale, objectIdField: "sale_id", writeMode: { kind: "update_only" } },
 })
 
 // ------------------------------------------------ OTB envelope lifecycle
@@ -680,21 +1055,72 @@ export const CloseEnvelope = Norn.action({
   effect: { kind: "fire_transition", type: OtbEnvelope, objectIdField: "envelope_id", lifecycle: "status", transition: "close" },
 })
 
-// ----------------------------------------- fail-closed OTB PO authorization
+// ----------------------------- atomic fail-closed OTB PO authorization + submit
 
 const AuthorizePoLineInput = Schema.Struct({
+  binding_id: Schema.String,
+  envelope_id: Schema.String,
+  po_id: Schema.String,
+  line_id: Schema.String,
+  expected_payment_date: Norn.timestamp("utc"),
+  payment_terms_days: Schema.Int,
+  as_of: Norn.timestamp("utc"),
+  // Kernel-derived strictly from governed slice + fenced aggregates (caller never supplies):
+  plan_version_id: Schema.String,
+  entity_id: Schema.String,
+  store_id: Schema.String,
+  sku_id: Schema.String,
+  category: Schema.String,
+  brand: Schema.String,
+  plan_month: Schema.String,
+  currency: Schema.String,
+  unit: Schema.String,
+  ordered_qty: Norn.decimal(6),
+  unit_cost: Norn.decimal(4),
+  authorized_cost: Norn.decimal(6),
+  envelope_cap_snapshot: Norn.decimal(6),
+  prior_consumed_snapshot: Norn.decimal(6),
+})
+const AuthorizePoWriterInput = Schema.Struct({
+  binding_id: Schema.String,
+  envelope_id: Schema.String,
+  po_id: Schema.String,
+  line_id: Schema.String,
+  expected_payment_date: Schema.String,
+  payment_terms_days: Schema.Int,
+  as_of: Schema.String,
+  plan_version_id: Schema.String,
+  entity_id: Schema.String,
+  store_id: Schema.String,
+  sku_id: Schema.String,
+  category: Schema.String,
+  brand: Schema.String,
+  plan_month: Schema.String,
+  currency: Schema.String,
+  unit: Schema.String,
+  ordered_qty: Norn.decimal(6),
+  unit_cost: Norn.decimal(4),
+  authorized_cost: Norn.decimal(6),
+  envelope_cap_snapshot: Norn.decimal(6),
+  prior_consumed_snapshot: Norn.decimal(6),
+})
+const PoRef = Schema.Struct({ po_id: Schema.String })
+const BindingRef = Schema.Struct({ binding_id: Schema.String })
+
+const OtbBindingCreateValues = Schema.Struct({
   binding_id: Schema.String,
   envelope_id: Schema.String,
   plan_version_id: Schema.String,
   entity_id: Schema.String,
   store_id: Schema.String,
+  sku_id: Schema.String,
   category: Schema.String,
   brand: Schema.String,
   plan_month: Schema.String,
   po_id: Schema.String,
   line_id: Schema.String,
-  currency: Currency,
-  unit: SupplyUnit,
+  currency: Schema.String,
+  unit: Schema.String,
   ordered_qty: Norn.decimal(6),
   received_qty: Norn.decimal(6),
   unit_cost: Norn.decimal(4),
@@ -705,143 +1131,224 @@ const AuthorizePoLineInput = Schema.Struct({
   otb_consumed_cost: Norn.decimal(6),
   envelope_cap_snapshot: Norn.decimal(6),
   prior_consumed_snapshot: Norn.decimal(6),
-  expected_payment_date: Norn.timestamp("utc"),
+  expected_payment_date: Schema.String,
   payment_terms_days: Schema.Int,
-  as_of: Norn.timestamp("utc"),
+  as_of: Schema.String,
   authorized_by: Schema.String,
+  status: Schema.Literal("authorized"),
 })
-const BindingRef = Schema.Struct({ binding_id: Schema.String })
+
+const OtbBindingLinkAdd = Schema.Struct({
+  op: Schema.Literal("add"),
+  sourceType: Schema.Literal("plan.OtbPoBinding"),
+  sourceKey: Schema.String,
+  link: Schema.Literals([
+    "envelope", "order", "order_line", "sku", "sku_profile",
+    "po_destination", "owner_entity", "store",
+  ]),
+  targetType: Schema.Literals([
+    "plan.OtbEnvelope", "supply.PurchaseOrder", "supply.OrderLine", "supply.Sku",
+    "plan.SkuProfile", "plan.PoDestination", "supply.LegalEntity", "supply.Store",
+  ]),
+  targetKey: Schema.String,
+})
 
 /**
- * Fail-closed OTB guard at PO line authorization:
- * - Refuses when no `OtbEnvelope` exists for the target category/period (`slice`).
- * - Refuses when the envelope is not `active` (blocks unapproved `unplanned` envelopes).
+ * Pure synchronous writer creating `plan.OtbPoBinding` and all 8 governed links
+ * atomically in the exact same commit that transitions `supply.PurchaseOrder`
+ * from `draft -> submitted`.
+ */
+export const AuthorizePoOtbWriter = Norn.decision({
+  id: "plan.otb.authorize_po_writer",
+  title: "Create OTB PO binding atomically with PO submission",
+  version: "0.1.0",
+  contract: "decide",
+  scopeRequired: Scope,
+  input: Schema.Struct({
+    slice: Schema.Struct({}),
+    event: Schema.Struct({
+      input: AuthorizePoWriterInput,
+      actor: Schema.String,
+      operationId: Schema.String,
+    }),
+  }),
+  output: Schema.Struct({
+    facts: Schema.Array(Schema.Struct({
+      op: Schema.Literal("create"),
+      objectType: Schema.Literal("plan.OtbPoBinding"),
+      key: Schema.String,
+      values: OtbBindingCreateValues,
+    })),
+    links: Schema.Array(OtbBindingLinkAdd),
+    commands: Schema.Array(Schema.Struct({})),
+    timers: Schema.Array(Schema.Struct({})),
+  }),
+}, (input) => ({
+  facts: [{
+    op: "create",
+    objectType: "plan.OtbPoBinding",
+    key: input.event.input.binding_id,
+    values: {
+      binding_id: input.event.input.binding_id,
+      envelope_id: input.event.input.envelope_id,
+      plan_version_id: input.event.input.plan_version_id,
+      entity_id: input.event.input.entity_id,
+      store_id: input.event.input.store_id,
+      sku_id: input.event.input.sku_id,
+      category: input.event.input.category,
+      brand: input.event.input.brand,
+      plan_month: input.event.input.plan_month,
+      po_id: input.event.input.po_id,
+      line_id: input.event.input.line_id,
+      currency: input.event.input.currency,
+      unit: input.event.input.unit,
+      ordered_qty: input.event.input.ordered_qty,
+      received_qty: 0,
+      unit_cost: input.event.input.unit_cost,
+      authorized_cost: input.event.input.authorized_cost,
+      recognized_receipt_cost: 0,
+      unreceived_authorized_cost: input.event.input.authorized_cost,
+      cancelled_released_cost: 0,
+      otb_consumed_cost: input.event.input.authorized_cost,
+      envelope_cap_snapshot: input.event.input.envelope_cap_snapshot,
+      prior_consumed_snapshot: input.event.input.prior_consumed_snapshot,
+      expected_payment_date: input.event.input.expected_payment_date,
+      payment_terms_days: input.event.input.payment_terms_days,
+      as_of: input.event.input.as_of,
+      authorized_by: input.event.actor,
+      status: "authorized",
+    },
+  }],
+  links: [
+    { op: "add", sourceType: "plan.OtbPoBinding", sourceKey: input.event.input.binding_id, link: "envelope", targetType: "plan.OtbEnvelope", targetKey: input.event.input.envelope_id },
+    { op: "add", sourceType: "plan.OtbPoBinding", sourceKey: input.event.input.binding_id, link: "order", targetType: "supply.PurchaseOrder", targetKey: input.event.input.po_id },
+    { op: "add", sourceType: "plan.OtbPoBinding", sourceKey: input.event.input.binding_id, link: "order_line", targetType: "supply.OrderLine", targetKey: input.event.input.line_id },
+    { op: "add", sourceType: "plan.OtbPoBinding", sourceKey: input.event.input.binding_id, link: "sku", targetType: "supply.Sku", targetKey: input.event.input.sku_id },
+    { op: "add", sourceType: "plan.OtbPoBinding", sourceKey: input.event.input.binding_id, link: "sku_profile", targetType: "plan.SkuProfile", targetKey: input.event.input.sku_id },
+    { op: "add", sourceType: "plan.OtbPoBinding", sourceKey: input.event.input.binding_id, link: "po_destination", targetType: "plan.PoDestination", targetKey: input.event.input.po_id },
+    { op: "add", sourceType: "plan.OtbPoBinding", sourceKey: input.event.input.binding_id, link: "owner_entity", targetType: "supply.LegalEntity", targetKey: input.event.input.entity_id },
+    { op: "add", sourceType: "plan.OtbPoBinding", sourceKey: input.event.input.binding_id, link: "store", targetType: "supply.Store", targetKey: input.event.input.store_id },
+  ],
+  commands: [],
+  timers: [],
+}))
+
+/**
+ * Atomic, fail-closed OTB authorization & PO submission:
+ * - Transitions `supply.PurchaseOrder` `draft -> submitted` (with SoD
+ *   `independentOf: ["created_by"]`) AND creates `plan.OtbPoBinding` + links
+ *   in ONE single checked atomic transaction (`synchronousRule`).
+ * - Derives cost (`order_line.ordered_qty * order_line.unit_price`), SKU
+ *   `(category, brand)` from `supply.Sku` + `plan.SkuProfile`, and destination
+ *   `(entity_id, store_id, plan_month, currency)` from `plan.PoDestination` +
+ *   `supply.Store` — never trusting caller-supplied cost or category.
  * - Fences `plan.OtbPoBinding` by `envelope_id` via `aggregates` (`TXN-PHANTOM`)
- *   and refuses any PO authorization where `consumed_otb_cost + authorized_cost > approved_budget_cost`.
- * - Derives all OTB cost buckets and cap snapshots in the kernel (`ORIGIN-DATAFLOW-1`).
+ *   so on missing envelope, wrong grain, OTB cap breach, or concurrent race,
+ *   the PO remains in `draft` and ZERO `OtbPoBinding` is created.
  */
 export const AuthorizePoLineAgainstOtb = Norn.action({
-  id: "plan.otb.authorize_po_line", title: "Authorize a PO line against an OTB envelope", version: "0.1.0",
-  label: { en: "Authorize PO line (OTB)", ar: "اعتماد بند أمر الشراء ضمن الميزانية" },
-  input: AuthorizePoLineInput, output: BindingRef,
+  id: "plan.otb.authorize_po_line", title: "Authorize and submit a draft PO against an OTB envelope", version: "0.1.0",
+  label: { en: "Authorize & submit PO (OTB)", ar: "اعتماد وإرسال أمر الشراء ضمن الميزانية" },
+  input: AuthorizePoLineInput, output: PoRef,
   scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
-  fromCaller: ["authorized_by"],
   slice: [
-    { name: "envelope", type: OtbEnvelope, key: { property: { from: "input", property: "envelope_id" } } },
     { name: "order", type: PurchaseOrder, key: { property: { from: "input", property: "po_id" } } },
     { name: "order_line", type: OrderLine, key: { property: { from: "input", property: "line_id" } } },
-    { name: "owner_entity", type: LegalEntity, key: { property: { from: "input", property: "entity_id" } } },
-    { name: "store", type: Store, key: { property: { from: "input", property: "store_id" } } },
+    { name: "sku", type: Sku, key: { property: { from: "order_line", property: "sku_id" } } },
+    { name: "sku_profile", type: SkuProfile, key: { property: { from: "order_line", property: "sku_id" } } },
+    { name: "po_destination", type: PoDestination, key: { property: { from: "input", property: "po_id" } } },
+    { name: "store", type: Store, key: { property: { from: "po_destination", property: "store_id" } } },
+    { name: "owner_entity", type: LegalEntity, key: { property: { from: "po_destination", property: "entity_id" } } },
+    { name: "envelope", type: OtbEnvelope, key: { property: { from: "input", property: "envelope_id" } } },
   ],
-  aggregates: [{
-    name: "consumed_otb_cost",
-    type: OtbPoBinding,
-    filter: { envelope_id: "envelope_id" },
-    aggregate: { kind: "sum", property: "otb_consumed_cost" },
-    maxItems: 200,
-  }],
-  derive: [
-    { field: "received_qty", inputRequired: false, expression: Norn.expression(AuthorizePoLineInput, () => 0) },
-    { field: "recognized_receipt_cost", inputRequired: false, expression: Norn.expression(AuthorizePoLineInput, () => 0) },
-    { field: "cancelled_released_cost", inputRequired: false, expression: Norn.expression(AuthorizePoLineInput, () => 0) },
+  aggregates: [
     {
-      field: "ordered_qty", inputRequired: false,
-      expression: Norn.expression(
-        Schema.Struct({ slice: Schema.Struct({ order_line: Schema.Struct({ ordered_qty: Norn.decimal(6) }) }) }),
-        (ctx) => ctx.slice.order_line.ordered_qty,
-        { root: "context" },
-      ),
+      name: "consumed_otb_cost",
+      type: OtbPoBinding,
+      filter: { envelope_id: "envelope_id" },
+      aggregate: { kind: "sum", property: "otb_consumed_cost" },
+      maxItems: 200,
     },
+    {
+      name: "po_line_count",
+      type: OrderLine,
+      filter: { po_id: "po_id" },
+      aggregate: { kind: "count" },
+      maxItems: 50,
+    },
+  ],
+  derive: [
+    { field: "plan_version_id", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ envelope: Schema.Struct({ plan_version_id: Schema.String }) }) }), (ctx) => ctx.slice.envelope.plan_version_id, { root: "context" }) },
+    { field: "entity_id", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ store: Schema.Struct({ entity_id: Schema.String }) }) }), (ctx) => ctx.slice.store.entity_id, { root: "context" }) },
+    { field: "store_id", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ po_destination: Schema.Struct({ store_id: Schema.String }) }) }), (ctx) => ctx.slice.po_destination.store_id, { root: "context" }) },
+    { field: "sku_id", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ order_line: Schema.Struct({ sku_id: Schema.String }) }) }), (ctx) => ctx.slice.order_line.sku_id, { root: "context" }) },
+    { field: "category", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ sku: Schema.Struct({ category: Schema.String }) }) }), (ctx) => ctx.slice.sku.category, { root: "context" }) },
+    { field: "brand", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ sku_profile: Schema.Struct({ brand: Schema.String }) }) }), (ctx) => ctx.slice.sku_profile.brand, { root: "context" }) },
+    { field: "plan_month", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ po_destination: Schema.Struct({ plan_month: Schema.String }) }) }), (ctx) => ctx.slice.po_destination.plan_month, { root: "context" }) },
+    { field: "currency", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ order_line: Schema.Struct({ currency: Schema.String }) }) }), (ctx) => ctx.slice.order_line.currency, { root: "context" }) },
+    { field: "unit", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ order_line: Schema.Struct({ unit: Schema.String }) }) }), (ctx) => ctx.slice.order_line.unit, { root: "context" }) },
+    { field: "ordered_qty", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ order_line: Schema.Struct({ ordered_qty: Norn.decimal(6) }) }) }), (ctx) => ctx.slice.order_line.ordered_qty, { root: "context" }) },
+    { field: "unit_cost", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ order_line: Schema.Struct({ unit_price: Norn.decimal(4) }) }) }), (ctx) => ctx.slice.order_line.unit_price, { root: "context" }) },
     {
       field: "authorized_cost", inputRequired: false,
       expression: Norn.expression(
-        Schema.Struct({
-          input: Schema.Struct({ unit_cost: Norn.decimal(4) }),
-          slice: Schema.Struct({ order_line: Schema.Struct({ ordered_qty: Norn.decimal(6) }) }),
-        }),
-        (ctx) => ctx.slice.order_line.ordered_qty * ctx.input.unit_cost,
+        Schema.Struct({ slice: Schema.Struct({ order_line: Schema.Struct({ ordered_qty: Norn.decimal(6), unit_price: Norn.decimal(4) }) }) }),
+        (ctx) => ctx.slice.order_line.ordered_qty * ctx.slice.order_line.unit_price,
         { root: "context" },
       ),
     },
-    {
-      field: "unreceived_authorized_cost", inputRequired: false,
-      expression: Norn.expression(
-        Schema.Struct({
-          input: Schema.Struct({ unit_cost: Norn.decimal(4) }),
-          slice: Schema.Struct({ order_line: Schema.Struct({ ordered_qty: Norn.decimal(6) }) }),
-        }),
-        (ctx) => ctx.slice.order_line.ordered_qty * ctx.input.unit_cost,
-        { root: "context" },
-      ),
-    },
-    {
-      field: "otb_consumed_cost", inputRequired: false,
-      expression: Norn.expression(
-        Schema.Struct({
-          input: Schema.Struct({ unit_cost: Norn.decimal(4) }),
-          slice: Schema.Struct({ order_line: Schema.Struct({ ordered_qty: Norn.decimal(6) }) }),
-        }),
-        (ctx) => ctx.slice.order_line.ordered_qty * ctx.input.unit_cost,
-        { root: "context" },
-      ),
-    },
-    {
-      field: "envelope_cap_snapshot", inputRequired: false,
-      expression: Norn.expression(
-        Schema.Struct({ slice: Schema.Struct({ envelope: Schema.Struct({ approved_budget_cost: Norn.decimal(6) }) }) }),
-        (ctx) => ctx.slice.envelope.approved_budget_cost,
-        { root: "context" },
-      ),
-    },
-    {
-      field: "prior_consumed_snapshot", inputRequired: false,
-      expression: Norn.expression(
-        Schema.Struct({ aggregates: Schema.Struct({ consumed_otb_cost: Norn.decimal(6) }) }),
-        (ctx) => ctx.aggregates.consumed_otb_cost,
-        { root: "context" },
-      ),
-    },
+    { field: "envelope_cap_snapshot", inputRequired: false, expression: Norn.expression(Schema.Struct({ slice: Schema.Struct({ envelope: Schema.Struct({ approved_budget_cost: Norn.decimal(6) }) }) }), (ctx) => ctx.slice.envelope.approved_budget_cost, { root: "context" }) },
+    { field: "prior_consumed_snapshot", inputRequired: false, expression: Norn.expression(Schema.Struct({ aggregates: Schema.Struct({ consumed_otb_cost: Norn.decimal(6) }) }), (ctx) => ctx.aggregates.consumed_otb_cost, { root: "context" }) },
   ],
   preconditions: [Norn.expression(
     Schema.Struct({
       input: AuthorizePoLineInput,
       slice: Schema.Struct({
-        envelope: Schema.Struct({
-          status: Schema.String, plan_version_id: Schema.String, entity_id: Schema.String,
-          store_id: Schema.String, category: Schema.String, brand: Schema.String,
-          plan_month: Schema.String, currency: Schema.String, approved_budget_cost: Norn.decimal(6),
-        }),
-        order: Schema.Struct({ status: Schema.String }),
+        order: Schema.Struct({ status: Schema.String, currency: Schema.String }),
         order_line: Schema.Struct({ po_id: Schema.String, unit: Schema.String, currency: Schema.String, received_qty: Norn.decimal(6) }),
+        sku: Schema.Struct({ category: Schema.String, unit_of_measure: Schema.String }),
+        sku_profile: Schema.Struct({ category: Schema.String, brand: Schema.String }),
+        po_destination: Schema.Struct({ entity_id: Schema.String, store_id: Schema.String, plan_month: Schema.String, currency: Schema.String }),
+        store: Schema.Struct({ status: Schema.String, entity_id: Schema.String, currency: Schema.String }),
+        owner_entity: Schema.Struct({ status: Schema.String }),
+        envelope: Schema.Struct({
+          status: Schema.String, entity_id: Schema.String, store_id: Schema.String,
+          category: Schema.String, brand: Schema.String, plan_month: Schema.String,
+          currency: Schema.String, approved_budget_cost: Norn.decimal(6),
+        }),
       }),
-      aggregates: Schema.Struct({ consumed_otb_cost: Norn.decimal(6) }),
+      aggregates: Schema.Struct({ consumed_otb_cost: Norn.decimal(6), po_line_count: Schema.Int }),
     }),
     (ctx) =>
-      ctx.slice.envelope.status === "active"
-      && (ctx.slice.order.status === "draft" || ctx.slice.order.status === "submitted")
+      ctx.slice.order.status === "draft"
+      && ctx.aggregates.po_line_count === 1
       && ctx.slice.order_line.po_id === ctx.input.po_id
       && ctx.slice.order_line.received_qty === 0
-      && ctx.input.unit === ctx.slice.order_line.unit
-      && ctx.input.currency === ctx.slice.order_line.currency
-      && ctx.input.currency === ctx.slice.envelope.currency
-      && ctx.input.plan_version_id === ctx.slice.envelope.plan_version_id
-      && ctx.input.entity_id === ctx.slice.envelope.entity_id
-      && ctx.input.store_id === ctx.slice.envelope.store_id
-      && ctx.input.category === ctx.slice.envelope.category
-      && ctx.input.brand === ctx.slice.envelope.brand
-      && ctx.input.plan_month === ctx.slice.envelope.plan_month
+      && ctx.slice.envelope.status === "active"
+      && ctx.slice.store.status === "active"
+      && ctx.slice.owner_entity.status === "active"
+      && ctx.slice.order.currency === ctx.slice.order_line.currency
+      && ctx.slice.order_line.currency === ctx.slice.po_destination.currency
+      && ctx.slice.order_line.currency === ctx.slice.store.currency
+      && ctx.slice.order_line.currency === ctx.slice.envelope.currency
+      && ctx.slice.order_line.unit === ctx.slice.sku.unit_of_measure
+      && ctx.slice.envelope.entity_id === ctx.slice.store.entity_id
+      && ctx.slice.envelope.entity_id === ctx.slice.po_destination.entity_id
+      && ctx.slice.envelope.store_id === ctx.slice.po_destination.store_id
+      && ctx.slice.envelope.category === ctx.slice.sku.category
+      && ctx.slice.envelope.category === ctx.slice.sku_profile.category
+      && ctx.slice.envelope.brand === ctx.slice.sku_profile.brand
+      && ctx.slice.envelope.plan_month === ctx.slice.po_destination.plan_month
       && (ctx.aggregates.consumed_otb_cost + ctx.input.authorized_cost) <= ctx.slice.envelope.approved_budget_cost,
     { root: "context" },
   )],
-  createLinks: [
-    { link: "envelope", targetType: OtbEnvelope, targetIdField: "envelope_id" },
-    { link: "order", targetType: PurchaseOrder, targetIdField: "po_id" },
-    { link: "order_line", targetType: OrderLine, targetIdField: "line_id" },
-    { link: "owner_entity", targetType: LegalEntity, targetIdField: "entity_id" },
-    { link: "store", targetType: Store, targetIdField: "store_id" },
+  synchronousRule: AuthorizePoOtbWriter,
+  writes: [
+    { type: PurchaseOrder, change: "modified" },
+    { type: OtbPoBinding, change: "created" },
   ],
-  writes: [{ type: OtbPoBinding, change: "created" }],
-  effect: { kind: "upsert_input_object", type: OtbPoBinding, objectIdField: "binding_id", writeMode: { kind: "create_only" } },
+  effect: { kind: "fire_transition", type: PurchaseOrder, objectIdField: "po_id", lifecycle: "status", transition: "submit" },
+  independentOf: ["created_by"],
 })
 
 const PartialReceiptOtbInput = Schema.Struct({
@@ -856,7 +1363,10 @@ const PartialReceiptOtbInput = Schema.Struct({
 
 /**
  * Shift accepted partial receipt cost from `unreceived_authorized_cost` into
- * `recognized_receipt_cost` while conserving net `otb_consumed_cost`.
+ * `recognized_receipt_cost` while conserving net `otb_consumed_cost`. Supports
+ * repeated consecutive partial receipts (`authorized -> partially_received` and
+ * `partially_received -> partially_received`), coupled directly to checked
+ * `supply.OrderLine.received_qty` and `supply.OrderLine.unit_price`.
  */
 export const RecordOtbPartialReceipt = Norn.action({
   id: "plan.otb.record_partial_receipt", title: "Recognize partial receipt against an OTB PO binding", version: "0.1.0",
@@ -866,8 +1376,16 @@ export const RecordOtbPartialReceipt = Norn.action({
   slice: [
     { name: "binding", type: OtbPoBinding, key: { property: { from: "input", property: "binding_id" } } },
     { name: "order_line", type: OrderLine, key: { property: { from: "input", property: "line_id" } } },
+    { name: "order", type: PurchaseOrder, key: { property: { from: "order_line", property: "po_id" } } },
     { name: "receipt", type: ShipmentReceipt, key: { property: { from: "input", property: "receipt_id" } } },
   ],
+  aggregates: [{
+    name: "shipped_receipts_qty",
+    type: ShipmentReceipt,
+    filter: { line_id: "line_id" },
+    aggregate: { kind: "sum", property: "received_qty" },
+    maxItems: 100,
+  }],
   derive: [
     {
       field: "next_received_qty", inputRequired: false,
@@ -882,11 +1400,10 @@ export const RecordOtbPartialReceipt = Norn.action({
       expression: Norn.expression(
         Schema.Struct({
           slice: Schema.Struct({
-            binding: Schema.Struct({ unit_cost: Norn.decimal(4) }),
-            order_line: Schema.Struct({ received_qty: Norn.decimal(6) }),
+            order_line: Schema.Struct({ received_qty: Norn.decimal(6), unit_price: Norn.decimal(4) }),
           }),
         }),
-        (ctx) => ctx.slice.order_line.received_qty * ctx.slice.binding.unit_cost,
+        (ctx) => ctx.slice.order_line.received_qty * ctx.slice.order_line.unit_price,
         { root: "context" },
       ),
     },
@@ -895,11 +1412,11 @@ export const RecordOtbPartialReceipt = Norn.action({
       expression: Norn.expression(
         Schema.Struct({
           slice: Schema.Struct({
-            binding: Schema.Struct({ authorized_cost: Norn.decimal(6), unit_cost: Norn.decimal(4) }),
-            order_line: Schema.Struct({ received_qty: Norn.decimal(6) }),
+            binding: Schema.Struct({ authorized_cost: Norn.decimal(6) }),
+            order_line: Schema.Struct({ received_qty: Norn.decimal(6), unit_price: Norn.decimal(4) }),
           }),
         }),
-        (ctx) => ctx.slice.binding.authorized_cost - (ctx.slice.order_line.received_qty * ctx.slice.binding.unit_cost),
+        (ctx) => ctx.slice.binding.authorized_cost - (ctx.slice.order_line.received_qty * ctx.slice.order_line.unit_price),
         { root: "context" },
       ),
     },
@@ -908,16 +1425,20 @@ export const RecordOtbPartialReceipt = Norn.action({
     Schema.Struct({
       input: PartialReceiptOtbInput,
       slice: Schema.Struct({
-        binding: Schema.Struct({ line_id: Schema.String, ordered_qty: Norn.decimal(6) }),
+        binding: Schema.Struct({ line_id: Schema.String, ordered_qty: Norn.decimal(6), received_qty: Norn.decimal(6) }),
+        order: Schema.Struct({ status: Schema.String }),
         order_line: Schema.Struct({ received_qty: Norn.decimal(6) }),
         receipt: Schema.Struct({ line_id: Schema.NullOr(Schema.String) }),
       }),
+      aggregates: Schema.Struct({ shipped_receipts_qty: Norn.decimal(6) }),
     }),
     (ctx) =>
       ctx.slice.binding.line_id === ctx.input.line_id
+      && (ctx.slice.order.status === "submitted" || ctx.slice.order.status === "partially_received")
       && (ctx.slice.receipt.line_id ?? "") === ctx.input.line_id
-      && ctx.slice.order_line.received_qty > 0
-      && ctx.slice.order_line.received_qty < ctx.slice.binding.ordered_qty,
+      && ctx.slice.order_line.received_qty > ctx.slice.binding.received_qty
+      && ctx.slice.order_line.received_qty < ctx.slice.binding.ordered_qty
+      && ctx.slice.order_line.received_qty === ctx.aggregates.shipped_receipts_qty,
     { root: "context" },
   )],
   writes: [{ type: OtbPoBinding, change: "modified" }],
@@ -931,6 +1452,96 @@ export const RecordOtbPartialReceipt = Norn.action({
       as_of: "as_of",
     },
   },
+})
+
+const UpdatePartialReceiptOtbInput = Schema.Struct({
+  binding_id: Schema.String,
+  line_id: Schema.String,
+  as_of: Norn.timestamp("utc"),
+  received_qty: Norn.decimal(6),
+  recognized_receipt_cost: Norn.decimal(6),
+  unreceived_authorized_cost: Norn.decimal(6),
+})
+
+/**
+ * Recognize a subsequent partial receipt on an already `partially_received`
+ * `plan.OtbPoBinding` (`writeMode: update_only`, no lifecycle self-transition),
+ * shifting exact receipt cost from `unreceived_authorized_cost` to
+ * `recognized_receipt_cost` while conserving net `otb_consumed_cost`.
+ */
+export const UpdateOtbPartialReceipt = Norn.action({
+  id: "plan.otb.update_partial_receipt", title: "Recognize subsequent partial receipt on an OTB PO binding", version: "0.1.0",
+  label: { en: "Update OTB partial receipt", ar: "تحديث الاستلام الجزئي على الميزانية" },
+  input: UpdatePartialReceiptOtbInput, output: BindingRef,
+  scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
+  slice: [
+    { name: "binding", type: OtbPoBinding, key: { property: { from: "input", property: "binding_id" } } },
+    { name: "order_line", type: OrderLine, key: { property: { from: "input", property: "line_id" } } },
+    { name: "order", type: PurchaseOrder, key: { property: { from: "order_line", property: "po_id" } } },
+  ],
+  aggregates: [{
+    name: "shipped_receipts_qty",
+    type: ShipmentReceipt,
+    filter: { line_id: "line_id" },
+    aggregate: { kind: "sum", property: "received_qty" },
+    maxItems: 100,
+  }],
+  derive: [
+    {
+      field: "received_qty", inputRequired: false,
+      expression: Norn.expression(
+        Schema.Struct({ slice: Schema.Struct({ order_line: Schema.Struct({ received_qty: Norn.decimal(6) }) }) }),
+        (ctx) => ctx.slice.order_line.received_qty,
+        { root: "context" },
+      ),
+    },
+    {
+      field: "recognized_receipt_cost", inputRequired: false,
+      expression: Norn.expression(
+        Schema.Struct({
+          slice: Schema.Struct({
+            order_line: Schema.Struct({ received_qty: Norn.decimal(6), unit_price: Norn.decimal(4) }),
+          }),
+        }),
+        (ctx) => ctx.slice.order_line.received_qty * ctx.slice.order_line.unit_price,
+        { root: "context" },
+      ),
+    },
+    {
+      field: "unreceived_authorized_cost", inputRequired: false,
+      expression: Norn.expression(
+        Schema.Struct({
+          slice: Schema.Struct({
+            binding: Schema.Struct({ authorized_cost: Norn.decimal(6) }),
+            order_line: Schema.Struct({ received_qty: Norn.decimal(6), unit_price: Norn.decimal(4) }),
+          }),
+        }),
+        (ctx) => ctx.slice.binding.authorized_cost - (ctx.slice.order_line.received_qty * ctx.slice.order_line.unit_price),
+        { root: "context" },
+      ),
+    },
+  ],
+  preconditions: [Norn.expression(
+    Schema.Struct({
+      input: UpdatePartialReceiptOtbInput,
+      slice: Schema.Struct({
+        binding: Schema.Struct({ status: Schema.String, line_id: Schema.String, ordered_qty: Norn.decimal(6), received_qty: Norn.decimal(6) }),
+        order: Schema.Struct({ status: Schema.String }),
+        order_line: Schema.Struct({ received_qty: Norn.decimal(6) }),
+      }),
+      aggregates: Schema.Struct({ shipped_receipts_qty: Norn.decimal(6) }),
+    }),
+    (ctx) =>
+      ctx.slice.binding.status === "partially_received"
+      && ctx.slice.binding.line_id === ctx.input.line_id
+      && ctx.slice.order.status === "partially_received"
+      && ctx.slice.order_line.received_qty > ctx.slice.binding.received_qty
+      && ctx.slice.order_line.received_qty < ctx.slice.binding.ordered_qty
+      && ctx.slice.order_line.received_qty === ctx.aggregates.shipped_receipts_qty,
+    { root: "context" },
+  )],
+  writes: [{ type: OtbPoBinding, change: "modified" }],
+  effect: { kind: "upsert_input_object", type: OtbPoBinding, objectIdField: "binding_id", writeMode: { kind: "update_only" } },
 })
 
 /** Fulfil an OTB PO binding once the underlying `supply.OrderLine` is fully received. */
@@ -997,17 +1608,21 @@ export const FulfilOtbPoBinding = Norn.action({
 const CancelPoOtbInput = Schema.Struct({
   binding_id: Schema.String,
   po_id: Schema.String,
+  line_id: Schema.String,
   as_of: Norn.timestamp("utc"),
+  next_received_qty: Norn.decimal(6),
+  next_recognized_receipt_cost: Norn.decimal(6),
   next_unreceived_authorized_cost: Norn.decimal(6),
   next_cancelled_released_cost: Norn.decimal(6),
   next_otb_consumed_cost: Norn.decimal(6),
 })
 
 /**
- * Release the unreceived OTB balance when the bound `supply.PurchaseOrder` is
- * cancelled (or partially received and remaining unreceived quantity closed):
- * already-recognized receipts remain consumed, while the unreceived balance
- * returns to remaining OTB.
+ * Release the exact unreceived OTB balance strictly AFTER the bound
+ * `supply.PurchaseOrder` has reached terminal `cancelled` state (where no
+ * further receipts can post). Computes both recognized receipts and the
+ * released remainder directly from checked `supply.OrderLine` and fenced
+ * `supply.ShipmentReceipt` sums, never trusting stale binding balances.
  */
 export const ReleaseCancelledPoOtb = Norn.action({
   id: "plan.otb.release_cancelled_po", title: "Release unreceived OTB on PO cancellation", version: "0.1.0",
@@ -1017,8 +1632,32 @@ export const ReleaseCancelledPoOtb = Norn.action({
   slice: [
     { name: "binding", type: OtbPoBinding, key: { property: { from: "input", property: "binding_id" } } },
     { name: "order", type: PurchaseOrder, key: { property: { from: "input", property: "po_id" } } },
+    { name: "order_line", type: OrderLine, key: { property: { from: "input", property: "line_id" } } },
   ],
+  aggregates: [{
+    name: "shipped_receipts_qty",
+    type: ShipmentReceipt,
+    filter: { line_id: "line_id" },
+    aggregate: { kind: "sum", property: "received_qty" },
+    maxItems: 100,
+  }],
   derive: [
+    {
+      field: "next_received_qty", inputRequired: false,
+      expression: Norn.expression(
+        Schema.Struct({ slice: Schema.Struct({ order_line: Schema.Struct({ received_qty: Norn.decimal(6) }) }) }),
+        (ctx) => ctx.slice.order_line.received_qty,
+        { root: "context" },
+      ),
+    },
+    {
+      field: "next_recognized_receipt_cost", inputRequired: false,
+      expression: Norn.expression(
+        Schema.Struct({ slice: Schema.Struct({ order_line: Schema.Struct({ received_qty: Norn.decimal(6), unit_price: Norn.decimal(4) }) }) }),
+        (ctx) => ctx.slice.order_line.received_qty * ctx.slice.order_line.unit_price,
+        { root: "context" },
+      ),
+    },
     {
       field: "next_unreceived_authorized_cost", inputRequired: false,
       expression: Norn.expression(CancelPoOtbInput, () => 0),
@@ -1026,16 +1665,20 @@ export const ReleaseCancelledPoOtb = Norn.action({
     {
       field: "next_cancelled_released_cost", inputRequired: false,
       expression: Norn.expression(
-        Schema.Struct({ slice: Schema.Struct({ binding: Schema.Struct({ unreceived_authorized_cost: Norn.decimal(6) }) }) }),
-        (ctx) => ctx.slice.binding.unreceived_authorized_cost,
+        Schema.Struct({
+          slice: Schema.Struct({
+            order_line: Schema.Struct({ ordered_qty: Norn.decimal(6), received_qty: Norn.decimal(6), unit_price: Norn.decimal(4) }),
+          }),
+        }),
+        (ctx) => (ctx.slice.order_line.ordered_qty - ctx.slice.order_line.received_qty) * ctx.slice.order_line.unit_price,
         { root: "context" },
       ),
     },
     {
       field: "next_otb_consumed_cost", inputRequired: false,
       expression: Norn.expression(
-        Schema.Struct({ slice: Schema.Struct({ binding: Schema.Struct({ recognized_receipt_cost: Norn.decimal(6) }) }) }),
-        (ctx) => ctx.slice.binding.recognized_receipt_cost,
+        Schema.Struct({ slice: Schema.Struct({ order_line: Schema.Struct({ received_qty: Norn.decimal(6), unit_price: Norn.decimal(4) }) }) }),
+        (ctx) => ctx.slice.order_line.received_qty * ctx.slice.order_line.unit_price,
         { root: "context" },
       ),
     },
@@ -1044,13 +1687,18 @@ export const ReleaseCancelledPoOtb = Norn.action({
     Schema.Struct({
       input: CancelPoOtbInput,
       slice: Schema.Struct({
-        binding: Schema.Struct({ po_id: Schema.String }),
+        binding: Schema.Struct({ po_id: Schema.String, line_id: Schema.String }),
         order: Schema.Struct({ status: Schema.String }),
+        order_line: Schema.Struct({ po_id: Schema.String, received_qty: Norn.decimal(6) }),
       }),
+      aggregates: Schema.Struct({ shipped_receipts_qty: Norn.decimal(6) }),
     }),
     (ctx) =>
       ctx.slice.binding.po_id === ctx.input.po_id
-      && (ctx.slice.order.status === "cancelled" || ctx.slice.order.status === "partially_received"),
+      && ctx.slice.binding.line_id === ctx.input.line_id
+      && ctx.slice.order_line.po_id === ctx.input.po_id
+      && ctx.slice.order.status === "cancelled"
+      && ctx.slice.order_line.received_qty === ctx.aggregates.shipped_receipts_qty,
     { root: "context" },
   )],
   writes: [{ type: OtbPoBinding, change: "modified" }],
@@ -1058,6 +1706,8 @@ export const ReleaseCancelledPoOtb = Norn.action({
     kind: "fire_transition", type: OtbPoBinding, objectIdField: "binding_id",
     lifecycle: "status", transition: "cancel",
     setFields: {
+      received_qty: "next_received_qty",
+      recognized_receipt_cost: "next_recognized_receipt_cost",
       unreceived_authorized_cost: "next_unreceived_authorized_cost",
       cancelled_released_cost: "next_cancelled_released_cost",
       otb_consumed_cost: "next_otb_consumed_cost",
@@ -1164,6 +1814,18 @@ export const PlanAccess = Norn.access({
   id: "plan.access", title: "Merchandise planning and OTB governance", version: "0.1.0",
   rules: [
     {
+      ruleId: "sku_profile",
+      actions: [RegisterSkuProfile],
+      resourceType: SkuProfile, scope: org,
+      allOf: [{ role: { anyOf: ["data_engineer", "planner"] } }],
+    },
+    {
+      ruleId: "po_destination",
+      actions: [AssignPoDestination],
+      resourceType: PoDestination, scope: org,
+      allOf: [{ role: { anyOf: ["planner", "ops_manager"] } }],
+    },
+    {
       ruleId: "author_plan_version",
       actions: [CreatePlanVersion, CreateSupersedingPlanVersion, UpdatePlanVersionDraft, SubmitPlanVersion],
       resourceType: PlanVersion, scope: org,
@@ -1188,6 +1850,18 @@ export const PlanAccess = Norn.access({
       allOf: [{ role: { anyOf: ["planner"] } }],
     },
     {
+      ruleId: "plan_baseline",
+      actions: [ActivatePlanBaseline],
+      resourceType: ActivePlanLine, scope: org,
+      allOf: [{ role: { anyOf: ["merch_director", "ops_manager", "planner"] } }],
+    },
+    {
+      ruleId: "restate_actual_sale",
+      actions: [RestatePosSale],
+      resourceType: PosSale, scope: org,
+      allOf: [{ role: { anyOf: ["ops_manager", "merch_director"] } }],
+    },
+    {
       ruleId: "request_envelope",
       actions: [CreatePlannedEnvelope, ActivatePlannedEnvelope, RequestUnplannedEnvelope, SubmitUnplannedOverride],
       resourceType: OtbEnvelope, scope: org,
@@ -1200,14 +1874,20 @@ export const PlanAccess = Norn.access({
       allOf: [{ role: { anyOf: ["merch_director", "ops_manager"] } }],
     },
     {
-      ruleId: "otb_authorize_and_cancel",
-      actions: [AuthorizePoLineAgainstOtb, ReleaseCancelledPoOtb],
+      ruleId: "otb_authorize_po",
+      actions: [AuthorizePoLineAgainstOtb],
+      resourceType: PurchaseOrder, scope: org,
+      allOf: [{ role: { anyOf: ["ops_manager", "merch_director"] } }],
+    },
+    {
+      ruleId: "otb_cancel_release",
+      actions: [ReleaseCancelledPoOtb],
       resourceType: OtbPoBinding, scope: org,
       allOf: [{ role: { anyOf: ["ops_manager", "merch_director"] } }],
     },
     {
       ruleId: "otb_receive",
-      actions: [RecordOtbPartialReceipt, FulfilOtbPoBinding],
+      actions: [RecordOtbPartialReceipt, UpdateOtbPartialReceipt, FulfilOtbPoBinding],
       resourceType: OtbPoBinding, scope: org,
       allOf: [{ role: { anyOf: ["warehouse_clerk", "ops_manager"] } }],
     },

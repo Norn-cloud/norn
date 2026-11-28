@@ -1,0 +1,214 @@
+{
+  "artifactId": "plan.baseline.activate.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Activate a locked plan line baseline",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.baseline.activate",
+    "createLinks": [
+      {
+        "link": "plan_version",
+        "targetIdField": "plan_version_id",
+        "targetType": "plan.PlanVersion"
+      },
+      {
+        "link": "plan_line",
+        "targetIdField": "plan_line_id",
+        "targetType": "plan.PlanLine"
+      },
+      {
+        "link": "owner_entity",
+        "targetIdField": "entity_id",
+        "targetType": "supply.LegalEntity"
+      },
+      {
+        "link": "store",
+        "targetIdField": "store_id",
+        "targetType": "supply.Store"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "slice.plan_line.brand",
+        "field": "brand",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.plan_line.plan_month",
+        "field": "plan_month",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.plan_line.period_month_date",
+        "field": "period_month_date",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.plan_line.currency",
+        "field": "currency",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.ActivePlanLine.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "slot_id",
+      "objectKind": "plan.ActivePlanLine",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "brand": {
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "dry_goods",
+            "chilled",
+            "pharma",
+            "spares"
+          ],
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "period_month_date": {
+          "type": "string"
+        },
+        "plan_line_id": {
+          "type": "string"
+        },
+        "plan_month": {
+          "type": "string"
+        },
+        "plan_version_id": {
+          "type": "string"
+        },
+        "slot_id": {
+          "type": "string"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot_id",
+        "plan_version_id",
+        "plan_line_id",
+        "entity_id",
+        "store_id",
+        "category",
+        "brand",
+        "plan_month",
+        "period_month_date",
+        "currency",
+        "unit"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "slot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((((slice.version.status == 'locked') and (input.plan_version_id == slice.plan_line.plan_version_id)) and (input.entity_id == slice.plan_line.entity_id)) and (input.store_id == slice.plan_line.store_id)) and (input.category == slice.plan_line.category)) and (input.unit == slice.plan_line.unit)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "plan_version_id"
+          }
+        },
+        "name": "version",
+        "objectType": "plan.PlanVersion"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "plan_line_id"
+          }
+        },
+        "name": "plan_line",
+        "objectType": "plan.PlanLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      }
+    ],
+    "title": "Activate a locked plan line baseline",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "plan.ActivePlanLine"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.baseline.activate.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -74,6 +74,7 @@
             "to": "one"
           },
           "id": "plan_version",
+          "inverse": "spread_targets",
           "target": "plan.PlanVersion"
         },
         {
@@ -125,6 +126,12 @@
           }
         },
         {
+          "id": "period_month_date",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
           "id": "currency",
           "type": {
             "kind": "enum",
@@ -156,6 +163,28 @@
                 "value": "exact_no_remainder"
               }
             ]
+          }
+        },
+        {
+          "id": "bucket_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "allocation_quantum_cost",
+          "type": {
+            "additivity": {
+              "kind": "non_additive"
+            },
+            "kind": "decimal",
+            "scale": 6
+          }
+        },
+        {
+          "id": "target_remainder_quanta",
+          "type": {
+            "kind": "integer"
           }
         },
         {

@@ -41,6 +41,28 @@
         "targetType": "supply.Store"
       }
     ],
+    "derive": [
+      {
+        "expression": "date(input.plan_month + '-01')",
+        "field": "period_month_date",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.spread_base_quanta * slice.spread_target.allocation_quantum_cost",
+        "field": "spread_base_receipts_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.spread_remainder_quanta * slice.spread_target.allocation_quantum_cost",
+        "field": "spread_remainder_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "(input.spread_base_quanta + input.spread_remainder_quanta) * slice.spread_target.allocation_quantum_cost",
+        "field": "planned_receipts_cost",
+        "inputRequired": false
+      }
+    ],
     "effectProgram": {
       "entityArtifactId": "plan.PlanLine.entity",
       "entityArtifactVersion": "0.1.0",
@@ -73,6 +95,9 @@
           "type": "string"
         },
         "entity_id": {
+          "type": "string"
+        },
+        "period_month_date": {
           "type": "string"
         },
         "period_start": {
@@ -175,12 +200,28 @@
           },
           "type": "number"
         },
+        "spread_base_quanta": {
+          "type": "integer"
+        },
+        "spread_base_receipts_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "spread_bucket_index": {
+          "type": "integer"
+        },
         "spread_remainder_cost": {
           "nornType": {
             "kind": "decimal",
             "scale": 6
           },
           "type": "number"
+        },
+        "spread_remainder_quanta": {
+          "type": "integer"
         },
         "spread_target_id": {
           "type": "string"
@@ -207,6 +248,7 @@
         "category",
         "brand",
         "plan_month",
+        "period_month_date",
         "period_start",
         "as_of",
         "currency",
@@ -220,6 +262,10 @@
         "planned_markdowns_cost",
         "planned_markdowns_retail",
         "planned_fine_metal_g",
+        "spread_bucket_index",
+        "spread_base_quanta",
+        "spread_remainder_quanta",
+        "spread_base_receipts_cost",
         "spread_remainder_cost",
         "planned_eom_stock_cost",
         "planned_eom_stock_retail",

@@ -1,0 +1,506 @@
+{
+  "artifactId": "plan.otb.authorize_po_writer.rule",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "rule",
+  "lifecycle": "active",
+  "name": "Create OTB PO binding atomically with PO submission",
+  "namespace": "plan",
+  "payload": {
+    "contract": "decide",
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "edges": [
+        {
+          "id": "edge_0",
+          "sourceId": "in",
+          "targetId": "decision"
+        },
+        {
+          "id": "edge_1",
+          "sourceId": "decision",
+          "targetId": "out"
+        }
+      ],
+      "nodes": [
+        {
+          "id": "in",
+          "name": "input",
+          "type": "inputNode"
+        },
+        {
+          "content": {
+            "expressions": [
+              {
+                "id": "out_facts",
+                "key": "facts",
+                "value": "[{op: 'create', objectType: 'plan.OtbPoBinding', key: event.input.binding_id, values: {binding_id: event.input.binding_id, envelope_id: event.input.envelope_id, plan_version_id: event.input.plan_version_id, entity_id: event.input.entity_id, store_id: event.input.store_id, sku_id: event.input.sku_id, category: event.input.category, brand: event.input.brand, plan_month: event.input.plan_month, po_id: event.input.po_id, line_id: event.input.line_id, currency: event.input.currency, unit: event.input.unit, ordered_qty: event.input.ordered_qty, received_qty: 0, unit_cost: event.input.unit_cost, authorized_cost: event.input.authorized_cost, recognized_receipt_cost: 0, unreceived_authorized_cost: event.input.authorized_cost, cancelled_released_cost: 0, otb_consumed_cost: event.input.authorized_cost, envelope_cap_snapshot: event.input.envelope_cap_snapshot, prior_consumed_snapshot: event.input.prior_consumed_snapshot, expected_payment_date: event.input.expected_payment_date, payment_terms_days: event.input.payment_terms_days, as_of: event.input.as_of, authorized_by: event.actor, status: 'authorized'}}]"
+              },
+              {
+                "id": "out_links",
+                "key": "links",
+                "value": "[{op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'envelope', targetType: 'plan.OtbEnvelope', targetKey: event.input.envelope_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'order', targetType: 'supply.PurchaseOrder', targetKey: event.input.po_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'order_line', targetType: 'supply.OrderLine', targetKey: event.input.line_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'sku', targetType: 'supply.Sku', targetKey: event.input.sku_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'sku_profile', targetType: 'plan.SkuProfile', targetKey: event.input.sku_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'po_destination', targetType: 'plan.PoDestination', targetKey: event.input.po_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'owner_entity', targetType: 'supply.LegalEntity', targetKey: event.input.entity_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'store', targetType: 'supply.Store', targetKey: event.input.store_id}]"
+              },
+              {
+                "id": "out_commands",
+                "key": "commands",
+                "value": "[]"
+              },
+              {
+                "id": "out_timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          },
+          "id": "decision",
+          "name": "decision",
+          "type": "expressionNode"
+        },
+        {
+          "id": "out",
+          "name": "output",
+          "type": "outputNode"
+        }
+      ]
+    },
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "additionalProperties": false,
+          "properties": {
+            "actor": {
+              "type": "string"
+            },
+            "input": {
+              "additionalProperties": false,
+              "properties": {
+                "as_of": {
+                  "type": "string"
+                },
+                "authorized_cost": {
+                  "nornType": {
+                    "kind": "decimal",
+                    "scale": 6
+                  },
+                  "type": "number"
+                },
+                "binding_id": {
+                  "type": "string"
+                },
+                "brand": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string"
+                },
+                "currency": {
+                  "type": "string"
+                },
+                "entity_id": {
+                  "type": "string"
+                },
+                "envelope_cap_snapshot": {
+                  "nornType": {
+                    "kind": "decimal",
+                    "scale": 6
+                  },
+                  "type": "number"
+                },
+                "envelope_id": {
+                  "type": "string"
+                },
+                "expected_payment_date": {
+                  "type": "string"
+                },
+                "line_id": {
+                  "type": "string"
+                },
+                "ordered_qty": {
+                  "nornType": {
+                    "kind": "decimal",
+                    "scale": 6
+                  },
+                  "type": "number"
+                },
+                "payment_terms_days": {
+                  "type": "integer"
+                },
+                "plan_month": {
+                  "type": "string"
+                },
+                "plan_version_id": {
+                  "type": "string"
+                },
+                "po_id": {
+                  "type": "string"
+                },
+                "prior_consumed_snapshot": {
+                  "nornType": {
+                    "kind": "decimal",
+                    "scale": 6
+                  },
+                  "type": "number"
+                },
+                "sku_id": {
+                  "type": "string"
+                },
+                "store_id": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "unit_cost": {
+                  "nornType": {
+                    "kind": "decimal",
+                    "scale": 4
+                  },
+                  "type": "number"
+                }
+              },
+              "required": [
+                "binding_id",
+                "envelope_id",
+                "po_id",
+                "line_id",
+                "expected_payment_date",
+                "payment_terms_days",
+                "as_of",
+                "plan_version_id",
+                "entity_id",
+                "store_id",
+                "sku_id",
+                "category",
+                "brand",
+                "plan_month",
+                "currency",
+                "unit",
+                "ordered_qty",
+                "unit_cost",
+                "authorized_cost",
+                "envelope_cap_snapshot",
+                "prior_consumed_snapshot"
+              ],
+              "type": "object"
+            },
+            "operationId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "input",
+            "actor",
+            "operationId"
+          ],
+          "type": "object"
+        },
+        "slice": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "facts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "objectType": {
+                "enum": [
+                  "plan.OtbPoBinding"
+                ],
+                "type": "string"
+              },
+              "op": {
+                "enum": [
+                  "create"
+                ],
+                "type": "string"
+              },
+              "values": {
+                "additionalProperties": false,
+                "properties": {
+                  "as_of": {
+                    "type": "string"
+                  },
+                  "authorized_by": {
+                    "type": "string"
+                  },
+                  "authorized_cost": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 6
+                    },
+                    "type": "number"
+                  },
+                  "binding_id": {
+                    "type": "string"
+                  },
+                  "brand": {
+                    "type": "string"
+                  },
+                  "cancelled_released_cost": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 6
+                    },
+                    "type": "number"
+                  },
+                  "category": {
+                    "type": "string"
+                  },
+                  "currency": {
+                    "type": "string"
+                  },
+                  "entity_id": {
+                    "type": "string"
+                  },
+                  "envelope_cap_snapshot": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 6
+                    },
+                    "type": "number"
+                  },
+                  "envelope_id": {
+                    "type": "string"
+                  },
+                  "expected_payment_date": {
+                    "type": "string"
+                  },
+                  "line_id": {
+                    "type": "string"
+                  },
+                  "ordered_qty": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 6
+                    },
+                    "type": "number"
+                  },
+                  "otb_consumed_cost": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 6
+                    },
+                    "type": "number"
+                  },
+                  "payment_terms_days": {
+                    "type": "integer"
+                  },
+                  "plan_month": {
+                    "type": "string"
+                  },
+                  "plan_version_id": {
+                    "type": "string"
+                  },
+                  "po_id": {
+                    "type": "string"
+                  },
+                  "prior_consumed_snapshot": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 6
+                    },
+                    "type": "number"
+                  },
+                  "received_qty": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 6
+                    },
+                    "type": "number"
+                  },
+                  "recognized_receipt_cost": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 6
+                    },
+                    "type": "number"
+                  },
+                  "sku_id": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "authorized"
+                    ],
+                    "type": "string"
+                  },
+                  "store_id": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "type": "string"
+                  },
+                  "unit_cost": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 4
+                    },
+                    "type": "number"
+                  },
+                  "unreceived_authorized_cost": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 6
+                    },
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "binding_id",
+                  "envelope_id",
+                  "plan_version_id",
+                  "entity_id",
+                  "store_id",
+                  "sku_id",
+                  "category",
+                  "brand",
+                  "plan_month",
+                  "po_id",
+                  "line_id",
+                  "currency",
+                  "unit",
+                  "ordered_qty",
+                  "received_qty",
+                  "unit_cost",
+                  "authorized_cost",
+                  "recognized_receipt_cost",
+                  "unreceived_authorized_cost",
+                  "cancelled_released_cost",
+                  "otb_consumed_cost",
+                  "envelope_cap_snapshot",
+                  "prior_consumed_snapshot",
+                  "expected_payment_date",
+                  "payment_terms_days",
+                  "as_of",
+                  "authorized_by",
+                  "status"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key",
+              "values"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "links": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "link": {
+                "enum": [
+                  "envelope",
+                  "order",
+                  "order_line",
+                  "sku",
+                  "sku_profile",
+                  "po_destination",
+                  "owner_entity",
+                  "store"
+                ],
+                "type": "string"
+              },
+              "op": {
+                "enum": [
+                  "add"
+                ],
+                "type": "string"
+              },
+              "sourceKey": {
+                "type": "string"
+              },
+              "sourceType": {
+                "enum": [
+                  "plan.OtbPoBinding"
+                ],
+                "type": "string"
+              },
+              "targetKey": {
+                "type": "string"
+              },
+              "targetType": {
+                "enum": [
+                  "plan.OtbEnvelope",
+                  "supply.PurchaseOrder",
+                  "supply.OrderLine",
+                  "supply.Sku",
+                  "plan.SkuProfile",
+                  "plan.PoDestination",
+                  "supply.LegalEntity",
+                  "supply.Store"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "sourceType",
+              "sourceKey",
+              "link",
+              "targetType",
+              "targetKey"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "timers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "facts",
+        "links",
+        "commands",
+        "timers"
+      ],
+      "type": "object"
+    },
+    "ruleId": "plan.otb.authorize_po_writer",
+    "ruleVersion": "2.0",
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.otb.authorize_po_writer.rule.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -100,6 +100,7 @@
             "to": "one"
           },
           "id": "order",
+          "inverse": "otb_bindings",
           "target": "supply.PurchaseOrder"
         },
         {
@@ -110,6 +111,33 @@
           },
           "id": "order_line",
           "target": "supply.OrderLine"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "sku",
+          "target": "supply.Sku"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "sku_profile",
+          "target": "plan.SkuProfile"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "po_destination",
+          "target": "plan.PoDestination"
         },
         {
           "cardinality": {
@@ -158,6 +186,12 @@
         },
         {
           "id": "store_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "sku_id",
           "type": {
             "kind": "text"
           }
@@ -369,7 +403,6 @@
         },
         {
           "id": "authorized_by",
-          "protected": true,
           "type": {
             "kind": "text"
           }

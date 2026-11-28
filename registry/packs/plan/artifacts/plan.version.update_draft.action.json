@@ -12,6 +12,13 @@
       "version": "0.1.0"
     },
     "actionId": "plan.version.update_draft",
+    "derive": [
+      {
+        "expression": "clock.nowIso",
+        "field": "recorded_at",
+        "inputRequired": false
+      }
+    ],
     "effectProgram": {
       "entityArtifactId": "plan.PlanVersion.entity",
       "entityArtifactVersion": "0.1.0",
@@ -19,7 +26,9 @@
       "objectIdField": "plan_version_id",
       "objectKind": "plan.PlanVersion",
       "writeMode": {
-        "kind": "update_only"
+        "kind": "draft_only",
+        "lifecycle": "status",
+        "state": "draft"
       }
     },
     "idempotent": true,

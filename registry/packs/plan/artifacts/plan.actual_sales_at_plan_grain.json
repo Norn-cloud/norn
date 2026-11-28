@@ -18,12 +18,18 @@
       "kind": "entity",
       "required": true,
       "version": "0.1.0"
+    },
+    {
+      "artifactId": "plan.SkuProfile.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
     }
   ],
   "irVersion": "0.1",
   "kind": "derived",
   "lifecycle": "active",
-  "name": "Actual POS sales aggregated to plan grain",
+  "name": "Actual POS sales aggregated to full plan grain",
   "namespace": "plan",
   "payload": {
     "calc": {
@@ -39,6 +45,9 @@
             },
             {
               "column": "sk_category"
+            },
+            {
+              "column": "sp_brand"
             },
             {
               "column": "unit"
@@ -90,6 +99,21 @@
         },
         "sale_with_dims": {
           "kind": "inner",
+          "left": "sale_with_sku",
+          "on": {
+            "key": {
+              "left": [
+                "sku_id"
+              ],
+              "right": "primary"
+            }
+          },
+          "op": "join",
+          "prefix": "sp_",
+          "right": "sku_profile"
+        },
+        "sale_with_sku": {
+          "kind": "inner",
           "left": "sale_with_store",
           "on": {
             "key": {
@@ -122,6 +146,10 @@
           "input": "sku",
           "op": "scan"
         },
+        "sku_profile": {
+          "input": "sku_profile",
+          "op": "scan"
+        },
         "store": {
           "input": "store",
           "op": "scan"
@@ -130,7 +158,7 @@
           "columns": [
             {
               "expression": "input.st_entity_id",
-              "name": "entity_id"
+              "name": "st_entity_id"
             },
             {
               "expression": "input.store_id",
@@ -138,7 +166,11 @@
             },
             {
               "expression": "input.sk_category",
-              "name": "category"
+              "name": "sk_category"
+            },
+            {
+              "expression": "input.sp_brand",
+              "name": "sp_brand"
             },
             {
               "expression": "input.unit",
@@ -191,6 +223,12 @@
       {
         "alias": "sku",
         "artifactId": "supply.Sku.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "sku_profile",
+        "artifactId": "plan.SkuProfile.entity",
         "kind": "entity",
         "version": "0.1.0"
       }

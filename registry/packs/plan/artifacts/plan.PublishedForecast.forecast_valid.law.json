@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "A published plan-grain forecast carries non-negative predicted sales, cost, quantity, and fine-metal grams.",
+  "name": "A published plan-grain forecast carries non-negative predicted sales, cost, quantity, and fine-metal grams at a canonical YYYY-MM period_start.",
   "namespace": "plan",
   "payload": {
     "id": "plan.PublishedForecast.forecast_valid",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/plan/plan.ts"
     },
-    "rationale": "A published plan-grain forecast carries non-negative predicted sales, cost, quantity, and fine-metal grams.",
+    "rationale": "A published plan-grain forecast carries non-negative predicted sales, cost, quantity, and fine-metal grams at a canonical YYYY-MM period_start.",
     "response": {
-      "expression": "((((len(self.plan_month) == 7) and (self.forecast_sales_retail >= 0)) and (self.forecast_sales_cost >= 0)) and (self.forecast_sales_qty >= 0)) and (self.forecast_fine_metal_g >= (self.forecast_fine_metal_g - self.forecast_fine_metal_g))",
+      "expression": "(((((len(self.plan_month) == 7) and (timestamp(self.period_start) == timestamp(self.plan_month + '-01T00:00:00Z'))) and (self.forecast_sales_retail >= 0)) and (self.forecast_sales_cost >= 0)) and (self.forecast_sales_qty >= 0)) and (self.forecast_fine_metal_g >= (self.forecast_fine_metal_g - self.forecast_fine_metal_g))",
       "kind": "predicate"
     },
     "scope": {

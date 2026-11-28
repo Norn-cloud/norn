@@ -229,7 +229,7 @@ export const OrderLifecycle = Norn.interfaceType({
     { id: "submit", from: ["draft"], to: "submitted" },
     { id: "receive_partial", from: ["submitted"], to: "partially_received" },
     { id: "fulfil", from: ["submitted", "partially_received"], to: "fulfilled" },
-    { id: "cancel", from: ["draft", "submitted"], to: "cancelled" },
+    { id: "cancel", from: ["draft", "submitted", "partially_received"], to: "cancelled" },
   ] }],
 })
 
@@ -260,7 +260,7 @@ export const PurchaseOrder = Norn.type({
     { id: "submit", from: ["draft"], to: "submitted" },
     { id: "receive_partial", from: ["submitted"], to: "partially_received" },
     { id: "fulfil", from: ["submitted", "partially_received"], to: "fulfilled" },
-    { id: "cancel", from: ["draft", "submitted"], to: "cancelled" },
+    { id: "cancel", from: ["draft", "submitted", "partially_received"], to: "cancelled" },
   ] }],
 })
 

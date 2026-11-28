@@ -24,6 +24,11 @@
         "expression": "actor.subjectId",
         "field": "created_by",
         "inputRequired": false
+      },
+      {
+        "expression": "clock.nowIso",
+        "field": "recorded_at",
+        "inputRequired": false
       }
     ],
     "effectProgram": {

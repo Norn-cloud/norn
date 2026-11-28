@@ -12,6 +12,20 @@
       "version": "0.1.0"
     },
     "actionId": "plan.otb.record_partial_receipt",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "received_qty"
+        },
+        "filter": {
+          "line_id": "line_id"
+        },
+        "maxItems": 100,
+        "name": "shipped_receipts_qty",
+        "objectType": "supply.ShipmentReceipt"
+      }
+    ],
     "derive": [
       {
         "expression": "slice.order_line.received_qty",
@@ -19,12 +33,12 @@
         "inputRequired": false
       },
       {
-        "expression": "slice.order_line.received_qty * slice.binding.unit_cost",
+        "expression": "slice.order_line.received_qty * slice.order_line.unit_price",
         "field": "next_recognized_receipt_cost",
         "inputRequired": false
       },
       {
-        "expression": "slice.binding.authorized_cost - (slice.order_line.received_qty * slice.binding.unit_cost)",
+        "expression": "slice.binding.authorized_cost - (slice.order_line.received_qty * slice.order_line.unit_price)",
         "field": "next_unreceived_authorized_cost",
         "inputRequired": false
       }
@@ -107,7 +121,7 @@
       "type": "object"
     },
     "preconditions": [
-      "(((slice.binding.line_id == input.line_id) and ((slice.receipt.line_id ?? '') == input.line_id)) and (slice.order_line.received_qty > 0)) and (slice.order_line.received_qty < slice.binding.ordered_qty)"
+      "(((((slice.binding.line_id == input.line_id) and ((slice.order.status == 'submitted') or (slice.order.status == 'partially_received'))) and ((slice.receipt.line_id ?? '') == input.line_id)) and (slice.order_line.received_qty > slice.binding.received_qty)) and (slice.order_line.received_qty < slice.binding.ordered_qty)) and (slice.order_line.received_qty == aggregates.shipped_receipts_qty)"
     ],
     "scopeRequired": [
       "orgId",
@@ -133,6 +147,16 @@
         },
         "name": "order_line",
         "objectType": "supply.OrderLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "order_line",
+            "property": "po_id"
+          }
+        },
+        "name": "order",
+        "objectType": "supply.PurchaseOrder"
       },
       {
         "key": {

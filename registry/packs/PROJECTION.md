@@ -10,7 +10,7 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 | `norn.link.erpnext.canon` | 59 | 40 | 8 | 11 | 0 |
 | `norn.link.frappe-hrms.workforce` | 34 | 34 | 0 | 0 | 0 |
 | `norn.link.odoo.canon` | 42 | 27 | 3 | 11 | 1 |
-| `norn.link.plan.canon` | 10 | 1 | 1 | 8 | 0 |
+| `norn.link.plan.canon` | 14 | 1 | 4 | 9 | 0 |
 | `norn.link.shopify.canon` | 35 | 14 | 5 | 16 | 0 |
 | `norn.link.supply-lab.canon` | 20 | 2 | 2 | 16 | 0 |
 
@@ -207,14 +207,18 @@ None.
 
 ### Maps
 
-- `norn.plan.guard.otb.exceeded` subsumed_by `norn.finance.guard.allocation.exceeds.outstanding`
+- `norn.plan.guard.amount.nonpositive` subsumed_by `norn.finance.guard.amount.nonpositive`
 
 ### Residual (system-specific)
 
+- `norn.plan.active.baseline`
 - `norn.plan.otb.po.binding`
+- `norn.plan.po.destination`
+- `norn.plan.sku.profile`
 
 ### Missing from the canon
 
+- `norn.plan.guard.otb.exceeded`
 - `norn.plan.guard.spread.drift`
 - `norn.plan.line`
 - `norn.plan.line.planned.eom.stock.cost`

@@ -2,16 +2,17 @@ import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 import { Commitment } from "../../core/src/rea.ts"
 import {
-  CountEvidence, OrderLine, PurchaseOrder, ReceiptEvidence,
+  CountEvidence, OrderLine, PurchaseOrder, ReceiptEvidence, Sku,
 } from "../supply-lab/supply.ts"
 import { LegalEntity, SaleEvidence, Store } from "../supply-lab/retail.ts"
 
 // Resource Planning Lab (S2 — Versioned Plan Pack & Open-to-Buy):
 // Bitemporal, versioned merchandise planning (`PlanVersion`, `PlanSpreadTarget`,
-// `PlanLine`), internal purchase-at-cost budget envelopes (`OtbEnvelope`),
-// PO commitment bindings (`OtbPoBinding`), and published demand/sales forecasts
-// (`PublishedForecast`) composed additively with `supply-lab` and `ml` — zero
-// domain opcodes.
+// `PlanLine`, `ActivePlanLine`), governed SKU/PO merchandise grain profiles
+// (`SkuProfile`, `PoDestination`), internal purchase-at-cost budget envelopes
+// (`OtbEnvelope`), atomic PO commitment bindings (`OtbPoBinding`), and
+// published demand/sales forecasts (`PublishedForecast`) composed additively
+// with `supply-lab` and `ml` — zero domain opcodes.
 //
 // Structural guarantees:
 // - `PlanTarget` is `disjointWith` `core.Commitment` (budgets/envelopes are
@@ -20,19 +21,27 @@ import { LegalEntity, SaleEvidence, Store } from "../supply-lab/retail.ts"
 //   `ReceiptEvidence`, `SaleEvidence`), so plans can never share a type or flag
 //   with actuals.
 // - `PlanVersion` is bitemporal (D07) with lifecycle
-//   `draft -> submitted -> approved -> locked -> superseded`, immutable once
-//   `locked`; supersession links successor -> predecessor without mutating
-//   locked history.
+//   `draft -> submitted -> approved -> locked -> superseded`, draft-only edits,
+//   all top-down spreads sealed before approval/lock, immutable once `locked`,
+//   and authenticated commit time for knowledge selection.
 // - `PlanLine` lives strictly at `(entity x store x category x brand x ISO month)`
-//   grain with additive flow measures (sales, receipts, markdowns, UCUM fine-metal
-//   grams `#1794`) and semi-additive EOM stock (`METRIC-ADDITIVITY-1`,
+//   grain with strict `YYYY-MM` / `period_start` / EOM `as_of` alignment,
+//   additive flow measures (sales, receipts, markdowns, UCUM fine-metal grams
+//   `#1794`), and semi-additive EOM stock (`METRIC-ADDITIVITY-1`,
 //   `METRIC-UNIT-PARTITION-1`).
-// - `PlanSpreadTarget` enforces exact top-down spread conservation (`LAW-LINK-MANY-1`)
-//   with explicit decimal rounding remainder tracking (no silent drift).
+// - `PlanSpreadTarget` enforces deterministic exact top-down spread conservation
+//   (`LAW-LINK-MANY-1`) with explicit quantum-aligned rounding remainder rules.
+// - `PurchaseOrderRequiresOtbBindings` blocks unbudgeted `supply.po.submit`
+//   bypasses whenever the Plan pack is installed; `plan.otb.authorize_po_line`
+//   performs the fenced OTB check, creates `OtbPoBinding`, and submits
+//   `supply.PurchaseOrder` in one atomic checked transaction using governed
+//   `OrderLine.unit_price`, `Sku.category`, `SkuProfile.brand`, and
+//   `PoDestination` store/entity/month facts.
 
 const Currency = Schema.Literals(["EGP", "USD", "EUR"])
 const PlanUnit = Schema.Literals(["each", "kg", "l", "g"])
 const SupplyUnit = Schema.Literals(["each", "kg", "l"])
+const SupplyCategory = Schema.Literals(["dry_goods", "chilled", "pharma", "spares"])
 const RoundingRule = Schema.Literals(["largest_remainder", "last_bucket_remainder", "exact_no_remainder"])
 const PlanVersionStatus = Schema.Literals(["draft", "submitted", "approved", "locked", "superseded"])
 const SpreadStatus = Schema.Literals(["open", "sealed"])
@@ -72,6 +81,91 @@ export const PlanTarget = Norn.interfaceType({
   }),
 })
 
+// ----------------------------------------- governed SKU & PO grain metadata
+
+const SkuProfileProps = Schema.Struct({
+  sku_id: Schema.String,
+  category: Schema.Literals(["dry_goods", "chilled", "pharma", "spares"]),
+  brand: Schema.String,
+  unit_of_measure: SupplyUnit,
+})
+
+/**
+ * Governed merchandise brand & category profile for a `supply.Sku` (keyed
+ * 1-to-1 by `sku_id`), so OTB authorization and `Actual - Plan` variance derive
+ * `(category, brand)` strictly from governed catalog facts rather than caller
+ * claims.
+ */
+export const SkuProfile = Norn.type({
+  name: "plan.SkuProfile", title: "SKU merchandise profile", version: "0.1.0",
+  label: { en: "SKU profile", ar: "ملف الصنف التجاري" },
+  properties: SkuProfileProps,
+  needsReview: ["ar"],
+  identity: [{ name: "primary", properties: ["sku_id"] }],
+  links: [
+    { id: "sku", target: Sku, cardinality: { to: "one", from: "one", required: true } },
+  ],
+})
+
+export const SkuProfileMatchesSku = Norn.law("matches_sku", {
+  on: SkuProfile,
+  must: (self) =>
+    self.sku_id === self.sku.sku_id
+    && self.category === self.sku.category
+    && self.unit_of_measure === self.sku.unit_of_measure
+    && Norn.byteLength(self.brand) > 0,
+  because: "A SKU merchandise profile must match its catalog SKU's identity, category, and unit of measure and carry a non-empty brand.",
+})
+
+const PoDestinationProps = Schema.Struct({
+  po_id: Schema.String,
+  store_id: Schema.String,
+  entity_id: Schema.String,
+  plan_month: Schema.String,
+  period_month_date: Norn.date(),
+  currency: Currency,
+})
+
+/**
+ * Governed destination store, legal entity, and planning month binding for a
+ * `supply.PurchaseOrder` (keyed 1-to-1 by `po_id`), so atomic OTB authorization
+ * derives `(entity_id, store_id, plan_month, currency)` strictly from governed
+ * order and store facts.
+ */
+export const PoDestination = Norn.type({
+  name: "plan.PoDestination", title: "Purchase order destination grain", version: "0.1.0",
+  label: { en: "PO destination", ar: "وجهة أمر الشراء" },
+  properties: PoDestinationProps,
+  needsReview: ["ar"],
+  identity: [{ name: "primary", properties: ["po_id"] }],
+  links: [
+    { id: "order", target: PurchaseOrder, cardinality: { to: "one", from: "one", required: true } },
+    { id: "store", target: Store, cardinality: { to: "one", from: "many", required: true } },
+    { id: "owner_entity", target: LegalEntity, cardinality: { to: "one", from: "many", required: true } },
+  ],
+})
+
+export const PoDestinationMatchesOrderAndStore = Norn.law("matches_order_and_store", {
+  on: PoDestination,
+  must: (self) =>
+    self.po_id === self.order.po_id
+    && self.store_id === self.store.store_id
+    && self.entity_id === self.store.entity_id
+    && self.entity_id === self.owner_entity.entity_id
+    && self.currency === self.store.currency
+    && self.currency === self.owner_entity.functional_currency
+    && self.currency === self.order.currency
+    && Norn.byteLength(self.plan_month) === 7
+    && Norn.parseDate(self.period_month_date) === Norn.parseDate(self.plan_month + "-01")
+    && Norn.parseTimestamp(self.order.promised_at) >= Norn.parseTimestamp(self.plan_month + "-01T00:00:00Z")
+    && Norn.secondsBetween(self.plan_month + "-01T00:00:00Z", self.order.promised_at) < (
+      (self.plan_month.endsWith("-04") || self.plan_month.endsWith("-06") || self.plan_month.endsWith("-09") || self.plan_month.endsWith("-11"))
+        ? 30 * 86400
+        : self.plan_month.endsWith("-02") ? 29 * 86400 : 31 * 86400
+    ),
+  because: "A purchase order destination must align with its order currency, store owning entity, and canonical YYYY-MM month containing promised_at.",
+})
+
 // ------------------------------------------------ bitemporal PlanVersion (D07)
 
 const PlanVersionProps = Schema.Struct({
@@ -80,7 +174,7 @@ const PlanVersionProps = Schema.Struct({
   plan_code: Schema.String,
   revision_number: Schema.Int,
   currency: Currency,
-  // Bitemporal window (D07): effective horizon vs knowledge recording time.
+  // Bitemporal window (D07): effective horizon vs authenticated commit clock time.
   effective_from: Norn.timestamp("utc"),
   effective_to: Norn.timestamp("utc"),
   recorded_at: Norn.timestamp("utc"),
@@ -93,9 +187,9 @@ const PlanVersionProps = Schema.Struct({
 /**
  * Versioned, bitemporal merchandise plan container (D07).
  * Lifecycle: `draft -> submitted -> approved -> locked -> superseded`.
- * Immutable once `locked`; superseding creates a new successor linking back
- * to the locked predecessor and transitions `locked -> superseded` without
- * modifying any locked property.
+ * Edits are restricted strictly to `draft`; all top-down spreads must be sealed
+ * before approval/lock; immutable once `locked`; superseding links successor ->
+ * predecessor without mutating locked history.
  */
 export const PlanVersion = Norn.type({
   name: "plan.PlanVersion", title: "Plan version", version: "0.1.0",
@@ -192,8 +286,12 @@ const PlanSpreadTargetProps = Schema.Struct({
   category: Schema.String,
   brand: Schema.String,
   plan_month: Schema.String, // canonical ISO month "YYYY-MM"
+  period_month_date: Norn.date(), // exact first calendar day "YYYY-MM-01"
   currency: Currency,
   rounding_rule: RoundingRule,
+  bucket_count: Schema.Int,
+  allocation_quantum_cost: Norn.decimal(6, { additivity: { kind: "non_additive" } }),
+  target_remainder_quanta: Schema.Int,
   target_sales_retail: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
   target_sales_cost: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
   target_receipts_cost: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
@@ -203,16 +301,16 @@ const PlanSpreadTargetProps = Schema.Struct({
   target_eom_stock_cost: Norn.decimal(6, { additivity: { kind: "semi_additive" }, unitSource: ["currency"] }),
   // Fine-metal grams target via UCUM (#1794) for jewelry categories.
   target_fine_metal_g: Norn.decimal(6, { unit: { system: "ucum", code: "g" }, additivity: { kind: "additive" } }),
-  // Explicit decimal rounding remainder distributed to child lines (no silent rounding drift).
+  // Explicit deterministic decimal rounding remainder distributed to child lines.
   target_rounding_remainder_cost: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
   status: SpreadStatus,
 })
 
 /**
  * Top-down merchandise plan target at `(plan_version, entity, category, brand,
- * ISO month)` grain. Sealing requires exact conservation across all child
- * `PlanLine`s (including explicit decimal rounding remainder), preventing any
- * silent rounding drift.
+ * ISO month)` grain. Sealing requires exact conservation across all
+ * `bucket_count` child `PlanLine`s with deterministic quantum-aligned rounding
+ * remainder allocation.
  */
 export const PlanSpreadTarget = Norn.type({
   name: "plan.PlanSpreadTarget", title: "Top-down plan spread target", version: "0.1.0",
@@ -235,7 +333,7 @@ export const PlanSpreadTarget = Norn.type({
   ],
   defaults: { status: "open" },
   links: [
-    { id: "plan_version", target: PlanVersion, cardinality: { to: "one", from: "many", required: true } },
+    { id: "plan_version", target: PlanVersion, cardinality: { to: "one", from: "many", required: true }, inverse: "spread_targets" },
     { id: "owner_entity", target: LegalEntity, cardinality: { to: "one", from: "many", required: true } },
   ],
   lifecycles: [{
@@ -248,10 +346,24 @@ export const PlanSpreadTarget = Norn.type({
   }],
 })
 
+// LAW-LINK-MANY-1: every top-down spread under a PlanVersion must be sealed before approval or lock.
+export const PlanVersionSpreadsSealed = Norn.law("spreads_sealed_before_approval", {
+  on: PlanVersion,
+  inverses: { spread_targets: PlanSpreadTarget },
+  when: (self) => self.status === "approved" || self.status === "locked" || self.status === "superseded",
+  must: (self) => self.spread_targets.every((s) => s.status === "sealed"),
+  because: "A plan version cannot be approved or locked while any top-down PlanSpreadTarget under it remains unsealed.",
+})
+
 export const SpreadTargetValid = Norn.law("spread_target_valid", {
   on: PlanSpreadTarget,
   must: (self) =>
     Norn.byteLength(self.plan_month) === 7
+    && Norn.parseDate(self.period_month_date) === Norn.parseDate(self.plan_month + "-01")
+    && self.bucket_count >= 1
+    && self.allocation_quantum_cost > 0
+    && self.target_remainder_quanta >= 0
+    && self.target_remainder_quanta < self.bucket_count
     && self.target_sales_retail >= 0
     && self.target_sales_cost >= 0
     && self.target_receipts_cost >= 0
@@ -260,15 +372,18 @@ export const SpreadTargetValid = Norn.law("spread_target_valid", {
     && self.target_markdowns_retail >= 0
     && self.target_eom_stock_cost >= 0
     && self.target_fine_metal_g >= self.target_fine_metal_g - self.target_fine_metal_g
-    && (self.rounding_rule !== "exact_no_remainder" || self.target_rounding_remainder_cost === 0),
-  because: "A top-down spread target carries non-negative planned measures, a canonical YYYY-MM month, and zero remainder when exact_no_remainder is declared.",
+    && self.target_rounding_remainder_cost === self.target_remainder_quanta * self.allocation_quantum_cost
+    && (self.rounding_rule !== "exact_no_remainder" || self.target_remainder_quanta === 0),
+  because: "A top-down spread target carries non-negative measures, a valid YYYY-MM ISO month, positive bucket count and quantum, and an exact integer-quanta remainder strictly below bucket_count (zero under exact_no_remainder).",
 })
 export const SpreadTargetValidHolds = Norn.example("a valid top-down spread target holds", {
   of: SpreadTargetValid,
   given: {
     spread_target_id: "SP-1", plan_version_id: "PV-2026-V1", entity_id: "LE-SOLE",
-    category: "dry_goods", brand: "nile_foods", plan_month: "2026-09", currency: "EGP",
-    rounding_rule: "largest_remainder", target_sales_retail: 10000, target_sales_cost: 6000,
+    category: "dry_goods", brand: "nile_foods", plan_month: "2026-09", period_month_date: "2026-09-01",
+    currency: "EGP", rounding_rule: "largest_remainder", bucket_count: 2, allocation_quantum_cost: 0.01,
+    target_remainder_quanta: 1,
+    target_sales_retail: 10000, target_sales_cost: 6000,
     target_receipts_cost: 10000.01, target_receipts_retail: 16000, target_markdowns_cost: 200,
     target_markdowns_retail: 350, target_eom_stock_cost: 5000, target_fine_metal_g: 0,
     target_rounding_remainder_cost: 0.01, status: "open",
@@ -279,11 +394,27 @@ export const SpreadTargetExactWithRemainderViolated = Norn.example("exact_no_rem
   of: SpreadTargetValid,
   given: {
     spread_target_id: "SP-2", plan_version_id: "PV-2026-V1", entity_id: "LE-SOLE",
-    category: "dry_goods", brand: "nile_foods", plan_month: "2026-09", currency: "EGP",
-    rounding_rule: "exact_no_remainder", target_sales_retail: 10000, target_sales_cost: 6000,
+    category: "dry_goods", brand: "nile_foods", plan_month: "2026-09", period_month_date: "2026-09-01",
+    currency: "EGP", rounding_rule: "exact_no_remainder", bucket_count: 2, allocation_quantum_cost: 0.01,
+    target_remainder_quanta: 1,
+    target_sales_retail: 10000, target_sales_cost: 6000,
     target_receipts_cost: 10000.01, target_receipts_retail: 16000, target_markdowns_cost: 200,
     target_markdowns_retail: 350, target_eom_stock_cost: 5000, target_fine_metal_g: 0,
     target_rounding_remainder_cost: 0.01, status: "open",
+  },
+  expect: "violated",
+})
+export const SpreadTargetRemainderAboveBoundViolated = Norn.example("remainder reaching bucket_count * quantum is refused", {
+  of: SpreadTargetValid,
+  given: {
+    spread_target_id: "SP-3", plan_version_id: "PV-2026-V1", entity_id: "LE-SOLE",
+    category: "dry_goods", brand: "nile_foods", plan_month: "2026-09", period_month_date: "2026-09-01",
+    currency: "EGP", rounding_rule: "largest_remainder", bucket_count: 2, allocation_quantum_cost: 0.01,
+    target_remainder_quanta: 2,
+    target_sales_retail: 10000, target_sales_cost: 6000,
+    target_receipts_cost: 10000.02, target_receipts_retail: 16000, target_markdowns_cost: 200,
+    target_markdowns_retail: 350, target_eom_stock_cost: 5000, target_fine_metal_g: 0,
+    target_rounding_remainder_cost: 0.02, status: "open",
   },
   expect: "violated",
 })
@@ -299,8 +430,9 @@ const PlanLineProps = Schema.Struct({
   category: Schema.String,
   brand: Schema.String,
   plan_month: Schema.String, // canonical ISO month "YYYY-MM"
+  period_month_date: Norn.date(), // exact first calendar day "YYYY-MM-01"
   period_start: Norn.timestamp("utc"), // first UTC instant of the ISO month
-  as_of: Norn.timestamp("utc"), // valid-time anchor for semi-additive EOM stock
+  as_of: Norn.timestamp("utc"), // exact end-of-month UTC instant for semi-additive EOM stock
   currency: Currency,
   unit: PlanUnit,
   // Additive flow measures:
@@ -314,7 +446,11 @@ const PlanLineProps = Schema.Struct({
   planned_markdowns_retail: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
   // Jewelry fine-metal mass target via UCUM (#1794), strictly distinct from currency and pieces.
   planned_fine_metal_g: Norn.decimal(6, { unit: { system: "ucum", code: "g" }, additivity: { kind: "additive" } }),
-  // Explicit exact decimal remainder attributed to this child line under top-down spread.
+  // Deterministic top-down spread decomposition: planned_receipts_cost == spread_base_receipts_cost + spread_remainder_cost.
+  spread_bucket_index: Schema.Int,
+  spread_base_quanta: Schema.Int,
+  spread_remainder_quanta: Schema.Int,
+  spread_base_receipts_cost: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
   spread_remainder_cost: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
   // Semi-additive end-of-month stock measures (never summed across months):
   planned_eom_stock_cost: Norn.decimal(6, { additivity: { kind: "semi_additive" }, unitSource: ["currency"] }),
@@ -352,6 +488,28 @@ export const PlanLineMeasuresNonNegative = Norn.law("measures_non_negative", {
   on: PlanLine,
   must: (self) =>
     Norn.byteLength(self.plan_month) === 7
+    && Norn.parseDate(self.period_month_date) === Norn.parseDate(self.plan_month + "-01")
+    && Norn.parseTimestamp(self.period_start) === Norn.parseTimestamp(self.plan_month + "-01T00:00:00Z")
+    && (
+      (
+        (self.plan_month.endsWith("-01") || self.plan_month.endsWith("-03") || self.plan_month.endsWith("-05")
+          || self.plan_month.endsWith("-07") || self.plan_month.endsWith("-08") || self.plan_month.endsWith("-10")
+          || self.plan_month.endsWith("-12"))
+        && Norn.secondsBetween(self.period_start, self.as_of) === (31 * 86400) - 1
+      )
+      || (
+        (self.plan_month.endsWith("-04") || self.plan_month.endsWith("-06")
+          || self.plan_month.endsWith("-09") || self.plan_month.endsWith("-11"))
+        && Norn.secondsBetween(self.period_start, self.as_of) === (30 * 86400) - 1
+      )
+      || (
+        self.plan_month.endsWith("-02")
+        && (
+          Norn.secondsBetween(self.period_start, self.as_of) === (28 * 86400) - 1
+          || Norn.secondsBetween(self.period_start, self.as_of) === (29 * 86400) - 1
+        )
+      )
+    )
     && self.planned_sales_retail >= 0
     && self.planned_sales_cost >= 0
     && self.planned_sales_qty >= 0
@@ -361,23 +519,31 @@ export const PlanLineMeasuresNonNegative = Norn.law("measures_non_negative", {
     && self.planned_markdowns_cost >= 0
     && self.planned_markdowns_retail >= 0
     && self.planned_fine_metal_g >= self.planned_fine_metal_g - self.planned_fine_metal_g
+    && self.spread_bucket_index >= 0
+    && self.spread_base_quanta >= 0
+    && self.spread_remainder_quanta >= 0
+    && self.spread_base_receipts_cost >= 0
+    && self.spread_remainder_cost >= 0
+    && self.planned_receipts_cost === self.spread_base_receipts_cost + self.spread_remainder_cost
+    && (self.spread_target_id !== null || (self.spread_bucket_index === 0 && self.spread_base_quanta === 0 && self.spread_remainder_quanta === 0 && self.spread_remainder_cost === 0))
     && self.planned_eom_stock_cost >= 0
     && self.planned_eom_stock_retail >= 0
     && self.planned_eom_stock_qty >= 0,
-  because: "A plan line carries non-negative planned sales, receipts, markdowns, fine-metal mass, and EOM stock at a canonical YYYY-MM month.",
+  because: "A plan line carries non-negative measures, exact spread decomposition, a valid YYYY-MM ISO month, matching period_start, and an exact end-of-month EOM stock snapshot timestamp.",
 })
 export const PlanLineValidHolds = Norn.example("a valid jewelry/retail plan line holds", {
   of: PlanLineMeasuresNonNegative,
   given: {
     plan_line_id: "PL-1", plan_version_id: "PV-2026-V1", spread_target_id: null,
     entity_id: "LE-SOLE", store_id: "ST-CFC", category: "gold_jewelry", brand: "nile_gold",
-    plan_month: "2026-09", period_start: "2026-09-01T00:00:00Z", as_of: "2026-09-30T23:59:59Z",
+    plan_month: "2026-09", period_month_date: "2026-09-01",
+    period_start: "2026-09-01T00:00:00Z", as_of: "2026-09-30T23:59:59Z",
     currency: "EGP", unit: "g",
     planned_sales_retail: 50000, planned_sales_cost: 38000, planned_sales_qty: 120,
     planned_receipts_cost: 40000, planned_receipts_retail: 52000, planned_receipts_qty: 125,
     planned_markdowns_cost: 500, planned_markdowns_retail: 800, planned_fine_metal_g: 125.5,
-    spread_remainder_cost: 0, planned_eom_stock_cost: 15000, planned_eom_stock_retail: 20000,
-    planned_eom_stock_qty: 40,
+    spread_bucket_index: 0, spread_base_quanta: 0, spread_remainder_quanta: 0, spread_base_receipts_cost: 40000, spread_remainder_cost: 0,
+    planned_eom_stock_cost: 15000, planned_eom_stock_retail: 20000, planned_eom_stock_qty: 40,
   },
   expect: "holds",
 })
@@ -386,13 +552,30 @@ export const PlanLineNegativeReceiptsViolated = Norn.example("a negative planned
   given: {
     plan_line_id: "PL-BAD", plan_version_id: "PV-2026-V1", spread_target_id: null,
     entity_id: "LE-SOLE", store_id: "ST-CFC", category: "dry_goods", brand: "nile_foods",
-    plan_month: "2026-09", period_start: "2026-09-01T00:00:00Z", as_of: "2026-09-30T23:59:59Z",
+    plan_month: "2026-09", period_month_date: "2026-09-01",
+    period_start: "2026-09-01T00:00:00Z", as_of: "2026-09-30T23:59:59Z",
     currency: "EGP", unit: "each",
     planned_sales_retail: 10000, planned_sales_cost: 6000, planned_sales_qty: 100,
     planned_receipts_cost: -100, planned_receipts_retail: 12000, planned_receipts_qty: 100,
     planned_markdowns_cost: 0, planned_markdowns_retail: 0, planned_fine_metal_g: 0,
-    spread_remainder_cost: 0, planned_eom_stock_cost: 3000, planned_eom_stock_retail: 5000,
-    planned_eom_stock_qty: 30,
+    spread_bucket_index: 0, spread_base_quanta: 0, spread_remainder_quanta: 0, spread_base_receipts_cost: -100, spread_remainder_cost: 0,
+    planned_eom_stock_cost: 3000, planned_eom_stock_retail: 5000, planned_eom_stock_qty: 30,
+  },
+  expect: "violated",
+})
+export const PlanLineMisalignedEomViolated = Norn.example("a misaligned EOM snapshot date is refused", {
+  of: PlanLineMeasuresNonNegative,
+  given: {
+    plan_line_id: "PL-BAD-EOM", plan_version_id: "PV-2026-V1", spread_target_id: null,
+    entity_id: "LE-SOLE", store_id: "ST-CFC", category: "dry_goods", brand: "nile_foods",
+    plan_month: "2026-09", period_month_date: "2026-09-01",
+    period_start: "2026-09-01T00:00:00Z", as_of: "2026-09-15T23:59:59Z",
+    currency: "EGP", unit: "each",
+    planned_sales_retail: 10000, planned_sales_cost: 6000, planned_sales_qty: 100,
+    planned_receipts_cost: 8000, planned_receipts_retail: 12000, planned_receipts_qty: 100,
+    planned_markdowns_cost: 0, planned_markdowns_retail: 0, planned_fine_metal_g: 0,
+    spread_bucket_index: 0, spread_base_quanta: 0, spread_remainder_quanta: 0, spread_base_receipts_cost: 8000, spread_remainder_cost: 0,
+    planned_eom_stock_cost: 3000, planned_eom_stock_retail: 5000, planned_eom_stock_qty: 30,
   },
   expect: "violated",
 })
@@ -419,8 +602,22 @@ export const PlanLineMatchesSpreadTarget = Norn.law("matches_spread_target", {
     && self.category === self.spread_target.category
     && self.brand === self.spread_target.brand
     && self.plan_month === self.spread_target.plan_month
-    && self.currency === self.spread_target.currency,
-  because: "A child plan line linked to a top-down spread target must match its version, entity, category, brand, month, and currency.",
+    && self.currency === self.spread_target.currency
+    && self.spread_bucket_index >= 1
+    && self.spread_bucket_index <= self.spread_target.bucket_count
+    && self.spread_base_receipts_cost === self.spread_base_quanta * self.spread_target.allocation_quantum_cost
+    && self.spread_remainder_cost === self.spread_remainder_quanta * self.spread_target.allocation_quantum_cost
+    && (
+      (self.spread_target.rounding_rule === "exact_no_remainder" && self.spread_remainder_quanta === 0)
+      || (self.spread_target.rounding_rule === "largest_remainder"
+        && (self.spread_remainder_quanta === 0 || self.spread_remainder_quanta === 1))
+      || (self.spread_target.rounding_rule === "last_bucket_remainder"
+        && (
+          (self.spread_bucket_index < self.spread_target.bucket_count && self.spread_remainder_quanta === 0)
+          || (self.spread_bucket_index === self.spread_target.bucket_count && self.spread_remainder_quanta === self.spread_target.target_remainder_quanta)
+        ))
+    ),
+  because: "A child plan line linked to a top-down spread target must match its parent grain, keep spread_base_receipts_cost aligned to allocation_quantum_cost, and obey the declared deterministic rounding rule.",
 })
 
 // LAW-LINK-MANY-1: exact top-down spread conservation across child PlanLines.
@@ -429,7 +626,9 @@ export const SpreadTargetConservation = Norn.law("spread_conservation", {
   inverses: { plan_lines: PlanLine },
   when: (self) => self.status === "sealed",
   must: (self) =>
-    self.plan_lines.length > 0
+    self.plan_lines.length === self.bucket_count
+    && Norn.sum(self.plan_lines.map((l) => l.spread_bucket_index)) * 2 === self.bucket_count * (self.bucket_count + 1)
+    && Norn.sum(self.plan_lines.map((l) => l.spread_base_receipts_cost)) + self.target_rounding_remainder_cost === self.target_receipts_cost
     && Norn.sum(self.plan_lines.map((l) => l.planned_sales_retail)) === self.target_sales_retail
     && Norn.sum(self.plan_lines.map((l) => l.planned_sales_cost)) === self.target_sales_cost
     && Norn.sum(self.plan_lines.map((l) => l.planned_receipts_cost)) === self.target_receipts_cost
@@ -439,7 +638,72 @@ export const SpreadTargetConservation = Norn.law("spread_conservation", {
     && Norn.sum(self.plan_lines.map((l) => l.planned_eom_stock_cost)) === self.target_eom_stock_cost
     && Norn.sum(self.plan_lines.map((l) => l.planned_fine_metal_g)) === self.target_fine_metal_g
     && Norn.sum(self.plan_lines.map((l) => l.spread_remainder_cost)) === self.target_rounding_remainder_cost,
-  because: "Child plan lines under a sealed top-down spread target must sum exactly to every parent measure and explicit rounding remainder with zero silent drift.",
+  because: "Child plan lines under a sealed top-down spread target must cover all declared buckets and sum exactly to every parent measure, quantum base, and explicit rounding remainder with zero silent drift.",
+})
+
+// ------------------------------------ active baseline slot for Actual - Plan
+
+const ActivePlanLineProps = Schema.Struct({
+  slot_id: Schema.String,
+  plan_version_id: Schema.String,
+  plan_line_id: Schema.String,
+  entity_id: Schema.String,
+  store_id: Schema.String,
+  category: SupplyCategory,
+  brand: Schema.String,
+  plan_month: Schema.String,
+  period_month_date: Norn.date(),
+  currency: Currency,
+  unit: SupplyUnit,
+})
+
+/**
+ * Governed active baseline pointer at unique `(entity x store x category x
+ * brand x period_month_date x currency x unit)` grain, pinning the active
+ * locked `PlanVersion` & `PlanLine` for chasm-trap-safe `Actual - Plan`
+ * variance joins without duplicating actuals across plan revisions.
+ */
+export const ActivePlanLine = Norn.type({
+  name: "plan.ActivePlanLine", title: "Active plan baseline slot", version: "0.1.0",
+  label: { en: "Active plan baseline", ar: "سطر الخطة المعتمد النشط" },
+  implements: [PlanTarget],
+  properties: ActivePlanLineProps,
+  valueLabels: {
+    unit: {
+      each: { en: "Each", ar: "قطعة" },
+      kg: { en: "Kilogram", ar: "كيلوغرام" },
+      l: { en: "Litre", ar: "لتر" },
+    },
+  },
+  needsReview: ["ar"],
+  identity: [
+    { name: "primary", properties: ["slot_id"] },
+    { name: "plan_grain_slot", properties: ["entity_id", "store_id", "category", "brand", "period_month_date", "currency", "unit"] },
+  ],
+  links: [
+    { id: "plan_version", target: PlanVersion, cardinality: { to: "one", from: "many", required: true } },
+    { id: "plan_line", target: PlanLine, cardinality: { to: "one", from: "many", required: true } },
+    { id: "owner_entity", target: LegalEntity, cardinality: { to: "one", from: "many", required: true } },
+    { id: "store", target: Store, cardinality: { to: "one", from: "many", required: true } },
+  ],
+})
+
+export const ActivePlanLineMatchesLine = Norn.law("matches_plan_line", {
+  on: ActivePlanLine,
+  must: (self) =>
+    self.plan_version_id === self.plan_version.plan_version_id
+    && self.plan_version.status === "locked"
+    && self.plan_line_id === self.plan_line.plan_line_id
+    && self.plan_version_id === self.plan_line.plan_version_id
+    && self.entity_id === self.plan_line.entity_id
+    && self.store_id === self.plan_line.store_id
+    && self.category === self.plan_line.category
+    && self.brand === self.plan_line.brand
+    && self.plan_month === self.plan_line.plan_month
+    && self.period_month_date === self.plan_line.period_month_date
+    && self.currency === self.plan_line.currency
+    && self.unit === self.plan_line.unit,
+  because: "An active plan baseline slot must pin a locked PlanVersion and match its PlanLine's exact grain, month date, currency, and unit.",
 })
 
 // ------------------------------------------------ Open-to-Buy (OTB) envelopes
@@ -519,12 +783,13 @@ export const OtbEnvelopeValid = Norn.law("envelope_valid", {
   on: OtbEnvelope,
   must: (self) =>
     Norn.byteLength(self.plan_month) === 7
+    && Norn.parseTimestamp(self.period_start) === Norn.parseTimestamp(self.plan_month + "-01T00:00:00Z")
     && self.approved_budget_cost >= 0
     && (
       (self.envelope_kind === "planned" && self.plan_line_id !== null)
       || (self.envelope_kind === "unplanned" && self.plan_line_id === null && self.override_reason !== null && self.approved_budget_cost > 0)
     ),
-  because: "A planned OTB envelope binds a plan line; an unplanned envelope carries null plan_line_id, an explicit override reason, and a positive override budget.",
+  because: "A planned OTB envelope binds a plan line at a canonical YYYY-MM period_start; an unplanned envelope carries null plan_line_id, an explicit override reason, and a positive override budget.",
 })
 export const OtbPlannedEnvelopeHolds = Norn.example("a planned OTB envelope holds", {
   of: OtbEnvelopeValid,
@@ -578,6 +843,7 @@ const OtbPoBindingProps = Schema.Struct({
   plan_version_id: Schema.String,
   entity_id: Schema.String,
   store_id: Schema.String,
+  sku_id: Schema.String,
   category: Schema.String,
   brand: Schema.String,
   plan_month: Schema.String,
@@ -592,7 +858,8 @@ const OtbPoBindingProps = Schema.Struct({
   //   authorized_cost == recognized_receipt_cost + unreceived_authorized_cost + cancelled_released_cost
   //   otb_consumed_cost == recognized_receipt_cost + unreceived_authorized_cost
   // Partial receipts shift from unreceived -> recognized with net OTB conserved;
-  // cancellations release unreceived -> cancelled_released_cost.
+  // cancellations (strictly after PurchaseOrder reaches `cancelled`) release
+  // exact unreceived remainder -> cancelled_released_cost.
   authorized_cost: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
   recognized_receipt_cost: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
   unreceived_authorized_cost: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
@@ -611,9 +878,10 @@ const OtbPoBindingProps = Schema.Struct({
 
 /**
  * Binds one open `supply.OrderLine` commitment to its governing `OtbEnvelope`
- * at purchase-at-cost, conserving OTB across partial receipts and releasing
- * unreceived value on PO cancellation while tracking expected cash payment
- * timing separately.
+ * at purchase-at-cost (derived strictly from `OrderLine.unit_price`,
+ * `Sku.category`, `SkuProfile.brand`, and `PoDestination`), conserving OTB
+ * across repeated partial receipts and releasing exact unreceived value only
+ * after `supply.PurchaseOrder` is `cancelled`.
  */
 export const OtbPoBinding = Norn.type({
   name: "plan.OtbPoBinding", title: "OTB purchase-order commitment binding", version: "0.1.0",
@@ -632,12 +900,14 @@ export const OtbPoBinding = Norn.type({
     { name: "primary", properties: ["binding_id"] },
     { name: "order_line_binding", properties: ["line_id"] },
   ],
-  protected: ["authorized_by"],
   defaults: { status: "authorized" },
   links: [
     { id: "envelope", target: OtbEnvelope, cardinality: { to: "one", from: "many", required: true }, inverse: "bindings" },
-    { id: "order", target: PurchaseOrder, cardinality: { to: "one", from: "many", required: true } },
+    { id: "order", target: PurchaseOrder, cardinality: { to: "one", from: "many", required: true }, inverse: "otb_bindings" },
     { id: "order_line", target: OrderLine, cardinality: { to: "one", from: "one", required: true } },
+    { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
+    { id: "sku_profile", target: SkuProfile, cardinality: { to: "one", from: "many", required: true } },
+    { id: "po_destination", target: PoDestination, cardinality: { to: "one", from: "many", required: true } },
     { id: "owner_entity", target: LegalEntity, cardinality: { to: "one", from: "many", required: true } },
     { id: "store", target: Store, cardinality: { to: "one", from: "many", required: true } },
   ],
@@ -653,6 +923,18 @@ export const OtbPoBinding = Norn.type({
       { id: "cancel", from: ["authorized", "partially_received"], to: "cancelled" },
     ],
   }],
+})
+
+// LAW-LINK-MANY-1: zero-bypass OTB gate on PurchaseOrder whenever the Plan pack is installed.
+export const PurchaseOrderRequiresOtbBindings = Norn.law("requires_otb_bindings", {
+  id: "plan.PurchaseOrder.requires_otb_bindings",
+  on: PurchaseOrder,
+  inverses: { lines: OrderLine, otb_bindings: OtbPoBinding },
+  when: (self) => self.status !== "draft" && self.status !== "cancelled",
+  must: (self) =>
+    self.lines.length > 0
+    && self.otb_bindings.length === self.lines.length,
+  because: "When the Plan pack is installed, every submitted or received purchase order must have a valid OTB binding covering every order line, blocking unbudgeted supply.po.submit bypasses.",
 })
 
 // LAW-LINK-MANY-1: envelope-wide OTB cap across all active PO bindings.
@@ -691,7 +973,7 @@ export const OtbPartialReceiptConservedHolds = Norn.example("partial receipt shi
   of: OtbPoBindingConserved,
   given: {
     binding_id: "OTB-1", envelope_id: "ENV-1", plan_version_id: "PV-2026-V1",
-    entity_id: "LE-SOLE", store_id: "ST-CFC", category: "dry_goods", brand: "nile_foods",
+    entity_id: "LE-SOLE", store_id: "ST-CFC", sku_id: "SKU-DRY-1", category: "dry_goods", brand: "nile_foods",
     plan_month: "2026-09", po_id: "PO-1", line_id: "PO-1/1", currency: "EGP", unit: "each",
     ordered_qty: 100, received_qty: 40, unit_cost: 60,
     authorized_cost: 6000, recognized_receipt_cost: 2400, unreceived_authorized_cost: 3600,
@@ -706,7 +988,7 @@ export const OtbCancelledReleaseHolds = Norn.example("cancelled PO releases unre
   of: OtbPoBindingConserved,
   given: {
     binding_id: "OTB-2", envelope_id: "ENV-1", plan_version_id: "PV-2026-V1",
-    entity_id: "LE-SOLE", store_id: "ST-CFC", category: "dry_goods", brand: "nile_foods",
+    entity_id: "LE-SOLE", store_id: "ST-CFC", sku_id: "SKU-DRY-1", category: "dry_goods", brand: "nile_foods",
     plan_month: "2026-09", po_id: "PO-1", line_id: "PO-1/1", currency: "EGP", unit: "each",
     ordered_qty: 100, received_qty: 40, unit_cost: 60,
     authorized_cost: 6000, recognized_receipt_cost: 2400, unreceived_authorized_cost: 0,
@@ -721,7 +1003,7 @@ export const OtbConservationDriftViolated = Norn.example("unbalanced OTB buckets
   of: OtbPoBindingConserved,
   given: {
     binding_id: "OTB-BAD", envelope_id: "ENV-1", plan_version_id: "PV-2026-V1",
-    entity_id: "LE-SOLE", store_id: "ST-CFC", category: "dry_goods", brand: "nile_foods",
+    entity_id: "LE-SOLE", store_id: "ST-CFC", sku_id: "SKU-DRY-1", category: "dry_goods", brand: "nile_foods",
     plan_month: "2026-09", po_id: "PO-1", line_id: "PO-1/1", currency: "EGP", unit: "each",
     ordered_qty: 100, received_qty: 40, unit_cost: 60,
     authorized_cost: 6000, recognized_receipt_cost: 2400, unreceived_authorized_cost: 3000,
@@ -746,7 +1028,7 @@ export const OtbAuthAllowedExample = Norn.example("allowed PO authorization with
   of: OtbAuthorizationWithinCap,
   given: {
     binding_id: "OTB-OK", envelope_id: "ENV-1", plan_version_id: "PV-2026-V1",
-    entity_id: "LE-SOLE", store_id: "ST-CFC", category: "dry_goods", brand: "nile_foods",
+    entity_id: "LE-SOLE", store_id: "ST-CFC", sku_id: "SKU-DRY-1", category: "dry_goods", brand: "nile_foods",
     plan_month: "2026-09", po_id: "PO-1", line_id: "PO-1/1", currency: "EGP", unit: "each",
     ordered_qty: 100, received_qty: 0, unit_cost: 60,
     authorized_cost: 6000, recognized_receipt_cost: 0, unreceived_authorized_cost: 6000,
@@ -761,7 +1043,7 @@ export const OtbAuthBreachRefusedExample = Norn.example("PO authorization breach
   of: OtbAuthorizationWithinCap,
   given: {
     binding_id: "OTB-BREACH", envelope_id: "ENV-1", plan_version_id: "PV-2026-V1",
-    entity_id: "LE-SOLE", store_id: "ST-CFC", category: "dry_goods", brand: "nile_foods",
+    entity_id: "LE-SOLE", store_id: "ST-CFC", sku_id: "SKU-DRY-1", category: "dry_goods", brand: "nile_foods",
     plan_month: "2026-09", po_id: "PO-2", line_id: "PO-2/1", currency: "EGP", unit: "each",
     ordered_qty: 100, received_qty: 0, unit_cost: 60,
     authorized_cost: 6000, recognized_receipt_cost: 0, unreceived_authorized_cost: 6000,
@@ -776,7 +1058,7 @@ export const OtbAuthZeroEnvelopeRefusedExample = Norn.example("PO authorization 
   of: OtbAuthorizationWithinCap,
   given: {
     binding_id: "OTB-ZERO", envelope_id: "ENV-0", plan_version_id: "PV-2026-V1",
-    entity_id: "LE-SOLE", store_id: "ST-CFC", category: "spares", brand: "none",
+    entity_id: "LE-SOLE", store_id: "ST-CFC", sku_id: "SKU-SPARE-1", category: "spares", brand: "none",
     plan_month: "2026-09", po_id: "PO-3", line_id: "PO-3/1", currency: "EGP", unit: "each",
     ordered_qty: 10, received_qty: 0, unit_cost: 50,
     authorized_cost: 500, recognized_receipt_cost: 0, unreceived_authorized_cost: 500,
@@ -793,17 +1075,30 @@ export const OtbPoBindingMatchesEnvelopeAndOrder = Norn.law("matches_envelope_an
   must: (self) =>
     self.currency === self.envelope.currency
     && self.currency === self.order_line.currency
+    && self.po_id === self.order.po_id
     && self.po_id === self.order_line.po_id
+    && self.po_id === self.po_destination.po_id
+    && self.sku_id === self.order_line.sku_id
+    && self.sku_id === self.sku.sku_id
+    && self.sku_id === self.sku_profile.sku_id
     && self.unit === self.order_line.unit
     && self.ordered_qty === self.order_line.ordered_qty
+    && self.unit_cost === self.order_line.unit_price
     && self.received_qty <= self.order_line.received_qty
     && self.entity_id === self.envelope.entity_id
+    && self.entity_id === self.po_destination.entity_id
     && self.store_id === self.envelope.store_id
+    && self.store_id === self.po_destination.store_id
     && self.category === self.envelope.category
+    && self.category === self.sku.category
     && self.brand === self.envelope.brand
+    && self.brand === self.sku_profile.brand
     && self.plan_month === self.envelope.plan_month
-    && self.envelope_cap_snapshot === self.envelope.approved_budget_cost,
-  because: "An OTB PO binding must match its governing envelope's grain, currency, and approved budget cap, and its underlying supply.OrderLine's ordered quantity, unit, and currency.",
+    && self.plan_month === self.po_destination.plan_month
+    && self.envelope_cap_snapshot === self.envelope.approved_budget_cost
+    && (self.status !== "cancelled" || (self.order.status === "cancelled" && self.received_qty === self.order_line.received_qty))
+    && (self.status !== "fulfilled" || self.received_qty === self.order_line.received_qty),
+  because: "An OTB PO binding must derive its cost, SKU category/brand, and destination store/entity/month directly from governed supply facts and release remainder strictly when the PO is cancelled.",
 })
 
 // ------------------------------------------------ published forecast revisions
@@ -878,11 +1173,12 @@ export const PublishedForecastValid = Norn.law("forecast_valid", {
   on: PublishedForecast,
   must: (self) =>
     Norn.byteLength(self.plan_month) === 7
+    && Norn.parseTimestamp(self.period_start) === Norn.parseTimestamp(self.plan_month + "-01T00:00:00Z")
     && self.forecast_sales_retail >= 0
     && self.forecast_sales_cost >= 0
     && self.forecast_sales_qty >= 0
     && self.forecast_fine_metal_g >= self.forecast_fine_metal_g - self.forecast_fine_metal_g,
-  because: "A published plan-grain forecast carries non-negative predicted sales, cost, quantity, and fine-metal grams.",
+  because: "A published plan-grain forecast carries non-negative predicted sales, cost, quantity, and fine-metal grams at a canonical YYYY-MM period_start.",
 })
 export const PublishedForecastValidHolds = Norn.example("a non-negative published forecast holds", {
   of: PublishedForecastValid,

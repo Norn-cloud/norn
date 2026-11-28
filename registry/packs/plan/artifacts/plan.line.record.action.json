@@ -36,6 +36,38 @@
         "targetType": "supply.Store"
       }
     ],
+    "derive": [
+      {
+        "expression": "date(input.plan_month + '-01')",
+        "field": "period_month_date",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "spread_bucket_index",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "spread_base_quanta",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "spread_remainder_quanta",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.planned_receipts_cost",
+        "field": "spread_base_receipts_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "spread_remainder_cost",
+        "inputRequired": false
+      }
+    ],
     "effectProgram": {
       "entityArtifactId": "plan.PlanLine.entity",
       "entityArtifactVersion": "0.1.0",
@@ -68,6 +100,9 @@
           "type": "string"
         },
         "entity_id": {
+          "type": "string"
+        },
+        "period_month_date": {
           "type": "string"
         },
         "period_start": {
@@ -170,12 +205,28 @@
           },
           "type": "number"
         },
+        "spread_base_quanta": {
+          "type": "integer"
+        },
+        "spread_base_receipts_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "spread_bucket_index": {
+          "type": "integer"
+        },
         "spread_remainder_cost": {
           "nornType": {
             "kind": "decimal",
             "scale": 6
           },
           "type": "number"
+        },
+        "spread_remainder_quanta": {
+          "type": "integer"
         },
         "store_id": {
           "type": "string"
@@ -198,6 +249,7 @@
         "category",
         "brand",
         "plan_month",
+        "period_month_date",
         "period_start",
         "as_of",
         "currency",
@@ -211,6 +263,10 @@
         "planned_markdowns_cost",
         "planned_markdowns_retail",
         "planned_fine_metal_g",
+        "spread_bucket_index",
+        "spread_base_quanta",
+        "spread_remainder_quanta",
+        "spread_base_receipts_cost",
         "spread_remainder_cost",
         "planned_eom_stock_cost",
         "planned_eom_stock_retail",
@@ -232,7 +288,7 @@
       "type": "object"
     },
     "preconditions": [
-      "(((((((slice.version.status == 'draft') and (slice.owner_entity.status == 'active')) and (slice.store.status == 'active')) and (input.spread_remainder_cost == 0)) and (input.entity_id == slice.version.entity_id)) and (input.entity_id == slice.store.entity_id)) and (input.currency == slice.version.currency)) and (input.currency == slice.store.currency)"
+      "((((((slice.version.status == 'draft') and (slice.owner_entity.status == 'active')) and (slice.store.status == 'active')) and (input.entity_id == slice.version.entity_id)) and (input.entity_id == slice.store.entity_id)) and (input.currency == slice.version.currency)) and (input.currency == slice.store.currency)"
     ],
     "scopeRequired": [
       "orgId",

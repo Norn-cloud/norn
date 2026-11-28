@@ -31,6 +31,18 @@
         "targetType": "supply.LegalEntity"
       }
     ],
+    "derive": [
+      {
+        "expression": "date(input.plan_month + '-01')",
+        "field": "period_month_date",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.target_remainder_quanta * input.allocation_quantum_cost",
+        "field": "target_rounding_remainder_cost",
+        "inputRequired": false
+      }
+    ],
     "effectProgram": {
       "entityArtifactId": "plan.PlanSpreadTarget.entity",
       "entityArtifactVersion": "0.1.0",
@@ -45,8 +57,18 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "allocation_quantum_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
         "brand": {
           "type": "string"
+        },
+        "bucket_count": {
+          "type": "integer"
         },
         "category": {
           "type": "string"
@@ -60,6 +82,9 @@
           "type": "string"
         },
         "entity_id": {
+          "type": "string"
+        },
+        "period_month_date": {
           "type": "string"
         },
         "plan_month": {
@@ -125,6 +150,9 @@
           },
           "type": "number"
         },
+        "target_remainder_quanta": {
+          "type": "integer"
+        },
         "target_rounding_remainder_cost": {
           "nornType": {
             "kind": "decimal",
@@ -154,8 +182,12 @@
         "category",
         "brand",
         "plan_month",
+        "period_month_date",
         "currency",
         "rounding_rule",
+        "bucket_count",
+        "allocation_quantum_cost",
+        "target_remainder_quanta",
         "target_sales_retail",
         "target_sales_cost",
         "target_receipts_cost",

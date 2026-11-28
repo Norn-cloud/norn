@@ -131,6 +131,12 @@
           }
         },
         {
+          "id": "period_month_date",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
           "id": "period_start",
           "type": {
             "kind": "timestamp",
@@ -297,6 +303,37 @@
               "code": "g",
               "system": "ucum"
             }
+          }
+        },
+        {
+          "id": "spread_bucket_index",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "spread_base_quanta",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "spread_remainder_quanta",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "spread_base_receipts_cost",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
           }
         },
         {

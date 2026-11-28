@@ -9,18 +9,18 @@
   "payload": {
     "correspondences": [
       {
-        "confidenceBasisPoints": 8000,
-        "correspondenceId": "corr.plan.guard.otb.exceeded",
+        "confidenceBasisPoints": 8500,
+        "correspondenceId": "corr.plan.guard.amount.nonpositive",
         "evidenceRefs": [
           "source.plan"
         ],
-        "fromTermId": "norn.plan.guard.otb.exceeded",
-        "justification": "OTB budget consumption guard prevents committing purchase value above the remaining approved budget envelope.",
+        "fromTermId": "norn.plan.guard.amount.nonpositive",
+        "justification": "Unplanned OTB override budgets and authorized PO binding amounts must be strictly positive; zero or negative values are refused.",
         "relation": "subsumed_by",
         "reviewedAt": "2026-11-28T00:00:00Z",
         "reviewedBy": "lane-a (agent, proposed)",
         "toTermIds": [
-          "norn.finance.guard.allocation.exceeds.outstanding"
+          "norn.finance.guard.amount.nonpositive"
         ]
       }
     ],
@@ -32,6 +32,16 @@
     "packKind": "link",
     "packVersion": "0.1",
     "residuals": [
+      {
+        "note": "Pack-level SKU merchandise brand/category profile linking supply.Sku to plan-grain dimensions.",
+        "reason": "system_specific",
+        "termId": "norn.plan.sku.profile"
+      },
+      {
+        "note": "Pack-level destination store, entity, and ISO-month grain binding for a supply.PurchaseOrder.",
+        "reason": "system_specific",
+        "termId": "norn.plan.po.destination"
+      },
       {
         "note": "The canon ontology pack has no bitemporal merchandise plan-version container class yet.",
         "reason": "canon_gap",
@@ -46,6 +56,11 @@
         "note": "Internal merchandise plan target at entity x store x category x brand x ISO month grain; intentionally disjoint from norn.core.event and norn.core.commitment.",
         "reason": "canon_gap",
         "termId": "norn.plan.line"
+      },
+      {
+        "note": "Pack-level active locked PlanLine slot at unique plan grain for chasm-trap-safe Actual - Plan variance.",
+        "reason": "system_specific",
+        "termId": "norn.plan.active.baseline"
       },
       {
         "note": "Internal purchase-at-cost budget target; not a financial claim or commitment amount.",
@@ -71,6 +86,11 @@
         "note": "The canon ontology pack has no pinned plan-grain ML forecast revision class yet.",
         "reason": "canon_gap",
         "termId": "norn.plan.published.forecast"
+      },
+      {
+        "note": "The canon ontology pack has no purchase-budget or capacity-ceiling guard predicate yet; OTB refusal is an internal budget-envelope ceiling check, not an invoice allocation-exceeds-outstanding guard.",
+        "reason": "canon_gap",
+        "termId": "norn.plan.guard.otb.exceeded"
       },
       {
         "note": "The canon ontology pack has no top-down plan spread conservation guard predicate yet.",

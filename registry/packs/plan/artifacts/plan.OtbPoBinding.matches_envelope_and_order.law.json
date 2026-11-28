@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "An OTB PO binding must match its governing envelope's grain, currency, and approved budget cap, and its underlying supply.OrderLine's ordered quantity, unit, and currency.",
+  "name": "An OTB PO binding must derive its cost, SKU category/brand, and destination store/entity/month directly from governed supply facts and release remainder strictly when the PO is cancelled.",
   "namespace": "plan",
   "payload": {
     "id": "plan.OtbPoBinding.matches_envelope_and_order",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/plan/plan.ts"
     },
-    "rationale": "An OTB PO binding must match its governing envelope's grain, currency, and approved budget cap, and its underlying supply.OrderLine's ordered quantity, unit, and currency.",
+    "rationale": "An OTB PO binding must derive its cost, SKU category/brand, and destination store/entity/month directly from governed supply facts and release remainder strictly when the PO is cancelled.",
     "response": {
-      "expression": "(((((((((((self.currency == self.envelope.currency) and (self.currency == self.order_line.currency)) and (self.po_id == self.order_line.po_id)) and (self.unit == self.order_line.unit)) and (self.ordered_qty == self.order_line.ordered_qty)) and (self.received_qty <= self.order_line.received_qty)) and (self.entity_id == self.envelope.entity_id)) and (self.store_id == self.envelope.store_id)) and (self.category == self.envelope.category)) and (self.brand == self.envelope.brand)) and (self.plan_month == self.envelope.plan_month)) and (self.envelope_cap_snapshot == self.envelope.approved_budget_cost)",
+      "expression": "((((((((((((((((((((((((self.currency == self.envelope.currency) and (self.currency == self.order_line.currency)) and (self.po_id == self.order.po_id)) and (self.po_id == self.order_line.po_id)) and (self.po_id == self.po_destination.po_id)) and (self.sku_id == self.order_line.sku_id)) and (self.sku_id == self.sku.sku_id)) and (self.sku_id == self.sku_profile.sku_id)) and (self.unit == self.order_line.unit)) and (self.ordered_qty == self.order_line.ordered_qty)) and (self.unit_cost == self.order_line.unit_price)) and (self.received_qty <= self.order_line.received_qty)) and (self.entity_id == self.envelope.entity_id)) and (self.entity_id == self.po_destination.entity_id)) and (self.store_id == self.envelope.store_id)) and (self.store_id == self.po_destination.store_id)) and (self.category == self.envelope.category)) and (self.category == self.sku.category)) and (self.brand == self.envelope.brand)) and (self.brand == self.sku_profile.brand)) and (self.plan_month == self.envelope.plan_month)) and (self.plan_month == self.po_destination.plan_month)) and (self.envelope_cap_snapshot == self.envelope.approved_budget_cost)) and ((self.status != 'cancelled') or ((self.order.status == 'cancelled') and (self.received_qty == self.order_line.received_qty)))) and ((self.status != 'fulfilled') or (self.received_qty == self.order_line.received_qty))",
       "kind": "predicate"
     },
     "scope": {

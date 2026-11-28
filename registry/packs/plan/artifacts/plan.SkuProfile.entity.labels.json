@@ -1,0 +1,33 @@
+{
+  "artifactId": "plan.SkuProfile.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "SKU merchandise profile labels",
+  "namespace": "plan",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "ملف الصنف التجاري",
+          "en": "SKU profile"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "plan.SkuProfile"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.SkuProfile.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

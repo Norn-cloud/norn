@@ -11,7 +11,7 @@ export const Pack = Norn.ontologyPack({
   sources: [
     {
       sourceId: "source.supply-lab",
-      releaseId: "0.1.0@560599ae29843296e062b27147c8d34c06aae7ea9c04205dad890db8dc6e3c4f",
+      releaseId: "0.1.0@ef1372c6a67628bcba62bfb062f9dd0d74a5563bf1a06d5fb566fea9504f9191",
       releasedAt: "2026-11-27",
       retrievedAt: "2026-11-27",
       canonicalUrl: "https://norn.cloud/registry/packs/supply-lab/0.1.0",
@@ -21,7 +21,7 @@ export const Pack = Norn.ontologyPack({
       files: [
         {
           path: SUPPLY_SOURCE_FILE,
-          sha256: "560599ae29843296e062b27147c8d34c06aae7ea9c04205dad890db8dc6e3c4f",
+          sha256: "851be19dd904d22212c63a5c2212da84b30d1c346fd53bc322fa525a73bd3427",
         },
         {
           path: ACTIONS_SOURCE_FILE,

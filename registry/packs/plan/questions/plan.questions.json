@@ -18,12 +18,22 @@
       },
       {
         "path": {
+          "property": "entity_id"
+        }
+      },
+      {
+        "path": {
           "property": "store_id"
         }
       },
       {
         "path": {
           "property": "category"
+        }
+      },
+      {
+        "path": {
+          "property": "brand"
         }
       },
       {
@@ -65,12 +75,22 @@
       },
       {
         "path": {
+          "property": "entity_id"
+        }
+      },
+      {
+        "path": {
           "property": "store_id"
         }
       },
       {
         "path": {
           "property": "category"
+        }
+      },
+      {
+        "path": {
+          "property": "brand"
         }
       },
       {
@@ -112,12 +132,22 @@
       },
       {
         "path": {
+          "property": "entity_id"
+        }
+      },
+      {
+        "path": {
           "property": "store_id"
         }
       },
       {
         "path": {
           "property": "category"
+        }
+      },
+      {
+        "path": {
+          "property": "brand"
         }
       },
       {
@@ -159,12 +189,22 @@
       },
       {
         "path": {
+          "property": "entity_id"
+        }
+      },
+      {
+        "path": {
           "property": "store_id"
         }
       },
       {
         "path": {
           "property": "category"
+        }
+      },
+      {
+        "path": {
+          "property": "brand"
         }
       },
       {
@@ -258,6 +298,11 @@
       {
         "path": {
           "property": "category"
+        }
+      },
+      {
+        "path": {
+          "property": "brand"
         }
       },
       {
@@ -368,7 +413,23 @@
     "groupBy": [
       {
         "path": {
+          "links": [
+            "store"
+          ],
+          "property": "entity_id"
+        }
+      },
+      {
+        "path": {
           "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "links": [
+            "sku"
+          ],
+          "property": "category"
         }
       },
       {
@@ -405,7 +466,23 @@
     "groupBy": [
       {
         "path": {
+          "links": [
+            "store"
+          ],
+          "property": "entity_id"
+        }
+      },
+      {
+        "path": {
           "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "links": [
+            "sku"
+          ],
+          "property": "category"
         }
       },
       {
@@ -437,11 +514,11 @@
     "calendar": "iso_utc",
     "filter": [
       {
-        "operator": "eq",
+        "operator": "ne",
         "path": {
           "property": "status"
         },
-        "value": "published"
+        "value": "draft"
       }
     ],
     "freshness": {
@@ -466,7 +543,22 @@
       },
       {
         "path": {
+          "property": "entity_id"
+        }
+      },
+      {
+        "path": {
           "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "property": "category"
+        }
+      },
+      {
+        "path": {
+          "property": "brand"
         }
       },
       {

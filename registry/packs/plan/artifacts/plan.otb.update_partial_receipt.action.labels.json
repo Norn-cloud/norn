@@ -1,0 +1,30 @@
+{
+  "artifactId": "plan.otb.update_partial_receipt.action.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Recognize subsequent partial receipt on an OTB PO binding labels",
+  "namespace": "plan",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "تحديث الاستلام الجزئي على الميزانية",
+          "en": "Update OTB partial receipt"
+        },
+        "target": {
+          "actionId": "plan.otb.update_partial_receipt",
+          "kind": "action"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.otb.update_partial_receipt.action.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

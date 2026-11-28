@@ -12,19 +12,43 @@
       "version": "0.1.0"
     },
     "actionId": "plan.otb.release_cancelled_po",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "received_qty"
+        },
+        "filter": {
+          "line_id": "line_id"
+        },
+        "maxItems": 100,
+        "name": "shipped_receipts_qty",
+        "objectType": "supply.ShipmentReceipt"
+      }
+    ],
     "derive": [
+      {
+        "expression": "slice.order_line.received_qty",
+        "field": "next_received_qty",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.order_line.received_qty * slice.order_line.unit_price",
+        "field": "next_recognized_receipt_cost",
+        "inputRequired": false
+      },
       {
         "expression": "0",
         "field": "next_unreceived_authorized_cost",
         "inputRequired": false
       },
       {
-        "expression": "slice.binding.unreceived_authorized_cost",
+        "expression": "(slice.order_line.ordered_qty - slice.order_line.received_qty) * slice.order_line.unit_price",
         "field": "next_cancelled_released_cost",
         "inputRequired": false
       },
       {
-        "expression": "slice.binding.recognized_receipt_cost",
+        "expression": "slice.order_line.received_qty * slice.order_line.unit_price",
         "field": "next_otb_consumed_cost",
         "inputRequired": false
       }
@@ -40,6 +64,8 @@
         "as_of": "as_of",
         "cancelled_released_cost": "next_cancelled_released_cost",
         "otb_consumed_cost": "next_otb_consumed_cost",
+        "received_qty": "next_received_qty",
+        "recognized_receipt_cost": "next_recognized_receipt_cost",
         "unreceived_authorized_cost": "next_unreceived_authorized_cost"
       },
       "transition": "cancel"
@@ -54,6 +80,9 @@
         "binding_id": {
           "type": "string"
         },
+        "line_id": {
+          "type": "string"
+        },
         "next_cancelled_released_cost": {
           "nornType": {
             "kind": "decimal",
@@ -62,6 +91,20 @@
           "type": "number"
         },
         "next_otb_consumed_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "next_received_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "next_recognized_receipt_cost": {
           "nornType": {
             "kind": "decimal",
             "scale": 6
@@ -82,7 +125,10 @@
       "required": [
         "binding_id",
         "po_id",
+        "line_id",
         "as_of",
+        "next_received_qty",
+        "next_recognized_receipt_cost",
         "next_unreceived_authorized_cost",
         "next_cancelled_released_cost",
         "next_otb_consumed_cost"
@@ -103,7 +149,7 @@
       "type": "object"
     },
     "preconditions": [
-      "(slice.binding.po_id == input.po_id) and ((slice.order.status == 'cancelled') or (slice.order.status == 'partially_received'))"
+      "((((slice.binding.po_id == input.po_id) and (slice.binding.line_id == input.line_id)) and (slice.order_line.po_id == input.po_id)) and (slice.order.status == 'cancelled')) and (slice.order_line.received_qty == aggregates.shipped_receipts_qty)"
     ],
     "scopeRequired": [
       "orgId",
@@ -129,6 +175,16 @@
         },
         "name": "order",
         "objectType": "supply.PurchaseOrder"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "line_id"
+          }
+        },
+        "name": "order_line",
+        "objectType": "supply.OrderLine"
       }
     ],
     "title": "Release unreceived OTB on PO cancellation",

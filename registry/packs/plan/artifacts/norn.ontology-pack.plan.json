@@ -13,6 +13,34 @@
         "evidenceRefs": [
           "registry/packs/plan/plan.ts"
         ],
+        "externalIri": "https://norn.cloud/registry/packs/plan/0.1.0#plan.SkuProfile",
+        "justification": "Declares `plan.SkuProfile` in `registry/packs/plan/plan.ts`.",
+        "mappingId": "map.norn.plan.sku.profile",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-28T00:00:00Z",
+        "reviewedBy": "lane-a (agent, proposed)",
+        "sourceId": "source.plan",
+        "termId": "norn.plan.sku.profile"
+      },
+      {
+        "confidenceBasisPoints": 10000,
+        "evidenceRefs": [
+          "registry/packs/plan/plan.ts"
+        ],
+        "externalIri": "https://norn.cloud/registry/packs/plan/0.1.0#plan.PoDestination",
+        "justification": "Declares `plan.PoDestination` in `registry/packs/plan/plan.ts`.",
+        "mappingId": "map.norn.plan.po.destination",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-28T00:00:00Z",
+        "reviewedBy": "lane-a (agent, proposed)",
+        "sourceId": "source.plan",
+        "termId": "norn.plan.po.destination"
+      },
+      {
+        "confidenceBasisPoints": 10000,
+        "evidenceRefs": [
+          "registry/packs/plan/plan.ts"
+        ],
         "externalIri": "https://norn.cloud/registry/packs/plan/0.1.0#plan.PlanVersion",
         "justification": "Declares `plan.PlanVersion` in `registry/packs/plan/plan.ts`.",
         "mappingId": "map.norn.plan.version",
@@ -49,6 +77,20 @@
         "reviewedBy": "lane-a (agent, proposed)",
         "sourceId": "source.plan",
         "termId": "norn.plan.line"
+      },
+      {
+        "confidenceBasisPoints": 10000,
+        "evidenceRefs": [
+          "registry/packs/plan/plan.ts"
+        ],
+        "externalIri": "https://norn.cloud/registry/packs/plan/0.1.0#plan.ActivePlanLine",
+        "justification": "Declares `plan.ActivePlanLine` in `registry/packs/plan/plan.ts`.",
+        "mappingId": "map.norn.plan.active.baseline",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-28T00:00:00Z",
+        "reviewedBy": "lane-a (agent, proposed)",
+        "sourceId": "source.plan",
+        "termId": "norn.plan.active.baseline"
       },
       {
         "confidenceBasisPoints": 10000,
@@ -97,6 +139,44 @@
     "packKind": "ontology",
     "packVersion": "0.1",
     "shapes": [
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "sku_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          },
+          {
+            "fieldId": "brand",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.plan.sku.profile",
+        "termId": "norn.plan.sku.profile"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "po_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          },
+          {
+            "fieldId": "store_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.plan.po.destination",
+        "termId": "norn.plan.po.destination"
+      },
       {
         "closed": true,
         "fields": [
@@ -153,6 +233,25 @@
         ],
         "shapeId": "shape.norn.plan.line",
         "termId": "norn.plan.line"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "slot_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          },
+          {
+            "fieldId": "plan_line_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.norn.plan.active.baseline",
+        "termId": "norn.plan.active.baseline"
       },
       {
         "closed": true,
@@ -218,17 +317,17 @@
         "files": [
           {
             "path": "registry/packs/plan/plan.ts",
-            "sha256": "328ba87e23b74f1da49fd9701af266466376aa604e45736ce3a10fd72e12b8c4"
+            "sha256": "523ccb2c26848c8cf7e4e1fd00b27e78c5c7fd218e2024c8f661c831d53bac3e"
           },
           {
             "path": "registry/packs/plan/actions.ts",
-            "sha256": "2b41dc0bc0de17caf6d3d68dc332cd5956b23665efd085e5ef7e1e17393663ca"
+            "sha256": "6ad23cc92d1ee8fd7fa7f0fbd2232b81d127c9f72029870bf9fbe75bf6058ff1"
           }
         ],
         "importMode": "map_only",
         "license": "Apache-2.0",
         "redistribution": "vendored",
-        "releaseId": "0.1.0@328ba87e23b74f1da49fd9701af266466376aa604e45736ce3a10fd72e12b8c4",
+        "releaseId": "0.1.0@80d6d340f3e7d450c3fc0cdab566e552e64dde7536f2a9d2e3466eb7250c80fe",
         "releasedAt": "2026-11-28",
         "retrievedAt": "2026-11-28",
         "sourceId": "source.plan"
@@ -236,7 +335,23 @@
     ],
     "terms": [
       {
-        "definition": "A versioned, bitemporal merchandise plan container with lifecycle draft -> submitted -> approved -> locked -> superseded, immutable once locked.",
+        "definition": "Governed SKU brand and category classification linking supply.Sku to plan-grain dimensions.",
+        "label": "SKU merchandise profile",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.sku.profile",
+        "termKind": "class"
+      },
+      {
+        "definition": "Governed destination store, legal entity, and planning month binding for a supply.PurchaseOrder.",
+        "label": "PO destination grain",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.po.destination",
+        "termKind": "class"
+      },
+      {
+        "definition": "A versioned, bitemporal merchandise plan container with lifecycle draft -> submitted -> approved -> locked -> superseded, draft-only edits, sealed spreads before approval, and immutable locked history.",
         "label": "Plan version",
         "semanticAuthority": "semantic_only",
         "status": "active",
@@ -244,7 +359,7 @@
         "termKind": "class"
       },
       {
-        "definition": "A top-down parent merchandise target at entity x category x brand x ISO month grain enforcing exact child spread conservation and explicit rounding remainder rules.",
+        "definition": "A top-down parent merchandise target at entity x category x brand x ISO month grain enforcing exact child spread conservation and deterministic quantum-aligned rounding remainder rules.",
         "label": "Plan spread target",
         "semanticAuthority": "semantic_only",
         "status": "active",
@@ -257,6 +372,14 @@
         "semanticAuthority": "semantic_only",
         "status": "active",
         "termId": "norn.plan.line",
+        "termKind": "class"
+      },
+      {
+        "definition": "Governed pointer to the active locked PlanLine at unique plan grain for chasm-trap-safe Actual - Plan variance.",
+        "label": "Active plan baseline slot",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.active.baseline",
         "termKind": "class"
       },
       {
@@ -302,6 +425,14 @@
         "termKind": "class"
       },
       {
+        "definition": "An unplanned OTB override budget or authorized PO binding amount that must be strictly positive is zero or negative.",
+        "label": "Non-positive OTB override or binding amount guard",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.guard.amount.nonpositive",
+        "termKind": "predicate"
+      },
+      {
         "definition": "Authorizing a purchase order line would push total consumed OTB above the envelope's approved purchase-at-cost budget or target an unapproved/absent envelope.",
         "label": "OTB budget ceiling guard",
         "semanticAuthority": "semantic_only",
@@ -310,7 +441,7 @@
         "termKind": "predicate"
       },
       {
-        "definition": "Child plan lines under a top-down spread target do not sum exactly to the parent target and explicit decimal rounding remainder.",
+        "definition": "Child plan lines under a top-down spread target do not sum exactly to the parent target and deterministic rounding remainder.",
         "label": "Top-down spread conservation guard",
         "semanticAuthority": "semantic_only",
         "status": "active",

@@ -2,13 +2,13 @@
   "artifactId": "plan.otb_position",
   "dependencies": [
     {
-      "artifactId": "plan.OtbPoBinding.entity",
+      "artifactId": "plan.OtbEnvelope.entity",
       "kind": "entity",
       "required": true,
       "version": "0.1.0"
     },
     {
-      "artifactId": "plan.OtbEnvelope.entity",
+      "artifactId": "plan.OtbPoBinding.entity",
       "kind": "entity",
       "required": true,
       "version": "0.1.0"
@@ -23,15 +23,80 @@
     "calc": {
       "kind": "relational",
       "nodes": {
+        "active_envelope": {
+          "input": "envelope",
+          "op": "filter",
+          "predicate": "input.status == 'active'"
+        },
+        "active_full": {
+          "kind": "inner",
+          "left": "active_keys",
+          "on": {
+            "key": {
+              "left": [
+                "envelope_id"
+              ],
+              "right": "primary"
+            }
+          },
+          "op": "join",
+          "prefix": "env_",
+          "right": "active_envelope"
+        },
+        "active_keys": {
+          "groupBy": [
+            {
+              "column": "envelope_id"
+            },
+            {
+              "column": "currency"
+            }
+          ],
+          "input": "active_envelope",
+          "measures": [
+            {
+              "fn": "count",
+              "name": "env_rows"
+            }
+          ],
+          "op": "aggregate"
+        },
         "binding": {
           "input": "binding",
           "op": "scan"
+        },
+        "combined": {
+          "branch": "source_branch",
+          "inputs": [
+            "with_bindings",
+            "zero_po"
+          ],
+          "op": "union"
+        },
+        "deduped": {
+          "input": "combined",
+          "keep": "first",
+          "key": [
+            "envelope_id",
+            "currency"
+          ],
+          "op": "dedupe",
+          "orderBy": [
+            {
+              "column": "has_bindings",
+              "direction": "desc"
+            },
+            {
+              "column": "source_branch",
+              "direction": "asc"
+            }
+          ]
         },
         "envelope": {
           "input": "envelope",
           "op": "scan"
         },
-        "joined": {
+        "joined_active": {
           "kind": "inner",
           "left": "per_envelope",
           "on": {
@@ -44,7 +109,7 @@
           },
           "op": "join",
           "prefix": "env_",
-          "right": "envelope"
+          "right": "active_envelope"
         },
         "per_envelope": {
           "groupBy": [
@@ -76,12 +141,6 @@
               "name": "cancelled_released_cost"
             },
             {
-              "column": "otb_consumed_cost",
-              "fn": "sum",
-              "label": "Total OTB consumed",
-              "name": "otb_consumed_cost"
-            },
-            {
               "fn": "count",
               "name": "po_line_count"
             }
@@ -93,6 +152,76 @@
             {
               "expression": "input.envelope_id",
               "name": "envelope_id"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.plan_version_id",
+              "name": "plan_version_id"
+            },
+            {
+              "expression": "input.entity_id",
+              "name": "entity_id"
+            },
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.category",
+              "name": "category"
+            },
+            {
+              "expression": "input.brand",
+              "name": "brand"
+            },
+            {
+              "expression": "input.plan_month",
+              "name": "plan_month"
+            },
+            {
+              "expression": "input.envelope_kind",
+              "name": "envelope_kind"
+            },
+            {
+              "expression": "input.approved_budget_cost",
+              "name": "approved_budget_cost"
+            },
+            {
+              "expression": "input.recognized_receipts_cost",
+              "name": "recognized_receipts_cost"
+            },
+            {
+              "expression": "input.unreceived_authorized_po_cost",
+              "name": "unreceived_authorized_po_cost"
+            },
+            {
+              "expression": "input.cancelled_released_cost",
+              "name": "cancelled_released_cost"
+            },
+            {
+              "expression": "input.remaining_otb_cost",
+              "name": "remaining_otb_cost"
+            },
+            {
+              "expression": "input.po_line_count",
+              "name": "po_line_count"
+            }
+          ],
+          "input": "deduped",
+          "op": "project"
+        },
+        "with_bindings": {
+          "columns": [
+            {
+              "expression": "input.envelope_id",
+              "name": "envelope_id"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
             },
             {
               "expression": "input.env_plan_version_id",
@@ -123,23 +252,19 @@
               "name": "envelope_kind"
             },
             {
-              "expression": "input.currency",
-              "name": "currency"
-            },
-            {
               "expression": "input.env_approved_budget_cost",
               "name": "approved_budget_cost"
             },
             {
-              "expression": "input.recognized_receipts_cost",
+              "expression": "input.recognized_receipts_cost + 0",
               "name": "recognized_receipts_cost"
             },
             {
-              "expression": "input.unreceived_authorized_po_cost",
+              "expression": "input.unreceived_authorized_po_cost + 0",
               "name": "unreceived_authorized_po_cost"
             },
             {
-              "expression": "input.cancelled_released_cost",
+              "expression": "input.cancelled_released_cost + 0",
               "name": "cancelled_released_cost"
             },
             {
@@ -147,11 +272,85 @@
               "name": "remaining_otb_cost"
             },
             {
-              "expression": "input.po_line_count",
+              "expression": "input.po_line_count + 0",
               "name": "po_line_count"
+            },
+            {
+              "expression": "1",
+              "name": "has_bindings"
             }
           ],
-          "input": "joined",
+          "input": "joined_active",
+          "op": "project"
+        },
+        "zero_po": {
+          "columns": [
+            {
+              "expression": "input.envelope_id",
+              "name": "envelope_id"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.env_plan_version_id",
+              "name": "plan_version_id"
+            },
+            {
+              "expression": "input.env_entity_id",
+              "name": "entity_id"
+            },
+            {
+              "expression": "input.env_store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.env_category",
+              "name": "category"
+            },
+            {
+              "expression": "input.env_brand",
+              "name": "brand"
+            },
+            {
+              "expression": "input.env_plan_month",
+              "name": "plan_month"
+            },
+            {
+              "expression": "input.env_envelope_kind",
+              "name": "envelope_kind"
+            },
+            {
+              "expression": "input.env_approved_budget_cost",
+              "name": "approved_budget_cost"
+            },
+            {
+              "expression": "input.env_approved_budget_cost - input.env_approved_budget_cost",
+              "name": "recognized_receipts_cost"
+            },
+            {
+              "expression": "input.env_approved_budget_cost - input.env_approved_budget_cost",
+              "name": "unreceived_authorized_po_cost"
+            },
+            {
+              "expression": "input.env_approved_budget_cost - input.env_approved_budget_cost",
+              "name": "cancelled_released_cost"
+            },
+            {
+              "expression": "input.env_approved_budget_cost + 0",
+              "name": "remaining_otb_cost"
+            },
+            {
+              "expression": "0",
+              "name": "po_line_count"
+            },
+            {
+              "expression": "0",
+              "name": "has_bindings"
+            }
+          ],
+          "input": "active_full",
           "op": "project"
         }
       },
@@ -159,14 +358,14 @@
     },
     "inputs": [
       {
-        "alias": "binding",
-        "artifactId": "plan.OtbPoBinding.entity",
+        "alias": "envelope",
+        "artifactId": "plan.OtbEnvelope.entity",
         "kind": "entity",
         "version": "0.1.0"
       },
       {
-        "alias": "envelope",
-        "artifactId": "plan.OtbEnvelope.entity",
+        "alias": "binding",
+        "artifactId": "plan.OtbPoBinding.entity",
         "kind": "entity",
         "version": "0.1.0"
       }

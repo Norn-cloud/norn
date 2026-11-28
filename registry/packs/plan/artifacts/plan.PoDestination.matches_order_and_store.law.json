@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.PoDestination.matches_order_and_store.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PoDestination.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A purchase order destination must align with its order currency, store owning entity, and canonical YYYY-MM month containing promised_at.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.PoDestination.matches_order_and_store",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A purchase order destination must align with its order currency, store owning entity, and canonical YYYY-MM month containing promised_at.",
+    "response": {
+      "expression": "((((((((((self.po_id == self.order.po_id) and (self.store_id == self.store.store_id)) and (self.entity_id == self.store.entity_id)) and (self.entity_id == self.owner_entity.entity_id)) and (self.currency == self.store.currency)) and (self.currency == self.owner_entity.functional_currency)) and (self.currency == self.order.currency)) and (len(self.plan_month) == 7)) and (date(self.period_month_date) == date(self.plan_month + '-01'))) and (timestamp(self.order.promised_at) >= timestamp(self.plan_month + '-01T00:00:00Z'))) and (seconds_between(timestamp(self.plan_month + '-01T00:00:00Z'), timestamp(self.order.promised_at)) < ((((endsWith(self.plan_month, '-04') or endsWith(self.plan_month, '-06')) or endsWith(self.plan_month, '-09')) or endsWith(self.plan_month, '-11')) ? (30 * 86400) : (endsWith(self.plan_month, '-02') ? (29 * 86400) : (31 * 86400))))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PoDestination"
+      ],
+      "root": {
+        "id": "plan.PoDestination",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PoDestination"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PoDestination.matches_order_and_store.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

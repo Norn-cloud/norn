@@ -1,0 +1,91 @@
+{
+  "artifactId": "plan.SkuProfile.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "SKU merchandise profile",
+  "namespace": "plan",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "sku_id"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "one",
+            "required": true,
+            "to": "one"
+          },
+          "id": "sku",
+          "target": "supply.Sku"
+        }
+      ],
+      "name": "plan.SkuProfile",
+      "properties": [
+        {
+          "id": "sku_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "category",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "dry_goods"
+              },
+              {
+                "value": "chilled"
+              },
+              {
+                "value": "pharma"
+              },
+              {
+                "value": "spares"
+              }
+            ]
+          }
+        },
+        {
+          "id": "brand",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "unit_of_measure",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "each"
+              },
+              {
+                "value": "kg"
+              },
+              {
+                "value": "l"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.SkuProfile.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -54,13 +54,16 @@
               "column": "forecast_revision"
             },
             {
+              "column": "status"
+            },
+            {
               "column": "currency"
             },
             {
               "column": "unit"
             }
           ],
-          "input": "published_only",
+          "input": "published_history",
           "measures": [
             {
               "column": "forecast_sales_retail",
@@ -98,10 +101,10 @@
           "input": "plan_line",
           "op": "scan"
         },
-        "published_only": {
+        "published_history": {
           "input": "forecast",
           "op": "filter",
-          "predicate": "input.status == 'published'"
+          "predicate": "input.status != 'draft'"
         },
         "variance": {
           "columns": [
@@ -110,16 +113,28 @@
               "name": "plan_line_id"
             },
             {
-              "expression": "input.pl_plan_version_id",
-              "name": "plan_version_id"
-            },
-            {
               "expression": "input.model_version",
               "name": "model_version"
             },
             {
               "expression": "input.forecast_revision",
               "name": "forecast_revision"
+            },
+            {
+              "expression": "input.status",
+              "name": "status"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.unit",
+              "name": "unit"
+            },
+            {
+              "expression": "input.pl_plan_version_id",
+              "name": "plan_version_id"
             },
             {
               "expression": "input.published_at",
@@ -144,14 +159,6 @@
             {
               "expression": "input.pl_plan_month",
               "name": "plan_month"
-            },
-            {
-              "expression": "input.currency",
-              "name": "currency"
-            },
-            {
-              "expression": "input.unit",
-              "name": "unit"
             },
             {
               "expression": "input.pl_planned_sales_retail",

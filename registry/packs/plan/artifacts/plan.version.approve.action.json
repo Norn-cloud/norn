@@ -12,6 +12,38 @@
       "version": "0.1.0"
     },
     "actionId": "plan.version.approve",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "plan_version_id": "plan_version_id"
+        },
+        "maxItems": 100,
+        "name": "total_spreads",
+        "objectType": "plan.PlanSpreadTarget"
+      },
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "plan_version_id": "plan_version_id",
+          "status": "sealed_status"
+        },
+        "maxItems": 100,
+        "name": "sealed_spreads",
+        "objectType": "plan.PlanSpreadTarget"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "'sealed'",
+        "field": "sealed_status",
+        "inputRequired": false
+      }
+    ],
     "effectProgram": {
       "entityArtifactId": "plan.PlanVersion.entity",
       "entityArtifactVersion": "0.1.0",
@@ -30,10 +62,14 @@
       "properties": {
         "plan_version_id": {
           "type": "string"
+        },
+        "sealed_status": {
+          "type": "string"
         }
       },
       "required": [
-        "plan_version_id"
+        "plan_version_id",
+        "sealed_status"
       ],
       "type": "object"
     },
@@ -50,6 +86,9 @@
       ],
       "type": "object"
     },
+    "preconditions": [
+      "aggregates.total_spreads == aggregates.sealed_spreads"
+    ],
     "scopeRequired": [
       "orgId",
       "environmentId"

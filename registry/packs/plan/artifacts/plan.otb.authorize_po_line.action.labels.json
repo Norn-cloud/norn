@@ -4,14 +4,14 @@
   "irVersion": "0.1",
   "kind": "labels",
   "lifecycle": "active",
-  "name": "Authorize a PO line against an OTB envelope labels",
+  "name": "Authorize and submit a draft PO against an OTB envelope labels",
   "namespace": "plan",
   "payload": {
     "entries": [
       {
         "label": {
-          "ar": "اعتماد بند أمر الشراء ضمن الميزانية",
-          "en": "Authorize PO line (OTB)"
+          "ar": "اعتماد وإرسال أمر الشراء ضمن الميزانية",
+          "en": "Authorize & submit PO (OTB)"
         },
         "target": {
           "actionId": "plan.otb.authorize_po_line",
