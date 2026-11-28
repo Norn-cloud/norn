@@ -34,7 +34,6 @@ pub(crate) type Env = HashMap<P<Symbol>, Expr>;
 pub(crate) struct DecisionRow {
     pub(crate) condition: Option<Expr>,
     pub(crate) value: Expr,
-    pub(crate) at: SourceLocation,
 }
 
 /// Optional hooks supplied when compiling a `Norn.decision` callback.
@@ -447,7 +446,6 @@ impl<'a> SyntaxCompiler<'a> {
             rows.push(DecisionRow {
                 condition: None,
                 value: val,
-                at: self.at(body),
             });
         }
         Ok(rows)
@@ -564,11 +562,7 @@ impl<'a> SyntaxCompiler<'a> {
             walk.expansion,
             walk.hooks.as_deref_mut(),
         )?;
-        walk.rows.push(DecisionRow {
-            condition,
-            value,
-            at: self.at(ret_expr),
-        });
+        walk.rows.push(DecisionRow { condition, value });
         Ok(())
     }
 

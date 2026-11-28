@@ -155,10 +155,6 @@ pub(crate) enum ClosureFn {
     Some,
     /// `all`
     All,
-    /// `none`
-    None,
-    /// `one`
-    One,
     /// `filter`
     Filter,
     /// `count`
@@ -174,8 +170,6 @@ impl ClosureFn {
         match self {
             Self::Some => "some",
             Self::All => "all",
-            Self::None => "none",
-            Self::One => "one",
             Self::Filter => "filter",
             Self::Count => "count",
             Self::Map => "map",
@@ -760,7 +754,7 @@ pub(crate) fn assignment_error(
     if let (Expr::Record(fields), ValueSchema::Object(obj)) = (expr, target) {
         let mut keys = BTreeSet::new();
         for (key, value) in fields {
-            let _ = zen_key(key)?;
+            zen_key(key)?;
             if !keys.insert(key.as_str()) {
                 return Ok(Some(format!("{path}.{key} is repeated")));
             }

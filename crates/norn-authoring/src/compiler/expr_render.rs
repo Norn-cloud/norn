@@ -6,7 +6,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use super::canonical::is_snake_ident;
 use super::expr::{
     Binders, Binding, CallFn, CompareOp, Expr, ExprError, LogicalOp, Scope, TemporalKind,
     temporal_kind,
@@ -744,10 +743,4 @@ fn collect_non_null_guards(expr: &Expr, out: &mut BTreeSet<String>) {
         | Expr::List(_)
         | Expr::Record(_) => {}
     }
-}
-
-/// Validates a `snake_case` identifier helper re-exported for expression checks.
-#[must_use]
-pub(crate) fn is_valid_binding_name(name: &str) -> bool {
-    is_snake_ident(name)
 }

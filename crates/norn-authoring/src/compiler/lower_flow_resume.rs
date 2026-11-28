@@ -563,8 +563,23 @@ impl FlowLowering<'_> {
         if !fresh {
             return Ok(None);
         }
-        let mut fields = Vec::with_capacity(path.scope.len());
-        for (name, binding) in &path.scope {
+        let mut ordered_names: Vec<&str> = Vec::with_capacity(path.scope.len());
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        for name in &self.binding_order {
+            if path.scope.contains_key(name) && seen.insert(name.as_str()) {
+                ordered_names.push(name.as_str());
+            }
+        }
+        for name in path.scope.keys() {
+            if seen.insert(name.as_str()) {
+                ordered_names.push(name.as_str());
+            }
+        }
+        let mut fields = Vec::with_capacity(ordered_names.len());
+        for name in ordered_names {
+            let Some(binding) = path.scope.get(name) else {
+                continue;
+            };
             let rendered = match binding {
                 Binding::Zen { zen, .. } => zen.clone(),
                 Binding::Inline { inline, scope, .. } => match render(inline, scope) {

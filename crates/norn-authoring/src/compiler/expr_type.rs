@@ -324,9 +324,7 @@ fn infer_closure(
     match func {
         ClosureFn::Filter => Ok(list_schema),
         ClosureFn::Count => Ok(ValueSchema::integer()),
-        ClosureFn::Some | ClosureFn::All | ClosureFn::None | ClosureFn::One => {
-            Ok(ValueSchema::boolean())
-        }
+        ClosureFn::Some | ClosureFn::All => Ok(ValueSchema::boolean()),
         ClosureFn::Map => Ok(ValueSchema::array(body_schema)),
     }
 }
@@ -390,7 +388,7 @@ fn infer_record(
     let mut props = BTreeSet::new();
     let mut ordered = Vec::with_capacity(fields.len());
     for (name, val) in fields {
-        let _ = zen_key(name)?;
+        zen_key(name)?;
         if !props.insert(name.as_str()) {
             return Err(ExprError::new(
                 "NORN-FLOW-EXPRESSION",

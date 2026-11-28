@@ -428,7 +428,7 @@ impl Parser {
             self.depth = self.depth.saturating_add(1);
             let res = self.binary(0);
             self.depth = self.depth.saturating_sub(1);
-            let _ = res?;
+            res?;
             parts.push(ZenNode::Closure);
             self.consume_tok(ZenTokenKind::Bracket, ")")?;
         } else {

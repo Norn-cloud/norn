@@ -107,11 +107,7 @@ impl SyntaxCompiler<'_> {
         }
     }
 
-    fn outputs_of(
-        &self,
-        expr: P<Node>,
-        checker: &mut Checker,
-    ) -> Result<Vec<P<Type>>, CompileError> {
+    fn outputs_of(expr: P<Node>, checker: &mut Checker) -> Result<Vec<P<Type>>, CompileError> {
         let ty = checker.get_type_at_location(expr);
         Self::effect_outputs(checker, ty, expr)
     }
@@ -321,7 +317,7 @@ impl SyntaxCompiler<'_> {
                 Ok(Plan {
                     steps: Vec::new(),
                     value: self.data(a0, env, checker, expansion, None)?,
-                    outputs: self.outputs_of(e, checker)?,
+                    outputs: Self::outputs_of(e, checker)?,
                 })
             }
             Some("effect/Effect#sleep") => self.effect_sleep(e, args, hint, checker, expansion),
@@ -411,7 +407,7 @@ impl SyntaxCompiler<'_> {
         Ok(Plan {
             steps: vec![node],
             value,
-            outputs: self.outputs_of(e, checker)?,
+            outputs: Self::outputs_of(e, checker)?,
         })
     }
 
@@ -455,7 +451,7 @@ impl SyntaxCompiler<'_> {
         Ok(Plan {
             steps: vec![node],
             value: Expr::lit(Value::Null),
-            outputs: self.outputs_of(e, checker)?,
+            outputs: Self::outputs_of(e, checker)?,
         })
     }
 
@@ -490,7 +486,7 @@ impl SyntaxCompiler<'_> {
         };
         let node = self.annotate(
             Step::Fail {
-                error: err_decl,
+                error: Box::new(err_decl),
                 fields: fields_expr,
                 at: Some(self.at(e)),
                 source_map: None,
@@ -552,7 +548,7 @@ impl SyntaxCompiler<'_> {
         Ok(Plan {
             steps: vec![node],
             value: Expr::List(values),
-            outputs: self.outputs_of(e, checker)?,
+            outputs: Self::outputs_of(e, checker)?,
         })
     }
 
@@ -594,7 +590,7 @@ impl SyntaxCompiler<'_> {
             checker,
             expansion,
         )?;
-        let outs = self.outputs_of(e, checker)?;
+        let outs = Self::outputs_of(e, checker)?;
         self.compose(body_steps, outs, e, hint.flatten(), checker, expansion)
     }
 

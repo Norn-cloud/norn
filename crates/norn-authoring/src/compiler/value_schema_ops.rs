@@ -1,7 +1,7 @@
 //! Closed value-schema merging, structural assignability, and cooperative
 //! expansion budgets (`schema.ts`, `assignable.ts`, and `budget.ts`).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
@@ -116,31 +116,42 @@ fn merge_object_schemas(
     right: &ObjectSchema,
     path: &str,
 ) -> Result<ValueSchema, String> {
-    let mut names = BTreeSet::new();
-    for key in left.properties.keys().chain(right.properties.keys()) {
-        names.insert(key.as_str());
+    let mut seen_names = BTreeSet::new();
+    let mut ordered_names = Vec::new();
+    for key in left
+        .required
+        .iter()
+        .chain(left.properties.keys())
+        .chain(right.required.iter())
+        .chain(right.properties.keys())
+    {
+        if seen_names.insert(key.as_str()) {
+            ordered_names.push(key.as_str());
+        }
     }
     let req_a: BTreeSet<&str> = left.required.iter().map(String::as_str).collect();
     let req_b: BTreeSet<&str> = right.required.iter().map(String::as_str).collect();
-    let mut fields = BTreeMap::new();
+    let mut fields = Vec::with_capacity(ordered_names.len());
     let mut optional = Vec::new();
-    for name in names {
+    for name in ordered_names {
         match (left.properties.get(name), right.properties.get(name)) {
             (Some(l_val), Some(r_val)) => {
                 let merged = merge_schemas(l_val, r_val, &format!("{path}.{name}"))?;
-                fields.insert(name.to_owned(), merged);
+                fields.push((name.to_owned(), merged));
                 if !req_a.contains(name) || !req_b.contains(name) {
                     optional.push(name.to_owned());
                 }
             }
             (Some(val), None) | (None, Some(val)) => {
-                fields.insert(name.to_owned(), val.clone());
+                fields.push((name.to_owned(), val.clone()));
                 optional.push(name.to_owned());
             }
             (None, None) => {}
         }
     }
-    Ok(ValueSchema::object(ObjectSchema::record(fields, &optional)))
+    Ok(ValueSchema::object(ObjectSchema::record_ordered(
+        fields, &optional,
+    )))
 }
 
 /// Returns `None` iff every value described by `from` is admitted by `to`
@@ -294,18 +305,6 @@ pub(crate) struct ExpansionBudget {
 }
 
 impl ExpansionBudget {
-    /// Creates a fresh expansion budget starting now.
-    #[must_use]
-    pub(crate) fn new(limits: ExpansionLimits) -> Self {
-        Self {
-            limits,
-            started: Instant::now(),
-            work: 0,
-            output: 0,
-            pending_bytes: 0,
-        }
-    }
-
     /// Creates a budget anchored at an explicit [`Instant`].
     #[must_use]
     pub(crate) const fn with_started(limits: ExpansionLimits, started: Instant) -> Self {
@@ -334,9 +333,11 @@ impl ExpansionBudget {
         Ok(())
     }
 
-    /// Resets the per-module work and pending literal counters while keeping
-    /// the pack-wide output byte counter and deadline.
-    pub(crate) fn begin_module(&mut self) {
+    /// Applies the module's expansion limits and resets the per-module work and
+    /// pending literal counters while keeping the pack-wide output byte counter
+    /// and deadline anchor.
+    pub(crate) fn begin_module(&mut self, limits: ExpansionLimits) {
+        self.limits = limits;
         self.work = 0;
         self.pending_bytes = 0;
     }
@@ -576,6 +577,8 @@ impl ExpansionBudget {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use serde_json::json;
 
     use super::{ExpansionBudget, ExpansionLimits};
@@ -584,18 +587,24 @@ mod tests {
     fn output_budget_charges_escaped_bytes_for_control_heavy_strings() {
         let raw = "\u{0000}".repeat(40);
         // Raw length is 40 bytes, but escaped JSON is `"\u0000..."` = 2 + 240 = 242 bytes.
-        let mut budget = ExpansionBudget::new(ExpansionLimits {
-            max_work: 1_000,
-            max_output_bytes: 100,
-            max_millis: None,
-        });
+        let mut budget = ExpansionBudget::with_started(
+            ExpansionLimits {
+                max_work: 1_000,
+                max_output_bytes: 100,
+                max_millis: None,
+            },
+            Instant::now(),
+        );
         assert!(budget.assert_value(&json!(raw)).is_err());
 
-        let mut generous = ExpansionBudget::new(ExpansionLimits {
-            max_work: 1_000,
-            max_output_bytes: 300,
-            max_millis: None,
-        });
+        let mut generous = ExpansionBudget::with_started(
+            ExpansionLimits {
+                max_work: 1_000,
+                max_output_bytes: 300,
+                max_millis: None,
+            },
+            Instant::now(),
+        );
         assert!(generous.assert_value(&json!(raw)).is_ok());
     }
 }

@@ -96,7 +96,7 @@ impl FlowSourceMapStepKind {
     }
 }
 
-/// Compiler-only source-map annotation carried on a flow [`Step`].
+/// Compiler-only source-map annotation carried on a flow `Step`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FlowSourceMapAnnotation {
@@ -123,7 +123,7 @@ pub struct FlowSourceMapArtifactRef {
     pub artifact_id: String,
     /// Artifact version.
     pub version: String,
-    /// Artifact Norn1 SHA-256 hash.
+    /// Artifact `Norn1` SHA-256 hash.
     pub sha256: String,
 }
 
@@ -209,7 +209,7 @@ pub struct FlowSourceMapFlow {
     pub edges: Vec<FlowSourceMapEdge>,
 }
 
-/// Draft flow source map emitted by the compiler before Rust supplies Norn1 hashes.
+/// Draft flow source map emitted by the compiler before Rust supplies `Norn1` hashes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FlowSourceMapDraft {
@@ -219,7 +219,7 @@ pub struct FlowSourceMapDraft {
     pub flows: Vec<FlowSourceMapFlow>,
 }
 
-/// Intermediate graph of steps and edges built from annotated [`Step`]s.
+/// Intermediate graph of steps and edges built from annotated `Step`s.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlowSourceMapGraph {
     /// Steps in traversal order.
@@ -286,35 +286,35 @@ pub struct RetryPolicy {
 
 /// Single `Norn.perform` step.
 #[derive(Clone, Debug, PartialEq)]
-pub struct PerformStep {
+pub(crate) struct PerformStep {
     /// Unique `snake_case` step identifier.
-    pub step: String,
+    pub(crate) step: String,
     /// Target Function handle.
-    pub func: FnRef,
+    pub(crate) func: FnRef,
     /// Input record expression.
-    pub input: Expr,
+    pub(crate) input: Expr,
     /// Optional result binding name.
-    pub bind: Option<String>,
+    pub(crate) bind: Option<String>,
     /// Optional display label.
-    pub label: Option<String>,
+    pub(crate) label: Option<String>,
     /// Source location.
-    pub at: Option<SourceLocation>,
+    pub(crate) at: Option<SourceLocation>,
     /// Optional flow source-map annotation.
-    pub source_map: Option<FlowSourceMapAnnotation>,
+    pub(crate) source_map: Option<FlowSourceMapAnnotation>,
 }
 
 /// One conditional branch of a [`Step::Route`].
 #[derive(Clone, Debug, PartialEq)]
-pub struct RouteBranch {
+pub(crate) struct RouteBranch {
     /// Boolean guard expression.
-    pub when: Expr,
+    pub(crate) when: Expr,
     /// Steps executed when `when` holds.
-    pub then: Vec<Step>,
+    pub(crate) then: Vec<Step>,
 }
 
 /// Closure-free flow step AST (`Step` in `tools/norn-ts/src/builder/flow.ts`).
 #[derive(Clone, Debug, PartialEq)]
-pub enum Step {
+pub(crate) enum Step {
     /// Durable Function invocation (`Norn.perform`).
     Perform(Box<PerformStep>),
     /// Finite retry around one [`PerformStep`].
@@ -326,7 +326,7 @@ pub enum Step {
         /// Source location.
         at: Option<SourceLocation>,
         /// Optional source-map annotation.
-        source_map: Option<FlowSourceMapAnnotation>,
+        source_map: Option<Box<FlowSourceMapAnnotation>>,
     },
     /// Durable timer wait (`Effect.sleep`).
     Sleep {
@@ -339,7 +339,7 @@ pub enum Step {
         /// Source location.
         at: Option<SourceLocation>,
         /// Optional source-map annotation.
-        source_map: Option<FlowSourceMapAnnotation>,
+        source_map: Option<Box<FlowSourceMapAnnotation>>,
     },
     /// First-hit conditional routing (`if` / `switch`).
     Route {
@@ -350,7 +350,7 @@ pub enum Step {
         /// Source location.
         at: Option<SourceLocation>,
         /// Optional source-map annotation.
-        source_map: Option<FlowSourceMapAnnotation>,
+        source_map: Option<Box<FlowSourceMapAnnotation>>,
     },
     /// Typed failure handler (`Effect.catchTag`).
     CatchTag {
@@ -365,18 +365,18 @@ pub enum Step {
         /// Source location.
         at: Option<SourceLocation>,
         /// Optional source-map annotation.
-        source_map: Option<FlowSourceMapAnnotation>,
+        source_map: Option<Box<FlowSourceMapAnnotation>>,
     },
     /// Explicit typed failure (`Effect.fail`).
     Fail {
         /// Tagged error declaration.
-        error: TaggedErrorDecl,
+        error: Box<TaggedErrorDecl>,
         /// Failure fields record expression.
         fields: Expr,
         /// Source location.
         at: Option<SourceLocation>,
         /// Optional source-map annotation.
-        source_map: Option<FlowSourceMapAnnotation>,
+        source_map: Option<Box<FlowSourceMapAnnotation>>,
     },
     /// Terminal flow completion (`return` / `Effect.succeed`).
     Succeed {
@@ -385,7 +385,7 @@ pub enum Step {
         /// Source location.
         at: Option<SourceLocation>,
         /// Optional source-map annotation.
-        source_map: Option<FlowSourceMapAnnotation>,
+        source_map: Option<Box<FlowSourceMapAnnotation>>,
     },
     /// Scoped inner sequence returning via [`Step::Value`].
     Compose {
@@ -398,7 +398,7 @@ pub enum Step {
         /// Source location.
         at: Option<SourceLocation>,
         /// Optional source-map annotation.
-        source_map: Option<FlowSourceMapAnnotation>,
+        source_map: Option<Box<FlowSourceMapAnnotation>>,
     },
     /// Value return from the nearest [`Step::Compose`].
     Value {
@@ -407,7 +407,7 @@ pub enum Step {
         /// Source location.
         at: Option<SourceLocation>,
         /// Optional source-map annotation.
-        source_map: Option<FlowSourceMapAnnotation>,
+        source_map: Option<Box<FlowSourceMapAnnotation>>,
     },
     /// Ordered children from a literal `Effect.all([...])`.
     All {
@@ -416,14 +416,14 @@ pub enum Step {
         /// Source location.
         at: Option<SourceLocation>,
         /// Optional source-map annotation.
-        source_map: Option<FlowSourceMapAnnotation>,
+        source_map: Option<Box<FlowSourceMapAnnotation>>,
     },
 }
 
 impl Step {
     /// Returns the optional [`FlowSourceMapAnnotation`] carried by this step.
     #[must_use]
-    pub const fn source_map(&self) -> Option<&FlowSourceMapAnnotation> {
+    pub(crate) fn source_map(&self) -> Option<&FlowSourceMapAnnotation> {
         match self {
             Self::Perform(p) => p.source_map.as_ref(),
             Self::Retry { source_map, .. }
@@ -434,12 +434,12 @@ impl Step {
             | Self::Succeed { source_map, .. }
             | Self::Compose { source_map, .. }
             | Self::Value { source_map, .. }
-            | Self::All { source_map, .. } => source_map.as_ref(),
+            | Self::All { source_map, .. } => source_map.as_deref(),
         }
     }
 
     /// Sets the [`FlowSourceMapAnnotation`] on this step.
-    pub fn set_source_map(&mut self, annotation: FlowSourceMapAnnotation) {
+    pub(crate) fn set_source_map(&mut self, annotation: FlowSourceMapAnnotation) {
         match self {
             Self::Perform(p) => p.source_map = Some(annotation),
             Self::Retry { source_map, .. }
@@ -450,7 +450,7 @@ impl Step {
             | Self::Succeed { source_map, .. }
             | Self::Compose { source_map, .. }
             | Self::Value { source_map, .. }
-            | Self::All { source_map, .. } => *source_map = Some(annotation),
+            | Self::All { source_map, .. } => *source_map = Some(Box::new(annotation)),
         }
     }
 }
@@ -472,7 +472,7 @@ pub struct FlowDef {
     /// Flow metadata.
     pub meta: FlowMeta,
     /// Root step sequence.
-    pub body: Vec<Step>,
+    pub(crate) body: Vec<Step>,
     /// Source location of `Norn.flow(...)`.
     pub at: Option<SourceLocation>,
 }
@@ -507,7 +507,7 @@ fn retry_delay_inner(delay: &RetryDelay, attempt: u32) -> f64 {
 #[must_use]
 pub(crate) fn flow_source_map_graph(steps: &[Step]) -> FlowSourceMapGraph {
     let mut builder = GraphBuilder::default();
-    let _ = builder.visit_sequence(steps);
+    let _shape = builder.visit_sequence(steps);
     FlowSourceMapGraph {
         steps: builder
             .order
@@ -639,7 +639,7 @@ impl GraphBuilder {
                 otherwise,
                 source_map,
                 ..
-            } => self.visit_route(id.as_deref(), branches, otherwise, source_map.as_ref()),
+            } => self.visit_route(id.as_deref(), branches, otherwise, source_map.as_deref()),
             Step::CatchTag {
                 body, tag, handler, ..
             } => self.visit_catch_tag(id, body, tag, handler),

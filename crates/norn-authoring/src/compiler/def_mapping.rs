@@ -485,10 +485,10 @@ fn add_mapping_pin(
     Ok(())
 }
 
-/// Binds same-project `Norn.sourceSchema` Norn1 hashes onto pending mappings (`MAPPING-SOURCE-REF-1`).
+/// Binds same-project `Norn.sourceSchema` `Norn1` hashes onto pending mappings (`MAPPING-SOURCE-REF-1`).
 pub(crate) fn bind_compiled_source_schemas(batches: &mut [Vec<Value>]) {
     let mut hashes: BTreeMap<String, String> = BTreeMap::new();
-    for artifacts in batches.iter() {
+    for artifacts in &*batches {
         for artifact in artifacts {
             if artifact.get("kind").and_then(Value::as_str) != Some("source_schema") {
                 continue;
@@ -507,8 +507,8 @@ pub(crate) fn bind_compiled_source_schemas(batches: &mut [Vec<Value>]) {
     if hashes.is_empty() {
         return;
     }
-    for artifacts in batches.iter_mut() {
-        for artifact in artifacts.iter_mut() {
+    for artifacts in &mut *batches {
+        for artifact in artifacts {
             if artifact.get("kind").and_then(Value::as_str) != Some("mapping") {
                 continue;
             }

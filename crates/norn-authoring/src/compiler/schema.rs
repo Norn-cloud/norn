@@ -76,7 +76,6 @@ pub(crate) struct PropertyProjection {
 pub(crate) struct ProjectedProperty {
     pub(crate) id: String,
     pub(crate) projection: PropertyProjection,
-    pub(crate) node: P<Node>,
 }
 
 pub(crate) fn projection_err(message: impl Into<String>, node: P<Node>) -> CompileError {

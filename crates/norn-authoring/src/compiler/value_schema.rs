@@ -89,6 +89,7 @@ impl ObjectSchema {
     }
 
     /// Iterates property names in deterministic order.
+    #[must_use]
     pub fn ordered_keys(&self) -> impl Iterator<Item = &str> {
         self.properties.keys().map(String::as_str)
     }

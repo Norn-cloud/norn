@@ -1,7 +1,7 @@
 //! Flow metadata, tagged-error declarations, Function handles, and Schedule
 //! retry policies split out of [`super::flow_syntax`].
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::Value;
 use tsrs_ast::{Kind, Node, Symbol};
@@ -249,14 +249,25 @@ impl SyntaxCompiler<'_> {
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
     ) -> Result<Vec<TaggedErrorDecl>, CompileError> {
+        let mut source_order: HashMap<P<Symbol>, usize> = HashMap::new();
+        let mut visited_aliases: HashSet<P<Symbol>> = HashSet::new();
+        self.collect_type_symbol_order(
+            err_node,
+            checker,
+            &mut source_order,
+            &mut visited_aliases,
+            0,
+        );
+
         let err_ty = checker.get_type_from_type_node_exported(err_node);
         let members: Vec<P<Type>> = if err_ty.is_union() {
             err_ty.types().to_vec()
         } else {
             vec![err_ty]
         };
-        let mut errors = Vec::new();
-        for member in members {
+        let mut collected: Vec<(usize, usize, TaggedErrorDecl)> = Vec::new();
+        let mut seen_syms: HashSet<P<Symbol>> = HashSet::new();
+        for (idx, member) in members.into_iter().enumerate() {
             if member.flags().intersects(TypeFlags::Never) {
                 continue;
             }
@@ -267,9 +278,74 @@ impl SyntaxCompiler<'_> {
                     err_node,
                 ));
             };
-            errors.push(self.tagged_error(err_sym, err_node, checker, expansion)?);
+            if !seen_syms.insert(err_sym) {
+                continue;
+            }
+            let decl = self.tagged_error(err_sym, err_node, checker, expansion)?;
+            let ord = source_order.get(&err_sym).copied().unwrap_or(usize::MAX);
+            collected.push((ord, idx, decl));
         }
-        Ok(errors)
+        collected.sort_by(|(ord_a, idx_a, decl_a), (ord_b, idx_b, decl_b)| {
+            ord_a
+                .cmp(ord_b)
+                .then_with(|| {
+                    let loc_a = decl_a
+                        .at
+                        .as_ref()
+                        .map(|a| (a.file.as_str(), a.line, a.column.unwrap_or(0)));
+                    let loc_b = decl_b
+                        .at
+                        .as_ref()
+                        .map(|b| (b.file.as_str(), b.line, b.column.unwrap_or(0)));
+                    loc_a.cmp(&loc_b)
+                })
+                .then_with(|| idx_a.cmp(idx_b))
+        });
+        Ok(collected.into_iter().map(|(_, _, decl)| decl).collect())
+    }
+
+    fn collect_type_symbol_order(
+        &self,
+        node: P<Node>,
+        checker: &mut Checker,
+        order: &mut HashMap<P<Symbol>, usize>,
+        visited_aliases: &mut HashSet<P<Symbol>>,
+        depth: usize,
+    ) {
+        if depth > self.limits.max_depth {
+            return;
+        }
+        if node.kind() == Kind::Identifier {
+            if let Ok(sym) = self.symbol(checker, node) {
+                let next_ord = order.len();
+                order.entry(sym).or_insert(next_ord);
+                if visited_aliases.insert(sym)
+                    && let Some(decl) = sym
+                        .declarations()
+                        .iter()
+                        .copied()
+                        .find(|d| d.kind() == Kind::TypeAliasDeclaration)
+                {
+                    self.collect_type_symbol_order(
+                        decl,
+                        checker,
+                        order,
+                        visited_aliases,
+                        depth.saturating_add(1),
+                    );
+                }
+            }
+            return;
+        }
+        let mut children = Vec::new();
+        node.for_each_child(&mut |child| {
+            children.push(child);
+            false
+        });
+        let next_depth = depth.saturating_add(1);
+        for child in children {
+            self.collect_type_symbol_order(child, checker, order, visited_aliases, next_depth);
+        }
     }
 
     pub(super) fn duration(

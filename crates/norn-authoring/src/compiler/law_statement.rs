@@ -435,7 +435,7 @@ fn validate_scope_slot(value: &Value) -> Result<(), StatementError> {
     if !matches!(root_kind.as_str(), "company" | "app" | "cell" | "entity") {
         return Err(StatementError::new("unknown scope root"));
     }
-    let _ = expect_string_field(root, "id")?;
+    expect_string_field(root, "id")?;
     if let Some(types) = scope.get("objectTypes") {
         expect_string_array(types)?;
     }
@@ -453,8 +453,8 @@ fn validate_scope_slot(value: &Value) -> Result<(), StatementError> {
                 &["objectType", "property", "states"],
                 &["objectType", "property", "states"],
             )?;
-            let _ = expect_string_field(state, "objectType")?;
-            let _ = expect_string_field(state, "property")?;
+            expect_string_field(state, "objectType")?;
+            expect_string_field(state, "property")?;
             if let Some(st_arr) = state.get("states") {
                 expect_string_array(st_arr)?;
             }
@@ -680,7 +680,7 @@ pub fn parse_statement(source: &str) -> Result<LawStatement, StatementError> {
     }
     for key in ["sourcePath", "actorId", "createdAt"] {
         if prov.contains_key(key) {
-            let _ = expect_string_field(prov, key)?;
+            expect_string_field(prov, key)?;
         }
     }
     let metadata = LawMetadata {

@@ -383,7 +383,7 @@ pub(crate) fn list_length(text: &str) -> usize {
     while let Some(ch) = chars.next() {
         if let Some(q) = quote {
             if ch == '\\' {
-                let _ = chars.next();
+                let _skipped = chars.next();
             } else if ch == q {
                 quote = None;
             }

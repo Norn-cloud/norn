@@ -91,8 +91,7 @@ pub use self::flow_source_map::{
     FLOW_SOURCE_MAP_DRAFT_FORMAT, FLOW_SOURCE_MAP_FORMAT, FlowDef, FlowMeta,
     FlowSourceMapAnnotation, FlowSourceMapArtifactRef, FlowSourceMapDraft, FlowSourceMapEdge,
     FlowSourceMapEdgeKind, FlowSourceMapFlow, FlowSourceMapGraph, FlowSourceMapStep,
-    FlowSourceMapStepKind, FnRef, PerformStep, RetryDelay, RetryPolicy, RouteBranch,
-    SourceLocation, Step, TaggedErrorDecl,
+    FlowSourceMapStepKind, FnRef, RetryDelay, RetryPolicy, SourceLocation, TaggedErrorDecl,
 };
 pub use self::law_statement::{
     LawMetadata, LawStatement, StatementError, from_statement, parse_sentence, parse_statement,
@@ -414,7 +413,7 @@ pub fn compile_flow_vfs(
 /// across `files` inside an existing [`AuthoringProgram`].
 ///
 /// Runs [`ProfileChecker::check_program`] first, lowers each accepted module, and
-/// binds same-project `Norn.sourceSchema` Norn1 hashes onto pending `Norn.mapping`
+/// binds same-project `Norn.sourceSchema` `Norn1` hashes onto pending `Norn.mapping`
 /// artifacts (`MAPPING-SOURCE-REF-1`).
 ///
 /// # Errors
@@ -487,7 +486,11 @@ fn compile_one_definitions_file(
             diagnostics: vec![err.into_diagnostic()],
         };
     }
-    expansion.begin_module();
+    expansion.begin_module(ExpansionLimits {
+        max_work: limits.max_expansion_work,
+        max_output_bytes: limits.max_output_bytes,
+        max_millis: Some(limits.max_millis),
+    });
     let forbid_unsafe = opts
         .forbid_unsafe_zen
         .unwrap_or_else(|| opts.envelope.registry_package_path.is_some());

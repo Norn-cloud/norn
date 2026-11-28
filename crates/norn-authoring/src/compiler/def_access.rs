@@ -640,7 +640,7 @@ fn inject_scoped_roles(
     rule_node: P<Node>,
 ) -> Result<(), CompileError> {
     let mut rule_roles: BTreeSet<String> = BTreeSet::new();
-    for cond in all_of.iter() {
+    for cond in &*all_of {
         if let Some(arr) = cond
             .get("role")
             .and_then(|r| r.get("anyOf"))

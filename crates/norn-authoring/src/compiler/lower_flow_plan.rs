@@ -14,7 +14,7 @@ use super::flow_source_map::{
     TaggedErrorDecl,
 };
 use super::lower_flow::{
-    AwaitTask, FlowLowering, Frame, LowerBreak, Path, ResumeTask, format_whole_f64,
+    AwaitTask, FlowLowering, Frame, LowerBreak, Path, ResumeTask, SleepTask, format_whole_f64,
 };
 use super::lower_flow_resume::EmitRow;
 use super::value_schema::{BudgetExceeded, ValueSchema};
@@ -117,7 +117,7 @@ impl FlowLowering<'_> {
                 steps: inner,
                 source_map,
                 ..
-            } => self.step_all(path, inner, source_map, names, next),
+            } => self.step_all(path, inner, source_map.as_deref(), &names, next),
             Step::Value { value, at, .. } => self.step_value(path, value, at.as_ref(), next),
             Step::Perform(p) => self.step_perform(&path, *p, next),
             Step::Retry {
@@ -125,14 +125,21 @@ impl FlowLowering<'_> {
                 policy,
                 source_map,
                 ..
-            } => self.step_retry(&path, *perform, policy, source_map, next),
+            } => self.step_retry(&path, *perform, policy, source_map.as_deref(), next),
             Step::Sleep {
                 step,
                 millis,
                 at,
                 source_map,
                 ..
-            } => self.step_sleep(path, (&step, millis), at.as_ref(), source_map, names, next),
+            } => self.step_sleep(
+                path,
+                (&step, millis),
+                at.as_ref(),
+                source_map.as_deref(),
+                names,
+                next,
+            ),
             Step::Route {
                 branches,
                 otherwise,
@@ -142,7 +149,7 @@ impl FlowLowering<'_> {
                 path,
                 (branches, otherwise),
                 at.as_ref(),
-                source_map.as_ref(),
+                source_map.as_deref(),
                 names,
                 next,
             ),
@@ -173,14 +180,14 @@ impl FlowLowering<'_> {
                 &error,
                 &fields,
                 at.as_ref(),
-                source_map.as_ref(),
+                source_map.as_deref(),
                 &next,
             ),
             Step::Succeed {
                 value,
                 at,
                 source_map,
-            } => self.step_succeed(&path, &value, at.as_ref(), source_map),
+            } => self.step_succeed(&path, &value, at.as_ref(), source_map.as_deref()),
         }
     }
 
@@ -204,12 +211,12 @@ impl FlowLowering<'_> {
         path: &Path,
         perform: PerformStep,
         policy: RetryPolicy,
-        source_map: Option<FlowSourceMapAnnotation>,
+        source_map: Option<&FlowSourceMapAnnotation>,
         next: Vec<Frame>,
     ) -> Result<(), LowerBreak> {
         let mut owners = Vec::new();
         if let Some(sm) = source_map {
-            owners.push(sm.id);
+            owners.push(sm.id.clone());
         }
         if let Some(sm) = perform.source_map.as_ref() {
             owners.push(sm.id.clone());
@@ -226,7 +233,7 @@ impl FlowLowering<'_> {
     ) -> Result<(), LowerBreak> {
         let context = Self::with_source_map(
             &path.source_map_context,
-            data.source_map.as_ref().map(|s| s.id.as_str()),
+            data.source_map.as_deref().map(|s| s.id.as_str()),
         );
         let outer_ctx = path.source_map_context.clone();
         next.push(Frame::Compose {
@@ -250,15 +257,13 @@ impl FlowLowering<'_> {
         &mut self,
         mut path: Path,
         inner: Vec<Step>,
-        source_map: Option<FlowSourceMapAnnotation>,
-        names: BTreeSet<String>,
+        source_map: Option<&FlowSourceMapAnnotation>,
+        names: &BTreeSet<String>,
         mut next: Vec<Frame>,
     ) -> Result<(), LowerBreak> {
-        let context = Self::with_source_map(
-            &path.source_map_context,
-            source_map.as_ref().map(|s| s.id.as_str()),
-        );
-        let outer = Self::bindings_in(&inner, &names);
+        let context =
+            Self::with_source_map(&path.source_map_context, source_map.map(|s| s.id.as_str()));
+        let outer = Self::bindings_in(&inner, names);
         let outer_ctx = path.source_map_context.clone();
         next.push(Frame::Rest {
             steps: inner,
@@ -361,7 +366,7 @@ impl FlowLowering<'_> {
         path: Path,
         sleep: (&str, f64),
         at: Option<&SourceLocation>,
-        source_map: Option<FlowSourceMapAnnotation>,
+        source_map: Option<&FlowSourceMapAnnotation>,
         names: BTreeSet<String>,
         next: Vec<Frame>,
     ) -> Result<(), LowerBreak> {
@@ -373,7 +378,7 @@ impl FlowLowering<'_> {
             "{{kind: 'timer', runId: {}, step: '{step_id}', attempt: 0, timerId: {timer_key}, afterMillis: {millis_str}}}",
             path.key
         );
-        let owners: Vec<String> = source_map.map(|s| s.id).into_iter().collect();
+        let owners: Vec<String> = source_map.map(|s| s.id.clone()).into_iter().collect();
         self.emit(EmitRow {
             path: &path,
             to: &state,
@@ -387,14 +392,14 @@ impl FlowLowering<'_> {
         self.enqueue_state(
             &state,
             at,
-            ResumeTask::Sleep {
+            ResumeTask::Sleep(Box::new(SleepTask {
                 step: step_id.to_owned(),
                 state: state.clone(),
                 names,
                 source_map_context: path.source_map_context,
                 owners,
                 next,
-            },
+            })),
         );
         Ok(())
     }
@@ -524,7 +529,7 @@ impl FlowLowering<'_> {
         path: &Path,
         value: &Expr,
         at: Option<&SourceLocation>,
-        source_map: Option<FlowSourceMapAnnotation>,
+        source_map: Option<&FlowSourceMapAnnotation>,
     ) -> Result<(), LowerBreak> {
         assert_expression_budget(self.budget, value, &path.scope)?;
         let schema = match type_of(value, &path.scope) {
@@ -545,7 +550,7 @@ impl FlowLowering<'_> {
         let merged =
             self.merge_optional_schema(self.result_schema.clone(), schema, at, "flow result")?;
         self.result_schema = Some(merged);
-        let owners: Vec<String> = source_map.map(|s| s.id).into_iter().collect();
+        let owners: Vec<String> = source_map.map(|s| s.id.clone()).into_iter().collect();
         self.emit(EmitRow {
             path,
             to: "completed",
@@ -691,7 +696,7 @@ struct ComposeStepData {
     schema: ValueSchema,
     body: Vec<Step>,
     at: Option<SourceLocation>,
-    source_map: Option<FlowSourceMapAnnotation>,
+    source_map: Option<Box<FlowSourceMapAnnotation>>,
 }
 
 struct CatchTagStepData {
@@ -699,5 +704,5 @@ struct CatchTagStepData {
     tag: String,
     as_name: Option<String>,
     handler: Vec<Step>,
-    source_map: Option<FlowSourceMapAnnotation>,
+    source_map: Option<Box<FlowSourceMapAnnotation>>,
 }

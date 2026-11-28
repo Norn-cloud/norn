@@ -144,15 +144,17 @@ pub(super) struct RetryTask {
     pub(super) owners: Vec<String>,
 }
 
+pub(super) struct SleepTask {
+    pub(super) step: String,
+    pub(super) state: String,
+    pub(super) names: BTreeSet<String>,
+    pub(super) source_map_context: Vec<String>,
+    pub(super) owners: Vec<String>,
+    pub(super) next: Vec<Frame>,
+}
+
 pub(super) enum ResumeTask {
-    Sleep {
-        step: String,
-        state: String,
-        names: BTreeSet<String>,
-        source_map_context: Vec<String>,
-        owners: Vec<String>,
-        next: Vec<Frame>,
-    },
+    Sleep(Box<SleepTask>),
     Awaiting(Box<AwaitTask>),
     Retrying(Box<RetryTask>),
 }
@@ -472,14 +474,14 @@ impl<'a> FlowLowering<'a> {
 
     fn dispatch_task(&mut self, task: ResumeTask) -> Result<(), LowerBreak> {
         match task {
-            ResumeTask::Sleep {
-                step,
-                state,
-                names,
-                source_map_context,
-                owners,
-                next,
-            } => self.resume_sleep(&step, &state, &names, source_map_context, owners, next),
+            ResumeTask::Sleep(task) => self.resume_sleep(
+                &task.step,
+                &task.state,
+                &task.names,
+                task.source_map_context,
+                task.owners,
+                task.next,
+            ),
             ResumeTask::Awaiting(task) => self.awaiting(&task),
             ResumeTask::Retrying(task) => self.retrying_resume(&task),
         }

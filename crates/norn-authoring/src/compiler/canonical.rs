@@ -1,4 +1,4 @@
-//! Canonical JSON formatting and Norn1 hashing helpers.
+//! Canonical JSON formatting and `Norn1` hashing helpers.
 //!
 //! Ports `tools/norn-ts/src/canonical.ts` and the `norn1Sha256` helper from
 //! `tools/norn-ts/src/compiler/definitions.ts`. Object keys are ordered by
@@ -6,7 +6,6 @@
 //! of `serde_json`'s map backend.
 
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use serde_json::{Map, Number, Value};
@@ -14,7 +13,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use unicode_normalization::UnicodeNormalization;
 
-/// Norn1 domain separator matching `crates/norn-canonical` and `definitions.ts`.
+/// `Norn1` domain separator matching `crates/norn-canonical` and `definitions.ts`.
 const NORN1_DOMAIN_TAG: &[u8] = b"norn.canonical.json/norn1\0";
 
 /// Maximum safe IEEE-754 integer (`2^53 - 1`), matching JavaScript `Number.MAX_SAFE_INTEGER`.
@@ -28,7 +27,7 @@ const MAX_SAFE_INTEGER_U64: u64 = 9_007_199_254_740_991;
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 #[error("{path}: {reason}")]
 pub struct CanonicalError {
-    /// JSONPath-like location of the offending member.
+    /// `JSONPath`-like location of the offending member.
     pub path: String,
     /// Human-readable reason the member is not canonical JSON.
     pub reason: String,
@@ -463,8 +462,9 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
 /// numbers).
 #[must_use]
 pub fn norn1_sha256(value: &Value) -> Option<String> {
+    let normalized = to_canonical_json(value).ok()?;
     let mut text = String::new();
-    write_norn1_subset(value, &mut text)?;
+    write_norn1_subset(&normalized, &mut text)?;
     let mut hasher = Sha256::new();
     hasher.update(NORN1_DOMAIN_TAG);
     hasher.update(text.as_bytes());
@@ -487,12 +487,21 @@ fn write_norn1_subset(value: &Value, out: &mut String) -> Option<()> {
             Some(())
         }
         Value::Number(num) => {
-            let i = num.as_i64()?;
-            if !(MIN_SAFE_INTEGER_I64..=MAX_SAFE_INTEGER_I64).contains(&i) {
-                return None;
+            if let Some(i) = num.as_i64() {
+                if !(MIN_SAFE_INTEGER_I64..=MAX_SAFE_INTEGER_I64).contains(&i) {
+                    return None;
+                }
+                let _written = write!(out, "{i}");
+                return Some(());
             }
-            let _written = write!(out, "{i}");
-            Some(())
+            if let Some(u) = num.as_u64() {
+                if u > MAX_SAFE_INTEGER_U64 {
+                    return None;
+                }
+                let _written = write!(out, "{u}");
+                return Some(());
+            }
+            None
         }
         Value::String(text) => {
             if text.chars().any(|ch| u32::from(ch) <= 0x1F) {
@@ -536,11 +545,6 @@ fn write_norn1_subset(value: &Value, out: &mut String) -> Option<()> {
             Some(())
         }
     }
-}
-
-/// Checks whether `name` is already in `seen`; helper used by schema/definition lowering.
-pub(crate) fn insert_unique_str(seen: &mut BTreeSet<String>, value: String) -> bool {
-    seen.insert(value)
 }
 
 /// Returns `true` if `value` is a valid `snake_case` identifier matching `[a-z][a-z0-9_]*`.
@@ -684,5 +688,12 @@ mod tests {
     fn norn1_sha256_matches_norn_canonical() {
         let doc = json!({ "artifactId": "demo.source", "version": "1.0.0", "count": 42 });
         assert_eq!(norn1_sha256(&doc), norn_canonical_hash(&doc));
+
+        let neg_zero = json!({ "z": 1, "a": [true, null, -0.0] });
+        assert!(norn1_sha256(&neg_zero).is_some());
+        assert_eq!(norn1_sha256(&neg_zero), norn_canonical_hash(&neg_zero));
+
+        assert!(norn1_sha256(&json!({ "frac": 1.5 })).is_none());
+        assert!(norn1_sha256(&json!({ "__proto__": 1 })).is_none());
     }
 }

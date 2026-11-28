@@ -501,7 +501,6 @@ impl SchemaProjection<'_> {
             out.push(ProjectedProperty {
                 id: f.name.clone(),
                 projection: self.property(&f.schema)?,
-                node: f.node,
             });
         }
         Ok(out)
