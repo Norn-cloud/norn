@@ -1333,3 +1333,129 @@ fn in_place_frontier_and_audit_tamper_heals_on_open_and_commit_observed_cannot_f
         "audit actor restored from immutable ledger"
     );
 }
+
+/// #1549 / OBS-LINK-DISPUTE-1: Resolving one of two pending conflicts for the
+/// same event with `accept-second-as-correction` must keep the link frozen while
+/// the sibling dispute remains open; decomposed Unicode actor/reason must match
+/// the canonical NFC ledger entry with zero drift; negative `commit_seq` in the
+/// audit index heals on reopen rather than aborting open.
+#[test]
+fn dispute_resolve_sibling_conflict_freezes_fresh_claim_and_nfc_audit_heals() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("sibling_nfc.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    let d = party_ref_row("P-D", "demo/party/d", "D", None);
+    for target in [&b, &c, &d] {
+        capture_kind(&mut cell, "erpnext", target, "et", "1", "upsert", "p1");
+    }
+
+    let a1 = party_ref_row("P-A", "demo/party/a", "A1", Some("demo/party/b"));
+    let a2 = party_ref_row("P-A", "demo/party/a", "A2", Some("demo/party/c"));
+    let a3 = party_ref_row("P-A", "demo/party/a", "A3", Some("demo/party/d"));
+    capture_kind(&mut cell, "erpnext", &a1, "e1", "1", "upsert", "p1");
+    let (raw2, input2) = raw_event(&cell, "erpnext", &a2, "e1", "1", "upsert", "p1");
+    let (c1, ins1) = cell
+        .inject_mapping_bundle(&raw2, &input2)
+        .expect("conflict 1");
+    let (raw3, input3) = raw_event(&cell, "erpnext", &a3, "e1", "1", "upsert", "p1");
+    let (c2, ins2) = cell
+        .inject_mapping_bundle(&raw3, &input3)
+        .expect("conflict 2");
+    assert!(ins1 && ins2 && c1 != c2);
+
+    // Resolve c1 with decomposed NFD Unicode actor & reason while c2 is still open.
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: c1.clone(),
+        decision: DisputeDecision::AcceptSecondAsCorrection,
+        actor: "ops:e\u{0301}rin".into(),
+        reason: "cafe\u{0301} correction".into(),
+    })
+    .expect("resolve c1");
+
+    assert!(
+        refers_targets(&cell, "demo/party/a").is_empty(),
+        "sibling pending dispute c2 must keep fresh correction claim frozen"
+    );
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("NFC-normalized audit index must match ledger with zero drift");
+    let audit = cell
+        .store()
+        .read()
+        .dispute_resolution(&c1)
+        .expect("read audit")
+        .expect("audit present");
+    assert_eq!(audit.actor, "ops:\u{00e9}rin");
+    assert_eq!(audit.reason, "caf\u{00e9} correction");
+
+    // Negative commit_seq in the derived audit index must trigger heal on reopen.
+    let model = cell.store().model().clone();
+    drop(cell);
+    {
+        let conn = rusqlite::Connection::open(&path).expect("sqlite");
+        conn.execute(
+            "UPDATE \"_norn_dispute_resolution\" SET \"commit_seq\" = -1",
+            [],
+        )
+        .expect("corrupt commit_seq");
+    }
+    let reopened =
+        CellStore::open(&path, model, StoreOptions::default()).expect("reopen heals negative seq");
+    reopened
+        .read()
+        .verify_frontier_equivalence()
+        .expect("healed audit index matches ledger");
+}
+
+/// #1549: Rejecting a contested explicit link clear (`target: None`) supersedes
+/// that disputed clear and restores the surviving undisputed claim's edge.
+#[test]
+fn dispute_resolve_reject_contested_clear_restores_surviving_claim() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut cell = setup_with(&dir.path().join("reject_clear.sqlite"), referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", Some("demo/party/b"));
+    let a_v2_clear = party_ref_row("P-A", "demo/party/a", "A v2 clear", None);
+    let a_v2_alt = party_ref_row("P-A", "demo/party/a", "A v2 alt", None);
+
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &a_v1, "e1", "1", "upsert", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+
+    // Late/contested explicit clear for an out-of-order event `e0` alongside `e1`,
+    // or a contested explicit clear on `e2` when `e1` still stands active.
+    // Use a second partition `p2` for `e1`? No, same partition with out-of-order
+    // `e0` leaves both `e1` (Some(B)) and `e0` (None) active in the contribution!
+    capture_kind(&mut cell, "erpnext", &a_v2_clear, "e0", "0", "upsert", "p1");
+    let (raw_alt, input_alt) = raw_event(&cell, "erpnext", &a_v2_alt, "e0", "0", "upsert", "p1");
+    let (conflict_id, inserted) = cell
+        .inject_mapping_bundle(&raw_alt, &input_alt)
+        .expect("conflict clear");
+    assert!(inserted && conflict_id.starts_with("mapping-conflict:"));
+
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: conflict_id,
+        decision: DisputeDecision::Reject,
+        actor: "ops:helen".into(),
+        reason: "bogus stale clear".into(),
+    })
+    .expect("reject contested clear");
+
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()]),
+        "rejecting contested explicit clear restores undisputed surviving claim"
+    );
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence after rejecting contested clear");
+}

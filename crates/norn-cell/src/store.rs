@@ -3617,7 +3617,7 @@ impl<E: SqlEngine> CellStore<E> {
                     commit_seq,
                     &receipt.hash,
                     effective_batch.consumes.as_ref(),
-                    &effective_batch.events,
+                    &entries,
                 )?;
             }
             self.conn.execute(r#"UPDATE "_norn_clock" SET logical_time=?1,commit_seq=?2,receipt_hash=?3 WHERE id=1"#,

@@ -314,10 +314,11 @@ pub(crate) fn record_dispute_resolutions_in_tx<E: SqlEngine>(
     commit_seq: u64,
     receipt_hash: &str,
     consumed: Option<&crate::store::Consumption>,
-    events: &[Value],
+    entries: &[crate::read::LedgerEntry],
 ) -> Result<(), CellError> {
     let commit_seq_i64 = to_i64(commit_seq, "dispute resolution commit_seq")?;
-    for event in events {
+    for entry in entries {
+        let event = &entry.event;
         if event.get("op").and_then(Value::as_str) != Some("dispute_resolved") {
             continue;
         }
@@ -482,7 +483,7 @@ pub(crate) fn frontier_has_drift<E: SqlEngine>(
             && row.get::<Option<String>>(7)?.as_deref()
                 == exp_claim.target.as_ref().map(|t| t.key.as_str())
             && row.get::<String>(8)? == exp_claim.observation_id
-            && to_u64(row.get(9)?, "frontier commit_seq")? == *exp_seq
+            && u64::try_from(row.get::<i64>(9)?).ok() == Some(*exp_seq)
             && row.get::<String>(10)? == exp_meta.source_version
             && row.get::<String>(11)? == exp_meta.version_kind.as_str()
             && row.get::<String>(12)? == exp_event_keys_json
@@ -493,7 +494,9 @@ pub(crate) fn frontier_has_drift<E: SqlEngine>(
         }
     }
     let expected_resolutions = expected_dispute_resolutions(reader.conn)?;
-    let stored_resolutions = reader.dispute_resolutions()?;
+    let Ok(stored_resolutions) = reader.dispute_resolutions() else {
+        return Ok(true);
+    };
     Ok(stored_resolutions != expected_resolutions)
 }
 

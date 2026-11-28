@@ -688,29 +688,18 @@ pub(crate) fn restore_observation_input<E: SqlEngine>(
     let is_evidence_obs = observation_id.starts_with("mapping-bundle:")
         || observation_id.starts_with("mapping-conflict:")
         || observation_id.starts_with("mapping-identity:");
-    let main_bundle_ok =
-        !is_evidence_obs || valid_evidence_observation(reader, observation_id, observed);
     if position == 0
         || record.batch.consumes
             != Some(crate::Consumption::Observation {
                 observation_id: observation_id.to_owned(),
             })
-        || !main_bundle_ok
         || !members_valid(reader, observation_id, observed, members)
     {
         return Err(mismatch());
     }
     let mut pre_existing = BTreeSet::new();
-    if ensure_pending_inbox_row(
-        reader.conn,
-        position,
-        observation_id,
-        observed,
-        is_evidence_obs,
-        &mismatch,
-    )? {
-        pre_existing.insert(observation_id);
-    }
+    // Restore members first so a conflict row whose accepted bundle was still
+    // pending at resolution time can recheck against that bundle in `_norn_inbox`.
     for member in members {
         if ensure_pending_inbox_row(
             reader.conn,
@@ -722,6 +711,19 @@ pub(crate) fn restore_observation_input<E: SqlEngine>(
         )? {
             pre_existing.insert(member.observation_id.as_str());
         }
+    }
+    if is_evidence_obs && !valid_evidence_observation(reader, observation_id, observed) {
+        return Err(mismatch());
+    }
+    if ensure_pending_inbox_row(
+        reader.conn,
+        position,
+        observation_id,
+        observed,
+        is_evidence_obs,
+        &mismatch,
+    )? {
+        pre_existing.insert(observation_id);
     }
     if !restore_source_evidence(
         reader.conn,

@@ -708,13 +708,14 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 continue;
             }
             let contribution = claim.contribution_id()?;
+            let disputed = self.event_keys_disputed(&event_keys, excluding_dispute)?;
             entries.push(Entry {
                 claim,
                 id,
                 contribution,
                 event_keys,
                 fresh: true,
-                disputed: false,
+                disputed,
             });
         }
         let touched_groups: BTreeSet<_> = entries

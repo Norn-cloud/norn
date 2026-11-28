@@ -434,12 +434,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     Vec<&crate::link_claim_frontier::FrontierRow>,
                 > = std::collections::BTreeMap::new();
                 for row in &active_event_claims {
-                    if row.claim.target.is_some() {
-                        by_contrib
-                            .entry(row.contribution_id.clone())
-                            .or_default()
-                            .push(row);
-                    }
+                    by_contrib
+                        .entry(row.contribution_id.clone())
+                        .or_default()
+                        .push(row);
                 }
                 for (contribution_id, disputed_rows) in by_contrib {
                     let Some(first) = disputed_rows.first() else {
