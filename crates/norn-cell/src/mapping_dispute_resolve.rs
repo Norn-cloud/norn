@@ -169,131 +169,6 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         self.load_source_conflicts(false)
     }
 
-    /// OBS-DISPUTE-LOOKUP-1: verify any `_norn_dispute_resolution` row for
-    /// `dispute_id` against its immutable `_norn_receipt`, `_norn_ledger`
-    /// event, and retained `_norn_export_journal` storage version before
-    /// treating the dispute as resolved (failing closed on inconsistent index
-    /// rows on already-open cells).
-    pub(crate) fn verified_dispute_resolution_seq(
-        &self,
-        dispute_id: &str,
-        max_seq: Option<i64>,
-    ) -> Result<Option<u64>, CellError> {
-        let Some((decision, actor, reason, seq_i64, receipt_hash)) = self.conn.query_optional(
-            &format!(
-                "SELECT \"decision\", \"actor\", \"reason\", \"commit_seq\", \"receipt_hash\" \
-                 FROM \"{}\" WHERE \"dispute_id\" = ?1",
-                crate::link_claim_frontier::DISPUTE_RESOLUTION
-            ),
-            crate::engine::params![dispute_id],
-            |row| {
-                Ok((
-                    row.get::<String>(0)?,
-                    row.get::<String>(1)?,
-                    row.get::<String>(2)?,
-                    row.get::<i64>(3)?,
-                    row.get::<String>(4)?,
-                ))
-            },
-        )?
-        else {
-            return Ok(None);
-        };
-        let commit_seq = crate::read::to_u64(seq_i64, "dispute resolution commit_seq")?;
-        let corrupt = |msg: &str| CellError::LedgerCorrupt {
-            seq: commit_seq,
-            reason: format!("unverified dispute resolution for {dispute_id}: {msg}"),
-        };
-        if !matches!(
-            decision.as_str(),
-            "accept-first" | "accept-second-as-correction" | "reject"
-        ) {
-            return Err(corrupt("invalid decision"));
-        }
-        let Some(receipt) = self.receipt_at(commit_seq)? else {
-            return Err(corrupt("missing receipt"));
-        };
-        if receipt.hash != receipt_hash
-            || receipt.body.world != crate::MAIN_WORLD
-            || !crate::link_claim_frontier::dispute_consumption_valid(
-                self.conn,
-                commit_seq,
-                dispute_id,
-                receipt.body.consumed.as_ref(),
-            )?
-        {
-            return Err(corrupt("receipt mismatch"));
-        }
-        let has_journal = self
-            .conn
-            .query_optional(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
-                crate::engine::params![],
-                |_row| Ok(()),
-            )?
-            .is_some();
-        if has_journal
-            && let Some(record) = crate::export_journal::read_record(self.conn, commit_seq)?
-            && (record.storage_version.unwrap_or(1)
-                < crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
-                || record.receipt != receipt)
-        {
-            return Err(corrupt("export journal mismatch"));
-        }
-        if !self.ledger_has_dispute_resolution_event(
-            &receipt.body,
-            seq_i64,
-            dispute_id,
-            &decision,
-            &actor,
-            &reason,
-        )? {
-            return Err(corrupt("missing matching ledger event"));
-        }
-        if max_seq.is_some_and(|f| seq_i64 > f) {
-            return Ok(None);
-        }
-        Ok(Some(commit_seq))
-    }
-
-    fn ledger_has_dispute_resolution_event(
-        &self,
-        body: &crate::store::ReceiptBody,
-        seq_i64: i64,
-        dispute_id: &str,
-        decision: &str,
-        actor: &str,
-        reason: &str,
-    ) -> Result<bool, CellError> {
-        let first_seq = crate::read::to_i64(body.first_event_seq, "first_event_seq")?;
-        let end_seq = crate::read::to_i64(
-            body.first_event_seq.saturating_add(body.event_count),
-            "end_event_seq",
-        )?;
-        let ledger_rows = self.conn.query(
-            &format!(
-                "SELECT \"event\" FROM \"{}\" \
-                 WHERE \"world\" = ?1 AND \"commit_seq\" = ?2 \
-                   AND \"seq\" >= ?3 AND \"seq\" < ?4 \
-                   AND json_extract(\"event\", '$.op') = 'dispute_resolved' \
-                   AND json_extract(\"event\", '$.disputeId') = ?5",
-                crate::system::LEDGER
-            ),
-            crate::engine::params![crate::MAIN_WORLD, seq_i64, first_seq, end_seq, dispute_id],
-        )?;
-        Ok(ledger_rows.into_iter().any(|raw| {
-            let Ok(text) = crate::engine::SqlRow(raw).get::<String>(0) else {
-                return false;
-            };
-            let Ok(ev) = RuntimeValue::from_json_text(&text) else {
-                return false;
-            };
-            ev.get("decision").and_then(RuntimeValue::as_str) == Some(decision)
-                && ev.get("actor").and_then(RuntimeValue::as_str) == Some(actor)
-                && ev.get("reason").and_then(RuntimeValue::as_str) == Some(reason)
-        }))
-    }
-
     pub(crate) fn load_source_conflicts(
         &self,
         pending_only: bool,
@@ -387,7 +262,8 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .map(|k| norn_ir::canonical::nfc(&k));
         let rows = self.conn.query(
             &format!(
-                "SELECT i.\"observation_id\", i.\"observed\" FROM \"{}\" i \
+                "SELECT i.\"observation_id\", r.\"decision\", r.\"actor\", r.\"reason\", \
+                        r.\"commit_seq\", r.\"receipt_hash\", i.\"observed\" FROM \"{}\" i \
                  JOIN \"{}\" r ON r.\"dispute_id\" = i.\"observation_id\" \
                  WHERE r.\"decision\" IN ('accept-second-as-correction', 'reject')",
                 crate::system::INBOX,
@@ -397,11 +273,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         )?;
         for values in rows {
             let row = crate::engine::SqlRow(values);
-            let id: String = row.get(0)?;
-            let encoded: String = row.get(1)?;
-            if self.verified_dispute_resolution_seq(&id, None)?.is_none() {
-                continue;
-            }
+            let rec = crate::mapping_conflict_scoped::decode_dispute_resolution_row(&row)?;
+            self.verify_dispute_resolution_record(&rec)?;
+            let id = rec.dispute_id;
+            let encoded: String = row.get(6)?;
             let Some((resolved_bundle, _)) =
                 crate::mapping_conflict::decode_evidence_with_identity(&id, &encoded)
             else {

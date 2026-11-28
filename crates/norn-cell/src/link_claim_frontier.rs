@@ -606,13 +606,20 @@ pub(crate) fn decode_claims_from_fact_values<E: SqlEngine>(
             continue;
         };
         // Verify canonical equality against immutable `_norn_fact_values` and
-        // decode live exact Unicode spelling (for resealing) when available.
-        let claim_values = if let Some(reader) = reader
-            && let Some(live) = reader.object(
+        // decode live exact Unicode spelling (for resealing) when `reader` is
+        // available; fail closed if the immutable live claim is missing or tampered.
+        let claim_values = if let Some(reader) = reader {
+            let Some(live) = reader.object(
                 crate::MAIN_WORLD,
                 norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
                 &id,
-            )? {
+            )?
+            else {
+                return Err(CellError::LedgerCorrupt {
+                    seq: commit_seq,
+                    reason: format!("missing live claim {id} referenced by _norn_fact_values"),
+                });
+            };
             if crate::codec::canonical_json(&live.values)? != crate::codec::canonical_json(&values)?
             {
                 return Err(CellError::LedgerCorrupt {
@@ -956,8 +963,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )?;
         rows.into_iter()
             .map(|raw| {
-                let rec = decode_dispute_resolution_row(&SqlRow(raw))?;
-                self.verified_dispute_resolution_seq(&rec.dispute_id, None)?;
+                let rec =
+                    crate::mapping_conflict_scoped::decode_dispute_resolution_row(&SqlRow(raw))?;
+                self.verify_dispute_resolution_record(&rec)?;
                 Ok(rec)
             })
             .collect()
@@ -978,22 +986,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                  FROM \"{DISPUTE_RESOLUTION}\" WHERE \"dispute_id\" = ?1"
             ),
             params![dispute_id],
-            decode_dispute_resolution_row,
+            crate::mapping_conflict_scoped::decode_dispute_resolution_row,
         )?;
         if let Some(record) = &rec {
-            self.verified_dispute_resolution_seq(&record.dispute_id, None)?;
+            self.verify_dispute_resolution_record(record)?;
         }
         Ok(rec)
     }
-}
-
-fn decode_dispute_resolution_row(row: &SqlRow) -> Result<DisputeResolutionRecord, CellError> {
-    Ok(DisputeResolutionRecord {
-        dispute_id: row.get(0)?,
-        decision: row.get(1)?,
-        actor: row.get(2)?,
-        reason: row.get(3)?,
-        commit_seq: to_u64(row.get(4)?, "dispute resolution commit_seq")?,
-        receipt_hash: row.get(5)?,
-    })
 }

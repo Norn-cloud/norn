@@ -491,4 +491,277 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
         Ok(open)
     }
+
+    /// OBS-DISPUTE-LOOKUP-1: cryptographically authenticate one
+    /// `_norn_dispute_resolution` row against `_norn_receipt`, the hash-chained
+    /// `_norn_ledger` span anchored to `receipt.body.ledger_head` (and the prior
+    /// receipt's head), `dispute_consumption_valid`, and `_norn_export_journal`
+    /// (receipt, storage version, and exact entries) before any live reader
+    /// trusts it.
+    pub(crate) fn verify_dispute_resolution_record(
+        &self,
+        rec: &crate::link_claim_frontier::DisputeResolutionRecord,
+    ) -> Result<(), CellError> {
+        let corrupt = |msg: &str| CellError::LedgerCorrupt {
+            seq: rec.commit_seq,
+            reason: format!(
+                "unverified dispute resolution for {}: {msg}",
+                rec.dispute_id
+            ),
+        };
+        if !matches!(
+            rec.decision.as_str(),
+            "accept-first" | "accept-second-as-correction" | "reject"
+        ) {
+            return Err(corrupt("invalid decision"));
+        }
+        let Some(receipt) = self.receipt_at(rec.commit_seq)? else {
+            return Err(corrupt("missing receipt"));
+        };
+        if receipt.hash != rec.receipt_hash
+            || receipt.body.world != crate::MAIN_WORLD
+            || !crate::link_claim_frontier::dispute_consumption_valid(
+                self.conn,
+                rec.commit_seq,
+                &rec.dispute_id,
+                receipt.body.consumed.as_ref(),
+            )?
+        {
+            return Err(corrupt("receipt mismatch"));
+        }
+        let entries = self.authenticated_commit_entries(&receipt, &corrupt)?;
+        if !entries
+            .iter()
+            .any(|entry| matches_dispute_resolution_event(&entry.event, rec))
+        {
+            return Err(corrupt("missing authenticated dispute_resolved event"));
+        }
+        let has_journal = self
+            .conn
+            .query_optional(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
+                params![],
+                |_row| Ok(()),
+            )?
+            .is_some();
+        if has_journal
+            && let Some(record) = crate::export_journal::read_record(self.conn, rec.commit_seq)?
+            && (record.storage_version.unwrap_or(1)
+                < crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
+                || record.receipt != receipt
+                || record.entries != entries)
+        {
+            return Err(corrupt("export journal mismatch"));
+        }
+        Ok(())
+    }
+
+    /// Read and authenticate every ledger entry in `receipt`'s exact event span
+    /// against both the prior receipt's head (or genesis) and `receipt.body.ledger_head`.
+    fn authenticated_commit_entries(
+        &self,
+        receipt: &crate::store::Receipt,
+        corrupt: &dyn Fn(&str) -> CellError,
+    ) -> Result<Vec<crate::read::LedgerEntry>, CellError> {
+        let mut expected_prev = if receipt.body.commit_seq == 1 {
+            if receipt.body.first_event_seq != 1 {
+                return Err(corrupt("first commit does not start at seq 1"));
+            }
+            crate::system::GENESIS_HASH.to_owned()
+        } else {
+            let Some(prev) = self.receipt_at(receipt.body.commit_seq.saturating_sub(1))? else {
+                return Err(corrupt("missing prior receipt"));
+            };
+            if prev.body.first_event_seq.checked_add(prev.body.event_count)
+                != Some(receipt.body.first_event_seq)
+            {
+                return Err(corrupt("receipt event span does not chain"));
+            }
+            prev.body.ledger_head
+        };
+        let end = receipt
+            .body
+            .first_event_seq
+            .checked_add(receipt.body.event_count)
+            .ok_or_else(|| corrupt("event span overflow"))?;
+        let first_i64 = crate::read::to_i64(receipt.body.first_event_seq, "first_event_seq")?;
+        let end_i64 = crate::read::to_i64(end, "end_event_seq")?;
+        let rows = self.conn.query(
+            &format!(
+                "SELECT \"seq\", \"commit_seq\", \"world\", \"event\", \"prev_hash\", \"hash\" \
+                 FROM \"{}\" WHERE \"seq\" >= ?1 AND \"seq\" < ?2 ORDER BY \"seq\"",
+                crate::system::LEDGER
+            ),
+            params![first_i64, end_i64],
+        )?;
+        if u64::try_from(rows.len()).ok() != Some(receipt.body.event_count) {
+            return Err(corrupt("ledger event count disagrees with receipt"));
+        }
+        let mut out = Vec::with_capacity(rows.len());
+        let mut expected_seq = receipt.body.first_event_seq;
+        for raw in rows {
+            let row = crate::engine::SqlRow(raw);
+            let seq = crate::read::to_u64(row.get(0)?, "seq")?;
+            let commit_seq = crate::read::to_u64(row.get(1)?, "commit_seq")?;
+            let world: String = row.get(2)?;
+            let event_raw: String = row.get(3)?;
+            let prev_hash: String = row.get(4)?;
+            let hash: String = row.get(5)?;
+            if seq != expected_seq
+                || commit_seq != receipt.body.commit_seq
+                || world != receipt.body.world
+                || prev_hash != expected_prev
+            {
+                return Err(corrupt("ledger chain mismatch"));
+            }
+            let event = crate::payload_storage::decode_event(self.conn, seq, &world, &event_raw)?;
+            if crate::read::entry_hash_with_pin(
+                seq,
+                commit_seq,
+                &world,
+                &event,
+                &prev_hash,
+                receipt.body.fork_pin.as_ref(),
+            )? != hash
+            {
+                return Err(corrupt("ledger entry hash mismatch"));
+            }
+            expected_prev = hash.clone();
+            expected_seq = expected_seq
+                .checked_add(1)
+                .ok_or_else(|| corrupt("seq overflow"))?;
+            out.push(crate::read::LedgerEntry {
+                seq,
+                commit_seq,
+                world,
+                event,
+                prev_hash,
+                hash,
+                fork_pin: receipt.body.fork_pin.clone(),
+            });
+        }
+        if expected_prev != receipt.body.ledger_head {
+            return Err(corrupt("ledger head disagrees with receipt"));
+        }
+        Ok(out)
+    }
+
+    /// Look up and authenticate the single `_norn_dispute_resolution` row for
+    /// `dispute_id`, returning its verified commit sequence (filtered by
+    /// optional `max_seq`).
+    pub(crate) fn verified_dispute_resolution_seq(
+        &self,
+        dispute_id: &str,
+        max_seq: Option<i64>,
+    ) -> Result<Option<u64>, CellError> {
+        let Some(rec) = self.conn.query_optional(
+            &format!(
+                "SELECT \"dispute_id\", \"decision\", \"actor\", \"reason\", \"commit_seq\", \"receipt_hash\" \
+                 FROM \"{}\" WHERE \"dispute_id\" = ?1",
+                crate::link_claim_frontier::DISPUTE_RESOLUTION
+            ),
+            params![dispute_id],
+            decode_dispute_resolution_row,
+        )?
+        else {
+            return Ok(None);
+        };
+        self.verify_dispute_resolution_record(&rec)?;
+        if let Some(f) = max_seq
+            && (f < 0 || rec.commit_seq > u64::try_from(f).unwrap_or(0))
+        {
+            return Ok(None);
+        }
+        Ok(Some(rec.commit_seq))
+    }
+
+    /// Whether `commit_seq` is a verified dispute-resolution commit (failing
+    /// closed with `LedgerCorrupt` if any indexed row at `commit_seq` is forged).
+    pub(crate) fn commit_is_verified_dispute_resolution(
+        &self,
+        commit_seq: i64,
+    ) -> Result<bool, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                "SELECT \"dispute_id\", \"decision\", \"actor\", \"reason\", \"commit_seq\", \"receipt_hash\" \
+                 FROM \"{}\" WHERE \"commit_seq\" = ?1",
+                crate::link_claim_frontier::DISPUTE_RESOLUTION
+            ),
+            params![commit_seq],
+        )?;
+        let found = !rows.is_empty();
+        for raw in rows {
+            let rec = decode_dispute_resolution_row(&crate::engine::SqlRow(raw))?;
+            self.verify_dispute_resolution_record(&rec)?;
+        }
+        Ok(found)
+    }
+}
+
+pub(crate) fn decode_dispute_resolution_row(
+    row: &crate::engine::SqlRow,
+) -> Result<crate::link_claim_frontier::DisputeResolutionRecord, CellError> {
+    let dispute_id: String = row.get(0)?;
+    let decision: String = row.get(1)?;
+    let actor: String = row.get(2)?;
+    let reason: String = row.get(3)?;
+    let seq_i64: i64 = row.get(4)?;
+    let receipt_hash: String = row.get(5)?;
+    let Ok(commit_seq) = u64::try_from(seq_i64) else {
+        return Err(CellError::LedgerCorrupt {
+            seq: 0,
+            reason: format!("unverified dispute resolution for {dispute_id}: negative commit_seq"),
+        });
+    };
+    Ok(crate::link_claim_frontier::DisputeResolutionRecord {
+        dispute_id,
+        decision,
+        actor,
+        reason,
+        commit_seq,
+        receipt_hash,
+    })
+}
+
+fn matches_dispute_resolution_event(
+    event: &norn_ir::RuntimeValue,
+    rec: &crate::link_claim_frontier::DisputeResolutionRecord,
+) -> bool {
+    event.get("op").and_then(norn_ir::RuntimeValue::as_str) == Some("dispute_resolved")
+        && event
+            .get("disputeId")
+            .and_then(norn_ir::RuntimeValue::as_str)
+            == Some(rec.dispute_id.as_str())
+        && event
+            .get("decision")
+            .and_then(norn_ir::RuntimeValue::as_str)
+            == Some(rec.decision.as_str())
+        && event.get("actor").and_then(norn_ir::RuntimeValue::as_str) == Some(rec.actor.as_str())
+        && event.get("reason").and_then(norn_ir::RuntimeValue::as_str) == Some(rec.reason.as_str())
+}
+
+/// Record governed dispute resolutions for a committed v13+ main-world batch.
+pub(crate) fn record_commit_dispute_resolutions<E: SqlEngine>(
+    conn: &E,
+    batch: &crate::store::CommitBatch,
+    commit_seq: u64,
+    receipt_hash: &str,
+    storage_version: Option<u32>,
+    allow_dispute_resolution: bool,
+    entries: &[crate::read::LedgerEntry],
+) -> Result<(), CellError> {
+    if batch.world == crate::MAIN_WORLD
+        && storage_version
+            .is_some_and(|v| v >= crate::link_claim_frontier::FRONTIER_STORAGE_VERSION)
+    {
+        crate::link_claim_frontier::record_dispute_resolutions_in_tx(
+            conn,
+            commit_seq,
+            receipt_hash,
+            batch.consumes.as_ref(),
+            allow_dispute_resolution,
+            entries,
+        )?;
+    }
+    Ok(())
 }

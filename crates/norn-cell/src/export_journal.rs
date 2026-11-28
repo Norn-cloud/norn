@@ -65,6 +65,25 @@ pub(crate) fn read_record(
     Ok(Some(record))
 }
 
+/// Capture the exact input being consumed for a commit batch, automatically
+/// including superseded conflict members for v13+ dispute resolutions.
+pub(crate) fn consumed_input_for_commit<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    batch: &CommitBatch,
+    legacy_dispute_resolution: bool,
+) -> Result<Option<Value>, CellError> {
+    let include_conflict_members = !legacy_dispute_resolution
+        && matches!(
+            batch.consumes.as_ref(),
+            Some(Consumption::Observation { observation_id })
+                if crate::link_claim_frontier::dispute_supersedes_first(
+                    observation_id,
+                    &batch.events,
+                )
+        );
+    consumed_input(reader, batch.consumes.as_ref(), include_conflict_members)
+}
+
 /// Capture the exact input being consumed before the commit marks it consumed.
 pub(crate) fn consumed_input<E: SqlEngine>(
     reader: &StoreReader<'_, E>,

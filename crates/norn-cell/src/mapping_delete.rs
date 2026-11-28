@@ -135,7 +135,7 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
     // SQLite uses an index range scan instead of scanning `_norn_inbox`.
     let rows = reader.conn.query(
         &format!(
-            "SELECT i.\"observed\" \
+            "SELECT i.\"observed\", i.\"consumed_commit_seq\" \
              FROM \"{inbox}\" i \
              WHERE i.\"observation_id\" LIKE 'mapping-bundle:%' \
                AND json_extract(i.\"observed\", '$.input.input.connectorInstance') = ?1 \
@@ -144,12 +144,8 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
                AND json_extract(i.\"observed\", '$.input.raw.source_id') = ?4 \
                AND json_extract(i.\"observed\", '$.input.input.mapping') = ?5 \
                AND json_extract(i.\"observed\", '$.input.input.dataset') = ?6 \
-               AND i.\"consumed_commit_seq\" IS NOT NULL \
-               AND NOT EXISTS ( \
-                   SELECT 1 FROM \"{res}\" r WHERE r.\"commit_seq\" = i.\"consumed_commit_seq\" \
-               )",
+               AND i.\"consumed_commit_seq\" IS NOT NULL",
             inbox = crate::system::INBOX,
-            res = crate::link_claim_frontier::DISPUTE_RESOLUTION,
         ),
         crate::engine::params![
             bundle.input.connector_instance.as_str(),
@@ -161,7 +157,12 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
         ],
     )?;
     for raw in rows {
-        let encoded: String = crate::engine::SqlRow(raw).get(0)?;
+        let row = crate::engine::SqlRow(raw);
+        let encoded: String = row.get(0)?;
+        let consumed_seq: i64 = row.get(1)?;
+        if reader.commit_is_verified_dispute_resolution(consumed_seq)? {
+            continue;
+        }
         if let Ok(observed) = serde_json::from_str::<norn_kernel::Observed<RuntimeValue>>(&encoded)
             && let Ok(landed) =
                 norn_ir::runtime::decode::<crate::mapping_bundle::MappingBundle>(&observed.input)
@@ -182,7 +183,8 @@ fn has_newer_landed_correction<E: SqlEngine>(
 ) -> Result<bool, CellError> {
     let corrected_rows = reader.conn.query(
         &format!(
-            "SELECT i.\"observation_id\", i.\"observed\" \
+            "SELECT i.\"observation_id\", r.\"decision\", r.\"actor\", r.\"reason\", \
+                    r.\"commit_seq\", r.\"receipt_hash\", i.\"observed\" \
              FROM \"{inbox}\" i \
              JOIN \"{res}\" r ON r.\"dispute_id\" = i.\"observation_id\" \
              WHERE r.\"decision\" = 'accept-second-as-correction' \
@@ -224,8 +226,10 @@ fn has_newer_landed_correction<E: SqlEngine>(
     )?;
     for raw in corrected_rows {
         let row = crate::engine::SqlRow(raw);
-        let obs_id: String = row.get(0)?;
-        let encoded: String = row.get(1)?;
+        let rec = crate::mapping_conflict_scoped::decode_dispute_resolution_row(&row)?;
+        reader.verify_dispute_resolution_record(&rec)?;
+        let obs_id = rec.dispute_id;
+        let encoded: String = row.get(6)?;
         let Ok(observed) = serde_json::from_str::<norn_kernel::Observed<RuntimeValue>>(&encoded)
         else {
             continue;
