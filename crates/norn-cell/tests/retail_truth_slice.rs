@@ -433,6 +433,19 @@ impl EntityBook {
         result
     }
 
+    fn with_store_mut<T>(
+        &mut self,
+        f: impl FnOnce(&mut CellStore<NativeEngine>) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let cell = self.cell.take().ok_or("missing retail cell")?;
+        let mut store = cell.into_store();
+        let result = f(&mut store);
+        let restored = RetailCell::new(store, self.scope.clone(), |c| c.payload.clone())
+            .map_err(|e| format!("restore retail cell: {e}"))?;
+        self.cell = Some(restored);
+        result
+    }
+
     /// Ingest one raw source row through the real `SOURCE-CAPTURE-1` durable
     /// cursor + mapping pipeline on this cell so `_norn_source_cursor` and
     /// `_norn_source_pending` stay durably synchronized with the cell frontier.
@@ -5284,7 +5297,7 @@ fn verify_forged_pending_bundle_ignored(
     let forged_id = "mapping-bundle:forged-empty-001";
     let forged_bundle = MappingBundle {
         digest: "forged-empty-001".to_owned(),
-        raw: norn_ir::runtime_object! {},
+        raw: RuntimeValue::Object(BTreeMap::new()),
         input: map_input("supply.pos_sales.mapping", "pos_sale_line"),
         definitions_version: 1,
         definitions_digest: "forged".to_owned(),
@@ -5307,11 +5320,11 @@ fn verify_forged_pending_bundle_ignored(
     };
     let encoded =
         norn_ir::runtime::encode(&forged_obs).map_err(|e| format!("encode forged obs: {e}"))?;
-    let inserted = clean
-        .cell_mut()?
-        .store_mut()
-        .inject(forged_id, &encoded)
-        .map_err(|e| format!("inject forged bundle: {e}"))?;
+    let inserted = clean.with_store_mut(|store| {
+        store
+            .inject(forged_id, &encoded)
+            .map_err(|e| format!("inject forged bundle: {e}"))
+    })?;
     assert!(inserted, "forged inbox row must be inserted");
     assert_eq!(
         clean
@@ -5490,11 +5503,11 @@ fn inject_corrupted_related_pos_bundle(book: &mut EntityBook) -> Result<(), Stri
     };
     let encoded = norn_ir::runtime::encode(&corrupted_obs)
         .map_err(|e| format!("encode corrupted obs: {e}"))?;
-    let inserted = book
-        .cell_mut()?
-        .store_mut()
-        .inject(corrupted_id, &encoded)
-        .map_err(|e| format!("inject corrupted related bundle: {e}"))?;
+    let inserted = book.with_store_mut(|store| {
+        store
+            .inject(corrupted_id, &encoded)
+            .map_err(|e| format!("inject corrupted related bundle: {e}"))
+    })?;
     assert!(inserted, "corrupted related bundle must be inserted");
     Ok(())
 }

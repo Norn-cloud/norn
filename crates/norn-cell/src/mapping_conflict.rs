@@ -596,9 +596,60 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         })
     }
 
+    fn readable_source_events(
+        &self,
+        readable_map: &BTreeMap<&str, Option<BTreeSet<String>>>,
+    ) -> Result<BTreeSet<[String; 5]>, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                "SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-bundle:%' ORDER BY position"
+            ),
+            params![],
+        )?;
+        let mut events = BTreeSet::new();
+        for values in rows {
+            let row = crate::engine::SqlRow(values);
+            let stored_id: String = row.get(0)?;
+            let encoded: String = row.get(1)?;
+            let Ok(observed) = serde_json::from_str::<Observed<RuntimeValue>>(&encoded) else {
+                continue;
+            };
+            let Ok(bundle) = norn_ir::runtime::decode::<MappingBundle>(&observed.input) else {
+                continue;
+            };
+            if observed.id.0 != stored_id
+                || stored_id != format!("mapping-bundle:{}", bundle.digest)
+            {
+                continue;
+            }
+            let touches = bundle.records.iter().any(|r| {
+                self.subject_matches_readable(
+                    bundle.definitions_version,
+                    r.object_type.as_str(),
+                    &r.key,
+                    readable_map,
+                )
+            });
+            if !touches {
+                continue;
+            }
+            if let Err(err) = self.recheck_mapping_bundle(&bundle) {
+                if crate::mapping_page::is_store_failure(&err) {
+                    return Err(err);
+                }
+                continue;
+            }
+            if let Ok(keys) = crate::mapping_identity::keys(&bundle.raw, &bundle.input) {
+                events.insert(keys.map(|k| norn_ir::canonical::nfc(&k)));
+            }
+        }
+        Ok(events)
+    }
+
     fn collect_scoped_source_conflicts(
         &self,
         readable_map: &BTreeMap<&str, Option<BTreeSet<String>>>,
+        readable_events: &BTreeSet<[String; 5]>,
         index: &mut SourceDisputeIndex,
     ) -> Result<(), CellError> {
         let rows = self.conn.query(&format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-conflict:%' ORDER BY position"), params![])?;
@@ -613,14 +664,21 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let Ok(conflict) = norn_ir::runtime::decode::<MappingConflict>(&observed.input) else {
                 continue;
             };
+            let event_matches =
+                crate::mapping_identity::keys(&conflict.incoming.raw, &conflict.incoming.input)
+                    .ok()
+                    .is_some_and(|keys| {
+                        readable_events.contains(&keys.map(|k| norn_ir::canonical::nfc(&k)))
+                    });
             if observed.id.0 != stored_id
                 || stored_id != format!("mapping-conflict:{}", conflict.finding.id)
-                || !self.dispute_touches_readable(
-                    conflict.incoming.definitions_version,
-                    &conflict.finding,
-                    &conflict.incoming.records,
-                    readable_map,
-                )
+                || (!event_matches
+                    && !self.dispute_touches_readable(
+                        conflict.incoming.definitions_version,
+                        &conflict.finding,
+                        &conflict.incoming.records,
+                        readable_map,
+                    ))
             {
                 continue;
             }
@@ -649,6 +707,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     fn collect_scoped_identity_evidence(
         &self,
         readable_map: &BTreeMap<&str, Option<BTreeSet<String>>>,
+        readable_events: &BTreeSet<[String; 5]>,
         index: &mut SourceDisputeIndex,
     ) -> Result<(), CellError> {
         let rows = self.conn.query(&format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-identity:%' ORDER BY position"), params![])?;
@@ -665,14 +724,21 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             ) else {
                 continue;
             };
+            let event_matches =
+                crate::mapping_identity::keys(&guard.bundle.raw, &guard.bundle.input)
+                    .ok()
+                    .is_some_and(|keys| {
+                        readable_events.contains(&keys.map(|k| norn_ir::canonical::nfc(&k)))
+                    });
             if observed.id.0 != stored_id
                 || stored_id != format!("mapping-identity:{}", guard.finding.id)
-                || !self.dispute_touches_readable(
-                    guard.bundle.definitions_version,
-                    &guard.finding,
-                    &guard.bundle.records,
-                    readable_map,
-                )
+                || (!event_matches
+                    && !self.dispute_touches_readable(
+                        guard.bundle.definitions_version,
+                        &guard.finding,
+                        &guard.bundle.records,
+                        readable_map,
+                    ))
             {
                 continue;
             }
@@ -693,12 +759,47 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(())
     }
 
+    fn held_link_endpoints_readable(
+        &self,
+        scope: &str,
+        finding: &DataQualityFinding,
+        evidence_access: crate::combined_view::RowAccessDecider<'_>,
+    ) -> Result<bool, CellError> {
+        if finding.subjects.len() < 2 {
+            return Ok(false);
+        }
+        for subject in &finding.subjects {
+            let Some(record) = self.object(
+                crate::MAIN_WORLD,
+                subject.object_type.as_str(),
+                &subject.key,
+            )?
+            else {
+                return Ok(false);
+            };
+            if record.scope != scope {
+                return Err(CellError::ComputeRefused("core.compute.stale_input"));
+            }
+            if !matches!(
+                evidence_access(&record)?,
+                crate::compute::transform::RowAccess::Read
+            ) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Count open source-conflict, identity-dispute, and held-link findings strictly
-    /// for `readable` subjects (`HOST-READ-2`), avoiding cell-wide dispute verification
-    /// over unreadable conflicts while remaining fail-closed for relevant evidence.
+    /// for `readable` subjects (`HOST-READ-2` / `OBS-LINK-DISPUTE-1`), avoiding cell-wide
+    /// dispute verification over unreadable conflicts while remaining fail-closed for
+    /// relevant evidence (including later/alternate mapping contexts) and requiring both
+    /// endpoints to be readable before counting any held-link finding.
     pub(crate) fn scoped_open_source_dispute_findings(
         &self,
+        scope: &str,
         readable: &[(String, String)],
+        evidence_access: crate::combined_view::RowAccessDecider<'_>,
     ) -> Result<usize, CellError> {
         let mut readable_roots = Vec::with_capacity(readable.len());
         let mut readable_map: BTreeMap<&str, Option<BTreeSet<String>>> = BTreeMap::new();
@@ -722,9 +823,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             readable_roots.push((ty.as_str(), key.as_str(), roots));
         }
+        let readable_events = self.readable_source_events(&readable_map)?;
         let mut scoped_index = SourceDisputeIndex::default();
-        self.collect_scoped_source_conflicts(&readable_map, &mut scoped_index)?;
-        self.collect_scoped_identity_evidence(&readable_map, &mut scoped_index)?;
+        self.collect_scoped_source_conflicts(&readable_map, &readable_events, &mut scoped_index)?;
+        self.collect_scoped_identity_evidence(&readable_map, &readable_events, &mut scoped_index)?;
         if scoped_index.subjects.is_empty() {
             return Ok(0);
         }
@@ -733,12 +835,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             open =
                 open.saturating_add(scoped_index.open_findings_for(roots.as_deref(), key, false));
             open = open.saturating_add(scoped_index.open_findings_for(roots.as_deref(), key, true));
-            let held = self.held_link_findings_in_index(ty, key, &scoped_index)?;
-            open = open.saturating_add(
-                held.into_iter()
-                    .filter(|f| matches!(f.status, DataQualityFindingStatus::Open))
-                    .count(),
-            );
+            for finding in self.held_link_findings_in_index(ty, key, &scoped_index)? {
+                if matches!(finding.status, DataQualityFindingStatus::Open)
+                    && self.held_link_endpoints_readable(scope, &finding, evidence_access)?
+                {
+                    open = open.saturating_add(1);
+                }
+            }
         }
         Ok(open)
     }

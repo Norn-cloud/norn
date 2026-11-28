@@ -244,6 +244,17 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         current: &[MappingBundle],
         scope: Option<&ClaimScope>,
     ) -> Result<Vec<Entry>, CellError> {
+        self.claim_journal_with_dispute(current, scope, |bundle| {
+            self.mapping_event_is_disputed(bundle)
+        })
+    }
+
+    fn claim_journal_with_dispute(
+        &self,
+        current: &[MappingBundle],
+        scope: Option<&ClaimScope>,
+        mut is_disputed: impl FnMut(&MappingBundle) -> Result<bool, CellError>,
+    ) -> Result<Vec<Entry>, CellError> {
         let mut cache = BTreeMap::new();
         let selection = match scope {
             None => None,
@@ -278,7 +289,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 Some(bundle) => bundle,
                 None => self.claim_bundle(&id)?,
             };
-            let disputed = self.mapping_event_is_disputed(&bundle)?;
+            let disputed = is_disputed(&bundle)?;
             bundles.push((bundle, false, disputed));
         }
         for bundle in current {
@@ -390,7 +401,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             sources: BTreeSet::from([subject.key.clone()]),
             targets: BTreeSet::new(),
         };
-        let entries = self.claim_journal(&[], Some(&scope))?;
+        let entries = self.claim_journal_with_dispute(&[], Some(&scope), |bundle| {
+            Ok(event_dispute(bundle)?.is_some())
+        })?;
         let fact = |object_type: &norn_ir::ObjectTypeName, key: &str| {
             model.canonical(&FactKey::new(object_type.as_str(), key))
         };

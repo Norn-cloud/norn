@@ -667,7 +667,11 @@ fn count_open_findings<E: SqlEngine>(
         }
     }
     if world == crate::MAIN_WORLD && !readable_subjects.is_empty() {
-        open = open.saturating_add(reader.scoped_open_source_dispute_findings(&readable_subjects)?);
+        open = open.saturating_add(reader.scoped_open_source_dispute_findings(
+            scope,
+            &readable_subjects,
+            evidence_access,
+        )?);
     }
     Ok((open, withheld))
 }
