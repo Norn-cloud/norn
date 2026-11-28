@@ -130,45 +130,8 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
     let Some(source_id) = bundle.raw.get("source_id").and_then(RuntimeValue::as_str) else {
         return Ok(false);
     };
-    // Tamper-proof subject history check via immutable `_norn_fact_values`
-    // (`_norn_fact_values/key_frontier` index): even if `_norn_inbox.observed`
-    // JSON fields were corrupted to hide a newer linkless landed bundle from
-    // `_norn_inbox/source_event`, every commit that wrote or tombstoned a
-    // deleted subject is authenticated directly from `_norn_receipt` and
-    // `_norn_export_journal`.
-    let mut seen_commits = std::collections::BTreeSet::new();
-    for delete in &bundle.deletes {
-        let commit_rows = reader.conn.query(
-            &format!(
-                "SELECT DISTINCT \"commit_seq\" FROM \"{}\" \
-                 WHERE \"world\" = ?1 AND \"id\" = ?2 AND \"object_type\" = ?3",
-                crate::system::FACT_VALUES,
-            ),
-            crate::engine::params![crate::MAIN_WORLD, &delete.key, delete.object_type.as_str()],
-        )?;
-        for raw in commit_rows {
-            let seq_i64: i64 = crate::engine::SqlRow(raw).get(0)?;
-            if !seen_commits.insert(seq_i64) {
-                continue;
-            }
-            let seq_u64 = u64::try_from(seq_i64).map_err(|err| CellError::LedgerCorrupt {
-                seq: 0,
-                reason: format!("negative _norn_fact_values commit_seq: {err}"),
-            })?;
-            if reader.commit_is_verified_dispute_resolution(seq_i64)? {
-                continue;
-            }
-            if subject_commit_has_newer_bundle(
-                reader,
-                seq_u64,
-                bundle,
-                source,
-                source_id,
-                &incoming_version,
-            )? {
-                return Ok(true);
-            }
-        }
+    if has_newer_subject_history_bundle(reader, bundle, source, source_id, &incoming_version)? {
+        return Ok(true);
     }
     // Match `_norn_inbox/source_event`'s exact partial-index predicate and
     // leading 4 columns `(connectorInstance, partition, source, source_id)` so
@@ -221,6 +184,56 @@ fn map_corrupt_err(err: CellError, corrupt: &dyn Fn(&str) -> CellError) -> CellE
         CellError::LedgerCorrupt { .. } => err,
         other => corrupt(&format!("{other}")),
     }
+}
+
+/// Tamper-proof subject history check via immutable `_norn_fact_values`
+/// (`_norn_fact_values/key_frontier` index): even if `_norn_inbox.observed`
+/// JSON fields were corrupted to hide a newer linkless landed bundle from
+/// `_norn_inbox/source_event`, every commit that wrote or tombstoned a
+/// deleted subject is authenticated directly from `_norn_receipt` and
+/// `_norn_export_journal`.
+fn has_newer_subject_history_bundle<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    bundle: &crate::mapping_bundle::MappingBundle,
+    source: &str,
+    source_id: &str,
+    incoming_version: &norn_ir::SourceVersion,
+) -> Result<bool, CellError> {
+    let mut seen_commits = std::collections::BTreeSet::new();
+    for delete in &bundle.deletes {
+        let commit_rows = reader.conn.query(
+            &format!(
+                "SELECT DISTINCT \"commit_seq\" FROM \"{}\" \
+                 WHERE \"world\" = ?1 AND \"id\" = ?2 AND \"object_type\" = ?3",
+                crate::system::FACT_VALUES,
+            ),
+            crate::engine::params![crate::MAIN_WORLD, &delete.key, delete.object_type.as_str()],
+        )?;
+        for raw in commit_rows {
+            let seq_i64: i64 = crate::engine::SqlRow(raw).get(0)?;
+            if !seen_commits.insert(seq_i64) {
+                continue;
+            }
+            let seq_u64 = u64::try_from(seq_i64).map_err(|err| CellError::LedgerCorrupt {
+                seq: 0,
+                reason: format!("negative _norn_fact_values commit_seq: {err}"),
+            })?;
+            if reader.commit_is_verified_dispute_resolution(seq_i64)? {
+                continue;
+            }
+            if subject_commit_has_newer_bundle(
+                reader,
+                seq_u64,
+                bundle,
+                source,
+                source_id,
+                incoming_version,
+            )? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Authenticate a commit that wrote or tombstoned a deleted subject in
