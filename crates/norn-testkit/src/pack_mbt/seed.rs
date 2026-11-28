@@ -139,8 +139,9 @@ pub(crate) fn seed_stamped<H: PackHost>(
     fill_missing_action_input_fields(&creator.root.input_schema, &mut input, id, seq);
     seed_create_links_and_slice_targets(pack, catalog, creator, &mut input, host, seq)?;
     encode_action_wire_input(&creator.root.input_schema, &mut input);
-    // ACTION-ACTOR-1: the stamped fields come from the principal, never the input.
-    for field in creator.root.actor_stamped_fields() {
+    // ACTION-ACTOR-1 / ACTION-CLOCK-1 / ORIGIN-DATAFLOW-1: server-derived
+    // fields come from the kernel, never caller input.
+    for field in norn_kernel::pack_mbt_support::server_derived_input_fields(&creator.root) {
         input.remove(&field);
     }
     let before_commit = host.ledger_len();

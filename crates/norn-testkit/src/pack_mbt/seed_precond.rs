@@ -559,7 +559,7 @@ pub(super) fn seed_update_target_via_creator<H: PackHost>(
             continue;
         }
         encode_action_wire_input(&creator.root.input_schema, &mut create_input);
-        for field in creator.root.actor_stamped_fields() {
+        for field in norn_kernel::pack_mbt_support::server_derived_input_fields(&creator.root) {
             create_input.remove(&field);
         }
         let scope: BTreeMap<String, String> = creator

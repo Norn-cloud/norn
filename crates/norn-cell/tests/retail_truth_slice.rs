@@ -919,8 +919,7 @@ fn seed_sole_cfc1_lots(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-S1-W1", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "50", "remaining_qty": "50", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-07-08T09:00:00Z", "as_of": "2026-07-08T09:00:00Z",
+            "received_qty": "50", "remaining_qty": "50", "depleted_qty": "0", "unit": "each", "received_at": "2026-07-08T09:00:00Z", "as_of": "2026-07-08T09:00:00Z",
             "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
             "stock_value": "0", "currency": "EGP"
         }),
@@ -931,8 +930,7 @@ fn seed_sole_cfc1_lots(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-S1-DEPLETED", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-07-15T09:00:00Z", "as_of": "2026-07-15T09:00:00Z",
+            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "unit": "each", "received_at": "2026-07-15T09:00:00Z", "as_of": "2026-07-15T09:00:00Z",
             "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
             "stock_value": "0", "currency": "EGP"
         }),
@@ -943,8 +941,7 @@ fn seed_sole_cfc1_lots(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-S1-W5", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "40", "remaining_qty": "40", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-08-05T09:00:00Z", "as_of": "2026-08-05T09:00:00Z",
+            "received_qty": "40", "remaining_qty": "40", "depleted_qty": "0", "unit": "each", "received_at": "2026-08-05T09:00:00Z", "as_of": "2026-08-05T09:00:00Z",
             "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
             "stock_value": "0", "currency": "EGP"
         }),
@@ -1035,8 +1032,7 @@ fn seed_sole_cfc1(sole: &mut EntityBook) -> Result<(), String> {
             json!({
                 "sale_id": sale_id, "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
                 "sold_qty": qty, "unit": "each", "net_revenue": rev, "applied_unit_cost": "100",
-                "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
-                "cost_status": "costed", "costed_ref": "COST-DRESS-1",
+                "cogs_amount": "0", "gross_margin": "0", "cost_status": "costed", "costed_ref": "COST-DRESS-1",
                 "currency": "EGP", "sold_at": sold_at
             }),
         )?;
@@ -1052,8 +1048,7 @@ fn seed_sole_edge_stores(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-S2-COSTED", "store_id": "ST-SOLE-CFC-2", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-08-20T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
+            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "unit": "each", "received_at": "2026-08-20T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
             "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
             "stock_value": "0", "currency": "EGP"
         }),
@@ -1064,9 +1059,8 @@ fn seed_sole_edge_stores(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-S2-NOCOST", "store_id": "ST-SOLE-CFC-2", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "20", "remaining_qty": "15", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-08-20T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
-            "cost_status": "missing_cost", "opening_stock_value": "0", "stock_value": "0", "currency": "EGP"
+            "received_qty": "20", "remaining_qty": "15", "depleted_qty": "0", "unit": "each", "received_at": "2026-08-20T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
+            "cost_status": "missing_cost", "currency": "EGP"
         }),
     )?;
     sole.ok(
@@ -1075,8 +1069,7 @@ fn seed_sole_edge_stores(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "sale_id": "SALE-S2-1", "store_id": "ST-SOLE-CFC-2", "sku_id": "SKU-DRESS",
             "sold_qty": "3", "unit": "each", "net_revenue": "600", "applied_unit_cost": "100",
-            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
-            "cost_status": "costed", "costed_ref": "COST-DRESS-1",
+            "cogs_amount": "0", "gross_margin": "0", "cost_status": "costed", "costed_ref": "COST-DRESS-1",
             "currency": "EGP", "sold_at": "2026-09-02T12:00:00Z"
         }),
     )?;
@@ -1086,7 +1079,6 @@ fn seed_sole_edge_stores(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "sale_id": "SALE-S2-2", "store_id": "ST-SOLE-CFC-2", "sku_id": "SKU-DRESS",
             "sold_qty": "2", "unit": "each", "net_revenue": "400",
-            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
             "cost_status": "missing_cost", "currency": "EGP", "sold_at": "2026-09-03T12:00:00Z"
         }),
     )?;
@@ -1097,8 +1089,7 @@ fn seed_sole_edge_stores(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-S3-STALE", "store_id": "ST-SOLE-CFC-3", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "30", "remaining_qty": "20", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
+            "received_qty": "30", "remaining_qty": "20", "depleted_qty": "0", "unit": "each", "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
             "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
             "stock_value": "0", "currency": "EGP"
         }),
@@ -1120,8 +1111,7 @@ fn seed_sole_edge_stores(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-ZAM-1", "store_id": "ST-SOLE-ZAM", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-BRANCH-ZAM",
-            "received_qty": "15", "remaining_qty": "15", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-08-18T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
+            "received_qty": "15", "remaining_qty": "15", "depleted_qty": "0", "unit": "each", "received_at": "2026-08-18T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
             "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
             "stock_value": "0", "currency": "EGP"
         }),
@@ -1145,8 +1135,7 @@ fn seed_partner_operations(partner: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-P1-W3", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
             "owner_entity_id": "LE-PARTNER", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "20", "remaining_qty": "20", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-07-22T09:00:00Z", "as_of": "2026-07-22T09:00:00Z",
+            "received_qty": "20", "remaining_qty": "20", "depleted_qty": "0", "unit": "each", "received_at": "2026-07-22T09:00:00Z", "as_of": "2026-07-22T09:00:00Z",
             "cost_status": "costed", "unit_cost": "250", "opening_stock_value": "0",
             "stock_value": "0", "currency": "USD"
         }),
@@ -1195,8 +1184,7 @@ fn seed_partner_operations(partner: &mut EntityBook) -> Result<(), String> {
         json!({
             "sale_id": "SALE-P1-1", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
             "sold_qty": "8", "unit": "each", "net_revenue": "3200", "applied_unit_cost": "250",
-            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
-            "cost_status": "costed", "costed_ref": "COST-RING-1",
+            "cogs_amount": "0", "gross_margin": "0", "cost_status": "costed", "costed_ref": "COST-RING-1",
             "currency": "USD", "sold_at": "2026-09-02T15:00:00Z"
         }),
     )
@@ -1217,8 +1205,7 @@ fn assert_cost_binding_refusals(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "sale_id": "SALE-FORGED-COST", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "sold_qty": "2", "unit": "each", "net_revenue": "400", "applied_unit_cost": "50",
-            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
-            "cost_status": "costed", "costed_ref": "COST-DRESS-1",
+            "cogs_amount": "0", "gross_margin": "0", "cost_status": "costed", "costed_ref": "COST-DRESS-1",
             "currency": "EGP", "sold_at": "2026-09-01T14:00:00Z"
         }),
     )?;
@@ -1228,8 +1215,7 @@ fn assert_cost_binding_refusals(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "sale_id": "SALE-WRONG-REF", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "sold_qty": "2", "unit": "each", "net_revenue": "400", "applied_unit_cost": "100",
-            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
-            "cost_status": "costed", "costed_ref": "COST-NONEXISTENT",
+            "cogs_amount": "0", "gross_margin": "0", "cost_status": "costed", "costed_ref": "COST-NONEXISTENT",
             "currency": "EGP", "sold_at": "2026-09-01T14:00:00Z"
         }),
     )?;
@@ -1239,8 +1225,7 @@ fn assert_cost_binding_refusals(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "sale_id": "SALE-NO-COST-SKU", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-RING-18K",
             "sold_qty": "1", "unit": "each", "net_revenue": "500", "applied_unit_cost": "100",
-            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
-            "cost_status": "costed", "costed_ref": "COST-DRESS-1",
+            "cogs_amount": "0", "gross_margin": "0", "cost_status": "costed", "costed_ref": "COST-DRESS-1",
             "currency": "EGP", "sold_at": "2026-09-01T14:00:00Z"
         }),
     )?;
@@ -1259,8 +1244,7 @@ fn assert_cost_binding_refusals(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "sale_id": "SALE-FUTURE-COST", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-SCARF",
             "sold_qty": "2", "unit": "each", "net_revenue": "200", "applied_unit_cost": "45",
-            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
-            "cost_status": "costed", "costed_ref": "COST-SCARF-OCT",
+            "cogs_amount": "0", "gross_margin": "0", "cost_status": "costed", "costed_ref": "COST-SCARF-OCT",
             "currency": "EGP", "sold_at": "2026-09-01T14:00:00Z"
         }),
     )?;
@@ -1294,8 +1278,7 @@ fn assert_store_isolation_and_lifecycle_refusals(sole: &mut EntityBook) -> Resul
         json!({
             "lot_id": "LOT-HOLD", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-08-01T09:00:00Z",
+            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "unit": "each", "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-08-01T09:00:00Z",
             "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
             "stock_value": "0", "currency": "EGP"
         }),
@@ -1414,8 +1397,7 @@ fn s1_two_entity_non_commingling_and_custody_separation() -> Result<(), String> 
         json!({
             "lot_id": "LOT-WRONG-OWNER", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-PARTNER", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-08-01T09:00:00Z",
+            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "unit": "each", "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-08-01T09:00:00Z",
             "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
             "stock_value": "0", "currency": "EGP"
         }),
@@ -2216,8 +2198,7 @@ fn verify_opening_cut_and_lot_date_refusals(sole: &mut EntityBook) -> Result<(),
         json!({
             "lot_id": "LOT-BACKDATED-ASOF", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "5", "remaining_qty": "5", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-09-20T09:00:00Z", "as_of": "2026-09-01T09:00:00Z",
+            "received_qty": "5", "remaining_qty": "5", "depleted_qty": "0", "unit": "each", "received_at": "2026-09-20T09:00:00Z", "as_of": "2026-09-01T09:00:00Z",
             "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
             "stock_value": "0", "currency": "EGP"
         }),
@@ -2271,9 +2252,9 @@ fn verify_opening_cut_and_lot_date_refusals(sole: &mut EntityBook) -> Result<(),
             "book_epoch": "1970-01-01T00:00:00Z",
             "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-12T09:00:00Z",
             "sales_weeks": 5, "on_hand_qty": "60", "avg_weekly_sales_qty": "8",
-            "weeks_of_supply": "0", "period_gross_margin": "5000",
+            "period_gross_margin": "5000",
             "opening_stock_value": "10000", "closing_stock_value": "6000",
-            "average_inventory_value": "0", "gmroi": "0"
+            "average_inventory_value": "0"
         }),
     )?;
     Ok(())
@@ -2293,8 +2274,7 @@ fn verify_opening_cut_post_sales_refusal() -> Result<(), String> {
         json!({
             "lot_id": "LOT-ISO-1", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "50", "remaining_qty": "50", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-08-05T09:00:00Z", "as_of": "2026-08-05T09:00:00Z",
+            "received_qty": "50", "remaining_qty": "50", "depleted_qty": "0", "unit": "each", "received_at": "2026-08-05T09:00:00Z", "as_of": "2026-08-05T09:00:00Z",
             "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
             "stock_value": "0", "currency": "EGP"
         }),
@@ -2305,8 +2285,7 @@ fn verify_opening_cut_post_sales_refusal() -> Result<(), String> {
         json!({
             "sale_id": "SALE-ISO-AFTER-CUT", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "sold_qty": "2", "unit": "each", "net_revenue": "400", "applied_unit_cost": "100",
-            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
-            "cost_status": "costed", "costed_ref": "COST-DRESS-1",
+            "cogs_amount": "0", "gross_margin": "0", "cost_status": "costed", "costed_ref": "COST-DRESS-1",
             "currency": "EGP", "sold_at": "2026-08-12T14:00:00Z"
         }),
     )?;
@@ -2339,10 +2318,7 @@ fn verify_store_kpi_rollup_temporal_refusals(
             "period_week": "2026-09-01", "unit": "each", "currency": "EGP",
             "cost_status": "missing_cost", "count_status": "unverified",
             "period_start": "2026-08-11T00:00:00Z", "period_end": "2026-09-05T18:00:00Z",
-            "sales_weeks": 4,
-            "on_hand_qty": "0", "avg_weekly_sales_qty": "0", "weeks_of_supply": "0",
-            "period_gross_margin": "0", "opening_stock_value": "0", "closing_stock_value": "0",
-            "average_inventory_value": "0", "gmroi": "0"
+            "sales_weeks": 4
         }),
     )?;
     assert_eq!(code, "core.laws.violated", "{msg}");
@@ -2360,10 +2336,7 @@ fn verify_store_kpi_rollup_temporal_refusals(
             "period_week": "bad", "unit": "each", "currency": "EGP",
             "cost_status": "missing_cost", "count_status": "unverified",
             "period_start": "2026-08-11T00:00:00Z", "period_end": "2026-09-05T18:00:00Z",
-            "sales_weeks": 4,
-            "on_hand_qty": "0", "avg_weekly_sales_qty": "0", "weeks_of_supply": "0",
-            "period_gross_margin": "0", "opening_stock_value": "0", "closing_stock_value": "0",
-            "average_inventory_value": "0", "gmroi": "0"
+            "sales_weeks": 4
         }),
     )?;
     assert_eq!(code, "core.laws.violated", "{msg}");
@@ -2386,10 +2359,10 @@ fn verify_store_kpi_rollup_temporal_refusals(
             "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-05T18:00:00Z",
             "sales_weeks": 2,
             "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "20",
-            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
+            "period_gross_margin": s1_margin.canonical(),
             "opening_stock_value": s1_opening_val.canonical(),
             "closing_stock_value": s1_closing_val.canonical(),
-            "average_inventory_value": "0", "gmroi": "0"
+            "average_inventory_value": "0"
         }),
     )?;
     assert_eq!(code, "core.laws.violated", "{msg}");
@@ -2421,10 +2394,10 @@ fn verify_store_kpi_rollup_stale_and_backdate_refusals(
             "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-29T18:00:00Z",
             "sales_weeks": 8,
             "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "5",
-            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
+            "period_gross_margin": s1_margin.canonical(),
             "opening_stock_value": s1_opening_val.canonical(),
             "closing_stock_value": s1_closing_val.canonical(),
-            "average_inventory_value": "0", "gmroi": "0"
+            "average_inventory_value": "0"
         }),
     )?;
     assert_eq!(code, "core.laws.violated", "{msg}");
@@ -2446,10 +2419,10 @@ fn verify_store_kpi_rollup_stale_and_backdate_refusals(
             "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-12T09:00:00Z",
             "sales_weeks": 5,
             "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "8",
-            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
+            "period_gross_margin": s1_margin.canonical(),
             "opening_stock_value": s1_opening_val.canonical(),
             "closing_stock_value": s1_closing_val.canonical(),
-            "average_inventory_value": "0", "gmroi": "0"
+            "average_inventory_value": "0"
         }),
     )?;
     assert_eq!(code, "action.precondition_failed", "{msg}");
@@ -2497,10 +2470,10 @@ fn verify_monotonic_count_and_cutoff_refusals(
             "book_epoch": "1970-01-01T00:00:00Z",
             "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-05T18:00:00Z",
             "sales_weeks": 4, "on_hand_qty": "61", "avg_weekly_sales_qty": "10",
-            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
+            "period_gross_margin": s1_margin.canonical(),
             "opening_stock_value": s1_opening_val.canonical(),
             "closing_stock_value": s1_closing_val.canonical(),
-            "average_inventory_value": "0", "gmroi": "0"
+            "average_inventory_value": "0"
         }),
     )?;
     assert_eq!(code, "action.precondition_failed", "{msg}");
@@ -2549,10 +2522,10 @@ fn verify_monotonic_future_and_cutoff_refusals(
             "book_epoch": "1970-01-01T00:00:00Z",
             "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-12T09:00:00Z",
             "sales_weeks": 5, "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "8",
-            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
+            "period_gross_margin": s1_margin.canonical(),
             "opening_stock_value": s1_opening_val.canonical(),
             "closing_stock_value": s1_closing_val.canonical(),
-            "average_inventory_value": "0", "gmroi": "0"
+            "average_inventory_value": "0"
         }),
     )?;
     assert_eq!(code, "core.laws.violated", "{msg}");
@@ -2578,9 +2551,9 @@ fn verify_monotonic_future_and_cutoff_refusals(
             "book_epoch": "1970-01-01T00:00:00Z",
             "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-12T09:00:00Z",
             "sales_weeks": 5, "on_hand_qty": "59", "avg_weekly_sales_qty": "8",
-            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
+            "period_gross_margin": s1_margin.canonical(),
             "opening_stock_value": s1_opening_val.canonical(), "closing_stock_value": "5900",
-            "average_inventory_value": "0", "gmroi": "0"
+            "average_inventory_value": "0"
         }),
     )?;
     assert_eq!(code, "action.precondition_failed", "{msg}");
@@ -2647,9 +2620,9 @@ fn verify_store_kpi_rollup_operand_refusals(
                 "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-12T18:00:00Z",
                 "sales_weeks": sales_weeks,
                 "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": avg_sales,
-                "weeks_of_supply": "0", "period_gross_margin": margin,
+                "period_gross_margin": margin,
                 "opening_stock_value": open_val, "closing_stock_value": close_val,
-                "average_inventory_value": "0", "gmroi": "0"
+                "average_inventory_value": "0"
             }),
         )?;
         assert_eq!(code, "action.precondition_failed", "{rollup_id}: {msg}");
@@ -2675,9 +2648,9 @@ fn verify_store_kpi_rollup_refusals(
             "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-12T18:00:00Z",
             "sales_weeks": 5,
             "on_hand_qty": "99", "avg_weekly_sales_qty": "8",
-            "weeks_of_supply": "0", "period_gross_margin": "5000",
+            "period_gross_margin": "5000",
             "opening_stock_value": "10000", "closing_stock_value": "6000",
-            "average_inventory_value": "0", "gmroi": "0"
+            "average_inventory_value": "0"
         }),
     )?;
     assert_eq!(code, "action.precondition_failed", "{msg}");
@@ -2699,10 +2672,10 @@ fn verify_store_kpi_rollup_refusals(
             "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-06T18:00:00Z",
             "sales_weeks": 4,
             "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
-            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
+            "period_gross_margin": s1_margin.canonical(),
             "opening_stock_value": s1_opening_val.canonical(),
             "closing_stock_value": s1_closing_val.canonical(),
-            "average_inventory_value": "0", "gmroi": "0"
+            "average_inventory_value": "0"
         }),
     )?;
     verify_store_kpi_rollup_temporal_refusals(
@@ -2748,11 +2721,10 @@ fn seed_partner_commercial_rollup(partner: &mut EntityBook) -> Result<(), String
             "book_epoch": "1970-01-01T00:00:00Z",
             "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T23:59:59.999999999Z",
             "sales_weeks": 1,
-            "on_hand_qty": "12", "avg_weekly_sales_qty": "8", "weeks_of_supply": "0",
-            "period_gross_margin": "1200",
+            "on_hand_qty": "12", "avg_weekly_sales_qty": "8", "period_gross_margin": "1200",
             "opening_stock_value": p1_opening_val.canonical(),
             "closing_stock_value": p1_closing_val.canonical(),
-            "average_inventory_value": "0", "gmroi": "0"
+            "average_inventory_value": "0"
         }),
     )
 }
@@ -2810,10 +2782,10 @@ fn seed_store_commercial_rollups(
             "period_start": "2026-08-10T00:00:00Z", "period_end": "2026-09-05T18:00:00Z",
             "sales_weeks": 4,
             "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
-            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
+            "period_gross_margin": s1_margin.canonical(),
             "opening_stock_value": s1_opening_val.canonical(),
             "closing_stock_value": s1_closing_val.canonical(),
-            "average_inventory_value": "0", "gmroi": "0"
+            "average_inventory_value": "0"
         }),
     )?;
     verify_store_kpi_rollup_refusals(
@@ -2831,10 +2803,7 @@ fn seed_store_commercial_rollups(
             "period_week": "2026-08-31", "unit": "each", "currency": "EGP",
             "cost_status": "missing_cost", "count_status": "unverified",
             "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-05T18:00:00Z",
-            "sales_weeks": 1,
-            "on_hand_qty": "0", "avg_weekly_sales_qty": "0", "weeks_of_supply": "0",
-            "period_gross_margin": "0", "opening_stock_value": "0",
-            "closing_stock_value": "0", "average_inventory_value": "0", "gmroi": "0"
+            "sales_weeks": 1
         }),
     )?;
     seed_partner_commercial_rollup(partner)
@@ -3209,8 +3178,7 @@ fn verify_count_coverage_cases(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-NO-AVAIL", "store_id": "ST-SOLE-NO-AVAIL", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-BRANCH-ZAM",
-            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-08-25T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
+            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "unit": "each", "received_at": "2026-08-25T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
             "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
             "stock_value": "0", "currency": "EGP"
         }),
@@ -3496,8 +3464,7 @@ fn promote_verified_pos_evidence(
             "store_id": store_id, "sku_id": sku_id,
             "sold_qty": sold_qty, "unit": unit, "net_revenue": net_revenue,
             "applied_unit_cost": unit_cost, "cogs_amount": "0",
-            "gross_margin": "0", "gross_margin_rate": "0",
-            "cost_status": "costed", "costed_ref": cost_ref,
+            "gross_margin": "0", "cost_status": "costed", "costed_ref": cost_ref,
             "currency": currency, "sold_at": sold_at
         }),
     )
@@ -4112,8 +4079,7 @@ fn verify_shipped_phantom_week_and_late_sale_gates() -> Result<(), String> {
         json!({
             "sale_id": "SALE-P1-NEXT-WK", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
             "sold_qty": "1", "unit": "each", "net_revenue": "400", "applied_unit_cost": "250",
-            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
-            "cost_status": "costed", "costed_ref": "COST-RING-1",
+            "cogs_amount": "0", "gross_margin": "0", "cost_status": "costed", "costed_ref": "COST-RING-1",
             "currency": "USD", "sold_at": "2026-09-07T00:00:00Z"
         }),
     )?;
@@ -4129,8 +4095,7 @@ fn verify_shipped_phantom_week_and_late_sale_gates() -> Result<(), String> {
         json!({
             "sale_id": "SALE-P1-LATE", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
             "sold_qty": "2", "unit": "each", "net_revenue": "800", "applied_unit_cost": "250",
-            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
-            "cost_status": "costed", "costed_ref": "COST-RING-1",
+            "cogs_amount": "0", "gross_margin": "0", "cost_status": "costed", "costed_ref": "COST-RING-1",
             "currency": "USD", "sold_at": "2026-09-06T21:30:00Z"
         }),
     )?;
@@ -4160,9 +4125,9 @@ fn verify_shipped_phantom_week_and_late_sale_gates() -> Result<(), String> {
             "book_epoch": "1970-01-01T00:00:00Z",
             "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T23:59:59.999999999Z",
             "sales_weeks": 1, "on_hand_qty": "12", "avg_weekly_sales_qty": "10",
-            "weeks_of_supply": "0", "period_gross_margin": "1500",
+            "period_gross_margin": "1500",
             "opening_stock_value": "5000", "closing_stock_value": "3000",
-            "average_inventory_value": "0", "gmroi": "0"
+            "average_inventory_value": "0"
         }),
     )?;
     let refreshed = evaluate_single_spec_cut(&partner, "LE-PARTNER", &spec, false)?;
@@ -4268,8 +4233,7 @@ fn verify_unsealed_rollup_fails_closing_cut_gates(spec: &CellCoverageSpec) -> Re
         json!({
             "sale_id": "SALE-P1-SELLOUT", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
             "sold_qty": "12", "unit": "each", "net_revenue": "4800", "applied_unit_cost": "250",
-            "cogs_amount": "0", "gross_margin": "0", "gross_margin_rate": "0",
-            "cost_status": "costed", "costed_ref": "COST-RING-1",
+            "cogs_amount": "0", "gross_margin": "0", "cost_status": "costed", "costed_ref": "COST-RING-1",
             "currency": "USD", "sold_at": "2026-09-06T09:00:00Z"
         }),
     )?;
@@ -4286,9 +4250,9 @@ fn verify_unsealed_rollup_fails_closing_cut_gates(spec: &CellCoverageSpec) -> Re
             "book_epoch": "1970-01-01T00:00:00Z",
             "period_start": "2026-08-31T00:00:00Z", "period_end": "2026-09-06T23:59:59.999999999Z",
             "sales_weeks": 1, "on_hand_qty": "0", "avg_weekly_sales_qty": "20",
-            "weeks_of_supply": "0", "period_gross_margin": "3000",
+            "period_gross_margin": "3000",
             "opening_stock_value": "5000", "closing_stock_value": "0",
-            "average_inventory_value": "0", "gmroi": "0"
+            "average_inventory_value": "0"
         }),
     )?;
     let snap = evaluate_single_spec_cut(&unsealed, "LE-PARTNER", spec, false)?;
@@ -4388,8 +4352,7 @@ fn verify_expected_grain_missing_sku_gate() -> Result<(), String> {
         json!({
             "lot_id": "LOT-P1-NECK", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-NECKLACE",
             "owner_entity_id": "LE-PARTNER", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "5", "remaining_qty": "5", "depleted_qty": "0", "sell_through_rate": "0",
-            "unit": "each", "received_at": "2026-08-20T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
+            "received_qty": "5", "remaining_qty": "5", "depleted_qty": "0", "unit": "each", "received_at": "2026-08-20T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
             "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
             "stock_value": "0", "currency": "USD"
         }),
@@ -5102,8 +5065,7 @@ fn verify_mismatched_promotion_refused(sole: &mut EntityBook) -> Result<(), Stri
                 "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
                 "sold_qty": qty, "unit": "each", "net_revenue": rev,
                 "applied_unit_cost": "100", "cogs_amount": "0",
-                "gross_margin": "0", "gross_margin_rate": "0",
-                "cost_status": "costed", "costed_ref": "COST-DRESS-1",
+                "gross_margin": "0", "cost_status": "costed", "costed_ref": "COST-DRESS-1",
                 "currency": "EGP", "sold_at": sold_at
             }),
         )?;
