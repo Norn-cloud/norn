@@ -596,13 +596,115 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         })
     }
 
-    fn readable_committed_seqs(
+    fn verify_committed_bundle_event(
+        &self,
+        observation_id: &str,
+    ) -> Result<[String; 5], CellError> {
+        let encoded: String = self
+            .conn
+            .query_optional(
+                &format!("SELECT observed FROM {INBOX} WHERE observation_id = ?1"),
+                params![observation_id],
+                |row| row.get(0),
+            )?
+            .ok_or(CellError::MappingBundleMismatch)?;
+        let observed: Observed<RuntimeValue> =
+            serde_json::from_str(&encoded).map_err(|_| CellError::MappingBundleMismatch)?;
+        let bundle: MappingBundle = norn_ir::runtime::decode(&observed.input)
+            .map_err(|_| CellError::MappingBundleMismatch)?;
+        if observed.id.0 != observation_id
+            || observation_id != format!("mapping-bundle:{}", bundle.digest)
+        {
+            return Err(CellError::MappingBundleMismatch);
+        }
+        self.recheck_mapping_bundle(&bundle)?;
+        Ok(crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
+            .map(|k| norn_ir::canonical::nfc(&k)))
+    }
+
+    fn verify_committed_page_subject_events(
+        &self,
+        page_id: &str,
+        commit_seq: i64,
+        key: &str,
+        roots: Option<&[String]>,
+        seen_bundles: &mut BTreeSet<String>,
+        events: &mut BTreeSet<[String; 5]>,
+    ) -> Result<(), CellError> {
+        let rows = match roots {
+            Some(rs) => {
+                let mut types: BTreeSet<String> = rs.iter().cloned().collect();
+                for def in self.model().object_types() {
+                    if let Ok(root) = self.root_type(def.name.as_str())
+                        && rs.iter().any(|r| r == root)
+                    {
+                        types.insert(def.name.as_str().to_owned());
+                    }
+                }
+                self.conn.query(
+                    &format!(
+                        "SELECT m.\"observation_id\", m.\"observed\" \
+                         FROM \"{INBOX}\" p, json_each(p.\"observed\", '$.input.members') AS listed \
+                         JOIN \"{INBOX}\" m ON m.\"observation_id\" = listed.value \
+                         WHERE p.\"observation_id\" = ?1 AND p.\"consumed_commit_seq\" = ?2 \
+                         AND m.\"consumed_commit_seq\" = ?2 AND json_valid(m.\"observed\") = 1 \
+                         AND EXISTS (SELECT 1 FROM json_each(m.\"observed\", '$.input.records') AS r \
+                           WHERE json_extract(r.value, '$.key') = ?3 \
+                           AND json_extract(r.value, '$.objectType') IN (SELECT value FROM json_each(?4)))"
+                    ),
+                    params![page_id, commit_seq, key, serde_json::to_string(&types)?],
+                )?
+            }
+            None => self.conn.query(
+                &format!(
+                    "SELECT m.\"observation_id\", m.\"observed\" \
+                     FROM \"{INBOX}\" p, json_each(p.\"observed\", '$.input.members') AS listed \
+                     JOIN \"{INBOX}\" m ON m.\"observation_id\" = listed.value \
+                     WHERE p.\"observation_id\" = ?1 AND p.\"consumed_commit_seq\" = ?2 \
+                     AND m.\"consumed_commit_seq\" = ?2 AND json_valid(m.\"observed\") = 1 \
+                     AND EXISTS (SELECT 1 FROM json_each(m.\"observed\", '$.input.records') AS r \
+                       WHERE json_extract(r.value, '$.key') = ?3)"
+                ),
+                params![page_id, commit_seq, key],
+            )?,
+        };
+        if rows.is_empty() {
+            return Err(CellError::MappingBundleMismatch);
+        }
+        for values in rows {
+            let row = crate::engine::SqlRow(values);
+            let member_id: String = row.get(0)?;
+            let encoded: String = row.get(1)?;
+            if !seen_bundles.insert(member_id.clone()) {
+                continue;
+            }
+            let observed: Observed<RuntimeValue> =
+                serde_json::from_str(&encoded).map_err(|_| CellError::MappingBundleMismatch)?;
+            let bundle: MappingBundle = norn_ir::runtime::decode(&observed.input)
+                .map_err(|_| CellError::MappingBundleMismatch)?;
+            if observed.id.0 != member_id
+                || member_id != format!("mapping-bundle:{}", bundle.digest)
+            {
+                return Err(CellError::MappingBundleMismatch);
+            }
+            self.recheck_mapping_bundle(&bundle)?;
+            events.insert(
+                crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
+                    .map(|k| norn_ir::canonical::nfc(&k)),
+            );
+        }
+        Ok(())
+    }
+
+    fn readable_committed_source_events(
         &self,
         readable_roots: &[(&str, &str, Option<Vec<String>>)],
-    ) -> Result<BTreeSet<i64>, CellError> {
+    ) -> Result<BTreeSet<[String; 5]>, CellError> {
         let table = crate::system::FACT_VALUES;
-        let mut seqs = BTreeSet::new();
+        let mut events = BTreeSet::new();
+        let mut seen_bundles = BTreeSet::new();
         for (_, key, roots) in readable_roots {
+            let mut commit_seqs = BTreeSet::new();
             match roots {
                 Some(rs) => {
                     for root in rs {
@@ -613,7 +715,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                             params![crate::MAIN_WORLD, root, *key],
                         )?;
                         for values in rows {
-                            seqs.insert(crate::engine::SqlRow(values).get::<i64>(0)?);
+                            commit_seqs.insert(crate::engine::SqlRow(values).get::<i64>(0)?);
                         }
                     }
                 }
@@ -625,19 +727,42 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                         params![crate::MAIN_WORLD, *key],
                     )?;
                     for values in rows {
-                        seqs.insert(crate::engine::SqlRow(values).get::<i64>(0)?);
+                        commit_seqs.insert(crate::engine::SqlRow(values).get::<i64>(0)?);
                     }
                 }
             }
+            for seq in commit_seqs {
+                let receipt = self
+                    .receipt_at(crate::read::to_u64(seq, "fact commit seq")?)?
+                    .ok_or(CellError::MappingBundleMismatch)?;
+                let Some(crate::Consumption::Observation { observation_id }) =
+                    receipt.body.consumed
+                else {
+                    continue;
+                };
+                if observation_id.starts_with("mapping-bundle:") {
+                    if seen_bundles.insert(observation_id.clone()) {
+                        events.insert(self.verify_committed_bundle_event(&observation_id)?);
+                    }
+                } else if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
+                    self.verify_committed_page_subject_events(
+                        &observation_id,
+                        seq,
+                        key,
+                        roots.as_deref(),
+                        &mut seen_bundles,
+                        &mut events,
+                    )?;
+                }
+            }
         }
-        Ok(seqs)
+        Ok(events)
     }
 
-    fn event_touches_readable(
+    fn event_has_unconsumed_readable_bundle(
         &self,
         event_keys: &[String; 5],
         readable_map: &BTreeMap<&str, Option<BTreeSet<String>>>,
-        readable_commit_seqs: &BTreeSet<i64>,
     ) -> Result<bool, CellError> {
         let [c, p, s, sid, eid] = event_keys;
         let [connector, partition, source, source_id, event_id]: [String; 5] =
@@ -646,8 +771,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             ))?)?;
         let rows = self.conn.query(
             &format!(
-                "SELECT observation_id, consumed_commit_seq, observed FROM {INBOX} \
+                "SELECT observation_id, observed FROM {INBOX} \
                  WHERE observation_id LIKE 'mapping-bundle:%' \
+                 AND consumed_commit_seq IS NULL \
                  AND json_extract(observed, '$.input.input.connectorInstance') = ?1 \
                  AND json_extract(observed, '$.input.input.partition') = ?2 \
                  AND json_extract(observed, '$.input.raw.source') = ?3 \
@@ -660,11 +786,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         for values in rows {
             let row = crate::engine::SqlRow(values);
             let stored_id: String = row.get(0)?;
-            let consumed_seq: Option<i64> = row.get(1)?;
-            let encoded: String = row.get(2)?;
-            if consumed_seq.is_some_and(|seq| readable_commit_seqs.contains(&seq)) {
-                return Ok(true);
-            }
+            let encoded: String = row.get(1)?;
             let Ok(observed) = serde_json::from_str::<Observed<RuntimeValue>>(&encoded) else {
                 continue;
             };
@@ -679,13 +801,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     readable_map,
                 )
             });
-            if !touches {
-                continue;
-            }
-            if consumed_seq.is_some() {
-                return Ok(true);
-            }
-            if observed.id.0 != stored_id
+            if !touches
+                || observed.id.0 != stored_id
                 || stored_id != format!("mapping-bundle:{}", bundle.digest)
             {
                 continue;
@@ -705,7 +822,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         rows: Vec<Vec<crate::engine::SqlValue>>,
         readable_map: &BTreeMap<&str, Option<BTreeSet<String>>>,
-        readable_commit_seqs: &BTreeSet<i64>,
+        readable_events: &BTreeSet<[String; 5]>,
         index: &mut SourceDisputeIndex,
     ) -> Result<(), CellError> {
         for values in rows {
@@ -734,14 +851,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 crate::mapping_identity::keys(&conflict.incoming.raw, &conflict.incoming.input)
                     .ok()
                     .map(|keys| keys.map(|k| norn_ir::canonical::nfc(&k)));
-            let indirect = if direct {
-                false
-            } else if let Some(keys) = event_keys.as_ref() {
-                self.event_touches_readable(keys, readable_map, readable_commit_seqs)?
-            } else {
-                false
-            };
-            if !direct && !indirect {
+            let relevant = direct
+                || event_keys
+                    .as_ref()
+                    .is_some_and(|keys| readable_events.contains(keys))
+                || match event_keys.as_ref() {
+                    Some(keys) => self.event_has_unconsumed_readable_bundle(keys, readable_map)?,
+                    None => false,
+                };
+            if !relevant {
                 continue;
             }
             if let Err(err) = self.recheck_mapping_bundle(&conflict.incoming) {
@@ -770,7 +888,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         rows: Vec<Vec<crate::engine::SqlValue>>,
         readable_map: &BTreeMap<&str, Option<BTreeSet<String>>>,
-        readable_commit_seqs: &BTreeSet<i64>,
+        readable_events: &BTreeSet<[String; 5]>,
         index: &mut SourceDisputeIndex,
     ) -> Result<(), CellError> {
         for values in rows {
@@ -800,14 +918,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let event_keys = crate::mapping_identity::keys(&guard.bundle.raw, &guard.bundle.input)
                 .ok()
                 .map(|keys| keys.map(|k| norn_ir::canonical::nfc(&k)));
-            let indirect = if direct {
-                false
-            } else if let Some(keys) = event_keys.as_ref() {
-                self.event_touches_readable(keys, readable_map, readable_commit_seqs)?
-            } else {
-                false
-            };
-            if !direct && !indirect {
+            let relevant = direct
+                || event_keys
+                    .as_ref()
+                    .is_some_and(|keys| readable_events.contains(keys))
+                || match event_keys.as_ref() {
+                    Some(keys) => self.event_has_unconsumed_readable_bundle(keys, readable_map)?,
+                    None => false,
+                };
+            if !relevant {
                 continue;
             }
             if let Err(err) = self.recheck_identity_evidence(&guard) {
@@ -860,21 +979,30 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 
     /// Count open source-conflict, identity-dispute, and held-link findings strictly
     /// for `readable` subjects (`HOST-READ-2` / `OBS-LINK-DISPUTE-1`), returning
-    /// immediately with zero bundle scans on clean cells, driving expansion only from
-    /// candidate dispute events (using committed provenance for fail-closed relevance),
-    /// and requiring both endpoints to be readable before counting any held-link finding.
+    /// immediately via indexed prefix ranges on clean cells, verifying bundle+subject
+    /// committed provenance fail-closed without page-sibling bleed, and requiring both
+    /// endpoints to be readable before counting any held-link finding.
     pub(crate) fn scoped_open_source_dispute_findings(
         &self,
         scope: &str,
         readable: &[(String, String)],
         evidence_access: crate::combined_view::RowAccessDecider<'_>,
     ) -> Result<usize, CellError> {
+        // Range bounds (`:` = 0x3A, `;` = 0x3B) use the `UNIQUE(observation_id)` index.
         let conflict_rows = self.conn.query(
-            &format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-conflict:%' ORDER BY position"),
+            &format!(
+                "SELECT position, observation_id, observed FROM {INBOX} \
+                 WHERE observation_id >= 'mapping-conflict:' AND observation_id < 'mapping-conflict;' \
+                 ORDER BY position"
+            ),
             params![],
         )?;
         let identity_rows = self.conn.query(
-            &format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-identity:%' ORDER BY position"),
+            &format!(
+                "SELECT position, observation_id, observed FROM {INBOX} \
+                 WHERE observation_id >= 'mapping-identity:' AND observation_id < 'mapping-identity;' \
+                 ORDER BY position"
+            ),
             params![],
         )?;
         if conflict_rows.is_empty() && identity_rows.is_empty() {
@@ -902,18 +1030,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             readable_roots.push((ty.as_str(), key.as_str(), roots));
         }
-        let readable_commit_seqs = self.readable_committed_seqs(&readable_roots)?;
+        let readable_events = self.readable_committed_source_events(&readable_roots)?;
         let mut scoped_index = SourceDisputeIndex::default();
         self.collect_scoped_source_conflicts(
             conflict_rows,
             &readable_map,
-            &readable_commit_seqs,
+            &readable_events,
             &mut scoped_index,
         )?;
         self.collect_scoped_identity_evidence(
             identity_rows,
             &readable_map,
-            &readable_commit_seqs,
+            &readable_events,
             &mut scoped_index,
         )?;
         if scoped_index.subjects.is_empty() {

@@ -345,40 +345,30 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         Ok(entries)
     }
 
-    fn bundle_has_canonical_source(
-        encoded: &str,
-        subject: &FactKey,
-        model: &CommitModel<'_>,
-    ) -> bool {
-        let Ok(observed) = serde_json::from_str::<Observed<RuntimeValue>>(encoded) else {
-            return true;
-        };
-        let Ok(bundle) = norn_ir::runtime::decode::<MappingBundle>(&observed.input) else {
-            return true;
-        };
-        bundle.records.iter().any(|rec| {
-            (!rec.cleared_links.is_empty()
-                && model.canonical(&FactKey::new(rec.object_type.as_str(), &rec.key)) == *subject)
-                || rec.links.iter().any(|link| {
-                    model.canonical(&FactKey::new(link.object_type.as_str(), &link.key)) == *subject
-                })
-        })
-    }
-
     fn claim_bundles_for_source(
         &self,
         subject: &FactKey,
         model: &CommitModel<'_>,
         limit: usize,
     ) -> Result<Vec<String>, CellError> {
+        let mut sides = BTreeSet::from([format!("source:{}", subject.object_type.as_str())]);
+        for def in self.model().object_types() {
+            if model
+                .canonical(&FactKey::new(def.name.as_str(), ""))
+                .object_type
+                == subject.object_type
+            {
+                sides.insert(format!("source:{}", def.name.as_str()));
+            }
+        }
         let table = crate::system::CLAIM_ENDPOINT;
         let rows = self.conn.query(
             &format!(
-                "SELECT DISTINCT e.\"commit_seq\", e.\"observation_id\", e.\"bytes\", i.\"observed\" \
-                 FROM \"{table}\" e JOIN \"{INBOX}\" i ON i.\"observation_id\" = e.\"observation_id\" \
-                 WHERE e.\"side\" = 'source' AND e.\"key\" = ?1 ORDER BY e.\"commit_seq\""
+                "SELECT \"commit_seq\", \"observation_id\", \"bytes\" \
+                 FROM \"{table}\" \
+                 WHERE \"key\" = ?1 AND \"side\" IN (SELECT value FROM json_each(?2))"
             ),
-            params![&subject.key],
+            params![&subject.key, serde_json::to_string(&sides)?],
         )?;
         let mut selected = BTreeMap::new();
         for values in rows {
@@ -386,10 +376,6 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             let seq = crate::read::to_u64(row.get(0)?, "claim sequence")?;
             let id: String = row.get(1)?;
             let bytes = crate::read::to_u64(row.get(2)?, "claim bytes")?;
-            let encoded: String = row.get(3)?;
-            if !Self::bundle_has_canonical_source(&encoded, subject, model) {
-                continue;
-            }
             selected.insert((seq, id), bytes);
         }
         if selected.len() > limit {
