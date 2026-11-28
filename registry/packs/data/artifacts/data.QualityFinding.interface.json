@@ -1,0 +1,89 @@
+{
+  "artifactId": "data.QualityFinding.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Quality finding",
+  "namespace": "data",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "A data quality measurement or violation finding anchored to a dataset snapshot across ISO/IEC 25012 inherent quality dimensions (W3C DQV dqv:QualityMeasurement + ISO/IEC 25012 / ISO 8000).",
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Dataset snapshot evaluated by this quality finding (W3C DQV dqv:computedOn).",
+          "id": "snapshot",
+          "target": "data.DatasetSnapshot"
+        }
+      ],
+      "name": "data.QualityFinding",
+      "properties": [
+        {
+          "id": "finding_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "dimension",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "accuracy"
+              },
+              {
+                "value": "completeness"
+              },
+              {
+                "value": "consistency"
+              },
+              {
+                "value": "credibility"
+              },
+              {
+                "value": "currentness"
+              }
+            ]
+          }
+        },
+        {
+          "id": "severity",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "info"
+              },
+              {
+                "value": "warning"
+              },
+              {
+                "value": "error"
+              }
+            ]
+          }
+        },
+        {
+          "id": "offending_path",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.QualityFinding.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

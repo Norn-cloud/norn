@@ -16,8 +16,7 @@ use crate::engine::{SqlEngine, SqlRow, SqlValue, params};
 use crate::error::CellError;
 use crate::model::{ColumnRef, Model};
 use crate::read::{
-    LedgerEntry, ObjectRecord, StoreReader, column_list, entry_hash, next, placeholders, to_i64,
-    to_u64,
+    LedgerEntry, ObjectRecord, StoreReader, column_list, next, placeholders, to_i64, to_u64,
 };
 use crate::store::{
     CommitBatch, Consumption, EffectRow, FactWriteRow, LinkChange, LinkedRow, OutboxCommand,
@@ -569,12 +568,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 self.reader().high_water(self.world, object_type, key)?,
             ),
         };
-        Ok(WrittenRow {
-            object_type,
-            key: key.to_owned(),
-            version,
-            snapshot_sha256: None,
-        })
+        Ok(WrittenRow::new(object_type, key.to_owned(), version))
     }
 
     fn finish_write_markings(
@@ -836,12 +830,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 }
             }
         }
-        Ok(WrittenRow {
-            object_type: concrete_type,
-            key: key.to_owned(),
-            version,
-            snapshot_sha256: None,
-        })
+        Ok(WrittenRow::new(concrete_type, key.to_owned(), version))
     }
 
     fn apply_fact(&mut self, fact: &FactChange) -> Result<(), CellError> {
@@ -2440,12 +2429,11 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     self.extend_marking_snapshot(object_type, key, property, version, &labels)?;
                 }
             }
-            self.close_emitted_markings(&[WrittenRow {
-                object_type: object_type.clone(),
-                key: key.clone(),
+            self.close_emitted_markings(&[WrittenRow::new(
+                object_type.clone(),
+                key.clone(),
                 version,
-                snapshot_sha256: None,
-            }])?;
+            )])?;
         }
         Ok(())
     }
@@ -3219,7 +3207,10 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
     /// records them without reading them back (INGEST-JOURNAL-MEMORY-1). Each
     /// entry's event is the one a ledger reader decodes (#1527 S1): its
     /// stored canonical text, parsed, with any payload stored apart resolved.
-    pub(crate) fn append_events(&mut self) -> Result<(u64, String, Vec<LedgerEntry>), CellError> {
+    pub(crate) fn append_events(
+        &mut self,
+        fork_pin: Option<&crate::fork::ForkPin>,
+    ) -> Result<(u64, String, Vec<LedgerEntry>), CellError> {
         for event in &self.batch.events {
             self.reader()
                 .verify_durable_event(self.world, self.commit_seq, event)?;
@@ -3235,13 +3226,21 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         let mut entries = Vec::with_capacity(self.batch.events.len());
         for event in &self.batch.events {
             seq = next(seq, "seq")?;
-            let hash = entry_hash(seq, self.commit_seq, self.world, event, &prev)?;
             let (encoded, stored) = crate::payload_storage::encode_event(
                 self.conn,
                 seq,
                 &self.batch.scope,
                 self.world,
                 event,
+            )?;
+            let entry = crate::fork_evidence::make_ledger_entry(
+                seq,
+                self.commit_seq,
+                self.world,
+                event,
+                stored,
+                &mut prev,
+                fork_pin,
             )?;
             self.conn.execute(
                 &format!(
@@ -3252,18 +3251,11 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     commit_seq,
                     self.world,
                     encoded,
-                    prev,
-                    hash
+                    entry.prev_hash,
+                    entry.hash
                 ],
             )?;
-            entries.push(LedgerEntry {
-                seq,
-                commit_seq: self.commit_seq,
-                world: self.world.to_owned(),
-                event: stored,
-                prev_hash: std::mem::replace(&mut prev, hash.clone()),
-                hash,
-            });
+            entries.push(entry);
         }
         Ok((first, prev, entries))
     }

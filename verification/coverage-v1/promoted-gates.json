@@ -192,6 +192,21 @@
       "generatedArtifacts": []
     },
     {
+      "id": "data-lineage-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/data-lineage-v1/DataLineage.lean",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "transition-lean",
       "profile": "fast",
       "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",

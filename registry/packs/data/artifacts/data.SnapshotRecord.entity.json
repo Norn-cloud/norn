@@ -1,0 +1,111 @@
+{
+  "artifactId": "data.SnapshotRecord.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Snapshot record",
+  "namespace": "data",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Reference immutable dataset snapshot implementing data.DatasetSnapshot with an acyclic supersedes revision link.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "snapshot_id"
+          ]
+        }
+      ],
+      "implements": [
+        "data.DatasetSnapshot"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Catalog dataset materialized by this snapshot.",
+          "id": "dataset",
+          "target": "data.CatalogDataset"
+        },
+        {
+          "acyclic": true,
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Prior immutable snapshot superseded by this revision (strictly acyclic).",
+          "id": "supersedes",
+          "target": "data.SnapshotRecord"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Pipeline run that generated this snapshot.",
+          "id": "generated_by",
+          "target": "data.PipelineRun"
+        }
+      ],
+      "name": "data.SnapshotRecord",
+      "properties": [
+        {
+          "id": "snapshot_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "content_sha256",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "schema_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "record_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "byte_size",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "effective_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "id": "known_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.SnapshotRecord.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,50 @@
+{
+  "artifactId": "data.Derivation.monotonic_knowledge_time.law",
+  "dependencies": [
+    {
+      "artifactId": "data.Derivation.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "DATA-CAUSAL-1: knowledge time is monotonically non-decreasing across every derivation edge, preventing transitive future leakage.",
+  "namespace": "data",
+  "payload": {
+    "id": "data.Derivation.monotonic_knowledge_time",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "data",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/data/data.ts"
+    },
+    "rationale": "DATA-CAUSAL-1: knowledge time is monotonically non-decreasing across every derivation edge, preventing transitive future leakage.",
+    "response": {
+      "expression": "timestamp(self.input_snapshot.known_at) <= timestamp(self.output_snapshot.known_at)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "data.Derivation"
+      ],
+      "root": {
+        "id": "data.Derivation",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "data.Derivation"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.Derivation.monotonic_knowledge_time.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

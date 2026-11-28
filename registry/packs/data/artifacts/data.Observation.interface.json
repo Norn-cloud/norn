@@ -1,0 +1,95 @@
+{
+  "artifactId": "data.Observation.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Observation",
+  "namespace": "data",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "An append-only observation record of an external or internal phenomenon (W3C SOSA/SSN sosa:Observation + CloudEvents; append-only immutability is a commit-layer convention). Distinct from posted economic events, commitments, and claims.",
+      "invariants": [
+        {
+          "expression": "((self.source_system != '') and (self.observable_property != '')) and (self.payload_digest != '')",
+          "id": "non_empty_digest",
+          "message": "source_system, observable_property, and payload_digest must be non-empty."
+        },
+        {
+          "expression": "timestamp(self.occurred_at) <= timestamp(self.observed_at)",
+          "id": "observed_at_or_after_occurred",
+          "message": "occurred_at must be at or before observed_at (late-arriving observations are allowed, pre-occurrence observations are refused)."
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional logical dataset this observation belongs to.",
+          "id": "dataset",
+          "target": "data.Dataset"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Sensor, connector, or agent that captured the observation (W3C SOSA sosa:madeBySensor / PROV-O prov:Agent).",
+          "id": "observed_by",
+          "target": "core.Agent"
+        }
+      ],
+      "name": "data.Observation",
+      "properties": [
+        {
+          "id": "observation_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "occurred_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "id": "observed_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "id": "source_system",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "observable_property",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "payload_digest",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.Observation.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
