@@ -606,14 +606,17 @@ class Loop(Loop, name="test.CyclicLoop", title="Loop", version="0.1.0"):
 #[test]
 fn class_chained_lifecycle_assignment_respects_eval_budget() -> TestResult {
     let mut src = String::from(
-        "from __future__ import annotations\n\
-         from enum import StrEnum\n\
-         from norn_py import Concept, Field, lifecycle, transition\n\n\
-         class St(StrEnum):\n\
-             A = \"a\"\n\
-             B = \"b\"\n\n\
-         class Huge(Concept, name=\"test.HugeChain\", title=\"Huge\", version=\"0.1.0\"):\n\
-             status: Field[St]\n    ",
+        r#"from __future__ import annotations
+from enum import StrEnum
+from norn_py import Concept, Field, lifecycle, transition
+
+class St(StrEnum):
+    A = "a"
+    B = "b"
+
+class Huge(Concept, name="test.HugeChain", title="Huge", version="0.1.0"):
+    status: Field[St]
+    "#,
     );
     for idx in 0_usize..200 {
         let _ = write!(src, "lc{idx} = ");
