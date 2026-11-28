@@ -64,6 +64,36 @@ class RustCratePathRewriteTests(unittest.TestCase):
             "fn f<'a>(x: &'a str) -> &'a str { let _ = crate::alpha::util::id(x); x }\n",
         )
 
+    def test_handles_spaced_commented_crate_paths_and_unicode_identifiers(self) -> None:
+        spaced = (
+            "use crate ::helper;\n"
+            "use crate /* comment */ :: /* inner */ nested::item;\n"
+            "use crate /* c */ :: alpha :: already_rooted;\n"
+            "use écrate::unicode_ident;\n"
+        )
+        self.assertTrue(fold.has_code_crate_path("use crate ::helper;\n"))
+        self.assertTrue(fold.has_code_crate_path("use crate /* c */ ::helper;\n"))
+        self.assertFalse(fold.has_code_crate_path("use écrate::unicode_ident;\n"))
+        rewritten = fold.rewrite_crate_paths(spaced, "alpha")
+        self.assertEqual(
+            rewritten,
+            "use crate ::alpha::helper;\n"
+            "use crate /* comment */ ::alpha:: /* inner */ nested::item;\n"
+            "use crate /* c */ :: alpha :: already_rooted;\n"
+            "use écrate::unicode_ident;\n",
+        )
+        self.assertEqual(fold.rewrite_crate_paths(rewritten, "alpha"), rewritten)
+
+
+class AllowRatchetTests(unittest.TestCase):
+    def test_new_folded_crates_refuse_legacy_suite_allows(self) -> None:
+        for crate_dir in ("norn-authoring", "norn-canonical", "norn-datalog", "norn-testkit"):
+            crate = fold.Crate(crate_dir)
+            self.assertFalse(fold._needs_suite_allows(crate))
+            generated = fold.suites_source(crate, crate.foldable(), {})
+            self.assertNotIn("#![allow(", generated)
+        self.assertTrue(fold._needs_suite_allows(fold.Crate("norn-api")))
+
 
 class CommandAndFilterRewriteTests(unittest.TestCase):
     def test_rewrite_command_filter_and_drops(self) -> None:
