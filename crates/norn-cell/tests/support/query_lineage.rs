@@ -206,5 +206,20 @@ pub(crate) fn loaded_with_extra_source_bytes(
     context.world = MAIN_WORLD.into();
     context.scope = SCOPE.into();
     context.mapping_pin = "demo.scrap.mapping/0.1.0".into();
+    context.source_cursors.insert(
+        "demo.scrap.mapping".into(),
+        BTreeMap::from([("conversions".into(), "k1/80".into())]),
+    );
+    context.watermarks.insert(
+        "demo.scrap.mapping".into(),
+        BTreeMap::from([(
+            "conversions".into(),
+            norn_cell::compute::Watermark {
+                observed: "k1/80".into(),
+                heartbeat_ms: Some(CLOCK),
+                complete: true,
+            },
+        )]),
+    );
     (cell, plan, context, raws, directory)
 }

@@ -103,6 +103,8 @@ mod reopen_after_migration;
 mod runs;
 #[path = "server.rs"]
 mod server;
+#[path = "source_freshness.rs"]
+mod source_freshness;
 #[path = "tenant_actions.rs"]
 mod tenant_actions;
 #[path = "tenant_isolation.rs"]

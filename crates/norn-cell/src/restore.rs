@@ -160,7 +160,21 @@ impl CellStore<NativeEngine> {
                 store.bind(key, value)?;
             }
             let seq = record.receipt.body.commit_seq;
+            let map_input = |error| {
+                if let CellError::HistoricalValueUnproven(_) = error {
+                    RestoreError::InputMismatch(seq)
+                } else {
+                    RestoreError::Cell(error)
+                }
+            };
             if let Some(install) = &record.definition_install {
+                crate::export_journal::restore_late_source_evidence(
+                    &store.read(),
+                    seq,
+                    &record.pending_observations,
+                    &record.source_evidence,
+                )
+                .map_err(map_input)?;
                 let installed = store.install_retained_definitions(record)?;
                 if installed != install.installed {
                     return Err(RestoreError::ReceiptMismatch(seq));
@@ -172,13 +186,14 @@ impl CellStore<NativeEngine> {
                 {
                     return Err(RestoreError::ModelDefinitionsMismatch);
                 }
-                restore_input(&mut store, record).map_err(|error| {
-                    if let CellError::HistoricalValueUnproven(_) = error {
-                        RestoreError::InputMismatch(seq)
-                    } else {
-                        RestoreError::Cell(error)
-                    }
-                })?;
+                restore_input(&mut store, record).map_err(map_input)?;
+                crate::export_journal::restore_late_source_evidence(
+                    &store.read(),
+                    seq,
+                    &record.pending_observations,
+                    &record.source_evidence,
+                )
+                .map_err(map_input)?;
                 let outcome = store.commit_retained_batch(record)?;
                 if !matches!(outcome, CommitOutcome::Committed(_))
                     || outcome.receipt() != &record.receipt

@@ -505,13 +505,13 @@ export const live = {
   "nowMs": 1792972800000,
   "sourceCursors": {
     "erp": {
-      "measurements": "k1/80"
+      "measurements": "9b6bba5ec7cb6a7839f3c77d1a70c24f36c1a41115310b573922af1bb7d26666"
     }
   },
   "watermarks": {
     "erp": {
       "measurements": {
-        "observed": "k1/80",
+        "observed": "9b6bba5ec7cb6a7839f3c77d1a70c24f36c1a41115310b573922af1bb7d26666",
         "heartbeatMs": 1792972800000,
         "complete": true
       }
@@ -1024,13 +1024,13 @@ export const fresh = {
   "nowMs": 1792972801000,
   "sourceCursors": {
     "erp": {
-      "measurements": "k1/80"
+      "measurements": "9b6bba5ec7cb6a7839f3c77d1a70c24f36c1a41115310b573922af1bb7d26666"
     }
   },
   "watermarks": {
     "erp": {
       "measurements": {
-        "observed": "k1/80",
+        "observed": "9b6bba5ec7cb6a7839f3c77d1a70c24f36c1a41115310b573922af1bb7d26666",
         "heartbeatMs": 1792972800000,
         "complete": true
       }
@@ -1543,13 +1543,13 @@ export const stale = {
   "nowMs": 1792972806000,
   "sourceCursors": {
     "erp": {
-      "measurements": "k1/80"
+      "measurements": "9b6bba5ec7cb6a7839f3c77d1a70c24f36c1a41115310b573922af1bb7d26666"
     }
   },
   "watermarks": {
     "erp": {
       "measurements": {
-        "observed": "k1/80",
+        "observed": "9b6bba5ec7cb6a7839f3c77d1a70c24f36c1a41115310b573922af1bb7d26666",
         "heartbeatMs": 1792972800000,
         "complete": true
       }
@@ -2062,13 +2062,13 @@ export const incomplete = {
   "nowMs": 1792972800000,
   "sourceCursors": {
     "erp": {
-      "measurements": "k1/80"
+      "measurements": "9b6bba5ec7cb6a7839f3c77d1a70c24f36c1a41115310b573922af1bb7d26666"
     }
   },
   "watermarks": {
     "erp": {
       "measurements": {
-        "observed": "k1/80",
+        "observed": "9b6bba5ec7cb6a7839f3c77d1a70c24f36c1a41115310b573922af1bb7d26666",
         "heartbeatMs": 1792972800000,
         "complete": false
       }
@@ -2588,13 +2588,13 @@ export const historical = {
     "nowMs": 1792972800000,
     "sourceCursors": {
       "erp": {
-        "measurements": "k1/80"
+        "measurements": "9b6bba5ec7cb6a7839f3c77d1a70c24f36c1a41115310b573922af1bb7d26666"
       }
     },
     "watermarks": {
       "erp": {
         "measurements": {
-          "observed": "k1/80",
+          "observed": "9b6bba5ec7cb6a7839f3c77d1a70c24f36c1a41115310b573922af1bb7d26666",
           "heartbeatMs": 1792972800000,
           "complete": true
         }
@@ -3109,13 +3109,13 @@ export const restricted_trace = {
     "nowMs": 1792972800000,
     "sourceCursors": {
       "erp": {
-        "measurements": "k1/80"
+        "measurements": "9b6bba5ec7cb6a7839f3c77d1a70c24f36c1a41115310b573922af1bb7d26666"
       }
     },
     "watermarks": {
       "erp": {
         "measurements": {
-          "observed": "k1/80",
+          "observed": "9b6bba5ec7cb6a7839f3c77d1a70c24f36c1a41115310b573922af1bb7d26666",
           "heartbeatMs": 1792972800000,
           "complete": true
         }
@@ -3964,7 +3964,7 @@ export const resolved_trace = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 81,
     "grain": "demo.Conversion",
-    "lineageRef": "b50b29ac912d921927c2900409cf5546a696ff7d095290ceffd2847108af4d7d",
+    "lineageRef": "2874e8e44a3f2bb4960d5b569a99b2a73c17e6dd27bec2ad1beb13f2c098b559",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -4584,11 +4584,21 @@ export const resolved_trace = {
     "mappingPin": "demo.scrap.mapping/0.1.0",
     "nowMs": 1792972800000,
     "sourceCursors": {
+      "demo.scrap.mapping": {
+        "conversions": "k1/80"
+      },
       "erp": {
         "measurements": "k1/80"
       }
     },
     "watermarks": {
+      "demo.scrap.mapping": {
+        "conversions": {
+          "observed": "k1/80",
+          "heartbeatMs": 1792972800000,
+          "complete": true
+        }
+      },
       "erp": {
         "measurements": {
           "observed": "k1/80",
