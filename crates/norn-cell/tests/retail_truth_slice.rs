@@ -5423,6 +5423,102 @@ fn verify_nonempty_pending_bundle_row_privacy(book: &mut EntityBook) -> Result<(
     let row_read = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
     let read_cut = evaluate_single_library_cut_with_access(book, "LE-SOLE", &row_read)?;
     assert_eq!(read_cut.pending_observations, 1);
+    verify_conflict_related_evidence_failure_and_filter_order(book)?;
+    Ok(())
+}
+
+fn verify_conflict_related_evidence_failure_and_filter_order(
+    book: &mut EntityBook,
+) -> Result<(), String> {
+    // Inject a corrupted related `mapping-bundle:` sharing the exact 5 source-event keys
+    // of the genuine pending `mapping-conflict:` (`POS-CONFLICT-1`).
+    // 1. An authorized reader MUST fail closed (`MappingBundleMismatch`), never silently
+    //    drop the genuine conflict.
+    // 2. A reader denied `PosSaleEvidence` MUST filter by evidence type BEFORE rechecking
+    //    and return `Ok` with `pending_observations == 0`.
+    let corrupted_id = "mapping-bundle:corrupted-related-001";
+    let corrupted_bundle = MappingBundle {
+        digest: "corrupted-related-001".to_owned(),
+        raw: norn_ir::runtime_object! {
+            "source" => "synthetic-pos",
+            "source_id" => "POS-CONFLICT-1",
+            "event_id" => "ev-sole-pos-conflict",
+        },
+        input: map_input("supply.pos_sales.mapping", "pos_sale_line"),
+        definitions_version: 1,
+        definitions_digest: "corrupted".to_owned(),
+        artifact_pins: Vec::new(),
+        records: Vec::new(),
+        diagnostics: Vec::new(),
+        derivation: 2,
+        reprocesses: None,
+    };
+    let corrupted_obs = Observed {
+        id: ObservationId(corrupted_id.to_owned()),
+        provenance: Provenance {
+            source: "synthetic-pos".to_owned(),
+            source_id: "POS-CONFLICT-1".to_owned(),
+            mapping_version: "retail-pipeline/1".to_owned(),
+            observed_at: LogicalTime::from_millis(CLOCK_MS),
+        },
+        input: norn_ir::runtime::encode(&corrupted_bundle)
+            .map_err(|e| format!("encode corrupted bundle: {e}"))?,
+    };
+    let encoded = norn_ir::runtime::encode(&corrupted_obs)
+        .map_err(|e| format!("encode corrupted obs: {e}"))?;
+    let inserted = book
+        .cell_mut()?
+        .store_mut()
+        .inject(corrupted_id, &encoded)
+        .map_err(|e| format!("inject corrupted related bundle: {e}"))?;
+    assert!(inserted, "corrupted related bundle must be inserted");
+
+    let rev_plan = book
+        .pack
+        .retail_question("supply.retail.store_revenue_weekly")?;
+    let (anchor_key, authority) = legal_entity_read_authority(book, "LE-SOLE");
+    let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
+    let live_frontier = || Ok((book.source_cursors.clone(), book.watermarks.clone()));
+    let auth_input = CellViewInput {
+        store: book.cell()?.store(),
+        anchor_key: &anchor_key,
+        authority: &authority,
+        context: book.query_context(),
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
+        member_access: &allow_all,
+        min_disclosed_bucket: 2,
+        required_feeds: &REQUIRED_FEEDS,
+        read_frontier: &live_frontier,
+        min_fresh_ms: book.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
+        evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
+        evidence_access: &allow_all,
+        coverage_transforms: &[],
+        reconciliation_gates: &[],
+        expected_grain_gates: &[],
+        questions: &[("supply.retail.store_revenue_weekly", &rev_plan)],
+    };
+    let auth_res = evaluate_cell_cut(&auth_input, &mut |_, plan, ctx| {
+        book.cell()
+            .map_err(CellError::Engine)?
+            .store()
+            .evaluate_question(plan, ctx, |_| Ok(true))
+    });
+    assert!(
+        matches!(auth_res, Err(CellError::MappingBundleMismatch)),
+        "corrupted related bundle must fail closed instead of dropping genuine conflict: {auth_res:?}"
+    );
+
+    let hide_pos_only = |obj: &norn_cell::ObjectRecord| {
+        if obj.object_type == "supply.PosSaleEvidence" {
+            Ok(RowAccess::None)
+        } else {
+            Ok(RowAccess::Read)
+        }
+    };
+    let denied_cut = evaluate_single_library_cut_with_access(book, "LE-SOLE", &hide_pos_only)?;
+    assert_eq!(denied_cut.pending_observations, 0);
     Ok(())
 }
 

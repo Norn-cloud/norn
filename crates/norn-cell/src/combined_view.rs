@@ -383,6 +383,22 @@ fn authorized_evidence_types<E: SqlEngine>(
     Ok(allowed)
 }
 
+enum PendingCandidate {
+    Bundle(MappingBundle),
+    Conflict(MappingConflict),
+    Identity(IdentityEvidence),
+}
+
+impl PendingCandidate {
+    fn mapping_id(&self) -> &str {
+        match self {
+            Self::Bundle(bundle) => bundle.input.mapping.as_str(),
+            Self::Conflict(conflict) => conflict.incoming.input.mapping.as_str(),
+            Self::Identity(evidence) => evidence.bundle.input.mapping.as_str(),
+        }
+    }
+}
+
 fn verify_or_ignore(result: Result<(), CellError>) -> Result<bool, CellError> {
     if let Err(err) = result {
         if crate::mapping_page::is_store_failure(&err) {
@@ -393,50 +409,50 @@ fn verify_or_ignore(result: Result<(), CellError>) -> Result<bool, CellError> {
     Ok(true)
 }
 
-fn retained_mapping_bundle<E: SqlEngine>(
-    reader: &StoreReader<'_, E>,
-    obs: &PendingObservation,
-) -> Result<Option<MappingBundle>, CellError> {
-    let Ok(observed) = norn_ir::runtime::decode::<Observed<RuntimeValue>>(&obs.observed) else {
-        return Ok(None);
-    };
+fn decode_pending_candidate(obs: &PendingObservation) -> Option<PendingCandidate> {
+    let observed: Observed<RuntimeValue> = norn_ir::runtime::decode(&obs.observed).ok()?;
     if observed.id.0 != obs.observation_id {
-        return Ok(None);
+        return None;
     }
     if obs.observation_id.starts_with("mapping-bundle:") {
-        let Ok(bundle) = norn_ir::runtime::decode::<MappingBundle>(&observed.input) else {
-            return Ok(None);
-        };
-        if obs.observation_id != format!("mapping-bundle:{}", bundle.digest) {
-            return Ok(None);
-        }
-        return Ok(verify_or_ignore(reader.recheck_mapping_bundle(&bundle))?.then_some(bundle));
+        let bundle: MappingBundle = norn_ir::runtime::decode(&observed.input).ok()?;
+        (obs.observation_id == format!("mapping-bundle:{}", bundle.digest))
+            .then_some(PendingCandidate::Bundle(bundle))
+    } else if obs.observation_id.starts_with("mapping-conflict:") {
+        let conflict: MappingConflict = norn_ir::runtime::decode(&observed.input).ok()?;
+        (obs.observation_id == format!("mapping-conflict:{}", conflict.finding.id))
+            .then_some(PendingCandidate::Conflict(conflict))
+    } else if obs.observation_id.starts_with("mapping-identity:") {
+        let evidence: IdentityEvidence = norn_ir::runtime::decode(&observed.input).ok()?;
+        (obs.observation_id == format!("mapping-identity:{}", evidence.finding.id))
+            .then_some(PendingCandidate::Identity(evidence))
+    } else {
+        None
     }
-    if obs.observation_id.starts_with("mapping-conflict:") {
-        let Ok(conflict) = norn_ir::runtime::decode::<MappingConflict>(&observed.input) else {
-            return Ok(None);
-        };
-        if obs.observation_id != format!("mapping-conflict:{}", conflict.finding.id) {
-            return Ok(None);
+}
+
+fn verify_pending_candidate<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    candidate: PendingCandidate,
+) -> Result<Option<MappingBundle>, CellError> {
+    match candidate {
+        PendingCandidate::Bundle(bundle) => {
+            Ok(verify_or_ignore(reader.recheck_mapping_bundle(&bundle))?.then_some(bundle))
         }
-        return Ok(
-            verify_or_ignore(reader.recheck_mapping_conflict(&conflict))?
-                .then_some(conflict.incoming),
-        );
-    }
-    if obs.observation_id.starts_with("mapping-identity:") {
-        let Ok(evidence) = norn_ir::runtime::decode::<IdentityEvidence>(&observed.input) else {
-            return Ok(None);
-        };
-        if obs.observation_id != format!("mapping-identity:{}", evidence.finding.id) {
-            return Ok(None);
+        PendingCandidate::Conflict(conflict) => {
+            // Distinguish an invalid candidate (ignored) from a failure verifying
+            // the related retained source-event evidence it depends on (fail closed).
+            if !verify_or_ignore(reader.recheck_mapping_bundle(&conflict.incoming))? {
+                return Ok(None);
+            }
+            let expected = reader.mapping_conflict(&conflict.incoming)?;
+            Ok((expected.as_ref() == Some(&conflict)).then_some(conflict.incoming))
         }
-        return Ok(
-            verify_or_ignore(reader.recheck_identity_evidence(&evidence))?
-                .then_some(evidence.bundle),
-        );
+        PendingCandidate::Identity(evidence) => Ok(verify_or_ignore(
+            reader.recheck_identity_evidence(&evidence),
+        )?
+        .then_some(evidence.bundle)),
     }
-    Ok(None)
 }
 
 fn pending_record_readable<E: SqlEngine>(
@@ -462,8 +478,9 @@ fn pending_record_readable<E: SqlEngine>(
 
 /// Count unconsumed retained mapping bundles in the inbox scoped strictly to
 /// `input.feed_mappings` and each mapping's authorized evidence type
-/// (`HOST-READ-2`), applying per-row `RowAccess::Read` visibility on nonempty
-/// bundles and ignoring ordinary non-mapping or unverified observations.
+/// (`HOST-READ-2`), filtering by configured mapping and readable type before
+/// rechecking retained evidence, then applying per-row `RowAccess::Read`
+/// visibility on nonempty bundles.
 fn count_scoped_pending_observations<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
 ) -> Result<usize, CellError> {
@@ -475,15 +492,18 @@ fn count_scoped_pending_observations<E: SqlEngine>(
     let reader = input.store.read();
     let mut count = 0_usize;
     for obs in reader.pending_observations()? {
-        let Some(bundle) = retained_mapping_bundle(&reader, &obs)? else {
+        let Some(candidate) = decode_pending_candidate(&obs) else {
             continue;
         };
-        let Some(expected_evidence) = mappings.get(bundle.input.mapping.as_str()).copied() else {
+        let Some(expected_evidence) = mappings.get(candidate.mapping_id()).copied() else {
             continue;
         };
         if !allowed_evidence.contains(expected_evidence) {
             continue;
         }
+        let Some(bundle) = verify_pending_candidate(&reader, candidate)? else {
+            continue;
+        };
         let visible = if bundle.records.is_empty() {
             true
         } else {
