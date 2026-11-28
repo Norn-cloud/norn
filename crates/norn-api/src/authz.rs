@@ -387,16 +387,25 @@ impl norn_kernel::result_reconciliation::ResultAuthorizer for ScopedResultAuthor
     }
 }
 
+pub(crate) fn bind_result_authz<E: norn_cell::engine::SqlEngine>(
+    cell: &mut crate::host::ActionCell<E>,
+    scope: &CellScope,
+    authorizer: &std::sync::Arc<dyn Authorizer>,
+) {
+    cell.set_result_authorizer(Some(HostResultAuthorizer::boxed(
+        scope.key(),
+        std::sync::Arc::clone(authorizer),
+    )));
+}
+
 impl<E: norn_cell::engine::SqlEngine> crate::host::DevHost<E> {
-    pub(crate) fn rebind_result_authorizer(&self, authorizer: &std::sync::Arc<dyn Authorizer>) {
+    pub(crate) fn rebind_authorizer(&mut self, authorizer: std::sync::Arc<dyn Authorizer>) {
         if let Ok(mut slot) = self.cell.lock()
             && let Some(cell) = slot.as_mut()
         {
-            cell.set_result_authorizer(Some(HostResultAuthorizer::boxed(
-                self.scope.key(),
-                std::sync::Arc::clone(authorizer),
-            )));
+            bind_result_authz(cell, &self.scope, &authorizer);
         }
+        self.authorizer = authorizer;
     }
 
     /// RECEIPT-CONSUME-1: install a custom Function command-authority recheck

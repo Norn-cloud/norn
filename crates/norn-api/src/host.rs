@@ -2,7 +2,7 @@
 mod source_capture;
 use crate::{
     action_admission::Serving,
-    authz::{Authorizer, DenyAll, HostResultAuthorizer, ReadCapability, ReadRequest, read_denied},
+    authz::{Authorizer, DenyAll, ReadCapability, ReadRequest, bind_result_authz, read_denied},
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
 };
@@ -214,10 +214,7 @@ impl<E: SqlEngine> DevHost<E> {
         scope.admit(Some(&scope.org_id), Some(&scope.environment_id))?;
         let authorizer: Arc<dyn Authorizer> = Arc::new(DenyAll);
         let mut cell = ActionCell::new(store, scope.key(), responder).map_err(Refusal::host)?;
-        cell.set_result_authorizer(Some(HostResultAuthorizer::boxed(
-            scope.key(),
-            Arc::clone(&authorizer),
-        )));
+        bind_result_authz(&mut cell, &scope, &authorizer);
         Ok(Self {
             scope,
             authorizer,
@@ -233,9 +230,7 @@ impl<E: SqlEngine> DevHost<E> {
     /// Supply the trusted server policy before sharing this host.
     #[must_use]
     pub fn with_authorizer(mut self, authorizer: impl Authorizer + 'static) -> Self {
-        let authorizer: Arc<dyn Authorizer> = Arc::new(authorizer);
-        self.rebind_result_authorizer(&authorizer);
-        self.authorizer = authorizer;
+        self.rebind_authorizer(Arc::new(authorizer));
         self
     }
     /// Key this cell's pseudonyms with `secret` (the host's lineage key);
