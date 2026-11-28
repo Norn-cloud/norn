@@ -306,10 +306,13 @@ fn unconditional_links_expression(rule: &ArtifactEnvelope) -> Option<String> {
             let single_mode = content
                 .execution_mode
                 .is_none_or(|mode| mode == JdmExecutionMode::Single);
-            if top_level_output && top_level_input && single_mode {
+            if top_level_output {
                 for expr in &content.expressions {
                     if expr.key == "links" {
-                        last_links_expr = Some(expr.value.as_str().to_owned());
+                        last_links_expr = (top_level_input && single_mode)
+                            .then(|| expr.value.as_str().to_owned());
+                    } else if expr.key.starts_with("links.") {
+                        last_links_expr = None;
                     }
                 }
             }
