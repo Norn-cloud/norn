@@ -121,8 +121,8 @@ const REFUSAL_CODES = new Set(Object.entries({
   reveal: "idempotency_conflict",
   route: "method_not_allowed not_found",
   run:
-    "exists flow_inadmissible flow_not_found not_found result_not_pending start_conflict " +
-    "start_invalid start_refused state_invalid turn_refused",
+    "exists flow_inadmissible flow_not_found not_found question_read_invalid result_not_pending " +
+    "start_conflict start_invalid start_refused state_invalid turn_refused",
   scope: "denied missing",
   source:
     "auth_unsupported bound cell_busy connector_missing cursor_conflict http_status ingest " +

@@ -293,6 +293,9 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
     fn as_ad_hoc(&self) -> Option<&dyn AdHocQuestions<E>> {
         Some(self)
     }
+    fn configured_connections(&self) -> BTreeMap<String, String> {
+        self.inner.configured_connections()
+    }
     fn collection_access(
         &self,
         scope: &CellScope,
@@ -474,6 +477,33 @@ pub fn export_objects<E: SqlEngine>(
         .collect();
     let guard = host.cell()?;
     let store = guard.store();
+    // QUESTION-STEP-1 / PRIVACY-3: exporting a Run type whose runs persisted
+    // `norn.question@1` reads requires inherited read clearance on every
+    // underlying source object type before any engine export is admitted.
+    let inherited = store
+        .read()
+        .object_type_question_source_types(norn_cell::MAIN_WORLD, object_type)
+        .map_err(Refusal::host)?;
+    if !inherited.is_empty() {
+        let Some(actor_id) = actor else {
+            return Err(crate::authz::read_denied());
+        };
+        if !crate::object_routes::question_sources_permitted(
+            host,
+            access,
+            actor_id,
+            &inherited,
+            ReadCapability::Population,
+        ) || !crate::object_routes::question_sources_permitted(
+            host,
+            access,
+            actor_id,
+            &inherited,
+            ReadCapability::Values,
+        ) {
+            return Err(crate::authz::read_denied());
+        }
+    }
     // PRIVACY-1: an export carries stored values, so a cell that declares
     // markings or holds dynamic `_norn_markings` exports nothing; a marked
     // value leaves only through a reveal. `admit_export` brackets the marking

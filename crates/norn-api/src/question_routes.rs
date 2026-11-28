@@ -11,6 +11,7 @@ use crate::{
     privacy::{
         DisclosedAnswer, DisclosedTrace,
         disclosure::{project_answer, project_trace},
+        source_grants::row_allowed,
     },
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
@@ -170,6 +171,10 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
     fn as_ad_hoc(&self) -> Option<&dyn AdHocQuestions<E>> {
         None
     }
+    /// Host-configured `(connection_id -> mapping_id)` bindings (`QUERY-FRESH-1`).
+    fn configured_connections(&self) -> std::collections::BTreeMap<String, String> {
+        std::collections::BTreeMap::new()
+    }
 }
 
 /// The declared default minimum disclosed bucket size (D53).
@@ -312,7 +317,8 @@ pub(crate) fn answer_plan_inner<E: SqlEngine>(
     let world_name = snapshot.context.world.clone();
     let snapshot_now_ms = snapshot.context.now_ms;
     refuse_labeled_paths_on(host, &cell.store().read(), plan, &world_name, historical)?;
-    let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
+    let ctx = (actor, question, world_name.as_str());
+    let permits = |r: &ObjectRecord, g| row_allowed((host, runtime, cell.store()), ctx, r, g);
     let mut withheld = BTreeSet::new();
     let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
     let outcome = match snapshot.cutoff {
@@ -323,47 +329,38 @@ pub(crate) fn answer_plan_inner<E: SqlEngine>(
             .evaluate(cell.store(), plan, snapshot.context, &mut visible)
             .map(QuestionAnswer::Live),
     };
-    let evaluated_frontier = outcome.as_ref().ok().map(|answer| match answer {
-        QuestionAnswer::Live(result) => result.known_as_of,
-        QuestionAnswer::Historical(historical) => historical.result.known_as_of,
+    let evaluated_frontier = outcome.as_ref().ok().map(|a| match a {
+        QuestionAnswer::Live(r) => r.known_as_of,
+        QuestionAnswer::Historical(h) => h.result.known_as_of,
     });
-    let disclosed = outcome.map(|answer| {
+    let disclosed = outcome.map(|a| {
         project_answer(
             (host, runtime, cell.store()),
             (actor, question, key, plan),
             &withheld,
-            answer,
+            a,
         )
     });
-    let evidence = if let (Ok(Ok(answer)), true) = (&disclosed, for_step) {
-        crate::flow_question::collect_step_evidence(
-            (host, runtime, cell.store()),
-            (actor, question, &world_name, plan),
-            (snapshot.cutoff, snapshot_now_ms),
-            answer,
-        )?
-    } else {
-        (false, norn_cell::compute::RequiredSources::default(), false)
-    };
-    verify_checked_snapshot(
-        host,
-        cell.store(),
-        plan,
-        &CheckedSnapshot {
-            world: &world_name,
-            checked_version,
-            evaluated_frontier,
-            historical,
-            live_read: snapshot.cutoff.is_none(),
-        },
+    let evidence = crate::flow_question::maybe_step_evidence(
+        for_step,
+        (host, runtime, cell.store()),
+        (actor, question, &world_name, plan),
+        (snapshot.cutoff, snapshot_now_ms),
+        &disclosed,
     )?;
+    let checked = CheckedSnapshot {
+        world: &world_name,
+        checked_version,
+        evaluated_frontier,
+        historical,
+        live_read: snapshot.cutoff.is_none(),
+    };
+    verify_checked_snapshot(host, cell.store(), plan, &checked)?;
     let disclosed = disclosed.map_err(Refusal::from_compute)??;
     Ok(crate::flow_question::QuestionStepEval {
         disclosed,
-        all_values_authorized: withheld.is_empty(),
-        sources_authorized: evidence.0,
-        required_sources: evidence.1,
-        has_marked_evidence: evidence.2,
+        all_values_authorized: withheld.is_empty() && !evidence.has_restricted_bucket,
+        evidence,
     })
 }
 
@@ -586,7 +583,8 @@ fn trace_plan<E: SqlEngine>(
             "core.compute.unsupported_engine",
         )));
     }
-    let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
+    let ctx = (actor, question, world_name.as_str());
+    let permits = |r: &ObjectRecord, g| row_allowed((host, runtime, cell.store()), ctx, r, g);
     let mut withheld = BTreeSet::new();
     let matches = |internal: &str| lineage_handle_matches(key, internal, lineage);
     let disclosure = LineageDisclosure {
@@ -624,18 +622,14 @@ fn trace_plan<E: SqlEngine>(
             trace,
         )
     });
-    verify_checked_snapshot(
-        host,
-        cell.store(),
-        plan,
-        &CheckedSnapshot {
-            world: &world_name,
-            checked_version,
-            evaluated_frontier,
-            historical,
-            live_read: answered.is_none(),
-        },
-    )?;
+    let checked = CheckedSnapshot {
+        world: &world_name,
+        checked_version,
+        evaluated_frontier,
+        historical,
+        live_read: answered.is_none(),
+    };
+    verify_checked_snapshot(host, cell.store(), plan, &checked)?;
     disclosed.map_err(Refusal::from_compute)?
 }
 

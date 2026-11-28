@@ -282,11 +282,41 @@ fn valid_run_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'))
 }
 
-fn readable<E: SqlEngine>(host: &DevHost<E>, access: ReadAccess<'_>, row: &RunRow) -> bool {
-    host.read_permitted(&ReadRequest {
+fn readable<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &norn_cell::StoreReader<'_, E>,
+    access: ReadAccess<'_>,
+    row: &RunRow,
+) -> Result<bool, Refusal> {
+    if !host.read_permitted(&ReadRequest {
         capability: ReadCapability::Values,
         access: &access(ReadCapability::Values, &row.object_type),
-    })
+    }) {
+        return Ok(false);
+    }
+    let sources = reader
+        .run_question_source_types(MAIN_WORLD, &row.object_type, &row.run_id)
+        .map_err(Refusal::host)?;
+    for req in &sources {
+        let caps: &[ReadCapability] = if req.requires_sources {
+            &[
+                ReadCapability::Population,
+                ReadCapability::Values,
+                ReadCapability::Sources,
+            ]
+        } else {
+            &[ReadCapability::Population, ReadCapability::Values]
+        };
+        for &cap in caps {
+            if !host.read_permitted(&ReadRequest {
+                capability: cap,
+                access: &access(cap, &req.source_type),
+            }) {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 /// What a run's document says about its flow: identity and display words.
@@ -514,7 +544,7 @@ pub fn start_run<E: SqlEngine>(
         .map_err(Refusal::host)?
     {
         // An exact retry returns the run; another flow's id never leaks.
-        return if row.flow.id == body.flow && readable(host, access, &row) {
+        return if row.flow.id == body.flow && readable(host, &cell.store().read(), access, &row)? {
             Ok((
                 StatusCode::OK,
                 document(host, actor, cell.store(), &flow.view, row)?,
@@ -633,13 +663,14 @@ pub fn get_run<E: SqlEngine>(
         return Err(run_not_found());
     }
     let cell = host.cell()?;
-    let row = cell
-        .store()
-        .read()
-        .flow_run(MAIN_WORLD, id)
-        .map_err(Refusal::host)?
-        .filter(|row| readable(host, access, row))
-        .ok_or_else(run_not_found)?;
+    let reader = cell.store().read();
+    let Some(row) = reader.flow_run(MAIN_WORLD, id).map_err(Refusal::host)? else {
+        return Err(run_not_found());
+    };
+    if !readable(host, &reader, access, &row)? {
+        return Err(run_not_found());
+    }
+    drop(reader);
     let flow = run_flow(cell.store(), &row)?;
     document(host, actor, cell.store(), &flow, row)
 }

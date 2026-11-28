@@ -344,9 +344,10 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
                 .map(|principal| principal.actor.clone()),
         ),
     );
-    let principals = DevPrincipals::new(sessions).with_named(Arc::clone(&named));
-    // One derived-metrics runtime serves the HTTP questions and the sources'
-    // question and dashboard sync, so a revision is derived once.
+    let principals = Arc::new(DevPrincipals::new(sessions).with_named(Arc::clone(&named)));
+    // One derived-metrics runtime serves the HTTP questions, the timer wake
+    // loop, and the sources' question and dashboard sync, so a revision is
+    // derived once.
     let questions = Arc::new(DevMetrics::new(token.handle_key, scope.clone()));
     // D102: a build with `duckdb` answers questions and profiles on the
     // project's own analytics engine, under `.norn/analytics`.
@@ -368,6 +369,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         .map_err(|message| Failure::setup("norn.dev.connections_config", message))?;
     {
         let serving = Arc::clone(&serving);
+        let principals = Arc::clone(&principals);
         let questions = Arc::clone(&questions);
         std::thread::spawn(move || {
             #[cfg(feature = "duckdb")]
@@ -384,10 +386,14 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
             );
         });
     }
-    // TIMER-ALARM-1: the dev host's clock runs the cell's due work, as the hosted alarm does.
+    // TIMER-ALARM-1 / QUESTION-STEP-1: the dev host's clock runs the cell's
+    // due work (including parked `norn.question@1` steps), as the hosted alarm
+    // does.
     {
         let serving = Arc::clone(&serving);
-        std::thread::spawn(move || timers::drive(&serving));
+        let principals = Arc::clone(&principals);
+        let questions = Arc::clone(&questions);
+        std::thread::spawn(move || timers::drive(&serving, &principals, &questions));
     }
     let session = Session {
         loads: &loads,

@@ -479,7 +479,11 @@ pub(crate) fn with_question_runtime<E: SqlEngine, R>(
 /// Run the cell's due work on the alarm/timer wake path with parked
 /// `norn.question@1` step dispatch under each run's recorded starter
 /// (`QUESTION-STEP-1`).
-pub(crate) fn run_due_with_runtime<E: SqlEngine>(
+///
+/// # Errors
+/// A host failure reading the cell or recording a failure; an item that fails
+/// stays due and is retried after its backoff.
+pub fn run_due_with_runtime<E: SqlEngine>(
     host: &DevHost<E>,
     caller: &CallerSlot,
     table_version: &'static str,

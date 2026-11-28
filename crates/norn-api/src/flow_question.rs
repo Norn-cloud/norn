@@ -67,14 +67,23 @@ pub mod question_step_codes {
     pub const STALE_SOURCE: &str = "core.compute.stale_input";
 }
 
+/// Same-snapshot evidence collected inside `question_routes::answer_plan_inner`
+/// under one held cell lock and snapshot bracket.
+#[derive(Default)]
+pub(crate) struct StepEvidence {
+    pub(crate) sources_authorized: bool,
+    pub(crate) required_sources: norn_cell::compute::RequiredSources,
+    pub(crate) has_marked_evidence: bool,
+    pub(crate) has_restricted_bucket: bool,
+    pub(crate) has_connection_type: bool,
+}
+
 /// Authenticated evaluation bundle for one parked `norn.question@1` step,
 /// captured under one cell lock and verified against one snapshot.
 pub(crate) struct QuestionStepEval {
     pub(crate) disclosed: crate::privacy::DisclosedAnswer,
     pub(crate) all_values_authorized: bool,
-    pub(crate) sources_authorized: bool,
-    pub(crate) required_sources: norn_cell::compute::RequiredSources,
-    pub(crate) has_marked_evidence: bool,
+    pub(crate) evidence: StepEvidence,
 }
 
 /// Coordinates and inputs for one parked `norn.question@1` step.
@@ -85,12 +94,14 @@ pub(crate) struct QuestionStepContext<'a> {
 }
 
 /// Result of dispatching one parked `norn.question@1` step: the typed outcome
-/// to settle, plus the source object types read when `outcome` is `Output`
-/// (persisted into `_norn_flow_run_source` so Run object readers must also hold
-/// read clearance on the question's sources).
+/// to settle, plus the source object types read (persisted into
+/// `_norn_flow_run_source` so Run readers must also hold inherited clearance on
+/// the question's sources, and `Sources` clearance when `StaleSource.sources`
+/// was persisted).
 pub(crate) struct QuestionDispatch {
     pub(crate) outcome: StepOutcome,
     pub(crate) source_types: Vec<String>,
+    pub(crate) requires_sources: bool,
 }
 
 impl QuestionDispatch {
@@ -98,6 +109,7 @@ impl QuestionDispatch {
         Self {
             outcome,
             source_types: Vec::new(),
+            requires_sources: false,
         }
     }
 }
@@ -247,9 +259,30 @@ fn is_marking_or_disclosure_refusal(refused: &Refusal) -> bool {
             .any(|diag| diag.code == norn_checker::metric::codes::MARKED_FIELD)
 }
 
-/// Collect same-snapshot `Sources` authorization, `RequiredSources`, and
-/// marking evidence inside `question_routes::answer_plan_for_step`'s held cell
-/// lock (no second store read).
+/// Collect same-snapshot step evidence only when `for_step` is true and
+/// `disclosed` succeeded, keeping `question_routes::answer_plan_inner` compact.
+pub(crate) fn maybe_step_evidence<E: SqlEngine>(
+    for_step: bool,
+    cell: (
+        &DevHost<E>,
+        &dyn QuestionRuntime<E>,
+        &norn_cell::CellStore<E>,
+    ),
+    ctx: (&str, &str, &str, &QuestionPlan),
+    time: (Option<norn_cell::KnowledgeCutoff>, u64),
+    disclosed: &Result<Result<crate::privacy::DisclosedAnswer, Refusal>, norn_cell::CellError>,
+) -> Result<StepEvidence, Refusal> {
+    if let (Ok(Ok(answer)), true) = (disclosed, for_step) {
+        collect_step_evidence(cell, ctx, time, answer)
+    } else {
+        Ok(StepEvidence::default())
+    }
+}
+
+/// Collect same-snapshot `Sources` authorization, `RequiredSources`, compact
+/// `ALL_MEMBERS` `Values` authorization, and marking evidence inside
+/// `question_routes::answer_plan_inner`'s held cell lock (no second store read
+/// and no post-snapshot authorization race).
 pub(crate) fn collect_step_evidence<E: SqlEngine>(
     (host, runtime, store): (
         &DevHost<E>,
@@ -259,9 +292,10 @@ pub(crate) fn collect_step_evidence<E: SqlEngine>(
     (actor, question, world, plan): (&str, &str, &str, &QuestionPlan),
     (cutoff, now_ms): (Option<norn_cell::KnowledgeCutoff>, u64),
     disclosed: &crate::privacy::DisclosedAnswer,
-) -> Result<(bool, norn_cell::compute::RequiredSources, bool), Refusal> {
-    let required = store
-        .required_sources_for_plan_at(world, plan, cutoff, now_ms, &BTreeMap::new())
+) -> Result<StepEvidence, Refusal> {
+    let configured = runtime.configured_connections();
+    let required_sources = store
+        .required_sources_for_plan_at(world, plan, cutoff, now_ms, &configured)
         .map_err(Refusal::from_compute)?;
     let (result, hist_at) = match disclosed.as_answer() {
         QuestionAnswer::Live(res) => (res, None),
@@ -270,15 +304,29 @@ pub(crate) fn collect_step_evidence<E: SqlEngine>(
             Some((hist.result.known_as_of, hist.result.context.now_ms)),
         ),
     };
-    let sources_ok = crate::privacy::source_grants::result_sources_granted(
+    let sources_authorized = crate::privacy::source_grants::step_sources_granted(
         host,
         runtime,
         store,
         (actor, question, plan),
-        (result, hist_at),
+        (result, &required_sources, hist_at),
     )?;
-    let marked = has_step_marked_evidence(host, &store.read(), world, plan, result)?;
-    Ok((sources_ok, required, marked))
+    let has_marked_evidence = has_step_marked_evidence(host, &store.read(), world, plan, result)?;
+    let has_restricted_bucket = has_restricted_or_unproven_bucket(
+        host,
+        runtime,
+        actor,
+        question,
+        plan.grain().as_str(),
+        result,
+    )?;
+    Ok(StepEvidence {
+        sources_authorized,
+        required_sources,
+        has_marked_evidence,
+        has_restricted_bucket,
+        has_connection_type: store.model().has_type("source.Connection"),
+    })
 }
 
 /// One parked, unsettled `norn.question@1` step queued for timer/alarm wake
@@ -451,33 +499,38 @@ fn evaluate_as_starter<E: SqlEngine>(
 
     // PRIVACY-1 / PRIVACY-3 / PRIVACY-4 / DATA-VALUES-1:
     // Require explicit Values authorization evidence across ALL members (and
-    // `ALL_MEMBERS` for compact analytics buckets even when bucket count >=
-    // min_disclosed), zero suppressed/restricted/withheld buckets, and zero
+    // `ALL_MEMBERS` for compact analytics buckets, checked inside the same held
+    // snapshot bracket), zero suppressed/restricted/withheld buckets, and zero
     // restricted markings on contributing rows or datasets.
-    if !eval.all_values_authorized
-        || eval.has_marked_evidence
-        || has_restricted_or_unproven_bucket(
-            host,
-            disclosure,
-            &starter.subject,
-            &step.question,
-            plan.grain().as_str(),
-            result,
-        )?
-    {
+    if !eval.all_values_authorized || eval.evidence.has_marked_evidence {
         return Ok(QuestionDispatch::failure(denied_failure()));
     }
 
     // QUERY-FRESH-1 (#1905): enforce model-derived RequiredSources freshness
     // strictly from the SAME authenticated answer snapshot (no second store read).
-    if let Some(stale) = evaluate_freshness_guard(
+    // Persist inherited source permissions on StaleSource failure too (requiring
+    // `Sources` whenever `StaleSource.sources` emitted source IDs) so later Run
+    // readers without clearance cannot read leaked source IDs or freshness state.
+    if let Some((stale, emitted_sources)) = evaluate_freshness_guard(
         &plan.question().freshness,
         result,
-        &eval.required_sources,
+        &eval.evidence.required_sources,
         step.freshness.as_ref(),
-        eval.sources_authorized,
+        eval.evidence.sources_authorized,
     ) {
-        return Ok(QuestionDispatch::failure(stale));
+        let mut source_types = plan_source_types(&plan);
+        if emitted_sources
+            && eval.evidence.has_connection_type
+            && !source_types.iter().any(|t| t == "source.Connection")
+        {
+            source_types.push("source.Connection".to_owned());
+            source_types.sort();
+        }
+        return Ok(QuestionDispatch {
+            outcome: stale,
+            source_types,
+            requires_sources: emitted_sources,
+        });
     }
 
     let outcome = build_answered_output(&step.question, result)?;
@@ -485,6 +538,7 @@ fn evaluate_as_starter<E: SqlEngine>(
     Ok(QuestionDispatch {
         outcome,
         source_types,
+        requires_sources: false,
     })
 }
 
@@ -549,6 +603,29 @@ fn plan_source_types(plan: &QuestionPlan) -> Vec<String> {
     types.into_iter().collect()
 }
 
+fn load_active_retained<E: SqlEngine>(
+    host: &DevHost<E>,
+    question_id: &str,
+) -> Result<
+    (
+        norn_cell::retained::RetainedDefinitionRecord,
+        Option<u64>,
+        Option<norn_cell::InstalledDefinitionSet>,
+    ),
+    Refusal,
+> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    let record = reader
+        .retained_definition(question_id, None)
+        .map_err(Refusal::host)?
+        .filter(|rec| rec.definition.kind == "question")
+        .ok_or_else(question_not_found)?;
+    let installed_version = reader.active_definitions_version().map_err(Refusal::host)?;
+    let active_set = reader.installed_definitions(None).map_err(Refusal::host)?;
+    Ok((record, installed_version, active_set))
+}
+
 fn evaluate_retained_question<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -564,23 +641,16 @@ fn evaluate_retained_question<E: SqlEngine>(
         .ok_or_else(question_unavailable)?;
     let (initial_record, initial_version) = {
         let _epoch = host.definition_read()?;
-        let cell = host.cell()?;
-        let reader = cell.store().read();
-        let record = reader
-            .retained_definition(&step.question, None)
-            .map_err(Refusal::host)?
-            .filter(|rec| rec.definition.kind == "question")
-            .ok_or_else(question_not_found)?;
-        let version = reader.active_definitions_version().map_err(Refusal::host)?;
+        let (record, version, _) = load_active_retained(host, &step.question)?;
         (record, version)
     };
     let mut question_ir: QuestionIR =
         serde_json::from_str(&initial_record.definition.payload).map_err(Refusal::host)?;
-    apply_step_overrides(&mut question_ir, step)?;
 
-    // Authorize population BEFORE checking pins or revealing retirement (zero
-    // existence oracle for unauthorized starters).
-    let admitted = check_ad_hoc(host, scope, &starter.subject, &question_ir, ad_hoc)?;
+    // Authorize starter Population and Values BEFORE evaluating retained
+    // overrides / parameter collisions, checking pins, or revealing retirement
+    // (zero existence or predicate-collision oracle for unauthorized callers).
+    let mut admitted = check_ad_hoc(host, scope, &starter.subject, &question_ir, ad_hoc)?;
     require_values_access(
         host,
         disclosure,
@@ -588,20 +658,14 @@ fn evaluate_retained_question<E: SqlEngine>(
         &question_ir.object_set.0,
     )?;
 
+    apply_step_overrides(&mut question_ir, step)?;
+    if step.as_of.is_some() {
+        admitted = check_ad_hoc(host, scope, &starter.subject, &question_ir, ad_hoc)?;
+    }
+
     // Hold one definition_read epoch across STEP-PIN-1 re-verification and evaluation.
     let _epoch = host.definition_read()?;
-    let (record, installed_version, active_set) = {
-        let cell = host.cell()?;
-        let reader = cell.store().read();
-        let record = reader
-            .retained_definition(&step.question, None)
-            .map_err(Refusal::host)?
-            .filter(|rec| rec.definition.kind == "question")
-            .ok_or_else(question_not_found)?;
-        let installed_version = reader.active_definitions_version().map_err(Refusal::host)?;
-        let active_set = reader.installed_definitions(None).map_err(Refusal::host)?;
-        (record, installed_version, active_set)
-    };
+    let (record, installed_version, active_set) = load_active_retained(host, &step.question)?;
     if installed_version != initial_version
         || record.definition.revision != initial_record.definition.revision
         || record.definition.payload_sha256 != initial_record.definition.payload_sha256
@@ -617,6 +681,8 @@ fn evaluate_retained_question<E: SqlEngine>(
         active_set.as_ref(),
         run_definitions_version,
         step.pin.as_ref(),
+        step.as_of.as_deref(),
+        ad_hoc.max_rows(),
     )?;
     require_values_access(host, disclosure, &starter.subject, plan.grain().as_str())?;
 
@@ -692,6 +758,10 @@ fn evaluate_named_question<E: SqlEngine>(
         let active_set = reader.installed_definitions(None).map_err(Refusal::host)?;
         (installed_version, active_set)
     };
+    let max_rows = disclosure.as_ad_hoc().map_or(
+        norn_ir::QuestionLimits::DEFAULT.max_scanned_records,
+        crate::question_routes::AdHocQuestions::max_rows,
+    );
     verify_named_pin(
         host,
         &step.question,
@@ -700,6 +770,7 @@ fn evaluate_named_question<E: SqlEngine>(
         active_set.as_ref(),
         run_definitions_version,
         step.pin.as_ref(),
+        max_rows,
     )?;
 
     if let Some(as_of) = step.as_of.as_deref()

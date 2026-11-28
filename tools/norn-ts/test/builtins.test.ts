@@ -146,4 +146,31 @@ test("a question step handle restates the norn-builtins contract exactly", async
   expect(() =>
     questionFn("inventory.on_hand", { params: S.record({ any: S.jsonValue }) }),
   ).toThrow(/must have a scalar schema/)
+  expect(() =>
+    questionFn("inventory.on_hand", {
+      params: { type: "object" } as unknown as S.ObjectSchema,
+    }),
+  ).toThrow(/additionalProperties to false or a scalar schema/)
+  expect(() =>
+    questionFn("inventory.on_hand", {
+      params: { type: "object", properties: { warehouse: S.text() }, additionalProperties: true } as unknown as S.ObjectSchema,
+    }),
+  ).toThrow(/additionalProperties to false or a scalar schema/)
+  expect(() =>
+    questionFn("inventory.on_hand", {
+      params: {
+        type: "object",
+        properties: {},
+        additionalProperties: { type: "object" },
+      } as unknown as S.ObjectSchema,
+    }),
+  ).toThrow(/additionalProperties to false or a scalar schema/)
+
+  const scalarMapParams = {
+    type: "object",
+    properties: {},
+    additionalProperties: { type: ["string", "number", "boolean", "null"] },
+  } as unknown as S.ObjectSchema
+  const withScalarMap = questionFn("inventory.on_hand", { params: scalarMapParams })
+  expect(withScalarMap.input.properties.params).toEqual(scalarMapParams)
 })

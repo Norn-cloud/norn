@@ -2,7 +2,7 @@
 //! evaluation through the shared read authority and disclosure boundary.
 
 use super::{
-    CheckedSnapshot, QuestionRuntime, admit_named_question, allowed, refuse_labeled_paths_on,
+    CheckedSnapshot, QuestionRuntime, admit_named_question, refuse_labeled_paths_on,
     verify_checked_snapshot, visible_recording,
 };
 use crate::{
@@ -60,7 +60,14 @@ fn fork_answer_plan<E: SqlEngine>(
     }
     let historical = plan.as_of();
     refuse_labeled_paths_on(host, &cell.store().read(), plan, MAIN_WORLD, historical)?;
-    let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
+    let permits = |row: &ObjectRecord, grant| {
+        crate::privacy::source_grants::row_allowed(
+            (host, runtime, cell.store()),
+            (actor, question, MAIN_WORLD),
+            row,
+            grant,
+        )
+    };
     let mut withheld = BTreeSet::new();
     let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
     let outcome = runtime.evaluate_in_fork(cell.store(), plan, snapshot.context, &mut visible);

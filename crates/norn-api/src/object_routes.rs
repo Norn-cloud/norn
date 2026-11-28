@@ -110,22 +110,23 @@ pub(crate) fn row_readable<E: SqlEngine>(
         .all(|capability| permitted(host, access, actor, row, capability))
 }
 
-/// QUESTION-STEP-1 / PRIVACY-3: a Run object that persisted `Answered`
-/// outputs from `norn.question@1` steps inherits the read gate of every
-/// source object type those questions read, so an ordinary Run reader without
-/// source clearance cannot read restricted question data via Run bindings.
+/// QUESTION-STEP-1 / PRIVACY-3: a Run object that persisted settled
+/// `norn.question@1` outputs or `StaleSource` source identifiers inherits the
+/// read gate of every source object type those questions read, so an ordinary
+/// Run reader without source clearance cannot read restricted question data via
+/// Run bindings.
 pub(crate) fn question_sources_permitted<E: SqlEngine>(
     host: &DevHost<E>,
     access: &dyn ObjectAccess,
     actor: &str,
-    source_types: &[String],
+    sources: &[norn_cell::flow_run::RunQuestionSource],
     capability: ReadCapability,
 ) -> bool {
-    source_types.iter().all(|source_type| {
-        let collection_ok = mapped(host.scope(), access, actor, capability, source_type, None)
-            .is_ok_and(|request| {
+    let check_cap = |source_type: &str, cap: ReadCapability| -> bool {
+        let collection_ok =
+            mapped(host.scope(), access, actor, cap, source_type, None).is_ok_and(|request| {
                 host.read_permitted(&ReadRequest {
-                    capability,
+                    capability: cap,
                     access: &request,
                 })
             });
@@ -133,13 +134,17 @@ pub(crate) fn question_sources_permitted<E: SqlEngine>(
             return false;
         }
         let every = ObjectRecord {
-            object_type: source_type.clone(),
+            object_type: source_type.to_owned(),
             id: norn_cell::compute::ALL_MEMBERS.to_owned(),
             scope: host.scope().key(),
             version: 0,
             values: std::collections::BTreeMap::new(),
         };
-        permitted(host, access, actor, &every, capability)
+        permitted(host, access, actor, &every, cap)
+    };
+    sources.iter().all(|req| {
+        check_cap(&req.source_type, capability)
+            && (!req.requires_sources || check_cap(&req.source_type, ReadCapability::Sources))
     })
 }
 

@@ -125,17 +125,32 @@ fn bound_failure_value(val: RuntimeValue) -> StepOutcome {
     }
 }
 
+/// Record one offending source/partition identifier into `bad` without
+/// allocating beyond `MAX_STALE_SOURCES` entries or `MAX_SOURCE_ID_BYTES` per
+/// entry.
+fn record_bad_source(bad: &mut BTreeSet<String>, source: &str, partition: Option<&str>) {
+    if bad.len() >= MAX_STALE_SOURCES {
+        return;
+    }
+    let entry = match partition {
+        Some(part) => truncate_utf8(&format!("{source}/{part}"), MAX_SOURCE_ID_BYTES),
+        None => truncate_utf8(source, MAX_SOURCE_ID_BYTES),
+    };
+    bad.insert(entry);
+}
+
 /// Evaluate the `#1905` `RequiredSources` freshness guard strictly against the
 /// SAME authenticated snapshot (`result` and `required`) used for the answer
 /// evaluation. Any incomplete, missing, quarantined, or lagging required source
-/// returns typed `StaleSource` even if `result.freshness` was labeled `Exact`.
+/// returns typed `(StaleSource, emitted_sources)` even if `result.freshness`
+/// was labeled `Exact`.
 pub(crate) fn evaluate_freshness_guard(
     policy: &FreshnessPolicy,
     result: &QueryResult,
     required: &RequiredSources,
     guard: Option<&QuestionFreshnessGuard>,
     sources_authorized: bool,
-) -> Option<StepOutcome> {
+) -> Option<(StepOutcome, bool)> {
     let require_exact = guard.and_then(|g| g.require_exact).unwrap_or(false);
     let plan_age = match policy {
         FreshnessPolicy::Live { max_age_ms } | FreshnessPolicy::Delayed { max_age_ms } => {
@@ -160,14 +175,14 @@ pub(crate) fn evaluate_freshness_guard(
     for (source, datasets) in &required.0 {
         if datasets.is_empty() {
             incomplete = true;
-            bad.insert(source.clone());
+            record_bad_source(&mut bad, source, None);
             continue;
         }
         let provided = result.context.source_cursors.get(source);
         for dataset in datasets {
             let Some(consumed) = provided.and_then(|parts| parts.get(dataset)) else {
                 incomplete = true;
-                bad.insert(format!("{source}/{dataset}"));
+                record_bad_source(&mut bad, source, Some(dataset));
                 continue;
             };
             check_watermark(
@@ -182,7 +197,7 @@ pub(crate) fn evaluate_freshness_guard(
     for (source, partitions) in &result.context.source_cursors {
         if partitions.is_empty() {
             incomplete = true;
-            bad.insert(source.clone());
+            record_bad_source(&mut bad, source, None);
             continue;
         }
         for (partition, consumed) in partitions {
@@ -211,11 +226,15 @@ pub(crate) fn evaluate_freshness_guard(
     } else {
         ("fresh", result.complete)
     };
-    Some(stale_failure(
-        label,
-        complete_flag,
-        bad.into_iter().collect(),
-        sources_authorized,
+    let emitted = sources_authorized && !bad.is_empty();
+    Some((
+        stale_failure(
+            label,
+            complete_flag,
+            bad.into_iter().collect(),
+            sources_authorized,
+        ),
+        emitted,
     ))
 }
 
@@ -228,7 +247,7 @@ fn check_watermarks_map(
         for (partition, wm) in partitions {
             let Some(at) = wm.heartbeat_ms.filter(|_| wm.complete) else {
                 *incomplete = true;
-                bad.insert(format!("{source}/{partition}"));
+                record_bad_source(bad, source, Some(partition));
                 continue;
             };
             check_lag(
@@ -258,7 +277,7 @@ fn check_watermark(
         .and_then(|w| w.heartbeat_ms)
     else {
         *incomplete = true;
-        bad.insert(format!("{source}/{partition}"));
+        record_bad_source(bad, source, Some(partition));
         return;
     };
     check_lag(
@@ -280,15 +299,15 @@ fn check_lag(
     match now_ms.checked_sub(heartbeat_ms) {
         None => {
             *stale = true;
-            bad.insert(format!("{source}/{partition}"));
+            record_bad_source(bad, source, Some(partition));
         }
         Some(lag) if effective_age.is_some_and(|max_age| lag > max_age) => {
             *stale = true;
-            bad.insert(format!("{source}/{partition}"));
+            record_bad_source(bad, source, Some(partition));
         }
         Some(lag) if require_exact && lag > 0 => {
             *not_exact = true;
-            bad.insert(format!("{source}/{partition}"));
+            record_bad_source(bad, source, Some(partition));
         }
         Some(_) => {}
     }
@@ -316,26 +335,43 @@ fn encode_u64(n: u64) -> Result<RuntimeValue, Refusal> {
     norn_ir::runtime::encode(&n).map_err(Refusal::host)
 }
 
-fn encode_query_row(bucket_key: &str, row: &QueryRow) -> Result<(RuntimeValue, usize), Refusal> {
+fn encode_query_row(
+    bucket_key: &str,
+    row: &QueryRow,
+    estimated_bytes: &mut usize,
+    max_bytes: usize,
+) -> Result<RuntimeValue, Refusal> {
     let member_count = row
         .member_count
         .unwrap_or_else(|| u64::try_from(row.members.len()).unwrap_or(u64::MAX));
-    let mut approx_bytes = PER_ROW_OVERHEAD_BYTES.saturating_add(bucket_key.len());
+    *estimated_bytes = estimated_bytes
+        .saturating_add(PER_ROW_OVERHEAD_BYTES)
+        .saturating_add(bucket_key.len())
+        .saturating_add(row.totals.len().saturating_mul(3));
+    if *estimated_bytes > max_bytes {
+        return Err(output_too_large());
+    }
     let mut totals = Vec::with_capacity(row.totals.len());
     for total in &row.totals {
         let text = total.to_string();
-        approx_bytes = approx_bytes.saturating_add(text.len()).saturating_add(3);
+        *estimated_bytes = estimated_bytes.saturating_add(text.len());
+        if *estimated_bytes > max_bytes {
+            return Err(output_too_large());
+        }
         totals.push(RuntimeValue::String(text));
     }
     let value = match row.value.as_ref() {
         None => RuntimeValue::Null,
         Some(d) => {
             let text = d.to_string();
-            approx_bytes = approx_bytes.saturating_add(text.len());
+            *estimated_bytes = estimated_bytes.saturating_add(text.len());
+            if *estimated_bytes > max_bytes {
+                return Err(output_too_large());
+            }
             RuntimeValue::String(text)
         }
     };
-    let encoded = RuntimeValue::Object(BTreeMap::from([
+    Ok(RuntimeValue::Object(BTreeMap::from([
         (
             "bucketKey".to_owned(),
             RuntimeValue::String(bucket_key.to_owned()),
@@ -344,8 +380,7 @@ fn encode_query_row(bucket_key: &str, row: &QueryRow) -> Result<(RuntimeValue, u
         ("totals".to_owned(), RuntimeValue::Array(totals)),
         ("memberCount".to_owned(), encode_u64(member_count)?),
         ("suppressed".to_owned(), RuntimeValue::Bool(row.suppressed)),
-    ]));
-    Ok((encoded, approx_bytes))
+    ])))
 }
 
 fn encode_rows_bounded(
@@ -360,12 +395,12 @@ fn encode_rows_bounded(
     }
     let mut rows = Vec::with_capacity(result.rows.len());
     for (bucket_key, row) in &result.rows {
-        let (encoded, row_bytes) = encode_query_row(bucket_key, row)?;
-        estimated_bytes = estimated_bytes.saturating_add(row_bytes);
-        if estimated_bytes > max_bytes {
-            return Err(output_too_large());
-        }
-        rows.push(encoded);
+        rows.push(encode_query_row(
+            bucket_key,
+            row,
+            &mut estimated_bytes,
+            max_bytes,
+        )?);
     }
     Ok(rows)
 }
@@ -533,11 +568,12 @@ mod tests {
         let policy = FreshnessPolicy::Live {
             max_age_ms: WholeNumber(60_000),
         };
-        let Some(StepOutcome::Failure(fail)) =
+        let Some((StepOutcome::Failure(fail), emitted)) =
             evaluate_freshness_guard(&policy, &result, &required, None, true)
         else {
             panic!("expected StaleSource failure when required source is missing");
         };
+        assert!(emitted);
         assert_eq!(
             fail.get("_tag").and_then(RuntimeValue::as_str),
             Some("StaleSource")
@@ -580,11 +616,12 @@ mod tests {
         let policy = FreshnessPolicy::Live {
             max_age_ms: WholeNumber(60_000),
         };
-        let Some(StepOutcome::Failure(fail)) =
+        let Some((StepOutcome::Failure(fail), emitted)) =
             evaluate_freshness_guard(&policy, &result, &required, None, true)
         else {
             panic!("expected StaleSource when required watermark exceeds max_age_ms");
         };
+        assert!(emitted);
         assert_eq!(
             fail.get("_tag").and_then(RuntimeValue::as_str),
             Some("StaleSource")

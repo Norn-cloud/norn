@@ -221,9 +221,20 @@ function isQuestionParamScalar(schema: S.ValueSchema): boolean {
 }
 
 function validateQuestionParamsSchema(params: S.ObjectSchema): S.ObjectSchema {
-  for (const [name, field] of Object.entries(params.properties)) {
-    if (!isQuestionParamScalar(field)) {
-      throw new Error(`questionFn params field ${JSON.stringify(name)} must have a scalar schema`)
+  if (params.type !== "object") {
+    throw new Error("questionFn params schema must have type object")
+  }
+  const extra = params.additionalProperties as unknown
+  if (extra !== false) {
+    if (typeof extra !== "object" || extra === null || !isQuestionParamScalar(extra as S.ValueSchema)) {
+      throw new Error("questionFn params schema must set additionalProperties to false or a scalar schema")
+    }
+  }
+  if (params.properties !== undefined) {
+    for (const [name, field] of Object.entries(params.properties)) {
+      if (!isQuestionParamScalar(field)) {
+        throw new Error(`questionFn params field ${JSON.stringify(name)} must have a scalar schema`)
+      }
     }
   }
   return params

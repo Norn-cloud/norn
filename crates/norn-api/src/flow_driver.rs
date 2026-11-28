@@ -623,7 +623,7 @@ pub(crate) fn deliver_recorded<E: SqlEngine>(
             outcome: step.outcome.clone(),
         },
         step.recorded,
-        &[],
+        (&[], false),
         now,
     )
 }
@@ -895,7 +895,7 @@ fn settle<E: SqlEngine>(
             outcome,
         },
         false,
-        &[],
+        (&[], false),
         now,
     )?;
     Ok(true)
@@ -903,7 +903,7 @@ fn settle<E: SqlEngine>(
 
 /// Settle a read-only `norn.question@1` step's outcome directly into the run's
 /// result turn under one cell hold, atomically recording its read source types
-/// (`RunQuestionRead`) when an `Answered` output is persisted.
+/// (`RunQuestionRead`) whenever an `Answered` or `StaleSource` outcome settles.
 fn settle_question<E: SqlEngine>(
     host: &DevHost<E>,
     step: &StepCall,
@@ -923,7 +923,7 @@ fn settle_question<E: SqlEngine>(
             outcome: dispatch.outcome,
         },
         false,
-        &dispatch.source_types,
+        (&dispatch.source_types, dispatch.requires_sources),
         now,
     )
 }
@@ -935,7 +935,7 @@ fn deliver_in<E: SqlEngine>(
     cell: &mut ActionCell<E>,
     delivery: Delivery<'_>,
     recorded: bool,
-    question_sources: &[String],
+    (question_sources, requires_sources): (&[String], bool),
     now: LogicalTime,
 ) -> Result<(), Refusal> {
     let row = cell
@@ -962,6 +962,7 @@ fn deliver_in<E: SqlEngine>(
             run_id: row.run_id,
             object_type: flow.object_type,
             source_types: question_sources.to_vec(),
+            requires_sources,
         }
         .event()
         .map_err(Refusal::host)?;

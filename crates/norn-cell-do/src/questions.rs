@@ -405,6 +405,9 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
     fn as_ad_hoc(&self) -> Option<&dyn AdHocQuestions<E>> {
         Some(self)
     }
+    fn configured_connections(&self) -> BTreeMap<String, String> {
+        self.effective_configured()
+    }
 }
 
 impl<E: SqlEngine> AdHocQuestions<E> for DerivedRuntime<'_> {

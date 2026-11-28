@@ -410,14 +410,33 @@ fn verify_question_params_schema(schema: &Value, path: &str) -> Result<(), Unver
             "norn.question@1 params schema must have type object",
         ));
     }
-    if let Some(props) = obj.get("properties").and_then(Value::as_object) {
-        for (key, field) in props {
-            if !is_scalar_schema(field) {
-                return Err(unverifiable(
-                    format!("{path}/properties/{key}"),
-                    format!("norn.question@1 param {key:?} must have a scalar schema"),
-                ));
+    match obj.get("additionalProperties") {
+        Some(Value::Bool(false)) => {}
+        Some(extra @ Value::Object(_)) if is_scalar_schema(extra) => {}
+        _ => {
+            return Err(unverifiable(
+                format!("{path}/additionalProperties"),
+                "norn.question@1 params schema must set additionalProperties to false or a scalar schema",
+            ));
+        }
+    }
+    match obj.get("properties") {
+        None => {}
+        Some(Value::Object(props)) => {
+            for (key, field) in props {
+                if !is_scalar_schema(field) {
+                    return Err(unverifiable(
+                        format!("{path}/properties/{key}"),
+                        format!("norn.question@1 param {key:?} must have a scalar schema"),
+                    ));
+                }
             }
+        }
+        Some(_) => {
+            return Err(unverifiable(
+                format!("{path}/properties"),
+                "norn.question@1 params properties must be an object",
+            ));
         }
     }
     Ok(())
@@ -868,7 +887,7 @@ mod tests {
         });
         assert!(perform_refs(&bad_freshness_type).is_err());
 
-        let mut bad_params_type = payload;
+        let mut bad_params_type = payload.clone();
         bad_params_type["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]
             ["properties"]["check_stock"]["properties"]["params"] = json!({
             "type": "object",
@@ -876,5 +895,53 @@ mod tests {
             "properties": { "nested": { "type": "object", "properties": {}, "additionalProperties": false } }
         });
         assert!(perform_refs(&bad_params_type).is_err());
+
+        // Bare `{ "type": "object" }` params (no additionalProperties) refuses.
+        let mut bare_params = payload.clone();
+        bare_params["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]["properties"]
+            ["check_stock"]["properties"]["params"] = json!({ "type": "object" });
+        assert!(perform_refs(&bare_params).is_err());
+
+        // Unrestricted `additionalProperties: true` params refuses.
+        let mut open_params = payload.clone();
+        open_params["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]["properties"]
+            ["check_stock"]["properties"]["params"] = json!({
+            "type": "object",
+            "additionalProperties": true,
+            "properties": { "warehouse": { "type": "string" } }
+        });
+        assert!(perform_refs(&open_params).is_err());
+
+        // Non-scalar `additionalProperties` schema refuses.
+        let mut object_extra_params = payload.clone();
+        object_extra_params["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]
+            ["properties"]["check_stock"]["properties"]["params"] = json!({
+            "type": "object",
+            "additionalProperties": { "type": "object" }
+        });
+        assert!(perform_refs(&object_extra_params).is_err());
+
+        // Scalar-only `additionalProperties` matching `norn-builtins` accepts.
+        let mut scalar_map_params = payload.clone();
+        scalar_map_params["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]
+            ["properties"]["check_stock"]["properties"]["params"] = json!({
+            "type": "object",
+            "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
+        });
+        assert!(perform_refs(&scalar_map_params).is_ok());
+
+        // Closed `additionalProperties: false` with scalar properties accepts.
+        let mut closed_scalar_params = payload;
+        closed_scalar_params["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]
+            ["properties"]["check_stock"]["properties"]["params"] = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "warehouse": { "type": "string" },
+                "limit": { "type": "integer" },
+                "active": { "type": ["boolean", "null"] }
+            }
+        });
+        assert!(perform_refs(&closed_scalar_params).is_ok());
     }
 }

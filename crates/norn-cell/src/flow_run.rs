@@ -79,6 +79,7 @@ pub(crate) const DDL: [&str; 4] = [
   "object_type" TEXT NOT NULL,
   "run_id" TEXT NOT NULL,
   "source_type" TEXT NOT NULL,
+  "requires_sources" INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY ("world", "object_type", "run_id", "source_type")
 )"#,
 ];
@@ -163,8 +164,9 @@ impl RunStart {
 }
 
 /// What a [`RUN_QUESTION_READ`] bookkeeping event records: the source object
-/// types read by an `Answered` `norn.question@1` step whose output was
-/// persisted into the run object.
+/// types read by a settled `norn.question@1` step on the run object, and
+/// whether readers must also hold `Sources` clearance (when `StaleSource`
+/// persisted source identifiers).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RunQuestionRead {
@@ -174,6 +176,20 @@ pub struct RunQuestionRead {
     pub object_type: String,
     /// Distinct source object types read by the question step.
     pub source_types: Vec<String>,
+    /// Whether readers of this run must also hold `ReadCapability::Sources` on
+    /// these source types (for example when `StaleSource.sources` was persisted).
+    #[serde(default)]
+    pub requires_sources: bool,
+}
+
+/// One inherited source permission requirement recorded on a flow run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunQuestionSource {
+    /// Underlying source object type name.
+    pub source_type: String,
+    /// Whether `ReadCapability::Sources` is also required in addition to
+    /// `Population` and `Values`.
+    pub requires_sources: bool,
 }
 
 impl RunQuestionRead {
@@ -460,12 +476,13 @@ pub(crate) fn apply<E: SqlEngine>(
         )?;
     }
     for read in question_reads(batch)? {
+        let req_src = i64::from(read.requires_sources);
         for source_type in read.source_types {
             conn.execute(
                 &format!(
-                    r#"INSERT OR IGNORE INTO "{FLOW_RUN_SOURCE}" ("world","object_type","run_id","source_type") VALUES (?1,?2,?3,?4)"#
+                    r#"INSERT INTO "{FLOW_RUN_SOURCE}" ("world","object_type","run_id","source_type","requires_sources") VALUES (?1,?2,?3,?4,?5) ON CONFLICT ("world","object_type","run_id","source_type") DO UPDATE SET "requires_sources" = MAX("requires_sources", excluded."requires_sources")"#
                 ),
-                params![world, read.object_type, read.run_id, source_type],
+                params![world, read.object_type, read.run_id, source_type, req_src],
             )?;
         }
     }
@@ -536,9 +553,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(None)
     }
 
-    /// Source object types read by `Answered` `norn.question@1` steps whose
-    /// outputs were persisted into `(world, object_type, run_id)`. Empty for
-    /// non-run objects and for runs without persisted question outputs.
+    /// Source object types read by settled `norn.question@1` steps on
+    /// `(world, object_type, run_id)`. Empty for non-run objects and for runs
+    /// without settled question reads.
     ///
     /// # Errors
     /// SQL engine or decode errors.
@@ -547,16 +564,51 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         object_type: &str,
         run_id: &str,
-    ) -> Result<Vec<String>, CellError> {
+    ) -> Result<Vec<RunQuestionSource>, CellError> {
         self.check_live()?;
         let rows = self.conn.query(
             &format!(
-                r#"SELECT "source_type" FROM "{FLOW_RUN_SOURCE}" WHERE "world"=?1 AND "object_type"=?2 AND "run_id"=?3 ORDER BY "source_type""#
+                r#"SELECT "source_type", "requires_sources" FROM "{FLOW_RUN_SOURCE}" WHERE "world"=?1 AND "object_type"=?2 AND "run_id"=?3 ORDER BY "source_type""#
             ),
             params![world, object_type, run_id],
         )?;
         rows.into_iter()
-            .map(|values| SqlRow(values).get(0))
+            .map(|values| {
+                let row = SqlRow(values);
+                Ok(RunQuestionSource {
+                    source_type: row.get(0)?,
+                    requires_sources: row.get::<i64>(1)? != 0,
+                })
+            })
+            .collect()
+    }
+
+    /// Distinct source object types read by any settled `norn.question@1` step
+    /// across all runs of `(world, object_type)`, for bulk/collection read
+    /// gates (exports and whole-grain engine queries).
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn object_type_question_source_types(
+        &self,
+        world: &str,
+        object_type: &str,
+    ) -> Result<Vec<RunQuestionSource>, CellError> {
+        self.check_live()?;
+        let rows = self.conn.query(
+            &format!(
+                r#"SELECT "source_type", MAX("requires_sources") FROM "{FLOW_RUN_SOURCE}" WHERE "world"=?1 AND "object_type"=?2 GROUP BY "source_type" ORDER BY "source_type""#
+            ),
+            params![world, object_type],
+        )?;
+        rows.into_iter()
+            .map(|values| {
+                let row = SqlRow(values);
+                Ok(RunQuestionSource {
+                    source_type: row.get(0)?,
+                    requires_sources: row.get::<i64>(1)? != 0,
+                })
+            })
             .collect()
     }
 

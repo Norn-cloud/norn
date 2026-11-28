@@ -238,7 +238,7 @@ fn readable<E: SqlEngine>(
     access: &dyn ObjectAccess,
     actor: &str,
     row: ObjectRecord,
-    sources: &[String],
+    sources: &[norn_cell::flow_run::RunQuestionSource],
 ) -> Result<ObjectRecord, Refusal> {
     if [Population, Values].into_iter().all(|capability| {
         permitted(host, access, actor, &row, capability)
@@ -257,7 +257,7 @@ fn raw_row<E: SqlEngine>(
     access: &dyn ObjectAccess,
     (object_type, id): (&str, &str),
     start: &mut Option<(u64, Option<(u64, u64)>)>,
-) -> Result<(ObjectRecord, Vec<String>), Refusal> {
+) -> Result<(ObjectRecord, Vec<norn_cell::flow_run::RunQuestionSource>), Refusal> {
     locked(host, access, start, |reader| {
         if !reader.model().has_type(object_type) {
             return Err(not_found());

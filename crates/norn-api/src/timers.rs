@@ -400,7 +400,7 @@ fn dispatch_due_item<'w, E: SqlEngine>(
     meter: &mut TurnEnvelopeMeter,
     work: &'w mut DueWork,
     woken_runs: &mut BTreeSet<String>,
-) -> Result<&'w mut usize, String> {
+) -> Result<&'w mut u32, String> {
     match item {
         Item::Quantity(pending) => {
             cell.advance_to(now);
