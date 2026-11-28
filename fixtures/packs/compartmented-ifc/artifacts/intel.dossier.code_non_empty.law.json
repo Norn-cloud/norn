@@ -10,7 +10,7 @@
   ],
   "irVersion": "0.1",
   "kind": "law",
-  "lifecycle": "draft",
+  "lifecycle": "active",
   "name": "Every dossier carries a non-empty code",
   "namespace": "intel",
   "payload": {
@@ -43,12 +43,9 @@
     "subject": "intel.Dossier"
   },
   "provenance": {
-    "source": "authoring_sdk",
-    "sourcePath": "fixtures/packs/compartmented-ifc/compartmented.ts"
+    "source": "system",
+    "sourcePath": "fixtures/packs/compartmented-ifc/artifacts/intel.dossier.code_non_empty.law.json"
   },
-  "scope": {
-    "environmentId": "dev",
-    "orgId": "org_bench"
-  },
+  "scope": {},
   "version": "0.1.0"
 }

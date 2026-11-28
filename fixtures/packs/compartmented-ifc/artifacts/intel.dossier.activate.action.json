@@ -3,7 +3,7 @@
   "dependencies": [],
   "irVersion": "0.1",
   "kind": "action",
-  "lifecycle": "draft",
+  "lifecycle": "active",
   "name": "Activate dossier",
   "namespace": "intel",
   "payload": {
@@ -63,12 +63,9 @@
     ]
   },
   "provenance": {
-    "source": "authoring_sdk",
-    "sourcePath": "fixtures/packs/compartmented-ifc/compartmented.ts"
+    "source": "system",
+    "sourcePath": "fixtures/packs/compartmented-ifc/artifacts/intel.dossier.activate.action.json"
   },
-  "scope": {
-    "environmentId": "dev",
-    "orgId": "org_bench"
-  },
+  "scope": {},
   "version": "0.1.0"
 }
