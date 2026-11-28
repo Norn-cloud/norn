@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 fn envelope(
     artifact_id: &str,
     kind: &str,
-    dependencies: Vec<Value>,
-    payload: Value,
+    dependencies: &[Value],
+    payload: &Value,
 ) -> ArtifactEnvelope {
     let value = json!({
         "irVersion": "0.1",
@@ -44,7 +44,7 @@ fn entity_v2(
     name: &str,
     extends: Option<&str>,
     implements: &[&str],
-    deps: Vec<Value>,
+    deps: &[Value],
 ) -> ArtifactEnvelope {
     let mut object_type = json!({
         "name": name,
@@ -62,7 +62,7 @@ fn entity_v2(
         artifact_id,
         "entity",
         deps,
-        json!({
+        &json!({
             "entityVersion": "2.0",
             "objectType": object_type,
         }),
@@ -78,8 +78,8 @@ fn action_upsert(
     envelope(
         artifact_id,
         "action",
-        vec![dep(entity_artifact_id, "entity")],
-        json!({
+        &[dep(entity_artifact_id, "entity")],
+        &json!({
             "actionId": action_id,
             "scopeRequired": ["orgId", "environmentId"],
             "idempotent": true,
@@ -117,8 +117,8 @@ fn law_on_action(
     envelope(
         artifact_id,
         "law",
-        vec![dep(action_artifact_id, "action")],
-        json!({
+        &[dep(action_artifact_id, "action")],
+        &json!({
             "lawVersion": "0.1",
             "id": law_id,
             "owner": "treasury",
@@ -145,8 +145,8 @@ fn widget_for_action(
     envelope(
         artifact_id,
         "widget",
-        vec![dep(action_artifact_id, "action")],
-        json!({
+        &[dep(action_artifact_id, "action")],
+        &json!({
             "widgetVersion": "0.1",
             "widgetId": widget_id,
             "dataDependencies": [],
@@ -165,13 +165,13 @@ fn widget_for_action(
 #[test]
 #[allow(clippy::expect_used, reason = "test assertion")]
 fn multi_hop_transitive_ripple_across_core_subtype_action_law_widget() {
-    let holding = entity_v2("core.Holding", "core.Holding", None, &[], vec![]);
+    let holding = entity_v2("core.Holding", "core.Holding", None, &[], &[]);
     let metal = entity_v2(
         "jewelry.Metal",
         "jewelry.Metal",
         Some("core.Holding"),
         &[],
-        vec![dep("core.Holding", "entity")],
+        &[dep("core.Holding", "entity")],
     );
     let melt = action_upsert(
         "jewelry.melt.action",
@@ -271,7 +271,7 @@ fn multi_hop_transitive_ripple_across_core_subtype_action_law_widget() {
 #[test]
 #[allow(clippy::expect_used, reason = "test assertion")]
 fn removed_dependency_marks_dependents_as_broken() {
-    let base = entity_v2("core.Item", "core.Item", None, &[], vec![]);
+    let base = entity_v2("core.Item", "core.Item", None, &[], &[]);
     let action = action_upsert(
         "app.create_item",
         "app.create_item",
@@ -298,26 +298,14 @@ fn removed_dependency_marks_dependents_as_broken() {
 
 #[test]
 fn cycle_safe_and_input_order_independent_deterministic_ordering() {
-    let a = entity_v2(
-        "cycle.A",
-        "cycle.A",
-        None,
-        &[],
-        vec![dep("cycle.B", "entity")],
-    );
-    let b = entity_v2(
-        "cycle.B",
-        "cycle.B",
-        None,
-        &[],
-        vec![dep("cycle.A", "entity")],
-    );
+    let a = entity_v2("cycle.A", "cycle.A", None, &[], &[dep("cycle.B", "entity")]);
+    let b = entity_v2("cycle.B", "cycle.B", None, &[], &[dep("cycle.A", "entity")]);
     let c = entity_v2(
         "cycle.C",
         "cycle.C",
         Some("cycle.B"),
         &[],
-        vec![dep("cycle.B", "entity")],
+        &[dep("cycle.B", "entity")],
     );
 
     let forward = compute_ripple_effects(
@@ -351,9 +339,9 @@ fn cycle_safe_and_input_order_independent_deterministic_ordering() {
 
 #[test]
 fn budget_exhaustion_fails_closed_with_unknown_and_no_silent_truncation() {
-    let a = entity_v2("b.A", "b.A", None, &[], vec![]);
-    let b = entity_v2("b.B", "b.B", Some("b.A"), &[], vec![dep("b.A", "entity")]);
-    let c = entity_v2("b.C", "b.C", Some("b.B"), &[], vec![dep("b.B", "entity")]);
+    let a = entity_v2("b.A", "b.A", None, &[], &[]);
+    let b = entity_v2("b.B", "b.B", Some("b.A"), &[], &[dep("b.A", "entity")]);
+    let c = entity_v2("b.C", "b.C", Some("b.B"), &[], &[dep("b.B", "entity")]);
     let set = vec![a, b, c];
 
     let node_refused = compute_ripple_effects_with_budget(
@@ -367,7 +355,7 @@ fn budget_exhaustion_fails_closed_with_unknown_and_no_silent_truncation() {
         },
     );
     assert_eq!(node_refused.status, RippleStatus::Unknown);
-    assert!(node_refused.ripples.is_empty());
+    assert_eq!(node_refused.ripples, Vec::new());
     assert_eq!(
         node_refused
             .budget_exceeded
@@ -387,7 +375,7 @@ fn budget_exhaustion_fails_closed_with_unknown_and_no_silent_truncation() {
         },
     );
     assert_eq!(edge_refused.status, RippleStatus::Unknown);
-    assert!(edge_refused.ripples.is_empty());
+    assert_eq!(edge_refused.ripples, Vec::new());
     assert_eq!(
         edge_refused
             .budget_exceeded
@@ -407,7 +395,7 @@ fn budget_exhaustion_fails_closed_with_unknown_and_no_silent_truncation() {
         },
     );
     assert_eq!(step_refused.status, RippleStatus::Unknown);
-    assert!(step_refused.ripples.is_empty());
+    assert_eq!(step_refused.ripples, Vec::new());
     assert_eq!(
         step_refused
             .budget_exceeded
@@ -420,18 +408,24 @@ fn budget_exhaustion_fails_closed_with_unknown_and_no_silent_truncation() {
 #[test]
 #[allow(clippy::expect_used, reason = "test assertion")]
 fn tight_budget_during_projection_returns_unknown_with_budget_exceeded_and_empty_ripples() {
-    let a = entity_v2("proj.A", "proj.A", None, &[], vec![]);
-    let b = entity_v2(
+    let base_entity = entity_v2("proj.A", "proj.A", None, &[], &[]);
+    let sub_entity = entity_v2(
         "proj.B",
         "proj.B",
         Some("proj.A"),
         &[],
-        vec![dep("proj.A", "entity")],
+        &[dep("proj.A", "entity")],
     );
-    let c = action_upsert("proj.write_b", "proj.write_b", "proj.B", "proj.B");
-    let d = law_on_action("proj.law_b", "proj.law_b", "proj.B", "proj.write_b");
-    let e = widget_for_action("proj.ui_b", "proj.ui_b", "proj.write_b", "proj.write_b");
-    let set = vec![a, b, c, d, e];
+    let writer_action = action_upsert("proj.write_b", "proj.write_b", "proj.B", "proj.B");
+    let governing_law = law_on_action("proj.law_b", "proj.law_b", "proj.B", "proj.write_b");
+    let bound_widget = widget_for_action("proj.ui_b", "proj.ui_b", "proj.write_b", "proj.write_b");
+    let set = vec![
+        base_entity,
+        sub_entity,
+        writer_action,
+        governing_law,
+        bound_widget,
+    ];
 
     // 5 artifacts in before + 5 in after requires at least 10 projection steps before reachability.
     let report = compute_ripple_effects_with_budget(
@@ -445,7 +439,7 @@ fn tight_budget_during_projection_returns_unknown_with_budget_exceeded_and_empty
         },
     );
     assert_eq!(report.status, RippleStatus::Unknown);
-    assert!(report.ripples.is_empty());
+    assert_eq!(report.ripples, Vec::new());
     let refusal = report
         .budget_exceeded
         .as_ref()
@@ -458,12 +452,12 @@ fn tight_budget_during_projection_returns_unknown_with_budget_exceeded_and_empty
 #[test]
 #[allow(clippy::expect_used, reason = "test assertion")]
 fn malformed_artifact_projection_error_fails_closed_with_unknown() {
-    let valid = entity_v2("err.Base", "err.Base", None, &[], vec![]);
+    let valid = entity_v2("err.Base", "err.Base", None, &[], &[]);
     let malformed = envelope(
         "err.Broken",
         "entity",
-        vec![dep("err.Base", "entity")],
-        json!({
+        &[dep("err.Base", "entity")],
+        &json!({
             "entityVersion": "2.0",
             "objectType": "not-an-object"
         }),
@@ -472,7 +466,7 @@ fn malformed_artifact_projection_error_fails_closed_with_unknown() {
 
     let report = compute_ripple_effects(&set, &set, &["err.Base".to_owned()]);
     assert_eq!(report.status, RippleStatus::Unknown);
-    assert!(report.ripples.is_empty());
+    assert_eq!(report.ripples, Vec::new());
     assert!(report.budget_exceeded.is_none());
     let reason = report
         .reason
