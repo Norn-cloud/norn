@@ -109,11 +109,27 @@ fn canonical_json_and_norn1_hash_determinism() -> Result<(), Box<dyn std::error:
         r#"{"a":[true,null,0],"m":{"a":"world","b":"hello"},"z":1}"#
     );
 
-    let digest_a = norn1_sha256(&sample)?;
-    let digest_b = norn1_sha256(&sample)?;
+    let digest_a = norn1_sha256(&sample).ok_or("expected norn1_sha256 digest")?;
+    let digest_b = norn1_sha256(&sample).ok_or("expected norn1_sha256 digest")?;
     assert_eq!(digest_a, digest_b);
-    assert!(digest_a.starts_with("norn1:"));
-    assert_eq!(digest_a.len(), "norn1:".len().saturating_add(64));
+    assert_eq!(digest_a.len(), 64);
+    assert!(
+        digest_a
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
+        "expected lower-case 64-hex SHA-256 digest, got: {digest_a}"
+    );
+
+    let js_parity = json!({
+        "10": 1e-7,
+        "2": 1.5e-7,
+        "01": 1e-6,
+        "a": 1e21
+    });
+    assert_eq!(
+        compact_canonical_json(&js_parity)?,
+        r#"{"2":1.5e-7,"10":1e-7,"01":0.000001,"a":1e+21}"#
+    );
 
     let proto = json!({ "__proto__": "forbid" });
     assert!(canonical_json(&proto).is_err());
@@ -127,9 +143,15 @@ fn zen_reads_and_law_statement_round_trip() -> Result<(), Box<dyn std::error::Er
     assert!(!may_read_actor("self.note == 'actor.role'"));
     assert!(!may_read_actor("self.amount >= 0"));
 
-    assert!(lexical_bounds("self.total > 0 and self.status == 'open'").is_none());
-    let deeply_nested = format!("{}1{}", "(".repeat(80), ")".repeat(80));
-    assert!(lexical_bounds(&deeply_nested).is_some());
+    assert!(
+        lexical_bounds("self.total > 0 and self.status == 'open'"),
+        "expected simple expression to pass lexical bounds"
+    );
+    let deeply_nested = format!("{}1{}", "(".repeat(130), ")".repeat(130));
+    assert!(
+        !lexical_bounds(&deeply_nested),
+        "expected 130 nested parentheses to exceed MAX_DEPTH (128)"
+    );
 
     let law_ir = json!({
         "lawVersion": "0.1",
@@ -202,6 +224,15 @@ export const Setting = Norn.setting({
   review: { state: "active" },
   scopeRequired: ["orgId"],
 })
+
+export const ErpMapping = Norn.mapping({
+  id: "demo.erp.orders",
+  title: "ERP Orders",
+  version: "1.0.0",
+  source: Source,
+  interfaces: [],
+  maps: [],
+})
 "#;
 
 const STANDALONE_INEXACT_TS: &str = r#"import { Norn } from "@norn/authoring"
@@ -248,8 +279,27 @@ fn standalone_definitions_and_source_schema_binding_without_effect_package()
     let Some(DefinitionsCompileOutcome::Ok(ok_out)) = outcomes.first() else {
         return Err(format!("expected defs.ts to compile, got: {:?}", outcomes.first()).into());
     };
-    assert_eq!(ok_out.artifacts.len(), 2);
+    assert_eq!(ok_out.artifacts.len(), 3);
     assert_eq!(ok_out.warnings, Vec::new());
+    let source_art = ok_out
+        .artifacts
+        .iter()
+        .find(|a| a.get("kind").and_then(Value::as_str) == Some("source_schema"))
+        .ok_or("missing source_schema artifact")?;
+    let mapping_art = ok_out
+        .artifacts
+        .iter()
+        .find(|a| a.get("kind").and_then(Value::as_str) == Some("mapping"))
+        .ok_or("missing mapping artifact")?;
+    let expected_source_sha =
+        norn1_sha256(source_art).ok_or("missing norn1_sha256 for source_schema")?;
+    assert_ne!(PENDING_SOURCE_SHA256, expected_source_sha);
+    assert_eq!(
+        mapping_art
+            .pointer("/payload/source/sha256")
+            .and_then(Value::as_str),
+        Some(expected_source_sha.as_str())
+    );
     let setting_art = ok_out
         .artifacts
         .iter()
@@ -261,7 +311,10 @@ fn standalone_definitions_and_source_schema_binding_without_effect_package()
             .and_then(Value::as_str),
         Some("0.12")
     );
-    assert_ne!(PENDING_SOURCE_SHA256, norn1_sha256(setting_art)?);
+    assert_ne!(
+        PENDING_SOURCE_SHA256,
+        norn1_sha256(setting_art).ok_or("missing norn1_sha256 for setting")?
+    );
 
     let Some(DefinitionsCompileOutcome::Err { diagnostics }) = outcomes.get(1) else {
         return Err("expected binary JS number in Norn.setting to be refused".into());
@@ -427,30 +480,10 @@ fn golden_definitions_and_schema_parity_matches_ts_compiler()
     let defs_dir = root.join("fixtures/definitions");
     let schema_dir = root.join("fixtures/schema");
     let def_cases = [
-        (
-            defs_dir.join("crm.source.ts"),
-            defs_dir.join("crm.ir.json"),
-            "/tools/norn-ts/fixtures/definitions/crm.source.ts",
-            "tools/norn-ts/fixtures/definitions/crm.source.ts",
-        ),
-        (
-            defs_dir.join("jewelry-pricing.source.ts"),
-            defs_dir.join("jewelry-pricing.ir.json"),
-            "/tools/norn-ts/fixtures/definitions/jewelry-pricing.source.ts",
-            "tools/norn-ts/fixtures/definitions/jewelry-pricing.source.ts",
-        ),
-        (
-            schema_dir.join("invoice.source.ts"),
-            schema_dir.join("invoice.ir.json"),
-            "/tools/norn-ts/fixtures/schema/invoice.source.ts",
-            "tools/norn-ts/fixtures/schema/invoice.source.ts",
-        ),
-        (
-            schema_dir.join("precision.source.ts"),
-            schema_dir.join("precision.ir.json"),
-            "/tools/norn-ts/fixtures/schema/precision.source.ts",
-            "tools/norn-ts/fixtures/schema/precision.source.ts",
-        ),
+        (&defs_dir, "fixtures/definitions", "crm", false),
+        (&defs_dir, "fixtures/definitions", "jewelry-pricing", true),
+        (&schema_dir, "fixtures/schema", "invoice", false),
+        (&schema_dir, "fixtures/schema", "precision", false),
     ];
     let closed_vpath = "/tools/norn-ts/fixtures/schema/closed.source.ts";
     vfs.add_file(
@@ -458,21 +491,35 @@ fn golden_definitions_and_schema_parity_matches_ts_compiler()
         std::fs::read_to_string(schema_dir.join("closed.source.ts"))?,
     )?;
 
+    let mut case_meta = Vec::with_capacity(def_cases.len());
+    for (dir, rel, stem, compact_golden) in def_cases {
+        let vpath = format!("/tools/norn-ts/{rel}/{stem}.source.ts");
+        let source_path = format!("tools/norn-ts/{rel}/{stem}.source.ts");
+        vfs.add_file(
+            &vpath,
+            std::fs::read_to_string(dir.join(format!("{stem}.source.ts")))?,
+        )?;
+        case_meta.push((
+            dir.join(format!("{stem}.ir.json")),
+            vpath,
+            source_path,
+            compact_golden,
+        ));
+    }
     let mut root_files: Vec<&str> = vec![closed_vpath];
-    for (disk, _, vpath, _) in &def_cases {
-        vfs.add_file(vpath, std::fs::read_to_string(disk)?)?;
-        root_files.push(vpath);
+    for (_, vpath, _, _) in &case_meta {
+        root_files.push(vpath.as_str());
     }
 
     let program = AuthoringProgram::new(vfs, &root_files, profile)?
         .with_effect_dist_prefix(PINNED_EFFECT_DIST_PREFIX);
 
-    for (_, golden_path, vpath, source_path) in &def_cases {
-        let outcomes = compile_definitions_program(&checker, &program, &[vpath], |_| {
+    for (golden_path, vpath, source_path, compact_golden) in &case_meta {
+        let outcomes = compile_definitions_program(&checker, &program, &[vpath.as_str()], |_| {
             DefinitionsCompileOptions {
                 envelope: EnvelopeOptions {
                     scope: demo_scope(),
-                    source_path: (*source_path).to_owned(),
+                    source_path: source_path.clone(),
                     registry_package_path: None,
                 },
                 tool_root: "/tools/norn-ts".to_owned(),
@@ -482,9 +529,15 @@ fn golden_definitions_and_schema_parity_matches_ts_compiler()
         let Some(DefinitionsCompileOutcome::Ok(out)) = outcomes.into_iter().next() else {
             return Err(format!("definition fixture `{source_path}` failed to compile").into());
         };
-        let actual = canonical_json(&Value::Array(out.artifacts))?;
-        let expected_val: Value = serde_json::from_str(&std::fs::read_to_string(golden_path)?)?;
-        let expected = canonical_json(&expected_val)?;
+        let actual = if *compact_golden {
+            format!(
+                "{}\n",
+                compact_canonical_json(&Value::Array(out.artifacts))?
+            )
+        } else {
+            canonical_json(&Value::Array(out.artifacts))?
+        };
+        let expected = std::fs::read_to_string(golden_path)?;
         assert_eq!(actual, expected, "golden mismatch for `{source_path}`");
     }
 
@@ -532,12 +585,11 @@ fn golden_questions_and_dashboards_parity_matches_ts_compiler()
     let QuestionsCompileOutcome::Ok { questions } = q_outcome else {
         return Err("scrap-yield.ts failed to compile questions".into());
     };
-    let q_expected: Value = serde_json::from_str(&std::fs::read_to_string(
-        root.join("fixtures/questions/scrap-yield.question.json"),
-    )?)?;
+    let q_expected =
+        std::fs::read_to_string(root.join("fixtures/questions/scrap-yield.question.json"))?;
     assert_eq!(
-        canonical_json(&Value::Array(questions))?,
-        canonical_json(&q_expected)?,
+        format!("{}\n", compact_canonical_json(&Value::Array(questions))?),
+        q_expected,
         "scrap-yield.question.json mismatch"
     );
 
@@ -550,8 +602,8 @@ fn golden_questions_and_dashboards_parity_matches_ts_compiler()
         root.join("fixtures/dashboards/refinery.dashboard.json"),
     )?)?;
     assert_eq!(
-        canonical_json(&Value::Array(dashboards))?,
-        canonical_json(&d_expected)?,
+        Value::Array(dashboards),
+        d_expected,
         "refinery.dashboard.json mismatch"
     );
     Ok(())
@@ -653,3 +705,5 @@ fn compiler_rejection_parity_preserves_profile_and_schema_refusals()
     }
     Ok(())
 }
+
+mod compiler_parity_regressions;

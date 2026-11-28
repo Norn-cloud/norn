@@ -68,7 +68,7 @@ use crate::{
 };
 
 use self::def_helpers::{DefCompilerConfig, DefinitionCompiler};
-use self::def_literals::bind_compiled_source_schemas;
+use self::def_mapping::bind_compiled_source_schemas;
 use self::flow_syntax::{SyntaxCompiler, SyntaxConfig};
 use self::lower_flow::{BuildDiagnostic, LowerFlowOptions, LowerFlowOutcome, lower_flow};
 use self::types::{check_closure, diagnostic_for_node, relative_virtual_path};

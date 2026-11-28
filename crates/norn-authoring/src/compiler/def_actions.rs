@@ -17,7 +17,7 @@ use super::def_helpers::{
 use super::def_literals::{build_label_entries, build_labels_artifact};
 use super::schema::NullableMode;
 use super::types::{
-    CompileError, DependencyPin, EnvelopeMeta, EnvelopeOptions, build_envelope,
+    CompileError, DependencyPin, EnvelopeMeta, EnvelopeOptions, build_envelope_checked,
     is_string_literal_like, pinned_dependencies,
 };
 use super::value_schema::{ExpansionBudget, InputGroup, ObjectSchema, SchemaLabels, ValueSchema};
@@ -124,7 +124,7 @@ impl DefinitionCompiler<'_> {
             },
         )?;
         let namespace = id.split('.').next().unwrap_or("").to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "action".to_owned(),
                 artifact_id,
@@ -135,10 +135,11 @@ impl DefinitionCompiler<'_> {
             },
             payload,
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         let entries = build_label_entries(&LabelTarget::Action(id), &localized, None);
-        let labels = build_labels_artifact(&artifact, entries, options);
+        let labels = build_labels_artifact(&artifact, entries, options, call)?;
         Ok(LoweredDef {
             artifact,
             labels,
@@ -332,7 +333,7 @@ impl DefinitionCompiler<'_> {
         if let Some(qe_node) = spec.members.get("quantityEffect") {
             payload.insert(
                 "quantityEffect".to_owned(),
-                self.compile_quantity_effect(checker, qe_node)?,
+                self.compile_quantity_effect(checker, expansion, qe_node)?,
             );
         }
         if let Some(sr) = spec.sync_rule {
@@ -387,24 +388,8 @@ impl DefinitionCompiler<'_> {
                 payload.insert("aggregates".to_owned(), Value::Array(aggs));
             }
         }
-        let mut derives = Vec::new();
-        let caller_count = if let Some(fc_node) = members.get("fromCaller") {
-            let fields = self.strings(checker, fc_node)?;
-            let count = fields.len();
-            for field in fields {
-                let mut d = Map::new();
-                d.insert("field".to_owned(), Value::String(field));
-                d.insert(
-                    "expression".to_owned(),
-                    Value::String("actor.subjectId".to_owned()),
-                );
-                d.insert("inputRequired".to_owned(), Value::Bool(false));
-                derives.push(Value::Object(d));
-            }
-            count
-        } else {
-            0
-        };
+        let mut derives = self.compile_from_caller_derives(checker, members)?;
+        let caller_count = derives.len();
         if let Some(derive_node) = members.get("derive") {
             for (index, entry) in self.list(checker, derive_node)?.into_iter().enumerate() {
                 let dm = self.closed_record(
@@ -460,6 +445,27 @@ impl DefinitionCompiler<'_> {
             }
         }
         Ok(())
+    }
+
+    fn compile_from_caller_derives(
+        &self,
+        checker: &mut Checker,
+        members: &Members,
+    ) -> Result<Vec<Value>, CompileError> {
+        let mut derives = Vec::new();
+        if let Some(fc_node) = members.get("fromCaller") {
+            for field in self.strings(checker, fc_node)? {
+                let mut d = Map::new();
+                d.insert("field".to_owned(), Value::String(field));
+                d.insert(
+                    "expression".to_owned(),
+                    Value::String("actor.subjectId".to_owned()),
+                );
+                d.insert("inputRequired".to_owned(), Value::Bool(false));
+                derives.push(Value::Object(d));
+            }
+        }
+        Ok(derives)
     }
 
     fn append_action_mutations(
@@ -722,7 +728,7 @@ impl DefinitionCompiler<'_> {
         let m = self.closed_record(checker, input, &["artifactId", "version"], &["artifactId"])?;
         let aid_node = Self::member(&m, "artifactId", input)?;
         let artifact_id = self.string(checker, aid_node)?;
-        if !artifact_id.ends_with(".policy") {
+        if artifact_id.strip_suffix(".policy").is_none() {
             return Err(CompileError::new(
                 "NORN-FLOW-LITERAL",
                 "access names a policy artifact: <policy id>.policy",

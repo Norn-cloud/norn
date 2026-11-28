@@ -10,7 +10,8 @@ use tsrs_core::P;
 
 use super::canonical::is_dotted_lower_id;
 use super::def_helpers::{DefinitionCompiler, LoweredDef, Members, OBJECT_TYPES};
-use super::types::{CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope};
+use super::def_literals::is_unsigned_decimal_text;
+use super::types::{CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope_checked};
 use super::value_schema::ExpansionBudget;
 
 impl DefinitionCompiler<'_> {
@@ -51,7 +52,7 @@ impl DefinitionCompiler<'_> {
         let payload =
             self.build_model_payload(checker, expansion, &m, call, &id, &title, &version)?;
         let namespace = id.split('.').next().unwrap_or("").to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "model".to_owned(),
                 artifact_id: format!("{id}.model"),
@@ -62,7 +63,8 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         Ok(LoweredDef {
             artifact,
@@ -305,7 +307,7 @@ impl DefinitionCompiler<'_> {
         calc.insert("kind".to_owned(), Value::String("relational".to_owned()));
         calc.insert(
             "nodes".to_owned(),
-            self.json(checker, Self::member(&m, "nodes", call)?, 0)?,
+            self.json(checker, expansion, Self::member(&m, "nodes", call)?, 0)?,
         );
         calc.insert(
             "output".to_owned(),
@@ -322,7 +324,7 @@ impl DefinitionCompiler<'_> {
             Value::String("recompute_on_read".to_owned()),
         );
         let namespace = id.split('.').next().unwrap_or("").to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "derived".to_owned(),
                 artifact_id: id,
@@ -333,7 +335,8 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         Ok(LoweredDef {
             artifact,

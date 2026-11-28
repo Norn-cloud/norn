@@ -19,7 +19,9 @@ use crate::checker::resolve::{
     format_construct, node_end, node_start, node_text, parse_js_number, pos_of,
 };
 
-use super::canonical::{MAX_SAFE_INTEGER_I64, MIN_SAFE_INTEGER_I64, to_canonical_json};
+use super::canonical::{
+    CanonicalError, MAX_SAFE_INTEGER_I64, MIN_SAFE_INTEGER_I64, to_canonical_json,
+};
 use super::flow_source_map::SourceLocation;
 use super::value_schema::{
     BudgetExceeded, ExpansionBudget, ObjectSchema, ValueSchema, merge_schemas,
@@ -213,12 +215,16 @@ pub(crate) struct EnvelopeMeta {
 }
 
 /// Builds a canonical `irVersion: "0.1"` artifact envelope (`envelope` in `builder/envelope.ts`).
-#[must_use]
+///
+/// # Errors
+///
+/// Returns [`CanonicalError`] when any scope key or payload member fails
+/// canonical JSON validation (for example `__proto__` or a non-finite number).
 pub(crate) fn build_envelope(
     meta: EnvelopeMeta,
     payload: Value,
     options: &EnvelopeOptions,
-) -> Value {
+) -> Result<Value, CanonicalError> {
     let registry = options.registry_package_path.is_some();
     let registry_root = options
         .registry_package_path
@@ -256,8 +262,19 @@ pub(crate) fn build_envelope(
     env.insert("dependencies".to_owned(), Value::Array(meta.dependencies));
     env.insert("provenance".to_owned(), Value::Object(prov));
     env.insert("payload".to_owned(), payload);
-    let raw = Value::Object(env);
-    to_canonical_json(&raw).unwrap_or(raw)
+    to_canonical_json(&Value::Object(env))
+}
+
+/// Builds a canonical `irVersion: "0.1"` artifact envelope and converts any
+/// [`CanonicalError`] into a [`CompileError`] anchored at `node`.
+pub(crate) fn build_envelope_checked(
+    meta: EnvelopeMeta,
+    payload: Value,
+    options: &EnvelopeOptions,
+    node: P<Node>,
+) -> Result<Value, CompileError> {
+    build_envelope(meta, payload, options)
+        .map_err(|err| CompileError::new("NORN-FLOW-LITERAL", err.to_string(), node))
 }
 
 /// Checks local import closure module count, source bytes, AST node count, and nesting depth.
@@ -561,30 +578,7 @@ impl SchemaBudget {
         let mut next = active.clone();
         next.insert(ty);
         if ty.is_union() {
-            let members = ty.types();
-            if members
-                .iter()
-                .all(|&m| m.flags().intersects(TypeFlags::StringLiteral))
-            {
-                let mut vals = Vec::with_capacity(members.len());
-                for &m in members {
-                    if let Some(LiteralValue::String(s)) = m.as_literal_type().value() {
-                        vals.push(s.to_owned());
-                    }
-                }
-                return Ok(ValueSchema::text_enum(vals));
-            }
-            if members
-                .iter()
-                .all(|&m| m.flags().intersects(TypeFlags::BooleanLike))
-            {
-                return Ok(ValueSchema::boolean());
-            }
-            return Err(CompileError::new(
-                "NORN-FLOW-VALUE",
-                "Function schemas do not admit general unions",
-                node,
-            ));
+            return Self::build_union_value_schema(ty, node);
         }
         let flags = ty.flags();
         if flags.intersects(TypeFlags::StringLike) {
@@ -640,6 +634,33 @@ impl SchemaBudget {
             ));
         }
         self.build_object_value_schema(checker, expansion, ty, node, &next)
+    }
+
+    fn build_union_value_schema(ty: P<Type>, node: P<Node>) -> Result<ValueSchema, CompileError> {
+        let members = ty.types();
+        if members
+            .iter()
+            .all(|&m| m.flags().intersects(TypeFlags::StringLiteral))
+        {
+            let mut vals = Vec::with_capacity(members.len());
+            for &m in members {
+                if let Some(LiteralValue::String(s)) = m.as_literal_type().value() {
+                    vals.push(s.to_owned());
+                }
+            }
+            return Ok(ValueSchema::text_enum(vals));
+        }
+        if members
+            .iter()
+            .all(|&m| m.flags().intersects(TypeFlags::BooleanLike))
+        {
+            return Ok(ValueSchema::boolean());
+        }
+        Err(CompileError::new(
+            "NORN-FLOW-VALUE",
+            "Function schemas do not admit general unions",
+            node,
+        ))
     }
 
     fn build_object_value_schema(

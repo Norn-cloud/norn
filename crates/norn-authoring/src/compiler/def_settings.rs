@@ -10,7 +10,7 @@ use tsrs_core::P;
 
 use super::def_helpers::{DefinitionCompiler, LoweredDef, Members};
 use super::def_literals::is_unsigned_decimal_text;
-use super::types::{CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope};
+use super::types::{CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope_checked};
 use super::value_schema::ExpansionBudget;
 
 const MAX_DECIMAL_MANTISSA: u128 = (1_u128 << 96).saturating_sub(1);
@@ -59,8 +59,12 @@ impl DefinitionCompiler<'_> {
                 vt_node,
             ));
         }
-        let value =
-            self.read_setting_value(checker, &value_type, Self::member(&m, "value", call)?)?;
+        let value = self.read_setting_value(
+            checker,
+            expansion,
+            &value_type,
+            Self::member(&m, "value", call)?,
+        )?;
         let (effective_from, effective_to) = self.read_setting_window(checker, &m, call)?;
 
         let mut payload = Map::new();
@@ -85,7 +89,7 @@ impl DefinitionCompiler<'_> {
         payload.insert("scopeRequired".to_owned(), Value::Array(scope_req));
 
         let namespace = id.split('.').next().unwrap_or("").to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "setting".to_owned(),
                 artifact_id: id,
@@ -96,7 +100,8 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         Ok(LoweredDef {
             artifact,
@@ -255,6 +260,7 @@ impl DefinitionCompiler<'_> {
     fn read_setting_value(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         value_type: &str,
         val_node: P<Node>,
     ) -> Result<Value, CompileError> {
@@ -297,7 +303,7 @@ impl DefinitionCompiler<'_> {
                 }
                 Ok(Value::String(text.to_owned()))
             }
-            _ => self.json(checker, val_node, 0),
+            _ => self.json(checker, expansion, val_node, 0),
         }
     }
 

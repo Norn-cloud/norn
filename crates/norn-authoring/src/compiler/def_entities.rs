@@ -18,7 +18,7 @@ use super::def_helpers::{
 };
 use super::def_literals::{build_label_entries, build_labels_artifact};
 use super::types::{
-    CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope, pinned_dependencies,
+    CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope_checked, pinned_dependencies,
 };
 use super::value_schema::ExpansionBudget;
 
@@ -108,7 +108,7 @@ impl DefinitionCompiler<'_> {
             .rsplit_once('.')
             .map_or("", |(ns, _)| ns)
             .to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "entity".to_owned(),
                 artifact_id: format!("{}.entity", base.name),
@@ -119,14 +119,15 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         let entries = build_label_entries(
             &LabelTarget::ObjectType(base.name),
             &localized,
             Some(&member_labels),
         );
-        let labels = build_labels_artifact(&artifact, entries, options);
+        let labels = build_labels_artifact(&artifact, entries, options, call)?;
         Ok(LoweredDef {
             artifact,
             labels,
@@ -371,7 +372,7 @@ impl DefinitionCompiler<'_> {
             .rsplit_once('.')
             .map_or("", |(ns, _)| ns)
             .to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "entity".to_owned(),
                 artifact_id: format!("{}.interface", base.name),
@@ -382,14 +383,15 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         let entries = build_label_entries(
             &LabelTarget::ObjectType(base.name),
             &localized,
             Some(&member_labels),
         );
-        let labels = build_labels_artifact(&artifact, entries, options);
+        let labels = build_labels_artifact(&artifact, entries, options, call)?;
         Ok(LoweredDef {
             artifact,
             labels,

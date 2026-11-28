@@ -4,30 +4,86 @@
 //! Split out of `schema.rs` to keep every module under 800 LOC.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use tsrs_ast::{Kind, Node};
 use tsrs_core::P;
 
+use crate::checker::resolve::node_text;
+
 use super::canonical::is_snake_ident;
 
 use super::schema::{
-    NullableMode, ProjectedProperty, PropertyProjection, SchemaNode, SchemaNodeKind,
-    SchemaProjection, projection_err,
+    MAX_SCHEMA_DEPTH, NullableMode, ProjectedProperty, PropertyProjection, SchemaNode,
+    SchemaNodeKind, SchemaProjection, projection_err,
 };
 use super::types::CompileError;
 use super::value_schema::{BudgetExceeded, ExpansionBudget, ObjectSchema, ValueSchema};
 use super::value_types::{
-    DecimalType, PropertyAdditivity, PropertyType, Rounding, UnitRef, registry_value_type,
+    DecimalType, PropertyAdditivity, PropertyType, Rounding, TimezonePolicy, UnitRef,
+    registry_value_type,
 };
 
 const MAX_DECIMAL_SCALE: u32 = 28;
 
 impl SchemaProjection<'_> {
-    pub(crate) fn read_rate(
-        &self,
+    pub(crate) fn read_norn_call(
+        &mut self,
         call: P<Node>,
         args: &[P<Node>],
-    ) -> Result<SchemaNode, CompileError> {
+        id: Option<String>,
+    ) -> Result<Rc<SchemaNode>, CompileError> {
+        match id.as_deref() {
+            Some("@norn/authoring#Norn.rate") => self.read_rate(call, args),
+            Some("@norn/authoring#Norn.decimal") => self.read_decimal(call, args),
+            Some("@norn/authoring#Norn.boundDecimal") => {
+                let group = Self::read_string_literal(
+                    args.first().copied(),
+                    call,
+                    "the decimal binding group",
+                )?;
+                Ok(self.mk_node(
+                    SchemaNodeKind::ValueType(PropertyType::DecimalBinding { group }),
+                    call,
+                ))
+            }
+            Some("@norn/authoring#Norn.ref") => self.read_ref(call, args),
+            Some("@norn/authoring#Norn.timestamp") => {
+                let tz_str =
+                    Self::read_string_literal(args.first().copied(), call, "the timezone policy")?;
+                let Some(timezone) = TimezonePolicy::parse(&tz_str) else {
+                    return Err(CompileError::new(
+                        "NORN-FLOW-LITERAL",
+                        "the timezone policy is \"utc\" or \"offset\"",
+                        call,
+                    ));
+                };
+                Ok(self.mk_node(
+                    SchemaNodeKind::ValueType(PropertyType::Timestamp { timezone }),
+                    call,
+                ))
+            }
+            Some("@norn/authoring#Norn.date") => {
+                Ok(self.mk_node(SchemaNodeKind::ValueType(PropertyType::Date), call))
+            }
+            Some(_) | None => {
+                let label = id.unwrap_or_else(|| {
+                    tsrs_ast::get_source_file_of_node(call).map_or_else(String::new, |sf| {
+                        node_text(sf, call.as_call_expression().expression())
+                    })
+                });
+                Err(projection_err(
+                    format!("{label} is not a schema in the structural subset"),
+                    call,
+                ))
+            }
+        }
+    }
+    pub(crate) fn read_rate(
+        &mut self,
+        call: P<Node>,
+        args: &[P<Node>],
+    ) -> Result<Rc<SchemaNode>, CompileError> {
         let scale_node = args.first().copied().ok_or_else(|| {
             projection_err("@norn/authoring#Norn.rate is missing an argument", call)
         })?;
@@ -78,22 +134,22 @@ impl SchemaProjection<'_> {
                 Some(parsed)
             }
         };
-        Ok(SchemaNode {
-            kind: SchemaNodeKind::ValueType(PropertyType::rate(
+        Ok(self.mk_node(
+            SchemaNodeKind::ValueType(PropertyType::rate(
                 scale,
                 currency,
                 UnitRef { system, code },
                 rounding,
             )),
-            node: call,
-        })
+            call,
+        ))
     }
 
     pub(crate) fn read_decimal(
-        &self,
+        &mut self,
         call: P<Node>,
         args: &[P<Node>],
-    ) -> Result<SchemaNode, CompileError> {
+    ) -> Result<Rc<SchemaNode>, CompileError> {
         let scale_node = args.first().copied().ok_or_else(|| {
             projection_err("@norn/authoring#Norn.decimal is missing an argument", call)
         })?;
@@ -142,17 +198,17 @@ impl SchemaProjection<'_> {
         dec.rounding = rounding;
         dec.additivity = additivity;
         dec.unit_source = unit_source;
-        Ok(SchemaNode {
-            kind: SchemaNodeKind::ValueType(PropertyType::Decimal(Box::new(dec))),
-            node: call,
-        })
+        Ok(self.mk_node(
+            SchemaNodeKind::ValueType(PropertyType::Decimal(Box::new(dec))),
+            call,
+        ))
     }
 
     pub(crate) fn read_ref(
-        &self,
+        &mut self,
         call: P<Node>,
         args: &[P<Node>],
-    ) -> Result<SchemaNode, CompileError> {
+    ) -> Result<Rc<SchemaNode>, CompileError> {
         let name =
             Self::read_string_literal(args.first().copied(), call, "the property type name")?;
         let options = match args.get(1).copied() {
@@ -173,14 +229,14 @@ impl SchemaProjection<'_> {
         };
         let additivity = Self::read_additivity(options.get("additivity").copied())?;
         let unit_source = Self::read_unit_source(options.get("unitSource").copied())?;
-        Ok(SchemaNode {
-            kind: SchemaNodeKind::ValueType(PropertyType::Ref {
+        Ok(self.mk_node(
+            SchemaNodeKind::ValueType(PropertyType::Ref {
                 name,
                 additivity,
                 unit_source,
             }),
-            node: call,
-        })
+            call,
+        ))
     }
 
     fn read_unit_source(node: Option<P<Node>>) -> Result<Vec<String>, CompileError> {
@@ -325,7 +381,7 @@ impl SchemaProjection<'_> {
     }
 
     fn expanded_size(&mut self, schema: &SchemaNode) -> Result<usize, CompileError> {
-        if let Some(&known) = self.sizes.get(&schema.node) {
+        if let Some(&known) = self.sizes.get(&schema.id) {
             return Ok(known);
         }
         self.guard(schema.node)?;
@@ -358,7 +414,7 @@ impl SchemaProjection<'_> {
             | SchemaNodeKind::Null
             | SchemaNodeKind::ValueType(_) => {}
         }
-        self.sizes.insert(schema.node, size);
+        self.sizes.insert(schema.id, size);
         Ok(size)
     }
 
@@ -367,6 +423,13 @@ impl SchemaProjection<'_> {
         schema: &SchemaNode,
         expansion: &mut ExpansionBudget,
     ) -> Result<(), CompileError> {
+        if schema.height > MAX_SCHEMA_DEPTH {
+            return Err(CompileError::new(
+                "NORN-FLOW-UNBOUNDED",
+                "schema nesting exceeds the compiler bound",
+                schema.node,
+            ));
+        }
         let size = self.expanded_size(schema)?;
         if size > self.max_expanded {
             return Err(CompileError::new(

@@ -361,6 +361,7 @@ impl DefinitionCompiler<'_> {
     pub(super) fn compile_examples(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         source: P<SourceFile>,
     ) -> Result<Vec<CompiledExample>, CompileError> {
         let mut out = Vec::new();
@@ -416,7 +417,7 @@ impl DefinitionCompiler<'_> {
                 )?;
                 let (artifact_id, pointer) =
                     self.example_target(checker, Self::member(&spec, "of", a1)?)?;
-                let given = self.json(checker, Self::member(&spec, "given", a1)?, 0)?;
+                let given = self.json(checker, expansion, Self::member(&spec, "given", a1)?, 0)?;
                 let expect =
                     self.example_expectation(checker, Self::member(&spec, "expect", a1)?)?;
                 out.push(CompiledExample {

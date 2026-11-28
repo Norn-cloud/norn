@@ -92,7 +92,7 @@ impl FlowLowering<'_> {
             },
             Value::Object(payload),
             &self.options.envelope,
-        );
+        )?;
         self.budget.add_output(&artifact)?;
         Ok(artifact)
     }
@@ -539,7 +539,7 @@ impl FlowLowering<'_> {
             },
             Value::Object(payload),
             &self.options.envelope,
-        );
+        )?;
         self.budget.add_output(&artifact)?;
         Ok(artifact)
     }
@@ -626,7 +626,7 @@ impl FlowLowering<'_> {
         map.insert("states".to_owned(), Value::Object(states_map));
         map.insert("rows".to_owned(), Value::Object(rows_map));
         let raw = Value::Object(map);
-        let canonical = to_canonical_json(&raw).unwrap_or(raw);
+        let canonical = to_canonical_json(&raw)?;
         self.budget.add_output(&canonical)?;
         Ok(canonical)
     }

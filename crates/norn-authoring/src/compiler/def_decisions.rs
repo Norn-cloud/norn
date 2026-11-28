@@ -17,7 +17,8 @@ use super::expr::{Binding, Expr, Scope, render, type_of};
 use super::flow_syntax::{DecisionHooks, SyntaxCompiler};
 use super::schema::NullableMode;
 use super::types::{
-    CompileError, DependencyPin, EnvelopeMeta, EnvelopeOptions, build_envelope, pinned_dependencies,
+    CompileError, DependencyPin, EnvelopeMeta, EnvelopeOptions, build_envelope_checked,
+    pinned_dependencies,
 };
 use super::value_schema::{ExpansionBudget, ObjectSchema, ValueSchema};
 
@@ -145,7 +146,7 @@ impl DefinitionCompiler<'_> {
         let output_schema =
             self.read_decision_schema(checker, expansion, &members, call, "output")?;
 
-        let mut called_deps: Vec<DependencyPin> = Vec::new();
+        let mut called_deps = Vec::new();
         let graph = self.compile_decision_graph(
             checker,
             expansion,
@@ -160,16 +161,10 @@ impl DefinitionCompiler<'_> {
             },
             &mut called_deps,
         )?;
-        let mut all_deps = Vec::new();
-        if let Some(deps_node) = members.get("dependencies") {
-            for dep in self.list(checker, deps_node)? {
-                all_deps.push(self.decision_dependency(checker, dep)?);
-            }
-        }
-        all_deps.extend(called_deps);
-
+        let all_deps = self.collect_decision_deps(checker, &members, called_deps)?;
         let payload = self.build_decision_payload(
             checker,
+            expansion,
             DecisionPayloadSpec {
                 members: &members,
                 id: &id,
@@ -181,7 +176,7 @@ impl DefinitionCompiler<'_> {
             },
         )?;
         let namespace = id.split('.').next().unwrap_or("").to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "rule".to_owned(),
                 artifact_id,
@@ -192,15 +187,32 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         let entries = build_label_entries(&LabelTarget::Rule(id), &localized, None);
-        let labels = build_labels_artifact(&artifact, entries, options);
+        let labels = build_labels_artifact(&artifact, entries, options, call)?;
         Ok(LoweredDef {
             artifact,
             labels,
             at: Some(self.at(call)),
         })
+    }
+
+    fn collect_decision_deps(
+        &self,
+        checker: &mut Checker,
+        members: &Members,
+        called_deps: Vec<DependencyPin>,
+    ) -> Result<Vec<DependencyPin>, CompileError> {
+        let mut all_deps = Vec::new();
+        if let Some(deps_node) = members.get("dependencies") {
+            for dep in self.list(checker, deps_node)? {
+                all_deps.push(self.decision_dependency(checker, dep)?);
+            }
+        }
+        all_deps.extend(called_deps);
+        Ok(all_deps)
     }
 
     fn read_decision_hit(
@@ -257,7 +269,7 @@ impl DefinitionCompiler<'_> {
     ) -> Result<Value, CompileError> {
         let Some(body_node) = spec.body else {
             let g_node = Self::member(spec.members, "graph", spec.call)?;
-            let g = self.json(checker, g_node, 0)?;
+            let g = self.json(checker, expansion, g_node, 0)?;
             if !g.is_object() {
                 return Err(CompileError::new(
                     "NORN-FLOW-LITERAL",
@@ -313,6 +325,7 @@ impl DefinitionCompiler<'_> {
     fn build_decision_payload(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         spec: DecisionPayloadSpec<'_>,
     ) -> Result<Map<String, Value>, CompileError> {
         let mut payload = Map::new();
@@ -343,7 +356,7 @@ impl DefinitionCompiler<'_> {
         if let Some(pi_node) = spec.members.get("principalInputs") {
             let mut pis = Vec::new();
             for entry in self.list(checker, pi_node)? {
-                pis.push(self.json(checker, entry, 0)?);
+                pis.push(self.json(checker, expansion, entry, 0)?);
             }
             if !pis.is_empty() {
                 payload.insert("principalInputs".to_owned(), Value::Array(pis));

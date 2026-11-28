@@ -2,13 +2,13 @@
 //!
 //! Split out of `expr.rs` to keep every module under 800 LOC.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::expr::{
     BinaryOp, Binders, Binding, CallFn, ClosureFn, CompareOp, Expr, ExprError, Scope, TemporalKind,
     temporal_kind,
 };
-use super::expr_render::render_operand;
+use super::expr_render::{render_operand, zen_key};
 use super::value_schema::{ObjectSchema, ValueSchema, literal_schema, merge_schemas};
 
 pub(crate) fn is_non_neg_int_index(segment: &str) -> Option<usize> {

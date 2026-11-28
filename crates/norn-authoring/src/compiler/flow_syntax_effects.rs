@@ -360,7 +360,7 @@ impl SyntaxCompiler<'_> {
                     expansion,
                 )
             }
-            _ => Err(CompileError::new(
+            Some(_) | None => Err(CompileError::new(
                 "NORN-FLOW-UNSUPPORTED-SYNTAX",
                 "effect syntax has no lowering",
                 e,
@@ -611,7 +611,7 @@ impl SyntaxCompiler<'_> {
             Some("effect/Effect#flatMap") => self.operator_map(op, false, checker, expansion),
             Some("effect/Effect#retry") => self.operator_retry(op, checker, expansion),
             Some("effect/Effect#catchTag") => self.operator_catch_tag(op, checker, expansion),
-            _ => Err(CompileError::new(
+            Some(_) | None => Err(CompileError::new(
                 "NORN-FLOW-UNSUPPORTED-SYNTAX",
                 "unsupported pipe operator",
                 op.call,

@@ -12,22 +12,34 @@ use unicode_normalization::UnicodeNormalization;
 use crate::checker::resolve::node_text;
 
 use super::canonical::{
-    MAX_SAFE_INTEGER_I64, MIN_SAFE_INTEGER_I64, norn1_sha256, to_canonical_json,
+    MAX_SAFE_INTEGER_I64, MIN_SAFE_INTEGER_I64, escaped_json_string_len, js_number_len,
 };
 use super::def_helpers::{
     DECISIONS, DefinitionCompiler, LabelTarget, LocalizedData, MAX_DATA_DEPTH, MemberLabelsData,
-    Members, PENDING_SOURCE_SHA256, TypeBase,
+    Members, TypeBase,
 };
 use super::types::{
-    CompileError, DependencyPin, EnvelopeMeta, EnvelopeOptions, build_envelope,
+    CompileError, DependencyPin, EnvelopeMeta, EnvelopeOptions, build_envelope_checked,
     diagnostic_for_node, exact_number, is_string_literal_like,
 };
 use super::value_schema::{BudgetExceeded, ExpansionBudget};
 
 impl DefinitionCompiler<'_> {
+    fn charge_literal(
+        expansion: &mut ExpansionBudget,
+        work: usize,
+        bytes: usize,
+        node: P<Node>,
+    ) -> Result<(), CompileError> {
+        expansion
+            .charge_literal(work, bytes)
+            .map_err(|BudgetExceeded(msg)| CompileError::new("NORN-FLOW-UNBOUNDED", msg, node))
+    }
+
     pub(crate) fn json(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         input: P<Node>,
         depth: usize,
     ) -> Result<Value, CompileError> {
@@ -39,21 +51,25 @@ impl DefinitionCompiler<'_> {
                 input,
             ));
         }
+        Self::charge_literal(expansion, 1, 0, input)?;
         let e = self.deref(checker, input)?;
         if e.kind() == Kind::CallExpression
             && self.call_id(checker, e).as_deref() == Some("@norn/authoring#Norn.unsafeZen")
         {
-            return self.json_unsafe_zen(checker, e, depth);
+            return self.json_unsafe_zen(checker, expansion, e, depth);
         }
         if is_string_literal_like(e) {
-            return Ok(Value::String(e.text().to_owned()));
+            let text = e.text();
+            Self::charge_literal(expansion, 1, escaped_json_string_len(text), e)?;
+            return Ok(Value::String(text.to_owned()));
         }
-        self.json_atom_or_container(checker, e, depth)
+        self.json_atom_or_container(checker, expansion, e, depth)
     }
 
     fn json_unsafe_zen(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         e: P<Node>,
         depth: usize,
     ) -> Result<Value, CompileError> {
@@ -76,23 +92,27 @@ impl DefinitionCompiler<'_> {
                 e,
             ));
         };
-        self.json(checker, a0, depth.saturating_add(1))
+        self.json(checker, expansion, a0, depth.saturating_add(1))
     }
 
     fn json_atom_or_container(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         e: P<Node>,
         depth: usize,
     ) -> Result<Value, CompileError> {
         let kind = e.kind();
         if kind == Kind::TrueKeyword {
+            Self::charge_literal(expansion, 1, 4, e)?;
             return Ok(Value::Bool(true));
         }
         if kind == Kind::FalseKeyword {
+            Self::charge_literal(expansion, 1, 5, e)?;
             return Ok(Value::Bool(false));
         }
         if kind == Kind::NullKeyword {
+            Self::charge_literal(expansion, 1, 4, e)?;
             return Ok(Value::Null);
         }
         if kind == Kind::NumericLiteral {
@@ -104,6 +124,7 @@ impl DefinitionCompiler<'_> {
                 ));
             };
             let n = exact_number(sf, e, self.started, self.limits.max_millis, false)?;
+            Self::charge_literal(expansion, 1, js_number_len(&n), e)?;
             return Ok(Value::Number(n));
         }
         if kind == Kind::PrefixUnaryExpression {
@@ -117,17 +138,21 @@ impl DefinitionCompiler<'_> {
                     ));
                 };
                 let n = exact_number(sf, pu.operand, self.started, self.limits.max_millis, true)?;
+                Self::charge_literal(expansion, 1, js_number_len(&n), e)?;
                 return Ok(Value::Number(n));
             }
         }
         if kind == Kind::ArrayLiteralExpression {
+            Self::charge_literal(expansion, 1, 2, e)?;
             let mut arr = Vec::new();
             for item in self.list(checker, e)? {
-                arr.push(self.json(checker, item, depth.saturating_add(1))?);
+                Self::charge_literal(expansion, 0, 2, item)?;
+                arr.push(self.json(checker, expansion, item, depth.saturating_add(1))?);
             }
             return Ok(Value::Array(arr));
         }
         if kind == Kind::ObjectLiteralExpression {
+            Self::charge_literal(expansion, 1, 2, e)?;
             let mut obj = Map::new();
             for (key, value) in self.record(checker, e)?.iter() {
                 if key == "__proto__" {
@@ -137,9 +162,15 @@ impl DefinitionCompiler<'_> {
                         value.parent().unwrap_or(value),
                     ));
                 }
+                Self::charge_literal(
+                    expansion,
+                    0,
+                    escaped_json_string_len(key).saturating_add(4),
+                    value,
+                )?;
                 obj.insert(
                     key.to_owned(),
-                    self.json(checker, value, depth.saturating_add(1))?,
+                    self.json(checker, expansion, value, depth.saturating_add(1))?,
                 );
             }
             return Ok(Value::Object(obj));
@@ -154,6 +185,7 @@ impl DefinitionCompiler<'_> {
     pub(crate) fn when_value(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         input: P<Node>,
     ) -> Result<Value, CompileError> {
         let e = self.deref(checker, input)?;
@@ -168,7 +200,7 @@ impl DefinitionCompiler<'_> {
             (false, e)
         };
         if literal.kind() != Kind::NumericLiteral {
-            return self.json(checker, input, 0);
+            return self.json(checker, expansion, input, 0);
         }
         let Some(sf) = get_source_file_of_node(literal) else {
             return Err(CompileError::new(
@@ -339,6 +371,13 @@ impl DefinitionCompiler<'_> {
     ) -> Result<Vec<(String, String)>, CompileError> {
         let mut out = Vec::new();
         for (tag, text) in self.record(checker, node)?.iter() {
+            if tag == "__proto__" {
+                return Err(CompileError::new(
+                    "NORN-FLOW-LITERAL",
+                    "__proto__ is not a portable JSON member name",
+                    text.parent().unwrap_or(text),
+                ));
+            }
             out.push((tag.to_owned(), self.string(checker, text)?));
         }
         Ok(out)
@@ -680,9 +719,10 @@ pub(crate) fn build_labels_artifact(
     owner_artifact: &Value,
     entries: Vec<Value>,
     options: &EnvelopeOptions,
-) -> Option<Value> {
+    at: P<Node>,
+) -> Result<Option<Value>, CompileError> {
     if entries.is_empty() {
-        return None;
+        return Ok(None);
     }
     let artifact_id = owner_artifact
         .get("artifactId")
@@ -703,7 +743,7 @@ pub(crate) fn build_labels_artifact(
     let mut payload = Map::new();
     payload.insert("labelsVersion".to_owned(), Value::String("0.1".to_owned()));
     payload.insert("entries".to_owned(), Value::Array(entries));
-    Some(build_envelope(
+    let artifact = build_envelope_checked(
         EnvelopeMeta {
             kind: "labels".to_owned(),
             artifact_id: format!("{artifact_id}.labels"),
@@ -714,58 +754,7 @@ pub(crate) fn build_labels_artifact(
         },
         Value::Object(payload),
         options,
-    ))
-}
-
-/// Binds same-project `Norn.sourceSchema` Norn1 hashes onto pending mappings (`MAPPING-SOURCE-REF-1`).
-pub(crate) fn bind_compiled_source_schemas(batches: &mut [Vec<Value>]) {
-    let mut hashes: BTreeMap<String, String> = BTreeMap::new();
-    for artifacts in batches.iter() {
-        for artifact in artifacts {
-            if artifact.get("kind").and_then(Value::as_str) != Some("source_schema") {
-                continue;
-            }
-            let (Some(id), Some(version)) = (
-                artifact.get("artifactId").and_then(Value::as_str),
-                artifact.get("version").and_then(Value::as_str),
-            ) else {
-                continue;
-            };
-            if let Some(sha) = norn1_sha256(artifact) {
-                hashes.insert(format!("{id}\0{version}"), sha);
-            }
-        }
-    }
-    if hashes.is_empty() {
-        return;
-    }
-    for artifacts in batches.iter_mut() {
-        for artifact in artifacts.iter_mut() {
-            if artifact.get("kind").and_then(Value::as_str) != Some("mapping") {
-                continue;
-            }
-            let key = {
-                let Some(source) = artifact.get("payload").and_then(|p| p.get("source")) else {
-                    continue;
-                };
-                if source.get("sha256").and_then(Value::as_str) != Some(PENDING_SOURCE_SHA256) {
-                    continue;
-                }
-                let schema_id = source.get("schemaId").and_then(Value::as_str).unwrap_or("");
-                let version = source.get("version").and_then(Value::as_str).unwrap_or("");
-                format!("{schema_id}\0{version}")
-            };
-            if let Some(sha) = hashes.get(&key)
-                && let Some(source) = artifact
-                    .get_mut("payload")
-                    .and_then(|p| p.get_mut("source"))
-                    .and_then(Value::as_object_mut)
-            {
-                source.insert("sha256".to_owned(), Value::String(sha.clone()));
-                if let Ok(canon) = to_canonical_json(artifact) {
-                    *artifact = canon;
-                }
-            }
-        }
-    }
+        at,
+    )?;
+    Ok(Some(artifact))
 }

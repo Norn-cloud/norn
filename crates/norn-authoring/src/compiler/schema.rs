@@ -5,6 +5,7 @@
 //! without ever executing authored code.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use tsrs_ast::{Kind, Node, NodeFlags, is_const_type_reference};
@@ -15,9 +16,9 @@ use crate::BoundedVfs;
 use crate::checker::resolve::{node_text, resolve_symbol};
 
 use super::types::{CompileError, is_string_literal_like};
-use super::value_types::{PropertyType, TimezonePolicy};
+use super::value_types::PropertyType;
 
-const MAX_SCHEMA_DEPTH: usize = 32;
+pub(crate) const MAX_SCHEMA_DEPTH: usize = 32;
 
 /// Nullable admission mode for [`SchemaProjection::closed`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,7 +32,7 @@ pub(crate) enum NullableMode {
 }
 
 /// Structural reading of an Effect Schema AST expression.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) enum SchemaNodeKind {
     String,
     Int,
@@ -40,23 +41,25 @@ pub(crate) enum SchemaNodeKind {
     Null,
     Literals(Vec<String>),
     Struct(Vec<StructField>),
-    Array(Box<SchemaNode>),
-    Union(Vec<SchemaNode>),
+    Array(Rc<SchemaNode>),
+    Union(Vec<Rc<SchemaNode>>),
     ValueType(PropertyType),
 }
 
-/// Structural schema node carrying its originating AST node for diagnostics.
-#[derive(Clone, Debug)]
+/// Shared structural schema DAG node carrying its originating AST node for diagnostics.
+#[derive(Debug)]
 pub(crate) struct SchemaNode {
+    pub(crate) id: usize,
+    pub(crate) height: usize,
     pub(crate) kind: SchemaNodeKind,
     pub(crate) node: P<Node>,
 }
 
 /// One field of a `Schema.Struct` / `Schema.Class` / `Schema.TaggedStruct`.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct StructField {
     pub(crate) name: String,
-    pub(crate) schema: SchemaNode,
+    pub(crate) schema: Rc<SchemaNode>,
     pub(crate) optional: bool,
     pub(crate) node: P<Node>,
 }
@@ -88,9 +91,10 @@ pub(crate) struct SchemaProjection<'a> {
     started: Instant,
     max_millis: u64,
     pub(crate) max_expanded: usize,
-    memo: HashMap<P<Node>, SchemaNode>,
+    memo: HashMap<P<Node>, Rc<SchemaNode>>,
     active: HashSet<P<Node>>,
-    pub(crate) sizes: HashMap<P<Node>, usize>,
+    pub(crate) sizes: HashMap<usize, usize>,
+    next_id: usize,
 }
 
 impl<'a> SchemaProjection<'a> {
@@ -112,7 +116,39 @@ impl<'a> SchemaProjection<'a> {
             memo: HashMap::new(),
             active: HashSet::new(),
             sizes: HashMap::new(),
+            next_id: 0,
         }
+    }
+
+    pub(crate) fn mk_node(&mut self, kind: SchemaNodeKind, node: P<Node>) -> Rc<SchemaNode> {
+        let height = match &kind {
+            SchemaNodeKind::Struct(fields) => fields
+                .iter()
+                .map(|f| f.schema.height.saturating_add(1))
+                .max()
+                .unwrap_or(0),
+            SchemaNodeKind::Array(items) => items.height.saturating_add(1),
+            SchemaNodeKind::Union(members) => members
+                .iter()
+                .map(|m| m.height.saturating_add(1))
+                .max()
+                .unwrap_or(0),
+            SchemaNodeKind::String
+            | SchemaNodeKind::Int
+            | SchemaNodeKind::Finite
+            | SchemaNodeKind::Boolean
+            | SchemaNodeKind::Null
+            | SchemaNodeKind::Literals(_)
+            | SchemaNodeKind::ValueType(_) => 0,
+        };
+        let id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1);
+        Rc::new(SchemaNode {
+            id,
+            height,
+            kind,
+            node,
+        })
     }
 
     pub(crate) fn guard(&self, node: P<Node>) -> Result<(), CompileError> {
@@ -208,12 +244,12 @@ impl<'a> SchemaProjection<'a> {
         Ok(expr)
     }
 
-    /// Reads an Effect Schema AST expression structurally.
+    /// Reads an Effect Schema AST expression into a shared immutable DAG node.
     pub(crate) fn read(
         &mut self,
         checker: &mut Checker,
         expression: P<Node>,
-    ) -> Result<SchemaNode, CompileError> {
+    ) -> Result<Rc<SchemaNode>, CompileError> {
         self.read_at(checker, expression, 0)
     }
 
@@ -222,7 +258,7 @@ impl<'a> SchemaProjection<'a> {
         checker: &mut Checker,
         input: P<Node>,
         depth: usize,
-    ) -> Result<SchemaNode, CompileError> {
+    ) -> Result<Rc<SchemaNode>, CompileError> {
         self.guard(input)?;
         if depth > MAX_SCHEMA_DEPTH {
             return Err(CompileError::new(
@@ -233,7 +269,14 @@ impl<'a> SchemaProjection<'a> {
         }
         let expr = Self::unwrap(input);
         if let Some(known) = self.memo.get(&expr) {
-            return Ok(known.clone());
+            if depth.saturating_add(known.height) > MAX_SCHEMA_DEPTH {
+                return Err(CompileError::new(
+                    "NORN-FLOW-UNBOUNDED",
+                    "schema nesting exceeds the compiler bound",
+                    expr,
+                ));
+            }
+            return Ok(Rc::clone(known));
         }
         if self.active.contains(&expr) {
             return Err(projection_err(
@@ -249,7 +292,7 @@ impl<'a> SchemaProjection<'a> {
         };
         self.active.remove(&expr);
         let node = res?;
-        self.memo.insert(expr, node.clone());
+        self.memo.insert(expr, Rc::clone(&node));
         Ok(node)
     }
 
@@ -258,7 +301,7 @@ impl<'a> SchemaProjection<'a> {
         checker: &mut Checker,
         expr: P<Node>,
         depth: usize,
-    ) -> Result<SchemaNode, CompileError> {
+    ) -> Result<Rc<SchemaNode>, CompileError> {
         if expr.kind() != Kind::Identifier && expr.kind() != Kind::PropertyAccessExpression {
             return Err(projection_err(
                 format!("{:?} is not a schema in the structural subset", expr.kind()),
@@ -291,7 +334,7 @@ impl<'a> SchemaProjection<'a> {
                     ));
                 }
             };
-            return Ok(SchemaNode { kind, node: expr });
+            return Ok(self.mk_node(kind, expr));
         }
         let decl = resolved.target.and_then(|sym| {
             sym.value_declaration()
@@ -326,10 +369,7 @@ impl<'a> SchemaProjection<'a> {
                             ));
                         };
                         let fields = self.read_fields(checker, fields_arg, depth)?;
-                        return Ok(SchemaNode {
-                            kind: SchemaNodeKind::Struct(fields),
-                            node: expr,
-                        });
+                        return Ok(self.mk_node(SchemaNodeKind::Struct(fields), expr));
                     }
                 }
             }
@@ -350,7 +390,7 @@ impl<'a> SchemaProjection<'a> {
         checker: &mut Checker,
         call: P<Node>,
         depth: usize,
-    ) -> Result<SchemaNode, CompileError> {
+    ) -> Result<Rc<SchemaNode>, CompileError> {
         let id = self.identity(checker, Self::callee_name(call));
         let args = call.as_call_expression().arguments().nodes();
         let arg = |idx: usize| -> Result<P<Node>, CompileError> {
@@ -365,41 +405,27 @@ impl<'a> SchemaProjection<'a> {
         match id.as_deref() {
             Some("effect/Schema#Struct") => {
                 let fields = self.read_fields(checker, arg(0)?, depth)?;
-                Ok(SchemaNode {
-                    kind: SchemaNodeKind::Struct(fields),
-                    node: call,
-                })
+                Ok(self.mk_node(SchemaNodeKind::Struct(fields), call))
             }
             Some("effect/Schema#TaggedStruct") => {
                 self.read_tagged_struct_call(checker, call, arg(0)?, arg(1)?, depth)
             }
-            Some("effect/Schema#Literal") => Ok(SchemaNode {
-                kind: SchemaNodeKind::Literals(vec![Self::read_string_enum_literal(arg(0)?)?]),
-                node: call,
-            }),
+            Some("effect/Schema#Literal") => {
+                let lit = Self::read_string_enum_literal(arg(0)?)?;
+                Ok(self.mk_node(SchemaNodeKind::Literals(vec![lit]), call))
+            }
             Some("effect/Schema#Literals") => self.read_literals_call(checker, call, arg(0)?),
             Some("effect/Schema#NullOr") => {
                 let inner = self.read_at(checker, arg(0)?, next_depth)?;
-                Ok(SchemaNode {
-                    kind: SchemaNodeKind::Union(vec![
-                        inner,
-                        SchemaNode {
-                            kind: SchemaNodeKind::Null,
-                            node: call,
-                        },
-                    ]),
-                    node: call,
-                })
+                let null_node = self.mk_node(SchemaNodeKind::Null, call);
+                Ok(self.mk_node(SchemaNodeKind::Union(vec![inner, null_node]), call))
             }
             Some("effect/Schema#Union") => {
                 self.read_union_call(checker, call, arg(0)?, args.get(1).copied(), next_depth)
             }
             Some("effect/Schema#ArraySchema") => {
                 let items = self.read_at(checker, arg(0)?, next_depth)?;
-                Ok(SchemaNode {
-                    kind: SchemaNodeKind::Array(Box::new(items)),
-                    node: call,
-                })
+                Ok(self.mk_node(SchemaNodeKind::Array(items), call))
             }
             Some("effect/Schema#TaggedUnion") => Err(projection_err(
                 "discriminated unions have no qualified EntityIR or closed-schema projection in v1",
@@ -416,7 +442,7 @@ impl<'a> SchemaProjection<'a> {
                 id.as_deref() == Some("effect/Function#pipe"),
                 next_depth,
             ),
-            _ => self.read_norn_call(call, args, id),
+            Some(_) | None => self.read_norn_call(call, args, id),
         }
     }
 
@@ -427,7 +453,7 @@ impl<'a> SchemaProjection<'a> {
         tag_arg: P<Node>,
         fields_arg: P<Node>,
         depth: usize,
-    ) -> Result<SchemaNode, CompileError> {
+    ) -> Result<Rc<SchemaNode>, CompileError> {
         let tag = Self::unwrap(tag_arg);
         if tag.kind() != Kind::StringLiteral {
             return Err(projection_err(
@@ -442,28 +468,23 @@ impl<'a> SchemaProjection<'a> {
                 call,
             ));
         }
+        let tag_schema = self.mk_node(SchemaNodeKind::Literals(vec![tag.text().to_owned()]), tag);
         let tag_field = StructField {
             name: "_tag".to_owned(),
-            schema: SchemaNode {
-                kind: SchemaNodeKind::Literals(vec![tag.text().to_owned()]),
-                node: tag,
-            },
+            schema: tag_schema,
             optional: false,
             node: tag,
         };
         fields.insert(0, tag_field);
-        Ok(SchemaNode {
-            kind: SchemaNodeKind::Struct(fields),
-            node: call,
-        })
+        Ok(self.mk_node(SchemaNodeKind::Struct(fields), call))
     }
 
     fn read_literals_call(
-        &self,
+        &mut self,
         checker: &mut Checker,
         call: P<Node>,
         list_arg: P<Node>,
-    ) -> Result<SchemaNode, CompileError> {
+    ) -> Result<Rc<SchemaNode>, CompileError> {
         let list = self.const_array(checker, list_arg)?;
         if list.kind() != Kind::ArrayLiteralExpression {
             return Err(projection_err(
@@ -482,10 +503,7 @@ impl<'a> SchemaProjection<'a> {
         for &el in elems {
             vals.push(Self::read_string_enum_literal(el)?);
         }
-        Ok(SchemaNode {
-            kind: SchemaNodeKind::Literals(vals),
-            node: call,
-        })
+        Ok(self.mk_node(SchemaNodeKind::Literals(vals), call))
     }
 
     fn read_union_call(
@@ -495,7 +513,7 @@ impl<'a> SchemaProjection<'a> {
         list_arg: P<Node>,
         extra: Option<P<Node>>,
         next_depth: usize,
-    ) -> Result<SchemaNode, CompileError> {
+    ) -> Result<Rc<SchemaNode>, CompileError> {
         let list = Self::unwrap(list_arg);
         if list.kind() != Kind::ArrayLiteralExpression {
             return Err(projection_err(
@@ -520,10 +538,7 @@ impl<'a> SchemaProjection<'a> {
         for &el in elems {
             members.push(self.read_at(checker, el, next_depth)?);
         }
-        Ok(SchemaNode {
-            kind: SchemaNodeKind::Union(members),
-            node: call,
-        })
+        Ok(self.mk_node(SchemaNodeKind::Union(members), call))
     }
 
     fn read_pipe_call(
@@ -533,7 +548,7 @@ impl<'a> SchemaProjection<'a> {
         args: &[P<Node>],
         is_fn_pipe: bool,
         next_depth: usize,
-    ) -> Result<SchemaNode, CompileError> {
+    ) -> Result<Rc<SchemaNode>, CompileError> {
         let base = if is_fn_pipe {
             args.first().copied().ok_or_else(|| {
                 projection_err("effect/Function#pipe is missing an argument", call)
@@ -571,59 +586,6 @@ impl<'a> SchemaProjection<'a> {
             }
         }
         self.read_at(checker, base, next_depth)
-    }
-
-    fn read_norn_call(
-        &self,
-        call: P<Node>,
-        args: &[P<Node>],
-        id: Option<String>,
-    ) -> Result<SchemaNode, CompileError> {
-        match id.as_deref() {
-            Some("@norn/authoring#Norn.rate") => self.read_rate(call, args),
-            Some("@norn/authoring#Norn.decimal") => self.read_decimal(call, args),
-            Some("@norn/authoring#Norn.boundDecimal") => Ok(SchemaNode {
-                kind: SchemaNodeKind::ValueType(PropertyType::DecimalBinding {
-                    group: Self::read_string_literal(
-                        args.first().copied(),
-                        call,
-                        "the decimal binding group",
-                    )?,
-                }),
-                node: call,
-            }),
-            Some("@norn/authoring#Norn.ref") => self.read_ref(call, args),
-            Some("@norn/authoring#Norn.timestamp") => {
-                let tz_str =
-                    Self::read_string_literal(args.first().copied(), call, "the timezone policy")?;
-                let Some(timezone) = TimezonePolicy::parse(&tz_str) else {
-                    return Err(CompileError::new(
-                        "NORN-FLOW-LITERAL",
-                        "the timezone policy is \"utc\" or \"offset\"",
-                        call,
-                    ));
-                };
-                Ok(SchemaNode {
-                    kind: SchemaNodeKind::ValueType(PropertyType::Timestamp { timezone }),
-                    node: call,
-                })
-            }
-            Some("@norn/authoring#Norn.date") => Ok(SchemaNode {
-                kind: SchemaNodeKind::ValueType(PropertyType::Date),
-                node: call,
-            }),
-            _ => {
-                let label = id.unwrap_or_else(|| {
-                    tsrs_ast::get_source_file_of_node(call).map_or_else(String::new, |sf| {
-                        node_text(sf, call.as_call_expression().expression())
-                    })
-                });
-                Err(projection_err(
-                    format!("{label} is not a schema in the structural subset"),
-                    call,
-                ))
-            }
-        }
     }
 
     fn read_fields(

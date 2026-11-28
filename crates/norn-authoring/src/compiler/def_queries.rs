@@ -125,9 +125,12 @@ impl DefinitionCompiler<'_> {
             ));
         }
         let (win, fr) =
-            self.compile_question_as_of(checker, Self::member(&input, "asOf", call)?)?;
-        let filters =
-            self.compile_question_filters(checker, Self::member(&input, "where", call)?)?;
+            self.compile_question_as_of(checker, expansion, Self::member(&input, "asOf", call)?)?;
+        let filters = self.compile_question_filters(
+            checker,
+            expansion,
+            Self::member(&input, "where", call)?,
+        )?;
         let group_by =
             self.compile_question_group_by(checker, Self::member(&input, "by", call)?)?;
 
@@ -163,7 +166,8 @@ impl DefinitionCompiler<'_> {
         q.insert("freshness".to_owned(), Value::Object(fr));
 
         let raw = Value::Object(q);
-        let canon = to_canonical_json(&raw).unwrap_or(raw);
+        let canon = to_canonical_json(&raw)
+            .map_err(|err| CompileError::new("NORN-FLOW-LITERAL", err.to_string(), call))?;
         Self::assert_expansion(expansion, &canon, call)?;
         Ok(canon)
     }
@@ -171,6 +175,7 @@ impl DefinitionCompiler<'_> {
     fn compile_question_as_of(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         time_node: P<Node>,
     ) -> Result<(Map<String, Value>, Map<String, Value>), CompileError> {
         let time = self.closed_record(
@@ -202,7 +207,7 @@ impl DefinitionCompiler<'_> {
             ));
         }
         let age_node = Self::member(&fresh, "maxAgeMs", fresh_node)?;
-        let age = self.json(checker, age_node, 0)?;
+        let age = self.json(checker, expansion, age_node, 0)?;
         if !age.as_i64().is_some_and(|v| v > 0) {
             return Err(CompileError::new(
                 "NORN-FLOW-LITERAL",
@@ -228,6 +233,7 @@ impl DefinitionCompiler<'_> {
     fn compile_question_filters(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         where_node: P<Node>,
     ) -> Result<Vec<Value>, CompileError> {
         let mut filters = Vec::new();
@@ -254,7 +260,7 @@ impl DefinitionCompiler<'_> {
                     val_node,
                 ));
             }
-            let val = self.json(checker, val_node, 0)?;
+            let val = self.json(checker, expansion, val_node, 0)?;
             if !matches!(val, Value::String(_) | Value::Number(_) | Value::Bool(_)) {
                 return Err(CompileError::new(
                     "NORN-FLOW-LITERAL",
@@ -465,73 +471,7 @@ impl DefinitionCompiler<'_> {
             .into_iter()
             .enumerate()
         {
-            let tile = self.closed_record(
-                checker,
-                node,
-                &["title", "question", "view", "width"],
-                &["title", "question", "view"],
-            )?;
-            let q_ref = Self::member(&tile, "question", node)?;
-            let question = if q_ref.kind() == Kind::Identifier {
-                questions.get(q_ref.text()).cloned()
-            } else {
-                None
-            };
-            let Some(question) = question else {
-                return Err(CompileError::new(
-                    "NORN-FLOW-LITERAL",
-                    "a tile's question names a Norn.question declared in this module",
-                    q_ref,
-                ));
-            };
-            let view_node = Self::member(&tile, "view", node)?;
-            let view = self.string(checker, view_node)?;
-            if !matches!(
-                view.as_str(),
-                "number" | "line" | "area" | "bar" | "pie" | "table"
-            ) {
-                return Err(CompileError::new(
-                    "NORN-FLOW-LITERAL",
-                    "a view is number, line, area, bar, pie or table",
-                    view_node,
-                ));
-            }
-            let width = self.read_tile_width(checker, &tile, &view)?;
-            let w: u32 = if width == "full" { 2 } else { 1 };
-            if x.saturating_add(w) > 2 {
-                x = 0;
-                y = y.saturating_add(1);
-            }
-            let mut layout = Map::new();
-            layout.insert("x".to_owned(), Value::Number(x.into()));
-            layout.insert("y".to_owned(), Value::Number(y.into()));
-            layout.insert("w".to_owned(), Value::Number(w.into()));
-            layout.insert("h".to_owned(), Value::Number(1_u32.into()));
-            x = x.saturating_add(w);
-            if x >= 2 {
-                x = 0;
-                y = y.saturating_add(1);
-            }
-            let mut view_obj = Map::new();
-            if view == "number" || view == "table" {
-                view_obj.insert("kind".to_owned(), Value::String(view));
-            } else {
-                view_obj.insert("kind".to_owned(), Value::String("chart".to_owned()));
-                view_obj.insert("chart".to_owned(), Value::String(view));
-            }
-            let mut t_obj = Map::new();
-            t_obj.insert(
-                "id".to_owned(),
-                Value::String(format!("t{}", index.saturating_add(1))),
-            );
-            t_obj.insert(
-                "title".to_owned(),
-                Value::String(self.string(checker, Self::member(&tile, "title", node)?)?),
-            );
-            t_obj.insert("question".to_owned(), question);
-            t_obj.insert("view".to_owned(), Value::Object(view_obj));
-            t_obj.insert("layout".to_owned(), Value::Object(layout));
-            tiles.push(Value::Object(t_obj));
+            tiles.push(self.build_dashboard_tile(checker, index, node, questions, &mut x, &mut y)?);
         }
         let mut origin = Map::new();
         origin.insert("by".to_owned(), Value::String("code".to_owned()));
@@ -543,7 +483,86 @@ impl DefinitionCompiler<'_> {
         db.insert("tiles".to_owned(), Value::Array(tiles));
         db.insert("origin".to_owned(), Value::Object(origin));
         let raw = Value::Object(db);
-        Ok(to_canonical_json(&raw).unwrap_or(raw))
+        to_canonical_json(&raw)
+            .map_err(|err| CompileError::new("NORN-FLOW-LITERAL", err.to_string(), call))
+    }
+
+    fn build_dashboard_tile(
+        &self,
+        checker: &mut Checker,
+        index: usize,
+        node: P<Node>,
+        questions: &BTreeMap<String, Value>,
+        x: &mut u32,
+        y: &mut u32,
+    ) -> Result<Value, CompileError> {
+        let tile = self.closed_record(
+            checker,
+            node,
+            &["title", "question", "view", "width"],
+            &["title", "question", "view"],
+        )?;
+        let q_ref = Self::member(&tile, "question", node)?;
+        let question = if q_ref.kind() == Kind::Identifier {
+            questions.get(q_ref.text()).cloned()
+        } else {
+            None
+        };
+        let Some(question) = question else {
+            return Err(CompileError::new(
+                "NORN-FLOW-LITERAL",
+                "a tile's question names a Norn.question declared in this module",
+                q_ref,
+            ));
+        };
+        let view_node = Self::member(&tile, "view", node)?;
+        let view = self.string(checker, view_node)?;
+        if !matches!(
+            view.as_str(),
+            "number" | "line" | "area" | "bar" | "pie" | "table"
+        ) {
+            return Err(CompileError::new(
+                "NORN-FLOW-LITERAL",
+                "a view is number, line, area, bar, pie or table",
+                view_node,
+            ));
+        }
+        let width = self.read_tile_width(checker, &tile, &view)?;
+        let w: u32 = if width == "full" { 2 } else { 1 };
+        if x.saturating_add(w) > 2 {
+            *x = 0;
+            *y = y.saturating_add(1);
+        }
+        let mut layout = Map::new();
+        layout.insert("x".to_owned(), Value::Number((*x).into()));
+        layout.insert("y".to_owned(), Value::Number((*y).into()));
+        layout.insert("w".to_owned(), Value::Number(w.into()));
+        layout.insert("h".to_owned(), Value::Number(1_u32.into()));
+        *x = x.saturating_add(w);
+        if *x >= 2 {
+            *x = 0;
+            *y = y.saturating_add(1);
+        }
+        let mut view_obj = Map::new();
+        if view == "number" || view == "table" {
+            view_obj.insert("kind".to_owned(), Value::String(view));
+        } else {
+            view_obj.insert("kind".to_owned(), Value::String("chart".to_owned()));
+            view_obj.insert("chart".to_owned(), Value::String(view));
+        }
+        let mut t_obj = Map::new();
+        t_obj.insert(
+            "id".to_owned(),
+            Value::String(format!("t{}", index.saturating_add(1))),
+        );
+        t_obj.insert(
+            "title".to_owned(),
+            Value::String(self.string(checker, Self::member(&tile, "title", node)?)?),
+        );
+        t_obj.insert("question".to_owned(), question);
+        t_obj.insert("view".to_owned(), Value::Object(view_obj));
+        t_obj.insert("layout".to_owned(), Value::Object(layout));
+        Ok(Value::Object(t_obj))
     }
 
     fn read_tile_width(

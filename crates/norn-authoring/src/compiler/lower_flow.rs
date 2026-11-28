@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::canonical::is_dotted_lower_id;
+use super::canonical::{CanonicalError, is_dotted_lower_id};
 use super::expr::{Scope, zen_string};
 use super::flow_source_map::{
     FLOW_MAX_ROWS, FlowDef, FlowSourceMapDraft, FlowSourceMapGraph, FnRef, PerformStep,
@@ -160,11 +160,18 @@ pub(super) enum ResumeTask {
 pub(super) enum LowerBreak {
     Bound,
     Budget(BudgetExceeded),
+    Canonical(CanonicalError),
 }
 
 impl From<BudgetExceeded> for LowerBreak {
     fn from(value: BudgetExceeded) -> Self {
         Self::Budget(value)
+    }
+}
+
+impl From<CanonicalError> for LowerBreak {
+    fn from(value: CanonicalError) -> Self {
+        Self::Canonical(value)
     }
 }
 
@@ -275,6 +282,11 @@ pub(crate) fn lower_flow(
                 at: def.at.clone(),
             }])
         }
+        Err(LowerBreak::Canonical(err)) => LowerFlowOutcome::Err(vec![BuildDiagnostic {
+            code: "NORN-FLOW-LITERAL".to_owned(),
+            message: err.to_string(),
+            at: def.at.clone(),
+        }]),
         Err(LowerBreak::Bound) => LowerFlowOutcome::Err(lowerer.diagnostics),
     }
 }
@@ -445,14 +457,14 @@ impl<'a> FlowLowering<'a> {
     fn run_worklist(&mut self, start: Path, root_cont: Vec<Frame>) -> Result<(), LowerBreak> {
         match self.proceed(start, root_cont) {
             Ok(()) | Err(LowerBreak::Bound) => {}
-            Err(err @ LowerBreak::Budget(_)) => return Err(err),
+            Err(err @ (LowerBreak::Budget(_) | LowerBreak::Canonical(_))) => return Err(err),
         }
         while let Some(task) = self.queue.pop_front() {
             let res = self.dispatch_task(task);
             match res {
                 Ok(()) => {}
                 Err(LowerBreak::Bound) => break,
-                Err(err @ LowerBreak::Budget(_)) => return Err(err),
+                Err(err @ (LowerBreak::Budget(_) | LowerBreak::Canonical(_))) => return Err(err),
             }
         }
         Ok(())

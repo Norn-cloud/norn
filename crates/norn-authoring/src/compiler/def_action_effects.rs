@@ -325,6 +325,7 @@ impl DefinitionCompiler<'_> {
     pub(super) fn compile_quantity_effect(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         input: P<Node>,
     ) -> Result<Value, CompileError> {
         let m = self.closed_record(
@@ -337,7 +338,7 @@ impl DefinitionCompiler<'_> {
         let op = self.record(checker, op_node)?;
         let kind = self.string(checker, Self::member(&op, "kind", op_node)?)?;
         let operation = match kind.as_str() {
-            "reserve" => self.compile_quantity_reserve(checker, op_node)?,
+            "reserve" => self.compile_quantity_reserve(checker, expansion, op_node)?,
             "post_reservation" => self.compile_quantity_post(checker, op_node)?,
             _ => {
                 return Err(CompileError::new(
@@ -363,6 +364,7 @@ impl DefinitionCompiler<'_> {
     fn compile_quantity_reserve(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         op_node: P<Node>,
     ) -> Result<Value, CompileError> {
         let rm = self.closed_record(
@@ -395,7 +397,7 @@ impl DefinitionCompiler<'_> {
                 &["field", "scale"],
             )?;
             let scale_node = Self::member(&pm, "scale", param_node)?;
-            let scale = self.json(checker, scale_node, 0)?;
+            let scale = self.json(checker, expansion, scale_node, 0)?;
             if !scale.as_i64().is_some_and(|v| (0..=28).contains(&v)) {
                 return Err(CompileError::new(
                     "NORN-FLOW-LITERAL",
@@ -412,7 +414,7 @@ impl DefinitionCompiler<'_> {
             params.insert(param_name.to_owned(), Value::Object(po));
         }
         let ttl_node = Self::member(&rm, "ttlMs", op_node)?;
-        let ttl = self.json(checker, ttl_node, 0)?;
+        let ttl = self.json(checker, expansion, ttl_node, 0)?;
         if !ttl.as_i64().is_some_and(|v| v > 0) {
             return Err(CompileError::new(
                 "NORN-FLOW-LITERAL",

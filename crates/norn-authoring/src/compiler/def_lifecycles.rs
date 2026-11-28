@@ -8,7 +8,7 @@ use tsrs_ast::{Kind, Node};
 use tsrs_checker::Checker;
 use tsrs_core::P;
 
-use super::canonical::to_canonical_json;
+use super::canonical::compact_canonical_json;
 use super::def_helpers::{DefinitionCompiler, Members};
 use super::types::CompileError;
 use super::value_schema::ExpansionBudget;
@@ -680,7 +680,8 @@ fn add_machine_move(
     node: P<Node>,
 ) -> Result<(), CompileError> {
     let val = Value::Object(body.clone());
-    let key = to_canonical_json(&val).unwrap_or_else(|_err| val.to_string());
+    let key = compact_canonical_json(&val)
+        .map_err(|err| CompileError::new("NORN-FLOW-LITERAL", err.to_string(), node))?;
     if let Some(known) = moves.iter_mut().find(|mv| mv.id == id) {
         if known.key != key {
             let first = known.from.first().map_or("", String::as_str);

@@ -62,11 +62,38 @@ pub(crate) fn utf16_cmp(left: &str, right: &str) -> Ordering {
     }
 }
 
+/// Parses an ECMAScript array index key (`0..=2^32-2` in canonical decimal form).
+fn js_array_index(key: &str) -> Option<u32> {
+    if key == "0" {
+        return Some(0);
+    }
+    let first = key.bytes().next()?;
+    if !(b'1'..=b'9').contains(&first) || !key.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let idx = key.parse::<u32>().ok()?;
+    if idx == u32::MAX { None } else { Some(idx) }
+}
+
+/// Orders object property keys identically to `JSON.stringify(toJson(value))`
+/// in `tools/norn-ts/src/canonical.ts`: ECMAScript array-index keys
+/// (`0..=2^32-2`) first in ascending numeric order, followed by remaining keys
+/// in `UTF-16` code-unit order.
+#[must_use]
+pub(crate) fn js_key_cmp(left: &str, right: &str) -> Ordering {
+    match (js_array_index(left), js_array_index(right)) {
+        (Some(a), Some(b)) => a.cmp(&b),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => utf16_cmp(left, right),
+    }
+}
+
 /// Validates and normalizes `value` into canonical JSON form:
 ///
 /// - Rejects `__proto__` object member names.
 /// - Normalizes `-0.0` to `0`.
-/// - Recursively sorts object members by `UTF-16` code units.
+/// - Recursively sorts object members in JavaScript `toJson` enumeration order.
 ///
 /// # Errors
 ///
@@ -89,7 +116,7 @@ fn to_canonical_at(value: &Value, path: &str) -> Result<Value, CanonicalError> {
         }
         Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort_by(|a, b| utf16_cmp(a.as_str(), b.as_str()));
+            keys.sort_by(|a, b| js_key_cmp(a.as_str(), b.as_str()));
             let mut out = Map::with_capacity(map.len());
             for key in keys {
                 if key == "__proto__" {
@@ -197,6 +224,96 @@ fn write_escaped_string(text: &str, out: &mut String) {
     out.push('"');
 }
 
+/// Returns the exact UTF-8 byte length of `text` as a quoted, JSON-escaped
+/// string matching [`write_escaped_string`].
+#[must_use]
+pub(crate) fn escaped_json_string_len(text: &str) -> usize {
+    let mut len = 2_usize;
+    for ch in text.chars() {
+        let extra = match ch {
+            '"' | '\\' | '\u{0008}' | '\u{000C}' | '\n' | '\r' | '\t' => 2,
+            c if u32::from(c) < 0x20 => 6,
+            c => c.len_utf8(),
+        };
+        len = len.saturating_add(extra);
+    }
+    len
+}
+
+/// Returns the exact UTF-8 byte length of `num` formatted by [`write_number`].
+#[must_use]
+pub(crate) fn js_number_len(num: &Number) -> usize {
+    let mut buf = String::new();
+    write_number(num, &mut buf);
+    buf.len()
+}
+
+fn write_js_f64(value: f64, out: &mut String) {
+    if value.abs().to_bits() == 0 {
+        out.push('0');
+        return;
+    }
+    let mag = if value.is_sign_negative() {
+        out.push('-');
+        -value
+    } else {
+        value
+    };
+    let sci = format!("{mag:e}");
+    let Some((mantissa, exp_str)) = sci.split_once('e') else {
+        out.push_str(&sci);
+        return;
+    };
+    let Ok(exp) = exp_str.parse::<i32>() else {
+        out.push_str(&sci);
+        return;
+    };
+    let mut digits = String::with_capacity(mantissa.len());
+    for ch in mantissa.chars() {
+        if ch != '.' {
+            digits.push(ch);
+        }
+    }
+    let k = i32::try_from(digits.len()).unwrap_or(1);
+    let n = exp.saturating_add(1);
+    if k <= n && n <= 21 {
+        out.push_str(&digits);
+        let zeros = usize::try_from(n.saturating_sub(k)).unwrap_or(0);
+        for _ in 0..zeros {
+            out.push('0');
+        }
+    } else if n > 0 && n <= 21 {
+        let split = usize::try_from(n).unwrap_or(0);
+        out.push_str(digits.get(..split).unwrap_or(""));
+        out.push('.');
+        out.push_str(digits.get(split..).unwrap_or(""));
+    } else if n > -6 && n <= 0 {
+        out.push_str("0.");
+        let zeros = usize::try_from(n.unsigned_abs()).unwrap_or(0);
+        for _ in 0..zeros {
+            out.push('0');
+        }
+        out.push_str(&digits);
+    } else {
+        let mut chars = digits.chars();
+        if let Some(first) = chars.next() {
+            out.push(first);
+            if k > 1 {
+                out.push('.');
+                out.push_str(chars.as_str());
+            }
+        }
+        out.push('e');
+        if exp >= 0 {
+            out.push('+');
+            let _ = write!(out, "{exp}");
+        } else {
+            out.push('-');
+            let _ = write!(out, "{}", exp.unsigned_abs());
+        }
+    }
+}
+
 fn write_number(num: &Number, out: &mut String) {
     if let Some(i) = num.as_i64() {
         let _ = write!(out, "{i}");
@@ -207,11 +324,7 @@ fn write_number(num: &Number, out: &mut String) {
         return;
     }
     if let Some(f) = num.as_f64() {
-        if f.abs().to_bits() == 0 {
-            out.push('0');
-            return;
-        }
-        let _ = write!(out, "{f}");
+        write_js_f64(f, out);
     } else {
         let _ = write!(out, "{num}");
     }
@@ -219,7 +332,7 @@ fn write_number(num: &Number, out: &mut String) {
 
 fn sorted_object_entries(map: &Map<String, Value>) -> Vec<(&str, &Value)> {
     let mut entries: Vec<(&str, &Value)> = map.iter().map(|(k, v)| (k.as_str(), v)).collect();
-    entries.sort_by(|(left, _), (right, _)| utf16_cmp(left, right));
+    entries.sort_by(|(left, _), (right, _)| js_key_cmp(left, right));
     entries
 }
 
@@ -314,11 +427,13 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Computes the Norn1 `SHA-256` hash of `value` for the exact subset spelled
-/// by `tools/norn-ts/src/compiler/definitions.ts` (`norn1Sha256`), delegating
-/// to `norn_canonical::HashProfile::Norn1` when available.
+/// Computes the lower-case 64-hex `Norn1` `SHA-256` hash of `value` for the
+/// exact subset spelled by `tools/norn-ts/src/compiler/definitions.ts`
+/// (`norn1Sha256`), returning `None` when `value` falls outside that subset
+/// (for example control characters, non-ASCII object keys, or non-safe-integer
+/// numbers).
 #[must_use]
-pub(crate) fn norn1_sha256(value: &Value) -> Option<String> {
+pub fn norn1_sha256(value: &Value) -> Option<String> {
     let mut text = String::new();
     write_norn1_subset(value, &mut text)?;
     let mut hasher = Sha256::new();
@@ -447,10 +562,11 @@ pub(crate) fn is_pascal_ident(value: &str) -> bool {
     first.is_ascii_uppercase() && bytes.all(|b| b.is_ascii_alphanumeric())
 }
 
-/// Converts a `serde_json::Value` to `JsonNumber` representation via `norn_canonical`
-/// when verifying compatibility with `norn-canonical`.
+/// Computes the `Norn1` `SHA-256` hash of `value` through
+/// `norn_canonical::HashProfile::Norn1`, returning `None` if canonical JSON
+/// formatting or `norn-canonical` hashing refuses `value`.
 #[must_use]
-pub(crate) fn norn_canonical_hash(value: &Value) -> Option<String> {
+pub fn norn_canonical_hash(value: &Value) -> Option<String> {
     let compact = compact_canonical_json(value).ok()?;
     norn_canonical::HashProfile::Norn1
         .hash_json(compact.as_bytes())
@@ -461,7 +577,10 @@ pub(crate) fn norn_canonical_hash(value: &Value) -> Option<String> {
 mod tests {
     use serde_json::json;
 
-    use super::{canonical_json, norn_canonical_hash, norn1_sha256, to_canonical_json};
+    use super::{
+        canonical_json, compact_canonical_json, escaped_json_string_len, norn_canonical_hash,
+        norn1_sha256, to_canonical_json,
+    };
 
     #[test]
     fn canonical_json_sorts_keys_and_normalizes_negative_zero()
@@ -472,6 +591,33 @@ mod tests {
             formatted,
             "{\n  \"a\": 0,\n  \"b\": 1,\n  \"c\": [\n    true,\n    null\n  ]\n}\n"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_json_matches_js_number_formatting_and_own_key_order()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let input = json!({
+            "10": 1e-7,
+            "2": 1.5e-7,
+            "01": 1e-6,
+            "4294967295": 1e20,
+            "a": 1e21,
+            "0": -0.0
+        });
+        let compact = compact_canonical_json(&input)?;
+        assert_eq!(
+            compact,
+            r#"{"0":0,"2":1.5e-7,"10":1e-7,"01":0.000001,"4294967295":100000000000000000000,"a":1e+21}"#
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn escaped_json_string_len_matches_rendered_output() -> Result<(), Box<dyn std::error::Error>> {
+        let text = "a\0\u{001f}\n\r\t\"\\é";
+        let rendered = compact_canonical_json(&json!(text))?;
+        assert_eq!(escaped_json_string_len(text), rendered.len());
         Ok(())
     }
 

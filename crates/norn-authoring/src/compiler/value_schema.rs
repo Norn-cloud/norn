@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 
 use super::value_types::DecimalType;
 
-pub use super::value_schema_ops::{
+pub(crate) use super::value_schema_ops::{
     BudgetExceeded, ExpansionBudget, ExpansionLimits, assignable, merge_schemas,
 };
 

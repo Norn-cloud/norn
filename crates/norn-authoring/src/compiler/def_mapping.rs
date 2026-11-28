@@ -8,13 +8,13 @@ use tsrs_ast::{Kind, Node};
 use tsrs_checker::Checker;
 use tsrs_core::P;
 
-use super::canonical::is_dotted_lower_id;
+use super::canonical::{is_dotted_lower_id, norn1_sha256, to_canonical_json};
 use super::def_helpers::{
     DefinitionCompiler, INTERFACES, LoweredDef, Members, OBJECT_TYPES, PENDING_SOURCE_SHA256,
     SOURCE_SCHEMA,
 };
 use super::types::{
-    CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope, is_string_literal_like,
+    CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope_checked, is_string_literal_like,
 };
 use super::value_schema::ExpansionBudget;
 
@@ -53,7 +53,7 @@ impl DefinitionCompiler<'_> {
         let title = self.string(checker, Self::member(&members, "title", call)?)?;
         let version = self.string(checker, Self::member(&members, "version", call)?)?;
         let namespace = id.split('.').next().unwrap_or("").to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "mapping".to_owned(),
                 artifact_id: id,
@@ -64,7 +64,8 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         Ok(LoweredDef {
             artifact,
@@ -482,4 +483,57 @@ fn add_mapping_pin(
     dep.insert("required".to_owned(), Value::Bool(true));
     deps.push(Value::Object(dep));
     Ok(())
+}
+
+/// Binds same-project `Norn.sourceSchema` Norn1 hashes onto pending mappings (`MAPPING-SOURCE-REF-1`).
+pub(crate) fn bind_compiled_source_schemas(batches: &mut [Vec<Value>]) {
+    let mut hashes: BTreeMap<String, String> = BTreeMap::new();
+    for artifacts in batches.iter() {
+        for artifact in artifacts {
+            if artifact.get("kind").and_then(Value::as_str) != Some("source_schema") {
+                continue;
+            }
+            let (Some(id), Some(version)) = (
+                artifact.get("artifactId").and_then(Value::as_str),
+                artifact.get("version").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            if let Some(sha) = norn1_sha256(artifact) {
+                hashes.insert(format!("{id}\0{version}"), sha);
+            }
+        }
+    }
+    if hashes.is_empty() {
+        return;
+    }
+    for artifacts in batches.iter_mut() {
+        for artifact in artifacts.iter_mut() {
+            if artifact.get("kind").and_then(Value::as_str) != Some("mapping") {
+                continue;
+            }
+            let key = {
+                let Some(source) = artifact.get("payload").and_then(|p| p.get("source")) else {
+                    continue;
+                };
+                if source.get("sha256").and_then(Value::as_str) != Some(PENDING_SOURCE_SHA256) {
+                    continue;
+                }
+                let schema_id = source.get("schemaId").and_then(Value::as_str).unwrap_or("");
+                let version = source.get("version").and_then(Value::as_str).unwrap_or("");
+                format!("{schema_id}\0{version}")
+            };
+            if let Some(sha) = hashes.get(&key)
+                && let Some(source) = artifact
+                    .get_mut("payload")
+                    .and_then(|p| p.get_mut("source"))
+                    .and_then(Value::as_object_mut)
+            {
+                source.insert("sha256".to_owned(), Value::String(sha.clone()));
+                if let Ok(canon) = to_canonical_json(artifact) {
+                    *artifact = canon;
+                }
+            }
+        }
+    }
 }

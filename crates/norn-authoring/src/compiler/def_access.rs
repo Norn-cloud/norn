@@ -10,7 +10,7 @@ use tsrs_core::P;
 
 use super::canonical::is_dotted_lower_id;
 use super::def_helpers::{DefinitionCompiler, LoweredDef, Members, OBJECT_TYPES};
-use super::types::{CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope};
+use super::types::{CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope_checked};
 use super::value_schema::ExpansionBudget;
 
 const SELF_SCOPE_ATTRS: &[&str] = &[
@@ -70,6 +70,7 @@ impl DefinitionCompiler<'_> {
         for r in self.list(checker, Self::member(&members, "rules", call)?)? {
             rules_json.push(self.compile_access_rule(
                 checker,
+                expansion,
                 r,
                 &scoped_roles,
                 &mut used_scoped_roles,
@@ -95,14 +96,14 @@ impl DefinitionCompiler<'_> {
         if let Some(pc_node) = members.get("principalCatalog") {
             let mut pc = Vec::new();
             for entry in self.list(checker, pc_node)? {
-                pc.push(self.json(checker, entry, 0)?);
+                pc.push(self.json(checker, expansion, entry, 0)?);
             }
             if !pc.is_empty() {
                 payload.insert("principalCatalog".to_owned(), Value::Array(pc));
             }
         }
         let namespace = id.split('.').next().unwrap_or("").to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "policy".to_owned(),
                 artifact_id: format!("{id}.policy"),
@@ -113,7 +114,8 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         Ok(LoweredDef {
             artifact,
@@ -150,6 +152,7 @@ impl DefinitionCompiler<'_> {
     fn compile_access_rule(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         r: P<Node>,
         scoped_roles: &[(String, String, String)],
         used_scoped_roles: &mut HashSet<String>,
@@ -165,7 +168,7 @@ impl DefinitionCompiler<'_> {
         let mut all_of = Vec::new();
         if let Some(ao_node) = m.get("allOf") {
             for cond in self.list(checker, ao_node)? {
-                all_of.push(self.json(checker, cond, 0)?);
+                all_of.push(self.json(checker, expansion, cond, 0)?);
             }
         }
         if !scoped_roles.is_empty() {
@@ -244,35 +247,12 @@ impl DefinitionCompiler<'_> {
         self.validate_connector_resources(checker, resources)?;
         self.validate_connector_mappings_and_extras(checker, mappings, &members)?;
 
-        let mut payload = Map::new();
-        payload.insert(
-            "connectorVersion".to_owned(),
-            Value::String("0.1".to_owned()),
-        );
-        payload.insert("auth".to_owned(), self.json(checker, auth, 0)?);
-        payload.insert("resources".to_owned(), self.json(checker, resources, 0)?);
-        payload.insert("mappings".to_owned(), self.json(checker, mappings, 0)?);
-        if let Some(c) = members.get("cursor") {
-            payload.insert("cursor".to_owned(), self.json(checker, c, 0)?);
-        }
-        if let Some(dl) = members.get("deadLetterPolicy") {
-            payload.insert("deadLetterPolicy".to_owned(), self.json(checker, dl, 0)?);
-        }
-        let mut exts = Map::new();
-        if let Some(p) = members.get("poll") {
-            exts.insert("norn.poll/1".to_owned(), self.json(checker, p, 0)?);
-        }
-        if let Some(p) = members.get("pull") {
-            exts.insert("norn.pull/1".to_owned(), self.json(checker, p, 0)?);
-        }
-        if !exts.is_empty() {
-            payload.insert("extensions".to_owned(), Value::Object(exts));
-        }
-
+        let payload =
+            self.build_connector_payload(checker, expansion, auth, resources, mappings, &members)?;
         let title = self.string(checker, Self::member(&members, "title", call)?)?;
         let version = self.string(checker, Self::member(&members, "version", call)?)?;
         let namespace = id.split('.').next().unwrap_or("").to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "connector".to_owned(),
                 artifact_id: id,
@@ -283,13 +263,65 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         Ok(LoweredDef {
             artifact,
             labels: None,
             at: Some(self.at(call)),
         })
+    }
+
+    fn build_connector_payload(
+        &self,
+        checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
+        auth: P<Node>,
+        resources: P<Node>,
+        mappings: P<Node>,
+        members: &Members,
+    ) -> Result<Map<String, Value>, CompileError> {
+        let mut payload = Map::new();
+        payload.insert(
+            "connectorVersion".to_owned(),
+            Value::String("0.1".to_owned()),
+        );
+        payload.insert("auth".to_owned(), self.json(checker, expansion, auth, 0)?);
+        payload.insert(
+            "resources".to_owned(),
+            self.json(checker, expansion, resources, 0)?,
+        );
+        payload.insert(
+            "mappings".to_owned(),
+            self.json(checker, expansion, mappings, 0)?,
+        );
+        if let Some(c) = members.get("cursor") {
+            payload.insert("cursor".to_owned(), self.json(checker, expansion, c, 0)?);
+        }
+        if let Some(dl) = members.get("deadLetterPolicy") {
+            payload.insert(
+                "deadLetterPolicy".to_owned(),
+                self.json(checker, expansion, dl, 0)?,
+            );
+        }
+        let mut exts = Map::new();
+        if let Some(p) = members.get("poll") {
+            exts.insert(
+                "norn.poll/1".to_owned(),
+                self.json(checker, expansion, p, 0)?,
+            );
+        }
+        if let Some(p) = members.get("pull") {
+            exts.insert(
+                "norn.pull/1".to_owned(),
+                self.json(checker, expansion, p, 0)?,
+            );
+        }
+        if !exts.is_empty() {
+            payload.insert("extensions".to_owned(), Value::Object(exts));
+        }
+        Ok(payload)
     }
 
     fn validate_connector_mappings_and_extras(
@@ -639,17 +671,7 @@ fn inject_scoped_roles(
             entry.2.insert(role.clone());
         }
     }
-    let has_explicit_self_scope = all_of.iter().any(|cond| {
-        let Some(res) = cond.get("resource") else {
-            return false;
-        };
-        res.get("op").and_then(Value::as_str) == Some("eq")
-            && res
-                .get("value")
-                .and_then(|v| v.get("principalAttribute"))
-                .and_then(Value::as_str)
-                .is_some_and(|attr| SELF_SCOPE_ATTRS.contains(&attr.to_ascii_lowercase().as_str()))
-    });
+    let has_explicit_self_scope = has_self_scope_predicate(all_of);
     for key in group_order {
         let Some((attr, prop, roles)) = groups.get(&key) else {
             continue;
@@ -659,22 +681,10 @@ fn inject_scoped_roles(
             .filter(|r| roles.contains(r.as_str()))
             .map(String::as_str)
             .collect();
-        if matched.is_empty() {
-            continue;
-        }
-        let already_scoped = all_of.iter().any(|cond| {
-            let Some(res) = cond.get("resource") else {
-                return false;
-            };
-            res.get("name").and_then(Value::as_str) == Some(prop.as_str())
-                && res.get("op").and_then(Value::as_str) == Some("in")
-                && res
-                    .get("value")
-                    .and_then(|v| v.get("principalAttribute"))
-                    .and_then(Value::as_str)
-                    == Some(attr.as_str())
-        });
-        if already_scoped || has_explicit_self_scope {
+        if matched.is_empty()
+            || has_explicit_self_scope
+            || has_resource_scope_predicate(all_of, prop, attr)
+        {
             continue;
         }
         if matched.len() < rule_roles.len() {
@@ -698,4 +708,33 @@ fn inject_scoped_roles(
         all_of.push(Value::Object(cond));
     }
     Ok(())
+}
+
+fn has_self_scope_predicate(all_of: &[Value]) -> bool {
+    all_of.iter().any(|cond| {
+        let Some(res) = cond.get("resource") else {
+            return false;
+        };
+        res.get("op").and_then(Value::as_str) == Some("eq")
+            && res
+                .get("value")
+                .and_then(|v| v.get("principalAttribute"))
+                .and_then(Value::as_str)
+                .is_some_and(|attr| SELF_SCOPE_ATTRS.contains(&attr.to_ascii_lowercase().as_str()))
+    })
+}
+
+fn has_resource_scope_predicate(all_of: &[Value], prop: &str, attr: &str) -> bool {
+    all_of.iter().any(|cond| {
+        let Some(res) = cond.get("resource") else {
+            return false;
+        };
+        res.get("name").and_then(Value::as_str) == Some(prop)
+            && res.get("op").and_then(Value::as_str) == Some("in")
+            && res
+                .get("value")
+                .and_then(|v| v.get("principalAttribute"))
+                .and_then(Value::as_str)
+                == Some(attr)
+    })
 }

@@ -13,7 +13,7 @@ use super::def_helpers::{
     DefinitionCompiler, LabelTarget, LocalizedData, LoweredDef, MemberLabelsData, Members,
 };
 use super::def_literals::build_label_entries;
-use super::types::{CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope};
+use super::types::{CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope_checked};
 use super::value_schema::ExpansionBudget;
 
 impl DefinitionCompiler<'_> {
@@ -54,19 +54,19 @@ impl DefinitionCompiler<'_> {
         for key in ["source", "observedAt", "adapter", "rawMetadata"] {
             payload.insert(
                 key.to_owned(),
-                self.json(checker, Self::member(&m, key, call)?, 0)?,
+                self.json(checker, expansion, Self::member(&m, key, call)?, 0)?,
             );
         }
         for key in ["datasets", "fields", "codeSets", "constraints"] {
             if let Some(node) = m.get(key) {
-                let val = self.json(checker, node, 0)?;
+                let val = self.json(checker, expansion, node, 0)?;
                 if val.as_array().is_some_and(|a| !a.is_empty()) {
                     payload.insert(key.to_owned(), val);
                 }
             }
         }
         let namespace = id.split('.').next().unwrap_or("").to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "source_schema".to_owned(),
                 artifact_id: id,
@@ -77,7 +77,8 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         Ok(LoweredDef {
             artifact,
@@ -209,10 +210,10 @@ impl DefinitionCompiler<'_> {
         for key in ["sources", "terms", "mappings", "shapes"] {
             payload.insert(
                 key.to_owned(),
-                self.json(checker, Self::member(&m, key, call)?, 0)?,
+                self.json(checker, expansion, Self::member(&m, key, call)?, 0)?,
             );
         }
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "business_pack".to_owned(),
                 artifact_id: id,
@@ -223,7 +224,8 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         Ok(LoweredDef {
             artifact,
@@ -398,16 +400,16 @@ impl DefinitionCompiler<'_> {
         for key in ["fromPack", "toPack", "correspondences"] {
             payload.insert(
                 key.to_owned(),
-                self.json(checker, Self::member(&m, key, call)?, 0)?,
+                self.json(checker, expansion, Self::member(&m, key, call)?, 0)?,
             );
         }
         if let Some(res_node) = m.get("residuals") {
-            let val = self.json(checker, res_node, 0)?;
+            let val = self.json(checker, expansion, res_node, 0)?;
             if val.as_array().is_some_and(|a| !a.is_empty()) {
                 payload.insert("residuals".to_owned(), val);
             }
         }
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "business_pack".to_owned(),
                 artifact_id: id,
@@ -418,7 +420,8 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         Ok(LoweredDef {
             artifact,
@@ -513,13 +516,13 @@ impl DefinitionCompiler<'_> {
                 _ => &["kind"],
             };
             self.closed_record(checker, mask, fields, fields)?;
-            items.push(self.json(checker, node, 0)?);
+            items.push(self.json(checker, expansion, node, 0)?);
         }
         let mut payload = Map::new();
         payload.insert("entityVersion".to_owned(), Value::String("2.0".to_owned()));
         payload.insert("markings".to_owned(), Value::Array(items));
         let namespace = id.split('.').next().unwrap_or("").to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "entity".to_owned(),
                 artifact_id: id,
@@ -530,7 +533,8 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         Ok(LoweredDef {
             artifact,
@@ -592,7 +596,7 @@ impl DefinitionCompiler<'_> {
             );
         }
         let namespace = id.split('.').next().unwrap_or("").to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "labels".to_owned(),
                 artifact_id: id,
@@ -603,7 +607,8 @@ impl DefinitionCompiler<'_> {
             },
             Value::Object(payload),
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         Ok(LoweredDef {
             artifact,

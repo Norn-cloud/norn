@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 
-use super::canonical::compact_canonical_json;
+use super::canonical::{compact_canonical_json, escaped_json_string_len, js_number_len};
 use super::value_schema::{ObjectSchema, ValueSchema};
 use super::value_types::DecimalType;
 
@@ -290,6 +290,7 @@ pub(crate) struct ExpansionBudget {
     started: Instant,
     work: usize,
     output: usize,
+    pending_bytes: usize,
 }
 
 impl ExpansionBudget {
@@ -301,6 +302,7 @@ impl ExpansionBudget {
             started: Instant::now(),
             work: 0,
             output: 0,
+            pending_bytes: 0,
         }
     }
 
@@ -312,6 +314,7 @@ impl ExpansionBudget {
             started,
             work: 0,
             output: 0,
+            pending_bytes: 0,
         }
     }
 
@@ -331,10 +334,11 @@ impl ExpansionBudget {
         Ok(())
     }
 
-    /// Resets the per-module work counter while keeping the pack-wide output
-    /// byte counter and deadline.
+    /// Resets the per-module work and pending literal counters while keeping
+    /// the pack-wide output byte counter and deadline.
     pub(crate) fn begin_module(&mut self) {
         self.work = 0;
+        self.pending_bytes = 0;
     }
 
     /// Returns work units charged since the last [`Self::begin_module`].
@@ -386,13 +390,13 @@ impl ExpansionBudget {
             }),
             Value::Number(num) => Ok(Cost {
                 work: 1,
-                bytes: num.to_string().len(),
+                bytes: js_number_len(num),
                 lines: 0,
                 height: 0,
             }),
             Value::String(s) => Ok(Cost {
                 work: 1,
-                bytes: s.len().saturating_add(2),
+                bytes: escaped_json_string_len(s),
                 lines: 0,
                 height: 0,
             }),
@@ -447,7 +451,7 @@ impl ExpansionBudget {
             work = self.cap_work(work.saturating_add(c.work));
             let comma = usize::from(idx.saturating_add(1) < len);
             let indent = c.lines.saturating_add(1).saturating_mul(2);
-            let key_bytes = key.len().saturating_add(4);
+            let key_bytes = escaped_json_string_len(key).saturating_add(2);
             bytes = self.cap_bytes(
                 bytes
                     .saturating_add(c.bytes)
@@ -506,12 +510,37 @@ impl ExpansionBudget {
         })
     }
 
+    /// Charges work and pending literal output bytes ahead of allocating or
+    /// cloning literal strings, arrays, or objects.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BudgetExceeded`] when work, output byte, or time limits are exceeded.
+    pub(crate) fn charge_literal(
+        &mut self,
+        work: usize,
+        bytes: usize,
+    ) -> Result<(), BudgetExceeded> {
+        self.check()?;
+        self.work = self.cap_work(self.work.saturating_add(work));
+        self.pending_bytes = self.cap_bytes(self.pending_bytes.saturating_add(bytes));
+        if self.work > self.limits.max_work
+            || self.pending_bytes > self.limits.max_output_bytes.saturating_sub(self.output)
+        {
+            return Err(BudgetExceeded(
+                "expanded data exceeds compiler work or output byte bound".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Charges work and accumulates output bytes for emitted data.
     ///
     /// # Errors
     ///
     /// Returns [`BudgetExceeded`] if work, output byte, depth, or time limits are exceeded.
     pub(crate) fn add_output(&mut self, value: &Value) -> Result<(), BudgetExceeded> {
+        self.pending_bytes = 0;
         let cost = self.value_cost(value, 0)?;
         self.charge(cost)?;
         self.output = self.cap_bytes(self.output.saturating_add(cost.bytes).saturating_add(1));
@@ -542,5 +571,31 @@ impl ExpansionBudget {
         self.charge(cost)?;
         self.output = self.cap_bytes(self.output.saturating_add(cost.bytes));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{ExpansionBudget, ExpansionLimits};
+
+    #[test]
+    fn output_budget_charges_escaped_bytes_for_control_heavy_strings() {
+        let raw = "\u{0000}".repeat(40);
+        // Raw length is 40 bytes, but escaped JSON is `"\u0000..."` = 2 + 240 = 242 bytes.
+        let mut budget = ExpansionBudget::new(ExpansionLimits {
+            max_work: 1_000,
+            max_output_bytes: 100,
+            max_millis: None,
+        });
+        assert!(budget.assert_value(&json!(raw)).is_err());
+
+        let mut generous = ExpansionBudget::new(ExpansionLimits {
+            max_work: 1_000,
+            max_output_bytes: 300,
+            max_millis: None,
+        });
+        assert!(generous.assert_value(&json!(raw)).is_ok());
     }
 }

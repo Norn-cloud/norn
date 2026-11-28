@@ -80,7 +80,7 @@ impl DefinitionCompiler<'_> {
                 source.as_node(),
             ));
         }
-        let examples = self.compile_examples(checker, source)?;
+        let examples = self.compile_examples(checker, expansion, source)?;
         Ok(CompiledModuleDefs {
             artifacts: acc.artifacts,
             flows: acc.flows,
@@ -119,7 +119,7 @@ impl DefinitionCompiler<'_> {
                 *flows = flows.saturating_add(1);
                 Ok(())
             }
-            _ => Ok(()),
+            Some(_) | None => Ok(()),
         }
     }
 
@@ -154,7 +154,7 @@ impl DefinitionCompiler<'_> {
             return Ok(());
         }
         if id == APPROVAL {
-            let approval = self.compile_approval(checker, init)?;
+            let approval = self.compile_approval(checker, expansion, init)?;
             if acc.retained.iter().any(|other| other.id == approval.id) {
                 return Err(CompileError::new(
                     "NORN-FLOW-LITERAL",
@@ -255,6 +255,7 @@ impl DefinitionCompiler<'_> {
     fn compile_approval(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         call: P<Node>,
     ) -> Result<RetainedDefinitionDoc, CompileError> {
         let m = self.meta(
@@ -313,25 +314,31 @@ impl DefinitionCompiler<'_> {
         );
         payload.insert("risk".to_owned(), Value::String(risk));
         if let Some(exp) = m.get("expiresInMs") {
-            payload.insert("expiresInMs".to_owned(), self.json(checker, exp, 0)?);
+            payload.insert(
+                "expiresInMs".to_owned(),
+                self.json(checker, expansion, exp, 0)?,
+            );
         }
         if let Some(when_node) = m.get("when") {
             payload.insert(
                 "when".to_owned(),
-                self.compile_approval_when(checker, when_node)?,
+                self.compile_approval_when(checker, expansion, when_node)?,
             );
         }
         let raw_payload = Value::Object(payload);
+        let canonical = to_canonical_json(&raw_payload)
+            .map_err(|err| CompileError::new("NORN-FLOW-LITERAL", err.to_string(), call))?;
         Ok(RetainedDefinitionDoc {
             kind: "approval".to_owned(),
             id: self.string(checker, Self::member(&m, "id", call)?)?,
-            payload: to_canonical_json(&raw_payload).unwrap_or(raw_payload),
+            payload: canonical,
         })
     }
 
     fn compile_approval_when(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         when_node: P<Node>,
     ) -> Result<Value, CompileError> {
         let w = self.closed_record(
@@ -350,7 +357,7 @@ impl DefinitionCompiler<'_> {
             ));
         }
         let val_node = Self::member(&w, "value", when_node)?;
-        let val = self.when_value(checker, val_node)?;
+        let val = self.when_value(checker, expansion, val_node)?;
         if !matches!(val, Value::String(_) | Value::Number(_) | Value::Bool(_)) {
             return Err(CompileError::new(
                 "NORN-FLOW-LITERAL",

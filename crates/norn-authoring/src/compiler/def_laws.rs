@@ -19,7 +19,7 @@ use super::def_literals::{build_label_entries, build_labels_artifact};
 use super::def_norms::ExceptionTreeSpec;
 use super::expr::{TemporalKind, narrow_subject_schema};
 use super::types::{
-    CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope, is_string_literal_like,
+    CompileError, EnvelopeMeta, EnvelopeOptions, build_envelope_checked, is_string_literal_like,
 };
 use super::value_schema::{ExpansionBudget, ObjectSchema, ValueSchema};
 
@@ -69,7 +69,12 @@ impl DefinitionCompiler<'_> {
             Self::member(&members, "law", call)?,
             &id,
         )?;
-        let deps_val = self.json(checker, Self::member(&members, "dependencies", call)?, 0)?;
+        let deps_val = self.json(
+            checker,
+            expansion,
+            Self::member(&members, "dependencies", call)?,
+            0,
+        )?;
         let deps = deps_val.as_array().cloned().unwrap_or_default();
         let law_id = law_body
             .get("id")
@@ -77,7 +82,7 @@ impl DefinitionCompiler<'_> {
             .unwrap_or(&id)
             .to_owned();
         let namespace = id.split('.').next().unwrap_or("").to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "law".to_owned(),
                 artifact_id: id,
@@ -88,10 +93,11 @@ impl DefinitionCompiler<'_> {
             },
             law_body,
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         let entries = build_label_entries(&LabelTarget::Law(law_id), &localized, None);
-        let labels = build_labels_artifact(&artifact, entries, options);
+        let labels = build_labels_artifact(&artifact, entries, options, call)?;
         Ok(LoweredDef {
             artifact,
             labels,
@@ -166,7 +172,7 @@ impl DefinitionCompiler<'_> {
             },
         )?;
         let namespace = artifact_id.split('.').next().unwrap_or("").to_owned();
-        let artifact = build_envelope(
+        let artifact = build_envelope_checked(
             EnvelopeMeta {
                 kind: "law".to_owned(),
                 artifact_id,
@@ -177,7 +183,8 @@ impl DefinitionCompiler<'_> {
             },
             law_ir,
             options,
-        );
+            call,
+        )?;
         Self::assert_expansion(expansion, &artifact, call)?;
         Ok(LoweredDef {
             artifact,
@@ -275,7 +282,7 @@ impl DefinitionCompiler<'_> {
             checker,
             Self::member(&subject_members, "name", subject_call)?,
         )?;
-        let Some((owner, _)) = subject.rsplit_once('.') else {
+        let Some((owner, _)) = subject.rsplit_once('.').filter(|(ns, _)| !ns.is_empty()) else {
             return Err(CompileError::new(
                 "NORN-FLOW-LITERAL",
                 format!(
@@ -284,15 +291,6 @@ impl DefinitionCompiler<'_> {
                 on,
             ));
         };
-        if owner.is_empty() {
-            return Err(CompileError::new(
-                "NORN-FLOW-LITERAL",
-                format!(
-                    "law subject {subject:?} is not a qualified type name (namespace.Type), so the law has no owner"
-                ),
-                on,
-            ));
-        }
         let version = self.string(
             checker,
             Self::member(&subject_members, "version", subject_call)?,
@@ -623,13 +621,13 @@ impl DefinitionCompiler<'_> {
                         };
                         Value::String(s)
                     } else {
-                        self.json(checker, member, 0)?
+                        self.json(checker, expansion, member, 0)?
                     };
                     resp.insert(field.to_owned(), v);
                 }
                 out.insert(key.to_owned(), Value::Object(resp));
             } else {
-                out.insert(key.to_owned(), self.json(checker, value, 0)?);
+                out.insert(key.to_owned(), self.json(checker, expansion, value, 0)?);
             }
         }
         Ok(Value::Object(out))

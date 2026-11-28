@@ -340,7 +340,7 @@ impl SyntaxCompiler<'_> {
                 self.policy_exponential(call, args, checker, expansion)
             }
             Some("effect/Schedule#max") => self.policy_max(expr, args, checker, expansion),
-            _ => Err(CompileError::new(
+            Some(_) | None => Err(CompileError::new(
                 "NORN-FLOW-UNSUPPORTED-SYNTAX",
                 "unsupported Schedule policy",
                 expr,

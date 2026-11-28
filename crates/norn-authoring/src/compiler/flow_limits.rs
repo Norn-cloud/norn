@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use super::flow_source_map::{
     FLOW_MAX_RECURS, FLOW_MAX_ROWS, FLOW_MAX_STEPS, FLOW_MAX_TIMER_MILLIS, FlowDef, Step,
-    list_length, retry_delay,
+    retry_delay,
 };
 
 /// Envelope limits section of a `norn.limits/1` profile.

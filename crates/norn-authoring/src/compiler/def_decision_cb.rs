@@ -98,11 +98,9 @@ impl DecisionHooks for CallbackDecisionHooks<'_, '_> {
             self.compiler
                 .schemas
                 .closed(&out_read, NullableMode::Any, false, expansion)?;
-
         let mut input_field = render(&input, self.scope)
             .map_err(|err| CompileError::new(err.code, err.message, site))?;
         let mut ordered_fold: Option<Value> = None;
-
         if self.compiler.call_id(checker, site).as_deref()
             == Some("@norn/authoring#Norn.orderedFold")
         {
@@ -118,28 +116,12 @@ impl DecisionHooks for CallbackDecisionHooks<'_, '_> {
             input_field = fold_input_field;
             ordered_fold = Some(fold_val);
         }
-
-        let mut content = Map::new();
-        content.insert("key".to_owned(), Value::String(pin.artifact_id));
-        content.insert("inputField".to_owned(), Value::String(input_field));
-        content.insert("outputPath".to_owned(), Value::String(name.clone()));
-        content.insert("passThrough".to_owned(), Value::Bool(true));
-        if let Some(fold) = ordered_fold {
-            content.insert("orderedFold".to_owned(), fold);
-        }
-        let mut node_obj = Map::new();
-        node_obj.insert("id".to_owned(), Value::String(name.clone()));
-        node_obj.insert("name".to_owned(), Value::String(name.clone()));
-        node_obj.insert("type".to_owned(), Value::String("decisionNode".to_owned()));
-        node_obj.insert("content".to_owned(), Value::Object(content));
-        self.calls.push(Value::Object(node_obj));
-
-        self.scope.insert(
+        self.push_sub_decision_node(
+            pin.artifact_id,
             name.clone(),
-            Binding::Zen {
-                zen: name.clone(),
-                schema: output,
-            },
+            input_field,
+            ordered_fold,
+            output,
         );
         Ok(Expr::input(name, Vec::new()))
     }
@@ -163,6 +145,37 @@ impl DecisionHooks for CallbackDecisionHooks<'_, '_> {
 }
 
 impl CallbackDecisionHooks<'_, '_> {
+    fn push_sub_decision_node(
+        &mut self,
+        artifact_id: String,
+        name: String,
+        input_field: String,
+        ordered_fold: Option<Value>,
+        output: ValueSchema,
+    ) {
+        let mut content = Map::new();
+        content.insert("key".to_owned(), Value::String(artifact_id));
+        content.insert("inputField".to_owned(), Value::String(input_field));
+        content.insert("outputPath".to_owned(), Value::String(name.clone()));
+        content.insert("passThrough".to_owned(), Value::Bool(true));
+        if let Some(fold) = ordered_fold {
+            content.insert("orderedFold".to_owned(), fold);
+        }
+        let mut node_obj = Map::new();
+        node_obj.insert("id".to_owned(), Value::String(name.clone()));
+        node_obj.insert("name".to_owned(), Value::String(name.clone()));
+        node_obj.insert("type".to_owned(), Value::String("decisionNode".to_owned()));
+        node_obj.insert("content".to_owned(), Value::Object(content));
+        self.calls.push(Value::Object(node_obj));
+        self.scope.insert(
+            name.clone(),
+            Binding::Zen {
+                zen: name,
+                schema: output,
+            },
+        );
+    }
+
     fn validate_sub_decision_site(&self, site: P<Node>) -> Result<(), CompileError> {
         let valid_site = site
             .parent()
@@ -249,10 +262,10 @@ impl CallbackDecisionHooks<'_, '_> {
             .map_err(|err| CompileError::new(err.code, err.message, target.site))?;
         let fold = self.build_ordered_fold_json(
             checker,
+            expansion,
             &policy,
             policy_arg,
-            &item_schema,
-            target.output,
+            (&item_schema, target.output),
             init_zen,
         )?;
         Ok((items_zen, fold))
@@ -359,12 +372,13 @@ impl CallbackDecisionHooks<'_, '_> {
     fn build_ordered_fold_json(
         &mut self,
         checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
         policy: &Members,
         policy_arg: P<Node>,
-        item_schema: &ValueSchema,
-        output: &ValueSchema,
+        schemas: (&ValueSchema, &ValueSchema),
         init_zen: String,
     ) -> Result<Value, CompileError> {
+        let (item_schema, output) = schemas;
         let mut fold = Map::new();
         fold.insert(
             "semanticsVersion".to_owned(),
@@ -381,6 +395,7 @@ impl CallbackDecisionHooks<'_, '_> {
                 key.to_owned(),
                 self.compiler.json(
                     checker,
+                    expansion,
                     DefinitionCompiler::member(policy, key, policy_arg)?,
                     0,
                 )?,
@@ -388,14 +403,12 @@ impl CallbackDecisionHooks<'_, '_> {
         }
         let item_val = item_schema.to_json();
         let acc_val = output.to_json();
-        fold.insert(
-            "itemSchema".to_owned(),
-            to_canonical_json(&item_val).unwrap_or(item_val),
-        );
-        fold.insert(
-            "accumulatorSchema".to_owned(),
-            to_canonical_json(&acc_val).unwrap_or(acc_val),
-        );
+        let item_canon = to_canonical_json(&item_val)
+            .map_err(|err| CompileError::new("NORN-FLOW-LITERAL", err.to_string(), policy_arg))?;
+        let acc_canon = to_canonical_json(&acc_val)
+            .map_err(|err| CompileError::new("NORN-FLOW-LITERAL", err.to_string(), policy_arg))?;
+        fold.insert("itemSchema".to_owned(), item_canon);
+        fold.insert("accumulatorSchema".to_owned(), acc_canon);
         fold.insert("initial".to_owned(), Value::String(init_zen));
         Ok(Value::Object(fold))
     }
