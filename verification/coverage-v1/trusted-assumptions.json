@@ -10,12 +10,12 @@
       "falsificationTest": "Pin and attest the Lean version and distribution checksum, rebuild on an independent host, compare behavior or binary identity where reproducible, and require known-invalid proof fixtures to fail."
     },
     {
-      "id": "TRUST-FSTAR-SMT-AND-HAX",
+      "id": "TRUST-VERUS-SMT-AND-TOOLCHAIN",
       "owner": "Norn verification maintainers",
-      "boundary": "Pinned clean hax source tree, its built or cache-restored binaries, the F* typechecker, Z3 solver, and reviewed compatibility models",
-      "justification": "The attestation records clean source commit/tree identities and live tool versions, but does not prove that cache-restored or locally built binaries correspond to those sources. Extracted correspondence lanes still rely on translation correctness and F*/SMT soundness outside the proved Rust predicate.",
-      "blastRadius": "A substituted binary, translation defect, or solver soundness defect could invalidate every implementation-extraction correspondence claim.",
-      "falsificationTest": "Rebuild extraction tools from the pinned clean trees with caches disabled, compare behavior and binary digests where reproducible, inspect one-function generated modules, run negative mutation fixtures, cross-check with independent solvers where supported, and reject source-tree or live tool-version drift."
+      "boundary": "Checksum-pinned Verus binary bundle (0.2026.11.22.1ce6a59), bundled Z3 solver, vstd library, pinned rustc 1.100.0 toolchain, and D107 VIR/THIR comparison",
+      "justification": "Inline Verus gates verify production Rust sources directly with --no-cheating, --no-external-by-default, and -Zcrate-attr=verus::untrusted, then compare Verus VIR against release Cargo THIR (D107). The Verus binary, SMT solver, vstd specifications, and rustc/LLVM codegen below THIR remain in the trusted computing base.",
+      "blastRadius": "A compromised or unsound Verus/Z3 binary, vstd defect, or compiler bug below THIR could accept invalid inline Verus contracts for version_check, artifact_governance, and overlay_core.",
+      "falsificationTest": "Verify the pinned Verus archive checksum and installation digest, check approved statement digests against the coverage manifest, require D107 VIR/THIR equality against release Cargo builds, and require every seeded mutant patch in verification/mutants/ to fail its exact named postcondition."
     },
     {
       "id": "TRUST-QUINT-APALACHE-AND-JVM",

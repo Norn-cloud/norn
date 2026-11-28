@@ -489,11 +489,10 @@
       "domain": "artifact-governance",
       "priority": "P0",
       "kind": "safety",
-      "statement": "For every current production ArtifactKind and ArtifactLifecycle value, the direct catalog-write predicate rejects exactly Approved and Active lifecycles and admits the other five lifecycle values.",
+      "statement": "For every current production ArtifactKind (17 variants) and ArtifactLifecycle (7 variants) value, the direct catalog-write predicate rejects exactly Approved and Active lifecycles for the 16 authority-bearing kinds and admits every other combination including all lifecycles of evidence-only SourceSchema.",
       "owner": "canonical ArtifactIR lifecycle admission predicate",
       "assumptions": [
-        "The hax translation preserves the selected Rust function and closed enum representations.",
-        "The pinned F* typechecker and SMT solver are sound.",
+        "The pinned Verus verifier, Z3 solver, and D107 VIR/THIR comparison preserve the selected Rust function and closed enum representations.",
         "This obligation does not assert that all privileged callsites invoke the predicate."
       ],
       "sources": [
@@ -512,12 +511,12 @@
         {
           "lane": "runtime",
           "artifact": "crates/norn-ir/tests/artifact_governance.rs",
-          "acceptance": "the production function returns the expected result for the current finite 11 ArtifactKind by 7 ArtifactLifecycle table"
+          "acceptance": "the production function returns the expected result for the current finite 16 authority-bearing x 4 and 17 x 3 ArtifactKind by ArtifactLifecycle table"
         },
         {
-          "lane": "hax-probe",
-          "artifact": "proofs/fstar/ArtifactPromotionProof.fst",
-          "acceptance": "a total F* theorem over the hax-extracted production definition and closed enum types proves the exact lifecycle truth table without a precondition or proof hole"
+          "lane": "verus",
+          "artifact": "crates/norn-ir/src/artifact_governance.rs",
+          "acceptance": "inline Verus contracts and total ghost lemmas directly on the production Rust definition and closed enum types prove the exact 17 x 7 lifecycle truth table without preconditions, checked with D107 VIR/THIR agreement and seeded negative mutants"
         }
       ],
       "counterexamples": [
