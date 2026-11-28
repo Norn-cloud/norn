@@ -535,7 +535,7 @@ fn add_v13_link_claim_frontier_tables(image: &mut Value) {
         (
             "_norn_link_claim_frontier",
             "_norn_link_claim_frontier/delete_withdrawal",
-            "CREATE INDEX \"_norn_link_claim_frontier/delete_withdrawal\" ON \"_norn_link_claim_frontier\" (\"commit_seq\") WHERE \"target_key\" IS NULL AND json_extract(\"claim_json\", '$.provenance.transform') LIKE '%.delete'",
+            "CREATE INDEX \"_norn_link_claim_frontier/delete_withdrawal\" ON \"_norn_link_claim_frontier\" (\"source_scope\", \"source_type\", \"source_key\", \"commit_seq\") WHERE \"target_key\" IS NULL AND json_extract(\"claim_json\", '$.provenance.transform') LIKE '%#delete'",
         ),
         (
             "_norn_ledger",

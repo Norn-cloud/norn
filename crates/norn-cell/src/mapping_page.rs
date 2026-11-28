@@ -232,7 +232,8 @@ impl<E: SqlEngine> CellStore<E> {
             match runs.last_mut() {
                 Some((ids, written, seen_ids, run_bytes, run_is_delete, _))
                     if !split
-                        && *run_is_delete == is_delete
+                        && !is_delete
+                        && !*run_is_delete
                         && ids.len() < run_cap
                         && run_bytes.saturating_add(row_bytes) <= MAX_PAGE_BYTES
                         && written.is_disjoint(&keys)

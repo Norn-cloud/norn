@@ -283,6 +283,7 @@ fn collect_delete_history_commits<E: SqlEngine>(
     bundle: &crate::mapping_bundle::MappingBundle,
 ) -> Result<std::collections::BTreeSet<i64>, CellError> {
     let mut commits = std::collections::BTreeSet::new();
+    let scope = bundle.source_scope()?;
     for (ty, key) in bundle
         .deletes
         .iter()
@@ -295,30 +296,31 @@ fn collect_delete_history_commits<E: SqlEngine>(
         )
     {
         let buried = tombstone_key(&FactKey::new(ty, key));
-        let rows = reader.conn.query(
+        for raw in reader.conn.query(
             &format!(
                 "SELECT DISTINCT \"commit_seq\" FROM \"{}\" \
                  WHERE \"world\" = ?1 AND \"id\" = ?2 AND \"object_type\" = ?3",
                 crate::system::FACT_VALUES,
             ),
             crate::engine::params![crate::MAIN_WORLD, buried.key, buried.object_type.as_str()],
-        )?;
-        for raw in rows {
+        )? {
             commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
         }
+        for raw in reader.conn.query(
+            &format!(
+                "SELECT DISTINCT \"commit_seq\" FROM \"{}\" \
+                 WHERE \"world\" = ?1 \
+                   AND json_extract(\"event\", '$.op') = 'observed_deleted' \
+                   AND json_extract(\"event\", '$.key.objectType') = ?2 \
+                   AND json_extract(\"event\", '$.key.key') = ?3",
+                crate::system::LEDGER,
+            ),
+            crate::engine::params![crate::MAIN_WORLD, ty, key],
+        )? {
+            commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
+        }
+        commits.extend(reader.delete_withdrawal_commits_for_subject(&scope, ty, key)?);
     }
-    let del_events = reader.conn.query(
-        &format!(
-            "SELECT DISTINCT \"commit_seq\" FROM \"{}\" \
-             WHERE \"world\" = ?1 AND json_extract(\"event\", '$.op') = 'observed_deleted'",
-            crate::system::LEDGER,
-        ),
-        crate::engine::params![crate::MAIN_WORLD],
-    )?;
-    for raw in del_events {
-        commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
-    }
-    commits.extend(reader.withdrawal_claim_commits()?);
     let zero_writes = reader.conn.query(
         &format!(
             "SELECT \"commit_seq\" FROM \"{}\" \
@@ -976,7 +978,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 }
                 let mut provenance = delete.provenance.clone();
                 provenance.transform =
-                    Some(format!("{}.{}.delete", delete.map, existing.role.as_str()));
+                    Some(format!("{}.{}#delete", delete.map, existing.role.as_str()));
                 withdrawals.push(norn_ir::mapping::ObservedLinkClaim {
                     observation_id: obs_id.to_owned(),
                     source_scope: existing.source_scope,

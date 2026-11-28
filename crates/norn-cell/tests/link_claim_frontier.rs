@@ -191,7 +191,15 @@ fn referring_parties_patch(artifacts: &mut Vec<ArtifactEnvelope>) {
                 "typeCandidate": { "origin": "declared", "type": "string" }
             }));
     });
+    let source_art = artifacts
+        .iter()
+        .find(|a| a.artifact_id == "erpnext.three.source")
+        .expect("source");
+    let source_sha = norn_checker::ArtifactRef::of(source_art)
+        .expect("source ref")
+        .sha256;
     edit_artifact(artifacts, "erpnext.three.mapping", |a| {
+        a["payload"]["source"]["sha256"] = json!(source_sha);
         a["payload"]["extensions"] = json!({
             "norn.feed/1": {
                 "feeds": {

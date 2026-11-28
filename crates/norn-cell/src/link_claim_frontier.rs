@@ -52,7 +52,7 @@ pub(crate) const DDL: &[&str] = &[
     r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/source_role" ON "_norn_link_claim_frontier" ("source_key", "role", "commit_seq", "claim_ordinal") WHERE "active" = 1"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/target" ON "_norn_link_claim_frontier" ("target_key", "source_key", "role") WHERE "active" = 1 AND "target_key" IS NOT NULL"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/observation" ON "_norn_link_claim_frontier" ("observation_id")"#,
-    r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/delete_withdrawal" ON "_norn_link_claim_frontier" ("commit_seq") WHERE "target_key" IS NULL AND json_extract("claim_json", '$.provenance.transform') LIKE '%.delete'"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/delete_withdrawal" ON "_norn_link_claim_frontier" ("source_scope", "source_type", "source_key", "commit_seq") WHERE "target_key" IS NULL AND json_extract("claim_json", '$.provenance.transform') LIKE '%#delete'"#,
     r#"CREATE TABLE IF NOT EXISTS "_norn_dispute_resolution" (
   "dispute_id" TEXT NOT NULL PRIMARY KEY,
   "decision" TEXT NOT NULL CHECK ("decision" IN ('accept-first', 'accept-second-as-correction', 'reject')),
@@ -770,14 +770,11 @@ fn decode_frontier_row(raw: Vec<crate::engine::SqlValue>) -> Result<FrontierRow,
         reason: format!("negative frontier commit_seq for {claim_id}: {err}"),
     })?;
     let source_version: String = row.get(3)?;
-    let version_kind_text: String = row.get(4)?;
     let version_kind =
-        VersionKind::parse_wire(&version_kind_text).unwrap_or(VersionKind::Lexicographical);
-    let event_keys_json: String = row.get(5)?;
-    let event_keys: [String; 5] = serde_json::from_str(&event_keys_json)?;
+        VersionKind::parse_wire(&row.get::<String>(4)?).unwrap_or(VersionKind::Lexicographical);
+    let event_keys: [String; 5] = serde_json::from_str(&row.get::<String>(5)?)?;
     let active = row.get::<i64>(6)? != 0;
-    let claim_json: String = row.get(7)?;
-    let claim_val = Value::from_json_text(&claim_json).map_err(|error| {
+    let claim_val = Value::from_json_text(&row.get::<String>(7)?).map_err(|error| {
         CellError::Encoding(format!("frontier claim JSON for {claim_id}: {error}"))
     })?;
     let claim: ObservedLinkClaim = norn_ir::runtime::decode(&claim_val).map_err(|error| {
@@ -866,15 +863,21 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.read_frontier_consistent(|| self.query_frontier_raw(where_clause, bound))
     }
 
-    pub(crate) fn withdrawal_claim_commits(&self) -> Result<Vec<i64>, CellError> {
+    pub(crate) fn delete_withdrawal_commits_for_subject(
+        &self,
+        source_scope: &str,
+        source_type: &str,
+        source_key: &str,
+    ) -> Result<Vec<i64>, CellError> {
         self.read_frontier_consistent(|| {
             let rows = self.conn.query(
                 &format!(
                     "SELECT DISTINCT \"commit_seq\" FROM \"{LINK_CLAIM_FRONTIER}\" \
-                     WHERE \"target_key\" IS NULL \
-                       AND json_extract(\"claim_json\", '$.provenance.transform') LIKE '%.delete'"
+                     WHERE \"source_scope\" = ?1 AND \"source_type\" = ?2 AND \"source_key\" = ?3 \
+                       AND \"target_key\" IS NULL \
+                       AND json_extract(\"claim_json\", '$.provenance.transform') LIKE '%#delete'"
                 ),
-                params![],
+                params![source_scope, source_type, source_key],
             )?;
             rows.into_iter().map(|r| SqlRow(r).get::<i64>(0)).collect()
         })
