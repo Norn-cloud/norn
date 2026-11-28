@@ -44,10 +44,7 @@ clone_pin() {
 
 OPAM_VERSION="2.5.2"
 OPAM_REPOSITORY_COMMIT="45220c31b03bbad5f368a3e01c8e3da44844c5db"
-FSTAR_VERSION="2026.08.16"
-HAX_COMMIT="37ecb8240fc237377f63614622650190a45617ff"
 AENEAS_COMMIT="74a460a2f80ecea481bbdf1a08f881633c3bb097"
-HAX_RUST_TOOLCHAIN="nightly-2025-11-08-x86_64-unknown-linux-gnu"
 OPAM_SWITCH="norn-verification-5.4.1"
 
 opam_binary="$tool_root/opam-$OPAM_VERSION/opam"
@@ -64,15 +61,10 @@ printf '%s  %s\n' \
   "$opam_binary" | sha256sum --check --status
 ln -sfn "$opam_binary" "$bin_root/opam"
 
-fstar_archive="$download_root/fstar-v$FSTAR_VERSION-Linux-x86_64.tar.gz"
-fstar_root="$tool_root/fstar-$FSTAR_VERSION"
-
-clone_pin "https://github.com/cryspen/hax.git" "$HAX_COMMIT" "$source_root/hax"
 clone_pin "https://github.com/AeneasVerif/aeneas.git" "$AENEAS_COMMIT" "$source_root/aeneas"
 
 export CARGO_HOME="$tool_root/cargo"
 export RUSTUP_HOME="$tool_root/rustup"
-export RUSTUP_TOOLCHAIN="$HAX_RUST_TOOLCHAIN"
 export OPAMROOT="$tool_root/opam-root"
 export PATH="$bin_root:$CARGO_HOME/bin:$PATH"
 # OCaml native compilation is memory intensive even with only four CPUs.
@@ -87,9 +79,9 @@ installation_digest() {
   sha256sum < "${BASH_SOURCE[0]}"
   "$opam_binary" list --installed --short --columns=name,version
   find -L "$OPAMROOT/$OPAM_SWITCH/bin" "$OPAMROOT/$OPAM_SWITCH/lib" "$OPAMROOT/$OPAM_SWITCH/share" \
-    "$bin_root" "$CARGO_HOME/bin" "$tool_root/rustup/toolchains" \
+    "$bin_root" "$tool_root/rustup/toolchains" \
     "$source_root/aeneas/bin" "$source_root/aeneas/charon/bin" \
-    "$fstar_root" -type f -exec stat -Lc 'mode %a %n' {} + -exec sha256sum {} + | LC_ALL=C sort
+    -type f -exec stat -Lc 'mode %a %n' {} + -exec sha256sum {} + | LC_ALL=C sort
 }
 
 if [[ -f "$receipt" ]]; then
@@ -105,35 +97,6 @@ if [[ -f "$receipt" ]]; then
   exit 0
 fi
 
-download_verified \
-  "https://github.com/FStarLang/FStar/releases/download/v$FSTAR_VERSION/fstar-v$FSTAR_VERSION-Linux-x86_64.tar.gz" \
-  "e8718fad41c51ef212aa6bfd7418796ab5e32f24e490eb0d7bef9357486fa6ab" \
-  "$fstar_archive"
-
-fstar_binary="$(find "$fstar_root" -type f -name fstar.exe -perm -u+x -print -quit 2>/dev/null || true)"
-if [[ -z "$fstar_binary" ]]; then
-  mkdir -p "$fstar_root"
-  tar -xzf "$fstar_archive" -C "$fstar_root"
-  fstar_binary="$(find "$fstar_root" -type f -name fstar.exe -perm -u+x -print -quit)"
-fi
-if [[ -z "$fstar_binary" ]]; then
-  echo "F* archive did not contain fstar.exe" >&2
-  exit 1
-fi
-ln -sfn "$fstar_binary" "$bin_root/fstar.exe"
-
-
-if [[ ! -d "$RUSTUP_HOME/toolchains/$HAX_RUST_TOOLCHAIN" ]]; then
-  rustup toolchain install "$HAX_RUST_TOOLCHAIN" \
-    --profile minimal \
-    --component rustc-dev \
-    --component llvm-tools-preview \
-    --component rust-analysis \
-    --component rust-src \
-    --component rustfmt \
-    --no-self-update
-fi
-
 opam_repository_url="git+https://github.com/ocaml/opam-repository.git#$OPAM_REPOSITORY_COMMIT"
 if [[ ! -f "$OPAMROOT/config" ]]; then
   "$opam_binary" init --bare --disable-sandboxing --no-setup --yes default "$opam_repository_url"
@@ -147,8 +110,6 @@ fi
 export OPAMSWITCH="$OPAM_SWITCH"
 eval "$("$opam_binary" env --set-root --set-switch --shell=sh)"
 
-# Resolve the complete switch first: adding optional logs dependencies later
-# would rebuild hax-engine a second time.
 "$opam_binary" install --yes \
   logs.0.10.0 \
   ppx_deriving.6.1.3 \
@@ -167,15 +128,6 @@ eval "$("$opam_binary" env --set-root --set-switch --shell=sh)"
   odoc.3.2.1 \
   ppx_deriving_yojson.3.10.0
 
-(
-  cd "$source_root/hax"
-  ./setup.sh -j "$OPAMJOBS" --no-cleanup
-)
-ln -sfn "$CARGO_HOME/bin/cargo-hax" "$bin_root/cargo-hax"
-ln -sfn "$CARGO_HOME/bin/driver-hax-frontend-exporter" "$bin_root/driver-hax-frontend-exporter"
-hax_engine="$(command -v hax-engine)"
-ln -sfn "$hax_engine" "$bin_root/hax-engine"
-
 if [[ ! -x "$source_root/aeneas/charon/bin/charon" ]]; then
   env -u RUSTUP_TOOLCHAIN -u CARGO_TARGET_DIR make -C "$source_root/aeneas" setup-charon
 fi
@@ -189,16 +141,14 @@ env -u RUSTUP_TOOLCHAIN -u CARGO_TARGET_DIR make -C "$source_root/aeneas" build-
 ln -sfn "$source_root/aeneas/bin/aeneas" "$bin_root/aeneas"
 ln -sfn "$source_root/aeneas/charon/bin/charon" "$bin_root/charon"
 
-for source in "$source_root/hax" "$source_root/aeneas" "$source_root/aeneas/charon"; do
+for source in "$source_root/aeneas" "$source_root/aeneas/charon"; do
   if [[ -n "$(git -C "$source" status --porcelain=v1 --untracked-files=all)" ]]; then
     echo "pinned source tree became dirty while building: $source" >&2
     exit 1
   fi
 done
 
-"$fstar_binary" --version | grep -Fx "F* $FSTAR_VERSION"
 test "$("$OPAMROOT/$OPAM_SWITCH/bin/ocamlc" -version)" = 5.4.1
-test "$("$opam_binary" list --installed --short --columns=version hax-engine)" = 0.3.7
 test "$("$source_root/aeneas/bin/aeneas" -version)" = 'aeneas 74a460a2'
 test "$("$source_root/aeneas/charon/bin/charon" version)" = 0.1.240
 installation_digest | sha256sum > "$receipt.tmp"

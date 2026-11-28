@@ -1,11 +1,15 @@
 """Regression cases for statement approval and Verus's per-function evidence."""
 from pathlib import Path
 import runpy
+import subprocess
+import tempfile
 import unittest
 
 HERE = Path(__file__).resolve().parent
 gate = runpy.run_path(str(HERE / "kernel_inline_verus.py"))
-compare_ir = runpy.run_path(str(HERE / "kernel_verus_ir.py"))["compare"]
+verus_ir = runpy.run_path(str(HERE / "kernel_verus_ir.py"))
+compare_ir = verus_ir["compare"]
+compare_artifact_ir = verus_ir["compare_artifact_governance"]
 coverage = runpy.run_path(str(HERE / "coverage_manifest.py"))
 
 
@@ -51,6 +55,82 @@ class VersionContracts(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "unexpected executable"):
                     check(data, code, symbols, mutant)
 
+
+class ArtifactGovernanceContracts(unittest.TestCase):
+    def test_approved_statement_rejects_weakened_spec_or_enum_change(self):
+        source = (HERE.parent / "crates/norn-ir/src/artifact_governance.rs").read_text()
+        symbols = coverage["load"]()["inlineVerus"]["artifact_governance"]
+        gate["approved_artifact_statements"](source, symbols)
+        for label, before, after in (
+            ("source_schema_flipped", "ArtifactKind::SourceSchema => false,", "ArtifactKind::SourceSchema => true,"),
+            ("law_dropped_from_spec", "            | ArtifactKind::Law\n", ""),
+            ("approved_dropped_from_spec", "ArtifactLifecycle::Approved | ArtifactLifecycle::Active => true,",
+             "ArtifactLifecycle::Active => true,"),
+            ("lemma_weakened", "ensures !expected_direct_write(kind, ArtifactLifecycle::Active),",
+             "ensures true,"),
+        ):
+            with self.subTest(label=label):
+                weakened = source.replace(before, after, 1)
+                self.assertNotEqual(source, weakened)
+                with self.assertRaisesRegex(SystemExit, "approved statement changed"):
+                    gate["approved_artifact_statements"](weakened, symbols)
+
+    def test_seeded_mutants_patch_only_executable_body(self):
+        source_path = HERE.parent / "crates/norn-ir/src/artifact_governance.rs"
+        original = source_path.read_text()
+        symbols = coverage["load"]()["inlineVerus"]["artifact_governance"]
+        patches = HERE.parent / "verification/mutants/artifact_governance"
+        declared = set(symbols["direct_artifact_write_allowed"]["mutants"])
+        self.assertEqual({p.stem for p in patches.glob("*.patch")}, declared)
+        body = next(m for m in gate["ARTIFACT_BODY"].finditer(original) if m["name"] == "direct_artifact_write_allowed")
+        start, end = body.span("body")
+        tail = len(original) - end
+        for mutant_id in sorted(declared):
+            with self.subTest(mutant=mutant_id), tempfile.TemporaryDirectory() as tmp:
+                copy = Path(tmp) / source_path.name
+                copy.write_text(original)
+                subprocess.run(
+                    ["patch", "--batch", "--forward", "--fuzz=0", copy, patches / f"{mutant_id}.patch"],
+                    cwd=tmp, check=True, stdout=subprocess.DEVNULL,
+                )
+                mutated = copy.read_text()
+                self.assertNotEqual(mutated, original)
+                self.assertEqual(mutated[:start], original[:start])
+                self.assertEqual(mutated[len(mutated) - tail:], original[end:])
+                # Statement digest must stay identical because only the exec body changed.
+                gate["approved_artifact_statements"](mutated, symbols)
+
+    def test_artifact_verifier_outcomes(self):
+        symbols = {
+            "direct_artifact_write_allowed": {
+                "postcondition": "direct_artifact_write_truth_table",
+            }
+        }
+        crate = gate["ARTIFACT_CRATE"]
+        lemmas = sorted(gate["ARTIFACT_LEMMAS"])
+        for mutant in (None, "direct_artifact_write_allowed"):
+            with self.subTest(mutant=mutant):
+                code = int(mutant is not None)
+                summary = {"is-verifying-entire-crate": True, "encountered-vir-error": False,
+                           "success": mutant is None, "errors": code, "verified": 6 - code}
+                symbol = f"{crate}::direct_artifact_write_allowed"
+                label = "direct_artifact_write_truth_table"
+                rows = [{"mode:": "exec", "function": symbol, "success": mutant is None}]
+                rows.extend({"mode:": "proof", "function": f"{crate}::{lemma}", "success": True} for lemma in lemmas)
+                notes = {symbol: {"obligation_proof_notes": [label],
+                                  "failed_proof_notes": [label] if mutant else []}}
+                data = {"verification-results": summary, "func-details": notes,
+                        "times-ms": {"smt": {"smt-run-module-times": [{"function-breakdown": rows}]}}}
+                check = gate["check_artifact_verdict"]
+                check(data, code, symbols, mutant)
+                rows[-1]["success"] = False
+                with self.assertRaisesRegex(SystemExit, "missing or failed lemmas"):
+                    check(data, code, symbols, mutant)
+                rows[-1]["success"] = True
+                if mutant:
+                    notes[symbol]["failed_proof_notes"] = ["wrong"]
+                    with self.assertRaisesRegex(SystemExit, "incorrect postcondition"):
+                        check(data, code, symbols, mutant)
 
 
 class CompilerAgreement(unittest.TestCase):
@@ -154,6 +234,183 @@ Thir {
                 compare_ir(self.vir, dump.splitlines(True), ["probe"])
         with self.assertRaisesRegex(ValueError, "incomplete compiler inventory"):
             compare_ir("", self.thir.splitlines(True), ["probe"])
+
+
+class ArtifactGovernanceCompilerAgreement(unittest.TestCase):
+    vir = """(@ "crates/norn-ir/src/artifact_governance.rs:187:1: 220:2 (#0)"
+ (Function (Fun :path norn_ir_artifact_governance::direct_artifact_write_allowed) :mode Exec :params (
+  (@ "crates/norn-ir/src/artifact_governance.rs:188:5: 188:24 (#0)"
+   (Param :name (VarIdent "kind" (VarIdentDisambiguate RustcId 2))
+          :typ (Typ Decorate (TypDecoration Ref) None
+                (Typ Datatype (Dt Path norn_ir_artifact_governance::t%ArtifactKind) () ()))))
+  (@ "crates/norn-ir/src/artifact_governance.rs:189:5: 189:34 (#0)"
+   (Param :name (VarIdent "lifecycle" (VarIdentDisambiguate RustcId 3))
+          :typ (Typ Decorate (TypDecoration Ref) None
+                (Typ Datatype (Dt Path norn_ir_artifact_governance::t%ArtifactLifecycle) () ())))))
+ :body (@@ "crates/norn-ir/src/artifact_governance.rs:190:10: 220:2 (#0)"
+  (> Block (
+   (@@ "crates/norn-ir/src/artifact_governance.rs:191:9: 191:26 (#0)"
+    (Pattern Var
+     (VarBinder :name (VarIdent "authority_bearing" (VarIdentDisambiguate RustcId 4))
+      :typ (Typ Bool)))
+    (Typ Bool))
+   (@@ "crates/norn-ir/src/artifact_governance.rs:191:29: 209:6 (#0)"
+    (> Match
+     (@@ "crates/norn-ir/src/artifact_governance.rs:191:35: 191:40 (#0)"
+      (Place Deref
+       (@@ "crates/norn-ir/src/artifact_governance.rs:191:36: 191:40 (#0)"
+        (Place Local (VarIdent "kind" (VarIdentDisambiguate RustcId 2)))
+        (Typ Decorate (TypDecoration Ref) None
+         (Typ Datatype (Dt Path norn_ir_artifact_governance::t%ArtifactKind) () ()))))
+      (Typ Datatype (Dt Path norn_ir_artifact_governance::t%ArtifactKind) () ()))
+     ((Arm
+       :pattern ()
+       :guard (@@ "crates/norn-ir/src/artifact_governance.rs:191:29: 209:6 (#0)"
+               (> Const (Constant Bool true)) (Typ Bool))
+       :body (@@ "crates/norn-ir/src/artifact_governance.rs:207:35: 207:39 (#0)"
+              (> Const (Constant Bool true)) (Typ Bool)))))
+    (Typ Bool)))
+  (@@ "crates/norn-ir/src/artifact_governance.rs:219:5: 219:53 (#0)"
+   (> Unary (UnaryOp Not)
+    (@@ "crates/norn-ir/src/artifact_governance.rs:219:7: 219:52 (#0)"
+     (> Const (Constant Bool true)) (Typ Bool)))
+   (Typ Bool)))
+  (Typ Bool))))
+"""
+    thir = """DefId(0:12 ~ norn_ir[abcd]::artifact_governance::direct_artifact_write_allowed):
+params: [
+    Param {
+        pat: Some(Pat {
+            ty: &'{erased} artifact_governance::ArtifactKind
+            span: crates/norn-ir/src/artifact_governance.rs:188:5: 188:24 (#0)
+            kind: PatKind {
+                Binding {
+                    name: "kind"
+                    mode: ByValue
+                    var: LocalVarId(2)
+                    ty: &'{erased} artifact_governance::ArtifactKind
+                }
+            }
+        })
+    },
+    Param {
+        pat: Some(Pat {
+            ty: &'{erased} artifact_governance::ArtifactLifecycle
+            span: crates/norn-ir/src/artifact_governance.rs:189:5: 189:34 (#0)
+            kind: PatKind {
+                Binding {
+                    name: "lifecycle"
+                    mode: ByValue
+                    var: LocalVarId(3)
+                    ty: &'{erased} artifact_governance::ArtifactLifecycle
+                }
+            }
+        })
+    },
+]
+body:
+    Expr {
+        ty: bool
+        temp_scope_id: 1
+        span: crates/norn-ir/src/artifact_governance.rs:190:10: 220:2 (#0)
+        kind:
+            Block {
+                stmts: [
+                    Stmt {
+                        pattern: Pat {
+                            ty: bool
+                            span: crates/norn-ir/src/artifact_governance.rs:191:9: 191:26 (#0)
+                            kind: PatKind {
+                                Binding {
+                                    name: "authority_bearing"
+                                    mode: ByValue
+                                    var: LocalVarId(4)
+                                    ty: bool
+                                }
+                            }
+                        }
+                        initializer: Some(
+                            Expr {
+                                ty: bool
+                                temp_scope_id: 2
+                                span: crates/norn-ir/src/artifact_governance.rs:191:29: 209:6 (#0)
+                                kind:
+                                    Match {
+                                        scrutinee:
+                                            Expr {
+                                                ty: artifact_governance::ArtifactKind
+                                                temp_scope_id: 3
+                                                span: crates/norn-ir/src/artifact_governance.rs:191:35: 191:40 (#0)
+                                                kind:
+                                                    Deref {
+                                                        arg:
+                                                            Expr {
+                                                                ty: &'{erased} artifact_governance::ArtifactKind
+                                                                temp_scope_id: 4
+                                                                span: crates/norn-ir/src/artifact_governance.rs:191:36: 191:40 (#0)
+                                                                kind:
+                                                                    VarRef
+                                                            }
+                                                    }
+                                            }
+                                        arms: [
+                                            Arm {
+                                                body:
+                                                    Expr {
+                                                        ty: bool
+                                                        temp_scope_id: 5
+                                                        span: crates/norn-ir/src/artifact_governance.rs:207:35: 207:39 (#0)
+                                                        kind:
+                                                            Literal
+                                                    }
+                                            }
+                                        ]
+                                    }
+                            }
+                        )
+                    }
+                ]
+                expr:
+                    Expr {
+                        ty: bool
+                        temp_scope_id: 6
+                        span: crates/norn-ir/src/artifact_governance.rs:219:5: 219:53 (#0)
+                        kind:
+                            Unary {
+                                arg:
+                                    Expr {
+                                        ty: bool
+                                        temp_scope_id: 7
+                                        span: crates/norn-ir/src/artifact_governance.rs:219:7: 219:52 (#0)
+                                        kind:
+                                            Literal
+                                    }
+                            }
+                    }
+            }
+    }
+"""
+
+    def test_equal_artifact_compiler_views(self):
+        counts = compare_artifact_ir(self.vir, self.thir, ["direct_artifact_write_allowed"])
+        self.assertEqual(
+            counts["direct_artifact_write_allowed"],
+            {"expressions": 7, "locals": 3, "calls": 0, "literal_patterns": 0},
+        )
+
+    def test_rejects_artifact_compiler_disagreements(self):
+        cases = {
+            "expr_span": self.thir.replace("207:35: 207:39", "207:35: 207:40"),
+            "local_name": self.thir.replace('name: "authority_bearing"', 'name: "other_local"'),
+            "cast": self.thir.replace("Literal", "Cast", 1),
+            "missing_fn": self.thir.replace("direct_artifact_write_allowed", "other_fn"),
+        }
+        for label, bad_thir in cases.items():
+            with self.subTest(label=label), self.assertRaises(ValueError):
+                compare_artifact_ir(self.vir, bad_thir, ["direct_artifact_write_allowed"])
+        bad_guard = self.vir.replace("(Constant Bool true)", "(Constant Bool false)", 1)
+        with self.assertRaisesRegex(ValueError, "unexpected match guard"):
+            compare_artifact_ir(bad_guard, self.thir, ["direct_artifact_write_allowed"])
 
 
 if __name__ == "__main__":

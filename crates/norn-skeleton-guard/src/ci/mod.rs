@@ -24,7 +24,7 @@ const GATE_DIRECTORIES: [&str; 2] = [".cargo/", "crates/norn-skeleton-guard/"];
 /// A gate file absent from the base must stay absent. The toolchain files are gates although
 /// none exists, as defence in depth: rustup reads them from the working directory, but the
 /// gated `validate-runner-policy.py` sets `RUSTUP_TOOLCHAIN`, which takes precedence.
-const GATE_FILES: [&str; 41] = [
+const GATE_FILES: [&str; 44] = [
     // Python isolation (#513): the base-owned check and its canaries, and every file a gated
     // Python file loads by explicit path, so none of them can change what a gate decides.
     "scripts/ci/python_isolation.py",
@@ -65,6 +65,9 @@ const GATE_FILES: [&str; 41] = [
     "verification/coverage-v1/manifest/index.json",
     "verification/mutants/version_check/saturating_add.patch",
     "verification/mutants/version_check/zero.patch",
+    "verification/mutants/artifact_governance/allow_approved_law.patch",
+    "verification/mutants/artifact_governance/reject_source_schema.patch",
+    "verification/mutants/artifact_governance/allow_active_write.patch",
     "scripts/check-proof-holes.py",
     "crates/norn-skeleton-guard/baseline.json",
     "crates/norn-checker/tests/non_code_literals.baseline.json",
@@ -856,13 +859,9 @@ pub fn maintainer_approval(
 }
 
 fn artifact_promotion_variants(root: &Path) -> Result<(), String> {
-    let ir = std::fs::read_to_string(root.join("crates/norn-ir/src/lib.rs"))
-        .map_err(|error| format!("artifact promotion IR: {error}"))?;
-    let proof = std::fs::read_to_string(
-        root.join("verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst"),
-    )
-    .map_err(|error| format!("artifact promotion proof: {error}"))?;
-    compare_artifact_variants(&ir, &proof)
+    let source = std::fs::read_to_string(root.join("crates/norn-ir/src/artifact_governance.rs"))
+        .map_err(|error| format!("artifact promotion source: {error}"))?;
+    compare_artifact_variants(&source, &source)
 }
 
 fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
@@ -882,7 +881,7 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
             })
         })
         .ok_or("ArtifactKind enum missing")?;
-    if proof.contains("(*") || proof.contains("*)") {
+    if proof.contains("/*") || proof.contains("*/") {
         return Err("artifact promotion proof contains unsupported block comments".into());
     }
     let uncommented = proof
@@ -891,7 +890,8 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
         .collect::<Vec<_>>()
         .join("\n");
     let mut declarations = uncommented.lines().enumerate().filter(|(_, line)| {
-        line.strip_prefix("let authority_bearing")
+        line.trim_start()
+            .strip_prefix("pub open spec fn authority_bearing")
             .and_then(|suffix| suffix.chars().next())
             .is_some_and(|c| c.is_whitespace() || c == '(')
     });
@@ -905,36 +905,43 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
         .lines()
         .skip(start)
         .enumerate()
-        .take_while(|(index, line)| *index == 0 || !line.starts_with("let "))
+        .take_while(|(index, line)| {
+            *index == 0
+                || (!line.trim_start().starts_with("pub open spec fn ")
+                    && !line.trim_start().starts_with("proof fn "))
+        })
         .map(|(_, line)| line)
         .collect::<Vec<_>>()
         .join("\n");
-    let (_, arms) = function
-        .split_once("match kind with")
+    let (_, after_match) = function
+        .split_once("match kind {")
         .ok_or("artifact promotion requires an explicit match on kind")?;
-    let mut patterns = arms.split('|');
-    if patterns
-        .next()
-        .is_none_or(|prefix| !prefix.trim().is_empty())
-    {
-        return Err("artifact promotion requires explicit constructor patterns".into());
-    }
+    let (arms, _) = after_match
+        .split_once('}')
+        .ok_or("artifact promotion match block is unterminated")?;
     let mut actual = BTreeSet::new();
-    for arm in patterns {
-        let pattern = match arm.split_once("->") {
-            Some((pattern, outcome)) if matches!(outcome.trim(), "true" | "false") => pattern,
-            Some(_) => return Err("artifact promotion requires Boolean match arms".into()),
-            None => arm,
-        };
-        let name = pattern
-            .trim()
-            .strip_prefix("ArtifactKind_")
-            .filter(|name| {
-                !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
-            .ok_or("artifact promotion requires explicit constructor patterns")?;
-        if !actual.insert(name.to_owned()) {
-            return Err(format!("duplicate artifact promotion variant {name}"));
+    for raw_arm in arms.split(',') {
+        let arm = raw_arm.trim();
+        if arm.is_empty() {
+            continue;
+        }
+        let (pattern_list, outcome) = arm
+            .split_once("=>")
+            .ok_or("artifact promotion requires explicit match arms")?;
+        if !matches!(outcome.trim(), "true" | "false") {
+            return Err("artifact promotion requires Boolean match arms".into());
+        }
+        for pattern in pattern_list.split('|') {
+            let name = pattern
+                .trim()
+                .strip_prefix("ArtifactKind::")
+                .filter(|name| {
+                    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                })
+                .ok_or("artifact promotion requires explicit constructor patterns")?;
+            if !actual.insert(name.to_owned()) {
+                return Err(format!("duplicate artifact promotion variant {name}"));
+            }
         }
     }
     if actual != expected {
@@ -1629,7 +1636,7 @@ mod tests {
     }
 
     const IR: &str = "pub enum ArtifactKind { Entity, SourceSchema, Law }";
-    const PROOF: &str = "let authority_bearing kind =\n  match kind with\n  | ArtifactKind_Entity\n  | ArtifactKind_Law -> true\n  | ArtifactKind_SourceSchema -> false\nlet next = ()\n";
+    const PROOF: &str = "    pub open spec fn authority_bearing(kind: ArtifactKind) -> bool {\n        match kind {\n            ArtifactKind::Entity\n            | ArtifactKind::Law => true,\n            ArtifactKind::SourceSchema => false,\n        }\n    }\n    pub open spec fn next() -> bool { true }\n";
 
     #[test]
     fn artifact_promotion_covers_the_closed_ir_enum() {
@@ -1649,51 +1656,59 @@ mod tests {
 
     #[test]
     fn artifact_promotion_rejects_the_missing_law_case() {
-        let proof = PROOF.replace("  | ArtifactKind_Law -> true\n", "");
+        let proof = PROOF.replace(
+            "            | ArtifactKind::Law => true,\n",
+            "            => true,\n",
+        );
         assert!(compare_artifact_variants(IR, &proof).is_err());
     }
 
     #[test]
     fn artifact_promotion_rejects_a_wildcard_instead_of_enumeration() {
-        let proof = PROOF.replace("ArtifactKind_Law", "_");
+        let proof = PROOF.replace("ArtifactKind::Law", "_");
         assert!(compare_artifact_variants(IR, &proof).is_err());
     }
 
     #[test]
     fn artifact_promotion_rejects_duplicate_variants() {
         let proof = PROOF.replace(
-            "ArtifactKind_Law -> true",
-            "ArtifactKind_Law\n  | ArtifactKind_Law -> true",
+            "ArtifactKind::Law => true,",
+            "ArtifactKind::Law\n            | ArtifactKind::Law => true,",
         );
         assert!(compare_artifact_variants(IR, &proof).is_err());
     }
 
     #[test]
     fn artifact_promotion_rejects_a_commented_function() {
-        let proof = format!("(*\n{PROOF}*)\nlet authority_bearing kind = true\nlet next = ()\n");
+        let proof = format!(
+            "/*\n{PROOF}*/\npub open spec fn authority_bearing(kind: ArtifactKind) -> bool {{ true }}\n"
+        );
         assert!(compare_artifact_variants(IR, &proof).is_err());
     }
 
     #[test]
     fn artifact_promotion_rejects_a_commented_constructor() {
         let proof = PROOF.replace(
-            "  | ArtifactKind_Law -> true",
-            "(*\n  | ArtifactKind_Law -> true\n*)",
+            "            | ArtifactKind::Law => true,",
+            "/*\n            | ArtifactKind::Law => true,\n*/",
         );
         assert!(compare_artifact_variants(IR, &proof).is_err());
     }
 
     #[test]
     fn artifact_promotion_ignores_similarly_named_functions() {
-        let reference = PROOF.replace("let authority_bearing ", "let authority_bearing_reference ");
-        let wildcard = "let authority_bearing kind = match kind with | _ -> true\nlet next = ()";
+        let reference = PROOF.replace(
+            "pub open spec fn authority_bearing(",
+            "pub open spec fn authority_bearing_reference(",
+        );
+        let wildcard = "    pub open spec fn authority_bearing(kind: ArtifactKind) -> bool { match kind { _ => true } }\n";
         assert!(compare_artifact_variants(IR, &format!("{reference}{wildcard}")).is_err());
     }
 
     #[test]
     fn artifact_promotion_rejects_same_line_wildcards_and_duplicates() {
-        for extra in ["_", "ArtifactKind_Law"] {
-            let proof = PROOF.replace("-> true", &format!("-> true | {extra} -> true"));
+        for extra in ["_", "ArtifactKind::Law"] {
+            let proof = PROOF.replace("=> true,", &format!("=> true, {extra} => true,"));
             assert!(compare_artifact_variants(IR, &proof).is_err());
         }
     }

@@ -100,11 +100,6 @@
         "owlrl",
         "pyshacl",
         "rdflib",
-        "fstar",
-        "cargoHax",
-        "haxSourceCommit",
-        "haxSourceTree",
-        "haxRustc",
         "opamSwitchState",
         "opamRepository"
       ],
@@ -171,26 +166,6 @@
           "minLength": 1
         },
         "rdflib": {
-          "type": "string",
-          "minLength": 1
-        },
-        "fstar": {
-          "type": "string",
-          "minLength": 1
-        },
-        "cargoHax": {
-          "type": "string",
-          "minLength": 1
-        },
-        "haxSourceCommit": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
-        },
-        "haxSourceTree": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
-        },
-        "haxRustc": {
           "type": "string",
           "minLength": 1
         },

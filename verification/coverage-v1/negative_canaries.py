@@ -2546,16 +2546,27 @@ def selector_declaration_canaries() -> None:
         rust = root / "canary.rs"
         rust.write_text(
             "pub const fn real_predicate() -> bool { true }\n"
+            "proof fn real_proof() {}\n"
             "fn caller() { forged_call_only(); }\n"
             "// fn comment_only() {}\n"
-            'const QUOTED: &str = "fn string_only() {}";\n',
+            "// proof fn comment_proof() {}\n"
+            'const QUOTED: &str = "fn string_only() {} proof fn string_proof() {}";\n',
             encoding="utf-8",
         )
         if not helper.selector_is_declared(rust, "predicate:real_predicate"):
             raise AssertionError("real Rust predicate declaration was not recognized")
-        for forged in ("predicate:forged_call_only", "predicate:comment_only", "predicate:string_only"):
+        if not helper.selector_is_declared(rust, "theorem:real_proof"):
+            raise AssertionError("real Verus proof fn declaration was not recognized")
+        for forged in (
+            "predicate:forged_call_only",
+            "predicate:comment_only",
+            "predicate:string_only",
+            "theorem:real_predicate",
+            "theorem:comment_proof",
+            "theorem:string_proof",
+        ):
             if helper.selector_is_declared(rust, forged):
-                raise AssertionError(f"non-declaration Rust predicate selector passed: {forged}")
+                raise AssertionError(f"non-declaration Rust selector passed: {forged}")
 
         llbc = root / "canary.llbc"
         llbc.write_bytes(b"binary")
