@@ -137,7 +137,7 @@ class Crate:
         explicit = {table["name"]: dict(table) for table in self.manifest.get("test", [])}
         claimed = {table.get("path", f"tests/{name}.rs") for name, table in explicit.items()}
         suites = self.tests / f"{SUITE}.rs"
-        existing = parse_suites(suites.read_text()) if suites.exists() else {}
+        existing = parse_suites(suites.read_bytes().decode("utf-8")) if suites.exists() else {}
         targets: dict[str, dict] = {}
         if self.manifest["package"].get("autotests", True) or suites.exists():
             in_lib = self.included_by_lib()
@@ -1266,7 +1266,7 @@ def main() -> int:
             if path.name != f"{SUITE}.rs"
         }
         suites = crate.tests / f"{SUITE}.rs"
-        shared_support = parse_shared_support(suites.read_text()) if suites.exists() else []
+        shared_support = parse_shared_support(suites.read_bytes().decode("utf-8")) if suites.exists() else []
         support_names = shared_support_names(shared_support)
         for target in targets:
             name = target["name"]

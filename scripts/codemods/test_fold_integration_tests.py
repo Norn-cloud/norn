@@ -316,6 +316,25 @@ class CommandAndFilterRewriteTests(unittest.TestCase):
             fold.split_suites_sections(
                 '// comment\x0c#[cfg(any())]\n#[path = "a.rs"]\nmod a;\n'
             )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            crate_dir = root / "crates" / "demo"
+            (crate_dir / "tests").mkdir(parents=True)
+            (crate_dir / "tests" / "a.rs").write_text("#[test] fn t() {}\n")
+            (crate_dir / "tests" / "suites.rs").write_bytes(
+                b'// comment\r#[cfg(any())]\n#[path = "a.rs"]\nmod a;\n'
+            )
+            (crate_dir / "Cargo.toml").write_text(
+                '[package]\nname = "demo"\nautotests = false\n\n'
+                '[[test]]\nname = "suites"\npath = "tests/suites.rs"\n'
+            )
+            orig_root = fold.ROOT
+            try:
+                fold.ROOT = root
+                with self.assertRaises(fold.Refused):
+                    fold.Crate("demo")
+            finally:
+                fold.ROOT = orig_root
         with self.assertRaises(fold.Refused):
             fold.shared_support_names(
                 [fold.SHARED_SUPPORT_HEADER, "use helpers::first; use helpers::second;"]
