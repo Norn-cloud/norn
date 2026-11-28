@@ -2502,9 +2502,9 @@ impl<E: SqlEngine> CellStore<E> {
                  AND i.\"consumed_commit_seq\" IS NOT NULL \
                  AND NOT EXISTS ( \
                      SELECT 1 FROM \"{table}\" e \
-                     WHERE e.\"observation_id\" = i.\"observation_id\" \
-                       AND e.\"side\" >= 'event:' AND e.\"side\" < 'event;' \
-                       AND e.\"key\" = '' \
+                     WHERE e.\"side\" = 'bundle' \
+                       AND e.\"key\" = i.\"observation_id\" \
+                       AND e.\"observation_id\" = i.\"observation_id\" \
                  )"
             ),
             params![],
@@ -2528,6 +2528,10 @@ impl<E: SqlEngine> CellStore<E> {
                 return Err(CellError::MappingBundleMismatch);
             }
             reader.recheck_mapping_bundle(&bundle)?;
+            let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?;
+            if keys.iter().any(|k| norn_ir::canonical::nfc(k) != *k) {
+                return Err(CellError::MappingBundleMismatch);
+            }
             conn.execute(
                 &crate::system::claim_endpoints_of("i.\"observation_id\" = ?1"),
                 params![&observation_id],

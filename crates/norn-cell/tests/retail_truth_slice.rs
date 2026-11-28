@@ -5595,6 +5595,74 @@ fn verify_conflict_related_evidence_failure_and_filter_order(
         .map_err(|e| format!("hide_pos_type must succeed: {e}"))?;
     assert_eq!(denied_cut.open_findings, 0);
     assert_eq!(denied_cut.pending_observations, 0);
+    verify_non_nfc_zero_record_backfill_refused()?;
+    Ok(())
+}
+
+fn verify_non_nfc_zero_record_backfill_refused() -> Result<(), String> {
+    let pack = retail_pack()?;
+    let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
+    let path = dir.path().join("non-nfc-backfill.sqlite");
+    let cell_id = CellId::try_from(SOLE_CELL_ID.to_owned()).map_err(|e| format!("{e}"))?;
+    let engine = NativeEngine::open(&path, StoreOptions::default()).map_err(|e| format!("{e}"))?;
+    let mut store = CellStore::from_engine_bound(engine, pack.model().clone(), &cell_id)
+        .map_err(|e| format!("{e}"))?;
+    store
+        .bind("scope", "org_family_sole_prop/prod")
+        .map_err(|e| format!("{e}"))?;
+    let mut cell = RetailCell::new(store, "org_family_sole_prop/prod", |c| c.payload.clone())
+        .map_err(|e| format!("{e}"))?;
+    cell.install_definitions(pack.model().clone(), pack.install_input(), Some(0))
+        .map_err(|e| format!("{e}"))?;
+    let mut store = cell.into_store();
+    let obs = raw_obs(
+        "synthetic-pos",
+        "ev-nfc-\u{00e9}",
+        "POS-NFC-0",
+        r#"{"pos_line_id":"POS-NFC-0","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":1,"uom":"BOX","net_amount":50,"ccy":"EGP","sold_at":"2026-09-02T17:00:00Z"}"#,
+    )?;
+    let (bundle_id, inserted) = store
+        .inject_mapping_bundle(
+            &obs,
+            &map_input("supply.pos_sales.mapping", "pos_sale_line"),
+        )
+        .map_err(|e| format!("inject zero-record bundle: {e}"))?;
+    assert!(inserted);
+    assert!(bundle_id.starts_with("mapping-bundle:"));
+    let pending = store
+        .read()
+        .pending_observations()
+        .map_err(|e| format!("{e}"))?;
+    let pending_row = pending.first().ok_or("missing zero-record bundle")?;
+    let decoded_obs: Observed<RuntimeValue> =
+        norn_ir::runtime::decode(&pending_row.observed).map_err(|e| format!("{e}"))?;
+    let bundle: MappingBundle =
+        norn_ir::runtime::decode(&decoded_obs.input).map_err(|e| format!("{e}"))?;
+    assert!(bundle.records.is_empty(), "original must be zero-record");
+    drop(store);
+
+    let db = rusqlite::Connection::open(&path).map_err(|e| format!("rusqlite open: {e}"))?;
+    db.execute(
+        "UPDATE _norn_inbox SET consumed_commit_seq = 1, observed = json_set(observed, '$.input.raw.event_id', ?1) WHERE observation_id = ?2",
+        rusqlite::params!["ev-nfc-e\u{0301}", &bundle_id],
+    )
+    .map_err(|e| format!("mutate event_id to NFD: {e}"))?;
+    db.execute(
+        "DELETE FROM _norn_claim_endpoint WHERE observation_id = ?1",
+        rusqlite::params![&bundle_id],
+    )
+    .map_err(|e| format!("clear claim_endpoint: {e}"))?;
+    drop(db);
+
+    let engine = NativeEngine::open(&path, StoreOptions::default()).map_err(|e| format!("{e}"))?;
+    let reopened = CellStore::from_engine_bound(engine, pack.model().clone(), &cell_id);
+    assert!(
+        matches!(reopened, Err(CellError::MappingBundleMismatch)),
+        "non-NFC zero-record legacy backfill must refuse: {}",
+        reopened
+            .err()
+            .map_or_else(|| "Ok".to_owned(), |e| e.to_string())
+    );
     Ok(())
 }
 
