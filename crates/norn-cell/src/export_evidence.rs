@@ -185,7 +185,22 @@ fn already_exported_pending<E: SqlEngine>(
         params![obs_id, prev_seq],
         |_row| Ok(()),
     )?;
-    Ok(via_conflict.is_some())
+    if via_conflict.is_some() {
+        return Ok(true);
+    }
+    let via_consumed_conflict = conn.query_optional(
+        &format!(
+            "SELECT 1 FROM \"{inbox}\" c \
+             WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
+               AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?1 \
+               AND c.\"consumed_commit_seq\" IS NOT NULL \
+               AND c.\"consumed_commit_seq\" <= ?2 \
+             LIMIT 1"
+        ),
+        params![obs_id, prev_seq],
+        |_row| Ok(()),
+    )?;
+    Ok(via_consumed_conflict.is_some())
 }
 
 fn append_conflict_dependencies<E: SqlEngine>(

@@ -792,9 +792,11 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         authorization
             .refresh_link_findings(&catalog, &mut commit, &GuardView(&reader))
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-        authorization
-            .seal_snapshot_event_chunks(&commit)
-            .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
+        if is_pending {
+            authorization
+                .seal_snapshot_event_chunks(&commit)
+                .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
+        }
         if !authorization.validates(&commit) {
             return Err(CellError::ObservationCommit(Box::new(
                 norn_kernel::CommitError::ObservationAuthorization,

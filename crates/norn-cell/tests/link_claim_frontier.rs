@@ -1903,3 +1903,246 @@ fn late_upsert_after_newer_delete_does_not_resurrect_tombstone() {
         "late v2 upsert must not emit ObservedRecreated"
     );
 }
+
+/// #1549: A pre-v13 generically-consumed conflict (consumed in `_norn_inbox`
+/// without a governed `_norn_dispute_resolution` row) remains resolvable for
+/// all three decisions (`AcceptSecondAsCorrection`, `Reject`, `AcceptFirst`),
+/// and correction/rejection atomically retires its still-pending `acceptedBundleId`
+/// so dataset quarantine clears and the superseded capture cannot later land.
+#[test]
+fn legacy_generically_consumed_conflict_resolves_and_retires_pending_first_capture() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("legacy_consumed_conflict.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &c, "ec", "1", "upsert", "p1");
+
+    // Case 1: correction on generically-consumed conflict with pending first capture.
+    let a1 = party_ref_row("P-A", "demo/party/a", "First Pending", Some("demo/party/b"));
+    let a2 = party_ref_row("P-A", "demo/party/a", "Corrected", Some("demo/party/c"));
+    let (raw_a1, input_a1) = raw_event(&cell, "erpnext", &a1, "ea", "1", "upsert", "p1");
+    let mapping_id = input_a1.mapping.clone();
+    let (first_a, _) = cell
+        .inject_mapping_bundle(&raw_a1, &input_a1)
+        .expect("inject a1");
+    let (raw_a2, input_a2) = raw_event(&cell, "erpnext", &a2, "ea", "1", "upsert", "p1");
+    let (conflict_a, inserted_a) = cell
+        .inject_mapping_bundle(&raw_a2, &input_a2)
+        .expect("inject conflict a");
+    assert!(inserted_a && conflict_a.starts_with("mapping-conflict:"));
+
+    // Case 2: rejection on generically-consumed conflict with pending first capture.
+    let d1 = party_ref_row("P-D", "demo/party/d", "D First Pending", None);
+    let d2 = party_ref_row("P-D", "demo/party/d", "D Second", None);
+    let (raw_d1, input_d1) = raw_event(&cell, "erpnext", &d1, "ed", "1", "upsert", "p1");
+    let (first_d, _) = cell
+        .inject_mapping_bundle(&raw_d1, &input_d1)
+        .expect("inject d1");
+    let (raw_d2, input_d2) = raw_event(&cell, "erpnext", &d2, "ed", "1", "upsert", "p1");
+    let (conflict_d, inserted_d) = cell
+        .inject_mapping_bundle(&raw_d2, &input_d2)
+        .expect("inject conflict d");
+    assert!(inserted_d && conflict_d.starts_with("mapping-conflict:"));
+
+    // Case 3: accept-first on generically-consumed conflict with landed first capture.
+    let e1 = party_ref_row("P-E", "demo/party/e", "E Landed", None);
+    let e2 = party_ref_row("P-E", "demo/party/e", "E Second", None);
+    capture_kind(&mut cell, "erpnext", &e1, "ee", "1", "upsert", "p1");
+    let (raw_e2, input_e2) = raw_event(&cell, "erpnext", &e2, "ee", "1", "upsert", "p1");
+    let (conflict_e, inserted_e) = cell
+        .inject_mapping_bundle(&raw_e2, &input_e2)
+        .expect("inject conflict e");
+    assert!(inserted_e && conflict_e.starts_with("mapping-conflict:"));
+
+    // Simulate pre-v13 generic consumption of all three conflict rows at an
+    // earlier commit seq without creating `_norn_dispute_resolution` rows.
+    let model = cell.store().model().clone();
+    drop(cell);
+    {
+        let conn = rusqlite::Connection::open(&path).expect("raw sqlite");
+        for id in [&conflict_a, &conflict_d, &conflict_e] {
+            conn.execute(
+                "UPDATE \"_norn_inbox\" SET \"consumed_commit_seq\" = 1 WHERE \"observation_id\" = ?1",
+                rusqlite::params![id],
+            )
+            .expect("simulate pre-v13 generic consumption");
+        }
+    }
+    let store = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
+    let mut cell = SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+
+    assert!(
+        !cell
+            .store()
+            .read()
+            .unresolved_quarantined_datasets(&mapping_id, None)
+            .expect("quarantined before resolve")
+            .is_empty(),
+        "generically-consumed disputes without governed resolution must stay quarantined"
+    );
+
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: conflict_a.clone(),
+        decision: DisputeDecision::AcceptSecondAsCorrection,
+        actor: "ops:priya".into(),
+        reason: "legacy conflict correction".into(),
+    })
+    .expect("resolve legacy correction");
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: conflict_d.clone(),
+        decision: DisputeDecision::Reject,
+        actor: "ops:priya".into(),
+        reason: "legacy conflict reject".into(),
+    })
+    .expect("resolve legacy reject");
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: conflict_e.clone(),
+        decision: DisputeDecision::AcceptFirst,
+        actor: "ops:priya".into(),
+        reason: "legacy conflict accept-first".into(),
+    })
+    .expect("resolve legacy accept-first");
+
+    // Both superseded pending first captures were atomically retired.
+    assert!(
+        cell.store()
+            .read()
+            .pending_observation(&first_a)
+            .expect("pending a")
+            .is_none()
+    );
+    assert!(
+        cell.store()
+            .read()
+            .pending_observation(&first_d)
+            .expect("pending d")
+            .is_none()
+    );
+    assert!(!cell.process_mapping_bundle(&first_a).expect("no-op a"));
+    assert!(!cell.process_mapping_bundle(&first_d).expect("no-op d"));
+    assert!(
+        cell.store()
+            .read()
+            .unresolved_quarantined_datasets(&mapping_id, None)
+            .expect("quarantined after resolve")
+            .is_empty(),
+        "dataset quarantine must clear once legacy disputes and superseded pending captures resolve"
+    );
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/c".to_owned()])
+    );
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence after legacy resolutions");
+}
+
+/// #1549: Two unattributed legacy conflicts referencing the same unattributed
+/// pending first capture resolved consecutively with `accept-first` must export
+/// the pending first capture only once and rebuild cleanly without duplicate
+/// inbox insertion.
+#[test]
+fn accept_first_two_unattributed_conflicts_same_pending_first_replays_cleanly() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("two_legacy_conflicts_accept_first.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+
+    let a1 = party_ref_row("P-A", "demo/party/a", "First Pending", Some("demo/party/b"));
+    let a2 = party_ref_row("P-A", "demo/party/a", "Second Conflict", None);
+    let a3 = party_ref_row("P-A", "demo/party/a", "Third Conflict", None);
+    let (raw1, input1) = raw_event(&cell, "erpnext", &a1, "e1", "1", "upsert", "p1");
+    let (first_id, _) = cell
+        .inject_mapping_bundle(&raw1, &input1)
+        .expect("inject 1");
+    let (raw2, input2) = raw_event(&cell, "erpnext", &a2, "e1", "1", "upsert", "p1");
+    let (conflict1, ins1) = cell
+        .inject_mapping_bundle(&raw2, &input2)
+        .expect("inject 2");
+    let (raw3, input3) = raw_event(&cell, "erpnext", &a3, "e1", "1", "upsert", "p1");
+    let (conflict2, ins2) = cell
+        .inject_mapping_bundle(&raw3, &input3)
+        .expect("inject 3");
+    assert!(ins1 && ins2 && conflict1 != conflict2);
+
+    // Strip `_norn_source_evidence` rows for the pending bundle and both conflicts
+    // to match pre-attribution legacy captures.
+    let model = cell.store().model().clone();
+    drop(cell);
+    {
+        let conn = rusqlite::Connection::open(&path).expect("raw sqlite");
+        for id in [&first_id, &conflict1, &conflict2] {
+            conn.execute(
+                "DELETE FROM \"_norn_source_evidence\" WHERE \"observation_id\" = ?1",
+                rusqlite::params![id],
+            )
+            .expect("strip source evidence");
+        }
+    }
+    let store = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
+    let mut cell = SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+
+    let r1 = cell
+        .resolve_mapping_dispute(DisputeResolutionInput {
+            dispute_id: conflict1,
+            decision: DisputeDecision::AcceptFirst,
+            actor: "ops:quinn".into(),
+            reason: "keep pending first over conflict 1".into(),
+        })
+        .expect("resolve c1");
+    let r2 = cell
+        .resolve_mapping_dispute(DisputeResolutionInput {
+            dispute_id: conflict2,
+            decision: DisputeDecision::AcceptFirst,
+            actor: "ops:quinn".into(),
+            reason: "keep pending first over conflict 2".into(),
+        })
+        .expect("resolve c2");
+
+    let (records, head) = export_records_and_head(&cell);
+    let rec1 = records
+        .iter()
+        .find(|r| r.receipt.body.commit_seq == r1.commit_seq)
+        .expect("record 1");
+    let rec2 = records
+        .iter()
+        .find(|r| r.receipt.body.commit_seq == r2.commit_seq)
+        .expect("record 2");
+    assert_eq!(
+        rec1.pending_observations
+            .iter()
+            .filter(|p| p.observation_id == first_id)
+            .count(),
+        1,
+        "first accept-first exports unattributed pending first capture once"
+    );
+    assert_eq!(
+        rec2.pending_observations
+            .iter()
+            .filter(|p| p.observation_id == first_id)
+            .count(),
+        0,
+        "second accept-first must not export the same pending first capture twice"
+    );
+
+    let rebuilt = CellStore::rebuild_export_history(
+        NativeEngine::open_in_memory().expect("mem"),
+        &records,
+        &head,
+    )
+    .expect("rebuild two consecutive accept-first resolutions");
+    assert!(
+        rebuilt
+            .read()
+            .pending_observation(&first_id)
+            .expect("pending")
+            .is_some(),
+        "pending first capture survives rebuild cleanly"
+    );
+}

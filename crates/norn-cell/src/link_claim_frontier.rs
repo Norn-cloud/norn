@@ -361,6 +361,11 @@ pub(crate) fn record_dispute_resolutions_in_tx<E: SqlEngine>(
             ),
             params![dispute_id, decision, actor, reason, commit_seq_i64, receipt_hash],
         )?;
+        if dispute_id.starts_with("mapping-conflict:")
+            && matches!(decision, "accept-second-as-correction" | "reject")
+        {
+            retire_superseded_conflict_bundle(conn, commit_seq_i64, dispute_id)?;
+        }
     }
     Ok(())
 }
@@ -425,15 +430,24 @@ pub(crate) fn consume_superseded_conflict_bundle<E: SqlEngine>(
     events: &[Value],
 ) -> Result<(), CellError> {
     if dispute_supersedes_first(observation_id, events) {
-        conn.execute(
-            &format!(
-                "UPDATE \"{INBOX}\" SET \"consumed_commit_seq\" = ?1 \
-                 WHERE \"consumed_commit_seq\" IS NULL \
-                   AND \"observation_id\" = (SELECT json_extract(\"observed\", '$.input.acceptedBundleId') FROM \"{INBOX}\" WHERE \"observation_id\" = ?2)"
-            ),
-            params![commit_seq, observation_id],
-        )?;
+        retire_superseded_conflict_bundle(conn, commit_seq, observation_id)?;
     }
+    Ok(())
+}
+
+fn retire_superseded_conflict_bundle<E: SqlEngine>(
+    conn: &E,
+    commit_seq: i64,
+    dispute_id: &str,
+) -> Result<(), CellError> {
+    conn.execute(
+        &format!(
+            "UPDATE \"{INBOX}\" SET \"consumed_commit_seq\" = ?1 \
+             WHERE \"consumed_commit_seq\" IS NULL \
+               AND \"observation_id\" = (SELECT json_extract(\"observed\", '$.input.acceptedBundleId') FROM \"{INBOX}\" WHERE \"observation_id\" = ?2)"
+        ),
+        params![commit_seq, dispute_id],
+    )?;
     Ok(())
 }
 
