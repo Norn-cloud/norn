@@ -610,7 +610,8 @@ await github.rest.repos.createCommitStatus({
         require(job.get("runs-on") == expected_runner,
                 f"{name}: runner must preserve the merge-group, same-repository pull-request and merge-queue main-push Boat opt-ins and hosted fallback")
     cache_env = {"SCCACHE_CACHE_SIZE": "10G", "SCCACHE_IGNORE_SERVER_IO_ERROR": "1",
-                 "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
+                 "NORN_INTEROP_CACHE": "~/.cache/norn-interop",
+                 "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS": "-C linker-features=-lld -C link-arg=-fuse-ld=mold"}
     job_env = {
         "core": cache_env,
         "test": {**cache_env,
@@ -710,7 +711,7 @@ df -h /
 [ "$(available)" -ge "$minimum" ] || { echo "Insufficient Boat runner space: need 40 GiB free"; df -Pk /; exit 1; }
 """}
     nextest = {"uses": "taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39",
-               "with": {"tool": "nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129,uv@0.13.10"}}
+               "with": {"tool": "nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129,uv@0.13.10,mold@3.0.0"}}
     for name, command in required_runs.items():
         job = jobs.get(name, {})
         # A draft head runs core only; its bundles wait until it is ready for review.
@@ -803,7 +804,7 @@ jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
   .base_sha == $base and .head_sha == $head and
   (.shard | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
   (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
-  (.bundle | type == "array" and length >= 1 and length <= 6 and all(.[];
+  (.bundle | type == "array" and length >= 1 and length <= 8 and all(.[];
     type == "object" and (.id | type == "string" and length > 0) and
     (.tasks | type == "array" and length > 0 and all(.[]; type == "string"))) and
     (map(.id) | length) == (map(.id) | unique | length)) and
