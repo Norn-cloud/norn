@@ -796,7 +796,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
     fn prepare_dispute_resolution_commit(
         &self,
         input: &DisputeResolutionInput,
-        observed: &Observed<Value>,
+        observed: &Observed<RuntimeValue>,
         dispute: &VerifiedDispute,
         is_pending: bool,
     ) -> Result<
