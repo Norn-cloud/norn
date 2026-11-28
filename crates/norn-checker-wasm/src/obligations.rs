@@ -58,7 +58,7 @@ pub fn analyze_obligations_json(
             .map_err(|error| format!("invalid context: {error}"))?
             .unwrap_or_default();
 
-    let _unused_flow_source_map = context.flow_source_map;
+    drop(context.flow_source_map);
     if context.tenant.is_some() {
         return Ok(unavailable_summary(
             "obligation summary requires a non-tenant base/candidate layer",

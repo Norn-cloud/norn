@@ -285,7 +285,7 @@ fn push_json_artifacts(
 }
 
 fn validate_base_artifact_envelope(display_path: &Path, raw: &str) -> Result<(), String> {
-    let _envelope: norn_ir::ArtifactEnvelope = serde_json::from_str(raw).map_err(|err| {
+    let _ = serde_json::from_str::<norn_ir::ArtifactEnvelope>(raw).map_err(|err| {
         format!(
             "{}: invalid base artifact envelope: {err}",
             display_path.display()
