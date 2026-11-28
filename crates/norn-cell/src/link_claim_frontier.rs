@@ -502,28 +502,20 @@ pub(crate) fn frontier_has_drift<E: SqlEngine>(
     for (id, commit_seq, ordinal, claim) in expected_claims {
         expected_by_id.insert(id, (commit_seq, ordinal, claim));
     }
-    let mut meta_cache: BTreeMap<(u64, String), ClaimSourceMeta> = BTreeMap::new();
     for raw in stored_claims {
         let row = SqlRow(raw);
         let id: String = row.get(0)?;
         let Some((exp_seq, exp_ordinal, exp_claim)) = expected_by_id.get(&id) else {
             return Ok(true);
         };
-        let meta_key = (*exp_seq, exp_claim.observation_id.clone());
-        if !meta_cache.contains_key(&meta_key) {
-            let meta = claim_source_meta(
-                reader.conn,
-                Some(reader),
-                *exp_seq,
-                Some(&id),
-                &exp_claim.observation_id,
-                true,
-            )?;
-            meta_cache.insert(meta_key.clone(), meta);
-        }
-        let exp_meta = meta_cache
-            .get(&meta_key)
-            .ok_or_else(|| CellError::Engine("missing cached claim metadata".to_owned()))?;
+        let exp_meta = claim_source_meta(
+            reader.conn,
+            Some(reader),
+            *exp_seq,
+            Some(&id),
+            &exp_claim.observation_id,
+            true,
+        )?;
         let exp_contrib = exp_claim.contribution_id()?;
         let exp_active = i64::from(!expected_superseded.contains(&id));
         let exp_event_keys_json = serde_json::to_string(&exp_meta.event_keys)?;
@@ -734,25 +726,17 @@ fn rebuild_inner<E: SqlEngine>(
     conn.execute(&format!("DELETE FROM \"{DISPUTE_RESOLUTION}\""), params![])?;
 
     let (decoded, superseded_ids) = decode_claims_from_fact_values(conn, reader)?;
-    let mut meta_cache: BTreeMap<(u64, String), ClaimSourceMeta> = BTreeMap::new();
     for (id, commit_seq, ord, claim) in &decoded {
-        let meta_key = (*commit_seq, claim.observation_id.clone());
-        if !meta_cache.contains_key(&meta_key) {
-            let meta = claim_source_meta(
-                conn,
-                reader,
-                *commit_seq,
-                Some(id),
-                &claim.observation_id,
-                true,
-            )?;
-            meta_cache.insert(meta_key.clone(), meta);
-        }
-        let meta = meta_cache
-            .get(&meta_key)
-            .ok_or_else(|| CellError::Engine("missing cached claim metadata".to_owned()))?;
+        let meta = claim_source_meta(
+            conn,
+            reader,
+            *commit_seq,
+            Some(id),
+            &claim.observation_id,
+            true,
+        )?;
         let active = !superseded_ids.contains(id);
-        insert_claim_row(conn, *commit_seq, *ord, id, claim, meta, active)?;
+        insert_claim_row(conn, *commit_seq, *ord, id, claim, &meta, active)?;
     }
     for rec in expected_dispute_resolutions(conn)? {
         conn.execute(
@@ -812,16 +796,48 @@ const SELECT_FRONTIER_COLS: &str = "\"claim_id\", \"contribution_id\", \"commit_
      \"source_version\", \"version_kind\", \"event_keys_json\", \"active\", \"claim_json\"";
 
 impl<E: SqlEngine> StoreReader<'_, E> {
-    /// All committed link claims from `_norn_link_claim_frontier`.
-    pub(crate) fn all_frontier_claims(&self) -> Result<Vec<FrontierRow>, CellError> {
+    pub(crate) fn ensure_frontier_consistent(&self) -> Result<(), CellError> {
+        self.check_live()?;
+        let Some(scrub) = self.live_scrub.filter(|_| {
+            self.conn.read_isolation() != crate::engine::ReadIsolation::ExclusiveSynchronous
+        }) else {
+            return Ok(());
+        };
+        let dv = self.conn.external_data_version().ok().flatten();
+        if dv.is_some() && scrub.borrow().frontier_checked_dv() == dv {
+            return Ok(());
+        }
+        if frontier_has_drift(self)? {
+            return Err(CellError::LedgerCorrupt {
+                seq: 0,
+                reason: "link claim frontier drifted on open cell".to_owned(),
+            });
+        }
+        if let Some(dv) = dv {
+            scrub.borrow_mut().set_frontier_checked_dv(dv);
+        }
+        Ok(())
+    }
+
+    fn query_frontier(
+        &self,
+        where_clause: &str,
+        bound: &[crate::engine::SqlValue],
+    ) -> Result<Vec<FrontierRow>, CellError> {
+        self.ensure_frontier_consistent()?;
         let rows = self.conn.query(
             &format!(
                 "SELECT {SELECT_FRONTIER_COLS} FROM \"{LINK_CLAIM_FRONTIER}\" \
-                 ORDER BY \"commit_seq\", \"claim_ordinal\", \"claim_id\""
+                 {where_clause} ORDER BY \"commit_seq\", \"claim_ordinal\", \"claim_id\""
             ),
-            params![],
+            bound,
         )?;
         rows.into_iter().map(decode_frontier_row).collect()
+    }
+
+    /// All committed link claims from `_norn_link_claim_frontier`.
+    pub(crate) fn all_frontier_claims(&self) -> Result<Vec<FrontierRow>, CellError> {
+        self.query_frontier("", params![])
     }
 
     /// All committed claims touching a specific canonical link endpoint pair
@@ -832,15 +848,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         role: &str,
         target_key: &str,
     ) -> Result<Vec<FrontierRow>, CellError> {
-        let rows = self.conn.query(
-            &format!(
-                "SELECT {SELECT_FRONTIER_COLS} FROM \"{LINK_CLAIM_FRONTIER}\" \
-                 WHERE \"source_key\" = ?1 AND \"role\" = ?2 AND \"target_key\" = ?3 \
-                 ORDER BY \"commit_seq\", \"claim_ordinal\", \"claim_id\""
-            ),
+        self.query_frontier(
+            "WHERE \"source_key\" = ?1 AND \"role\" = ?2 AND \"target_key\" = ?3",
             params![source_key, role, target_key],
-        )?;
-        rows.into_iter().map(decode_frontier_row).collect()
+        )
     }
 
     /// Active (`active = 1`) frontier claims touching `sources` or `targets`,
@@ -850,6 +861,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         sources: &BTreeSet<String>,
         targets: &BTreeSet<String>,
     ) -> Result<Vec<FrontierRow>, CellError> {
+        self.ensure_frontier_consistent()?;
         let mut closed_sources = sources.clone();
         if !targets.is_empty() {
             let target_json = serde_json::to_string(targets)?;
@@ -870,15 +882,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             return Ok(Vec::new());
         }
         let source_json = serde_json::to_string(&closed_sources)?;
-        let rows = self.conn.query(
-            &format!(
-                "SELECT {SELECT_FRONTIER_COLS} FROM \"{LINK_CLAIM_FRONTIER}\" \
-                 WHERE \"active\" = 1 AND \"source_key\" IN (SELECT value FROM json_each(?1)) \
-                 ORDER BY \"commit_seq\", \"claim_ordinal\", \"claim_id\""
-            ),
+        self.query_frontier(
+            "WHERE \"active\" = 1 AND \"source_key\" IN (SELECT value FROM json_each(?1))",
             params![source_json],
-        )?;
-        rows.into_iter().map(decode_frontier_row).collect()
+        )
     }
 
     /// Active (`active = 1`) frontier claims for one `contribution_id`.
@@ -886,15 +893,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         contribution_id: &str,
     ) -> Result<Vec<FrontierRow>, CellError> {
-        let rows = self.conn.query(
-            &format!(
-                "SELECT {SELECT_FRONTIER_COLS} FROM \"{LINK_CLAIM_FRONTIER}\" \
-                 WHERE \"contribution_id\" = ?1 AND \"active\" = 1 \
-                 ORDER BY \"commit_seq\", \"claim_ordinal\", \"claim_id\""
-            ),
+        self.query_frontier(
+            "WHERE \"contribution_id\" = ?1 AND \"active\" = 1",
             params![contribution_id],
-        )?;
-        rows.into_iter().map(decode_frontier_row).collect()
+        )
     }
 
     /// Inactive (`active = 0`) frontier claims for one `contribution_id`.
@@ -902,15 +904,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         contribution_id: &str,
     ) -> Result<Vec<FrontierRow>, CellError> {
-        let rows = self.conn.query(
-            &format!(
-                "SELECT {SELECT_FRONTIER_COLS} FROM \"{LINK_CLAIM_FRONTIER}\" \
-                 WHERE \"contribution_id\" = ?1 AND \"active\" = 0 \
-                 ORDER BY \"commit_seq\", \"claim_ordinal\", \"claim_id\""
-            ),
+        self.query_frontier(
+            "WHERE \"contribution_id\" = ?1 AND \"active\" = 0",
             params![contribution_id],
-        )?;
-        rows.into_iter().map(decode_frontier_row).collect()
+        )
     }
 
     /// Active (`active = 1`) frontier claims owned by `source_scope` for source deletes.
@@ -920,17 +917,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         source_type: &str,
         source_key: &str,
     ) -> Result<Vec<FrontierRow>, CellError> {
-        let rows = self.conn.query(
-            &format!(
-                "SELECT {SELECT_FRONTIER_COLS} FROM \"{LINK_CLAIM_FRONTIER}\" \
-                 WHERE \"active\" = 1 AND \"source_key\" = ?1 \
-                   AND \"source_scope\" = ?2 AND \"source_type\" = ?3 \
-                   AND \"target_key\" IS NOT NULL \
-                 ORDER BY \"commit_seq\", \"claim_ordinal\", \"claim_id\""
-            ),
+        self.query_frontier(
+            "WHERE \"active\" = 1 AND \"source_key\" = ?1 \
+               AND \"source_scope\" = ?2 AND \"source_type\" = ?3 \
+               AND \"target_key\" IS NOT NULL",
             params![source_key, source_scope, source_type],
-        )?;
-        rows.into_iter().map(decode_frontier_row).collect()
+        )
     }
 
     /// Active (`active = 1`) frontier claims matching NFC `event_keys`.
@@ -939,15 +931,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         event_keys: &[String; 5],
     ) -> Result<Vec<FrontierRow>, CellError> {
         let keys_json = serde_json::to_string(event_keys)?;
-        let rows = self.conn.query(
-            &format!(
-                "SELECT {SELECT_FRONTIER_COLS} FROM \"{LINK_CLAIM_FRONTIER}\" \
-                 WHERE \"active\" = 1 AND \"event_keys_json\" = ?1 \
-                 ORDER BY \"commit_seq\", \"claim_ordinal\", \"claim_id\""
-            ),
+        self.query_frontier(
+            "WHERE \"active\" = 1 AND \"event_keys_json\" = ?1",
             params![keys_json],
-        )?;
-        rows.into_iter().map(decode_frontier_row).collect()
+        )
     }
 
     /// Every recorded `mapping.dispute.resolve` decision.
