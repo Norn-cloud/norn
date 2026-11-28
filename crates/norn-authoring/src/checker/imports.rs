@@ -69,6 +69,36 @@ impl FileWalk<'_> {
         );
     }
 
+    /// Returns source byte spans of string-literal module specifiers in `self.sf`
+    /// that name an external package outside the import allowlist (not listed,
+    /// not relative). Those imports are always rejected with `NORN-FLOW-MODULE`,
+    /// so missing-module `TS2307`/`TS7016` diagnostics on their specifier span
+    /// are suppressed to avoid spurious `NORN-FLOW-TYPE` noise.
+    pub(super) fn disallowed_package_specifier_spans(&self) -> Vec<(u32, u32)> {
+        let mut spans = Vec::new();
+        for &stmt in self.sf.statements.nodes() {
+            let specifier = if stmt.kind() == Kind::ImportDeclaration {
+                Some(stmt.as_import_declaration().module_specifier)
+            } else if stmt.kind() == Kind::ExportDeclaration {
+                stmt.as_export_declaration().module_specifier
+            } else {
+                None
+            };
+            let Some(specifier) = specifier else {
+                continue;
+            };
+            if specifier.kind() != Kind::StringLiteral {
+                continue;
+            }
+            let name = specifier.text();
+            if self.is_listed_import(name) || name.starts_with("./") || name.starts_with("../") {
+                continue;
+            }
+            spans.push((node_start(self.sf, specifier), node_end(specifier)));
+        }
+        spans
+    }
+
     fn is_listed_import(&self, name: &str) -> bool {
         name == self.owner.profile.intrinsics_module
             || self

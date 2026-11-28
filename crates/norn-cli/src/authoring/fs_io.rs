@@ -739,7 +739,7 @@ fn has_pinned_effect(root: &Path) -> bool {
     root.join("node_modules/effect/package.json").is_file()
 }
 
-/// Discovers the directory holding pinned `node_modules/effect` (and optional `typescript`).
+/// Discovers the directory holding pinned `node_modules/effect`.
 ///
 /// When `explicit` is provided, fails closed if `node_modules/effect/package.json` is missing.
 pub(crate) fn discover_tool_root(

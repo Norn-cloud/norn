@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { canonicalJson } from "../src/canonical.ts"
 import * as C from "../src/builder/connector.ts"
-import { compileDefinitions } from "../src/compiler/definitions.ts"
+import { compileDefinitions } from "../src/native-compiler.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { CHECKER_PKG_ENV, checker } from "./checker.ts"
 

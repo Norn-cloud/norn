@@ -8,7 +8,7 @@
   "parents": [
     "tools/norn-ts/fixtures/query-lineage/scrap-yield.source.ts",
     "tools/norn-ts/src/pack.ts",
-    "tools/norn-ts/src/compiler/definitions.ts",
+    "crates/norn-authoring/src/compiler/mod.rs",
     "tools/norn-ts/src/builder/mapping.ts"
   ],
   "rights_evidence": [

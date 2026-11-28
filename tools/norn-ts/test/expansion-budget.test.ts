@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BudgetExceeded, ExpansionBudget } from "../src/builder/budget.ts"
-import { compileDefinitionFiles } from "../src/compiler/definitions.ts"
+import { compileDefinitionFiles } from "../src/native-compiler.ts"
 
 // #1110: a pack of modules that each fit the work bound compiles; the output
 // byte bound still spans the whole pack.

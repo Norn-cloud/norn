@@ -56,8 +56,6 @@ pub struct PackagePin {
 pub struct ProfilePins {
     /// Pinned `effect` package.
     pub effect: PackagePin,
-    /// Pinned reference TypeScript compiler version.
-    pub typescript: PackagePin,
 }
 
 /// Import allowlist metadata declared by the profile.

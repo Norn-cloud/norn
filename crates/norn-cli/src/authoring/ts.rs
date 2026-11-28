@@ -55,12 +55,13 @@ pub(crate) enum TsCompileTarget<'a> {
     },
 }
 
-struct MountedTsContext {
-    profile: Profile,
-    vfs: BoundedVfs,
-    effect_dist_prefix: Option<&'static str>,
-    root_vpaths: Vec<String>,
-    source_paths: BTreeMap<String, String>,
+pub(super) struct MountedTsContext {
+    pub(super) profile: Profile,
+    pub(super) vfs: BoundedVfs,
+    pub(super) effect_dist_prefix: Option<&'static str>,
+    pub(super) root_vpaths: Vec<String>,
+    pub(super) root_rels: BTreeMap<String, PathBuf>,
+    pub(super) source_paths: BTreeMap<String, String>,
 }
 
 fn diagnostics_json(file: &str, diagnostics: &[ProfileDiagnostic]) -> String {
@@ -84,23 +85,23 @@ fn mount_pinned_packages(
         return Ok(None);
     };
     let effect_dir = tool_root.join("node_modules/effect");
+    if !effect_dir.join("package.json").is_file() {
+        return Err(AuthoringFailure::Io(format!(
+            "{}: missing pinned effect package manifest",
+            effect_dir.display()
+        )));
+    }
     let _effect_files = vfs
         .mount_pinned_effect_dir(&effect_dir, profile)
         .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-    let ts_dir = tool_root.join("node_modules/typescript");
-    if ts_dir.join("package.json").is_file() {
-        let _ts_files = vfs
-            .mount_pinned_package_dir("/node_modules/typescript", &ts_dir)
-            .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-    }
     Ok(Some(PINNED_EFFECT_DIST_PREFIX))
 }
 
-fn is_ts_support_file(_name: &str, path: &Path) -> bool {
+pub(super) fn is_ts_support_file(_name: &str, path: &Path) -> bool {
     classify_source_file(path) == Some(SourceLang::TypeScript) || is_json_file(path)
 }
 
-fn normalize_lexical_relative(path: &Path) -> PathBuf {
+pub(super) fn normalize_lexical_relative(path: &Path) -> PathBuf {
     let mut up_count: usize = 0;
     let mut normals: Vec<&std::ffi::OsStr> = Vec::new();
     for component in path.components() {
@@ -145,9 +146,9 @@ fn normalize_display_join(base: &Path, rel: &Path) -> PathBuf {
 fn relative_candidates(importer_rel: &Path, specifier: &str) -> Vec<PathBuf> {
     let importer_dir = importer_rel.parent().unwrap_or_else(|| Path::new(""));
     let base = normalize_lexical_relative(&importer_dir.join(specifier));
-    let mut probes = Vec::with_capacity(5);
+    let mut probes = Vec::with_capacity(6);
     probes.push(base.clone());
-    for suffix in [".ts", ".tsx", ".json"] {
+    for suffix in [".ts", ".tsx", ".d.ts", ".json"] {
         let mut with_ext = base.as_os_str().to_os_string();
         with_ext.push(suffix);
         probes.push(PathBuf::from(with_ext));
@@ -204,11 +205,11 @@ fn virtual_path_from_rel(rel: &Path, up_levels: usize) -> Result<String, Authori
     Ok(format!("/workspace/{}", parts.join("/")))
 }
 
-struct TsClosureInputs<'a> {
-    root_files: Vec<LoadedFile>,
-    support_files: &'a [LoadedFile],
-    subdir_files: Vec<LoadedFile>,
-    package_hint_path: &'a Path,
+pub(super) struct TsClosureInputs<'a> {
+    pub(super) root_files: Vec<LoadedFile>,
+    pub(super) support_files: &'a [LoadedFile],
+    pub(super) subdir_files: Vec<LoadedFile>,
+    pub(super) package_hint_path: &'a Path,
 }
 
 struct SeededClosure {
@@ -218,23 +219,27 @@ struct SeededClosure {
     loaded: Vec<LoadedFile>,
 }
 
-fn seed_closure_inputs(inputs: TsClosureInputs<'_>) -> SeededClosure {
+fn seed_closure_inputs(inputs: TsClosureInputs<'_>) -> Result<SeededClosure, AuthoringFailure> {
     let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
     let mut queue: VecDeque<(LoadedFile, usize)> = VecDeque::new();
     let mut root_rels: Vec<PathBuf> = Vec::with_capacity(inputs.root_files.len());
     for file in inputs.root_files {
         let norm_rel = normalize_lexical_relative(&file.rel_path);
-        if visited.insert(norm_rel.clone()) {
-            root_rels.push(norm_rel.clone());
-            queue.push_back((
-                LoadedFile {
-                    display_path: file.display_path,
-                    rel_path: norm_rel,
-                    content: file.content,
-                },
-                0,
-            ));
+        if !visited.insert(norm_rel.clone()) {
+            return Err(AuthoringFailure::Io(format!(
+                "{}: duplicate module root",
+                file.display_path.display()
+            )));
         }
+        root_rels.push(norm_rel.clone());
+        queue.push_back((
+            LoadedFile {
+                display_path: file.display_path,
+                rel_path: norm_rel,
+                content: file.content,
+            },
+            0,
+        ));
     }
 
     let capacity = queue
@@ -267,12 +272,12 @@ fn seed_closure_inputs(inputs: TsClosureInputs<'_>) -> SeededClosure {
             }
         }
     }
-    SeededClosure {
+    Ok(SeededClosure {
         visited,
         root_rels,
         queue,
         loaded,
-    }
+    })
 }
 
 fn collect_ts_import_closure(
@@ -286,7 +291,7 @@ fn collect_ts_import_closure(
         root_rels,
         mut queue,
         mut loaded,
-    } = seed_closure_inputs(inputs);
+    } = seed_closure_inputs(inputs)?;
     let mut imported_count: usize = 0;
     while let Some((current, depth)) = queue.pop_front() {
         if depth < MAX_LOCAL_IMPORT_DEPTH && !is_json_file(&current.display_path) {
@@ -328,7 +333,7 @@ fn collect_ts_import_closure(
     Ok((root_rels, loaded))
 }
 
-fn mount_ts_closure(
+pub(super) fn mount_ts_closure(
     base_dir: &TrustedDir,
     inputs: TsClosureInputs<'_>,
     explicit_tool_root: Option<&Path>,
@@ -361,6 +366,7 @@ fn mount_ts_closure(
     }
 
     let mut root_vpaths = Vec::with_capacity(root_rels.len());
+    let mut root_rels_by_vpath = BTreeMap::new();
     for root_rel in root_rels {
         let vpath = rel_to_vpath.remove(&root_rel).ok_or_else(|| {
             AuthoringFailure::Io(format!(
@@ -368,6 +374,7 @@ fn mount_ts_closure(
                 root_rel.display()
             ))
         })?;
+        root_rels_by_vpath.insert(vpath.clone(), root_rel);
         root_vpaths.push(vpath);
     }
 
@@ -376,11 +383,12 @@ fn mount_ts_closure(
         vfs,
         effect_dist_prefix,
         root_vpaths,
+        root_rels: root_rels_by_vpath,
         source_paths,
     })
 }
 
-fn mount_single_file_closure(
+pub(super) fn mount_single_file_closure(
     parent_dir: &TrustedDir,
     file_name: &str,
     display_path: &Path,

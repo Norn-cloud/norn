@@ -119,15 +119,9 @@ fn merge_object_schemas(
 ) -> Result<ValueSchema, String> {
     let mut seen_names = BTreeSet::new();
     let mut ordered_names = Vec::new();
-    for key in left
-        .required
-        .iter()
-        .chain(left.properties.keys())
-        .chain(right.required.iter())
-        .chain(right.properties.keys())
-    {
-        if seen_names.insert(key.as_str()) {
-            ordered_names.push(key.as_str());
+    for key in left.ordered_keys().chain(right.ordered_keys()) {
+        if seen_names.insert(key) {
+            ordered_names.push(key);
         }
     }
     let req_a: BTreeSet<&str> = left.required.iter().map(String::as_str).collect();

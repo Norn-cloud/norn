@@ -3,7 +3,7 @@
 //! Structural merging, assignability, and expansion budgets live in
 //! [`super::value_schema_ops`] and are re-exported here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
@@ -38,6 +38,8 @@ pub struct InputGroup {
 pub struct ObjectSchema {
     /// Field schemas keyed by property name.
     pub properties: BTreeMap<String, ValueSchema>,
+    /// Property names in declaration order (used for ordered outputs).
+    pub property_order: Vec<String>,
     /// Required property names in declaration order (omitted on wire when empty).
     pub required: Vec<String>,
     /// Optional display labels.
@@ -50,32 +52,39 @@ impl ObjectSchema {
     /// Builds a closed record schema where every field is required unless in `optional`.
     #[must_use]
     pub fn record(properties: BTreeMap<String, ValueSchema>, optional: &[String]) -> Self {
-        let required: Vec<String> = properties
-            .keys()
+        let property_order: Vec<String> = properties.keys().cloned().collect();
+        let required: Vec<String> = property_order
+            .iter()
             .filter(|name| !optional.iter().any(|opt| opt == *name))
             .cloned()
             .collect();
         Self {
             properties,
+            property_order,
             required,
             labels: SchemaLabels::default(),
             groups: Vec::new(),
         }
     }
 
-    /// Builds a closed record schema preserving explicit required field order.
+    /// Builds a closed record schema preserving explicit field and required order.
     #[must_use]
     pub fn record_ordered(ordered_fields: Vec<(String, ValueSchema)>, optional: &[String]) -> Self {
+        let mut property_order = Vec::with_capacity(ordered_fields.len());
         let mut required = Vec::new();
         let mut properties = BTreeMap::new();
         for (name, schema) in ordered_fields {
-            if !optional.iter().any(|opt| opt == &name) {
-                required.push(name.clone());
+            if !properties.contains_key(&name) {
+                property_order.push(name.clone());
+                if !optional.iter().any(|opt| opt == &name) {
+                    required.push(name.clone());
+                }
             }
             properties.insert(name, schema);
         }
         Self {
             properties,
+            property_order,
             required,
             labels: SchemaLabels::default(),
             groups: Vec::new(),
@@ -88,9 +97,22 @@ impl ObjectSchema {
         Self::record(BTreeMap::new(), &[])
     }
 
-    /// Iterates property names in deterministic order.
+    /// Iterates property names in declaration order (falling back to any key
+    /// present in `properties` that is not listed in `property_order`).
     pub fn ordered_keys(&self) -> impl Iterator<Item = &str> {
-        self.properties.keys().map(String::as_str)
+        let mut seen = BTreeSet::new();
+        let mut out: Vec<&str> = Vec::with_capacity(self.properties.len());
+        for key in &self.property_order {
+            if self.properties.contains_key(key) && seen.insert(key.as_str()) {
+                out.push(key.as_str());
+            }
+        }
+        for key in self.properties.keys() {
+            if seen.insert(key.as_str()) {
+                out.push(key.as_str());
+            }
+        }
+        out.into_iter()
     }
 
     /// Merges D66 per-field display labels onto declared properties.
@@ -520,5 +542,25 @@ pub(crate) fn literal_schema(value: &Value) -> Option<ValueSchema> {
             }
         }
         Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ObjectSchema, ValueSchema};
+
+    #[test]
+    fn ordered_keys_preserves_declaration_order_for_required_and_optional() {
+        let schema = ObjectSchema::record_ordered(
+            vec![
+                ("facts".to_owned(), ValueSchema::text()),
+                ("commands".to_owned(), ValueSchema::text()),
+                ("timers".to_owned(), ValueSchema::text()),
+                ("audit".to_owned(), ValueSchema::text()),
+            ],
+            &["commands".to_owned(), "audit".to_owned()],
+        );
+        let keys: Vec<&str> = schema.ordered_keys().collect();
+        assert_eq!(keys, vec!["facts", "commands", "timers", "audit"]);
     }
 }

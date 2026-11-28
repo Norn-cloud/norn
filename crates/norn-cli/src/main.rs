@@ -56,7 +56,7 @@ pub(crate) struct CheckArgs {
     /// Promote `NORN-AUTHORING-UNSAFE-ZEN` warnings to hard errors when compiling `--source`.
     #[arg(long, requires = "source")]
     pub(crate) forbid_unsafe_zen: bool,
-    /// Optional path to `tools/norn-ts` containing pinned `node_modules/effect` and `node_modules/typescript`.
+    /// Optional path to `tools/norn-ts` containing pinned `node_modules/effect`.
     #[arg(long, requires = "source")]
     pub(crate) tool_root: Option<PathBuf>,
 }

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join, relative } from "node:path"
-import { compileDefinitionFiles } from "../src/compiler/definitions.ts"
+import { compileDefinitionFiles } from "../src/native-compiler.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { canonicalJson } from "../src/canonical.ts"
 import { checker, CHECKER_PKG_ENV } from "./checker.ts"

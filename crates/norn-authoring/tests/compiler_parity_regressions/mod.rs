@@ -476,3 +476,231 @@ input: Schema.Struct({ x: Schema.Int }), output: Schema.Struct({ y: Schema.Int }
     );
     Ok(())
 }
+
+const PR_A_SRC: &str = r#"
+import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+const PayoutProps = Schema.Struct({
+  id: Schema.String,
+  payslip_id: Schema.String,
+  generation: Schema.Int,
+  stamped_at: Norn.timestamp("utc"),
+  stamped_ms: Schema.Int,
+  created_by: Schema.String,
+  state: Schema.Literals(["requested", "failed"]),
+})
+
+export const Payout = Norn.type({
+  name: "test.Payout",
+  title: "Payout",
+  version: "0.1.0",
+  properties: PayoutProps,
+  protected: ["created_by"],
+  origins: { created_by: "actor", stamped_at: "clock", generation: "derived" },
+  immutableAfterCreate: ["payslip_id"],
+  identity: [{ name: "primary", properties: ["id"] }],
+  defaults: { generation: 1, state: "requested" },
+  lifecycles: [{
+    property: "state",
+    initial: ["requested"],
+    transitions: [{ id: "retry", from: ["failed"], to: "requested" }],
+  }],
+})
+
+const CreateInput = Schema.Struct({
+  id: Schema.String,
+  payslip_id: Schema.String,
+  generation: Schema.Int,
+  stamped_at: Norn.timestamp("utc"),
+  stamped_ms: Schema.Int,
+  created_by: Schema.String,
+})
+
+export const CreatePayout = Norn.action({
+  id: "test.payout.create",
+  title: "Create payout",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: CreateInput,
+  output: Schema.Struct({ id: Schema.String }),
+  fromCaller: ["created_by"],
+  derive: [
+    { field: "stamped_at", expression: Norn.commitTime(), inputRequired: false },
+    { field: "stamped_ms", expression: Norn.commitTimeMillis(), inputRequired: false },
+    { field: "generation", expression: Norn.expression(Schema.Struct({ id: Schema.String }), () => 1), inputRequired: false },
+  ],
+  writes: [{ type: Payout, change: "created" }],
+  effect: { kind: "upsert_input_object", type: Payout, objectIdField: "id", writeMode: { kind: "create_only" } },
+})
+
+const RetryInput = Schema.Struct({ id: Schema.String, next_generation: Schema.Int })
+
+export const RetryPayout = Norn.action({
+  id: "test.payout.retry",
+  title: "Retry payout",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: RetryInput,
+  output: Schema.Struct({ id: Schema.String }),
+  slice: [{ name: "instruction", type: Payout, key: { property: { from: "input", property: "id" } } }],
+  derive: [{
+    field: "next_generation",
+    expression: Norn.expression(
+      Schema.Struct({ input: RetryInput, slice: Schema.Struct({ instruction: Schema.Struct({ generation: Schema.Int }) }) }),
+      (ctx) => ctx.slice.instruction.generation + 1,
+      { root: "context" },
+    ),
+    inputRequired: false,
+  }],
+  writes: [{ type: Payout, change: "modified" }],
+  effect: {
+    kind: "fire_transition",
+    type: Payout,
+    objectIdField: "id",
+    lifecycle: "state",
+    transition: "retry",
+    setFields: { generation: "next_generation" },
+  },
+})
+
+export const OrderedDecision = Norn.decision({
+  id: "test.ordered.decide",
+  title: "Ordered",
+  version: "0.1.0",
+  contract: "decide",
+  scopeRequired: ["orgId", "environmentId"],
+  input: Schema.Struct({ x: Schema.Int }),
+  output: Schema.Struct({ facts: Schema.Array(Schema.Int), commands: Schema.Array(Schema.Int), timers: Schema.Array(Schema.Int) }),
+}, () => ({ facts: [], commands: [], timers: [] }))
+"#;
+
+const UNQUALIFIED_LAW_SRC: &str = r#"
+import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+export const Account = Norn.type({
+  name: "Account",
+  title: "Account",
+  version: "0.1.0",
+  properties: Schema.Struct({ id: Schema.String, balance: Schema.Int }),
+  identity: [{ name: "primary", properties: ["id"] }],
+})
+export const law = Norn.law("solvent", { on: Account, must: (self) => self.balance >= 0, because: "x" })
+"#;
+
+fn find_artifact<'a>(
+    artifacts: &'a [serde_json::Value],
+    id: &str,
+) -> Result<&'a serde_json::Value, Box<dyn std::error::Error>> {
+    artifacts
+        .iter()
+        .find(|a| a.get("artifactId").and_then(serde_json::Value::as_str) == Some(id))
+        .ok_or_else(|| format!("missing artifact {id}").into())
+}
+
+#[test]
+fn regression_pr_a_authoring_outputs_order_and_unqualified_law_subject()
+-> Result<(), Box<dyn std::error::Error>> {
+    let profile = Profile::load()?;
+    let checker = ProfileChecker::new(profile.clone());
+    let (_, mut vfs) = mount_pinned_packages(&profile)?;
+    let (pr_a_path, law_path) = ("/reg/pr_a.ts", "/reg/unqualified_law.ts");
+    vfs.add_file(pr_a_path, PR_A_SRC)?;
+    vfs.add_file(law_path, UNQUALIFIED_LAW_SRC)?;
+    let program = AuthoringProgram::new(vfs, &[pr_a_path, law_path], profile)?
+        .with_effect_dist_prefix(PINNED_EFFECT_DIST_PREFIX);
+    let out = compile_definitions_program(&checker, &program, &[pr_a_path, law_path], |file| {
+        DefinitionsCompileOptions {
+            envelope: EnvelopeOptions {
+                scope: demo_scope(),
+                source_path: file.trim_start_matches('/').to_owned(),
+                registry_package_path: None,
+            },
+            ..DefinitionsCompileOptions::default()
+        }
+    })?;
+
+    let Some(DefinitionsCompileOutcome::Ok(pr_a)) = out.first() else {
+        return Err(format!("PR-A module failed: {:?}", out.first()).into());
+    };
+    let entity = find_artifact(&pr_a.artifacts, "test.Payout.entity")?;
+    let props = entity
+        .pointer("/payload/objectType/properties")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing properties")?;
+    let prop = |id: &str| {
+        props
+            .iter()
+            .find(|p| p.get("id").and_then(serde_json::Value::as_str) == Some(id))
+    };
+    assert_eq!(
+        prop("created_by")
+            .and_then(|p| p.get("origin"))
+            .and_then(serde_json::Value::as_str),
+        Some("actor")
+    );
+    assert_eq!(
+        prop("stamped_at")
+            .and_then(|p| p.get("origin"))
+            .and_then(serde_json::Value::as_str),
+        Some("clock")
+    );
+    assert_eq!(
+        prop("payslip_id")
+            .and_then(|p| p.get("immutableAfterCreate"))
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+
+    let create = find_artifact(&pr_a.artifacts, "test.payout.create.action")?;
+    assert_eq!(
+        create
+            .pointer("/payload/derive/1/expression")
+            .and_then(serde_json::Value::as_str),
+        Some("clock.nowIso")
+    );
+    assert_eq!(
+        create
+            .pointer("/payload/derive/2/expression")
+            .and_then(serde_json::Value::as_str),
+        Some("clock.nowMillis")
+    );
+
+    let retry = find_artifact(&pr_a.artifacts, "test.payout.retry.action")?;
+    assert_eq!(
+        retry
+            .pointer("/payload/derive/0/expression")
+            .and_then(serde_json::Value::as_str),
+        Some("slice.instruction.generation + 1")
+    );
+    assert_eq!(
+        retry
+            .pointer("/payload/effectProgram/setFields/generation")
+            .and_then(serde_json::Value::as_str),
+        Some("next_generation")
+    );
+
+    let rule = find_artifact(&pr_a.artifacts, "test.ordered.decide.rule")?;
+    let output_fields: Vec<&str> = rule
+        .pointer("/payload/graph/nodes/1/content/outputs")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing decision outputs")?
+        .iter()
+        .filter_map(|o| o.get("field").and_then(serde_json::Value::as_str))
+        .collect();
+    assert_eq!(output_fields, vec!["facts", "commands", "timers"]);
+
+    let Some(DefinitionsCompileOutcome::Err { diagnostics }) = out.get(1) else {
+        return Err("expected unqualified law subject to fail".into());
+    };
+    assert!(diagnostics.iter().any(|d| {
+        d.message
+            .contains("law subject \"Account\" is not a qualified type name")
+    }));
+    Ok(())
+}

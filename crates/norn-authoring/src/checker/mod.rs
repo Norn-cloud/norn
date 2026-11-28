@@ -444,6 +444,7 @@ impl FileWalk<'_> {
             self.checker,
             self.sf,
         ));
+        let disallowed_pkg_spans = self.disallowed_package_specifier_spans();
         let deduped = sort_and_deduplicate_diagnostics(&pre_emit);
         for diag in deduped {
             if diag.category() != Category::Error {
@@ -453,6 +454,13 @@ impl FileWalk<'_> {
                 continue;
             };
             let end = diag.end().unwrap_or(start);
+            if matches!(diag.code(), 2307 | 7016)
+                && disallowed_pkg_spans
+                    .iter()
+                    .any(|&(spec_start, spec_end)| start >= spec_start && end <= spec_end)
+            {
+                continue;
+            }
             let message = flatten_diagnostic_message(diag);
             self.emit_span(start, end, "NORN-FLOW-TYPE", &message);
         }

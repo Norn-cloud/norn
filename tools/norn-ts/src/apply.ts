@@ -19,7 +19,7 @@
  * cell refuses fails the command and applies nothing.
  */
 import { existsSync } from "node:fs"
-import type { RetainedDefinitionDoc } from "./compiler/definitions.ts"
+import type { RetainedDefinitionDoc } from "./native-compiler.ts"
 import { loadChecker } from "./checker-abi.ts"
 import { bindSourceSchemas, checkPack, pendingSourceSchemas, type PackResult } from "./pack.ts"
 import { isFetchableUrl, sanitizeUrlForDiagnostic, type FetchLike } from "./setup.ts"

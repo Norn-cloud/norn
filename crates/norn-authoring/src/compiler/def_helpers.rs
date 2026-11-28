@@ -53,6 +53,8 @@ pub(crate) const DASHBOARD: &str = "@norn/authoring#Norn.dashboard";
 pub(crate) const METRIC_ID: &str = "@norn/authoring#Norn.metricId";
 pub(crate) const APPROVAL: &str = "@norn/authoring#Norn.approval";
 pub(crate) const CALLER_ID: &str = "@norn/authoring#Norn.callerId";
+pub(crate) const COMMIT_TIME: &str = "@norn/authoring#Norn.commitTime";
+pub(crate) const COMMIT_TIME_MILLIS: &str = "@norn/authoring#Norn.commitTimeMillis";
 
 pub(crate) const NORM_MEMBERS: &[&str] = &[
     "on", "when", "must", "never", "may", "cite", "yieldsTo", "unless", "because",
@@ -261,6 +263,7 @@ pub(crate) struct DefinitionCompiler<'a> {
     pub(crate) schemas: SchemaProjection<'a>,
     pub(crate) source_map: Vec<DefinitionSource>,
     pub(crate) warnings: Vec<ProfileDiagnostic>,
+    pub(crate) deferred_errors: Vec<CompileError>,
 }
 
 impl<'a> DefinitionCompiler<'a> {
@@ -284,6 +287,7 @@ impl<'a> DefinitionCompiler<'a> {
             schemas,
             source_map: Vec::new(),
             warnings: Vec::new(),
+            deferred_errors: Vec::new(),
         }
     }
 

@@ -7,7 +7,7 @@
   "analyzed_sources": [],
   "parents": [
     "tools/norn-ts/fixtures/schema/precision.source.ts",
-    "tools/norn-ts/src/compiler/definitions.ts"
+    "crates/norn-authoring/src/compiler/mod.rs"
   ],
   "rights_evidence": [
     {
