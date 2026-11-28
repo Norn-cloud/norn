@@ -392,7 +392,7 @@ if [[ $(wc -l < calls) -eq 1 ]]; then
     mkdir -p target/debug/.fingerprint target/norn-checker-wasm/pkg
 else
     case "$*" in
-        "test rest-1"|browser) [[ -d target/debug/.fingerprint && -d target/norn-checker-wasm/pkg ]] ;;
+        "test rest-1"|"test rest-2"|browser) [[ -d target/debug/.fingerprint && -d target/norn-checker-wasm/pkg ]] ;;
         doc) [[ ! -e target/debug && ! -e target/norn-checker-wasm ]] ;;
         *) exit 24 ;;
     esac
@@ -402,14 +402,15 @@ fi
                        "NORN_CI_PACKAGES": ""}
         for label, plan, expected_calls, shared in (
             ("incompatible", {"mode": "affected", "shard": ["rest-1"], "phase": ["doc"]}, ["test rest-1", "doc"], False),
-            ("shared-test", {"mode": "affected", "shard": ["rest-1", "rest-2"], "phase": []}, ["test rest-2", "test rest-1"], True),
+            ("shared-test", {"mode": "affected", "shard": ["rest-1", "rest-2"], "phase": []}, ["test rest-1", "test rest-2"], True),
             ("shared-wasm-pkg", {"mode": "affected", "shard": [], "phase": ["integration-authoring", "browser"]}, ["integration-authoring", "browser"], True),
         ):
             with self.subTest(case=label):
                 shutil.rmtree(self.root / "target", ignore_errors=True)
+                calls = self.root / "calls"
+                calls.unlink(missing_ok=True)
                 packed = subprocess.check_output(command + ["bundle-plan", json.dumps(plan)], cwd=ROOT, text=True)
                 execute = [str(self.built_xtask()), "ci", "bundle"]
-                calls = self.root / "calls"
                 for flag in ("--help", "-h", "--version"):
                     for arguments in ([flag, "b0"], [packed, flag]):
                         result = subprocess.run(execute + arguments, cwd=self.root,
@@ -541,7 +542,7 @@ else:
         cargo.chmod(0o755)
         for fail in ("0", "1"):
             environment = {**os.environ, "CARGO_HOME": str(tools.parent),
-                           "NORN_CI_PACKAGES": "", "NORN_CI_REST_SHARDS": "3",
+                           "NORN_CI_PACKAGES": "", "NORN_CI_REST_SHARDS": "6",
                            "BUNDLE_CANARY_XTASK": str(xtask), "BUNDLE_CANARY_FAIL": fail}
             result = subprocess.run(command + ["bundle", json.dumps(plan), plan["bundle"][0]["id"]],
                                     env=environment, capture_output=True, text=True, timeout=10)

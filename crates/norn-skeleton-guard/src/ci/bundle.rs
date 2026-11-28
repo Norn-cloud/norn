@@ -38,8 +38,9 @@ const TASKS: [&str; 26] = [
     "phase/browser",
 ];
 /// Measured task seconds and shared build costs, generated from green merge-group bundle logs
-/// by `scripts/bundle_durations.py` (never by hand). The hosted planner in core.sh reads the
-/// same file.
+/// by `scripts/bundle_durations.py`. Any newly-split tasks whose weights are temporary estimates
+/// pending post-merge regeneration must be listed explicitly in `estimated_tasks`. The hosted
+/// planner in core.sh reads the same file.
 const DURATIONS: &str = include_str!("bundle-durations.json");
 const TARGET_SECONDS: u32 = 300;
 const MAX_BUNDLES: usize = 8;
@@ -52,6 +53,8 @@ struct Durations {
     statistic: String,
     test_build_seconds: u32,
     wasm_pkg_seconds: u32,
+    #[serde(default)]
+    estimated_tasks: BTreeSet<String>,
     task_seconds: BTreeMap<String, u32>,
 }
 
@@ -85,6 +88,15 @@ impl Model {
         }
         if table.task_seconds.len() != tasks.len() {
             return Err("bundle-durations.json times a task the planner does not know".into());
+        }
+        if let Some(unknown) = table
+            .estimated_tasks
+            .iter()
+            .find(|name| !tasks.contains_key(name.as_str()))
+        {
+            return Err(format!(
+                "bundle-durations.json marks unknown task {unknown} as estimated"
+            ));
         }
         Ok(Self {
             tasks,
