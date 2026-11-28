@@ -382,9 +382,9 @@ where
         }
         current = next;
     }
-    Err(AuthoringError::FormatFailed {
-        message: format!("formatter did not reach a fixed point within {max_passes} passes"),
-    })
+    Err(AuthoringError::FormatFailed(format!(
+        "formatter did not reach a fixed point within {max_passes} passes"
+    )))
 }
 
 /// Formats a Norn TypeScript source file in memory without executing code.
@@ -428,7 +428,7 @@ mod tests {
     #[test]
     fn rejects_non_converging_format_passes() {
         let result = converge_format_passes("a\n".to_owned(), 3, |s| Ok(format!("{s}x")));
-        assert!(matches!(result, Err(AuthoringError::FormatFailed { .. })));
+        assert!(matches!(result, Err(AuthoringError::FormatFailed(_))));
     }
 
     #[test]
