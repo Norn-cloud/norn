@@ -225,7 +225,8 @@ fn crm_authz_and_action_steps() -> Vec<Value> {
                 "objectType": "crm.Contact",
                 "objectId": "c-1",
                 "version": 1,
-                "outputContains": { "receipt": { "recordedAtMs": 1_767_225_600_000_u64 } }
+                // Monotonic +1ms after initial tenant definition install at 1_767_225_600_000.
+                "outputContains": { "receipt": { "recordedAtMs": 1_767_225_600_001_u64 } }
             }
         }),
         json!({
