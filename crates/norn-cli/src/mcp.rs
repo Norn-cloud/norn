@@ -121,11 +121,16 @@ impl Backend for Human {
                 });
             }
             Command::Check(check_args) => {
-                match (check_args.artifacts, check_args.context, check_args.source) {
-                    (Some(artifacts), Some(context), None) => (artifacts, context),
+                match (
+                    check_args.artifacts,
+                    check_args.context,
+                    check_args.source,
+                    check_args.base.is_empty(),
+                ) {
+                    (Some(artifacts), Some(context), None, true) => (artifacts, context),
                     _ => {
                         return Err(Refusal::invalid(
-                            "MCP norn.check requires --artifacts and --context without --source",
+                            "MCP norn.check requires --artifacts and --context without --source or --base",
                         ));
                     }
                 }

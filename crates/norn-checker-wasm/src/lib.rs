@@ -36,6 +36,10 @@ mod checker;
 #[cfg(feature = "checker")]
 pub use checker::*;
 #[cfg(feature = "checker")]
+mod obligations;
+#[cfg(feature = "checker")]
+pub use obligations::{OBLIGATIONS_SUMMARY_FORMAT, analyze_obligations_json};
+#[cfg(feature = "checker")]
 mod ui;
 #[cfg(feature = "checker")]
 pub use ui::renderer_capabilities_json;

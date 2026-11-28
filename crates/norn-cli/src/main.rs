@@ -3,6 +3,7 @@ use std::io::{BufRead as _, Read as _, Write as _};
 mod authoring;
 mod cell;
 mod cell_render;
+mod cell_source;
 #[cfg(test)]
 mod cli_contract;
 mod eval;
@@ -43,6 +44,9 @@ pub(crate) struct CheckArgs {
     /// Checker context JSON, containing the explicit tenant scope (required with `--artifacts`, optional with `--source`).
     #[arg(long, required_unless_present = "source")]
     pub(crate) context: Option<PathBuf>,
+    /// Repeatable base pack path (artifact JSON file, JSON artifact directory, or `.ts`/`.py` authoring source) merged into `context.base`.
+    #[arg(long)]
+    pub(crate) base: Vec<PathBuf>,
     /// `TypeScript` (`.ts`) or Python (`.py`) authoring file or directory to compile and check in-process.
     #[arg(
         long,
@@ -141,6 +145,52 @@ pub(crate) fn run_check(artifacts: &Path, context: &Path) -> Result<(String, boo
     let context =
         cell::read_regular_file_bounded(context, MAX_CHECK_BYTES, "16 MiB check input limit")?;
     red_team::check_with_red_team(&artifacts, &context)
+}
+
+fn run_check_with_base(
+    artifacts: &Path,
+    context: &Path,
+    base: &[PathBuf],
+) -> authoring::CommandOutput {
+    if base.is_empty() {
+        return legacy_to_output(run_check(artifacts, context));
+    }
+    let artifacts_text = match cell::read_regular_file_bounded(
+        artifacts,
+        MAX_CHECK_BYTES,
+        "16 MiB check input limit",
+    ) {
+        Ok(text) => text,
+        Err(err) => return authoring::CommandOutput::usage_or_io_error(&err),
+    };
+    let context_text =
+        match cell::read_regular_file_bounded(context, MAX_CHECK_BYTES, "16 MiB check input limit")
+        {
+            Ok(text) => text,
+            Err(err) => return authoring::CommandOutput::usage_or_io_error(&err),
+        };
+    let mut budget = authoring::InvocationBudget::new();
+    let scope = authoring::base_packs::BasePackScope {
+        org: None,
+        env: None,
+        forbid_unsafe_zen: false,
+        tool_root: None,
+    };
+    let merged_context = match authoring::base_packs::merge_base_packs_into_context(
+        &context_text,
+        None,
+        &[],
+        base,
+        &scope,
+        &mut budget,
+    ) {
+        Ok(merged) => merged,
+        Err(failure) => return failure.into_output(),
+    };
+    legacy_to_output(red_team::check_with_red_team(
+        &artifacts_text,
+        &merged_context,
+    ))
 }
 
 fn run_eval(
@@ -248,6 +298,7 @@ pub(crate) fn run_check_args(args: &CheckArgs) -> authoring::CommandOutput {
         return authoring::execute_check_source(&authoring::CheckSourceRequest {
             source: source_path,
             context: args.context.as_deref(),
+            base: &args.base,
             org: args.org.as_deref(),
             env: args.env.as_deref(),
             forbid_unsafe_zen: args.forbid_unsafe_zen,
@@ -273,7 +324,7 @@ pub(crate) fn run_check_args(args: &CheckArgs) -> authoring::CommandOutput {
             "--context is required with --artifacts",
         );
     };
-    legacy_to_output(run_check(artifacts_path, context_path))
+    run_check_with_base(artifacts_path, context_path, &args.base)
 }
 
 fn legacy_to_output(result: Result<(String, bool), String>) -> authoring::CommandOutput {

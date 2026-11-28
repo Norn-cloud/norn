@@ -3,6 +3,7 @@
 //! `norn-authoring-py` (Python) with zero Node/Bun/`tsc`/`CPython`.
 
 mod atomic_io;
+pub(crate) mod base_packs;
 mod fmt;
 mod fs_io;
 mod pack_json;
@@ -24,19 +25,18 @@ use clap::Args;
 use serde_json::{Value, json};
 
 use self::atomic_io::write_file_atomic;
+pub(crate) use self::fs_io::InvocationBudget;
 use self::fs_io::{
-    BoundedJsonArray, InvocationBudget, LoadedFile, SourceLang, classify_source_file,
-    display_posix_path, is_declaration_file, is_json_file, read_opened_file_budgeted,
-    validate_safe_relative,
+    BoundedJsonArray, LoadedFile, SourceLang, classify_source_file, display_posix_path,
+    is_declaration_file, is_json_file, read_opened_file_budgeted, validate_safe_relative,
 };
 use self::retained::validate_retained_definition;
-use self::trusted_dir::{PinnedSourceTarget, TrustedDir, open_source_target_pinned};
+pub(crate) use self::trusted_dir::{PinnedSourceTarget, TrustedDir, open_source_target_pinned};
 use self::ts::{TsCompileOptions, TsCompileTarget};
-use self::zero_ci::{
-    AppRootMatch, ZeroCiOutcome, check_zero_ci_app_root, find_norn_app_root_from_dir,
-};
+pub(crate) use self::zero_ci::find_norn_app_root_from_dir;
+use self::zero_ci::{AppRootMatch, ZeroCiOutcome, check_zero_ci_app_root};
 
-const MAX_CHECK_CONTEXT_BYTES: u64 = 16 * 1024 * 1024;
+pub(super) const MAX_CHECK_CONTEXT_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Structured CLI execution result supporting exit codes `0` (ok), `1` (refusal), and `2` (usage/IO).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,7 +79,7 @@ pub(crate) enum AuthoringFailure {
 }
 
 impl AuthoringFailure {
-    fn into_output(self) -> CommandOutput {
+    pub(crate) fn into_output(self) -> CommandOutput {
         match self {
             Self::Diagnostics(doc) => CommandOutput::refused(doc),
             Self::Io(message) => CommandOutput::usage_or_io_error(&message),
@@ -190,16 +190,17 @@ pub(crate) struct DashboardArgs {
 pub(crate) struct CheckSourceRequest<'a> {
     pub(crate) source: &'a Path,
     pub(crate) context: Option<&'a Path>,
+    pub(crate) base: &'a [PathBuf],
     pub(crate) org: Option<&'a str>,
     pub(crate) env: Option<&'a str>,
     pub(crate) forbid_unsafe_zen: bool,
     pub(crate) tool_root: Option<&'a Path>,
 }
 
-struct NornAppManifest {
-    sources: Vec<PathBuf>,
-    org_id: Option<String>,
-    environment_id: Option<String>,
+pub(super) struct NornAppManifest {
+    pub(super) sources: Vec<PathBuf>,
+    pub(super) org_id: Option<String>,
+    pub(super) environment_id: Option<String>,
 }
 
 enum JsonSourceEntry {
@@ -207,15 +208,15 @@ enum JsonSourceEntry {
     RetainedDefinition,
 }
 
-struct CompileDirOptions<'a> {
-    org: &'a str,
-    env: &'a str,
-    forbid_unsafe_zen: bool,
-    tool_root: Option<&'a Path>,
-    allow_empty: bool,
+pub(super) struct CompileDirOptions<'a> {
+    pub(super) org: &'a str,
+    pub(super) env: &'a str,
+    pub(super) forbid_unsafe_zen: bool,
+    pub(super) tool_root: Option<&'a Path>,
+    pub(super) allow_empty: bool,
 }
 
-fn read_norn_manifest_from_dir(
+pub(super) fn read_norn_manifest_from_dir(
     app_root: &TrustedDir,
     budget: &mut InvocationBudget,
 ) -> Result<Option<NornAppManifest>, String> {
@@ -245,6 +246,7 @@ fn read_norn_manifest_from_dir(
         let rel = validate_safe_relative(text)?;
         sources.push(rel);
     }
+    let _validated_base_packs = base_packs::parse_manifest_base_packs(&parsed, &manifest_display)?;
     let org_id = parsed
         .pointer("/scope/orgId")
         .and_then(Value::as_str)
@@ -471,7 +473,7 @@ fn compile_manifest_project(
         .map_err(AuthoringFailure::Io)
 }
 
-fn compile_single_file_pinned(
+pub(super) fn compile_single_file_pinned(
     parent_dir: &TrustedDir,
     file_name: &str,
     display_path: &Path,
@@ -523,7 +525,7 @@ fn compile_single_file_pinned(
     }
 }
 
-fn compile_directory_pinned(
+pub(super) fn compile_directory_pinned(
     root_dir: &TrustedDir,
     manifest: Option<&NornAppManifest>,
     opts: &CompileDirOptions<'_>,
@@ -595,6 +597,17 @@ pub(crate) fn compile_source_artifacts(
     compile_path_to_json(path, org, env, false, None, &mut budget)
 }
 
+/// Compiles a `.ts`/`.py` authoring file or directory to a canonical JSON artifact array.
+pub(crate) fn compile_source_to_json(
+    path: &Path,
+    org: &str,
+    env: &str,
+    forbid_unsafe_zen: bool,
+    tool_root: Option<&Path>,
+) -> Result<String, AuthoringFailure> {
+    let mut budget = InvocationBudget::new();
+    compile_path_to_json(path, org, env, forbid_unsafe_zen, tool_root, &mut budget)
+}
 /// Executes `norn compile`.
 pub(crate) fn execute_compile(args: &CompileArgs) -> CommandOutput {
     if args.pack_json {
@@ -680,12 +693,19 @@ fn resolve_check_scope(
     }
 }
 
+struct CompiledCheckSource {
+    artifacts_json: String,
+    org: String,
+    env: String,
+    app_root: Option<TrustedDir>,
+}
+
 fn compile_check_source_pinned(
     target: PinnedSourceTarget,
-    app_root: Option<&AppRootMatch>,
+    app_root: Option<AppRootMatch>,
     req: &CheckSourceRequest<'_>,
     budget: &mut InvocationBudget,
-) -> Result<String, AuthoringFailure> {
+) -> Result<CompiledCheckSource, AuthoringFailure> {
     match target {
         PinnedSourceTarget::Directory(root_dir) => {
             let manifest = if matches!(app_root, Some(AppRootMatch::SameAsStart)) {
@@ -704,7 +724,19 @@ fn compile_check_source_pinned(
                 tool_root: req.tool_root,
                 allow_empty: false,
             };
-            compile_directory_pinned(&root_dir, manifest.as_ref(), &opts, budget)
+            let artifacts_json =
+                compile_directory_pinned(&root_dir, manifest.as_ref(), &opts, budget)?;
+            let app_root_dir = match app_root {
+                Some(AppRootMatch::SameAsStart) => Some(root_dir),
+                Some(AppRootMatch::Ancestor(dir)) => Some(dir),
+                None => None,
+            };
+            Ok(CompiledCheckSource {
+                artifacts_json,
+                org: resolved_org,
+                env: resolved_env,
+                app_root: app_root_dir,
+            })
         }
         PinnedSourceTarget::File {
             parent_dir,
@@ -723,19 +755,30 @@ fn compile_check_source_pinned(
                 tool_root: req.tool_root,
                 allow_empty: false,
             };
-            compile_single_file_pinned(
+            let artifacts_json = compile_single_file_pinned(
                 &parent_dir,
                 &file_name,
                 &display_path,
                 opened,
                 &opts,
                 budget,
-            )
+            )?;
+            let app_root_dir = match app_root {
+                Some(AppRootMatch::SameAsStart) => Some(parent_dir),
+                Some(AppRootMatch::Ancestor(dir)) => Some(dir),
+                None => None,
+            };
+            Ok(CompiledCheckSource {
+                artifacts_json,
+                org: resolved_org,
+                env: resolved_env,
+                app_root: app_root_dir,
+            })
         }
     }
 }
 
-/// Executes `norn check --source <PATH> [--org <ID> --env <ID>] [--context <FILE>]`.
+/// Executes `norn check --source <PATH> [--org <ID> --env <ID>] [--context <FILE>] [--base <PATH>...]`.
 pub(crate) fn execute_check_source(req: &CheckSourceRequest<'_>) -> CommandOutput {
     let target = match open_source_target_pinned(req.source) {
         Ok(pinned) => pinned,
@@ -758,13 +801,22 @@ pub(crate) fn execute_check_source(req: &CheckSourceRequest<'_>) -> CommandOutpu
     }
 
     let mut budget = InvocationBudget::new();
-    let artifacts_json =
-        match compile_check_source_pinned(target, app_root.as_ref(), req, &mut budget) {
-            Ok(json_text) => json_text,
-            Err(failure) => return failure.into_output(),
-        };
+    let manifest_base_packs = match app_root.as_ref() {
+        Some(matched) => match base_packs::read_manifest_base_packs_from_dir(
+            matched.as_dir(start_dir),
+            &mut budget,
+        ) {
+            Ok(paths) => paths,
+            Err(err) => return CommandOutput::usage_or_io_error(&err),
+        },
+        None => Vec::new(),
+    };
+    let compiled = match compile_check_source_pinned(target, app_root, req, &mut budget) {
+        Ok(result) => result,
+        Err(failure) => return failure.into_output(),
+    };
 
-    let context_json = match req.context {
+    let raw_context = match req.context {
         Some(ctx_path) => match crate::cell::read_regular_file_bounded(
             ctx_path,
             MAX_CHECK_CONTEXT_BYTES,
@@ -776,7 +828,25 @@ pub(crate) fn execute_check_source(req: &CheckSourceRequest<'_>) -> CommandOutpu
         None => "{}".to_owned(),
     };
 
-    match crate::red_team::check_with_red_team(&artifacts_json, &context_json) {
+    let base_scope = base_packs::BasePackScope {
+        org: Some(&compiled.org),
+        env: Some(&compiled.env),
+        forbid_unsafe_zen: req.forbid_unsafe_zen,
+        tool_root: req.tool_root,
+    };
+    let context_json = match base_packs::merge_base_packs_into_context(
+        &raw_context,
+        compiled.app_root.as_ref(),
+        &manifest_base_packs,
+        req.base,
+        &base_scope,
+        &mut budget,
+    ) {
+        Ok(merged) => merged,
+        Err(failure) => return failure.into_output(),
+    };
+
+    match crate::red_team::check_with_red_team(&compiled.artifacts_json, &context_json) {
         Ok((report, true)) => CommandOutput::ok(report),
         Ok((report, false)) => CommandOutput::refused(report),
         Err(err) => CommandOutput::usage_or_io_error(&err),
