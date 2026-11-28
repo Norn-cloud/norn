@@ -753,9 +753,9 @@ fn check_law_binding_on_subtype(
             continue;
         };
         let checked = if guarded && let Some(cond) = &compiled_condition {
-            norn_expr::check_expression_under(&compiled, cond, env, &Type::Bool)
+            norn_expr::check_inherited_expression_under(&compiled, cond, env, &Type::Bool)
         } else {
-            norn_expr::check_expression(&compiled, env, &Type::Bool)
+            norn_expr::check_inherited_expression(&compiled, env, &Type::Bool)
         };
         if let Err(errors) = checked {
             let detail = errors.first().map_or_else(
