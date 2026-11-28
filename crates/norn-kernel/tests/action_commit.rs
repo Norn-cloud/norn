@@ -410,41 +410,51 @@ fn assert_overlong_keys_refuse_before_host_io(extra: usize) {
     let mut host = NoReadOrCommit;
 
     let overlong_key = "k".repeat(ACTION_IDEMPOTENCY_KEY_MAX_BYTES.saturating_add(extra));
-    let key_refusal = commit_action(
+    let key_result = commit_action(
         &mut host,
         &catalog,
         &call(&action, "SO-1", &overlong_key),
         &Allow,
-    )
-    .expect_err("the key is over the byte limit");
-    assert!(matches!(
-        key_refusal,
-        ActionRefusal::Command(ActionCommandRejection::IdempotencyKeyTooLong { .. })
-    ));
-    assert_eq!(key_refusal.code(), "action.idempotency_key_too_long");
-    assert_eq!(key_refusal.category(), norn_kernel::RefusalCategory::Limit);
+    );
+    assert!(
+        key_result.is_err(),
+        "the key is over the byte limit: {key_result:?}"
+    );
+    if let Err(key_refusal) = key_result {
+        assert!(matches!(
+            key_refusal,
+            ActionRefusal::Command(ActionCommandRejection::IdempotencyKeyTooLong { .. })
+        ));
+        assert_eq!(key_refusal.code(), "action.idempotency_key_too_long");
+        assert_eq!(key_refusal.category(), norn_kernel::RefusalCategory::Limit);
+    }
 
     let overlong_id =
         "k".repeat(norn_ir::identifier_limits::MAX_OBJECT_KEY_BYTES.saturating_add(extra));
-    let target_refusal = commit_action(
+    let target_result = commit_action(
         &mut host,
         &catalog,
         &call(&action, &overlong_id, "idem-1"),
         &Allow,
-    )
-    .expect_err("the target key is over the byte limit");
-    assert!(matches!(
-        target_refusal,
-        ActionRefusal::Decision(norn_kernel::DecisionRefusal::IdentifierTooLong {
-            field: "object key",
-            ..
-        })
-    ));
-    assert_eq!(target_refusal.code(), "commit.identifier_too_long");
-    assert_eq!(
-        target_refusal.category(),
-        norn_kernel::RefusalCategory::Limit
     );
+    assert!(
+        target_result.is_err(),
+        "the target key is over the byte limit: {target_result:?}"
+    );
+    if let Err(target_refusal) = target_result {
+        assert!(matches!(
+            target_refusal,
+            ActionRefusal::Decision(norn_kernel::DecisionRefusal::IdentifierTooLong {
+                field: "object key",
+                ..
+            })
+        ));
+        assert_eq!(target_refusal.code(), "commit.identifier_too_long");
+        assert_eq!(
+            target_refusal.category(),
+            norn_kernel::RefusalCategory::Limit
+        );
+    }
 }
 
 #[test]
