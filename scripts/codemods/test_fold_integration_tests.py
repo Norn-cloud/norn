@@ -310,7 +310,11 @@ class CommandAndFilterRewriteTests(unittest.TestCase):
             )
         with self.assertRaises(fold.Refused):
             fold.split_suites_sections(
-                '#[cfg(test /* )]\n#[path = "a.rs"]\nmod a;\n// */ )] #[test] fn smoke() {}\n'
+                '#[cfg(test /* )]\n#[path = "a.rs"]\nmod a;\n// */ )] #[test] fn smoke() {}\n#[path = "b.rs"]\nmod b;\n'
+            )
+        with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(
+                '// comment\x0c#[cfg(any())]\n#[path = "a.rs"]\nmod a;\n'
             )
         with self.assertRaises(fold.Refused):
             fold.shared_support_names(

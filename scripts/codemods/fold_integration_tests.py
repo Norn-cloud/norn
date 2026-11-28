@@ -270,6 +270,9 @@ def _validate_suite_entries(rest: list[str]) -> None:
 
 def split_suites_sections(text: str) -> tuple[list[str], list[str]]:
     """Split an existing `tests/suites.rs` into `(shared_support_lines, suite_mod_lines)`."""
+    # Reject non-LF separators (`splitlines()` splits on VT/FF/NEL/LS/PS/CR, Rust comments only on LF).
+    if any(ch in text for ch in "\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"):
+        raise Refused(f"tests/{SUITE}.rs: only LF line breaks are allowed")
     # Reject lexical forms that can span lines and desynchronize line-oriented parsing.
     for kind, start, end in _iter_rust_spans(text):
         span = text[start:end]
@@ -277,7 +280,7 @@ def split_suites_sections(text: str) -> tuple[list[str], list[str]]:
             raise Refused(f"tests/{SUITE}.rs: block comments are not allowed")
         if kind == "literal" and ("\n" in span or "\\" in span):
             raise Refused(f"tests/{SUITE}.rs: multiline or escaped string literals are not allowed")
-    lines = text.splitlines()
+    lines = text.split("\n")
     body_start = _consume_header(lines)
     if body_start < len(lines) and lines[body_start] == SHARED_SUPPORT_HEADER:
         end = body_start
