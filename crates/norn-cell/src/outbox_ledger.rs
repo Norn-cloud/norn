@@ -3,7 +3,7 @@
 //! Persists append-only [`OutboxRecord`] rows in `_norn_outbox_record` keyed by
 //! `(command_id, epoch, seq)` and validates every transition through
 //! [`OperationLedger`]. The mutable `_norn_outbox` table acts strictly as the
-//! projected queue head ([`HeadProjection`]):
+//! projected queue head ([`norn_kernel::world::outbox_ledger::HeadProjection`]):
 //!
 //! - Old results never settle a newer active generation.
 //! - Late outcomes attach immutably to their original generation via a verified
@@ -21,16 +21,19 @@ use norn_ir::cell_id::CellId;
 use norn_kernel::CommandId;
 use norn_kernel::world::outbox::{OperationKey, Queue};
 use norn_kernel::world::outbox_ledger::{
-    ApplyStatus, DispatchProof, HeadProjection, OperationLedger, OutboxDigest, OutboxLedgerRefusal,
-    OutboxRecord, OutboxRecordKind, OutcomeEvidence, ProviderDedupContract, ReconciliationDecision,
+    ApplyStatus, DispatchProof, OperationLedger, OutboxDigest, OutboxLedgerRefusal, OutboxRecord,
+    OutboxRecordKind, OutcomeEvidence, ProviderDedupContract, ReconciliationDecision,
 };
 
 use crate::codec::canonical_json;
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
+use crate::outbox_generations::{
+    ActiveRunReplay, CompensationProgress, ProofOutcomeTarget, ReconciliationTarget, RestoreFence,
+};
 use crate::read::{RunRecord, to_i64, to_u64};
 use crate::store::OutboxCommand;
-use crate::system::{META, OUTBOX_RECORD};
+use crate::system::OUTBOX_RECORD;
 
 /// Deterministic local-only fallback identity for legacy cells without a
 /// persisted `binding:cell_id`.
@@ -55,6 +58,20 @@ pub(crate) enum EnqueueAction {
     InsertNew,
     /// Newer generation replacing an active pending head in place.
     ReplaceInPlace,
+}
+
+/// Whether replaying an epoch against an effective [`RestoreFence`] synthesized
+/// an unpersisted `RestoreFenced` record (`D3`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FenceProjection {
+    None,
+    Synthesized(Box<OutboxRecord>),
+}
+
+/// Replayed epoch ledger paired with any in-memory synthesized fence record.
+struct ReplayedEpoch {
+    ledger: OperationLedger,
+    pending_fence: FenceProjection,
 }
 
 /// Derive the generation-free [`OperationKey`] for `command_id` in `cell_id`.
@@ -191,48 +208,59 @@ pub(crate) fn operation_key<E: SqlEngine>(
     operation_key_for_cell(cell_id.as_ref(), command_id)
 }
 
-pub(crate) fn read_meta_fence<E: SqlEngine>(
-    conn: &E,
-    command_id: &str,
-) -> Result<Option<u64>, CellError> {
-    let raw: Option<String> = conn.query_optional(
-        &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
-        params![format!("restore:perform_fence:{command_id}")],
-        |row| row.get(0),
-    )?;
-    raw.map(|value| {
-        value
-            .parse::<u64>()
-            .map_err(|error| CellError::LedgerCorrupt {
-                seq: 0,
-                reason: format!("invalid restore fence generation: {error}"),
-            })
-    })
-    .transpose()
-}
-
 pub(crate) fn load_epochs<E: SqlEngine>(
     conn: &E,
     command_id: &str,
 ) -> Result<Vec<(u64, Vec<OutboxRecord>)>, CellError> {
     let rows = conn.query(
         &format!(
-            "SELECT \"epoch\", \"record\" FROM \"{OUTBOX_RECORD}\" WHERE \"command_id\" = ?1 ORDER BY \"epoch\", \"seq\""
+            "SELECT \"epoch\", \"seq\", \"generation\", \"record\" FROM \"{OUTBOX_RECORD}\" WHERE \"command_id\" = ?1 ORDER BY \"epoch\", \"seq\""
         ),
         params![command_id],
     )?;
+    let corrupt = |reason: String| CellError::LedgerCorrupt { seq: 0, reason };
     let mut epochs: Vec<(u64, Vec<OutboxRecord>)> = Vec::new();
+    let mut expected_seq: u64 = 1;
     for values in rows {
         let row = SqlRow(values);
         let epoch = to_u64(row.get::<i64>(0)?, "outbox epoch")?;
-        let text: String = row.get(1)?;
+        let seq = to_u64(row.get::<i64>(1)?, "outbox record seq")?;
+        let col_gen = to_u64(row.get::<i64>(2)?, "generation")?;
+        let text: String = row.get(3)?;
         let record: OutboxRecord = serde_json::from_str(&text)?;
-        if let Some((current, list)) = epochs.last_mut()
-            && *current == epoch
-        {
-            list.push(record);
-        } else {
-            epochs.push((epoch, vec![record]));
+        if col_gen != record.generation {
+            return Err(corrupt(format!(
+                "outbox record generation column ({col_gen}) disagrees with payload ({})",
+                record.generation
+            )));
+        }
+        match epochs.last_mut() {
+            Some((current, list)) if *current == epoch => {
+                if seq != expected_seq {
+                    return Err(corrupt(format!(
+                        "outbox record seq gap in epoch {epoch}: expected {expected_seq}, got {seq}"
+                    )));
+                }
+                list.push(record);
+                expected_seq = seq
+                    .checked_add(1)
+                    .ok_or(CellError::OutOfRange("outbox record seq"))?;
+            }
+            last => {
+                let expected_epoch = match last {
+                    Some((current, _)) => current
+                        .checked_add(1)
+                        .ok_or(CellError::OutOfRange("outbox epoch"))?,
+                    None => 0,
+                };
+                if epoch != expected_epoch || seq != 1 {
+                    return Err(corrupt(format!(
+                        "outbox record epoch/seq discontinuity: expected ({expected_epoch}, 1), got ({epoch}, {seq})"
+                    )));
+                }
+                epochs.push((epoch, vec![record]));
+                expected_seq = 2;
+            }
         }
     }
     Ok(epochs)
@@ -247,16 +275,19 @@ pub(crate) fn replay_records(records: &[OutboxRecord]) -> Result<OperationLedger
 
 fn apply_meta_fence_in_memory(
     ledger: &mut OperationLedger,
-    meta_fence: Option<u64>,
-) -> Result<bool, CellError> {
-    let Some(fenced_at) = meta_fence else {
-        return Ok(false);
+    meta_fence: RestoreFence,
+) -> Result<FenceProjection, CellError> {
+    let RestoreFence::FencedAt {
+        generation: fenced_at,
+    } = meta_fence
+    else {
+        return Ok(FenceProjection::None);
     };
-    if ledger.is_terminal() || ledger.fence().is_some_and(|existing| existing >= fenced_at) {
-        return Ok(false);
-    }
-    if ledger.active_generation() > fenced_at {
-        return Ok(false);
+    if ledger.is_terminal()
+        || ledger.fence().is_some_and(|existing| existing >= fenced_at)
+        || !meta_fence.blocks(ledger.active_generation())
+    {
+        return Ok(FenceProjection::None);
     }
     let fence_record = OutboxRecord {
         operation: ledger.operation(),
@@ -271,16 +302,19 @@ fn apply_meta_fence_in_memory(
             seq: 0,
             reason: format!("failed to apply restore fence to outbox ledger: {error}"),
         })?;
-    Ok(true)
+    Ok(FenceProjection::Synthesized(Box::new(fence_record)))
 }
 
 fn replay_epoch_with_fence(
     records: &[OutboxRecord],
-    meta_fence: Option<u64>,
-) -> Result<(OperationLedger, bool), CellError> {
+    meta_fence: RestoreFence,
+) -> Result<ReplayedEpoch, CellError> {
     let mut ledger = replay_records(records)?;
-    let synthesized = apply_meta_fence_in_memory(&mut ledger, meta_fence)?;
-    Ok((ledger, synthesized))
+    let pending_fence = apply_meta_fence_in_memory(&mut ledger, meta_fence)?;
+    Ok(ReplayedEpoch {
+        ledger,
+        pending_fence,
+    })
 }
 
 pub(crate) fn append_record<E: SqlEngine>(
@@ -325,9 +359,8 @@ pub(crate) fn load_active_ledger<E: SqlEngine>(
     let Some((_, records)) = epochs.last() else {
         return Ok(None);
     };
-    let meta_fence = read_meta_fence(conn, command_id)?;
-    let (ledger, _) = replay_epoch_with_fence(records, meta_fence)?;
-    Ok(Some(ledger))
+    let meta_fence = RestoreFence::load(conn, command_id)?;
+    Ok(Some(replay_epoch_with_fence(records, meta_fence)?.ledger))
 }
 
 /// Read every persisted immutable [`OutboxRecord`] of `command_id` across all
@@ -407,8 +440,8 @@ pub(crate) fn record_enqueue<E: SqlEngine>(
     let Some((last_epoch, last_records)) = epochs.last() else {
         return Err(refused("missing outbox epoch".to_owned()));
     };
-    let meta_fence = read_meta_fence(conn, &command.command_id)?;
-    let (mut ledger, _) = replay_epoch_with_fence(last_records, meta_fence)?;
+    let meta_fence = RestoreFence::load(conn, &command.command_id)?;
+    let mut ledger = replay_epoch_with_fence(last_records, meta_fence)?.ledger;
     if command.generation < ledger.active_generation() {
         return Ok(EnqueueAction::Noop);
     }
@@ -505,8 +538,8 @@ pub(crate) fn record_dispatched<E: SqlEngine>(
             generation,
         });
     };
-    let meta_fence = read_meta_fence(conn, command_id)?;
-    let (mut ledger, _) = replay_epoch_with_fence(last_records, meta_fence)?;
+    let meta_fence = RestoreFence::load(conn, command_id)?;
+    let mut ledger = replay_epoch_with_fence(last_records, meta_fence)?.ledger;
     let record = OutboxRecord {
         operation: ledger.operation(),
         generation,
@@ -556,8 +589,8 @@ pub(crate) fn record_active_outcome<E: SqlEngine>(
             refusal: OutboxLedgerRefusal::NotInitialized,
         });
     };
-    let meta_fence = read_meta_fence(conn, command_id)?;
-    let (mut ledger, _) = replay_epoch_with_fence(last_records, meta_fence)?;
+    let meta_fence = RestoreFence::load(conn, command_id)?;
+    let mut ledger = replay_epoch_with_fence(last_records, meta_fence)?.ledger;
     let (evidence, commit_seq) = if let Some(proof) = ledger.active().dispatch {
         (
             OutcomeEvidence::DispatchProof { proof },
@@ -645,16 +678,16 @@ pub(crate) fn try_attach_late_outcome<E: SqlEngine>(
 /// Explicitly attach an outcome carrying a caller-supplied [`DispatchProof`],
 /// failing closed on any proof mismatch or conflicting outcome.
 ///
-/// Returns `(status, is_active_head)` so callers can project the outcome onto
-/// `_norn_outbox` iff it settled the active unfenced head; late outcomes for
-/// prior generations never alter `_norn_outbox` or [`HeadProjection`].
+/// Returns [`ProofOutcomeTarget::SettledActiveHead`] iff it newly settled the
+/// active unfenced head; late outcomes for prior generations return
+/// [`ProofOutcomeTarget::NoHeadProjection`] and never alter `_norn_outbox`.
 pub(crate) fn record_outcome_with_proof<E: SqlEngine>(
     conn: &E,
     command_id: &str,
     proof: DispatchProof,
     ok: bool,
     outcome: &Value,
-) -> Result<(ApplyStatus, bool), CellError> {
+) -> Result<ProofOutcomeTarget, CellError> {
     let epochs = load_epochs(conn, command_id)?;
     let Some((last_epoch, _)) = epochs.last() else {
         return Err(CellError::OutboxLedgerRefused {
@@ -663,13 +696,13 @@ pub(crate) fn record_outcome_with_proof<E: SqlEngine>(
             refusal: OutboxLedgerRefusal::UnknownGeneration,
         });
     };
-    let meta_fence = read_meta_fence(conn, command_id)?;
+    let meta_fence = RestoreFence::load(conn, command_id)?;
     let digest = outcome_digest(outcome)?;
     for (epoch, records) in epochs.iter().rev() {
-        let (mut ledger, _) = if *epoch == *last_epoch {
-            replay_epoch_with_fence(records, meta_fence)?
+        let mut ledger = if *epoch == *last_epoch {
+            replay_epoch_with_fence(records, meta_fence)?.ledger
         } else {
-            (replay_records(records)?, false)
+            replay_records(records)?
         };
         if ledger.generation(proof.generation).is_none() {
             continue;
@@ -694,10 +727,15 @@ pub(crate) fn record_outcome_with_proof<E: SqlEngine>(
         if status == ApplyStatus::Applied {
             append_record(conn, command_id, *epoch, &record)?;
         }
-        let is_active = *epoch == *last_epoch
+        let settled_active = status == ApplyStatus::Applied
+            && *epoch == *last_epoch
             && proof.generation == ledger.active_generation()
             && !ledger.is_terminal();
-        return Ok((status, is_active));
+        return Ok(if settled_active {
+            ProofOutcomeTarget::SettledActiveHead
+        } else {
+            ProofOutcomeTarget::NoHeadProjection
+        });
     }
     Err(CellError::OutboxLedgerRefused {
         command_id: command_id.to_owned(),
@@ -721,8 +759,8 @@ pub(crate) fn record_consumed<E: SqlEngine>(
             refusal: OutboxLedgerRefusal::NotInitialized,
         });
     };
-    let meta_fence = read_meta_fence(conn, command_id)?;
-    let (mut ledger, _) = replay_epoch_with_fence(last_records, meta_fence)?;
+    let meta_fence = RestoreFence::load(conn, command_id)?;
+    let mut ledger = replay_epoch_with_fence(last_records, meta_fence)?.ledger;
     let record = OutboxRecord {
         operation: ledger.operation(),
         generation,
@@ -775,17 +813,16 @@ pub(crate) fn record_restore_fence<E: SqlEngine>(
 
 /// Validate and append a durable [`OutboxRecordKind::Reconciliation`] record.
 ///
-/// Returns `(status, is_active_generation, head_projection)` so the commit
-/// writer can synchronize `_norn_outbox` when a confirmed outcome settles the
-/// active head.
+/// Returns [`ReconciliationTarget`] so the commit writer can synchronize
+/// `_norn_outbox` iff a confirmed outcome settled the active head.
 pub(crate) fn record_reconciliation<E: SqlEngine>(
     conn: &E,
     command_id: &str,
     generation: u64,
     decision: ReconciliationDecision,
     commit_seq: u64,
-    recorded_fence: Option<u64>,
-) -> Result<(ApplyStatus, bool, HeadProjection), CellError> {
+    recorded_fence: RestoreFence,
+) -> Result<ReconciliationTarget, CellError> {
     let epochs = load_epochs(conn, command_id)?;
     let Some((last_epoch, _)) = epochs.last() else {
         return Err(CellError::OutboxLedgerRefused {
@@ -794,47 +831,50 @@ pub(crate) fn record_reconciliation<E: SqlEngine>(
             refusal: OutboxLedgerRefusal::UnknownGeneration,
         });
     };
-    let effective_fence = read_meta_fence(conn, command_id)?.or(recorded_fence);
+    let effective_fence = RestoreFence::load(conn, command_id)?.or(recorded_fence);
     for (epoch, records) in epochs.iter().rev() {
         let is_latest = *epoch == *last_epoch;
-        let (mut ledger, synthesized_fence) = if is_latest {
+        let mut replayed = if is_latest {
             replay_epoch_with_fence(records, effective_fence)?
         } else {
-            (replay_records(records)?, false)
+            ReplayedEpoch {
+                ledger: replay_records(records)?,
+                pending_fence: FenceProjection::None,
+            }
         };
-        if ledger.generation(generation).is_none() {
+        if replayed.ledger.generation(generation).is_none() {
             continue;
         }
         let record = OutboxRecord {
-            operation: ledger.operation(),
+            operation: replayed.ledger.operation(),
             generation,
             kind: OutboxRecordKind::Reconciliation {
                 decision,
                 commit_seq,
             },
         };
-        let status = ledger
-            .apply(&record)
-            .map_err(|refusal| CellError::OutboxLedgerRefused {
-                command_id: command_id.to_owned(),
-                generation,
-                refusal,
-            })?;
+        let status =
+            replayed
+                .ledger
+                .apply(&record)
+                .map_err(|refusal| CellError::OutboxLedgerRefused {
+                    command_id: command_id.to_owned(),
+                    generation,
+                    refusal,
+                })?;
         if status == ApplyStatus::Applied {
-            if synthesized_fence {
-                let fence_record = OutboxRecord {
-                    operation: ledger.operation(),
-                    generation: ledger.active_generation(),
-                    kind: OutboxRecordKind::RestoreFenced {
-                        commit_seq: ledger.active().enqueue_commit_seq,
-                    },
-                };
+            if let FenceProjection::Synthesized(fence_record) = replayed.pending_fence {
                 append_record(conn, command_id, *epoch, &fence_record)?;
             }
             append_record(conn, command_id, *epoch, &record)?;
         }
-        let is_active = is_latest && generation == ledger.active_generation();
-        return Ok((status, is_active, ledger.head_projection()));
+        return Ok(
+            if is_latest && generation == replayed.ledger.active_generation() {
+                ReconciliationTarget::ActiveHead
+            } else {
+                ReconciliationTarget::PriorGeneration
+            },
+        );
     }
     Err(CellError::OutboxLedgerRefused {
         command_id: command_id.to_owned(),
@@ -845,16 +885,16 @@ pub(crate) fn record_reconciliation<E: SqlEngine>(
 
 /// Validate and append an [`OutboxRecordKind::Compensation`] record.
 ///
-/// Returns `(status, is_compensated)` so the writer can mark the terminal
-/// compensated command row consumed in `_norn_outbox` to unblock the FIFO queue.
+/// Returns [`CompensationProgress::Compensated`] when the writer must mark the
+/// terminal compensated command row consumed in `_norn_outbox`.
 pub(crate) fn record_compensation<E: SqlEngine>(
     conn: &E,
     command_id: &str,
     generation: u64,
     ok: bool,
     commit_seq: u64,
-    recorded_fence: Option<u64>,
-) -> Result<(ApplyStatus, bool), CellError> {
+    recorded_fence: RestoreFence,
+) -> Result<CompensationProgress, CellError> {
     let epochs = load_epochs(conn, command_id)?;
     let Some((last_epoch, last_records)) = epochs.last() else {
         return Err(CellError::OutboxLedgerRefused {
@@ -863,38 +903,38 @@ pub(crate) fn record_compensation<E: SqlEngine>(
             refusal: OutboxLedgerRefusal::UnknownGeneration,
         });
     };
-    let effective_fence = read_meta_fence(conn, command_id)?.or(recorded_fence);
-    let (mut ledger, synthesized_fence) = replay_epoch_with_fence(last_records, effective_fence)?;
+    let effective_fence = RestoreFence::load(conn, command_id)?.or(recorded_fence);
+    let mut replayed = replay_epoch_with_fence(last_records, effective_fence)?;
     let record = OutboxRecord {
-        operation: ledger.operation(),
+        operation: replayed.ledger.operation(),
         generation,
         kind: OutboxRecordKind::Compensation { ok, commit_seq },
     };
-    let status = ledger
-        .apply(&record)
-        .map_err(|refusal| CellError::OutboxLedgerRefused {
-            command_id: command_id.to_owned(),
-            generation,
-            refusal,
-        })?;
+    let status =
+        replayed
+            .ledger
+            .apply(&record)
+            .map_err(|refusal| CellError::OutboxLedgerRefused {
+                command_id: command_id.to_owned(),
+                generation,
+                refusal,
+            })?;
     if status == ApplyStatus::Applied {
-        if synthesized_fence {
-            let fence_record = OutboxRecord {
-                operation: ledger.operation(),
-                generation: ledger.active_generation(),
-                kind: OutboxRecordKind::RestoreFenced {
-                    commit_seq: ledger.active().enqueue_commit_seq,
-                },
-            };
+        if let FenceProjection::Synthesized(fence_record) = replayed.pending_fence {
             append_record(conn, command_id, *last_epoch, &fence_record)?;
         }
         append_record(conn, command_id, *last_epoch, &record)?;
     }
-    let compensated = matches!(
-        ledger.head_projection().state,
-        norn_kernel::world::outbox::OutboxState::Compensated
-    );
-    Ok((status, compensated))
+    Ok(
+        if matches!(
+            replayed.ledger.head_projection().state,
+            norn_kernel::world::outbox::OutboxState::Compensated
+        ) {
+            CompensationProgress::Compensated
+        } else {
+            CompensationProgress::StillPending
+        },
+    )
 }
 
 /// Return the [`DispatchProof`] of a superseded prior generation that was
@@ -932,7 +972,7 @@ pub(crate) fn restore_consumed_runs<E: SqlEngine>(
     command_id: &str,
     active_generation: u64,
     runs: &[RunRecord],
-    include_active: bool,
+    replay_mode: ActiveRunReplay,
 ) -> Result<(), CellError> {
     for run in runs {
         if run.attempt != 1 {
@@ -941,9 +981,129 @@ pub(crate) fn restore_consumed_runs<E: SqlEngine>(
         if run.generation < active_generation {
             let _attached =
                 try_attach_late_outcome(conn, command_id, run.generation, &run.outcome)?;
-        } else if include_active && run.generation == active_generation {
+        } else if replay_mode == ActiveRunReplay::IncludeActive
+            && run.generation == active_generation
+        {
             let _status = record_active_outcome(conn, command_id, run.generation, &run.outcome)?;
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, feature = "native"))]
+mod tests {
+    use norn_ir::RuntimeValue as Value;
+    use norn_kernel::world::outbox::Queue;
+    use norn_kernel::world::outbox_ledger::{
+        OutboxRecord, OutboxRecordKind, ProviderDedupContract,
+    };
+
+    use super::{DDL, load_epochs, operation_key_for_cell, payload_digest};
+    use crate::codec::canonical_json;
+    use crate::engine::{NativeEngine, SqlEngine as _, SqlValue};
+    use crate::error::CellError;
+
+    fn requested_record(command_id: &str, generation: u64) -> Result<OutboxRecord, CellError> {
+        let operation = operation_key_for_cell(None, command_id)?;
+        let digest = payload_digest(&Value::String(format!("{command_id}:{generation}")))?;
+        Ok(OutboxRecord {
+            operation,
+            generation,
+            kind: OutboxRecordKind::Requested {
+                queue: Queue::Fifo,
+                payload_digest: digest,
+                dedup_contract: ProviderDedupContract::None,
+                commit_seq: generation.saturating_add(1),
+            },
+        })
+    }
+
+    fn insert_raw(
+        engine: &NativeEngine,
+        command_id: &str,
+        epoch: i64,
+        seq: i64,
+        generation: i64,
+        record: &OutboxRecord,
+    ) -> Result<(), CellError> {
+        engine.execute(
+            "INSERT INTO \"_norn_outbox_record\" (\"command_id\", \"epoch\", \"seq\", \"generation\", \"record\") VALUES (?1, ?2, ?3, ?4, ?5)",
+            &[
+                SqlValue::Text(command_id.to_owned()),
+                SqlValue::Integer(epoch),
+                SqlValue::Integer(seq),
+                SqlValue::Integer(generation),
+                SqlValue::Text(canonical_json(record)?),
+            ],
+        )
+    }
+
+    #[test]
+    fn load_epochs_rejects_corrupt_or_contradictory_rows() -> Result<(), CellError> {
+        // 1. Valid contiguous epochs (0: seq 1..=2, 1: seq 1).
+        let valid = NativeEngine::open_in_memory()?;
+        valid.execute_batch(DDL)?;
+        let req0 = requested_record("ok-cmd", 0)?;
+        let disp0 = OutboxRecord {
+            operation: req0.operation,
+            generation: 0,
+            kind: OutboxRecordKind::Dispatched {
+                claim_commit_seq: 2,
+            },
+        };
+        let req1 = requested_record("ok-cmd", 1)?;
+        insert_raw(&valid, "ok-cmd", 0, 1, 0, &req0)?;
+        insert_raw(&valid, "ok-cmd", 0, 2, 0, &disp0)?;
+        insert_raw(&valid, "ok-cmd", 1, 1, 1, &req1)?;
+        let epochs = load_epochs(&valid, "ok-cmd")?;
+        assert_eq!(epochs.len(), 2);
+
+        // 2. Column `generation` disagrees with JSON payload `record.generation`.
+        let gen_mismatch = NativeEngine::open_in_memory()?;
+        gen_mismatch.execute_batch(DDL)?;
+        insert_raw(&gen_mismatch, "bad-gen", 0, 1, 9, &req0)?;
+        assert!(matches!(
+            load_epochs(&gen_mismatch, "bad-gen"),
+            Err(CellError::LedgerCorrupt { seq: 0, .. })
+        ));
+
+        // 3. Non-zero starting epoch.
+        let bad_start_epoch = NativeEngine::open_in_memory()?;
+        bad_start_epoch.execute_batch(DDL)?;
+        insert_raw(&bad_start_epoch, "bad-epoch", 1, 1, 0, &req0)?;
+        assert!(matches!(
+            load_epochs(&bad_start_epoch, "bad-epoch"),
+            Err(CellError::LedgerCorrupt { seq: 0, .. })
+        ));
+
+        // 4. Non-1 starting seq (seq = 0).
+        let bad_start_seq = NativeEngine::open_in_memory()?;
+        bad_start_seq.execute_batch(DDL)?;
+        insert_raw(&bad_start_seq, "bad-seq0", 0, 0, 0, &req0)?;
+        assert!(matches!(
+            load_epochs(&bad_start_seq, "bad-seq0"),
+            Err(CellError::LedgerCorrupt { seq: 0, .. })
+        ));
+
+        // 5. Seq gap within epoch (1 -> 3).
+        let seq_gap = NativeEngine::open_in_memory()?;
+        seq_gap.execute_batch(DDL)?;
+        insert_raw(&seq_gap, "seq-gap", 0, 1, 0, &req0)?;
+        insert_raw(&seq_gap, "seq-gap", 0, 3, 0, &disp0)?;
+        assert!(matches!(
+            load_epochs(&seq_gap, "seq-gap"),
+            Err(CellError::LedgerCorrupt { seq: 0, .. })
+        ));
+
+        // 6. Epoch gap (0 -> 2).
+        let epoch_gap = NativeEngine::open_in_memory()?;
+        epoch_gap.execute_batch(DDL)?;
+        insert_raw(&epoch_gap, "epoch-gap", 0, 1, 0, &req0)?;
+        insert_raw(&epoch_gap, "epoch-gap", 2, 1, 1, &req1)?;
+        assert!(matches!(
+            load_epochs(&epoch_gap, "epoch-gap"),
+            Err(CellError::LedgerCorrupt { seq: 0, .. })
+        ));
+        Ok(())
+    }
 }

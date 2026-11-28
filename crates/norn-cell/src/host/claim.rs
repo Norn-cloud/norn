@@ -117,15 +117,15 @@ where
                 generation,
             })?;
         let projection = ledger.head_projection();
-        let fence = self
-            .store
-            .perform_fence_generation(&row.command.command_id)?;
+        let fence = self.store.restore_fence(&row.command.command_id)?;
         let mut state = projection.state;
         // Keep a restore fence active for ordinary `claim_perform()` calls
         // even after an authorized newer generation is enqueued, unless
         // durable reconciliation confirmed an outcome or the caller names the
         // authorized generation via `claim_reconciled_perform`.
-        if let Some(fenced_at) = fence
+        if let crate::outbox_generations::RestoreFence::FencedAt {
+            generation: fenced_at,
+        } = fence
             && !ledger.active().has_reconciled_outcome()
         {
             let lifted = reconciled.is_some_and(|authorized| {

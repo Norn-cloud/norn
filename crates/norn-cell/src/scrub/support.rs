@@ -1,5 +1,5 @@
 //! Shared bounded cursors for `Phase::History` definition installs and
-//! `Phase::Seed` genesis definition-pin folding (S10).
+//! `Phase::Seed` genesis definition-pin folding (S10, D5).
 
 use super::durable_event::DurableEventCursor;
 use super::history::{LEDGER_ENTRY_MAX_ROWS, WAKE_ROW_BUDGET};
@@ -11,15 +11,25 @@ use crate::read::StoreReader;
 use crate::store::InstalledDefinitionSet;
 use crate::{CellError, CellStore, Receipt};
 
+/// Closed phase state of [`DefInstallCursor`] (`D5`): eliminates parallel
+/// `Option<ExportDecodeCursor>` / `Option<Box<ExportRecord>>` states.
+#[derive(Clone)]
+enum DefInstallStage {
+    Unopened,
+    DecodingExport(Box<ExportDecodeCursor>),
+    VerifyingEvents {
+        record: Box<ExportRecord>,
+        event_index: usize,
+        durable: Option<DurableEventCursor>,
+    },
+}
+
 /// Resumable verifier for one definition-install commit under [`RowBudget`].
 #[derive(Clone)]
 pub(super) struct DefInstallCursor {
     version_index: usize,
     receipt: Receipt,
-    export_cursor: Option<ExportDecodeCursor>,
-    record: Option<Box<ExportRecord>>,
-    event_index: usize,
-    durable: Option<DurableEventCursor>,
+    stage: DefInstallStage,
 }
 
 impl DefInstallCursor {
@@ -27,10 +37,7 @@ impl DefInstallCursor {
         Self {
             version_index,
             receipt,
-            export_cursor: None,
-            record: None,
-            event_index: 0,
-            durable: None,
+            stage: DefInstallStage::Unopened,
         }
     }
 
@@ -44,40 +51,43 @@ impl DefInstallCursor {
         let version = versions
             .get(self.version_index)
             .ok_or(CellError::OutOfRange("definition history index"))?;
-        if self.record.is_none() {
-            if self.export_cursor.is_none() {
-                if budget.exhausted() {
-                    return Ok(false);
-                }
-                self.export_cursor = Some(
-                    ExportDecodeCursor::open(&store.conn, version.commit_seq, budget)?.ok_or_else(
-                        || CellError::LedgerCorrupt {
-                            seq: version.commit_seq,
-                            reason: "installed definitions have no typed export record".to_owned(),
-                        },
-                    )?,
-                );
+        if matches!(self.stage, DefInstallStage::Unopened) {
+            if budget.exhausted() {
+                return Ok(false);
             }
-            let Some(cursor) = self.export_cursor.as_mut() else {
-                return Err(CellError::OutOfRange("definition export cursor"));
-            };
+            let cursor = ExportDecodeCursor::open(&store.conn, version.commit_seq, budget)?
+                .ok_or_else(|| CellError::LedgerCorrupt {
+                    seq: version.commit_seq,
+                    reason: "installed definitions have no typed export record".to_owned(),
+                })?;
+            self.stage = DefInstallStage::DecodingExport(Box::new(cursor));
+        }
+        if let DefInstallStage::DecodingExport(cursor) = &mut self.stage {
             let Some(record) = cursor.step(&store.conn, budget)? else {
                 return Ok(false);
             };
-            self.export_cursor = None;
-            self.record = Some(Box::new(record));
+            self.stage = DefInstallStage::VerifyingEvents {
+                record: Box::new(record),
+                event_index: 0,
+                durable: None,
+            };
         }
-        let Some(record) = self.record.as_deref() else {
+        let DefInstallStage::VerifyingEvents {
+            record,
+            event_index,
+            durable,
+        } = &mut self.stage
+        else {
             return Err(CellError::OutOfRange("definition export record"));
         };
-        while self.event_index < record.entries.len() {
-            if self.durable.is_none() {
+        while *event_index < record.entries.len() {
+            if durable.is_none() {
                 let entry = record
                     .entries
-                    .get(self.event_index)
+                    .get(*event_index)
                     .ok_or(CellError::OutOfRange("definition entry index"))?;
                 if crate::history::durable_event_is_proven(&entry.event) {
-                    self.durable = DurableEventCursor::new(
+                    *durable = DurableEventCursor::new(
                         &entry.world,
                         entry.commit_seq,
                         &record.receipt,
@@ -85,13 +95,13 @@ impl DefInstallCursor {
                     )?;
                 }
             }
-            if let Some(durable) = self.durable.as_mut() {
-                if !durable.step(reader, versions, budget)? {
+            if let Some(active_durable) = durable.as_mut() {
+                if !active_durable.step(reader, versions, budget)? {
                     return Ok(false);
                 }
-                self.durable = None;
+                *durable = None;
             }
-            self.event_index = self.event_index.saturating_add(1);
+            *event_index = event_index.saturating_add(1);
         }
         if budget.remaining() < LEDGER_ENTRY_MAX_ROWS {
             return Ok(false);
@@ -113,23 +123,32 @@ impl DefInstallCursor {
     }
 }
 
-/// Bounded definition-digest folder for genesis-open seed-only runs (`!run.history`).
+/// Closed outcome of one bounded [`SeedDefsCursor::step`].
+pub(super) enum SeedDefsStep {
+    /// More retained definition versions remain to fold.
+    Continue(SeedDefsCursor),
+    /// Folding finished; verified pins are ready for checkpoint recording.
+    Ready(VerifiedPins),
+}
+
+/// Bounded definition-digest folder for genesis-open seed-only runs.
 #[derive(Debug, Clone, Default)]
 pub(super) struct SeedDefsCursor {
     after_version: u64,
-    digest: String,
+    digest: Option<String>,
     max_version: u64,
 }
 
 impl SeedDefsCursor {
     pub(super) fn step<E: SqlEngine>(
-        &mut self,
+        mut self,
         store: &CellStore<E>,
         target_commits: u64,
-    ) -> Result<Option<VerifiedPins>, CellError> {
-        if self.digest.is_empty() {
-            self.digest = crate::codec::hash_json(&"norn.open-checkpoint.definitions/1")?;
-        }
+    ) -> Result<SeedDefsStep, CellError> {
+        let mut digest = match self.digest.take() {
+            Some(existing) => existing,
+            None => crate::codec::hash_json(&"norn.open-checkpoint.definitions/1")?,
+        };
         let mut budget = RowBudget::new(WAKE_ROW_BUDGET);
         let cap = (budget.remaining().saturating_sub(3) / 4).max(1);
         let page = store.verifier().installed_definition_versions_after(
@@ -145,19 +164,18 @@ impl SeedDefsCursor {
                 reached_past = true;
                 break;
             }
-            self.digest = crate::codec::hash_json(&(
-                self.digest.as_str(),
-                crate::codec::hash_json(&version)?,
-            ))?;
+            digest =
+                crate::codec::hash_json(&(digest.as_str(), crate::codec::hash_json(&version)?))?;
             self.max_version = self.max_version.max(version.version);
         }
         if reached_past || read < cap {
-            return Ok(Some(VerifiedPins {
+            return Ok(SeedDefsStep::Ready(VerifiedPins {
                 export: crate::cell_identity::last_record_through(&store.conn, target_commits)?,
-                definitions: self.digest.clone(),
+                definitions: digest,
                 definitions_max_version: self.max_version,
             }));
         }
-        Ok(None)
+        self.digest = Some(digest);
+        Ok(SeedDefsStep::Continue(self))
     }
 }

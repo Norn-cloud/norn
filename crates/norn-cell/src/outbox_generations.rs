@@ -1,19 +1,297 @@
 //! Outbox-generation lifecycle orchestration on [`CellStore`] and [`Writer`],
-//! plus export-restore replay for consumed result generations (`D1`).
+//! plus export-restore replay for consumed result generations (`D1`, `D3`).
 
 use norn_ir::RuntimeValue as Value;
 use norn_kernel::world::outbox::Queue;
+use norn_kernel::world::outbox_ledger::{
+    OutboxDigest, OutboxLedgerRefusal, ReconciliationDecision,
+};
 
 use crate::codec::canonical_json;
-use crate::engine::{SqlEngine, params};
+use crate::engine::{MAX_SAFE_INTEGER, SqlEngine, SqlValue, params};
 use crate::error::CellError;
 use crate::export::ExportRecord;
 use crate::read::{StoreReader, to_i64, to_u64};
 use crate::store::{
     At, CellStore, CommitOutcome, EffectRow, MAIN_WORLD, OutboxCommand, SystemWrite,
 };
-use crate::system::{OUTBOX, PERFORM_CLAIM, RUN};
+use crate::system::{META, OUTBOX, PERFORM_CLAIM, RUN};
 use crate::write::Writer;
+
+/// Which generation tier a durable reconciliation record applied to (`D3`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReconciliationTarget {
+    /// Reconciled the active head generation.
+    ActiveHead,
+    /// Reconciled a superseded prior generation.
+    PriorGeneration,
+}
+
+/// Whether attaching a dispatch-proof-verified outcome settled the active head (`D3`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProofOutcomeTarget {
+    /// Newly settled the active unfenced head; project onto `_norn_outbox`.
+    SettledActiveHead,
+    /// Duplicate or prior/terminal generation; leave `_norn_outbox` unchanged.
+    NoHeadProjection,
+}
+
+/// Whether a compensation attempt completed the operation (`D3`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CompensationProgress {
+    /// Compensation failed and remains pending retry.
+    StillPending,
+    /// Compensation completed; mark the terminal head consumed in `_norn_outbox`.
+    Compensated,
+}
+
+/// Whether export-restore replay should also record the active generation's run (`D3`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActiveRunReplay {
+    /// Active head was already settled; attach prior-generation late runs only.
+    PriorOnly,
+    /// Attach prior-generation late runs and record the active generation's run.
+    IncludeActive,
+}
+
+/// Durable restore-fence state for one outbox `command_id` (`D3`).
+///
+/// Decoded fail-closed from `_norn_meta` (`restore:perform_fence:<command_id>`)
+/// or reconstructed from a journaled commit record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RestoreFence {
+    /// No restore fence is recorded for this command.
+    Unfenced,
+    /// Restored with a fence blocking automatic execution through `generation`
+    /// (inclusive).
+    FencedAt { generation: u64 },
+}
+
+impl RestoreFence {
+    /// Lift an optional fence generation into a closed [`RestoreFence`].
+    pub(crate) const fn from_optional(generation: Option<u64>) -> Self {
+        match generation {
+            Some(generation) => Self::FencedAt { generation },
+            None => Self::Unfenced,
+        }
+    }
+
+    /// The fenced generation, when fenced.
+    pub(crate) const fn generation(self) -> Option<u64> {
+        match self {
+            Self::Unfenced => None,
+            Self::FencedAt { generation } => Some(generation),
+        }
+    }
+
+    /// Whether a restore fence is active.
+    pub(crate) const fn is_fenced(self) -> bool {
+        matches!(self, Self::FencedAt { .. })
+    }
+
+    /// Prefer `self` when fenced; otherwise fall back to `fallback`.
+    pub(crate) const fn or(self, fallback: Self) -> Self {
+        match self {
+            Self::FencedAt { generation } => Self::FencedAt { generation },
+            Self::Unfenced => fallback,
+        }
+    }
+
+    /// Whether `generation` is at or below this fence.
+    pub(crate) const fn blocks(self, generation: u64) -> bool {
+        match self {
+            Self::Unfenced => false,
+            Self::FencedAt {
+                generation: fenced_at,
+            } => generation <= fenced_at,
+        }
+    }
+
+    /// Parse a canonical decimal generation string (`0..=MAX_SAFE_INTEGER`).
+    pub(crate) fn parse(raw: &str) -> Result<Self, CellError> {
+        let canonical = !raw.is_empty()
+            && raw.bytes().all(|byte| byte.is_ascii_digit())
+            && (raw.len() == 1 || !raw.starts_with('0'));
+        if !canonical {
+            return Err(CellError::LedgerCorrupt {
+                seq: 0,
+                reason: format!("invalid restore fence generation: {raw:?}"),
+            });
+        }
+        let generation = raw
+            .parse::<u64>()
+            .map_err(|error| CellError::LedgerCorrupt {
+                seq: 0,
+                reason: format!("invalid restore fence generation: {error}"),
+            })?;
+        let max_safe = u64::try_from(MAX_SAFE_INTEGER).unwrap_or(u64::MAX);
+        if generation > max_safe {
+            return Err(CellError::LedgerCorrupt {
+                seq: 0,
+                reason: format!("restore fence generation out of safe integer range: {generation}"),
+            });
+        }
+        Ok(Self::FencedAt { generation })
+    }
+
+    /// Decode one optional `_norn_meta.value` SQL cell fail-closed.
+    pub(crate) fn decode_sql(value: Option<SqlValue>) -> Result<Self, CellError> {
+        match value {
+            None => Ok(Self::Unfenced),
+            Some(SqlValue::Text(raw)) => Self::parse(&raw),
+            Some(SqlValue::Null | SqlValue::Integer(_) | SqlValue::Real(_) | SqlValue::Blob(_)) => {
+                Err(CellError::LedgerCorrupt {
+                    seq: 0,
+                    reason: "invalid restore fence generation: non-text metadata value".to_owned(),
+                })
+            }
+        }
+    }
+
+    /// Load the durable restore fence for `command_id` from `_norn_meta`.
+    pub(crate) fn load<E: SqlEngine>(conn: &E, command_id: &str) -> Result<Self, CellError> {
+        let value = conn.query_optional(
+            &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
+            params![format!("restore:perform_fence:{command_id}")],
+            |row| row.get_ref(0).cloned(),
+        )?;
+        Self::decode_sql(value)
+    }
+}
+
+/// Closed lifecycle state of one `_norn_outbox` generation row paired with its
+/// `_norn_perform_claim` row (`D3`).
+///
+/// Construction through [`Self::from_row_parts`] rejects impossible/contradictory
+/// column combinations fail-closed with [`CellError::LedgerCorrupt`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GenerationLifecycle {
+    /// Pending FIFO command that has not been claimed or settled yet.
+    PendingUnclaimed,
+    /// Pending FIFO command that was durably claimed and has no result yet.
+    PendingClaimed,
+    /// Pending parked command awaiting cell-side resolution (never claimed).
+    ParkedUnsettled,
+    /// Pending command whose result has been recorded and awaits consumption.
+    ResultRecorded { queue: Queue },
+    /// Terminal command row already consumed (or compensated).
+    Consumed,
+}
+
+impl GenerationLifecycle {
+    /// Validate and classify one `_norn_outbox` + `_norn_perform_claim` row pair.
+    pub(crate) fn from_row_parts(
+        queue: Queue,
+        commit_seq: u64,
+        claim_commit_seq: Option<u64>,
+        has_result: bool,
+        consumed_commit_seq: Option<u64>,
+    ) -> Result<Self, CellError> {
+        if queue == Queue::Parked && claim_commit_seq.is_some() {
+            return Err(CellError::LedgerCorrupt {
+                seq: commit_seq,
+                reason: "parked outbox generation cannot carry a perform claim".to_owned(),
+            });
+        }
+        if let Some(claim_seq) = claim_commit_seq
+            && claim_seq < commit_seq
+        {
+            return Err(CellError::LedgerCorrupt {
+                seq: commit_seq,
+                reason: "outbox perform claim predates command enqueue".to_owned(),
+            });
+        }
+        if let Some(consumed_seq) = consumed_commit_seq {
+            if consumed_seq < commit_seq {
+                return Err(CellError::LedgerCorrupt {
+                    seq: commit_seq,
+                    reason: "outbox consumption predates command enqueue".to_owned(),
+                });
+            }
+            if let Some(claim_seq) = claim_commit_seq
+                && consumed_seq < claim_seq
+            {
+                return Err(CellError::LedgerCorrupt {
+                    seq: commit_seq,
+                    reason: "outbox consumption predates perform claim".to_owned(),
+                });
+            }
+            return Ok(Self::Consumed);
+        }
+        if has_result {
+            return Ok(Self::ResultRecorded { queue });
+        }
+        match (queue, claim_commit_seq) {
+            (Queue::Parked, None) => Ok(Self::ParkedUnsettled),
+            (Queue::Parked, Some(_)) => Err(CellError::LedgerCorrupt {
+                seq: commit_seq,
+                reason: "parked outbox generation cannot carry a perform claim".to_owned(),
+            }),
+            (Queue::Fifo, Some(_)) => Ok(Self::PendingClaimed),
+            (Queue::Fifo, None) => Ok(Self::PendingUnclaimed),
+        }
+    }
+}
+
+/// Settlement state of the replayed outbox head row during export restore.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeadSettlement {
+    /// Head row has not recorded its result yet; restore must write it and
+    /// replay the active generation run into `_norn_outbox_record`.
+    Unsettled,
+    /// Head row already holds the matching result; restore replays only
+    /// prior-generation runs into `_norn_outbox_record`.
+    AlreadySettled,
+}
+
+/// Validated reconciliation request pairing a [`ReconciliationDecision`] with
+/// only the payload combinations legal for that decision.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ReconciliationRequest<'a> {
+    /// `ConfirmedOutcome` carrying a verified payload to project if active.
+    ConfirmedWithPayload { outcome: &'a Value },
+    /// `ConfirmedOutcome` referencing either an already-stored active result
+    /// or a superseded prior generation.
+    ConfirmedStoredOrPrior {
+        ok: bool,
+        outcome_digest: OutboxDigest,
+    },
+    /// Non-outcome reconciliation decision (`AuthorizeReissue` or
+    /// `RequireCompensation`), never paired with a confirmed outcome payload.
+    Control,
+}
+
+impl<'a> ReconciliationRequest<'a> {
+    fn validate(
+        command_id: &str,
+        generation: u64,
+        decision: ReconciliationDecision,
+        confirmed_outcome: Option<&'a Value>,
+    ) -> Result<Self, CellError> {
+        match (decision, confirmed_outcome) {
+            (ReconciliationDecision::ConfirmedOutcome { ok, outcome_digest }, Some(outcome)) => {
+                if crate::outbox_ledger::outcome_digest(outcome)? != outcome_digest
+                    || crate::outbox_ledger::outcome_is_ok(outcome) != ok
+                {
+                    return Err(CellError::OutboxLedgerRefused {
+                        command_id: command_id.to_owned(),
+                        generation,
+                        refusal: OutboxLedgerRefusal::OutcomeDiverged,
+                    });
+                }
+                Ok(Self::ConfirmedWithPayload { outcome })
+            }
+            (ReconciliationDecision::ConfirmedOutcome { ok, outcome_digest }, None) => {
+                Ok(Self::ConfirmedStoredOrPrior { ok, outcome_digest })
+            }
+            (
+                ReconciliationDecision::AuthorizeReissue { .. }
+                | ReconciliationDecision::RequireCompensation,
+                _,
+            ) => Ok(Self::Control),
+        }
+    }
+}
 
 impl EffectRow {
     /// Timer id targeted by a timer scheduling or cancellation effect, if any.
@@ -45,15 +323,15 @@ pub(crate) fn restore_consumed_result<E: SqlEngine>(
     mismatch: &dyn Fn() -> CellError,
 ) -> Result<(), CellError> {
     let head = crate::history::replayed_result(store, position)?.ok_or_else(mismatch)?;
-    let already_settled = head.result.is_some();
-    if head.position != position
-        || head.commit_seq != commit_seq
-        || head.command != *command
-        || result.is_none()
-        || (already_settled && head.result.as_ref() != result)
-    {
+    let result = result.ok_or_else(mismatch)?;
+    if head.position != position || head.commit_seq != commit_seq || head.command != *command {
         return Err(mismatch());
     }
+    let settlement = match head.result.as_ref() {
+        None => HeadSettlement::Unsettled,
+        Some(existing) if existing == result => HeadSettlement::AlreadySettled,
+        Some(_) => return Err(mismatch()),
+    };
     // Older generation runs can survive command replacement without
     // ever having been consumed. Recover the recorded history, without IO.
     let existing = store.read().runs(&command.command_id)?;
@@ -65,44 +343,40 @@ pub(crate) fn restore_consumed_result<E: SqlEngine>(
         .iter()
         .filter(|run| run.generation == command.generation)
         .collect();
-    let valid_current = if already_settled {
-        current.is_empty()
-            || (current.len() == 1
-                && current.first().is_some_and(|run| {
-                    run.attempt == 1
-                        && run.consumed_commit_seq.is_none()
-                        && Some(&run.outcome) == result
-                }))
-    } else {
-        current.len() == 1
-            && current.first().is_some_and(|run| {
-                run.attempt == 1
-                    && run.consumed_commit_seq.is_none()
-                    && Some(&run.outcome) == result
-            })
+    let matches_attempt_one = current.len() == 1
+        && current.first().is_some_and(|run| {
+            run.attempt == 1 && run.consumed_commit_seq.is_none() && &run.outcome == result
+        });
+    let valid_current = match settlement {
+        HeadSettlement::Unsettled => matches_attempt_one,
+        HeadSettlement::AlreadySettled => current.is_empty() || matches_attempt_one,
     };
     if !valid_current {
         return Err(mismatch());
     }
-    if !already_settled {
-        let world = crate::payload_storage::receipt_world(&store.conn, head.commit_seq)?;
-        let encoded_result = crate::payload_storage::encode_result(
-            &store.conn,
-            &record.batch.scope,
-            &world,
-            result.ok_or_else(mismatch)?,
-        )?;
-        store.conn.execute(
-            "UPDATE \"_norn_outbox\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3",
-            params![encoded_result, command.command_id, to_i64(command.generation, "generation")?],
-        )?;
-    }
+    let replay_mode = match settlement {
+        HeadSettlement::Unsettled => {
+            let world = crate::payload_storage::receipt_world(&store.conn, head.commit_seq)?;
+            let encoded_result = crate::payload_storage::encode_result(
+                &store.conn,
+                &record.batch.scope,
+                &world,
+                result,
+            )?;
+            store.conn.execute(
+                "UPDATE \"_norn_outbox\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3",
+                params![encoded_result, command.command_id, to_i64(command.generation, "generation")?],
+            )?;
+            ActiveRunReplay::IncludeActive
+        }
+        HeadSettlement::AlreadySettled => ActiveRunReplay::PriorOnly,
+    };
     crate::outbox_ledger::restore_consumed_runs(
         &store.conn,
         &command.command_id,
         command.generation,
         runs,
-        !already_settled,
+        replay_mode,
     )?;
     Ok(())
 }
@@ -159,22 +433,17 @@ impl<E: SqlEngine> CellStore<E> {
         logical_time: u64,
         command_id: &str,
         generation: u64,
-        decision: norn_kernel::world::outbox_ledger::ReconciliationDecision,
+        decision: ReconciliationDecision,
         confirmed_outcome: Option<&Value>,
     ) -> Result<CommitOutcome, CellError> {
-        let fenced_at = self.perform_fence_generation(command_id)?;
+        let fenced_at = self.restore_fence(command_id)?.generation();
         let confirmed_outcome = match confirmed_outcome {
             Some(outcome) => Some(outcome.clone()),
-            None if matches!(
-                decision,
-                norn_kernel::world::outbox_ledger::ReconciliationDecision::ConfirmedOutcome { .. }
-            ) =>
-            {
-                self.read()
-                    .pending_command(command_id)?
-                    .filter(|row| row.command.generation == generation)
-                    .and_then(|row| row.result)
-            }
+            None if matches!(decision, ReconciliationDecision::ConfirmedOutcome { .. }) => self
+                .read()
+                .pending_command(command_id)?
+                .filter(|row| row.command.generation == generation)
+                .and_then(|row| row.result),
             None => None,
         };
         let write = SystemWrite::ReconcileOutbox {
@@ -206,7 +475,7 @@ impl<E: SqlEngine> CellStore<E> {
         generation: u64,
         ok: bool,
     ) -> Result<CommitOutcome, CellError> {
-        let fenced_at = self.perform_fence_generation(command_id)?;
+        let fenced_at = self.restore_fence(command_id)?.generation();
         let write = SystemWrite::RecordCompensation {
             command_id: command_id.to_owned(),
             generation,
@@ -240,20 +509,17 @@ impl<E: SqlEngine> CellStore<E> {
         outcome: &Value,
     ) -> Result<bool, CellError> {
         self.write_tx(|| {
-            let head = StoreReader::new(&self.conn, &self.model)
+            let Some(head) = StoreReader::new(&self.conn, &self.model)
                 .with_source_disputes(&self.source_disputes)
-                .head_command()?;
-            let is_head = head.as_ref().is_some_and(|head| {
-                head.command.command_id == command_id
-                    && head.command.generation == generation
-                    && head.result.is_none()
-            });
-            if !is_head {
+                .head_command()?
+                .filter(|head| {
+                    head.command.command_id == command_id
+                        && head.command.generation == generation
+                        && head.result.is_none()
+                })
+            else {
                 return Ok(false);
-            }
-            let head = head.ok_or_else(|| {
-                CellError::Encoding("pending result command disappeared".to_owned())
-            })?;
+            };
             self.store_result(&head, command_id, generation, outcome)
         })
     }
@@ -290,15 +556,15 @@ impl<E: SqlEngine> CellStore<E> {
         generation: u64,
         outcome: &Value,
     ) -> Result<bool, CellError> {
-        let parked = StoreReader::new(&self.conn, &self.model)
+        let Some(parked) = StoreReader::new(&self.conn, &self.model)
             .with_source_disputes(&self.source_disputes)
             .pending_command(command_id)?
             .filter(|row| {
                 row.queue == Queue::Parked
                     && row.command.generation == generation
                     && row.result.is_none()
-            });
-        let Some(parked) = parked else {
+            })
+        else {
             return Ok(false);
         };
         self.store_result(&parked, command_id, generation, outcome)
@@ -372,43 +638,63 @@ impl<E: SqlEngine> CellStore<E> {
 impl<E: SqlEngine> Writer<'_, E> {
     pub(crate) fn claim_perform(&self, command_id: &str, generation: u64) -> Result<(), CellError> {
         let generation_sql = to_i64(generation, "generation")?;
-        let head = StoreReader::new(self.conn, self.model).head_command()?;
-        let is_head = head.is_some_and(|head| {
-            head.command.command_id == command_id
-                && head.command.generation == generation
-                && head.result.is_none()
-        });
-        if !is_head {
-            let parked = StoreReader::new(self.conn, self.model)
-                .pending_command(command_id)?
-                .is_some_and(|row| {
+        let reader = StoreReader::new(self.conn, self.model);
+        let row = match reader.head_command()? {
+            Some(head)
+                if head.command.command_id == command_id
+                    && head.command.generation == generation =>
+            {
+                head
+            }
+            Some(_) | None => {
+                let Some(parked) = reader.pending_command(command_id)?.filter(|row| {
                     row.queue == Queue::Parked && row.command.generation == generation
+                }) else {
+                    return Err(CellError::PerformClaimNotPending {
+                        command_id: command_id.to_owned(),
+                        generation,
+                    });
+                };
+                parked
+            }
+        };
+        let claim_commit_seq = self.conn.query_optional(
+            &format!(
+                "SELECT \"commit_seq\" FROM \"{PERFORM_CLAIM}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2"
+            ),
+            params![command_id, generation_sql],
+            |claim| to_u64(claim.get::<i64>(0)?, "claim commit_seq"),
+        )?;
+        match GenerationLifecycle::from_row_parts(
+            row.queue,
+            row.commit_seq,
+            claim_commit_seq,
+            row.result.is_some(),
+            None,
+        )? {
+            GenerationLifecycle::PendingUnclaimed => {}
+            GenerationLifecycle::PendingClaimed => {
+                return Err(CellError::PerformAlreadyClaimed {
+                    command_id: command_id.to_owned(),
+                    generation,
                 });
-            if parked {
+            }
+            GenerationLifecycle::ParkedUnsettled
+            | GenerationLifecycle::ResultRecorded {
+                queue: Queue::Parked,
+            } => {
                 return Err(CellError::ParkedClaimUnsupported {
                     command_id: command_id.to_owned(),
                     generation,
                 });
             }
-            return Err(CellError::PerformClaimNotPending {
-                command_id: command_id.to_owned(),
-                generation,
-            });
-        }
-        let known: Option<i64> = self
-            .conn
-            .query_optional(
-                &format!(
-                    "SELECT 1 FROM \"{PERFORM_CLAIM}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2"
-                ),
-                params![command_id, generation_sql],
-                |row| row.get::<i64>(0),
-            )?;
-        if known.is_some() {
-            return Err(CellError::PerformAlreadyClaimed {
-                command_id: command_id.to_owned(),
-                generation,
-            });
+            GenerationLifecycle::ResultRecorded { queue: Queue::Fifo }
+            | GenerationLifecycle::Consumed => {
+                return Err(CellError::PerformClaimNotPending {
+                    command_id: command_id.to_owned(),
+                    generation,
+                });
+            }
         }
         let _proof = crate::outbox_ledger::record_dispatched(
             self.conn,
@@ -429,62 +715,53 @@ impl<E: SqlEngine> Writer<'_, E> {
         &self,
         command_id: &str,
         generation: u64,
-        decision: norn_kernel::world::outbox_ledger::ReconciliationDecision,
+        decision: ReconciliationDecision,
         confirmed_outcome: Option<&Value>,
         fenced_at: Option<u64>,
     ) -> Result<(), CellError> {
-        use norn_kernel::world::outbox_ledger::{OutboxLedgerRefusal, ReconciliationDecision};
-        if let ReconciliationDecision::ConfirmedOutcome { ok, outcome_digest } = decision {
-            let pending = StoreReader::new(self.conn, self.model)
+        let request =
+            ReconciliationRequest::validate(command_id, generation, decision, confirmed_outcome)?;
+        if let ReconciliationRequest::ConfirmedStoredOrPrior { ok, outcome_digest } = request
+            && let Some(pending) = StoreReader::new(self.conn, self.model)
                 .pending_command(command_id)?
-                .filter(|row| row.command.generation == generation);
-            if let Some(outcome) = confirmed_outcome {
-                if crate::outbox_ledger::outcome_digest(outcome)? != outcome_digest
-                    || crate::outbox_ledger::outcome_is_ok(outcome) != ok
-                {
-                    return Err(CellError::OutboxLedgerRefused {
-                        command_id: command_id.to_owned(),
-                        generation,
-                        refusal: OutboxLedgerRefusal::OutcomeDiverged,
-                    });
-                }
-            } else if let Some(pending) = &pending {
-                match &pending.result {
-                    Some(existing) => {
-                        if crate::outbox_ledger::outcome_digest(existing)? != outcome_digest
-                            || crate::outbox_ledger::outcome_is_ok(existing) != ok
-                        {
-                            return Err(CellError::OutboxLedgerRefused {
-                                command_id: command_id.to_owned(),
-                                generation,
-                                refusal: OutboxLedgerRefusal::OutcomeDiverged,
-                            });
-                        }
-                    }
-                    // Active head has no stored outcome: `ConfirmedOutcome` must
-                    // carry the payload so `_norn_outbox.result` stays in lockstep
-                    // with `HeadProjection`.
-                    None => {
+                .filter(|row| row.command.generation == generation)
+        {
+            match &pending.result {
+                Some(existing) => {
+                    if crate::outbox_ledger::outcome_digest(existing)? != outcome_digest
+                        || crate::outbox_ledger::outcome_is_ok(existing) != ok
+                    {
                         return Err(CellError::OutboxLedgerRefused {
                             command_id: command_id.to_owned(),
                             generation,
-                            refusal: OutboxLedgerRefusal::NotPending,
+                            refusal: OutboxLedgerRefusal::OutcomeDiverged,
                         });
                     }
                 }
+                // Active head has no stored outcome: `ConfirmedOutcome` must
+                // carry the payload so `_norn_outbox.result` stays in lockstep
+                // with `HeadProjection`.
+                None => {
+                    return Err(CellError::OutboxLedgerRefused {
+                        command_id: command_id.to_owned(),
+                        generation,
+                        refusal: OutboxLedgerRefusal::NotPending,
+                    });
+                }
             }
         }
-        let (_status, is_active, _head) = crate::outbox_ledger::record_reconciliation(
+        let target = crate::outbox_ledger::record_reconciliation(
             self.conn,
             command_id,
             generation,
             decision,
             self.commit_seq,
-            fenced_at,
+            RestoreFence::from_optional(fenced_at),
         )?;
-        if is_active
-            && matches!(decision, ReconciliationDecision::ConfirmedOutcome { .. })
-            && let Some(outcome) = confirmed_outcome
+        if let (
+            ReconciliationTarget::ActiveHead,
+            ReconciliationRequest::ConfirmedWithPayload { outcome },
+        ) = (target, request)
         {
             self.project_active_outcome(command_id, generation, outcome)?;
         }
@@ -498,11 +775,13 @@ impl<E: SqlEngine> Writer<'_, E> {
         ok: bool,
         outcome: &Value,
     ) -> Result<(), CellError> {
-        let (status, is_active) = crate::outbox_ledger::record_outcome_with_proof(
+        match crate::outbox_ledger::record_outcome_with_proof(
             self.conn, command_id, proof, ok, outcome,
-        )?;
-        if status == norn_kernel::world::outbox_ledger::ApplyStatus::Applied && is_active {
-            self.project_active_outcome(command_id, proof.generation, outcome)?;
+        )? {
+            ProofOutcomeTarget::SettledActiveHead => {
+                self.project_active_outcome(command_id, proof.generation, outcome)?;
+            }
+            ProofOutcomeTarget::NoHeadProjection => {}
         }
         Ok(())
     }
@@ -513,10 +792,10 @@ impl<E: SqlEngine> Writer<'_, E> {
         generation: u64,
         outcome: &Value,
     ) -> Result<(), CellError> {
-        let pending = StoreReader::new(self.conn, self.model)
+        let Some(pending) = StoreReader::new(self.conn, self.model)
             .pending_command(command_id)?
-            .filter(|row| row.command.generation == generation && row.result.is_none());
-        let Some(pending) = pending else {
+            .filter(|row| row.command.generation == generation && row.result.is_none())
+        else {
             return Ok(());
         };
         crate::payload_storage::remember_command(
@@ -563,21 +842,240 @@ impl<E: SqlEngine> Writer<'_, E> {
         ok: bool,
         fenced_at: Option<u64>,
     ) -> Result<(), CellError> {
-        let (_status, compensated) = crate::outbox_ledger::record_compensation(
+        match crate::outbox_ledger::record_compensation(
             self.conn,
             command_id,
             generation,
             ok,
             self.commit_seq,
-            fenced_at,
+            RestoreFence::from_optional(fenced_at),
+        )? {
+            CompensationProgress::Compensated => {
+                self.conn.execute(
+                    &format!(
+                        "UPDATE \"{OUTBOX}\" SET \"consumed_commit_seq\" = ?1 WHERE \"command_id\" = ?2 AND \"consumed_commit_seq\" IS NULL"
+                    ),
+                    params![self.commit_seq_sql()?, command_id],
+                )?;
+            }
+            CompensationProgress::StillPending => {}
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use norn_ir::RuntimeValue as Value;
+    use norn_kernel::world::outbox::Queue;
+    use norn_kernel::world::outbox_ledger::{OutboxLedgerRefusal, ReconciliationDecision};
+
+    use super::{GenerationLifecycle, ReconciliationRequest, RestoreFence};
+    use crate::engine::{MAX_SAFE_INTEGER, SqlValue};
+    use crate::error::CellError;
+
+    #[test]
+    fn restore_fence_parses_canonical_and_rejects_corrupt_values() -> Result<(), CellError> {
+        assert_eq!(RestoreFence::decode_sql(None)?, RestoreFence::Unfenced);
+        assert!(!RestoreFence::Unfenced.is_fenced());
+        assert!(!RestoreFence::Unfenced.blocks(0));
+
+        let zero = RestoreFence::decode_sql(Some(SqlValue::Text("0".to_owned())))?;
+        assert_eq!(zero, RestoreFence::FencedAt { generation: 0 });
+        assert!(zero.is_fenced());
+        assert!(zero.blocks(0));
+        assert!(!zero.blocks(1));
+
+        let max_safe = RestoreFence::parse(&MAX_SAFE_INTEGER.to_string())?;
+        assert_eq!(max_safe.generation(), u64::try_from(MAX_SAFE_INTEGER).ok());
+        assert_eq!(RestoreFence::Unfenced.or(zero), zero);
+        assert_eq!(max_safe.or(zero), max_safe);
+
+        for bad_text in [
+            "",
+            "-1",
+            "+1",
+            "00",
+            "01",
+            " 1",
+            "1 ",
+            "abc",
+            "9007199254740993",
+            "18446744073709551616",
+        ] {
+            let err = RestoreFence::parse(bad_text);
+            assert!(
+                matches!(err, Err(CellError::LedgerCorrupt { seq: 0, .. })),
+                "expected LedgerCorrupt for {bad_text:?}, got {err:?}"
+            );
+        }
+        for bad_sql in [
+            SqlValue::Null,
+            SqlValue::Integer(1),
+            SqlValue::Real(1.0),
+            SqlValue::Blob(vec![b'1']),
+        ] {
+            let err = RestoreFence::decode_sql(Some(bad_sql));
+            assert!(matches!(err, Err(CellError::LedgerCorrupt { seq: 0, .. })));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn generation_lifecycle_admits_valid_states_and_rejects_contradictions() -> Result<(), CellError>
+    {
+        assert_eq!(
+            GenerationLifecycle::from_row_parts(Queue::Fifo, 5, None, false, None)?,
+            GenerationLifecycle::PendingUnclaimed
+        );
+        assert_eq!(
+            GenerationLifecycle::from_row_parts(Queue::Fifo, 5, Some(6), false, None)?,
+            GenerationLifecycle::PendingClaimed
+        );
+        assert_eq!(
+            GenerationLifecycle::from_row_parts(Queue::Parked, 5, None, false, None)?,
+            GenerationLifecycle::ParkedUnsettled
+        );
+        assert_eq!(
+            GenerationLifecycle::from_row_parts(Queue::Fifo, 5, Some(6), true, None)?,
+            GenerationLifecycle::ResultRecorded { queue: Queue::Fifo }
+        );
+        assert_eq!(
+            GenerationLifecycle::from_row_parts(Queue::Parked, 5, None, true, None)?,
+            GenerationLifecycle::ResultRecorded {
+                queue: Queue::Parked
+            }
+        );
+        assert_eq!(
+            GenerationLifecycle::from_row_parts(Queue::Fifo, 5, Some(6), false, Some(7))?,
+            GenerationLifecycle::Consumed
+        );
+
+        // Parked command with a perform claim is impossible.
+        assert!(matches!(
+            GenerationLifecycle::from_row_parts(Queue::Parked, 5, Some(6), false, None),
+            Err(CellError::LedgerCorrupt { seq: 5, .. })
+        ));
+        // Perform claim predating enqueue is impossible.
+        assert!(matches!(
+            GenerationLifecycle::from_row_parts(Queue::Fifo, 5, Some(4), false, None),
+            Err(CellError::LedgerCorrupt { seq: 5, .. })
+        ));
+        // Consumption predating enqueue is impossible.
+        assert!(matches!(
+            GenerationLifecycle::from_row_parts(Queue::Fifo, 5, None, true, Some(4)),
+            Err(CellError::LedgerCorrupt { seq: 5, .. })
+        ));
+        // Consumption predating perform claim is impossible.
+        assert!(matches!(
+            GenerationLifecycle::from_row_parts(Queue::Fifo, 5, Some(7), true, Some(6)),
+            Err(CellError::LedgerCorrupt { seq: 5, .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn reconciliation_request_rejects_contradictory_payloads() -> Result<(), CellError> {
+        let ok_payload = Value::Bool(true);
+        let digest = crate::outbox_ledger::outcome_digest(&ok_payload)?;
+
+        let confirmed = ReconciliationRequest::validate(
+            "cmd-1",
+            0,
+            ReconciliationDecision::ConfirmedOutcome {
+                ok: true,
+                outcome_digest: digest,
+            },
+            Some(&ok_payload),
         )?;
-        if compensated {
-            self.conn.execute(
-                &format!(
-                    "UPDATE \"{OUTBOX}\" SET \"consumed_commit_seq\" = ?1 WHERE \"command_id\" = ?2 AND \"consumed_commit_seq\" IS NULL"
-                ),
-                params![self.commit_seq_sql()?, command_id],
+        assert_eq!(
+            confirmed,
+            ReconciliationRequest::ConfirmedWithPayload {
+                outcome: &ok_payload
+            }
+        );
+
+        let diverged_ok = ReconciliationRequest::validate(
+            "cmd-1",
+            0,
+            ReconciliationDecision::ConfirmedOutcome {
+                ok: false,
+                outcome_digest: digest,
+            },
+            Some(&ok_payload),
+        );
+        assert!(matches!(
+            diverged_ok,
+            Err(CellError::OutboxLedgerRefused {
+                refusal: OutboxLedgerRefusal::OutcomeDiverged,
+                ..
+            })
+        ));
+
+        // Control decisions ignore any carried outcome payload so previously
+        // accepted exports that recorded one still restore identically.
+        for control in [
+            ReconciliationDecision::AuthorizeReissue { next_generation: 1 },
+            ReconciliationDecision::RequireCompensation,
+        ] {
+            assert_eq!(
+                ReconciliationRequest::validate("cmd-1", 0, control, None)?,
+                ReconciliationRequest::Control
+            );
+            assert_eq!(
+                ReconciliationRequest::validate("cmd-1", 0, control, Some(&ok_payload))?,
+                ReconciliationRequest::Control
+            );
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "native"))]
+mod native_tests {
+    use super::RestoreFence;
+    use crate::engine::{NativeEngine, SqlEngine as _, SqlValue};
+    use crate::error::CellError;
+
+    #[test]
+    fn restore_fence_load_fails_closed_on_corrupt_meta_rows() -> Result<(), CellError> {
+        let engine = NativeEngine::open_in_memory()?;
+        engine.execute_batch(
+            r#"CREATE TABLE "_norn_meta" ("key" TEXT PRIMARY KEY, "value" NOT NULL);"#,
+        )?;
+        assert_eq!(
+            RestoreFence::load(&engine, "missing")?,
+            RestoreFence::Unfenced
+        );
+        engine.execute(
+            "INSERT INTO \"_norn_meta\" (\"key\", \"value\") VALUES (?1, ?2)",
+            &[
+                SqlValue::Text("restore:perform_fence:good".to_owned()),
+                SqlValue::Text("3".to_owned()),
+            ],
+        )?;
+        assert_eq!(
+            RestoreFence::load(&engine, "good")?,
+            RestoreFence::FencedAt { generation: 3 }
+        );
+        for (id, bad_val) in [
+            ("non_canonical", SqlValue::Text("03".to_owned())),
+            ("signed", SqlValue::Text("+3".to_owned())),
+            ("int_storage", SqlValue::Integer(3)),
+            ("blob_storage", SqlValue::Blob(vec![b'3'])),
+        ] {
+            engine.execute(
+                "INSERT INTO \"_norn_meta\" (\"key\", \"value\") VALUES (?1, ?2)",
+                &[
+                    SqlValue::Text(format!("restore:perform_fence:{id}")),
+                    bad_val,
+                ],
             )?;
+            let err = RestoreFence::load(&engine, id);
+            assert!(
+                matches!(err, Err(CellError::LedgerCorrupt { seq: 0, .. })),
+                "expected LedgerCorrupt for {id}, got {err:?}"
+            );
         }
         Ok(())
     }
