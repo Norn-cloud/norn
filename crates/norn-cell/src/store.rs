@@ -2564,10 +2564,13 @@ impl<E: SqlEngine> CellStore<E> {
         // One proof cache for this read-only pass (#1423): receipts and the
         // retained writer models are proven once per pass, not once per event.
         let pass = RefCell::default();
-        let upgrading = matches!(
-            crate::engine_release::admission(&store.conn)?,
-            crate::engine_release::Admission::Upgrade { .. }
-        );
+        let upgrade_from = match crate::engine_release::admission(&store.conn)? {
+            crate::engine_release::Admission::Upgrade { from } => Some(from),
+            crate::engine_release::Admission::Fresh | crate::engine_release::Admission::Current => {
+                None
+            }
+        };
+        let upgrading = upgrade_from.is_some();
         let (verified, fork) = store.conn.transaction(|| {
             Self::init_schema(&store.conn, &store.model, source)?;
             if let Some(expected) = expected {
@@ -2576,6 +2579,9 @@ impl<E: SqlEngine> CellStore<E> {
             let verified = store.verify_history(&pass)?;
             if let Some(active) = Self::read_active_definitions(&store.conn)? {
                 crate::definition_scope::verify_active(&store.conn, &store.model, &active)?;
+            }
+            if upgrade_from.is_some_and(|from| from < 13) {
+                crate::link_claim_frontier::rebuild_all(&store.verifier())?;
             }
             let fork = crate::fork::load_pin(&store.conn)?;
             refuse_pin_past(fork.as_ref(), verified.head.commits)?;
@@ -3179,10 +3185,12 @@ impl<E: SqlEngine> CellStore<E> {
                     // and bring it to this engine's storage version before
                     // any statement below touches it.
                     validate_store_format(&self.conn)?;
-                    let upgrading = matches!(
-                        crate::engine_release::admission(&self.conn)?,
-                        crate::engine_release::Admission::Upgrade { .. }
-                    );
+                    let upgrade_from = match crate::engine_release::admission(&self.conn)? {
+                        crate::engine_release::Admission::Upgrade { from } => Some(from),
+                        crate::engine_release::Admission::Fresh
+                        | crate::engine_release::Admission::Current => None,
+                    };
+                    let upgrading = upgrade_from.is_some();
                     crate::engine_release::upgrade(&self.conn)?;
                     // A file provisioned before a system table existed gains it here,
                     // so the next run start or write finds it (idempotent DDL).
@@ -3204,6 +3212,9 @@ impl<E: SqlEngine> CellStore<E> {
                     let pass = RefCell::default();
                     let verified = self.verify_history(&pass)?;
                     crate::definition_scope::verify_active(&self.conn, &self.model, &active)?;
+                    if upgrade_from.is_some_and(|from| from < 13) {
+                        crate::link_claim_frontier::rebuild_all(&self.verifier())?;
+                    }
                     refuse_pin_past(self.fork.as_ref(), verified.head.commits)?;
                     self.finish_open_scrub(upgrading, &verified)?;
                     self.transparency.replace(verified.transparency);
@@ -3598,6 +3609,14 @@ impl<E: SqlEngine> CellStore<E> {
                 }
             }
             let receipt = writer.write_receipt(body)?;
+            if effective_batch.world == MAIN_WORLD {
+                crate::link_claim_frontier::record_dispute_resolutions_in_tx(
+                    &self.conn,
+                    commit_seq,
+                    &receipt.hash,
+                    &effective_batch.events,
+                )?;
+            }
             self.conn.execute(r#"UPDATE "_norn_clock" SET logical_time=?1,commit_seq=?2,receipt_hash=?3 WHERE id=1"#,
                 params![to_i64(receipt.body.logical_time, "cell clock")?, to_i64(receipt.body.commit_seq, "clock commit")?, receipt.hash])?;
             export_journal::record(

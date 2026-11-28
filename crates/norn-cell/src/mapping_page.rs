@@ -216,11 +216,16 @@ impl<E: SqlEngine> CellStore<E> {
                 split = true;
                 continue;
             }
-            let keys: BTreeSet<FactKey> = bundle
+            let mut keys: BTreeSet<FactKey> = bundle
                 .records
                 .iter()
                 .map(|r| canonical.canonical(&FactKey::new(r.object_type.as_str(), &r.key)))
                 .collect();
+            for delete in &bundle.deletes {
+                let key = FactKey::new(delete.object_type.as_str(), &delete.key);
+                keys.insert(canonical.canonical(&key));
+                keys.insert(norn_kernel::snapshot_observe::tombstone_key(&key));
+            }
             member = true;
             match runs.last_mut() {
                 Some((ids, written, seen_ids, run_bytes, _))

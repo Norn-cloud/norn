@@ -8,7 +8,11 @@ use norn_checker::Diagnostic;
 use norn_checker::mapping::{
     CompiledMapping, Derivation, SourceDocument, compile_mapping_artifact,
 };
-use norn_ir::{ArtifactEnvelope, RuntimeValue, mapping::MappedRecord, provenance::UtcTimestamp};
+use norn_ir::{
+    ArtifactEnvelope, RuntimeValue,
+    mapping::{MappedDelete, MappedRecord},
+    provenance::UtcTimestamp,
+};
 use norn_kernel::Observed;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -50,11 +54,16 @@ pub struct MappingBundle {
     pub artifact_pins: Vec<(String, String, String)>,
     /// Full mapping outputs, retaining provenance and declared relation outputs.
     pub records: Vec<MappedRecord>,
+    /// Source-delete directives derived when `raw.kind == "delete"` (derivation 3;
+    /// omitted when empty so upsert bundles serialize identically).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deletes: Vec<MappedDelete>,
     /// Mapping failures retained as ordinary evidence.
     pub diagnostics: Vec<RuntimeValue>,
     /// MAP-DERIVATION-1: the runtime derivation the bundle was captured
-    /// under (`1`, absent on bundles captured before it, or `2`). A bundle is
-    /// always verified under its own derivation.
+    /// under (`1`, absent on bundles captured before it, `2` for upserts, or
+    /// `3` for source deletes). A bundle is always verified under its own
+    /// derivation.
     #[serde(
         default = "legacy_derivation",
         skip_serializing_if = "is_legacy_derivation"
@@ -68,7 +77,7 @@ pub struct MappingBundle {
     pub reprocesses: Option<String>,
 }
 
-/// The derivation number new captures record ([`Derivation::CURRENT`]).
+/// The derivation number new upsert captures record ([`Derivation::CURRENT`]).
 pub(crate) const CURRENT_DERIVATION: u32 = derivation_number(Derivation::CURRENT);
 
 const fn legacy_derivation() -> u32 {
@@ -90,7 +99,7 @@ const fn is_legacy_derivation(derivation: &u32) -> bool {
 fn derivations_of(version: u32) -> Result<&'static [Derivation], CellError> {
     match version {
         1 => Ok(&[Derivation::V1DecimalText, Derivation::V1]),
-        2 => Ok(&[Derivation::V2]),
+        2 | crate::mapping_delete::DELETE_DERIVATION => Ok(&[Derivation::V2]),
         _ => Err(mismatch()),
     }
 }
@@ -103,16 +112,22 @@ const fn derivation_number(derivation: Derivation) -> u32 {
 }
 
 impl MappingBundle {
+    /// OBS-LINK-CONTRIBUTION-1: stable capture scope hash for this bundle's
+    /// `(connector, partition, source, source_id)` tuple.
+    pub(crate) fn source_scope(&self) -> Result<String, CellError> {
+        let [connector, partition, source, row, _] =
+            crate::mapping_identity::keys(&self.raw, &self.input)?;
+        Ok(norn_ir::canonical::domain_hash_hex(
+            b"norn.link.scope.v1\0",
+            &(connector, partition, source, row),
+        )?)
+    }
+
     /// OBS-LINK-CONTRIBUTION-1: bind claims to the existing capture identity namespace.
     pub(crate) fn link_claims(
         &self,
     ) -> Result<Vec<norn_ir::mapping::ObservedLinkClaim>, CellError> {
-        let [connector, partition, source, row, _] =
-            crate::mapping_identity::keys(&self.raw, &self.input)?;
-        let scope = norn_ir::canonical::domain_hash_hex(
-            b"norn.link.scope.v1\0",
-            &(connector, partition, source, row),
-        )?;
+        let scope = self.source_scope()?;
         let id = format!("mapping-bundle:{}", self.digest);
         let claims = self.records.iter().flat_map(|r| r.link_claims(&id, &scope));
         Ok(claims.collect())
@@ -501,20 +516,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(bytes)
     }
 
-    /// A fresh capture's bundle, under the current derivation.
+    /// A fresh capture's bundle, under the current derivation for `raw`'s kind.
     pub(crate) fn mapping_bundle(
         &self,
         raw: &RuntimeValue,
         input: &MappingInput,
         version: u64,
     ) -> Result<MappingBundle, CellError> {
-        self.derived_mapping_bundle(raw, input, version, Derivation::CURRENT, None)
+        let dv = crate::mapping_delete::target_derivation_for(raw);
+        self.derived_mapping_bundle_version(raw, input, version, Derivation::CURRENT, dv, None)
     }
 
     /// The bundle `raw` derives under an exact `derivation` (MAP-DERIVATION-1).
-    /// Its address is the capture address every derivation shares, so a replay
-    /// of a captured event finds the row it already has; only an explicit
-    /// reprocessing (`reprocesses`) gets an address of its own.
     pub(crate) fn derived_mapping_bundle(
         &self,
         raw: &RuntimeValue,
@@ -523,12 +536,37 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         derivation: Derivation,
         reprocesses: Option<String>,
     ) -> Result<MappingBundle, CellError> {
-        let plan = self.mapping_plan(input, version)?;
-        self.derive_under(plan, raw, input, version, derivation, reprocesses)
+        let dv = derivation_number(derivation);
+        self.derived_mapping_bundle_version(raw, input, version, derivation, dv, reprocesses)
     }
 
-    /// [`Self::derived_mapping_bundle`] under an already proven `plan`,
-    /// remembered as derived under it (INGEST-DERIVE-ONCE-1).
+    /// [`Self::derived_mapping_bundle`] with an explicit runtime derivation number.
+    pub(crate) fn derived_mapping_bundle_version(
+        &self,
+        raw: &RuntimeValue,
+        input: &MappingInput,
+        version: u64,
+        derivation: Derivation,
+        derivation_version: u32,
+        reprocesses: Option<String>,
+    ) -> Result<MappingBundle, CellError> {
+        let plan = self.mapping_plan(input, version)?;
+        self.derive_under(
+            plan,
+            raw,
+            input,
+            version,
+            derivation,
+            derivation_version,
+            reprocesses,
+        )
+    }
+
+    /// [`Self::derived_mapping_bundle`] under an already proven `plan`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "internal bundle derivation helper"
+    )]
     fn derive_under(
         &self,
         plan: Arc<MappingPlan>,
@@ -536,9 +574,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         input: &MappingInput,
         version: u64,
         derivation: Derivation,
+        derivation_version: u32,
         reprocesses: Option<String>,
     ) -> Result<MappingBundle, CellError> {
-        let bundle = Self::compute_under(&plan, raw, input, version, derivation, reprocesses)?;
+        let bundle = Self::compute_under(
+            &plan,
+            raw,
+            input,
+            version,
+            derivation,
+            derivation_version,
+            reprocesses,
+        )?;
         if let Some(cache) = self.mapping_plans {
             let mut cache = cache.borrow_mut();
             if cache.derived.len() >= MAX_DERIVED_BUNDLES {
@@ -559,6 +606,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         input: &MappingInput,
         version: u64,
         derivation: Derivation,
+        derivation_version: u32,
         reprocesses: Option<String>,
     ) -> Result<MappingBundle, CellError> {
         let field = |name: &str| {
@@ -584,7 +632,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let feed_mode = parse_raw_feed_mode(plan, &input.dataset, raw, field("source_version")?)?;
         let source_document =
             SourceDocument::from_json(&input.dataset, &payload_text, None)?.with_mode(feed_mode);
-        let (records, diagnostics) = if field("kind")? == "upsert" {
+        let kind = field("kind")?;
+        let (records, deletes, diagnostics) = if kind == "upsert" {
+            if derivation_version >= crate::mapping_delete::DELETE_DERIVATION {
+                return Err(mismatch());
+            }
             let outcome = match &plan.compiled {
                 Ok(compiled) => compiled
                     .apply_derived(&[source_document], &input.recorded_at, derivation)
@@ -594,13 +646,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                             .iter()
                             .map(|refusal| refusal.diagnostic().to_json())
                             .collect::<Vec<_>>(),
-                        Derivation::V2 => refusals.iter().map(explained).collect(),
+                        Derivation::V2 => refusals
+                            .iter()
+                            .map(crate::mapping_delete::explained)
+                            .collect(),
                     }),
                 Err(diagnostics) => Err(diagnostics.iter().map(Diagnostic::to_json).collect()),
             };
             match outcome {
-                Ok(records) => (records, Vec::new()),
+                Ok(records) => (records, Vec::new(), Vec::new()),
                 Err(diagnostics) => (
+                    Vec::new(),
                     Vec::new(),
                     diagnostics
                         .iter()
@@ -608,8 +664,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                         .collect::<Result<Vec<_>, _>>()?,
                 ),
             }
+        } else if kind == "delete" && derivation_version >= crate::mapping_delete::DELETE_DERIVATION
+        {
+            let (deletes, diagnostics) = crate::mapping_delete::derive_delete_bundle(
+                &plan.compiled,
+                &source_document,
+                &input.recorded_at,
+            )?;
+            (Vec::new(), deletes, diagnostics)
         } else {
             (
+                Vec::new(),
                 Vec::new(),
                 vec![
                     norn_ir::runtime_object! {"code"=>norn_checker::mapping::codes::EVALUATION_FAILED, "message"=>"CP2 mapping bundle does not apply source deletes"},
@@ -626,14 +691,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if let Some(original) = &reprocesses {
             // MAP-REPROCESS-1: only the reprocessed row's own capture address,
             // re-derived under a newer derivation, ever has one.
-            if *original != format!("mapping-bundle:{address}")
-                || derivation_number(derivation) == 1
-            {
+            if *original != format!("mapping-bundle:{address}") || derivation_version == 1 {
                 return Err(mismatch());
             }
             address = norn_ir::canonical::domain_hash_hex(
                 b"norn.mapping.reprocess.v1\0",
-                &(&address, derivation_number(derivation)),
+                &(&address, derivation_version),
             )?;
         }
         Ok(MappingBundle {
@@ -644,8 +707,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             definitions_digest: plan.definitions_digest.clone(),
             artifact_pins: plan.artifact_pins.clone(),
             records,
+            deletes,
             diagnostics,
-            derivation: derivation_number(derivation),
+            derivation: derivation_version,
             reprocesses,
         })
     }
@@ -723,6 +787,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                         &bundle.input,
                         bundle.definitions_version,
                         *derivation,
+                        bundle.derivation,
                         bundle.reprocesses.clone(),
                     )
                     .is_ok_and(|fresh| fresh == *bundle)
@@ -740,6 +805,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 &bundle.input,
                 bundle.definitions_version,
                 *derivation,
+                bundle.derivation,
                 bundle.reprocesses.clone(),
             )? == *bundle
             {
@@ -817,62 +883,7 @@ impl<E: SqlEngine> CellStore<E> {
     }
 }
 
-/// The most bytes of one retained diagnostic text: a refused row's own
-/// field can be as large as the request, and its full value is already in
-/// the retained raw evidence, so a diagnostic never repeats it unbounded.
-pub(crate) const DIAGNOSTIC_TEXT_BYTES: usize = 256;
-
-/// `text`, cut to [`DIAGNOSTIC_TEXT_BYTES`] at a character boundary.
-pub(crate) fn bounded_text(text: &str) -> String {
-    bounded(text).0
-}
-
-/// `text`, cut to [`DIAGNOSTIC_TEXT_BYTES`] at a character boundary, and
-/// whether it was cut.
-fn bounded(text: &str) -> (String, bool) {
-    if text.len() <= DIAGNOSTIC_TEXT_BYTES {
-        return (text.to_owned(), false);
-    }
-    let mut end = DIAGNOSTIC_TEXT_BYTES;
-    while !text.is_char_boundary(end) {
-        end = end.saturating_sub(1);
-    }
-    (format!("{}…", text.get(..end).unwrap_or_default()), true)
-}
-
-/// MAP-EXPLAIN-1: a row refusal as retained evidence, the mapping's
-/// diagnostic plus what it refused: the map (mapping rule) and, for a field
-/// that does not conform, the field, a bounded preview of its value, the
-/// declared type and why. Every text is bounded ([`DIAGNOSTIC_TEXT_BYTES`]):
-/// the value itself is the retained raw evidence's (`valueTruncated` says a
-/// preview was cut), so a malformed field never multiplies a row's size.
-fn explained(refusal: &norn_checker::mapping::RowRefusal) -> serde_json::Value {
-    let mut value = refusal.diagnostic().to_json();
-    let text = |text: &str| bounded(text).0.into();
-    if let Some(fields) = value.as_object_mut() {
-        if let Some(message) = fields.get("message").and_then(serde_json::Value::as_str) {
-            let message = text(message);
-            fields.insert("message".to_owned(), message);
-        }
-        fields.insert("map".to_owned(), text(&refusal.map));
-        fields.insert("reason".to_owned(), text(&refusal.reason));
-        if let Some(field) = &refusal.field {
-            fields.insert("field".to_owned(), text(&field.field));
-            if let Some(raw) = &field.value {
-                let (preview, cut) = bounded(raw);
-                fields.insert("value".to_owned(), preview.into());
-                if cut {
-                    fields.insert("valueTruncated".to_owned(), true.into());
-                }
-            } else {
-                fields.insert("value".to_owned(), serde_json::Value::Null);
-            }
-            fields.insert("expected".to_owned(), text(&field.expected));
-            fields.insert("reason".to_owned(), text(&field.reason));
-        }
-    }
-    value
-}
+pub(crate) use crate::mapping_delete::{DIAGNOSTIC_TEXT_BYTES, bounded_text};
 
 impl<E: SqlEngine> StoreReader<'_, E> {
     /// Authoritative [`norn_ir::VersionKind`] for `bundle`: combines the

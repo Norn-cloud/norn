@@ -494,7 +494,8 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                 }
                 ObservationEvent::ObservedFact { .. }
                 | ObservationEvent::ObservedDeleted { .. }
-                | ObservationEvent::ObservedRecreated { .. } => {}
+                | ObservationEvent::ObservedRecreated { .. }
+                | ObservationEvent::DisputeResolved { .. } => {}
             }
         }
     }

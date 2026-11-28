@@ -59,10 +59,13 @@ pub mod function_receipt;
 mod history;
 mod history_selection;
 pub mod host;
+pub mod link_claim_frontier;
 mod link_guard;
 mod link_laws;
 pub mod mapping_bundle;
 pub mod mapping_conflict;
+pub(crate) mod mapping_delete;
+pub mod mapping_dispute_resolve;
 mod mapping_identity;
 mod mapping_links;
 pub use mapping_links::LINK_HELD_RULE;
@@ -143,6 +146,11 @@ pub use fork_scenario::{ForkScenario, RecordedEntropy, WorldContext, fixture_key
 pub use function_receipt::ResultAuthority;
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{ClaimOutcome, CommitRecord, Responder, Settlement, SqliteCell};
+pub use link_claim_frontier::DisputeResolutionRecord;
+pub use mapping_dispute_resolve::{
+    DisputeDecision, DisputeResolutionInput, DisputeResolutionOutcome,
+    MAPPING_DISPUTE_RESOLVE_ACTION,
+};
 pub use mapping_process::{MappingOutcome, QuarantineReason};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{

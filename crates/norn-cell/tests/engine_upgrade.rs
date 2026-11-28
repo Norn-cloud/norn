@@ -487,6 +487,96 @@ fn add_function_receipt_table(image: &mut Value) {
         }),
     );
     add_source_cursor_tables(image);
+    add_v13_link_claim_frontier_tables(image);
+}
+
+/// Storage version 13 (#1028, #1549, #1931) adds `_norn_link_claim_frontier`
+/// and `_norn_dispute_resolution`, empty on older cells without link claims.
+fn add_v13_link_claim_frontier_tables(image: &mut Value) {
+    let schema = image["schema"].as_array_mut().expect("schema");
+    for (name, sql) in [
+        (
+            "_norn_link_claim_frontier",
+            "CREATE TABLE \"_norn_link_claim_frontier\" (\n  \"claim_id\" TEXT NOT NULL PRIMARY KEY,\n  \"contribution_id\" TEXT NOT NULL,\n  \"source_scope\" TEXT NOT NULL,\n  \"source_type\" TEXT NOT NULL,\n  \"source_key\" TEXT NOT NULL,\n  \"role\" TEXT NOT NULL,\n  \"target_type\" TEXT,\n  \"target_key\" TEXT,\n  \"observation_id\" TEXT NOT NULL,\n  \"commit_seq\" INTEGER NOT NULL,\n  \"claim_ordinal\" INTEGER NOT NULL,\n  \"source_version\" TEXT NOT NULL,\n  \"version_kind\" TEXT NOT NULL,\n  \"event_keys_json\" TEXT NOT NULL,\n  \"active\" INTEGER NOT NULL DEFAULT 1,\n  \"claim_json\" TEXT NOT NULL\n)",
+        ),
+        (
+            "_norn_dispute_resolution",
+            "CREATE TABLE \"_norn_dispute_resolution\" (\n  \"dispute_id\" TEXT NOT NULL PRIMARY KEY,\n  \"decision\" TEXT NOT NULL CHECK (\"decision\" IN ('accept-first', 'accept-second-as-correction', 'reject')),\n  \"actor\" TEXT NOT NULL,\n  \"reason\" TEXT NOT NULL,\n  \"commit_seq\" INTEGER NOT NULL,\n  \"receipt_hash\" TEXT NOT NULL\n)",
+        ),
+    ] {
+        schema.push(serde_json::json!({
+            "type": "table",
+            "name": name,
+            "table": name,
+            "sql": sql,
+        }));
+    }
+    for (name, sql) in [
+        (
+            "_norn_link_claim_frontier/contribution",
+            "CREATE INDEX \"_norn_link_claim_frontier/contribution\" ON \"_norn_link_claim_frontier\" (\"contribution_id\", \"active\", \"commit_seq\", \"claim_ordinal\")",
+        ),
+        (
+            "_norn_link_claim_frontier/source_role",
+            "CREATE INDEX \"_norn_link_claim_frontier/source_role\" ON \"_norn_link_claim_frontier\" (\"source_key\", \"role\", \"commit_seq\", \"claim_ordinal\") WHERE \"active\" = 1",
+        ),
+        (
+            "_norn_link_claim_frontier/target",
+            "CREATE INDEX \"_norn_link_claim_frontier/target\" ON \"_norn_link_claim_frontier\" (\"target_key\", \"source_key\", \"role\") WHERE \"active\" = 1 AND \"target_key\" IS NOT NULL",
+        ),
+        (
+            "_norn_link_claim_frontier/observation",
+            "CREATE INDEX \"_norn_link_claim_frontier/observation\" ON \"_norn_link_claim_frontier\" (\"observation_id\")",
+        ),
+    ] {
+        schema.push(serde_json::json!({
+            "type": "index",
+            "name": name,
+            "table": "_norn_link_claim_frontier",
+            "sql": sql,
+        }));
+    }
+    let tables = image["tables"].as_object_mut().expect("tables");
+    tables.insert(
+        "_norn_link_claim_frontier".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "claim_id",
+                "contribution_id",
+                "source_scope",
+                "source_type",
+                "source_key",
+                "role",
+                "target_type",
+                "target_key",
+                "observation_id",
+                "commit_seq",
+                "claim_ordinal",
+                "source_version",
+                "version_kind",
+                "event_keys_json",
+                "active",
+                "claim_json"
+            ],
+            "rows": []
+        }),
+    );
+    tables.insert(
+        "_norn_dispute_resolution".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "dispute_id",
+                "decision",
+                "actor",
+                "reason",
+                "commit_seq",
+                "receipt_hash"
+            ],
+            "rows": []
+        }),
+    );
 }
 
 /// SOURCE-CAPTURE-1 adds the durable source lease and cursor tables, empty on
@@ -2441,6 +2531,7 @@ fn upgraded_v8_image(mut expected: Value) -> Result<Value, Box<dyn std::error::E
     add_outbox_queue(&mut expected);
     add_outbox_ledger(&mut expected);
     add_source_cursor_tables(&mut expected);
+    add_v13_link_claim_frontier_tables(&mut expected);
     by_name(&mut expected);
     Ok(expected)
 }

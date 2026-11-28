@@ -106,6 +106,18 @@ pub enum ObservationEvent {
         /// The source record that recreated it.
         provenance: InstanceProvenance,
     },
+    /// A governed operator decision resolved a mapping dispute (#1549).
+    /// Immutable conflict/identity evidence stays retained in the inbox.
+    DisputeResolved {
+        /// The resolved dispute's inbox observation id (`mapping-conflict:` or `mapping-identity:`).
+        dispute_id: String,
+        /// The operator's decision (`accept-first`, `accept-second-as-correction`, or `reject`).
+        decision: String,
+        /// The actor who authorized the resolution.
+        actor: String,
+        /// The operator-supplied reason recorded for audit.
+        reason: String,
+    },
 }
 
 /// The system type of observed-delete tombstones (#3013): one object per

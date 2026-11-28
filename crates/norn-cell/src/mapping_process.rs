@@ -429,9 +429,10 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         let reader = self.store().read();
         let original = reader.inbox_bundle(observation_id)?;
         reader.recheck_mapping_bundle(&original)?;
+        let target_derivation = crate::mapping_delete::target_derivation_for(&original.raw);
         if original.diagnostics.is_empty()
             || original.reprocesses.is_some()
-            || original.derivation >= crate::mapping_bundle::CURRENT_DERIVATION
+            || original.derivation >= target_derivation
         {
             return Err(CellError::UnsupportedMappingProfile);
         }
@@ -440,11 +441,12 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         {
             return Err(CellError::MappingBundleMismatch);
         }
-        let bundle = reader.derived_mapping_bundle(
+        let bundle = reader.derived_mapping_bundle_version(
             &original.raw,
             &original.input,
             original.definitions_version,
             norn_checker::mapping::Derivation::CURRENT,
+            target_derivation,
             Some(observation_id.to_owned()),
         )?;
         if !bundle.diagnostics.is_empty() {
@@ -573,15 +575,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if self.mapping_conflict(bundle)?.is_some() || self.mapping_event_is_disputed(bundle)? {
             return Err(CellError::UnsupportedMappingProfile);
         }
-        if bundle.raw.get("kind").and_then(RuntimeValue::as_str) != Some("upsert")
-            || !bundle.diagnostics.is_empty()
+        if !matches!(
+            bundle.raw.get("kind").and_then(RuntimeValue::as_str),
+            Some("upsert" | "delete")
+        ) || !bundle.diagnostics.is_empty()
         {
             return Err(CellError::UnsupportedMappingProfile);
         }
         Ok(())
     }
 
-    /// Append one bundle's record snapshots to `commit`.
+    /// Append one bundle's record snapshots and source deletes to `commit`.
     pub(crate) fn prepare_mapping_records(
         &self,
         bundle: &MappingBundle,
@@ -619,6 +623,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 .append_to(commit, authorization)
                 .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
         }
+        crate::mapping_delete::prepare_mapping_deletes(
+            self,
+            &bundle.deletes,
+            catalog,
+            turn,
+            commit,
+            authorization,
+        )?;
         Ok(())
     }
 

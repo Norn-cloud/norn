@@ -149,11 +149,32 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .iter()
             .chain(&incoming.records)
             .map(|r| DataQualitySubject::new(r.object_type.clone(), &r.key))
+            .chain(
+                accepted
+                    .deletes
+                    .iter()
+                    .chain(&incoming.deletes)
+                    .map(|d| DataQualitySubject::new(d.object_type.clone(), &d.key)),
+            )
             .collect();
         let observation_ids = vec![
             accepted_id.clone(),
             format!("mapping-bundle:{}", incoming.digest),
         ];
+        let lineage = accepted
+            .records
+            .iter()
+            .chain(&incoming.records)
+            .map(|r| &r.provenance)
+            .chain(
+                accepted
+                    .deletes
+                    .iter()
+                    .chain(&incoming.deletes)
+                    .map(|d| &d.provenance),
+            )
+            .map(|p| DataQualityLineage::new(p.clone(), observation_ids.clone()))
+            .collect();
         let finding = DataQualityFinding::v2(
             DataQualityRuleRef::Builtin {
                 id: "core.boundary.import_finding".into(),
@@ -163,12 +184,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             DataQualitySeverity::Error,
             "conflicting immutable source event content",
             DataQualityOutcome::NotSatisfied,
-            accepted
-                .records
-                .iter()
-                .chain(&incoming.records)
-                .map(|r| DataQualityLineage::new(r.provenance.clone(), observation_ids.clone()))
-                .collect(),
+            lineage,
             incoming.input.recorded_at.clone(),
             incoming.input.recorded_at.clone(),
             DataQualityFindingStatus::Open,
@@ -201,29 +217,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.indexed_source_findings(object_type, key, false)
     }
 
-    /// Every captured conflict with its inbox position, in capture order.
+    /// Every unresolved (pending) conflict with its inbox position, in capture order.
     pub(crate) fn verified_source_conflicts(
         &self,
     ) -> Result<Vec<(u64, MappingConflict)>, CellError> {
-        let rows = self.conn.query(&format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-conflict:%' ORDER BY position"), params![])?;
-        let mut conflicts = Vec::new();
-        for values in rows {
-            let row = crate::engine::SqlRow(values);
-            let position = crate::read::to_u64(row.get(0)?, "inbox position")?;
-            let stored_id: String = row.get(1)?;
-            let encoded: String = row.get(2)?;
-            let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
-            let conflict: MappingConflict =
-                norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
-            self.recheck_mapping_conflict(&conflict)?;
-            if observed.id.0 != stored_id
-                || stored_id != format!("mapping-conflict:{}", conflict.finding.id)
-            {
-                return Err(CellError::MappingBundleMismatch);
-            }
-            conflicts.push((position, conflict));
-        }
-        Ok(conflicts)
+        self.load_source_conflicts(true)
+            .map(|rows| rows.into_iter().map(|(pos, c, _)| (pos, c)).collect())
     }
 
     /// Recompute boundary conflict evidence before disclosure under the caller's source policy.
@@ -277,7 +276,7 @@ pub(crate) struct SourceDisputeIndex {
     initialized: bool,
     subjects: BTreeMap<(String, String), Vec<(bool, DataQualityFinding)>>,
     /// Disputed source events (NFC keys), conflicts and identity disputes alike.
-    events: BTreeMap<[String; 5], EventDispute>,
+    pub(crate) events: BTreeMap<[String; 5], EventDispute>,
     roots_by_key: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -372,6 +371,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                         record.object_type.as_str(),
                     )?,
                     record.key.clone(),
+                ));
+            }
+            for delete in &bundle.deletes {
+                subjects.insert((
+                    self.retained_mapping_root(
+                        bundle.definitions_version,
+                        delete.object_type.as_str(),
+                    )?,
+                    delete.key.clone(),
                 ));
             }
         }
@@ -512,7 +520,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<Option<EventDispute>, CellError> {
         let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
             .map(|key| norn_ir::canonical::nfc(&key));
-        self.with_source_dispute_index(|index| index.events.get(&keys).cloned())
+        self.event_dispute_for_keys(&keys, None)
     }
 
     /// Datasets of `mapping_id` (optionally scoped to `connection_id`) that

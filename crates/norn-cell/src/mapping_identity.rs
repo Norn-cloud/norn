@@ -185,9 +185,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(())
     }
 
-    /// Every captured identity dispute with its inbox position, in capture order.
+    /// Every unresolved (pending) identity dispute with its inbox position, in capture order.
     pub(crate) fn identity_evidence(&self) -> Result<Vec<(u64, IdentityEvidence)>, CellError> {
-        let rows = self.conn.query(&format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-identity:%' ORDER BY position"), params![])?;
+        let rows = self.conn.query(
+            &format!(
+                "SELECT position, observation_id, observed FROM {INBOX} \
+                 WHERE observation_id LIKE 'mapping-identity:%' AND consumed_commit_seq IS NULL \
+                 ORDER BY position"
+            ),
+            params![],
+        )?;
         let mut evidence = Vec::new();
         for values in rows {
             let row = crate::engine::SqlRow(values);

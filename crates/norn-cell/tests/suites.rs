@@ -64,6 +64,8 @@ mod label_identity;
 mod lifecycle_initialization;
 #[path = "lifecycle_updates.rs"]
 mod lifecycle_updates;
+#[path = "link_claim_frontier.rs"]
+mod link_claim_frontier;
 #[path = "mapping_links.rs"]
 mod mapping_links;
 #[cfg(not(target_arch = "wasm32"))]

@@ -997,7 +997,8 @@ fn quality_constraints_allow_commands_and_refresh_findings_for_unchanged_bad_obs
             ObservationEvent::ObservedFact { .. }
             | ObservationEvent::ObservedTransition { .. }
             | ObservationEvent::ObservedDeleted { .. }
-            | ObservationEvent::ObservedRecreated { .. } => None,
+            | ObservationEvent::ObservedRecreated { .. }
+            | ObservationEvent::DisputeResolved { .. } => None,
         })
         .expect("the unchanged bad observation emits a unified finding");
     assert_eq!(first_finding.severity, DataQualitySeverity::Warning);
@@ -1059,7 +1060,8 @@ fn quality_constraints_allow_commands_and_refresh_findings_for_unchanged_bad_obs
             ObservationEvent::ObservedFact { .. }
             | ObservationEvent::ObservedTransition { .. }
             | ObservationEvent::ObservedDeleted { .. }
-            | ObservationEvent::ObservedRecreated { .. } => None,
+            | ObservationEvent::ObservedRecreated { .. }
+            | ObservationEvent::DisputeResolved { .. } => None,
         })
         .expect("the repeated observation emits a unified finding");
     assert_eq!(second_finding.id, first_finding.id);
@@ -1099,7 +1101,8 @@ fn quality_constraints_allow_commands_and_refresh_findings_for_unchanged_bad_obs
             ObservationEvent::ObservedFact { .. }
             | ObservationEvent::ObservedTransition { .. }
             | ObservationEvent::ObservedDeleted { .. }
-            | ObservationEvent::ObservedRecreated { .. } => None,
+            | ObservationEvent::ObservedRecreated { .. }
+            | ObservationEvent::DisputeResolved { .. } => None,
         })
         .expect("changed invalid evidence emits a finding");
     assert_ne!(changed_finding.id, first_finding.id);
@@ -1180,7 +1183,8 @@ fn aggregated_read_findings_coalesce_only_exact_authorities() {
             ObservationEvent::ObservedFact { .. }
             | ObservationEvent::ObservedTransition { .. }
             | ObservationEvent::ObservedDeleted { .. }
-            | ObservationEvent::ObservedRecreated { .. } => None,
+            | ObservationEvent::ObservedRecreated { .. }
+            | ObservationEvent::DisputeResolved { .. } => None,
         })
         .collect();
     assert_eq!(findings.len(), 2, "exact duplicate was folded only once");
@@ -1303,7 +1307,8 @@ fn final_write_retention_keeps_the_last_sealed_authority_once() {
             ObservationEvent::ObservedFact { .. }
             | ObservationEvent::ObservedTransition { .. }
             | ObservationEvent::ObservedDeleted { .. }
-            | ObservationEvent::ObservedRecreated { .. } => None,
+            | ObservationEvent::ObservedRecreated { .. }
+            | ObservationEvent::DisputeResolved { .. } => None,
         })
         .collect();
     assert_eq!(findings.len(), 1);
@@ -1475,7 +1480,8 @@ fn repeated_guarded_read_state_shares_fuel_and_keeps_each_authority() {
             ObservationEvent::ObservedFact { .. }
             | ObservationEvent::ObservedTransition { .. }
             | ObservationEvent::ObservedDeleted { .. }
-            | ObservationEvent::ObservedRecreated { .. } => None,
+            | ObservationEvent::ObservedRecreated { .. }
+            | ObservationEvent::DisputeResolved { .. } => None,
         })
         .collect();
     assert_eq!(findings.len(), AUTHORITY_COUNT);
@@ -3953,7 +3959,8 @@ fn obs_evidence_direct_law_violation_persists_its_governing_pin() {
             ObservationEvent::ObservedFact { .. }
             | ObservationEvent::ObservedTransition { .. }
             | ObservationEvent::ObservedDeleted { .. }
-            | ObservationEvent::ObservedRecreated { .. } => None,
+            | ObservationEvent::ObservedRecreated { .. }
+            | ObservationEvent::DisputeResolved { .. } => None,
         })
         .collect();
     assert_eq!(findings.len(), 1);

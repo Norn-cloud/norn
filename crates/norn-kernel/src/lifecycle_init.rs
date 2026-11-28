@@ -257,7 +257,8 @@ fn recorded_fact_events<'c, E: 'static, C, T>(
                 }
                 Some(
                     ObservationEvent::DataQualityFinding { .. }
-                    | ObservationEvent::ObservedRecreated { .. },
+                    | ObservationEvent::ObservedRecreated { .. }
+                    | ObservationEvent::DisputeResolved { .. },
                 )
                 | None => continue,
             }

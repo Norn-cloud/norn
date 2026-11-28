@@ -92,7 +92,7 @@ impl LinkGuardMode {
 /// Verify mapping bundle evidence, exact pending page/bundle consumption, and
 /// `mapping_link_plan` equality inside the commit transaction. This is the
 /// ONLY constructor of [`VerifiedMappingProof`].
-pub(crate) fn verify_mapping_links<E, C, I, S: SqlEngine>(
+pub(crate) fn verify_mapping_links<E: 'static, C, I, S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     commit: &CellCommit<E, C, I>,
     mapped: &[crate::mapping_bundle::MappingBundle],
@@ -130,10 +130,56 @@ pub(crate) fn verify_mapping_links<E, C, I, S: SqlEngine>(
         return Err(CommitError::Host(CellError::MappingBundleMismatch));
     }
     if mapped.is_empty() {
+        if let Some(norn_kernel::Consumed::Observation {
+            id: norn_kernel::ObservationId(observation_id),
+        }) = &commit.consumes
+            && (observation_id.starts_with("mapping-conflict:")
+                || observation_id.starts_with("mapping-identity:"))
+        {
+            return verify_dispute_resolution_links(reader, commit, observation_id);
+        }
         return Ok(None);
     }
     if reader
         .mapping_link_plan(mapped, commit)
+        .map_err(CommitError::Host)?
+        .links
+        != commit.links
+    {
+        return Err(CommitError::Host(CellError::SourceEvidenceChanged));
+    }
+    Ok(Some(VerifiedMappingProof(())))
+}
+
+fn verify_dispute_resolution_links<E: 'static, C, I, S: SqlEngine>(
+    reader: &StoreReader<'_, S>,
+    commit: &CellCommit<E, C, I>,
+    dispute_id: &str,
+) -> Result<Option<VerifiedMappingProof>, CommitError<CellError>> {
+    let (_, dispute) = reader
+        .load_verified_pending_dispute(dispute_id)
+        .map_err(CommitError::Host)?;
+    let decision = commit
+        .events
+        .iter()
+        .find_map(|event| {
+            let any: &dyn std::any::Any = event;
+            let obs = any.downcast_ref::<norn_kernel::ObservationEvent>()?;
+            let norn_kernel::ObservationEvent::DisputeResolved {
+                dispute_id: id,
+                decision,
+                ..
+            } = obs
+            else {
+                return None;
+            };
+            (id == dispute_id)
+                .then(|| crate::mapping_dispute_resolve::DisputeDecision::parse_wire(decision))
+                .flatten()
+        })
+        .ok_or(CommitError::Host(CellError::MappingBundleMismatch))?;
+    if reader
+        .dispute_resolution_link_plan(dispute_id, &dispute, decision, commit)
         .map_err(CommitError::Host)?
         .links
         != commit.links

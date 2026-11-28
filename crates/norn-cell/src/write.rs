@@ -299,6 +299,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         let mut written = Vec::with_capacity(self.batch.writes.len());
         let mut records = Vec::new();
         let mut changed_properties = BTreeMap::new();
+        let mut claim_ordinal: u64 = 0;
         for write in &self.batch.writes {
             let write_inherited = self.destination_value_lineage(
                 &inherited,
@@ -381,6 +382,23 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 records.push(record);
             }
             row.snapshot_sha256 = Some(self.capture_value_commitment(&row)?);
+            if self.world == crate::MAIN_WORLD
+                && let FactWriteRow::Put {
+                    object_type,
+                    key,
+                    values,
+                } = write
+                && object_type == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
+            {
+                crate::link_claim_frontier::record_claim_in_tx(
+                    &self.reader(),
+                    self.commit_seq,
+                    claim_ordinal,
+                    key,
+                    values,
+                )?;
+                claim_ordinal = claim_ordinal.saturating_add(1);
+            }
             written.push(row);
         }
         for fact in &self.batch.facts {

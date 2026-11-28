@@ -964,6 +964,7 @@ pub(crate) fn init_core_tables<E: crate::engine::SqlEngine>(
         .chain(&crate::automation_outbox::DDL)
         .chain(&crate::function_receipt::DDL)
         .chain(&crate::source_cursor::DDL)
+        .chain(crate::link_claim_frontier::DDL.iter())
     {
         conn.execute_batch(statement)?;
     }
