@@ -712,6 +712,28 @@ df -h /
 """}
     nextest = {"uses": "taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39",
                "with": {"tool": "nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129,uv@0.13.10,mold@3.0.0"}}
+    cli_publish_condition = "${{ github.repository == 'Norn-cloud/norn' && github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.bundle.id == 'b0' }}"
+    cli_publish = [
+        {"name": "Build prebuilt norn-linux-x86_64 CLI",
+         "if": cli_publish_condition,
+         "run": """set -euo pipefail
+cargo build --locked --release -p norn-cli --bin norn
+out="$RUNNER_TEMP/norn-linux-x86_64"
+rm -rf -- "$out"
+mkdir -p "$out"
+install -m 0755 "${CARGO_TARGET_DIR:-target}/release/norn" "$out/norn"
+"$out/norn" --version
+git rev-parse HEAD > "$out/commit.txt"
+(cd "$out" && sha256sum norn > norn.sha256)
+"""},
+        {"name": "Upload prebuilt norn-linux-x86_64 CLI",
+         "if": cli_publish_condition,
+         "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+         "with": {"name": "norn-linux-x86_64",
+                  "path": "${{ runner.temp }}/norn-linux-x86_64",
+                  "retention-days": 14,
+                  "if-no-files-found": "error"}},
+    ]
     for name, command in required_runs.items():
         job = jobs.get(name, {})
         # A draft head runs core only; its bundles wait until it is ready for review.
@@ -751,8 +773,11 @@ df -h /
             preparation.append({"name": "Audit Actions secret inventory",
                                 "env": {"GITHUB_TOKEN": "${{ github.token }}"},
                                 "run": "python3 -I scripts/ci/actions-secret-inventory.py"})
-        require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
+        post_gate = copy.deepcopy(cli_publish) if name == "test" else []
+        require(json.dumps(job_steps[:len(preparation)], sort_keys=True) == json.dumps(preparation, sort_keys=True),
                 f"{name}: preparation actions and inputs must match the approved contract")
+        require(json.dumps(job_steps[len(preparation) + 1:], sort_keys=True) == json.dumps(post_gate, sort_keys=True),
+                f"{name}: post-gate actions and inputs must match the approved contract")
         checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
         require(len(checkouts) == 1 and "if" not in checkouts[0]
                 and not checkouts[0].get("continue-on-error")
@@ -760,7 +785,7 @@ df -h /
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == {"core": 6, "test": 6}[name],
+        require(len([step for step in job_steps if "run" in step]) == {"core": 6, "test": 7}[name],
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")
@@ -770,7 +795,7 @@ df -h /
                 f"{name}: required gate command missing or conditional")
         require(not steps[0].get("env"),
                 f"{name}: step environment must not override gate inputs")
-        require(job_steps.index(checkouts[0]) < job_steps.index(steps[0]),
+        require(job_steps.index(checkouts[0]) < job_steps.index(steps[0]) == len(preparation),
                 f"{name}: candidate checkout must precede the gate")
         require("outputs" not in job and job.get("needs") == {"core": None, "test": ["plan"]}[name],
                 f"{name}: the gate plan comes only from the plan job")

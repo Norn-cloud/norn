@@ -1576,9 +1576,18 @@ def workflow_context_canaries(source: str, trusted_source: str) -> None:
             document = copy.deepcopy(workflow)
             del document["on"][trigger]
             rejected(f"removed trigger {trigger}", document)
+        gate_commands = {
+            "core": "bash scripts/ci/core.sh cheap",
+            "test": 'bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"',
+        }
+        def gate_step(doc, job_name):
+            steps = doc["jobs"][job_name]["steps"]
+            if job_name in gate_commands:
+                return next(s for s in steps if s.get("run", "").strip() == gate_commands[job_name])
+            return steps[-1]
         for name in ("core", "test", "full"):
             document = copy.deepcopy(workflow)
-            document["jobs"][name]["steps"][-1]["shell"] = "/usr/bin/true {0}"
+            gate_step(document, name)["shell"] = "/usr/bin/true {0}"
             rejected(f"{name} shell override", document)
         for key in ("DRAFT", "BASE", "HEAD_SHA", "PLAN", "PLANNER", "CORE", "TEST"):
             document = copy.deepcopy(workflow)
@@ -1933,7 +1942,7 @@ def workflow_context_canaries(source: str, trusted_source: str) -> None:
                 rejected(f"{name} checkout {key}", document)
             for key in ("BASH_ENV", "BASH_FUNC_exit%%", "LD_PRELOAD", "NORN_CI_PACKAGES", "NORN_CI_REST_SHARDS", "NORN_CI_BASE", "PLAN", "BUNDLE_ID"):
                 document = copy.deepcopy(workflow)
-                document["jobs"][name]["steps"][-1].setdefault("env", {})[key] = "override"
+                gate_step(document, name).setdefault("env", {})[key] = "override"
                 rejected(f"{name} step environment {key}", document)
         document = copy.deepcopy(workflow)
         document["jobs"]["test"]["needs"] = []
