@@ -213,7 +213,7 @@ fn commit_main_action(
         .action(action_id)
         .ok_or_else(|| format!("missing action {action_id}"))?;
     let catalog = definitions.catalog();
-    let call = ActionCall {
+    let action_call = ActionCall {
         action: &admitted.root,
         action_artifact_id: &admitted.artifact_id,
         action_version: &admitted.version,
@@ -231,7 +231,7 @@ fn commit_main_action(
         },
         trace: None,
     };
-    commit_action(cell, &catalog, &call, authorizer)
+    commit_action(cell, &catalog, &action_call, authorizer)
         .map_err(|error| format!("commit {action_id} ({key}): {error}"))
 }
 
