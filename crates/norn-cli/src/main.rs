@@ -7,7 +7,9 @@ mod cell_render;
 mod cli_contract;
 mod eval;
 mod explain;
+mod explain_support;
 mod mcp;
+mod mcp_tools;
 mod red_team;
 mod remote;
 mod source;
@@ -24,9 +26,9 @@ const MAX_TREE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Parser)]
 #[command(name = "norn", version, about = "Norn core checker")]
-struct Cli {
+pub(crate) struct Cli {
     #[command(subcommand)]
-    command: Command,
+    pub(crate) command: Command,
 }
 
 #[derive(Debug, Args)]
@@ -64,7 +66,7 @@ pub(crate) struct CheckArgs {
 }
 
 #[derive(Debug, Subcommand)]
-enum Command {
+pub(crate) enum Command {
     /// Explain an action, law or concept through the shared checker.
     Explain(explain::ExplainArgs),
     /// Serve available human operations over bounded MCP stdio.
@@ -127,6 +129,12 @@ enum Command {
     SourceDigest {
         /// The source tree's root directory (for a built-in, its crate directory).
         dir: PathBuf,
+    },
+    /// Print Norn CLI and checker ABI version metadata.
+    Version {
+        /// Print machine-readable checker ABI version JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -283,7 +291,7 @@ fn legacy_to_output(result: Result<(String, bool), String>) -> authoring::Comman
     }
 }
 
-fn run(command: Command) -> authoring::CommandOutput {
+pub(crate) fn run(command: Command) -> authoring::CommandOutput {
     match command {
         Command::Explain(args) => legacy_to_output(explain::execute(&args)),
         Command::Mcp => legacy_to_output(mcp::serve()),
@@ -310,6 +318,13 @@ fn run(command: Command) -> authoring::CommandOutput {
         } => legacy_to_output(run_eval(&defs, &org, &env, &rule, units)),
         Command::SourceDigest { dir } => {
             legacy_to_output(source_digest(&dir).map(|document| (document, true)))
+        }
+        Command::Version { json } => {
+            if json {
+                authoring::CommandOutput::ok(norn_checker_wasm::version_json())
+            } else {
+                authoring::CommandOutput::ok(format!("norn {}", env!("CARGO_PKG_VERSION")))
+            }
         }
         Command::Check(args) => run_check_args(&args),
     }

@@ -21,6 +21,7 @@
 
 mod checker;
 mod compiler;
+mod effect_stub;
 mod error;
 mod fmt;
 mod imports;

@@ -57,3 +57,29 @@ pub fn ripple_effects_json(
         norn_checker::ripple::compute_ripple_effects(&before, &after, &changed_ids).to_json_value();
     serde_json::to_string(&report).map_err(|error| AbiError::Receipt(error.to_string()))
 }
+
+/// Look up a registered checker diagnostic code and return its metadata
+/// (`code`, `tier`, `severity`, `message`, `since`, `fix`, `no_fix`) as JSON.
+#[must_use]
+pub fn explain_code_json(code: &str) -> String {
+    let document = match norn_checker::codes::lookup(code) {
+        Some(entry) => serde_json::json!({
+            "format": "norn/explain-diagnostic@1",
+            "found": true,
+            "code": entry.code,
+            "tier": entry.tier.as_str(),
+            "severity": norn_checker::codes::severity_str(&entry.severity),
+            "message": entry.message,
+            "since": entry.since,
+            "fix": entry.fix,
+            "no_fix": entry.no_fix,
+        }),
+        None => serde_json::json!({
+            "format": "norn/explain-diagnostic@1",
+            "found": false,
+            "code": code,
+            "error": format!("unknown diagnostic code `{code}`"),
+        }),
+    };
+    document.to_string()
+}

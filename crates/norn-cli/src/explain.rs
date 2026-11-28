@@ -5,23 +5,27 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Args)]
 pub(crate) struct ExplainArgs {
-    #[arg(value_parser = ["action", "law", "concept"])]
-    kind: String,
-    id: String,
+    /// Subject kind (`action`, `law`, `concept`, `diagnostic`) or a dotted diagnostic code.
+    pub(crate) kind: String,
+    /// Subject identifier or diagnostic code (optional when `kind` is a dotted diagnostic code).
+    pub(crate) id: Option<String>,
     /// A JSON artifact array or directory of artifact envelopes.
     #[arg(long)]
-    defs: PathBuf,
+    pub(crate) defs: Option<PathBuf>,
+    /// Installed base layer artifact JSON file or directory (repeatable).
+    #[arg(long)]
+    pub(crate) base: Vec<PathBuf>,
     /// Installed base, registry and tenant checker context.
     #[arg(long)]
-    context: Option<PathBuf>,
+    pub(crate) context: Option<PathBuf>,
     #[arg(long, value_parser = ["text", "json"], default_value = "text")]
-    format: String,
+    pub(crate) format: String,
     /// BCP 47 tag resolved by the supplied reviewed wording map.
     #[arg(long, requires = "wording")]
-    locale: Option<String>,
+    pub(crate) locale: Option<String>,
     /// JSON array of typed, reviewed `StructuredRequirement` values.
     #[arg(long, requires = "locale")]
-    wording: Option<PathBuf>,
+    pub(crate) wording: Option<PathBuf>,
 }
 
 const EXPLAIN_LIMIT: u64 = 8_388_608;
@@ -36,13 +40,38 @@ fn definitions(path: &Path) -> Result<String, String> {
 
 /// The JSON and text forms share one report; unknown proof status is explicit.
 pub(crate) fn execute(args: &ExplainArgs) -> Result<(String, bool), String> {
-    let artifacts = definitions(&args.defs)?;
-    let context = args
-        .context
+    if args.kind == "diagnostic" {
+        let code = args.id.as_deref().ok_or_else(|| {
+            "missing diagnostic code: usage `norn explain diagnostic <CODE>`".to_owned()
+        })?;
+        return crate::explain_support::execute_diagnostic(code, &args.format);
+    }
+    if args.id.is_none() && crate::explain_support::looks_like_diagnostic_code(&args.kind) {
+        return crate::explain_support::execute_diagnostic(&args.kind, &args.format);
+    }
+    if !matches!(args.kind.as_str(), "action" | "law" | "concept") {
+        return Err(format!(
+            "invalid explain kind `{}`: expected action, law, concept, diagnostic, or a dotted diagnostic code",
+            args.kind
+        ));
+    }
+    let id = args.id.as_deref().ok_or_else(|| {
+        format!(
+            "missing target id: usage `norn explain {} <ID> --defs <PATH>`",
+            args.kind
+        )
+    })?;
+    let defs_path = args
+        .defs
         .as_deref()
-        .map(read)
-        .transpose()?
-        .unwrap_or_else(|| "{}".into());
+        .ok_or_else(|| format!("--defs <PATH> is required for `norn explain {}`", args.kind))?;
+    let artifacts = definitions(defs_path)?;
+    let context = crate::explain_support::build_context_json(
+        args.context.as_deref(),
+        &args.base,
+        read,
+        definitions,
+    )?;
     let options = ExplainOptions {
         locale: args.locale.clone(),
         requirements: args
@@ -57,7 +86,7 @@ pub(crate) fn execute(args: &ExplainArgs) -> Result<(String, bool), String> {
     };
     let options = serde_json::to_string(&options).map_err(|error| error.to_string())?;
     let output = norn_checker_wasm::explain_artifact_set_json(
-        &artifacts, &context, &args.kind, &args.id, &options,
+        &artifacts, &context, &args.kind, id, &options,
     )
     .map_err(|error| error.to_string())?;
     let value: serde_json::Value =
@@ -69,14 +98,10 @@ pub(crate) fn execute(args: &ExplainArgs) -> Result<(String, bool), String> {
     if !admitted {
         return Ok((diagnostic_text(&value), false));
     }
-    let report: ExplainReport = serde_json::from_value(
-        value
-            .get("report")
-            .cloned()
-            .ok_or("missing explain report")?,
-    )
-    .map_err(|error| error.to_string())?;
-    Ok((render(&report), true))
+    let raw_report = value.get("report").ok_or("missing explain report")?;
+    let report: ExplainReport =
+        serde_json::from_value(raw_report.clone()).map_err(|error| error.to_string())?;
+    Ok((render(&report, raw_report), true))
 }
 
 fn diagnostic_text(value: &serde_json::Value) -> String {
@@ -122,7 +147,7 @@ fn diagnostic_text(value: &serde_json::Value) -> String {
         .join("\n")
 }
 
-fn render(report: &ExplainReport) -> String {
+fn render(report: &ExplainReport, raw_report: &serde_json::Value) -> String {
     let mut lines = vec![
         format!(
             "{}@{} {}",
@@ -181,60 +206,12 @@ fn render(report: &ExplainReport) -> String {
             ));
         }
     }
-    for law in &report.laws {
-        render_law(&mut lines, law);
+    let raw_laws = raw_report.get("laws").and_then(serde_json::Value::as_array);
+    for (idx, law) in report.laws.iter().enumerate() {
+        let raw_law = raw_laws.and_then(|items| items.get(idx));
+        crate::explain_support::render_law_entry(&mut lines, law, raw_law);
     }
     lines.join("\n")
-}
-
-fn render_law(lines: &mut Vec<String>, law: &norn_ir::explain::ExplainedLaw) {
-    lines.push(format!(
-        "Law {}: proof unknown; enforcement {}",
-        law.law.id,
-        if law.enforcement.is_some() {
-            "declared invariant at commit"
-        } else {
-            "not established"
-        }
-    ));
-    if let Some(source) = &law.source_path {
-        lines.push(format!("  authored source: {source}"));
-    }
-    for path in &law.inheritance_paths {
-        lines.push(format!(
-            "  inheritance: {}",
-            path.iter()
-                .map(|at| at.member.id())
-                .collect::<Vec<_>>()
-                .join(" -> ")
-        ));
-    }
-    for path in &law.containment_paths {
-        lines.push(format!(
-            "  containment: {}",
-            path.iter()
-                .map(|at| format!("{}@{}", at.artifact_id, at.version))
-                .collect::<Vec<_>>()
-                .join(" -> ")
-        ));
-    }
-    if let Some(wording) = &law.wording {
-        for slot in &wording.slots {
-            lines.push(format!("  {}: {}", slot.label, slot.text));
-        }
-    }
-    for unknown in &law.why_unknown {
-        lines.push(format!(
-            "  unknown {} {}: {} Fix: {}",
-            unknown
-                .writer
-                .as_ref()
-                .map_or_else(String::new, |writer| writer.to_json().to_string()),
-            unknown.footprint,
-            unknown.reason,
-            unknown.fix
-        ));
-    }
 }
 
 #[cfg(test)]
@@ -409,5 +386,170 @@ mod tests {
                 .any(|d| d["code"] == "widget.validation.invalid_payload"),
             "{invalid_out}"
         );
+    }
+
+    #[test]
+    fn explain_diagnostic_explicit_and_auto_detected_dotted_codes() {
+        for argv in [
+            vec![
+                "norn",
+                "explain",
+                "diagnostic",
+                "core.laws.preservation_violated",
+                "--format",
+                "text",
+            ],
+            vec![
+                "norn",
+                "explain",
+                "core.laws.preservation_violated",
+                "--format",
+                "text",
+            ],
+        ] {
+            let cli = crate::Cli::try_parse_from(argv).unwrap();
+            let crate::Command::Explain(args) = cli.command else {
+                panic!("wrong command");
+            };
+            let (text, found) = execute(&args).unwrap();
+            assert!(found, "{text}");
+            assert!(text.contains("Diagnostic core.laws.preservation_violated"));
+            assert!(text.contains("severity: error"));
+            assert!(text.contains("tier:"));
+            assert!(text.contains("message:"));
+            assert!(text.contains("fix:") || text.contains("no_fix:"));
+        }
+
+        let cli_json = crate::Cli::try_parse_from([
+            "norn",
+            "explain",
+            "core.laws.preservation_violated",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        let crate::Command::Explain(args_json) = cli_json.command else {
+            panic!("wrong command");
+        };
+        let (json_out, found_json) = execute(&args_json).unwrap();
+        assert!(found_json);
+        let parsed: serde_json::Value = serde_json::from_str(&json_out).unwrap();
+        assert_eq!(parsed["found"], true);
+        assert_eq!(parsed["code"], "core.laws.preservation_violated");
+        assert_eq!(parsed["severity"], "error");
+
+        let cli_missing = crate::Cli::try_parse_from([
+            "norn",
+            "explain",
+            "diagnostic",
+            "core.laws.definitely_not_registered",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        let crate::Command::Explain(args_missing) = cli_missing.command else {
+            panic!("wrong command");
+        };
+        let (missing_out, found_missing) = execute(&args_missing).unwrap();
+        assert!(!found_missing);
+        let missing_json: serde_json::Value = serde_json::from_str(&missing_out).unwrap();
+        assert_eq!(missing_json["found"], false);
+    }
+
+    #[test]
+    fn explain_repeatable_base_merges_base_artifacts_without_context_file() {
+        let base_path =
+            std::env::temp_dir().join(format!("norn-explain-base-{}.json", std::process::id()));
+        let defs_path =
+            std::env::temp_dir().join(format!("norn-explain-defs-{}.json", std::process::id()));
+        std::fs::write(
+            &base_path,
+            include_str!("../../../fixtures/law-ir/entities.json"),
+        )
+        .unwrap();
+        std::fs::write(
+            &defs_path,
+            include_str!("../../../fixtures/law-ir/laws.json"),
+        )
+        .unwrap();
+
+        let cli = crate::Cli::try_parse_from([
+            "norn",
+            "explain",
+            "law",
+            "erpnext.no_unpaid_ship",
+            "--defs",
+            defs_path.to_str().unwrap(),
+            "--base",
+            base_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        let crate::Command::Explain(args) = cli.command else {
+            panic!("wrong command");
+        };
+        let (out, admitted) = execute(&args).unwrap();
+        let _rm_base = std::fs::remove_file(&base_path);
+        let _rm_defs = std::fs::remove_file(&defs_path);
+        assert!(admitted, "expected --base merge to admit: {out}");
+        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(parsed["admitted"], true);
+        assert_eq!(
+            parsed["report"]["laws"][0]["law"]["id"],
+            "erpnext.no_unpaid_ship"
+        );
+    }
+
+    #[test]
+    fn render_law_uses_actual_proof_status_and_assurance_metadata_from_json() {
+        let mut pool: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json")).unwrap();
+        pool.extend(
+            serde_json::from_str::<Vec<serde_json::Value>>(include_str!(
+                "../../../fixtures/law-ir/laws.json"
+            ))
+            .unwrap(),
+        );
+        let output = norn_checker_wasm::explain_artifact_set_json(
+            &serde_json::to_string(&pool).unwrap(),
+            "{}",
+            "law",
+            "erpnext.no_unpaid_ship",
+            "{}",
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let report: ExplainReport = serde_json::from_value(parsed["report"].clone()).unwrap();
+        let law = report.laws.first().unwrap();
+
+        let mut enriched_raw = parsed["report"]["laws"][0].clone();
+        if let Some(obj) = enriched_raw.as_object_mut() {
+            obj.insert("status".to_owned(), serde_json::json!("checked-proof"));
+            obj.insert("tier".to_owned(), serde_json::json!("T3"));
+            obj.insert(
+                "evidence".to_owned(),
+                serde_json::json!("sha256:abcdef0123456789"),
+            );
+            obj.insert(
+                "fix".to_owned(),
+                serde_json::json!("Maintain preservation certificate on edits."),
+            );
+        }
+
+        let mut lines = Vec::new();
+        crate::explain_support::render_law_entry(&mut lines, law, Some(&enriched_raw));
+        let rendered = lines.join("\n");
+        assert!(
+            rendered.contains("Law erpnext.no_unpaid_ship: proof checked-proof;"),
+            "expected actual proof status, got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("proof unknown"),
+            "must not hardcode proof unknown when status is checked-proof:\n{rendered}"
+        );
+        assert!(rendered.contains("tier: T3"));
+        assert!(rendered.contains("evidence: sha256:abcdef0123456789"));
+        assert!(rendered.contains("fix: Maintain preservation certificate on edits."));
     }
 }

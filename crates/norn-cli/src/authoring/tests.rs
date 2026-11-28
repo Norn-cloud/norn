@@ -749,3 +749,184 @@ export default Norn.flow(
     }
     Ok(())
 }
+
+#[test]
+fn offline_ts_compile_and_check_source_in_isolated_temp_dir() -> TestResult {
+    let scratch = TempWorkspace::new("offline-standalone-ts")?;
+    let source_path = scratch.write(
+        "defs/ticket.ts",
+        r#"import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+export const Ticket = Norn.type({
+  name: "standalone.Ticket",
+  title: "Ticket",
+  version: "0.1.0",
+  properties: Schema.Struct({
+    ticket_id: Schema.String,
+    status: Schema.Literals(["open", "resolved"]),
+    note: Schema.NullOr(Schema.String),
+  }),
+  identity: [{ name: "primary", properties: ["ticket_id"] }],
+  defaults: { status: "open" },
+})
+"#,
+    )?;
+
+    let compiled = execute_compile(&CompileArgs {
+        path: source_path.clone(),
+        org: Some("org_standalone".to_owned()),
+        env: Some("dev".to_owned()),
+        forbid_unsafe_zen: true,
+        out: None,
+        tool_root: None,
+        pack_json: false,
+        registry: None,
+        root: None,
+        source_path: None,
+        modules: None,
+        allow_empty: false,
+        max_expansion_work: None,
+    });
+    assert_eq!(
+        compiled.exit_code, 0,
+        "offline standalone TS compile failed: stdout={} stderr={}",
+        compiled.stdout, compiled.stderr
+    );
+    let artifacts: Value = serde_json::from_str(&compiled.stdout)?;
+    assert!(
+        artifacts
+            .as_array()
+            .is_some_and(|list| list.iter().any(|item| {
+                item.get("artifactId").and_then(Value::as_str) == Some("standalone.Ticket.entity")
+            }))
+    );
+
+    let checked = execute_check_source(&CheckSourceRequest {
+        source: &source_path,
+        context: None,
+        org: Some("org_standalone"),
+        env: Some("dev"),
+        forbid_unsafe_zen: true,
+        tool_root: None,
+    });
+    assert_eq!(
+        checked.exit_code, 0,
+        "offline standalone TS check failed: stdout={} stderr={}",
+        checked.stdout, checked.stderr
+    );
+    let report: Value = serde_json::from_str(&checked.stdout)?;
+    assert_eq!(report.get("admitted").and_then(Value::as_bool), Some(true));
+    Ok(())
+}
+
+#[test]
+fn check_source_inherits_ancestor_norn_json_scope_and_allows_cli_override() -> TestResult {
+    let scratch = TempWorkspace::new("ancestor-scope")?;
+    scratch.write(
+        "norn.json",
+        &json!({
+            "format": "norn-project/1",
+            "name": "ops-app",
+            "sources": ["src"],
+            "scope": { "orgId": "org_ancestor", "environmentId": "staging" },
+        })
+        .to_string(),
+    )?;
+    let nested_ts = scratch.write(
+        "src/sub/item.ts",
+        r#"import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+export const Item = Norn.type({
+  name: "ops.Item",
+  title: "Item",
+  version: "0.1.0",
+  properties: Schema.Struct({ item_id: Schema.String }),
+  identity: [{ name: "primary", properties: ["item_id"] }],
+})
+"#,
+    )?;
+
+    // Single nested file inherits scope from ancestor norn.json without --org/--env.
+    let file_checked = execute_check_source(&CheckSourceRequest {
+        source: &nested_ts,
+        context: None,
+        org: None,
+        env: None,
+        forbid_unsafe_zen: false,
+        tool_root: None,
+    });
+    assert_eq!(
+        file_checked.exit_code, 0,
+        "ancestor scope single-file check failed: stdout={} stderr={}",
+        file_checked.stdout, file_checked.stderr
+    );
+    let file_report: Value = serde_json::from_str(&file_checked.stdout)?;
+    assert_eq!(
+        file_report.get("admitted").and_then(Value::as_bool),
+        Some(true)
+    );
+
+    // Nested subdirectory also inherits scope from ancestor norn.json.
+    let subdir = scratch.path().join("src/sub");
+    let subdir_checked = execute_check_source(&CheckSourceRequest {
+        source: &subdir,
+        context: None,
+        org: None,
+        env: None,
+        forbid_unsafe_zen: false,
+        tool_root: None,
+    });
+    assert_eq!(
+        subdir_checked.exit_code, 0,
+        "ancestor scope subdir check failed: stdout={} stderr={}",
+        subdir_checked.stdout, subdir_checked.stderr
+    );
+
+    // Explicit --org / --env still override the ancestor norn.json scope.
+    let overridden = execute_check_source(&CheckSourceRequest {
+        source: &nested_ts,
+        context: None,
+        org: Some("org_override"),
+        env: Some("prod"),
+        forbid_unsafe_zen: false,
+        tool_root: None,
+    });
+    assert_eq!(
+        overridden.exit_code, 0,
+        "explicit scope override failed: stdout={} stderr={}",
+        overridden.stdout, overridden.stderr
+    );
+    Ok(())
+}
+
+#[test]
+fn version_subcommand_emits_text_and_checker_abi_json() -> TestResult {
+    use clap::Parser as _;
+
+    let text_cli = crate::Cli::try_parse_from(["norn", "version"])?;
+    let text_out = crate::run(text_cli.command);
+    assert_eq!(text_out.exit_code, 0);
+    assert_eq!(
+        text_out.stdout,
+        format!("norn {}", env!("CARGO_PKG_VERSION"))
+    );
+
+    let json_cli = crate::Cli::try_parse_from(["norn", "version", "--json"])?;
+    let json_out = crate::run(json_cli.command);
+    assert_eq!(json_out.exit_code, 0);
+    assert_eq!(json_out.stdout, norn_checker_wasm::version_json());
+    let parsed: Value = serde_json::from_str(&json_out.stdout)?;
+    assert_eq!(
+        parsed.get("abi").and_then(Value::as_str),
+        Some(norn_checker_wasm::ABI_VERSION)
+    );
+    assert!(
+        parsed
+            .get("checkerVersion")
+            .and_then(Value::as_str)
+            .is_some()
+    );
+    Ok(())
+}

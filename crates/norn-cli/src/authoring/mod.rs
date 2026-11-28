@@ -646,9 +646,34 @@ pub(crate) fn execute_dashboard(args: &DashboardArgs) -> CommandOutput {
     }
 }
 
+fn read_norn_scope_from_dir(
+    app_root: &TrustedDir,
+    budget: &mut InvocationBudget,
+) -> Result<Option<(String, String)>, String> {
+    let Some(raw) = app_root.try_read_regular_file_rel(Path::new("norn.json"), budget)? else {
+        return Ok(None);
+    };
+    let manifest_display = app_root.display_path().join("norn.json");
+    let parsed: Value = serde_json::from_str(&raw)
+        .map_err(|err| format!("{}: invalid JSON: {err}", manifest_display.display()))?;
+    let org_id = parsed
+        .pointer("/scope/orgId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let environment_id = parsed
+        .pointer("/scope/environmentId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    Ok(org_id.zip(environment_id))
+}
+
 fn resolve_check_scope(
     req: &CheckSourceRequest<'_>,
-    manifest: Option<&NornAppManifest>,
+    default_scope: Option<(&str, &str)>,
 ) -> Result<(String, String), String> {
     match (req.org, req.env) {
         (Some(org), Some(env)) => Ok((org.to_owned(), env.to_owned())),
@@ -657,10 +682,8 @@ fn resolve_check_scope(
                 .to_owned(),
         ),
         (None, None) => {
-            if let Some(app) = manifest
-                && let (Some(org_id), Some(env_id)) = (&app.org_id, &app.environment_id)
-            {
-                return Ok((org_id.clone(), env_id.clone()));
+            if let Some((org_id, env_id)) = default_scope {
+                return Ok((org_id.to_owned(), env_id.to_owned()));
             }
             Err(
                 "--org and --env are required with --source (or omit both when checking a norn.json project with scope)"
@@ -683,8 +706,26 @@ fn compile_check_source_pinned(
             } else {
                 None
             };
+            let ancestor_scope = if req.org.is_none() && req.env.is_none() {
+                match app_root {
+                    Some(AppRootMatch::Ancestor(dir)) => {
+                        read_norn_scope_from_dir(dir, budget).map_err(AuthoringFailure::Io)?
+                    }
+                    Some(AppRootMatch::SameAsStart) | None => None,
+                }
+            } else {
+                None
+            };
+            let default_scope = manifest
+                .as_ref()
+                .and_then(|app| app.org_id.as_deref().zip(app.environment_id.as_deref()))
+                .or_else(|| {
+                    ancestor_scope
+                        .as_ref()
+                        .map(|(org, env)| (org.as_str(), env.as_str()))
+                });
             let (resolved_org, resolved_env) =
-                resolve_check_scope(req, manifest.as_ref()).map_err(AuthoringFailure::Io)?;
+                resolve_check_scope(req, default_scope).map_err(AuthoringFailure::Io)?;
             validate_non_empty_scope("--org", &resolved_org)?;
             validate_non_empty_scope("--env", &resolved_env)?;
             let opts = CompileDirOptions {
@@ -702,8 +743,22 @@ fn compile_check_source_pinned(
             display_path,
             opened,
         } => {
-            let (resolved_org, resolved_env) =
-                resolve_check_scope(req, None).map_err(AuthoringFailure::Io)?;
+            let inherited_scope = if req.org.is_none() && req.env.is_none() {
+                match app_root {
+                    Some(matched) => read_norn_scope_from_dir(matched.as_dir(&parent_dir), budget)
+                        .map_err(AuthoringFailure::Io)?,
+                    None => None,
+                }
+            } else {
+                None
+            };
+            let (resolved_org, resolved_env) = resolve_check_scope(
+                req,
+                inherited_scope
+                    .as_ref()
+                    .map(|(org, env)| (org.as_str(), env.as_str())),
+            )
+            .map_err(AuthoringFailure::Io)?;
             validate_non_empty_scope("--org", &resolved_org)?;
             validate_non_empty_scope("--env", &resolved_env)?;
             let opts = CompileDirOptions {

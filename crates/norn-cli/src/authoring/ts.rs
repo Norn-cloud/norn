@@ -82,19 +82,47 @@ fn mount_pinned_packages(
     let Some(tool_root) =
         discover_tool_root(start, explicit_tool_root).map_err(AuthoringFailure::Io)?
     else {
-        return Ok(None);
+        let _stub_files = vfs.mount_embedded_effect_stub(profile).map_err(|err| {
+            AuthoringFailure::Io(format!(
+                "failed to mount embedded offline `effect` declarations: {err} (pass --tool-root pointing to tools/norn-ts)"
+            ))
+        })?;
+        return Ok(Some(PINNED_EFFECT_DIST_PREFIX));
     };
     let effect_dir = tool_root.join("node_modules/effect");
     if !effect_dir.join("package.json").is_file() {
         return Err(AuthoringFailure::Io(format!(
-            "{}: missing pinned effect package manifest",
+            "{}: missing pinned effect package manifest (pass --tool-root pointing to tools/norn-ts)",
             effect_dir.display()
         )));
     }
     let _effect_files = vfs
         .mount_pinned_effect_dir(&effect_dir, profile)
-        .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
+        .map_err(|err| {
+            AuthoringFailure::Io(format!(
+                "{err} (pass --tool-root pointing to tools/norn-ts with pinned effect {})",
+                profile.pins.effect.version
+            ))
+        })?;
     Ok(Some(PINNED_EFFECT_DIST_PREFIX))
+}
+
+fn enrich_effect_resolution_hint(diagnostics: Vec<ProfileDiagnostic>) -> Vec<ProfileDiagnostic> {
+    diagnostics
+        .into_iter()
+        .map(|mut diag| {
+            if diag.code == "NORN-FLOW-TYPE"
+                && (diag.message.contains("Cannot find module 'effect")
+                    || diag.message.contains("Cannot find module \"effect"))
+                && !diag.message.contains("--tool-root")
+            {
+                diag.message.push_str(
+                    " (hint: if importing an `effect` subpath outside the offline stub, pass --tool-root pointing to tools/norn-ts)",
+                );
+            }
+            diag
+        })
+        .collect()
 }
 
 pub(super) fn is_ts_support_file(_name: &str, path: &Path) -> bool {
@@ -471,6 +499,7 @@ fn collect_module_artifacts(
     let mut failures = Vec::new();
     match outcome {
         DefinitionsCompileOutcome::Err { diagnostics } => {
+            let diagnostics = enrich_effect_resolution_hint(diagnostics);
             failures.push(json!({ "file": source_path, "diagnostics": diagnostics }));
         }
         DefinitionsCompileOutcome::Ok(out) => {
@@ -502,6 +531,7 @@ fn collect_module_artifacts(
                             }
                         }
                         FlowCompileOutcome::Err { diagnostics } => {
+                            let diagnostics = enrich_effect_resolution_hint(diagnostics);
                             failures
                                 .push(json!({ "file": source_path, "diagnostics": diagnostics }));
                         }
@@ -675,9 +705,13 @@ pub(crate) fn run_profile(
     )?;
     let root_slices: Vec<&str> = mounted.root_vpaths.iter().map(String::as_str).collect();
     let checker = ProfileChecker::new(mounted.profile);
-    let reports = checker
+    let mut reports = checker
         .check_vfs(mounted.vfs, &root_slices, mounted.effect_dist_prefix)
         .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
+    for report in &mut reports {
+        let diagnostics = std::mem::take(&mut report.diagnostics);
+        report.diagnostics = enrich_effect_resolution_hint(diagnostics);
+    }
     let clean = reports.iter().all(|report| report.diagnostics.is_empty());
     let mut array = BoundedJsonArray::new();
     for report in &reports {
@@ -740,9 +774,13 @@ pub(crate) fn run_question(
                 Ok(rendered)
             }
         }
-        QuestionsCompileOutcome::Err { diagnostics } => Err(AuthoringFailure::Diagnostics(
-            diagnostics_json(&display_posix_path(path), &diagnostics),
-        )),
+        QuestionsCompileOutcome::Err { diagnostics } => {
+            let diagnostics = enrich_effect_resolution_hint(diagnostics);
+            Err(AuthoringFailure::Diagnostics(diagnostics_json(
+                &display_posix_path(path),
+                &diagnostics,
+            )))
+        }
     }
 }
 
@@ -793,8 +831,12 @@ pub(crate) fn run_dashboard(
                 Ok(rendered)
             }
         }
-        DashboardsCompileOutcome::Err { diagnostics } => Err(AuthoringFailure::Diagnostics(
-            diagnostics_json(&display_posix_path(path), &diagnostics),
-        )),
+        DashboardsCompileOutcome::Err { diagnostics } => {
+            let diagnostics = enrich_effect_resolution_hint(diagnostics);
+            Err(AuthoringFailure::Diagnostics(diagnostics_json(
+                &display_posix_path(path),
+                &diagnostics,
+            )))
+        }
     }
 }
