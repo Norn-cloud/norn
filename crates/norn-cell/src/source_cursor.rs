@@ -34,7 +34,7 @@ pub(crate) const SOURCE_BINDING: &str = "_norn_source_binding";
 pub(crate) const SOURCE_EVIDENCE: &str = "_norn_source_evidence";
 
 /// Additive DDL for source-sync leases, cursors, recovery, bindings, evidence, and indexes.
-pub(crate) const DDL: [&str; 13] = [
+pub(crate) const DDL: [&str; 14] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_source_lease" (
   "connection_id" TEXT NOT NULL PRIMARY KEY,
   "lease_id" TEXT NOT NULL,
