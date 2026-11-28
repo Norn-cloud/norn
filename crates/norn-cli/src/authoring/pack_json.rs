@@ -393,12 +393,19 @@ struct FlowPassContext<'a> {
     limits: CompilerLimits,
 }
 
+struct ModuleFlowOutput {
+    artifacts: Vec<Value>,
+    flow_source_map: Option<FlowSourceMapFlow>,
+    builder_source_map: Option<Value>,
+    ok: bool,
+}
+
 fn compile_module_flow(
     ctx: &FlowPassContext<'_>,
     vpath: &str,
     env: &ModuleEnvelope,
     collector: &mut PackCollector,
-) -> Result<(Vec<Value>, Option<FlowSourceMapFlow>, Option<Value>, bool), AuthoringFailure> {
+) -> Result<ModuleFlowOutput, AuthoringFailure> {
     let flow_opts = FlowCompileOptions {
         envelope: EnvelopeOptions {
             scope: env.scope.clone(),
@@ -414,7 +421,12 @@ fn compile_module_flow(
     let outcomes = compile_flow_program(ctx.checker, ctx.program, &[vpath], &flow_opts)
         .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
     let Some(outcome) = outcomes.into_iter().next() else {
-        return Ok((Vec::new(), None, None, true));
+        return Ok(ModuleFlowOutput {
+            artifacts: Vec::new(),
+            flow_source_map: None,
+            builder_source_map: None,
+            ok: true,
+        });
     };
     match outcome {
         FlowCompileOutcome::Err { diagnostics } => {
@@ -427,7 +439,12 @@ fn compile_module_flow(
                 "ok": false,
                 "diagnostics": diagnostics,
             }));
-            Ok((Vec::new(), None, None, false))
+            Ok(ModuleFlowOutput {
+                artifacts: Vec::new(),
+                flow_source_map: None,
+                builder_source_map: None,
+                ok: false,
+            })
         }
         FlowCompileOutcome::Ok(flow_out) => {
             for warning in &flow_out.warnings {
@@ -458,7 +475,12 @@ fn compile_module_flow(
                 }));
                 collector.flow_sm_flows.push(entry.clone());
             }
-            Ok((flow_artifacts, flow_sm, Some(builder_sm), true))
+            Ok(ModuleFlowOutput {
+                artifacts: flow_artifacts,
+                flow_source_map: flow_sm,
+                builder_source_map: Some(builder_sm),
+                ok: true,
+            })
         }
     }
 }
@@ -509,14 +531,13 @@ fn process_module_outcome(
             let mut mod_flow_sm: Option<FlowSourceMapFlow> = None;
             let mut mod_builder_sm: Option<Value> = None;
             if out.flows > 0 {
-                let (flow_arts, flow_sm, builder_sm, ok) =
-                    compile_module_flow(ctx, vpath, env, collector)?;
-                if !ok {
+                let flow_out = compile_module_flow(ctx, vpath, env, collector)?;
+                if !flow_out.ok {
                     return Ok(());
                 }
-                mod_artifacts.extend(flow_arts);
-                mod_flow_sm = flow_sm;
-                mod_builder_sm = builder_sm;
+                mod_artifacts.extend(flow_out.artifacts);
+                mod_flow_sm = flow_out.flow_source_map;
+                mod_builder_sm = flow_out.builder_source_map;
             } else if mod_artifacts.is_empty()
                 && mod_retained.is_empty()
                 && out.warnings.is_empty()
@@ -561,7 +582,7 @@ fn process_module_outcome(
     Ok(())
 }
 
-fn render_pack_collector(profile_name: &str, collector: PackCollector) -> (String, bool) {
+fn render_pack_collector(profile_name: &str, collector: &PackCollector) -> (String, bool) {
     if !collector.failures.is_empty() {
         let doc = json!({
             "ok": false,
@@ -607,7 +628,7 @@ fn compile_pack_json_inner(args: &CompileArgs) -> Result<(String, bool), Authori
     let profile_name = mounted.profile.profile.clone();
 
     if mounted.root_vpaths.is_empty() {
-        return Ok(render_pack_collector(&profile_name, PackCollector::new()));
+        return Ok(render_pack_collector(&profile_name, &PackCollector::new()));
     }
 
     let vpath_to_rel: BTreeMap<String, String> = mounted
@@ -674,7 +695,7 @@ fn compile_pack_json_inner(args: &CompileArgs) -> Result<(String, bool), Authori
         process_module_outcome(&ctx, vpath, env, outcome, args.allow_empty, &mut collector)?;
     }
 
-    Ok(render_pack_collector(&profile_name, collector))
+    Ok(render_pack_collector(&profile_name, &collector))
 }
 
 /// Executes `norn compile --pack-json`.
