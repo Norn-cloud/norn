@@ -226,6 +226,7 @@ fn zero_ci_fails_closed_on_github_symlinks_and_non_dir_workflows() -> TestResult
     let sym_github = execute_check_source(&CheckSourceRequest {
         source: scratch.path(),
         context: None,
+        base: &[],
         org: None,
         env: None,
         forbid_unsafe_zen: false,
@@ -242,6 +243,7 @@ fn zero_ci_fails_closed_on_github_symlinks_and_non_dir_workflows() -> TestResult
     let file_workflows = execute_check_source(&CheckSourceRequest {
         source: scratch.path(),
         context: None,
+        base: &[],
         org: None,
         env: None,
         forbid_unsafe_zen: false,
@@ -262,6 +264,7 @@ fn zero_ci_fails_closed_on_github_symlinks_and_non_dir_workflows() -> TestResult
     let sym_workflows = execute_check_source(&CheckSourceRequest {
         source: scratch.path(),
         context: None,
+        base: &[],
         org: None,
         env: None,
         forbid_unsafe_zen: false,
@@ -282,6 +285,7 @@ fn zero_ci_fails_closed_on_github_symlinks_and_non_dir_workflows() -> TestResult
     let regular_github = execute_check_source(&CheckSourceRequest {
         source: scratch.path(),
         context: None,
+        base: &[],
         org: None,
         env: None,
         forbid_unsafe_zen: false,
@@ -424,6 +428,7 @@ export const Product = Norn.type({
     let checked = execute_check_source(&CheckSourceRequest {
         source: scratch.path(),
         context: None,
+        base: &[],
         org: None,
         env: None,
         forbid_unsafe_zen: false,

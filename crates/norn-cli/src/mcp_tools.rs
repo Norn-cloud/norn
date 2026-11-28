@@ -404,6 +404,9 @@ pub(crate) fn call_tool(
             confine_opt_path(&mut check_args.context, workspace_root)?;
             confine_opt_path(&mut check_args.source, workspace_root)?;
             confine_opt_path(&mut check_args.tool_root, workspace_root)?;
+            for base_path in &mut check_args.base {
+                *base_path = confine_path(base_path, workspace_root)?;
+            }
             let output = crate::run_check_args_confined(&check_args, workspace_root);
             from_command_output(output, None)
         }
