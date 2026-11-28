@@ -1,0 +1,4 @@
+{
+  "order": 8,
+  "value": "lean -DwarningAsError=true verification/data-lineage-v1/DataLineage.lean"
+}

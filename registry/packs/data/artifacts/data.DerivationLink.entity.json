@@ -1,0 +1,74 @@
+{
+  "artifactId": "data.DerivationLink.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Derivation link",
+  "namespace": "data",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Reference qualified lineage edge implementing data.Derivation and inheriting all DATA-CAUSAL-1 temporal causality laws.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "derivation_id"
+          ]
+        }
+      ],
+      "implements": [
+        "data.Derivation"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Upstream snapshot read as input.",
+          "id": "input_snapshot",
+          "target": "data.SnapshotRecord"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Downstream snapshot produced as output.",
+          "id": "output_snapshot",
+          "target": "data.SnapshotRecord"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Pipeline run that performed the derivation.",
+          "id": "activity",
+          "target": "data.PipelineRun"
+        }
+      ],
+      "name": "data.DerivationLink",
+      "properties": [
+        {
+          "id": "derivation_id",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.DerivationLink.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

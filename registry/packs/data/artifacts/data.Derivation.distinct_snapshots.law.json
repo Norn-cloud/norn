@@ -1,0 +1,50 @@
+{
+  "artifactId": "data.Derivation.distinct_snapshots.law",
+  "dependencies": [
+    {
+      "artifactId": "data.Derivation.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "DATA-CAUSAL-1: a derivation must connect two distinct snapshots (non-reflexive lineage edge).",
+  "namespace": "data",
+  "payload": {
+    "id": "data.Derivation.distinct_snapshots",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "data",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/data/data.ts"
+    },
+    "rationale": "DATA-CAUSAL-1: a derivation must connect two distinct snapshots (non-reflexive lineage edge).",
+    "response": {
+      "expression": "self.input_snapshot.snapshot_id != self.output_snapshot.snapshot_id",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "data.Derivation"
+      ],
+      "root": {
+        "id": "data.Derivation",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "data.Derivation"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.Derivation.distinct_snapshots.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

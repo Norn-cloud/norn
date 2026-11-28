@@ -85,12 +85,25 @@ declare module "@norn/authoring" {
      * a question aggregating it groups by or fixes each of them.
      */
     function ref(name: NumericValueType, options?: { readonly additivity?: PropertyAdditivity; readonly unitSource?: ReadonlyArray<string> }): Schema.Finite
+    function ref(name: TextValueType, options?: { readonly additivity?: PropertyAdditivity; readonly unitSource?: ReadonlyArray<string> }): Schema.String
     function ref<S extends Schema.Top = Schema.String>(name: string, options?: { readonly additivity?: PropertyAdditivity; readonly unitSource?: ReadonlyArray<string> }): S
     /**
      * The registry value types that are numbers (`registry/core`: decimal(6)),
      * so a law, guard or precondition compares and computes with them as numbers.
      */
     type NumericValueType = "core.quantity" | "core.money_amount"
+    /**
+     * Registry value types that are canonical strings (ISO 8601 / `core.time.*`),
+     * so `Schema.Struct` contextual inference does not widen `Norn.ref(...)` to `Schema.Top`.
+     */
+    type TextValueType =
+      | "core.time.instant"
+      | "core.time.date"
+      | "core.time.duration"
+      | "core.time.iana_timezone"
+      | "core.time.dst_policy"
+      | "iso8601.timestamp"
+      | "iso8601.date"
 
     /** An instant with an explicit timezone policy (EntityIR `timestamp`; RFC 3339 text). */
     function timestamp(timezone: "utc" | "offset"): Schema.String
@@ -200,9 +213,9 @@ declare module "@norn/authoring" {
     }
 
     /** Opaque interface definition; the syntax compiler lowers the call. */
-    interface InterfaceDefinition<T> {
+    interface InterfaceDefinition<T, L extends ReadonlyArray<InterfaceLinkSpec> = ReadonlyArray<InterfaceLinkSpec>> {
       readonly _tag: "NornInterface"
-      readonly __types?: { readonly type: T }
+      readonly __types?: { readonly type: T; readonly links?: L }
     }
 
     /** Opaque object type definition; the syntax compiler lowers the call. */
@@ -314,7 +327,7 @@ declare module "@norn/authoring" {
     type ParentObject<P> = [P] extends [undefined]
       ? {}
       : P extends TypeDefinition<infer T> ? T : P extends string ? RegistryObject<P> : {}
-    type InterfaceProperties<I> = I extends InterfaceDefinition<infer T> ? T : I extends string ? RegistryInterface<I> : {}
+    type InterfaceProperties<I> = I extends InterfaceDefinition<infer T, any> ? T : I extends string ? RegistryInterface<I> : {}
     type UnionToIntersection<U> = [U] extends [never]
       ? {}
       : (U extends unknown ? (value: U) => void : never) extends (value: infer I) => void ? I : {}
@@ -374,7 +387,7 @@ declare module "@norn/authoring" {
       readonly id: string
       readonly description?: string
       /** The widest target: an object type or an interface, by reference or qualified name. */
-      readonly target: TypeDefinition<unknown> | InterfaceDefinition<unknown> | string
+      readonly target: TypeDefinition<unknown, any> | InterfaceDefinition<unknown, any> | string
       readonly cardinality: { readonly to: "one" | "many"; readonly from: "one" | "many"; readonly required?: boolean }
     }
 
@@ -412,8 +425,8 @@ declare module "@norn/authoring" {
 
     interface TypeMeta<
       S extends Schema.Top,
-      E extends TypeDefinition<unknown> | string | undefined = undefined,
-      I extends ReadonlyArray<InterfaceDefinition<unknown> | string> = readonly [],
+      E extends TypeDefinition<unknown, any> | string | undefined = undefined,
+      I extends ReadonlyArray<InterfaceDefinition<unknown, any> | string> = readonly [],
       L extends ReadonlyArray<LinkSpec> = ReadonlyArray<LinkSpec>,
     > extends InterfaceMeta<S> {
       /** The one supertype, declared locally or named from the installed registry. */
@@ -437,8 +450,8 @@ declare module "@norn/authoring" {
     /** An EntityIR v2 object type. */
     function type<
       S extends Schema.Top,
-      const E extends TypeDefinition<unknown> | string | undefined = undefined,
-      const I extends ReadonlyArray<InterfaceDefinition<unknown> | string> = readonly [],
+      const E extends TypeDefinition<unknown, any> | string | undefined = undefined,
+      const I extends ReadonlyArray<InterfaceDefinition<unknown, any> | string> = readonly [],
       const L extends ReadonlyArray<LinkSpec> = readonly [],
     >(
       meta: TypeMeta<S, E, I, L>,
@@ -447,17 +460,18 @@ declare module "@norn/authoring" {
     /** An EntityIR v2 interface (`interface` is a reserved word). */
     function interfaceType<
       S extends Schema.Top,
-      const P extends ReadonlyArray<InterfaceDefinition<unknown> | string> = readonly [],
+      const P extends ReadonlyArray<InterfaceDefinition<unknown, any> | string> = readonly [],
+      const L extends ReadonlyArray<InterfaceLinkSpec> = readonly [],
     >(
       meta: InterfaceMeta<S> & InterfaceInvariantMeta & {
         readonly extends?: P
         /** INTERFACE-DISJOINT-1: interfaces mutually exclusive with this one (`A ⊓ B = ∅`). */
-        readonly disjointWith?: ReadonlyArray<InterfaceDefinition<unknown> | string>
-        readonly links?: ReadonlyArray<InterfaceLinkSpec>
+        readonly disjointWith?: ReadonlyArray<InterfaceDefinition<unknown, any> | string>
+        readonly links?: L
         /** INTERFACE-LIFECYCLE-1: lifecycles every implementing type and child interface inherits with non-weakening narrowing. */
         readonly lifecycles?: ReadonlyArray<LifecycleSpec<EffectiveProperties<undefined, P, S["Type"]>>>
       },
-    ): InterfaceDefinition<EffectiveProperties<undefined, P, S["Type"]>>
+    ): InterfaceDefinition<EffectiveProperties<undefined, P, S["Type"]>, L>
 
     /** Opaque action definition; the syntax compiler lowers the call. */
     interface ActionDefinition<I> {
@@ -778,8 +792,11 @@ declare module "@norn/authoring" {
     /** Data-only law over ontology-bound ZEN predicates. The Rust schema is authoritative. */
     interface LawDefinition { readonly _tag: "NornLaw" }
     /** What a law lambda reads as `self`: the subject's properties, its forward links, and any declared inverse roles (LAW-LINK-MANY-1). */
-    type LinkTargetProperties<K> = K extends { readonly target: TypeDefinition<infer T, any> } ? T : {}
-    type LinkValues<L extends ReadonlyArray<LinkSpec>> = {
+    type LinkTargetProperties<K> =
+      K extends { readonly target: TypeDefinition<infer T, any> } ? T
+      : K extends { readonly target: InterfaceDefinition<infer T, any> } ? T
+      : {}
+    type LinkValues<L extends ReadonlyArray<{ readonly id: string; readonly target: unknown; readonly cardinality: { readonly to: "one" | "many"; readonly required?: boolean } }>> = {
       readonly [K in L[number] as K["id"]]: K["cardinality"]["to"] extends "many"
         ? ReadonlyArray<LinkTargetProperties<K>>
         : K["cardinality"] extends { readonly required: true } ? LinkTargetProperties<K> : LinkTargetProperties<K> | null
@@ -788,7 +805,11 @@ declare module "@norn/authoring" {
       readonly [K in keyof Inv]: Inv[K] extends TypeDefinition<infer T, any> ? ReadonlyArray<T> : never
     }
     type SelfOf<D, Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}> =
-      (D extends TypeDefinition<infer T, infer L> ? T & LinkValues<L> : D extends InterfaceDefinition<infer T> ? T : never) & InverseValues<Inv>
+      (
+        D extends TypeDefinition<infer T, infer L> ? T & LinkValues<L>
+        : D extends InterfaceDefinition<infer T, infer L> ? T & LinkValues<L>
+        : never
+      ) & InverseValues<Inv>
     type LawPredicate<D, Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}> = (self: SelfOf<NoInfer<D>, NoInfer<Inv>>) => boolean
     interface LawSpecBase<D, Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}> {
       /** The subject: an object type or an interface (every implementation inherits the law). */
@@ -834,8 +855,8 @@ declare module "@norn/authoring" {
      * `lawVersion`, owner, provenance and the entity dependency are inferred;
      * the lambdas compile statically and never run.
      */
-    function law<const D extends TypeDefinition<any, any> | InterfaceDefinition<any>, const Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}, N extends SelfOf<NoInfer<D>, NoInfer<Inv>> = SelfOf<NoInfer<D>, NoInfer<Inv>>>(name: string, spec: NarrowedLawSpec<D, Inv, N>): LawDefinition
-    function law<const D extends TypeDefinition<any, any> | InterfaceDefinition<any>, const Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}>(name: string, spec: LawSpec<D, Inv>): LawDefinition
+    function law<const D extends TypeDefinition<any, any> | InterfaceDefinition<any, any>, const Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}, N extends SelfOf<NoInfer<D>, NoInfer<Inv>> = SelfOf<NoInfer<D>, NoInfer<Inv>>>(name: string, spec: NarrowedLawSpec<D, Inv, N>): LawDefinition
+    function law<const D extends TypeDefinition<any, any> | InterfaceDefinition<any, any>, const Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}>(name: string, spec: LawSpec<D, Inv>): LawDefinition
 
     /** A norm: an obligation, prohibition or permission over one object type (#1176 unit B). */
     interface NormDefinition { readonly _tag: "NornNorm" }
