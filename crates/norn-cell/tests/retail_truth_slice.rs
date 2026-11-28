@@ -2350,6 +2350,27 @@ fn verify_store_kpi_rollup_temporal_refusals(
         msg.contains("store_commercial_rollup_period_week_is_monday"),
         "{msg}"
     );
+    // 1b. Malformed-width `period_week` ("bad") also refuses cleanly via `StoreCommercialRollupPeriodWeekIsMonday`
+    // rather than failing timestamp parsing in the sibling week-window laws.
+    let (code, msg) = sole.refused(
+        "supply.store_kpi.record_withheld",
+        "planner:omar",
+        json!({
+            "rollup_id": "KPI-ST-SOLE-CFC-1-BAD-FMT", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "period_week": "bad", "unit": "each", "currency": "EGP",
+            "cost_status": "missing_cost", "count_status": "unverified",
+            "period_start": "2026-08-11T00:00:00Z", "period_end": "2026-09-05T18:00:00Z",
+            "sales_weeks": 4,
+            "on_hand_qty": "0", "avg_weekly_sales_qty": "0", "weeks_of_supply": "0",
+            "period_gross_margin": "0", "opening_stock_value": "0", "closing_stock_value": "0",
+            "average_inventory_value": "0", "gmroi": "0"
+        }),
+    )?;
+    assert_eq!(code, "core.laws.violated", "{msg}");
+    assert!(
+        msg.contains("store_commercial_rollup_period_week_is_monday"),
+        "{msg}"
+    );
     // 2. Wrong-week Monday string (`2026-08-17`) matching `CUT-S1-2026-08-10` and `2 * 20 = 40`
     // passes all preconditions and refuses via `StoreCommercialRollupPeriodEndWithinWeek`.
     let (code, msg) = sole.refused(

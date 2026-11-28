@@ -14,6 +14,7 @@
   "name": "Store commercial KPI rollup period_week must start on or before period_end with at least one sales week.",
   "namespace": "supply",
   "payload": {
+    "condition": "len(self.period_week) == 10",
     "id": "supply.StoreCommercialRollup.store_commercial_rollup_period_week_matches_end",
     "lawVersion": "0.1",
     "modality": {
