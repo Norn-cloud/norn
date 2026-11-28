@@ -714,7 +714,7 @@ fn landed_bundle_is_newer<E: SqlEngine>(
 
 fn is_delete_withdrawal_claim(
     write: &norn_kernel::FactWrite,
-    delete: &crate::mapping_bundle::MappedDelete,
+    delete: &norn_ir::mapping::MappedDelete,
 ) -> bool {
     if write.key.object_type.as_str() != norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE {
         return false;
@@ -975,7 +975,8 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     continue;
                 }
                 let mut provenance = delete.provenance.clone();
-                provenance.transform = Some(format!("{}.{}", delete.map, existing.role.as_str()));
+                provenance.transform =
+                    Some(format!("{}.{}.delete", delete.map, existing.role.as_str()));
                 withdrawals.push(norn_ir::mapping::ObservedLinkClaim {
                     observation_id: obs_id.to_owned(),
                     source_scope: existing.source_scope,

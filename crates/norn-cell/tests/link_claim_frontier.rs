@@ -176,6 +176,44 @@ fn referring_parties(artifacts: &mut Vec<ArtifactEnvelope>) {
     });
 }
 
+fn referring_parties_patch(artifacts: &mut Vec<ArtifactEnvelope>) {
+    referring_parties(artifacts);
+    edit_artifact(artifacts, "erpnext.three.source", |a| {
+        a["payload"]["fields"]
+            .as_array_mut()
+            .expect("fields")
+            .push(json!({
+                "dataset": "Party",
+                "name": "refers_ref",
+                "nativeType": "SyntheticText",
+                "ordinal": 4,
+                "required": false,
+                "typeCandidate": { "origin": "declared", "type": "string" }
+            }));
+    });
+    edit_artifact(artifacts, "erpnext.three.mapping", |a| {
+        a["payload"]["extensions"] = json!({
+            "norn.feed/1": {
+                "feeds": {
+                    "Party": { "mode": "patch", "versionKind": "uint64" }
+                }
+            }
+        });
+    });
+}
+
+fn party_patch_row(name: &str, key: &str, label: &str) -> Value {
+    json!({
+        "dataset": "Party",
+        "record": {
+            "name": name,
+            "custom_norn_ref": key,
+            "label": label,
+            "role": "customer",
+        }
+    })
+}
+
 fn linkless_parties(artifacts: &mut Vec<ArtifactEnvelope>) {
     edit_artifact(artifacts, "erpnext.three.mapping", |a| {
         if let Some(maps) = a["payload"]["maps"].as_array_mut() {
@@ -348,7 +386,11 @@ fn replay_pre_v13_generic_consume(
     pre_seq
 }
 
-fn pending_obs_count(records: &[norn_cell::ExportRecord], commit_seq: u64, obs_id: &str) -> usize {
+fn pending_obs_count(
+    records: &[norn_cell::export::ExportRecord],
+    commit_seq: u64,
+    obs_id: &str,
+) -> usize {
     records
         .iter()
         .find(|r| r.receipt.body.commit_seq == commit_seq)
@@ -376,7 +418,10 @@ fn inject_party(
     (id, mapping)
 }
 
-fn rebuild_in_memory(records: &[norn_cell::ExportRecord], head: &str) -> CellStore<NativeEngine> {
+fn rebuild_in_memory(
+    records: &[norn_cell::export::ExportRecord],
+    head: &str,
+) -> CellStore<NativeEngine> {
     CellStore::rebuild_export_history(NativeEngine::open_in_memory().expect("mem"), records, head)
         .expect("rebuild")
 }
@@ -3167,7 +3212,7 @@ fn omitted_corroborating_claim_on_open_cell_fails_closed_on_retarget() {
 fn stale_delete_after_property_only_patch_preserves_live_link() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join("stale_delete_property_patch.sqlite");
-    let mut cell = setup_with(&path, referring_parties);
+    let mut cell = setup_with(&path, referring_parties_patch);
 
     let b = party_ref_row("P-B", "demo/party/b", "B", None);
     land_party(&mut cell, &b, "eb", "1", "p1");
@@ -3178,16 +3223,27 @@ fn stale_delete_after_property_only_patch_preserves_live_link() {
         BTreeSet::from(["demo/party/b".to_owned()])
     );
 
-    // v3 property-only patch (no link claim emitted; v1 link claim stays active).
-    let a_v3 = party_ref_row("P-A", "demo/party/a", "A v3 patched", None);
+    // v3 property-only patch omits `refers_ref` under `FeedMode::Patch` so v1's
+    // link claim stays active at version "1" while `display_name` advances to v3.
+    let a_v3 = party_patch_row("P-A", "demo/party/a", "A v3 patched");
     land_party(&mut cell, &a_v3, "ea3", "3", "p1");
     assert_eq!(
         refers_targets(&cell, "demo/party/a"),
         BTreeSet::from(["demo/party/b".to_owned()])
     );
+    let active_ver: String = rusqlite::Connection::open(&path)
+        .expect("sqlite")
+        .query_row(
+            "SELECT \"source_version\" FROM \"_norn_link_claim_frontier\" \
+             WHERE \"source_key\" = 'demo/party/a' AND \"role\" = 'refers' AND \"active\" = 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("active refers claim");
+    assert_eq!(active_ver, "1");
 
     // Late v2 delete must NOT withdraw the live link A -> B or tombstone A.
-    let del_v2 = party_ref_row("P-A", "demo/party/a", "A v2", None);
+    let del_v2 = party_patch_row("P-A", "demo/party/a", "A v2");
     capture_kind(&mut cell, "erpnext", &del_v2, "eadel2", "2", "delete", "p1");
     assert_eq!(
         refers_targets(&cell, "demo/party/a"),
@@ -3298,15 +3354,25 @@ fn delete_before_create_blocks_stale_upsert_and_allows_newer_upsert() {
 fn stale_delete_conflict_correction_resolves_cleanly_and_preserves_live_link() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join("stale_delete_conflict_correction.sqlite");
-    let mut cell = setup_with(&path, referring_parties);
+    let mut cell = setup_with(&path, referring_parties_patch);
 
     let b = party_ref_row("P-B", "demo/party/b", "B", None);
     let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", Some("demo/party/b"));
-    let a_v3 = party_ref_row("P-A", "demo/party/a", "A v3 patched", None);
-    let del_v2 = party_ref_row("P-A", "demo/party/a", "A v2 del", None);
+    let a_v3 = party_patch_row("P-A", "demo/party/a", "A v3 patched");
+    let del_v2 = party_patch_row("P-A", "demo/party/a", "A v2 del");
     land_party(&mut cell, &b, "eb", "1", "p1");
     land_party(&mut cell, &a_v1, "e1", "1", "p1");
     land_party(&mut cell, &a_v3, "e3", "3", "p1");
+    let active_ver: String = rusqlite::Connection::open(&path)
+        .expect("sqlite")
+        .query_row(
+            "SELECT \"source_version\" FROM \"_norn_link_claim_frontier\" \
+             WHERE \"source_key\" = 'demo/party/a' AND \"role\" = 'refers' AND \"active\" = 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("active refers claim");
+    assert_eq!(active_ver, "1");
 
     // Conflicting v2 delete reuses v1's event ID `e1`.
     let (raw_del, input_del) = raw_event(&cell, "erpnext", &del_v2, "e1", "2", "delete", "p1");

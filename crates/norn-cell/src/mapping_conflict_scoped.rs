@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use norn_ir::{DataQualityFinding, DataQualityFindingStatus, RuntimeValue};
 use norn_kernel::Observed;
 
-use crate::engine::{SqlEngine, params};
+use crate::engine::{SqlEngine, SqlRow, params};
 use crate::mapping_bundle::MappingBundle;
 use crate::mapping_conflict::{MappingConflict, SourceDisputeIndex};
 use crate::system::INBOX;

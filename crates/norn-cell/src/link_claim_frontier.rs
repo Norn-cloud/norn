@@ -52,7 +52,7 @@ pub(crate) const DDL: &[&str] = &[
     r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/source_role" ON "_norn_link_claim_frontier" ("source_key", "role", "commit_seq", "claim_ordinal") WHERE "active" = 1"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/target" ON "_norn_link_claim_frontier" ("target_key", "source_key", "role") WHERE "active" = 1 AND "target_key" IS NOT NULL"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/observation" ON "_norn_link_claim_frontier" ("observation_id")"#,
-    r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/withdrawal" ON "_norn_link_claim_frontier" ("commit_seq") WHERE "target_key" IS NULL"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/delete_withdrawal" ON "_norn_link_claim_frontier" ("commit_seq") WHERE "target_key" IS NULL AND json_extract("claim_json", '$.provenance.transform') LIKE '%.delete'"#,
     r#"CREATE TABLE IF NOT EXISTS "_norn_dispute_resolution" (
   "dispute_id" TEXT NOT NULL PRIMARY KEY,
   "decision" TEXT NOT NULL CHECK ("decision" IN ('accept-first', 'accept-second-as-correction', 'reject')),
@@ -871,7 +871,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let rows = self.conn.query(
                 &format!(
                     "SELECT DISTINCT \"commit_seq\" FROM \"{LINK_CLAIM_FRONTIER}\" \
-                     WHERE \"target_key\" IS NULL"
+                     WHERE \"target_key\" IS NULL \
+                       AND json_extract(\"claim_json\", '$.provenance.transform') LIKE '%.delete'"
                 ),
                 params![],
             )?;

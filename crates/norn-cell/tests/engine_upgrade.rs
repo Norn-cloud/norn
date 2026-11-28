@@ -511,28 +511,62 @@ fn add_v13_link_claim_frontier_tables(image: &mut Value) {
             "sql": sql,
         }));
     }
-    for (name, sql) in [
+    for (table, name, sql) in [
         (
+            "_norn_link_claim_frontier",
             "_norn_link_claim_frontier/contribution",
             "CREATE INDEX \"_norn_link_claim_frontier/contribution\" ON \"_norn_link_claim_frontier\" (\"contribution_id\", \"active\", \"commit_seq\", \"claim_ordinal\")",
         ),
         (
+            "_norn_link_claim_frontier",
             "_norn_link_claim_frontier/source_role",
             "CREATE INDEX \"_norn_link_claim_frontier/source_role\" ON \"_norn_link_claim_frontier\" (\"source_key\", \"role\", \"commit_seq\", \"claim_ordinal\") WHERE \"active\" = 1",
         ),
         (
+            "_norn_link_claim_frontier",
             "_norn_link_claim_frontier/target",
             "CREATE INDEX \"_norn_link_claim_frontier/target\" ON \"_norn_link_claim_frontier\" (\"target_key\", \"source_key\", \"role\") WHERE \"active\" = 1 AND \"target_key\" IS NOT NULL",
         ),
         (
+            "_norn_link_claim_frontier",
             "_norn_link_claim_frontier/observation",
             "CREATE INDEX \"_norn_link_claim_frontier/observation\" ON \"_norn_link_claim_frontier\" (\"observation_id\")",
+        ),
+        (
+            "_norn_link_claim_frontier",
+            "_norn_link_claim_frontier/delete_withdrawal",
+            "CREATE INDEX \"_norn_link_claim_frontier/delete_withdrawal\" ON \"_norn_link_claim_frontier\" (\"commit_seq\") WHERE \"target_key\" IS NULL AND json_extract(\"claim_json\", '$.provenance.transform') LIKE '%.delete'",
+        ),
+        (
+            "_norn_ledger",
+            "_norn_ledger/dispute_resolved",
+            "CREATE INDEX \"_norn_ledger/dispute_resolved\" ON \"_norn_ledger\" (\"world\", json_extract(\"event\", '$.disputeId'), \"commit_seq\") WHERE json_extract(\"event\", '$.op') = 'dispute_resolved'",
+        ),
+        (
+            "_norn_ledger",
+            "_norn_ledger/observed_deleted",
+            "CREATE INDEX \"_norn_ledger/observed_deleted\" ON \"_norn_ledger\" (\"world\", json_extract(\"event\", '$.key.objectType'), json_extract(\"event\", '$.key.key'), \"commit_seq\") WHERE json_extract(\"event\", '$.op') = 'observed_deleted'",
+        ),
+        (
+            "_norn_receipt",
+            "_norn_receipt/noop_observation",
+            "CREATE INDEX \"_norn_receipt/noop_observation\" ON \"_norn_receipt\" (\"world\", \"commit_seq\") WHERE json_extract(\"receipt\", '$.consumed.kind') = 'observation' AND (json_array_length(json_extract(\"receipt\", '$.written')) = 0 OR json_extract(\"receipt\", '$.consumed.observationId') LIKE 'mapping-page:%')",
+        ),
+        (
+            "_norn_receipt",
+            "_norn_receipt/zero_write_obs",
+            "CREATE INDEX \"_norn_receipt/zero_write_obs\" ON \"_norn_receipt\" (\"world\", \"commit_seq\") WHERE json_extract(\"receipt\", '$.consumed.kind') = 'observation' AND json_array_length(json_extract(\"receipt\", '$.written')) = 0",
+        ),
+        (
+            "_norn_inbox",
+            "_norn_inbox/source_delete",
+            "CREATE INDEX \"_norn_inbox/source_delete\" ON \"_norn_inbox\" (json_extract(\"observed\", '$.input.input.connectorInstance'), json_extract(\"observed\", '$.input.input.partition'), json_extract(\"observed\", '$.input.raw.source'), json_extract(\"observed\", '$.input.raw.source_id')) WHERE \"observation_id\" LIKE 'mapping-bundle:%' AND json_extract(\"observed\", '$.input.raw.kind') = 'delete' AND \"consumed_commit_seq\" IS NOT NULL",
         ),
     ] {
         schema.push(serde_json::json!({
             "type": "index",
             "name": name,
-            "table": "_norn_link_claim_frontier",
+            "table": table,
             "sql": sql,
         }));
     }
