@@ -882,6 +882,8 @@ mod tests {
         Ok(())
     }
 
+    type CloseForkFn = fn(&mut CellStore<NativeEngine>) -> Result<(), CellError>;
+
     /// FORK-LIFE-1: closing a fork durably persists `discarded`, `expired`, or
     /// `promoted`, refuses reopen from disk (`CellStore::open` / `open_bound`),
     /// and closes sibling handles opened on the same SQLite file (including
@@ -911,11 +913,7 @@ mod tests {
         let base = main.verified_head()?;
         let dir = tempfile::tempdir().map_err(|error| CellError::Engine(error.to_string()))?;
 
-        let closers: [(
-            &str,
-            &str,
-            fn(&mut CellStore<NativeEngine>) -> Result<(), CellError>,
-        ); 3] = [
+        let closers: [(&str, &str, CloseForkFn); 3] = [
             ("discarded-fork", "discarded", CellStore::discard_fork),
             ("expired-fork", "expired", CellStore::expire_fork),
             ("promoted-fork", "promoted", CellStore::mark_fork_promoted),
