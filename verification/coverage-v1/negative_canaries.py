@@ -788,7 +788,8 @@ def studio_browser_pin_canaries() -> None:
     with tempfile.TemporaryDirectory() as directory:
         mutated = Path(directory) / "core.sh"
         for label, before, after in (
-                ("passes with no tests", "bunx playwright test --reporter=list,json\n", "bunx playwright test --reporter=list,json --pass-with-no-tests\n"),
+                ("passes with no tests", "bunx playwright test --forbid-only --reporter=list,json\n", "bunx playwright test --forbid-only --reporter=list,json --pass-with-no-tests\n"),
+                ("drops forbid-only", "bunx playwright test --forbid-only --reporter=list,json\n", "bunx playwright test --reporter=list,json\n"),
                 ("all skipped passes", "        [[ $ran -gt 0 ]] || { printf 'browser: Playwright ran no tests (every row skipped)\\n' >&2; exit 1; }\n", ""),
                 ("skips while tests exist", "          exit 1\n        fi\n        printf '::notice::browser", "        fi\n        printf '::notice::browser"),
                 ("no listing check", "        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\\n' >&2; exit 1; }\n", ""),
@@ -796,7 +797,8 @@ def studio_browser_pin_canaries() -> None:
                 ("no checker-admission test", "        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\\n' \"$decision\"; exit 1; }\n", ""),
                 ("no named-case check", "        grep -qxE '\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]' <<< \"$decision\" || { printf 'browser: the checker-admission case did not run and pass\\n' >&2; exit 1; }\n", ""),
                 ("named case matched as a substring", "grep -qxE '\\(pass\\) the checker admits", "grep -qE '\\(pass\\) the checker admits"),
-                ("checker-admission test may skip", "NORN_CHECKER_WASM_REQUIRED=1 bun test", "bun test")):
+                ("checker-admission test may skip", "NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts", "bun test test/decision.test.ts"),
+                ("checker-canvas test may skip", "NORN_CHECKER_WASM_REQUIRED=1 bun test test/canvas.test.ts", "bun test test/canvas.test.ts")):
             if core.count(before) != 1:
                 raise AssertionError(f"browser pin canary target drifted: {label}")
             mutated.write_text(core.replace(before, after), encoding="utf-8")
@@ -923,7 +925,9 @@ def studio_browser_phase_canaries() -> None:
         bin_dir.mkdir()
         tools = {
             "cargo": "exit 0",
-            "bun": 'if [ "$1" = test ]; then printf "%s\\n" "$BUN_TEST_OUTPUT"; exit "$BUN_TEST_STATUS"; fi; exit 0',
+            "bun": 'if [ "$1" = test ]; then '
+                   'if [ "$2" = test/canvas.test.ts ]; then printf "%s\\n" "$BUN_CANVAS_OUTPUT"; exit "$BUN_CANVAS_STATUS"; fi; '
+                   'printf "%s\\n" "$BUN_TEST_OUTPUT"; exit "$BUN_TEST_STATUS"; fi; exit 0',
             "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.100.0"; fi',
             "bunx": 'if [ "$3" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; '
                     'printf "{\\"stats\\": {\\"expected\\": %s, \\"skipped\\": %s}}" "$RAN" "$SKIPPED" > "$PLAYWRIGHT_JSON_OUTPUT_NAME"; '
@@ -960,7 +964,9 @@ def studio_browser_phase_canaries() -> None:
                 ("config, checker-admission test fails", True, True, "99", 0, 1, str(wasm_libdir), "99"),
                 ("config, checker-admission case skipped", True, True, "99", 0, 1, str(wasm_libdir), "99"),
                 ("config, checker-admission case missing", True, True, "99", 0, 1, str(wasm_libdir), "99"),
-                ("config, only a longer name passed", True, True, "99", 0, 1, str(wasm_libdir), "99")):
+                ("config, only a longer name passed", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                ("config, checker-canvas test fails", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                ("config, checker-canvas case skipped", True, True, "99", 0, 1, str(wasm_libdir), "99")):
             config.unlink(missing_ok=True)
             if has_config:
                 config.write_text("export default {}\n")
@@ -976,12 +982,16 @@ def studio_browser_phase_canaries() -> None:
                                                                 "CARGO_HOME": str(Path(directory) / "cargo-home"),
                                                                 "HOME": directory, "LISTED": listed, "RUN_STATUS": str(run_status),
                                                                 "WASM_LIBDIR": libdir, "RAN": ran,
-                                                                "BUN_TEST_STATUS": "1" if label.endswith("test fails") else "0",
+                                                                "BUN_TEST_STATUS": "1" if label == "config, checker-admission test fails" else "0",
                                                                 "BUN_TEST_OUTPUT": {
                                                                     "config, checker-admission case skipped": "(skip) the checker admits what a drawn decision lowers to",
                                                                     "config, checker-admission case missing": "(pass) the decider reads the real time limit",
                                                                     "config, only a longer name passed": "(pass) the checker admits what a drawn decision lowers to, twice [1.00ms]",
                                                                 }.get(label, "(pass) the checker admits what a drawn decision lowers to [1.00ms]"),
+                                                                "BUN_CANVAS_STATUS": "1" if label == "config, checker-canvas test fails" else "0",
+                                                                "BUN_CANVAS_OUTPUT": {
+                                                                    "config, checker-canvas case skipped": "(skip) the checker finds the stuck state a deleted step leaves",
+                                                                }.get(label, "(pass) the checker finds the stuck state a deleted step leaves [1.00ms]"),
                                                                 "SKIPPED": str(int(listed) - int(ran))})
             if result.returncode != expected:
                 raise AssertionError(f"browser phase drift ({label}): {result.returncode} {result.stdout[-300:]} {result.stderr[-300:]}")

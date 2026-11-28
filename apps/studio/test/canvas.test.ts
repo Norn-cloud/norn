@@ -122,9 +122,13 @@ test("findings the loaded definitions already had are kept apart from those an e
   expect(standing).toHaveLength(1)
 })
 
-// The real checker, when its package is built into src/checker/ (Boat and the build do; CI's Studio job does not yet).
+// The real checker, when its package is built into src/checker/ (required in CI's browser phase).
 const pkg = join(import.meta.dir, "../src/checker")
-test.skipIf(!existsSync(join(pkg, "norn_checker_wasm_bg.wasm")))("the checker finds the stuck state a deleted step leaves", async () => {
+const hasCheckerWasm = existsSync(join(pkg, "norn_checker_wasm_bg.wasm"))
+if (!hasCheckerWasm && process.env.NORN_CHECKER_WASM_REQUIRED === "1") {
+  throw new Error("apps/studio/src/checker/norn_checker_wasm_bg.wasm is required when NORN_CHECKER_WASM_REQUIRED=1")
+}
+test.skipIf(!hasCheckerWasm)("the checker finds the stuck state a deleted step leaves", async () => {
   const wasm = await import(join(pkg, "norn_checker_wasm.js")) as { initSync: (input: { module: BufferSource }) => unknown; checkArtifactSet: (a: string, c: string) => string }
   wasm.initSync({ module: readFileSync(join(pkg, "norn_checker_wasm_bg.wasm")) })
   const check = (set: readonly Envelope[]) => JSON.parse(wasm.checkArtifactSet(JSON.stringify(set), "null")) as CheckResult
