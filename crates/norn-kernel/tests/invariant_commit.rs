@@ -4383,6 +4383,126 @@ fn law_with_exceptions_fails_closed_on_malformed_tree_broken_expr_invariant_and_
     );
 }
 
+struct EmptyCommitView;
+
+impl CommitView for EmptyCommitView {
+    type Error = std::convert::Infallible;
+    fn version(&self, _: &FactKey) -> Result<FactVersion, Self::Error> {
+        Ok(FactVersion::ABSENT)
+    }
+    fn concrete(&self, _: &FactKey) -> Result<Option<ObjectTypeName>, Self::Error> {
+        Ok(None)
+    }
+    fn link_version(&self, _: &LinkKey) -> Result<FactVersion, Self::Error> {
+        Ok(FactVersion::ABSENT)
+    }
+    fn links_of(&self, _: &FactKey) -> Result<Vec<LinkKey>, Self::Error> {
+        Ok(Vec::new())
+    }
+    fn object_values(&self, _: &FactKey) -> Result<Option<JsonObject>, Self::Error> {
+        Ok(None)
+    }
+    fn pending(&self, _: &Consumed) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+}
+
+#[test]
+fn law_exception_audit_attribution_records_applied_exception_ids() {
+    let types = vec![quality_item_type()];
+    let mut nested = serde_json::to_value(direct_amount_law()).unwrap();
+    nested["payload"]["exceptions"] = json!([
+        law_exception("vip", "amount_bounded", "self.item_id == 'vip'"),
+        law_exception("board_override", "amount_bounded", "self.amount >= 400"),
+        law_exception("huge_cap", "vip", "self.amount > 1000"),
+    ]);
+    let nested_artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(nested).unwrap();
+    let nested_catalog =
+        TypeCatalog::new(&types).with_governing_laws(std::slice::from_ref(&nested_artifact));
+    let lifted = norn_kernel::governing_laws::evaluate_with_audit(
+        &nested_catalog,
+        &FactKey::new(ITEM, "vip"),
+        &object(json!({"item_id": "vip", "amount": 500})),
+        &mut TurnFuel::default(),
+    )
+    .expect("both sibling exceptions lift the law");
+    assert_eq!(lifted.failures, Vec::new());
+    assert_eq!(lifted.applied_exceptions.len(), 1);
+    assert_eq!(
+        lifted.applied_exceptions[0].applied_exception_ids,
+        vec!["board_override".to_owned(), "vip".to_owned()]
+    );
+    assert!(matches!(
+        &lifted.applied_exceptions[0].rule_ref,
+        DataQualityRuleRef::Law { law_id, .. } if law_id == "amount_bounded"
+    ));
+
+    let re_engaged = norn_kernel::governing_laws::evaluate_with_audit(
+        &nested_catalog,
+        &FactKey::new(ITEM, "vip"),
+        &object(json!({"item_id": "vip", "amount": 2000})),
+        &mut TurnFuel::default(),
+    )
+    .expect("huge_cap defeats vip while board_override still lifts");
+    assert_eq!(re_engaged.failures, Vec::new());
+    assert_eq!(
+        re_engaged.applied_exceptions[0].applied_exception_ids,
+        vec!["board_override".to_owned(), "huge_cap".to_owned()]
+    );
+
+    let mut defeated = serde_json::to_value(direct_amount_law()).unwrap();
+    defeated["payload"]["exceptions"] = json!([
+        law_exception("vip", "amount_bounded", "self.item_id == 'vip'"),
+        law_exception("huge_cap", "vip", "self.amount > 1000"),
+    ]);
+    let defeated_artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(defeated).unwrap();
+    let defeated_catalog =
+        TypeCatalog::new(&types).with_governing_laws(std::slice::from_ref(&defeated_artifact));
+    let defeated_report = norn_kernel::governing_laws::evaluate_with_audit(
+        &defeated_catalog,
+        &FactKey::new(ITEM, "vip"),
+        &object(json!({"item_id": "vip", "amount": 2000})),
+        &mut TurnFuel::default(),
+    )
+    .expect("huge_cap defeats sole vip exception so law re-engages");
+    assert_eq!(defeated_report.failures.len(), 1);
+    assert_eq!(defeated_report.applied_exceptions, Vec::new());
+
+    let not_lifted = norn_kernel::governing_laws::evaluate_with_audit(
+        &nested_catalog,
+        &FactKey::new(ITEM, "std"),
+        &object(json!({"item_id": "std", "amount": 200})),
+        &mut TurnFuel::default(),
+    )
+    .expect("no exception matches");
+    assert_eq!(not_lifted.applied_exceptions, Vec::new());
+    assert_eq!(not_lifted.failures.len(), 1);
+
+    // Real CellCommit through check_commit_with_audit preserves the same §8.1 attribution.
+    let model = norn_kernel::CommitModel::new(&nested_catalog);
+    let commit = CellCommit::<FactEvent, JsonObject, JsonObject> {
+        writes: vec![FactWrite {
+            key: FactKey::new(ITEM, "vip"),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: object(json!({"item_id": "vip", "amount": 500})),
+            },
+        }],
+        ..CellCommit::empty()
+    };
+    let audit = norn_kernel::check_commit_with_audit(&commit, &model, &EmptyCommitView)
+        .expect("excepted commit admits with audit attribution");
+    assert_eq!(audit.applied_exceptions.len(), 1);
+    assert_eq!(
+        audit.applied_exceptions[0].subject,
+        FactKey::new(ITEM, "vip")
+    );
+    assert_eq!(
+        audit.applied_exceptions[0].applied_exceptions[0].applied_exception_ids,
+        vec!["board_override".to_owned(), "vip".to_owned()]
+    );
+}
+
 #[test]
 fn law_exception_reading_links_rechecks_on_target_mutation_and_supports_observations() -> Checked {
     let types = document_types()?;

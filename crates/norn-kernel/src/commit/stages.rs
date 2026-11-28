@@ -24,6 +24,7 @@ struct PreStages<'c, 'a, V: ?Sized> {
 struct PostStages<'c, 'a, V: ?Sized> {
     post: PostState<'c, 'a, V>,
     links: BTreeMap<FactKey, BTreeSet<LinkKey>>,
+    applied_exceptions: Vec<crate::commit_check::CommitLawAudit>,
 }
 enum Phase<'c, 'a, V: ?Sized> {
     Pre(PreStages<'c, 'a, V>),
@@ -35,13 +36,13 @@ struct LocalStages<'c, 'a, E, C, T, V: ?Sized> {
     authorization: Option<&'c ObservationAuthorization>,
 }
 
-pub(crate) fn check_commit_local<E: 'static, C, T, V: CommitView + ?Sized>(
+pub(crate) fn check_commit_local_with_audit<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
     authorization: Option<&ObservationAuthorization>,
     trust: Trust<'_>,
-) -> Result<CommitVersions, CommitError<V::Error>> {
+) -> Result<(CommitVersions, Vec<crate::commit_check::CommitLawAudit>), CommitError<V::Error>> {
     let mut stages = LocalStages {
         commit,
         authorization,
@@ -49,9 +50,20 @@ pub(crate) fn check_commit_local<E: 'static, C, T, V: CommitView + ?Sized>(
     };
     run_stages(&mut stages)?;
     match stages.phase {
-        Phase::Post(stages) => Ok(stages.post.into_versions()),
+        Phase::Post(stages) => Ok((stages.post.into_versions(), stages.applied_exceptions)),
         Phase::Pre(_) => unreachable!("run_stages completed without Versions"),
     }
+}
+
+pub(crate) fn check_commit_local<E: 'static, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+    authorization: Option<&ObservationAuthorization>,
+    trust: Trust<'_>,
+) -> Result<CommitVersions, CommitError<V::Error>> {
+    check_commit_local_with_audit(commit, model, view, authorization, trust)
+        .map(|(versions, _)| versions)
 }
 
 impl<E: 'static, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
@@ -77,6 +89,7 @@ impl<E: 'static, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error
                         self.phase = Phase::Post(PostStages {
                             post: PostState::seal(commit, model, view, plan)?,
                             links: BTreeMap::new(),
+                            applied_exceptions: Vec::new(),
                         });
                         Ok(())
                     }
@@ -118,7 +131,12 @@ impl<E: 'static, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error
                     CommitStage::Acyclic => check_acyclic_links(commit, post),
                     CommitStage::Invariants => check_invariants(commit, post, authorization)
                         .map_err(InvariantAdmissionError::into_commit_error),
-                    CommitStage::Laws => check_governing_laws(commit, post, authorization),
+                    CommitStage::Laws => check_governing_laws(
+                        commit,
+                        post,
+                        authorization,
+                        &mut stages.applied_exceptions,
+                    ),
                     CommitStage::EventLimit
                     | CommitStage::Shape
                     | CommitStage::Accounting

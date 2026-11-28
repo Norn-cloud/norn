@@ -372,6 +372,11 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
     /// S12 (#1551 round 7): live scrub reference so even an already-acquired
     /// served reader observes local and sibling durable fences via `data_version`.
     pub(crate) live_scrub: Option<&'a std::cell::RefCell<crate::scrub::Scrub>>,
+    /// FORK-LIFE-1: live fork pin and state so reads on a closed fork fail closed.
+    pub(crate) live_fork: Option<(
+        &'a crate::fork::ForkPin,
+        &'a std::cell::Cell<Option<crate::fork::ForkState>>,
+    )>,
 }
 
 impl<'a, E: SqlEngine> StoreReader<'a, E> {
@@ -388,6 +393,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             verified_receipts_transaction: false,
             history_gate: crate::scrub::Gate::OPEN,
             live_scrub: None,
+            live_fork: None,
         }
     }
 
@@ -408,32 +414,64 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         self
     }
 
-    /// S12 (#1551 round 7): fail closed on a local or sibling durable fence,
-    /// checking `_norn_meta` whenever `PRAGMA data_version` changed since the
-    /// last clean check (zero extra SQL queries on the hot path).
+    /// Attach the store's live fork pin and state for FORK-LIFE-1 read checks.
+    #[must_use]
+    pub(crate) const fn with_live_fork(
+        mut self,
+        pin: Option<&'a crate::fork::ForkPin>,
+        state: &'a std::cell::Cell<Option<crate::fork::ForkState>>,
+    ) -> Self {
+        self.live_fork = match pin {
+            Some(pin) => Some((pin, state)),
+            None => None,
+        };
+        self
+    }
+
+    /// S12 (#1551 round 7) & FORK-LIFE-1: fail closed on a local or sibling
+    /// durable fence, or on a closed fork.
     pub(crate) fn check_live(&self) -> Result<(), CellError> {
         self.history_gate.refuse_fenced()?;
-        let Some(scrub) = self.live_scrub else {
-            return Ok(());
-        };
-        scrub.borrow().refuse_fenced()?;
-        if self.conn.read_isolation() != crate::engine::ReadIsolation::ExclusiveSynchronous {
-            match self.conn.external_data_version() {
-                Ok(Some(dv)) => {
-                    if scrub.borrow().fence_checked_dv() != Some(dv) {
+        if let Some(scrub) = self.live_scrub {
+            scrub.borrow().refuse_fenced()?;
+            if self.conn.read_isolation() != crate::engine::ReadIsolation::ExclusiveSynchronous {
+                match self.conn.external_data_version() {
+                    Ok(Some(dv)) => {
+                        if scrub.borrow().fence_checked_dv() != Some(dv) {
+                            if let Some(finding) =
+                                crate::open_checkpoint::read_fence_open(self.conn)?
+                            {
+                                scrub.borrow_mut().record_durable_fence(finding.clone());
+                                return Err(CellError::Fenced(finding));
+                            }
+                            scrub.borrow_mut().set_fence_checked_dv(dv);
+                        }
+                    }
+                    Ok(None) | Err(_) => {
                         if let Some(finding) = crate::open_checkpoint::read_fence_open(self.conn)? {
                             scrub.borrow_mut().record_durable_fence(finding.clone());
                             return Err(CellError::Fenced(finding));
                         }
-                        scrub.borrow_mut().set_fence_checked_dv(dv);
                     }
                 }
-                Ok(None) | Err(_) => {
-                    if let Some(finding) = crate::open_checkpoint::read_fence_open(self.conn)? {
-                        scrub.borrow_mut().record_durable_fence(finding.clone());
-                        return Err(CellError::Fenced(finding));
-                    }
-                }
+            }
+        }
+        if let Some((pin, state_cell)) = self.live_fork {
+            if let Some(state) = state_cell.get()
+                && !state.is_open()
+            {
+                return Err(CellError::ForkClosed {
+                    world: pin.world.clone(),
+                    state: state.as_str().to_owned(),
+                });
+            }
+            let durable = crate::fork::read_state(self.conn)?;
+            if !durable.is_open() {
+                state_cell.set(Some(durable));
+                return Err(CellError::ForkClosed {
+                    world: pin.world.clone(),
+                    state: durable.as_str().to_owned(),
+                });
             }
         }
         Ok(())

@@ -1,0 +1,51 @@
+{
+  "artifactId": "core.ReversibleEvent.no_reversal_of_reversal.law",
+  "dependencies": [
+    {
+      "artifactId": "core.ReversibleEvent.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A linked reversal marks itself as a reversal and never reverses another reversal",
+  "namespace": "core",
+  "payload": {
+    "condition": "self.reverses != null",
+    "id": "core.ReversibleEvent.no_reversal_of_reversal",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "core",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/core/src/rea.ts"
+    },
+    "rationale": "A linked reversal must carry `is_reversal == true` and may only reverse an original event (`self.reverses.is_reversal == false`).",
+    "response": {
+      "expression": "self.is_reversal == true and self.reverses.is_reversal == false",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "core.ReversibleEvent"
+      ],
+      "root": {
+        "id": "core.ReversibleEvent",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "core.ReversibleEvent"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.ReversibleEvent.no_reversal_of_reversal.law.json"
+  },
+  "scope": {},
+  "version": "0.2.0"
+}

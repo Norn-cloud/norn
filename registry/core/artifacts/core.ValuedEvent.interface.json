@@ -1,0 +1,65 @@
+{
+  "artifactId": "core.ValuedEvent.interface",
+  "dependencies": [
+    {
+      "artifactId": "core.EconomicEvent.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "core.LedgerEffect.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "core.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Valued economic event",
+  "namespace": "core",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "A posted economic event whose accounting legs are linked through inverse role `effects` and must net to zero in `valuation_currency` (core.law.value_conservation).",
+      "extends": [
+        "core.EconomicEvent"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "many"
+          },
+          "description": "Signed ledger effects valuing this economic event (inverse of core.ValuedLedgerEffect.event).",
+          "id": "effects",
+          "target": "core.ValuedLedgerEffect"
+        }
+      ],
+      "name": "core.ValuedEvent",
+      "properties": [
+        {
+          "id": "valuation_currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.ValuedEvent.interface.json"
+  },
+  "scope": {},
+  "version": "0.2.0"
+}

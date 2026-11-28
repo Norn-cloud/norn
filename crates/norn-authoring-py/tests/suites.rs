@@ -192,7 +192,31 @@ fn standalone_callbacks_enforce_ast_node_and_depth_budgets_before_recursion() ->
     )?;
     assert_eq!(err_low_nodes.code(), CODE_UNBOUNDED);
 
-    // Validate and lower must enforce identical AST node and depth boundaries for standalone lambdas.
+    // Default depth budget (128) must also reject deeply nested standalone callbacks cleanly.
+    let mut deeply_nested = String::from("lambda s: ");
+    for _ in 0..70 {
+        deeply_nested.push_str("not_(");
+    }
+    deeply_nested.push_str("s.hours > 0");
+    for _ in 0..70 {
+        deeply_nested.push(')');
+    }
+    let err_default_val = expect_err(
+        validate_callback_source(&deeply_nested, "deep_default.py"),
+        "default validate depth",
+    )?;
+    assert_eq!(err_default_val.code(), CODE_UNBOUNDED);
+
+    let err_default_low = expect_err(
+        lower_callback_source(&deeply_nested, "deep_default.py", &LowerContext::default()),
+        "default lower depth",
+    )?;
+    assert_eq!(err_default_low.code(), CODE_UNBOUNDED);
+    Ok(())
+}
+
+#[test]
+fn standalone_lambda_validate_and_lower_share_exact_budget_boundaries() {
     let boundary_src = "lambda s: s.hours > 0";
     for max_nodes in 1..=20 {
         let limits = SandboxLimits {
@@ -238,28 +262,6 @@ fn standalone_callbacks_enforce_ast_node_and_depth_budgets_before_recursion() ->
             assert_eq!(le.code(), CODE_UNBOUNDED);
         }
     }
-
-    // Default depth budget (128) must also reject deeply nested standalone callbacks cleanly.
-    let mut deeply_nested = String::from("lambda s: ");
-    for _ in 0..70 {
-        deeply_nested.push_str("not_(");
-    }
-    deeply_nested.push_str("s.hours > 0");
-    for _ in 0..70 {
-        deeply_nested.push(')');
-    }
-    let err_default_val = expect_err(
-        validate_callback_source(&deeply_nested, "deep_default.py"),
-        "default validate depth",
-    )?;
-    assert_eq!(err_default_val.code(), CODE_UNBOUNDED);
-
-    let err_default_low = expect_err(
-        lower_callback_source(&deeply_nested, "deep_default.py", &LowerContext::default()),
-        "default lower depth",
-    )?;
-    assert_eq!(err_default_low.code(), CODE_UNBOUNDED);
-    Ok(())
 }
 
 #[test]
