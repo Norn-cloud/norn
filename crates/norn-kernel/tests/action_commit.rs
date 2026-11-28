@@ -403,46 +403,60 @@ fn synchronous_rule_never_degrades_to_the_primary_effect() {
     assert_eq!(refusal.code(), "action.unsupported_effect");
 }
 
+fn assert_overlong_keys_refuse_before_host_io(extra: usize) {
+    let types = order_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = approve();
+    let mut host = NoReadOrCommit;
+
+    let overlong_key = "k".repeat(ACTION_IDEMPOTENCY_KEY_MAX_BYTES.saturating_add(extra));
+    let key_refusal = commit_action(
+        &mut host,
+        &catalog,
+        &call(&action, "SO-1", &overlong_key),
+        &Allow,
+    )
+    .expect_err("the key is over the byte limit");
+    assert!(matches!(
+        key_refusal,
+        ActionRefusal::Command(ActionCommandRejection::IdempotencyKeyTooLong { .. })
+    ));
+    assert_eq!(key_refusal.code(), "action.idempotency_key_too_long");
+    assert_eq!(key_refusal.category(), norn_kernel::RefusalCategory::Limit);
+
+    let overlong_id =
+        "k".repeat(norn_ir::identifier_limits::MAX_OBJECT_KEY_BYTES.saturating_add(extra));
+    let target_refusal = commit_action(
+        &mut host,
+        &catalog,
+        &call(&action, &overlong_id, "idem-1"),
+        &Allow,
+    )
+    .expect_err("the target key is over the byte limit");
+    assert!(matches!(
+        target_refusal,
+        ActionRefusal::Decision(norn_kernel::DecisionRefusal::IdentifierTooLong {
+            field: "object key",
+            ..
+        })
+    ));
+    assert_eq!(target_refusal.code(), "commit.identifier_too_long");
+    assert_eq!(
+        target_refusal.category(),
+        norn_kernel::RefusalCategory::Limit
+    );
+}
+
+#[test]
+fn overlong_idempotency_and_target_keys_at_limit_plus_one_refuse_before_host_io() {
+    assert_overlong_keys_refuse_before_host_io(1);
+}
+
 norn_testkit::proptest::proptest! {
     #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(32))]
     #[test]
     fn overlong_idempotency_and_target_keys_refuse_before_host_io(extra in 1_usize..=128) {
-        let types = order_types();
-        let catalog = TypeCatalog::new(&types);
-        let action = approve();
-        let mut host = NoReadOrCommit;
-
-        let overlong_key = "k".repeat(ACTION_IDEMPOTENCY_KEY_MAX_BYTES.saturating_add(extra));
-        let key_refusal =
-            commit_action(&mut host, &catalog, &call(&action, "SO-1", &overlong_key), &Allow)
-                .expect_err("the key is over the byte limit");
-        norn_testkit::proptest::prop_assert!(matches!(
-            key_refusal,
-            ActionRefusal::Command(ActionCommandRejection::IdempotencyKeyTooLong { .. })
-        ));
-        norn_testkit::proptest::prop_assert_eq!(key_refusal.code(), "action.idempotency_key_too_long");
-        norn_testkit::proptest::prop_assert_eq!(
-            key_refusal.category(),
-            norn_kernel::RefusalCategory::Limit
-        );
-
-        let overlong_id =
-            "k".repeat(norn_ir::identifier_limits::MAX_OBJECT_KEY_BYTES.saturating_add(extra));
-        let target_refusal =
-            commit_action(&mut host, &catalog, &call(&action, &overlong_id, "idem-1"), &Allow)
-                .expect_err("the target key is over the byte limit");
-        norn_testkit::proptest::prop_assert!(matches!(
-            target_refusal,
-            ActionRefusal::Decision(norn_kernel::DecisionRefusal::IdentifierTooLong {
-                field: "object key",
-                ..
-            })
-        ));
-        norn_testkit::proptest::prop_assert_eq!(target_refusal.code(), "commit.identifier_too_long");
-        norn_testkit::proptest::prop_assert_eq!(
-            target_refusal.category(),
-            norn_kernel::RefusalCategory::Limit
-        );
+        assert_overlong_keys_refuse_before_host_io(extra);
     }
 }
 

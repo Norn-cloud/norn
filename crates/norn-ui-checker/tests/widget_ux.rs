@@ -1389,7 +1389,7 @@ fn record_query_dependency_cycles_and_acyclicity() {
             1,
             "the cycle is the only invalid contract: {found:#?}"
         );
-        let msg = &found[0].message;
+        let msg = &found.first().req("cycle finding").message;
         for m in must_mention {
             assert!(msg.contains(m), "expected {m} in {msg:?}");
         }
@@ -2092,7 +2092,7 @@ fn enum_select_baseline(control: &str, option_key_type: Option<&str>) -> (Value,
     (baseline, support)
 }
 
-fn baseline_list_host(selection: &str, override_cond: Value) -> (Value, Value) {
+fn baseline_list_host(selection: &str, override_cond: &Value) -> (Value, Value) {
     let mut baseline = baseline_widget("baseline-list-semantic");
     baseline.set(
         "dependencies",
@@ -2358,7 +2358,7 @@ fn composing_one_page_preserves_unrelated_forms_and_override_only_placements() {
 fn composed_binding_surface_isolation() {
     let (baseline, mut host) = baseline_list_host(
         "none",
-        j(
+        &j(
             r#"{"expression":"input.record.status == \"draft\"","inputs":{"recordBindingId":"orders"}}"#,
         ),
     );
@@ -2398,7 +2398,7 @@ fn composed_binding_surface_isolation() {
 
     let (baseline, mut host) = baseline_list_host(
         "single",
-        j(r#"{"expression":"len(input.selection) > 0","inputs":{"selectionBindingId":"orders"}}"#),
+        &j(r#"{"expression":"len(input.selection) > 0","inputs":{"selectionBindingId":"orders"}}"#),
     );
     assert_clean(&findings(baseline.clone()));
     assert_clean(&findings_with_base(
