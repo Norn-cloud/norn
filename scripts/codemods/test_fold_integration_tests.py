@@ -70,17 +70,23 @@ class RustCratePathRewriteTests(unittest.TestCase):
             "use crate /* comment */ :: /* inner */ nested::item;\n"
             "use crate /* c */ :: alpha :: already_rooted;\n"
             "use écrate::unicode_ident;\n"
+            "use e\u0301crate::combining_prefix;\n"
+            "use crate\u0301::combining_suffix;\n"
         )
         self.assertTrue(fold.has_code_crate_path("use crate ::helper;\n"))
         self.assertTrue(fold.has_code_crate_path("use crate /* c */ ::helper;\n"))
         self.assertFalse(fold.has_code_crate_path("use écrate::unicode_ident;\n"))
+        self.assertFalse(fold.has_code_crate_path("use e\u0301crate::combining_prefix;\n"))
+        self.assertFalse(fold.has_code_crate_path("use crate\u0301::combining_suffix;\n"))
         rewritten = fold.rewrite_crate_paths(spaced, "alpha")
         self.assertEqual(
             rewritten,
             "use crate ::alpha::helper;\n"
             "use crate /* comment */ ::alpha:: /* inner */ nested::item;\n"
             "use crate /* c */ :: alpha :: already_rooted;\n"
-            "use écrate::unicode_ident;\n",
+            "use écrate::unicode_ident;\n"
+            "use e\u0301crate::combining_prefix;\n"
+            "use crate\u0301::combining_suffix;\n",
         )
         self.assertEqual(fold.rewrite_crate_paths(rewritten, "alpha"), rewritten)
 

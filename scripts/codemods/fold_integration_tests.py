@@ -238,7 +238,7 @@ CODEMOD_SELF_FILES: frozenset[str] = frozenset(
 
 
 def _is_rust_ident_char(ch: str) -> bool:
-    return ch == "_" or ch == "$" or ch.isalnum()
+    return len(ch) == 1 and (ch == "$" or ("a" + ch).isidentifier())
 
 
 def _iter_rust_spans(text: str):
