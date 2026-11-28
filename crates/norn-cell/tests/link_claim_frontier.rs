@@ -1569,3 +1569,117 @@ fn dispute_resolve_accept_delete_correction_withdraws_earlier_v1_edge() {
         .verify_frontier_equivalence()
         .expect("frontier equivalence after delete correction");
 }
+
+/// #1549 / OBS-LINK-CONTRIBUTION-1: Rejecting two of three contested targets in
+/// one contribution supersedes the intermediate synthetic `None` so the sole
+/// surviving claim returns to `Standing::Current` (not permanently contested).
+#[test]
+fn dispute_resolve_three_way_reject_restores_unique_survivor_to_current() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut cell = setup_with(
+        &dir.path().join("three_way_reject.sqlite"),
+        referring_parties,
+    );
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    let d = party_ref_row("P-D", "demo/party/d", "D", None);
+    // Out-of-order descending versions `3 -> 2 -> 1` before targets arrive
+    // create three contested active claims (`B`, `C`, `D`) with no edge yet.
+    let a3 = party_ref_row("P-A", "demo/party/a", "A3", Some("demo/party/b"));
+    let a2 = party_ref_row("P-A", "demo/party/a", "A2", Some("demo/party/c"));
+    let a1 = party_ref_row("P-A", "demo/party/a", "A1", Some("demo/party/d"));
+    let a2_bad = party_ref_row("P-A", "demo/party/a", "A2 bad", Some("demo/party/c"));
+    let a1_bad = party_ref_row("P-A", "demo/party/a", "A1 bad", Some("demo/party/d"));
+
+    capture_kind(&mut cell, "erpnext", &a3, "e3", "3", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &a2, "e2", "2", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &a1, "e1", "1", "upsert", "p1");
+    for t in [&b, &c, &d] {
+        capture_kind(&mut cell, "erpnext", t, "et", "1", "upsert", "p1");
+    }
+    assert!(refers_targets(&cell, "demo/party/a").is_empty());
+
+    let (r2, i2) = raw_event(&cell, "erpnext", &a2_bad, "e2", "2", "upsert", "p1");
+    let (d2, _) = cell.inject_mapping_bundle(&r2, &i2).expect("d2");
+    let (r1, i1) = raw_event(&cell, "erpnext", &a1_bad, "e1", "1", "upsert", "p1");
+    let (d1, _) = cell.inject_mapping_bundle(&r1, &i1).expect("d1");
+
+    // Reject e1 first (leaves two real survivors `B` and `C` -> synthetic None).
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: d1,
+        decision: DisputeDecision::Reject,
+        actor: "ops:kate".into(),
+        reason: "reject e1".into(),
+    })
+    .expect("reject d1");
+
+    // Reject e2 next -> supersedes both e2 AND the earlier synthetic None,
+    // leaving `B` as the unique surviving `Standing::Current` claim!
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: d2,
+        decision: DisputeDecision::Reject,
+        actor: "ops:kate".into(),
+        reason: "reject e2".into(),
+    })
+    .expect("reject d2");
+
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()]),
+        "unique surviving target B must not remain contested against earlier synthetic None"
+    );
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence after 3-way reject");
+}
+
+/// #1549 / OBS-LINK-CONTRIBUTION-1: Accepting a late disputed `v2` delete
+/// correction when an undisputed newer `v3` claim already owns the edge must
+/// not supersede or erase `v3`'s link membership.
+#[test]
+fn dispute_resolve_late_v2_delete_correction_preserves_newer_v3_edge() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut cell = setup_with(
+        &dir.path().join("late_v2_delete_v3.sqlite"),
+        referring_parties,
+    );
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let a_v3 = party_ref_row("P-A", "demo/party/a", "A v3", Some("demo/party/b"));
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", Some("demo/party/b"));
+
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &a_v3, "e3", "3", "upsert", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+
+    // Late v2 upsert (pending) + conflicting late v2 delete.
+    let (r_up, i_up) = raw_event(&cell, "erpnext", &a_v2, "e2", "2", "upsert", "p1");
+    let (_pending_v2, _) = cell.inject_mapping_bundle(&r_up, &i_up).expect("inject v2");
+    let (r_del, i_del) = raw_event(&cell, "erpnext", &a_v2, "e2", "2", "delete", "p1");
+    let (conflict_id, _) = cell
+        .inject_mapping_bundle(&r_del, &i_del)
+        .expect("inject v2 delete conflict");
+
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: conflict_id,
+        decision: DisputeDecision::AcceptSecondAsCorrection,
+        actor: "ops:leo".into(),
+        reason: "late v2 delete".into(),
+    })
+    .expect("resolve late v2 delete");
+
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()]),
+        "OBS-LINK-CONTRIBUTION-1: late v2 delete correction must not erase newer v3 edge"
+    );
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence after late v2 delete");
+}

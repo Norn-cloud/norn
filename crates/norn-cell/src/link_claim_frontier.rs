@@ -594,16 +594,17 @@ fn expected_dispute_resolutions<E: SqlEngine>(
             CellError::Encoding(format!("invalid dispute_resolved ledger event: {error}"))
         })?;
         let body: crate::store::ReceiptBody = serde_json::from_str(&receipt_text)?;
-        let dispute_id = event
-            .get("disputeId")
-            .and_then(Value::as_str)
-            .ok_or_else(|| CellError::Encoding("dispute_resolved missing disputeId".to_owned()))?;
+        // Pre-v13 cells could contain generic application events whose `op`
+        // happened to be `"dispute_resolved"`. Only index genuine governed
+        // mapping dispute resolutions whose payload and receipt consumption
+        // match a `mapping-conflict:` or `mapping-identity:` dispute row.
+        let Some(dispute_id) = event.get("disputeId").and_then(Value::as_str) else {
+            continue;
+        };
         if !(dispute_id.starts_with("mapping-conflict:")
             || dispute_id.starts_with("mapping-identity:"))
         {
-            return Err(CellError::Encoding(format!(
-                "dispute_resolved requires a mapping dispute id, got {dispute_id}"
-            )));
+            continue;
         }
         let consumed_matches = matches!(
             body.consumed.as_ref(),
@@ -611,27 +612,27 @@ fn expected_dispute_resolutions<E: SqlEngine>(
                 if observation_id == dispute_id
         );
         if !consumed_matches {
-            return Err(CellError::Encoding(format!(
-                "dispute_resolved ledger event for {dispute_id} disagrees with receipt consumption"
-            )));
+            continue;
         }
+        let Some(decision) = event.get("decision").and_then(Value::as_str).filter(|d| {
+            matches!(
+                *d,
+                "accept-first" | "accept-second-as-correction" | "reject"
+            )
+        }) else {
+            continue;
+        };
+        let Some(actor) = event.get("actor").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(reason) = event.get("reason").and_then(Value::as_str) else {
+            continue;
+        };
         out.push(DisputeResolutionRecord {
             dispute_id: dispute_id.to_owned(),
-            decision: event
-                .get("decision")
-                .and_then(Value::as_str)
-                .ok_or_else(|| CellError::Encoding("dispute_resolved missing decision".to_owned()))?
-                .to_owned(),
-            actor: event
-                .get("actor")
-                .and_then(Value::as_str)
-                .ok_or_else(|| CellError::Encoding("dispute_resolved missing actor".to_owned()))?
-                .to_owned(),
-            reason: event
-                .get("reason")
-                .and_then(Value::as_str)
-                .ok_or_else(|| CellError::Encoding("dispute_resolved missing reason".to_owned()))?
-                .to_owned(),
+            decision: decision.to_owned(),
+            actor: actor.to_owned(),
+            reason: reason.to_owned(),
             commit_seq,
             receipt_hash,
         });

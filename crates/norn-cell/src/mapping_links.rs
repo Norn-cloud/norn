@@ -81,7 +81,7 @@ fn touches(claim: &ObservedLinkClaim, scope: &ClaimScope) -> bool {
             .is_some_and(|t| scope.targets.contains(&t.key))
 }
 
-fn parse_source_version(
+pub(crate) fn parse_source_version(
     bundle: &MappingBundle,
     kind: norn_ir::VersionKind,
 ) -> Result<norn_ir::SourceVersion, CellError> {
@@ -365,7 +365,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     /// frontier is inspected (`O(1)`). On out-of-order late arrivals
     /// (`version <= some active claim`), inactive predecessors of that
     /// contribution are checked to record the maximal earlier predecessor(s).
-    fn compute_claim_supersedes(
+    pub(crate) fn compute_claim_supersedes(
         &self,
         contribution: &str,
         version: &norn_ir::SourceVersion,

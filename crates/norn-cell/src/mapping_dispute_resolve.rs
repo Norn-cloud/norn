@@ -376,18 +376,32 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         match decision {
             DisputeDecision::AcceptFirst => {}
             DisputeDecision::AcceptSecondAsCorrection => {
-                // Incoming candidate's link claims explicitly supersede every
-                // active claim of their contribution (including the originally
-                // accepted capture's claims for the same source event), plus
-                // any active claims from the accepted capture for roles no
-                // longer asserted by the correction are explicitly withdrawn.
+                // OBS-LINK-CONTRIBUTION-1: incoming correction claims supersede
+                // strictly older claims per source-version ordering plus any
+                // active claim from THIS disputed event (never erasing a newer
+                // active claim such as v3 when resolving a late disputed v2).
+                let incoming_version = crate::mapping_links::parse_source_version(
+                    incoming,
+                    self.bundle_version_kind(incoming)?,
+                )?;
+                let correction_supersedes =
+                    |contribution: &str| -> Result<BTreeSet<String>, CellError> {
+                        let mut supersedes =
+                            self.compute_claim_supersedes(contribution, &incoming_version, None)?;
+                        supersedes.extend(
+                            active_event_claims
+                                .iter()
+                                .filter(|r| r.contribution_id == contribution)
+                                .map(|r| r.claim_id.clone()),
+                        );
+                        Ok(supersedes)
+                    };
                 let mut covered_contributions = BTreeSet::new();
                 for mut claim in incoming.link_claims()? {
                     claim.observation_id = dispute_id.to_owned();
                     let contribution = claim.contribution_id()?;
                     covered_contributions.insert(contribution.clone());
-                    let active = self.active_claims_for_contribution(&contribution)?;
-                    claim.supersedes = active.into_iter().map(|r| r.claim_id).collect();
+                    claim.supersedes = correction_supersedes(&contribution)?;
                     scope.sources.insert(claim.source_key.clone());
                     let exclusive = model
                         .link(&claim.source_type, claim.role.as_str())
@@ -397,12 +411,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     }
                     fresh_claims.push((claim, event_keys.clone()));
                 }
-                // For `kind == "delete"` corrections, withdraw every active
-                // contribution owned by `incoming`'s source scope on deleted
-                // subjects (including earlier v1 claims when a conflicting v2
-                // upsert was still pending).
+                // For `kind == "delete"` corrections, withdraw active
+                // contributions owned by `incoming`'s source scope on deleted
+                // subjects respecting source-version ordering (including
+                // earlier v1 claims when a conflicting v2 upsert was pending,
+                // without erasing newer v3 claims).
                 for mut withdrawal in self.delete_withdrawal_claims_for_obs(
-                    &incoming,
+                    incoming,
                     dispute_id,
                     &std::collections::BTreeMap::new(),
                 )? {
@@ -410,8 +425,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     if !covered_contributions.insert(contribution.clone()) {
                         continue;
                     }
-                    let active = self.active_claims_for_contribution(&contribution)?;
-                    withdrawal.supersedes = active.into_iter().map(|r| r.claim_id).collect();
+                    withdrawal.supersedes = correction_supersedes(&contribution)?;
                     scope.sources.insert(withdrawal.source_key.clone());
                     fresh_claims.push((withdrawal, event_keys.clone()));
                 }
@@ -425,9 +439,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     {
                         continue;
                     }
-                    let active = self.active_claims_for_contribution(&row.contribution_id)?;
-                    let supersedes: BTreeSet<String> =
-                        active.into_iter().map(|r| r.claim_id).collect();
+                    let supersedes = correction_supersedes(&row.contribution_id)?;
                     let withdrawal = ObservedLinkClaim {
                         observation_id: dispute_id.to_owned(),
                         source_scope: row.claim.source_scope.clone(),
@@ -482,17 +494,11 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                             real_surviving.push(r);
                         }
                     }
-                    // If real surviving active claims exist in this contribution
-                    // (all agreeing on one target), carry that surviving target
-                    // on the superseding claim so the survivor stays
-                    // `Standing::Current` instead of contesting against `None`
-                    // (and if the survivor is itself still disputed,
-                    // `disputed_contributions` keeps the contribution frozen
-                    // under OBS-LINK-DISPUTE-1). If no real survivor remains,
-                    // also supersede any prior `reject` carry-forward rows.
-                    if real_surviving.is_empty() {
-                        supersedes.extend(reject_carry_ids);
-                    }
+                    // Always supersede prior synthetic `reject` carry-forward
+                    // rows so an earlier synthetic `None` (from a 3-way
+                    // contested state) never leaves a later unique survivor
+                    // permanently contested.
+                    supersedes.extend(reject_carry_ids);
                     let surviving_targets: BTreeSet<_> = real_surviving
                         .iter()
                         .map(|r| {
