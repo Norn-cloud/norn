@@ -28,7 +28,7 @@ NORN=$PWD
 (cd tools/norn-ts && bun install --frozen-lockfile && bun src/cli.ts setup)
 ```
 
-To build the checker WASM and dev host from source instead, you need Rust 1.100.0 with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` 0.2.129, Bun 1.3.14, Node with `npx` (the checker build runs binaryen's `wasm-opt` through it), and `sha256sum` (on macOS, `brew install coreutils`):
+To build the checker WASM and dev host from source instead, you need Rust 1.100.0 with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` 0.2.129, Bun 1.4.5, Node with `npx` (the checker build runs binaryen's `wasm-opt` through it), and `sha256sum` (on macOS, `brew install coreutils`):
 
 ```sh
 rustup target add wasm32-unknown-unknown
