@@ -597,7 +597,7 @@ mod tests {
         assert!(declared_admitted, "{declared_text}");
         assert!(
             declared_text.contains(
-                "Law erpnext.no_unpaid_ship: proof unknown; enforcement declared-only; binding declared invariant"
+                "Law erpnext.no_unpaid_ship: proof unknown; enforcement declared-only; binding not established"
             ),
             "expected honest declared-only live status, got:\n{declared_text}"
         );
@@ -618,7 +618,7 @@ mod tests {
         assert!(enforced_admitted, "{enforced_text}");
         assert!(
             enforced_text.contains(
-                "Law erpnext.no_unpaid_ship: proof unknown; enforcement enforced; binding declared invariant"
+                "Law erpnext.no_unpaid_ship: proof unknown; enforcement enforced; binding not established"
             ),
             "expected honest enforced live status, got:\n{enforced_text}"
         );

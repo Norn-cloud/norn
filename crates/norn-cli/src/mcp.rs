@@ -317,7 +317,7 @@ mod tests {
         backend: &mut Human,
         id: u64,
         name: &str,
-        arguments: serde_json::Value,
+        arguments: &serde_json::Value,
     ) -> serde_json::Value {
         let req = serde_json::json!({
             "jsonrpc": "2.0",
@@ -444,7 +444,7 @@ export const Ticket = Norn.type({
             &mut backend,
             2,
             "norn.check",
-            serde_json::json!({
+            &serde_json::json!({
                 "source": "src/model.ts",
                 "org": "org_ops",
                 "env": "dev",
@@ -466,7 +466,7 @@ export const Ticket = Norn.type({
             &mut backend,
             3,
             "norn.check",
-            serde_json::json!({ "source": "app" }),
+            &serde_json::json!({ "source": "app" }),
         );
         assert_eq!(
             dir_res.pointer("/result/structuredContent/admitted"),
@@ -502,7 +502,7 @@ export const Ticket = Norn.type({
             &mut backend,
             4,
             "norn.explain",
-            serde_json::json!({
+            &serde_json::json!({
                 "kind": "diagnostic",
                 "id": "core.laws.preservation_violated",
                 "format": "json"
@@ -523,7 +523,7 @@ export const Ticket = Norn.type({
             &mut backend,
             5,
             "norn.compile",
-            serde_json::json!({
+            &serde_json::json!({
                 "path": "src/model.ts",
                 "org": "org_ops",
                 "env": "dev"
@@ -546,7 +546,7 @@ export const Ticket = Norn.type({
             &mut backend,
             6,
             "norn.fmt",
-            serde_json::json!({ "path": "src/unformatted.ts", "check": true }),
+            &serde_json::json!({ "path": "src/unformatted.ts", "check": true }),
         );
         assert_eq!(
             fmt_res.pointer("/result/isError"),
@@ -570,7 +570,7 @@ export const Ticket = Norn.type({
             &mut backend,
             7,
             "norn.check",
-            serde_json::json!({
+            &serde_json::json!({
                 "source": "../escape.ts",
                 "org": "org_ops",
                 "env": "dev"
@@ -599,7 +599,7 @@ export const Ticket = Norn.type({
                 &mut backend,
                 8,
                 "norn.check",
-                serde_json::json!({
+                &serde_json::json!({
                     "source": "src/escape_link.ts",
                     "org": "org_ops",
                     "env": "dev"
@@ -620,14 +620,14 @@ export const Ticket = Norn.type({
 
     #[test]
     fn mcp_explain_preserves_positional_order_for_kind_and_id() {
-        let args = RuntimeObject::from([
+        let input = RuntimeObject::from([
             (
                 "id".into(),
                 RuntimeValue::String("core.laws.preservation_violated".into()),
             ),
             ("kind".into(), RuntimeValue::String("diagnostic".into())),
         ]);
-        let argv = crate::mcp_tools::build_argv("explain", args.clone()).unwrap();
+        let argv = crate::mcp_tools::build_argv("explain", input.clone()).unwrap();
         assert_eq!(
             argv,
             vec![
@@ -640,7 +640,7 @@ export const Ticket = Norn.type({
         );
 
         let ws = ScratchWorkspace::new("explain-positional-order");
-        let output = crate::mcp_tools::call_tool("norn.explain", args, &ws.0).unwrap();
+        let output = crate::mcp_tools::call_tool("norn.explain", input, &ws.0).unwrap();
         assert!(!output.is_error, "norn.explain failed: {:?}", output.value);
         let text = output
             .value
