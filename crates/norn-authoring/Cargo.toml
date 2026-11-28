@@ -7,8 +7,10 @@ publish.workspace = true
 description = "Native Rust TypeScript authoring compiler and formatter embedding tsrs (ring 1; see README.md)"
 
 [dependencies]
+norn-canonical = { path = "../norn-canonical" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+sha2 = "0.10.9"
 thiserror = "2.0.20"
 tsrs_ast = "=7.1.0-beta.tsrs5"
 tsrs_checker = "=7.1.0-beta.tsrs5"
@@ -21,6 +23,7 @@ tsrs_parser = "=7.1.0-beta.tsrs5"
 tsrs_scanner = "=7.1.0-beta.tsrs5"
 tsrs_tsoptions = "=7.1.0-beta.tsrs5"
 tsrs_vfs = "=7.1.0-beta.tsrs5"
+unicode-normalization = "0.1.25"
 
 # Safe no-follow, directory-relative opens (openat, O_NOFOLLOW | O_NONBLOCK)
 # for mounting pinned package directories without pathname TOCTOU.

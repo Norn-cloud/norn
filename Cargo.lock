@@ -3454,9 +3454,11 @@ dependencies = [
 name = "norn-authoring"
 version = "0.1.0"
 dependencies = [
+ "norn-canonical",
  "rustix",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.20",
  "tsrs_ast",
  "tsrs_checker",
@@ -3469,6 +3471,7 @@ dependencies = [
  "tsrs_scanner",
  "tsrs_tsoptions",
  "tsrs_vfs",
+ "unicode-normalization",
 ]
 
 [[package]]
