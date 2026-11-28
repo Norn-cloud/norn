@@ -4,7 +4,7 @@
 
 #![cfg(feature = "native")]
 
-mod query_support;
+use super::query_support;
 
 use std::collections::BTreeMap;
 

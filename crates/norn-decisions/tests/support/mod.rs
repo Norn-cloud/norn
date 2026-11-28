@@ -48,9 +48,10 @@ pub(crate) fn num(text: &str) -> Value {
 
 /// A rule payload, inline or `{"ruleFile": <repo-relative envelope>}`.
 pub(crate) fn rule(json: &Json) -> RuleRoot {
-    let payload = match json.get("ruleFile").and_then(Json::as_str) {
-        Some(file) => read_json(&repo_root().join(file))["payload"].clone(),
-        None => json.clone(),
+    let payload = if let Some(file) = json.get("ruleFile").and_then(Json::as_str) {
+        read_json(&repo_root().join(file))["payload"].clone()
+    } else {
+        json.clone()
     };
     serde_json::from_value(payload).unwrap()
 }
@@ -63,19 +64,19 @@ pub(crate) fn binding() -> DecisionBinding {
 }
 
 pub(crate) fn admit_fixture(fixture: &Json) -> Result<AdmittedDecision, AdmissionError> {
-    let root = match fixture.get("ruleFile") {
-        Some(_) => rule(fixture),
-        None => rule(&fixture["rule"]),
+    let root = if fixture.get("ruleFile").is_some() {
+        rule(fixture)
+    } else {
+        rule(&fixture["rule"])
     };
     let subs: BTreeMap<String, RuleRoot> = fixture
         .get("subDecisions")
         .and_then(Json::as_object)
-        .map(|subs| {
+        .map_or_default(|subs| {
             subs.iter()
                 .map(|(key, sub)| (key.clone(), rule(sub)))
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     AdmittedDecision::admit(&root, &subs, binding())
 }
 
@@ -162,7 +163,7 @@ pub(crate) fn check_fixture(path: &Path, failures: &mut Vec<String>) -> usize {
         match admitted {
             Err(error) if admission_kind(&error) == expected => {}
             Err(error) => {
-                failures.push(format!("{name}: refused as {error:?}, expected {expected}"))
+                failures.push(format!("{name}: refused as {error:?}, expected {expected}"));
             }
             Ok(_) => failures.push(format!("{name}: admitted, expected {expected}")),
         }
@@ -223,7 +224,7 @@ pub(crate) fn check_fixture(path: &Path, failures: &mut Vec<String>) -> usize {
     cases.len()
 }
 
-/// Compiler-generated RuleIR; the authoring tests check source/golden drift.
+/// Compiler-generated `RuleIR`; the authoring tests check source/golden drift.
 pub(crate) fn generated_rules(fixture: &str) -> BTreeMap<String, RuleRoot> {
     let artifacts = read_json(&repo_root().join(fixture));
     artifacts

@@ -7,7 +7,7 @@
     reason = "integration-test crate"
 )]
 
-mod common;
+use super::common;
 
 use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
 use norn_cell::read::LinkDirection;

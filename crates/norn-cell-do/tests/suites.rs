@@ -14,6 +14,31 @@
     reason = "each suite keeps the visibility and the shared helpers it had as its own test binary"
 )]
 
+// Shared test support, compiled once for every suite in this binary.
+#[cfg(all(feature = "datafusion", feature = "duckdb"))]
+#[path = "backends/datafusion.rs"]
+mod datafusion_backend;
+#[path = "../../norn-cell/tests/support/governed.rs"]
+mod governed;
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "shared Quint ITF trace loader uses test-only expect/indexing/panic"
+)]
+#[path = "support/quint_itf.rs"]
+mod quint_itf;
+#[allow(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "the shared step cell's fixture setup unwraps"
+)]
+#[path = "support/step_cell.rs"]
+mod step_cell;
+use step_cell::action_cell;
+#[path = "support/tools_list.rs"]
+mod tools_list;
+
 #[path = "action_steps.rs"]
 mod action_steps;
 #[path = "actions.rs"]

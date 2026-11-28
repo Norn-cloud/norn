@@ -7,6 +7,17 @@
 //! lists them; `autotests = false`), and a fixture in any other crate writes
 //! through the kernel path (`tests/support/governed.rs`).
 
+// Shared test support, compiled once for every suite in this module.
+#[path = "../tests/common/mod.rs"]
+mod common;
+#[cfg(feature = "native")]
+#[path = "../tests/support/engine_fixture.rs"]
+mod engine_fixture;
+#[path = "../tests/quantity_support/mod.rs"]
+mod quantity_support;
+#[path = "../tests/query_support/mod.rs"]
+mod query_support;
+
 #[cfg(all(feature = "duckdb", feature = "native"))]
 #[path = "../tests/backends/duckdb.rs"]
 mod analytics_backend;

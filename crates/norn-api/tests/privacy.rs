@@ -17,14 +17,11 @@
 )]
 
 // #1485 S6: fixtures write through the kernel path, never the raw door.
-#[path = "../../norn-cell/tests/support/governed.rs"]
-mod governed;
-use governed::GovernedCommit as _;
+
+use super::governed::GovernedCommit as _;
 use std::collections::{BTreeMap, BTreeSet};
 
-#[path = "support/hosted_read.rs"]
-mod hosted_read;
-use hosted_read::Mapping;
+use super::hosted_read::Mapping;
 use norn_api::authz::{AccessRequest, Authorizer, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::object_query::ObjectQueryParams;

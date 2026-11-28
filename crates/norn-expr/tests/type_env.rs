@@ -22,10 +22,9 @@
 //! artifact set (T1-EXPR-2, #2519), its golden snapshot and content hash, and
 //! the closed actor operand (#2419).
 
-mod support;
-
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::support::{Model, fields, name};
 use norn_expr::actor::{ACTOR_KINDS, ACTOR_RECORD, ACTOR_SCOPE_RECORD};
 use norn_expr::{
     EnvError, EnvOptions, FieldSource, RecordKind, TYPE_ENV_ID, TYPE_ENV_VERSION, Type, ZenTypeEnv,
@@ -34,7 +33,6 @@ use norn_ir::{
     InterfaceDef, InterfaceName, ObjectTypeName, PropertyType, PropertyTypeName,
     ResourceLimitProfile, TextFormat, TimezonePolicy, UnitRef, UnitSystem,
 };
-use support::{Model, fields, name};
 
 /// Pinned content hash of the retail fixture environment (no `self`/`input`
 /// bound). A change here means the derivation or the canonical form changed:

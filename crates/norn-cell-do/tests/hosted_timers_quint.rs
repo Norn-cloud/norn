@@ -21,20 +21,16 @@
     reason = "trace correspondence: a divergence must fail loudly"
 )]
 
-#[path = "support/quint_itf.rs"]
-#[allow(dead_code, reason = "the ITF helpers serve both trace tests")]
-mod quint_itf;
-
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use super::quint_itf::{int, map, traces};
 use norn_api::host::DevHost;
 use norn_api::scope::CellScope;
 use norn_api::timers::{MAX_DUE_STEPS, STUCK_RETRY_MS, next_due, run_due};
 use norn_cell::engine::{NativeEngine, SqlEngine, SqlValue};
 use norn_cell::{CellStore, Model, StoreOptions};
 use norn_kernel::LogicalTime;
-use quint_itf::{int, map, traces};
 use serde_json::{Value, json};
 
 /// Rows per model slot: two slots fill one wake's budget.

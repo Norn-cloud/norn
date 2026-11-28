@@ -3,18 +3,13 @@
 //! was granted for (APPROVAL-INTENT-1), and the requester's authority is
 //! decided again when its retry commits.
 
-#[path = "support/step_cell.rs"]
-#[allow(
-    clippy::unwrap_used,
-    clippy::indexing_slicing,
-    reason = "the shared step cell's fixture setup unwraps"
-)]
-mod step_cell;
-
 use std::error::Error;
 use std::path::Path;
 use std::sync::Arc;
 
+use super::step_cell::{
+    APPROVER, Cell, MELT_ACTION, OPERATOR, REVOKED, call, cell, cell_on, melt_body,
+};
 use norn_api::actions::{ActionAnswer, ActionQuery};
 use norn_api::decisions::{DecideCall, DecideRequest, DecisionsQuery};
 use norn_api::scope::ScopeQuery;
@@ -24,7 +19,6 @@ use norn_cell_do::policy::Caller;
 use norn_cell_do::principal::{FIXTURE_ROLES, FixturePrincipals};
 use norn_kernel::LogicalTime;
 use serde_json::{Value, json};
-use step_cell::{APPROVER, Cell, MELT_ACTION, OPERATOR, REVOKED, call, cell, cell_on, melt_body};
 
 type Checked = Result<(), Box<dyn Error>>;
 

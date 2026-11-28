@@ -11,7 +11,7 @@
 //! payloads (ledger events, commands, timers) are parsed exactly; and a file
 //! of the previous store format is refused with a clear error, not migrated.
 
-mod common;
+use super::common;
 
 use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;

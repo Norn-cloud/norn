@@ -10,9 +10,18 @@
 #![allow(
     dead_code,
     unreachable_pub,
-    clippy::duplicate_mod,
-    reason = "each suite keeps the visibility and the shared helpers it had as its own test binary"
+    reason = "each suite keeps the visibility it had as its own test binary"
 )]
+
+// Shared test support, compiled once for every suite in this binary.
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "shared decision fixture helpers use test-only unwrap/expect/indexing/panic"
+)]
+mod support;
 
 #[path = "dmn_tck.rs"]
 mod dmn_tck;

@@ -17,7 +17,7 @@
     reason = "durable receipt scenarios"
 )]
 
-mod common;
+use super::common;
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

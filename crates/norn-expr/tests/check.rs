@@ -25,8 +25,9 @@
 //! F2 `o[k] - 1`; and a generated soundness check (every accepted expression
 //! evaluates to a value of its checked type on conforming inputs).
 
-mod support;
-
+use super::support::{
+    Model, env_for, fields, name, roomy_limits, slice_bytes, within_slice_limits,
+};
 use norn_expr::check::{CHECKER_PROFILE, codes};
 use norn_expr::{
     ConstructionSource, EnvOptions, EvaluationBudget, Expression, InferredType, Number, Type,
@@ -34,7 +35,6 @@ use norn_expr::{
     check_expression_with_sources, check_unary, check_unary_with,
 };
 use norn_ir::{ObjectTypeDef, ResourceLimitProfile, TextFormat, TimezonePolicy};
-use support::{Model, env_for, fields, name, roomy_limits, slice_bytes, within_slice_limits};
 
 fn check(
     env: &ZenTypeEnv,

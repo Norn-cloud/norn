@@ -11,7 +11,6 @@
     missing_docs,
     reason = "QUERY-ENGINE-1 engine correspondence"
 )]
-mod query_support;
 
 use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;
@@ -20,6 +19,7 @@ use std::io::Write as _;
 use proptest::strategy::Strategy as _;
 
 use super::analytics_backend::{Engine, Settings};
+use super::query_support::{CLOCK, TYPE, WORLD, fixture, load_batch, put};
 use norn_cell::analytics::{
     EvaluateResponse, FileFormat, FileSource, GroupKey, LandRequest, LoadRequest, MembersRequest,
     MembershipDigest, Source, StoreRequest, StoredObject, SyncRequest, TenantId, bucket_value,
@@ -34,7 +34,6 @@ use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, Decimal, EntityIrVersion, EntityRootV2,
     RuntimeValue,
 };
-use query_support::{CLOCK, TYPE, WORLD, fixture, load_batch, put};
 
 /// [`query_support::load_batch`], committed raw (this suite is compiled in
 /// the crate, #1485 S6).

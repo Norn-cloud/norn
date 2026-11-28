@@ -13,15 +13,15 @@
 //! originals). Not FIBO content: three small modules that exercise every
 //! lowering rule and every deferral reason.
 
-mod support;
+use super::support;
 
 use std::collections::BTreeMap;
 
+use super::support::{synthetic_ledger_config as config, synthetic_ledger_graph as graph};
 use norn_formats::SchemaImporter;
 use norn_formats::contract::{Disposition, SourceElement, sha256_hex};
 use norn_formats::owl::{OwlGraph, OwlNamespace, OwlReader, WitnessPolicy};
 use serde_json::Value;
-use support::{synthetic_ledger_config as config, synthetic_ledger_graph as graph};
 
 fn interfaces(import: &norn_formats::SchemaImport) -> BTreeMap<String, Value> {
     import.layers[0]

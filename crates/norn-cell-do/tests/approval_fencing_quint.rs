@@ -18,19 +18,16 @@
     reason = "trace correspondence: a divergence must fail loudly"
 )]
 
-#[path = "support/quint_itf.rs"]
-mod quint_itf;
-#[path = "support/step_cell.rs"]
-mod step_cell;
+use super::step_cell;
 
 use std::collections::BTreeMap;
 
-use norn_cell_do::principal::FixturePrincipals;
-use quint_itf::{int, map, str_map, traces};
-use serde_json::{Value, json};
-use step_cell::{
+use super::quint_itf::{int, map, str_map, traces};
+use super::step_cell::{
     APPROVER, Cell, MELT_ACTION, NAMES, NOW, OPERATOR, REVOKED, call, cell, melt_body,
 };
+use norn_cell_do::principal::FixturePrincipals;
+use serde_json::{Value, json};
 
 const APPROVAL_ID: &str = "ops.melt_approval";
 

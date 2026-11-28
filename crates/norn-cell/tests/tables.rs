@@ -11,7 +11,7 @@
 //! links of every one load into and read back from those tables — also after
 //! reopening the file.
 
-mod common;
+use super::common;
 
 use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;

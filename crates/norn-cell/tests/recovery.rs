@@ -13,7 +13,7 @@
 //! the commit (or, after `COMMIT`, exactly the state after it), with a ledger
 //! hash chain that verifies.
 
-mod common;
+use super::common;
 
 use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;

@@ -26,7 +26,7 @@
 //! - Forks (Core 08, FORK-PIN-1, WORLD-ISOLATE-1): WORLD-FORK, and the
 //!   FORK-NONINTERFERE property against main run alone.
 
-mod common;
+use super::common;
 
 use std::cell::Cell as FlagCell;
 use std::fmt::Debug;

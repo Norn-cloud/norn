@@ -4,11 +4,12 @@
     reason = "integration-test assertions and fixtures"
 )]
 //! Current normalized cell quantity authority, not the legacy engine shell.
-mod quantity_support;
+use super::quantity_support;
 
 use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;
 
+use super::quantity_support::{define, parameters, post, request, reserve};
 use norn_cell::{
     CellError, CellStore, CommitBatch, CommitOutcome, CommitPoint, Model, SqliteCell, StoreOptions,
 };
@@ -16,7 +17,6 @@ use norn_ir::quantity_ledger::QuantityOperation;
 use norn_kernel::quantity::{QuantityError, QuantityKey};
 use norn_kernel::{CellCommit, FactKey, FactMutation, FactVersion, FactWrite, LogicalTime};
 use norn_testkit::proptest::prelude::*;
-use quantity_support::{define, parameters, post, request, reserve};
 
 fn model() -> Model {
     let def = serde_json::from_value(serde_json::json!({"name":"fixture.Marker","properties":[{"id":"label","type":{"kind":"text"}}]})).expect("definition");

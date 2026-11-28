@@ -10,8 +10,7 @@
 //! fan-out cap, over-profile refusal, and evaluation against committed
 //! state.
 
-mod common;
-mod query_support;
+use super::common;
 
 use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;
@@ -1290,9 +1289,11 @@ fn dependency_capture_refuses_entry_and_byte_overflow_without_truncation() {
 /// and its contribution identity is stable across unrelated and unauthorized commits.
 #[test]
 fn query_fanout_exact_cell_question_returns_80_with_stable_identities_for_authorized_holdings() {
+    use super::query_support::fanout::{
+        Fixture, HOLDING, fanout_batch, fanout_fixture, holding, tags,
+    };
     use norn_cell::ObjectRecord;
     use norn_cell::compute::{Engine, Freshness, lineage::LineageDisclosure};
-    use query_support::fanout::{Fixture, HOLDING, fanout_batch, fanout_fixture, holding, tags};
     let Fixture {
         mut store,
         plan,

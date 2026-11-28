@@ -75,8 +75,7 @@ pub(crate) fn slice_bytes(value: &Value) -> u64 {
         serde_json::to_string(text).expect("string").len() as u64
     }
     match value {
-        Value::Null => 4,
-        Value::Bool(true) => 4,
+        Value::Null | Value::Bool(true) => 4,
         Value::Bool(false) => 5,
         Value::Number(number) => number.as_str().len() as u64,
         Value::String(text) => string(text),

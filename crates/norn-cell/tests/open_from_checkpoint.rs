@@ -10,15 +10,13 @@
 //! not verified; and an old receipt changed in place is never served.
 #![cfg(feature = "native")]
 
-#[path = "support/engine_fixture.rs"]
-mod engine_fixture;
-#[path = "quantity_support/mod.rs"]
-mod quantity_support;
+use super::engine_fixture;
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use super::quantity_support::{define, post, reserve};
 use norn_cell::engine::{NativeEngine, ReadIsolation, SqlEngine, SqlValue};
 use norn_cell::reactive::{BudgetedLinksRead, DecodeBudget, ReactiveLimits};
 use norn_cell::test_door::TestCommit as _;
@@ -28,7 +26,6 @@ use norn_cell::{
 };
 use norn_ir::quantity_ledger::QuantityRequest;
 use norn_ir::{RuntimeValue, runtime_object};
-use quantity_support::{define, post, reserve};
 
 /// Commits apart the engine records a checkpoint (`open_checkpoint::EVERY`).
 const EVERY: u64 = 128;

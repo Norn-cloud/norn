@@ -4311,8 +4311,7 @@ fn live_owned_collection_accepts_only_monotonic_bound_increases() {
     );
 }
 
-#[path = "quantity_support/mod.rs"]
-mod quantity_v2_support;
+use super::quantity_support as quantity_v2_support;
 
 #[tokio::test]
 #[allow(

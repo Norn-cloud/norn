@@ -30,11 +30,11 @@
 //! `event`, an optional `budget`, and either `expect` (`facts`, `commands`,
 //! `timers`) or `error`.
 
-mod support;
+use super::support;
 
 use std::path::Path;
 
-use support::check_fixture;
+use super::support::check_fixture;
 
 #[test]
 fn zen_admitted_node_corpus() {

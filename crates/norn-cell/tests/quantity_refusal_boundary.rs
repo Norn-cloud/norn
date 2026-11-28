@@ -4,8 +4,9 @@
     reason = "quantity refusal boundary regression assertions"
 )]
 //! Dependency discovery and admission must agree before selecting a remainder.
-mod quantity_support;
+use super::quantity_support;
 
+use super::quantity_support::{define, post, request, reserve};
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellError, CellStore, CommitBatch, CommitOutcome, Model, StoreOptions};
 use norn_ir::quantity_ledger::{
@@ -15,7 +16,6 @@ use norn_ir::quantity_ledger::{
 use norn_kernel::quantity::{
     QuantityError, QuantityState, prepare_quantity, quantity_balance_keys,
 };
-use quantity_support::{define, post, request, reserve};
 
 fn model() -> Model {
     Model::from_definitions(&[], &[]).expect("model")

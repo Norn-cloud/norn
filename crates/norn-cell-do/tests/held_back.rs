@@ -48,8 +48,7 @@ use norn_cell_do::server::{Request, Response};
 use norn_cell_do::tenant::Tenant;
 use serde_json::{Value, json};
 
-#[path = "support/tools_list.rs"]
-mod tools_list;
+use super::tools_list;
 
 const ISSUER: &str = "https://studio-preview.example";
 const NOW: u64 = 1_800_000_000;

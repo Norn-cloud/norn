@@ -10,8 +10,7 @@
 #![allow(
     dead_code,
     unreachable_pub,
-    clippy::duplicate_mod,
-    reason = "each suite keeps the visibility and the shared helpers it had as its own test binary"
+    reason = "each suite keeps the visibility it had as its own test binary"
 )]
 
 #[path = "cedar.rs"]

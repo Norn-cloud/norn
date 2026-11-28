@@ -9,8 +9,7 @@
 )]
 #[path = "../../norn-cell/tests/support/query_lineage.rs"]
 mod lineage_support;
-#[path = "../../norn-cell/tests/query_support/mod.rs"]
-mod query_support;
+
 use norn_api::{
     authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest},
     host::DevHost,
@@ -22,6 +21,9 @@ use norn_api::{
     scope::{CellScope, ScopeQuery},
 };
 // #1485 S6: fixtures write through the kernel path, never the raw door.
+use super::query_support;
+use super::query_support::governed::GovernedCommit as _;
+use super::query_support::*;
 use norn_cell::{
     CellStore, CommitBatch, FactWriteRow, KnowledgeCutoff, LedgerHead, ObjectRecord,
     compute::{
@@ -41,8 +43,6 @@ use norn_kernel::{
         VerifiedPrincipal,
     },
 };
-use query_support::governed::GovernedCommit as _;
-use query_support::*;
 use std::{
     collections::BTreeMap,
     fmt::Write as _,

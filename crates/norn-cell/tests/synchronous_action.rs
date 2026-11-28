@@ -10,7 +10,7 @@
 )]
 //! TXN-ATOMIC-1 / TXN-IDEMPOTENT-1: declared facts, links and outbox share SQLite durability.
 
-mod quantity_support;
+use super::quantity_support;
 
 use norn_cell::{Model, SqliteCell, StoreOptions};
 use norn_checker::entity_scopes::ScopedView;

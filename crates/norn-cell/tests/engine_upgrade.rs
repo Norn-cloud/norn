@@ -14,8 +14,7 @@
     reason = "integration-test crate"
 )]
 
-#[path = "support/engine_fixture.rs"]
-mod engine_fixture;
+use super::engine_fixture;
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};

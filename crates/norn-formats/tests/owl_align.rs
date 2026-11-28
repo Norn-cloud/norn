@@ -11,7 +11,7 @@
 //! every class is aligned, a gap or a conflict; the checker admits both
 //! packs and proves the link total.
 
-mod support;
+use super::support;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

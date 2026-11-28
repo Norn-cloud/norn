@@ -16,13 +16,11 @@
     reason = "benchmark driver"
 )]
 
-#[path = "support/dataset_cell.rs"]
-mod support;
-
 use std::collections::BTreeMap;
 use std::io::BufRead as _;
 use std::time::Instant;
 
+use super::dataset_cell::{Cell, Field, cell};
 use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
     FileFormat, FileSource, LandRequest, LoadRequest, SettleRequest, StoreRequest, StoredObject,
@@ -34,7 +32,6 @@ use norn_cell::dataset_manifest::{
 use norn_ir::RuntimeValue as Value;
 use norn_kernel::{LogicalTime, ObservationId, Observed, Provenance};
 use serde_json::json;
-use support::{Cell, Field, cell};
 
 const TYPE: &str = "bench.Bpi19Event";
 

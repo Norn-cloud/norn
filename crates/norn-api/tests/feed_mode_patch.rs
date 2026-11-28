@@ -14,8 +14,7 @@
 //!    `norn_ir::feed::reduce_object` / `compose_object_patches`.
 
 #[cfg(not(target_arch = "wasm32"))]
-#[path = "support/hosted_read.rs"]
-mod hosted_read;
+use super::hosted_read;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(

@@ -4,8 +4,7 @@
 //! historical/pinned `:trace` frontier reconstruction, production `Tenant::serve`
 //! multi-connection coverage, and strict cursor validation.
 
-#[path = "../../norn-cell/tests/support/governed.rs"]
-mod governed;
+use super::governed;
 
 #[allow(
     clippy::expect_used,

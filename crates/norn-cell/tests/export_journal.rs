@@ -8,7 +8,7 @@
 
 //! Export journal persistence and atomicity checks.
 
-mod common;
+use super::common;
 
 use norn_cell::test_door::TestCommit as _;
 use std::path::Path;

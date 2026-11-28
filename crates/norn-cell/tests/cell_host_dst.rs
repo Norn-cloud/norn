@@ -7,7 +7,7 @@
 //! replay any failure deterministically.
 #![cfg(feature = "native")]
 
-mod quantity_support;
+use super::quantity_support;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Debug, Display};

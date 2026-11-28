@@ -45,9 +45,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SUITE = "suites"
 # Every multi-binary workspace crate whose integration tests can fold cleanly.
-# Remaining multi-binary crates outside this list:
-# - `norn-checker-wasm`: `parity` binary is pinned by name (`--test parity -- --test-threads=1`)
-#   in `GATE_FILES` (`scripts/ci/core.sh` and `verification/coverage-v1/validate.py`).
+# Remaining non-folded targets:
+# - `norn-checker-wasm::parity`: pinned by name (`--test parity -- --test-threads=1`)
+#   in `GATE_FILES` (`scripts/ci/core.sh` and `verification/coverage-v1/validate.py`);
+#   its other integration tests fold into `tests/suites.rs`.
 # - `norn-skeleton-guard`: standalone `GATE_DIRECTORIES` workspace; `gate_source_errors` refuses
 #   `#[path = ...]` in gated sources and `baseline-shrink-only.sh` blocks moving `tests/*.rs`.
 CRATES = (
@@ -58,6 +59,7 @@ CRATES = (
     "norn-cell",
     "norn-cell-do",
     "norn-checker",
+    "norn-checker-wasm",
     "norn-datalog",
     "norn-decisions",
     "norn-expr",
@@ -67,6 +69,9 @@ CRATES = (
     "norn-projections",
     "norn-testkit",
 )
+# Explicit `[[test]]` binaries that stay standalone while the rest of their
+# crate folds into `tests/suites.rs`.
+PINNED_TARGETS: frozenset[tuple[str, str]] = frozenset({("norn-checker-wasm", "parity")})
 TARGET_KEYS = {"name", "path", "required-features", "cfg", "comments"}
 MODULE_ATTRIBUTES = {"allow", "deny", "warn", "forbid", "expect", "cfg", "cfg_attr", "doc"}
 RESERVED = {"std", "core", "alloc", "test", "proc_macro", SUITE}
@@ -132,7 +137,7 @@ class Crate:
         explicit = {table["name"]: dict(table) for table in self.manifest.get("test", [])}
         claimed = {table.get("path", f"tests/{name}.rs") for name, table in explicit.items()}
         suites = self.tests / f"{SUITE}.rs"
-        existing = parse_suites(suites.read_text()) if suites.exists() else {}
+        existing = parse_suites(suites.read_bytes().decode("utf-8")) if suites.exists() else {}
         targets: dict[str, dict] = {}
         if self.manifest["package"].get("autotests", True) or suites.exists():
             in_lib = self.included_by_lib()
@@ -151,9 +156,17 @@ class Crate:
         return names
 
     def foldable(self) -> list[dict]:
+        for crate_name, pinned_name in sorted(PINNED_TARGETS):
+            if crate_name != self.name:
+                continue
+            pinned = self.targets.get(pinned_name)
+            if pinned is None or pinned.get("auto"):
+                raise Refused(
+                    f"{self.name}: pinned test target {pinned_name!r} must have an explicit [[test]] table in Cargo.toml"
+                )
         folded = []
         for name, target in sorted(self.targets.items()):
-            if name == SUITE:
+            if name == SUITE or (self.name, name) in PINNED_TARGETS:
                 continue
             path = target.get("path", f"tests/{name}.rs")
             if path != f"tests/{name}.rs":
@@ -175,10 +188,193 @@ class Crate:
         return names
 
 
+SHARED_SUPPORT_HEADER = "// Shared test support, compiled once for every suite in this binary."
+
+
+def _consume_header(lines: list[str]) -> int:
+    """Consume crate doc comments (`//!`), blank lines, and optional `#![allow(...)]` block."""
+    idx = 0
+    n = len(lines)
+    while idx < n:
+        stripped = lines[idx].strip()
+        if not stripped or stripped.startswith("//!"):
+            idx += 1
+            continue
+        if re.fullmatch(r"#!\[allow\([^\]\n]*\)\]", stripped):
+            idx += 1
+            continue
+        if stripped == "#![allow(":
+            idx += 1
+            while idx < n:
+                inner = lines[idx].strip()
+                if inner == ")]":
+                    idx += 1
+                    break
+                if not (
+                    re.fullmatch(r"[A-Za-z_][A-Za-z0-9_:]*,", inner)
+                    or re.fullmatch(r'reason = "[^"\\\n]*"(?:,)?', inner)
+                ):
+                    raise Refused(
+                        f"tests/{SUITE}.rs: unexpected line inside `#![allow(...)]` ({inner!r})"
+                    )
+                idx += 1
+            else:
+                raise Refused(f"tests/{SUITE}.rs: unclosed `#![allow(...)]` block")
+            continue
+        break
+    return idx
+
+
+def _validate_suite_entries(rest: list[str]) -> None:
+    """Require every non-blank line after the shared-support block to be an exact suite entry.
+
+    Grammar of each suite entry (matching `suites_source` exactly):
+        ( `// ...` )*
+        ( `#[cfg(...)]` )?
+        `#[path = "<name>.rs"]`
+        `mod <name>;`
+    """
+    idx = 0
+    n = len(rest)
+    seen_suites: set[str] = set()
+    while idx < n:
+        stripped = rest[idx].strip()
+        if not stripped:
+            idx += 1
+            continue
+        while idx < n and rest[idx].startswith("//") and not rest[idx].startswith("//!"):
+            idx += 1
+        if idx < n and re.fullmatch(r"#\[cfg\([^\]\n]+\)\]", rest[idx]):
+            idx += 1
+        if idx >= n:
+            raise Refused(f"tests/{SUITE}.rs: trailing comments/attributes without a suite module")
+        path_match = re.fullmatch(r'#\[path = "([a-z0-9_]+)\.rs"\]', rest[idx])
+        if not path_match:
+            raise Refused(
+                f"tests/{SUITE}.rs: unexpected line outside shared support block ({rest[idx]!r})"
+            )
+        suite_name = path_match[1]
+        if suite_name in seen_suites:
+            raise Refused(
+                f"tests/{SUITE}.rs: duplicate suite entry `mod {suite_name};` would collapse during regeneration"
+            )
+        seen_suites.add(suite_name)
+        idx += 1
+        if idx >= n or rest[idx] != f"mod {suite_name};":
+            found = rest[idx] if idx < n else "<eof>"
+            raise Refused(
+                f"tests/{SUITE}.rs: expected `mod {suite_name};` after `#[path = \"{suite_name}.rs\"]`, got {found!r}"
+            )
+        idx += 1
+
+
+def split_suites_sections(text: str) -> tuple[list[str], list[str]]:
+    """Split an existing `tests/suites.rs` into `(shared_support_lines, suite_mod_lines)`."""
+    # Reject non-LF separators (`splitlines()` splits on VT/FF/NEL/LS/PS/CR, Rust comments only on LF).
+    if any(ch in text for ch in "\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"):
+        raise Refused(f"tests/{SUITE}.rs: only LF line breaks are allowed")
+    # Reject lexical forms that can span lines and desynchronize line-oriented parsing.
+    for kind, start, end in _iter_rust_spans(text):
+        span = text[start:end]
+        if kind == "comment" and span.startswith("/*"):
+            raise Refused(f"tests/{SUITE}.rs: block comments are not allowed")
+        if kind == "literal" and ("\n" in span or "\\" in span):
+            raise Refused(f"tests/{SUITE}.rs: multiline or escaped string literals are not allowed")
+    lines = text.split("\n")
+    body_start = _consume_header(lines)
+    if body_start < len(lines) and lines[body_start] == SHARED_SUPPORT_HEADER:
+        end = body_start
+        while end < len(lines) and lines[end].strip():
+            if lines[end].lstrip().startswith("#!["):
+                raise Refused(f"tests/{SUITE}.rs: inner attribute not allowed in shared support block")
+            end += 1
+        shared = lines[body_start:end]
+        rest = lines[end:]
+    else:
+        shared = []
+        rest = lines[body_start:]
+    _validate_suite_entries(rest)
+    return shared, rest
+
+
+def parse_shared_support(text: str) -> list[str]:
+    """Return the hoisted shared test-support block from an existing `tests/suites.rs`."""
+    return split_suites_sections(text)[0]
+
+
+def shared_support_names(lines: list[str]) -> set[str]:
+    """Return module and re-export names bound in the shared support block."""
+    names: set[str] = set()
+    attr_depth = 0
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        cursor = stripped
+        if attr_depth > 0:
+            # Consume remainder of an open multi-line outer attribute `#[...]`.
+            idx = 0
+            while idx < len(cursor) and attr_depth > 0:
+                if cursor[idx] == "[":
+                    attr_depth += 1
+                elif cursor[idx] == "]":
+                    attr_depth -= 1
+                idx += 1
+            cursor = cursor[idx:].lstrip()
+            if not cursor:
+                continue
+        while cursor.startswith("#["):
+            depth = 0
+            idx = 1
+            while idx < len(cursor):
+                if cursor[idx] == "[":
+                    depth += 1
+                elif cursor[idx] == "]":
+                    depth -= 1
+                    if depth == 0:
+                        cursor = cursor[idx + 1 :].lstrip()
+                        break
+                idx += 1
+            else:
+                attr_depth = depth
+                cursor = ""
+                break
+        if not cursor or cursor.startswith("//"):
+            continue
+        mod_match = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?mod ([A-Za-z0-9_]+);$", cursor)
+        if mod_match:
+            names.add(mod_match[1])
+            continue
+        if re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use\b", cursor):
+            if (
+                "{" in cursor
+                or "}" in cursor
+                or "*" in cursor
+                or cursor.count(";") != 1
+                or not cursor.endswith(";")
+            ):
+                raise Refused(
+                    f"tests/{SUITE}.rs: shared support block only supports single-item `use` statements ({stripped!r})"
+                )
+            use_as = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use .+\s+as\s+([A-Za-z0-9_]+);$", cursor)
+            if use_as:
+                names.add(use_as[1])
+                continue
+            use_tail = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use (?:.+::)?([A-Za-z0-9_]+);$", cursor)
+            if use_tail:
+                names.add(use_tail[1])
+                continue
+            raise Refused(f"tests/{SUITE}.rs: unparseable `use` in shared support block ({stripped!r})")
+        raise Refused(f"tests/{SUITE}.rs: unsupported item in shared support block ({stripped!r})")
+    if attr_depth != 0:
+        raise Refused(f"tests/{SUITE}.rs: unclosed outer attribute in shared support block")
+    return names
+
+
 def parse_suites(text: str) -> dict[str, dict]:
     """The cfg and comments above each module of an existing `tests/suites.rs`."""
     found: dict[str, dict] = {}
-    lines = text.splitlines()
+    _, lines = split_suites_sections(text)
     for index, line in enumerate(lines):
         match = re.match(r"^mod ([a-z0-9_]+);$", line)
         if not match:
@@ -215,7 +411,7 @@ _RUST_CHAR_LITERAL = re.compile(
     r"b?'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]+\}|.)|[^'\\\n])'"
 )
 # Fixed baseline of pre-existing folded crates whose `tests/suites.rs` carry the legacy
-# `#![allow(dead_code, unreachable_pub, clippy::duplicate_mod)]` block. Newly folded crates
+# `#![allow(dead_code, unreachable_pub, ...)]` block. Newly folded crates
 # must stay allow-free; adding `#![allow(...)]` to a non-baseline suite fails `--check`.
 LEGACY_SUITE_ALLOW_CRATES: frozenset[str] = frozenset(
     {
@@ -229,6 +425,17 @@ LEGACY_SUITE_ALLOW_CRATES: frozenset[str] = frozenset(
         "norn-ir",
         "norn-kernel",
         "norn-projections",
+    }
+)
+# Subset of `LEGACY_SUITE_ALLOW_CRATES` whose `tests/suites.rs` still compile a
+# module more than once (e.g. DuckDB + DataFusion parity suites). Crates outside
+# this set must not allow `clippy::duplicate_mod`.
+LEGACY_DUPLICATE_MOD_CRATES: frozenset[str] = frozenset(
+    {
+        "norn-cell",
+        "norn-cell-do",
+        "norn-checker",
+        "norn-kernel",
     }
 )
 CODEMOD_SELF_FILES: frozenset[str] = frozenset(
@@ -675,7 +882,17 @@ def _needs_suite_allows(crate: Crate) -> bool:
     return crate.name in LEGACY_SUITE_ALLOW_CRATES
 
 
-def suites_source(crate: Crate, folded: list[dict], comments: dict[str, list[str]]) -> str:
+def _needs_duplicate_mod_allow(crate: Crate) -> bool:
+    """Keep `clippy::duplicate_mod` strictly on crates that still have duplicate modules."""
+    return crate.name in LEGACY_DUPLICATE_MOD_CRATES
+
+
+def suites_source(
+    crate: Crate,
+    folded: list[dict],
+    comments: dict[str, list[str]],
+    shared_support: list[str] | None = None,
+) -> str:
     header = f"""//! `{crate.name}`'s integration tests, built as one test binary.
 //!
 //! Each `tests/<name>.rs` is the module `<name>` here, so nextest names a test
@@ -687,13 +904,23 @@ def suites_source(crate: Crate, folded: list[dict], comments: dict[str, list[str
 //! keeps this list and every reference to it in step.
 """
     if _needs_suite_allows(crate):
-        header += """#![allow(
+        if _needs_duplicate_mod_allow(crate):
+            header += """#![allow(
     dead_code,
     unreachable_pub,
     clippy::duplicate_mod,
     reason = "each suite keeps the visibility and the shared helpers it had as its own test binary"
 )]
 """
+        else:
+            header += """#![allow(
+    dead_code,
+    unreachable_pub,
+    reason = "each suite keeps the visibility it had as its own test binary"
+)]
+"""
+    if shared_support:
+        header += "\n" + "\n".join(shared_support) + "\n"
     body = []
     for target in folded:
         name = target["name"]
@@ -1038,10 +1265,13 @@ def main() -> int:
             for path in sorted(crate.tests.rglob("*.rs"))
             if path.name != f"{SUITE}.rs"
         }
+        suites = crate.tests / f"{SUITE}.rs"
+        shared_support = parse_shared_support(suites.read_bytes().decode("utf-8")) if suites.exists() else []
+        support_names = shared_support_names(shared_support)
         for target in targets:
             name = target["name"]
-            if name in hard_reserved:
-                raise Refused(f"{crate.name}: module {name} would shadow a reserved or crate name")
+            if name in hard_reserved or name in support_names:
+                raise Refused(f"{crate.name}: module {name} would shadow a reserved, crate, or shared-support name")
             if name in externs and any(uses_extern_crate(src, name) for src in test_sources.values()):
                 raise Refused(f"{crate.name}: module {name} would shadow a used extern crate")
             folded[(crate.name, name)] = crate.name
@@ -1051,8 +1281,7 @@ def main() -> int:
                 writes[path] = source
         manifest, comments = edit_manifest(crate, targets)
         writes[crate.manifest_path] = manifest
-        suites = crate.tests / f"{SUITE}.rs"
-        writes[suites] = suites_source(crate, targets, comments)
+        writes[suites] = suites_source(crate, targets, comments, shared_support=shared_support)
 
     for relative in tracked():
         if relative.startswith(FROZEN) or relative in CODEMOD_SELF_FILES:

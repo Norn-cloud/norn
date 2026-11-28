@@ -15,11 +15,12 @@
     reason = "dispatch correspondence"
 )]
 
-#[path = "support/step_cell.rs"]
-mod step_cell;
-
 use std::path::{Path, PathBuf};
 
+use super::step_cell::{
+    APPROVER, Cell, DERIVES_LOSS, FLOW_ID, MELT_ACTION, NAMES, NOW, OPERATOR, REVOKED, SCOPE, call,
+    call_with, cell_on, melt_body, melt_store_on,
+};
 use norn_api::timers::{DueWork, next_due, run_due};
 use norn_cell::engine::{
     EngineFault, EngineFaultKind, FaultEngine, FaultSwitch, NativeEngine, SqlEngine,
@@ -29,10 +30,6 @@ use norn_cell::{CellStore, MAIN_WORLD, StoreOptions};
 use norn_cell_do::principal::FixturePrincipals;
 use norn_kernel::LogicalTime;
 use serde_json::{Value, json};
-use step_cell::{
-    APPROVER, Cell, DERIVES_LOSS, FLOW_ID, MELT_ACTION, NAMES, NOW, OPERATOR, REVOKED, SCOPE, call,
-    call_with, cell_on, melt_body, melt_store_on,
-};
 
 const APPROVAL_ID: &str = "ops.melt_approval";
 

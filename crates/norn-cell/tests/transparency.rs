@@ -5,7 +5,7 @@
     reason = "test assertions"
 )]
 
-mod common;
+use super::common;
 
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::transparency::checkpoint_json;

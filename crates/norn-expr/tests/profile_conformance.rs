@@ -24,8 +24,7 @@
 //! zen adoption review's mandatory counterexamples, and the pin that ties
 //! `PROFILE.md`'s content to the profile id.
 
-mod support;
-
+use super::support::{Model, fields, roomy_limits};
 use norn_expr::check::{CHECKER_PROFILE, StructuralLimits, codes};
 use norn_expr::{
     EnvOptions, EvaluationBudget, ExprError, Expression, Number, Type, UnaryTest, Value,
@@ -33,7 +32,6 @@ use norn_expr::{
     validate_unary_evaluation_source,
 };
 use norn_ir::{ObjectTypeDef, ResourceLimitProfile, TimezonePolicy};
-use support::{Model, fields, roomy_limits};
 
 /// The Norn1 hash of `PROFILE.md`, pinned with the profile id: editing the
 /// profile without bumping `CHECKER_PROFILE` (and re-pinning) fails here.

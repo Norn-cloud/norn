@@ -36,9 +36,7 @@ use norn_kernel::{
 };
 use serde_json::{Value, json};
 
-#[path = "../../norn-api/tests/support/action_cell.rs"]
-mod action_cell;
-use action_cell::{DERIVES_LOSS, MELT, MELT_ACTION, OMITS_LOSS, melt_body, melt_store};
+use super::action_cell::{DERIVES_LOSS, MELT, MELT_ACTION, OMITS_LOSS, melt_body, melt_store};
 
 const OPERATOR: &str = "Bearer fixture:operator@demo";
 const VIEWER: &str = "Bearer fixture:viewer@demo";

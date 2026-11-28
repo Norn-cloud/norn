@@ -16,9 +16,7 @@
 #[path = "../../norn-cell/tests/support/mapped_cell.rs"]
 mod mapped_cell;
 
-#[path = "support/hosted_read.rs"]
-mod hosted_read;
-use hosted_read::Mapping;
+use super::hosted_read::Mapping;
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::inbox::{InboxQuery, NornInboxItem, get_inbox};

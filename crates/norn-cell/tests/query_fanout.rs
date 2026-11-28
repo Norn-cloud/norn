@@ -4,16 +4,16 @@
     missing_docs,
     reason = "QUERY-FANOUT native conformance"
 )]
-mod query_support;
+
+use super::query_support::WORLD;
+use super::query_support::fanout::{
+    Fixture, HOLDING, fanout_batch as batch, fanout_fixture as fixture, holding, tags,
+};
 use norn_cell::compute::{Engine, ivm::IncrementalQuestion, lineage::LineageDisclosure};
 use norn_cell::test_door::TestCommit as _;
 use norn_checker::metric::compute::{AMBIGUOUS_GRAIN, admit};
 use norn_ir::metric::{DimensionPath, QuestionDimension, SafeAggregation};
 use norn_ir::{Decimal, LinkId, PropertyId};
-use query_support::WORLD;
-use query_support::fanout::{
-    Fixture, HOLDING, fanout_batch as batch, fanout_fixture as fixture, holding, tags,
-};
 
 #[test]
 fn query_fanout_holding_80_with_two_tags_counts_once_and_equal_values_keep_distinct_ids() {

@@ -12,10 +12,9 @@
     reason = "dispatch correspondence"
 )]
 
-#[path = "support/step_cell.rs"]
-pub(super) mod step_cell;
+pub(super) use super::step_cell;
+use super::step_cell::{APPROVER, Cell, FLOW_ID, MEMBER, OPERATOR, SCOPE, call, call_with, cell};
 use serde_json::{Value, json};
-use step_cell::{APPROVER, Cell, FLOW_ID, MEMBER, OPERATOR, SCOPE, call, call_with, cell};
 
 /// Start `run` as `starter`, then have the approver approve it.
 fn start_and_approve(cell: &Cell, starter: Option<&str>, run: &str) -> Value {

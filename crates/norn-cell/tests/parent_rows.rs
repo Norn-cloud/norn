@@ -10,12 +10,8 @@
 //! Native SQLite integration coverage for atomic parent and ordered child-row
 //! action commits (#3254).
 
-mod common;
-#[allow(
-    dead_code,
-    reason = "shared quantity fixtures also serve other test targets"
-)]
-mod quantity_support;
+use super::common;
+use super::quantity_support;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{

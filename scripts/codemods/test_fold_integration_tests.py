@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -97,6 +98,7 @@ class AllowRatchetTests(unittest.TestCase):
             "norn-authoring",
             "norn-builtins",
             "norn-canonical",
+            "norn-checker-wasm",
             "norn-datalog",
             "norn-testkit",
         ):
@@ -105,6 +107,62 @@ class AllowRatchetTests(unittest.TestCase):
             generated = fold.suites_source(crate, crate.foldable(), {})
             self.assertNotIn("#![allow(", generated)
         self.assertTrue(fold._needs_suite_allows(fold.Crate("norn-api")))
+
+    def test_deduplicated_crates_drop_duplicate_mod_allow(self) -> None:
+        for crate_dir in (
+            "norn-api",
+            "norn-decisions",
+            "norn-expr",
+            "norn-formats",
+            "norn-ir",
+            "norn-projections",
+        ):
+            crate = fold.Crate(crate_dir)
+            self.assertFalse(fold._needs_duplicate_mod_allow(crate))
+            generated = fold.suites_source(crate, crate.foldable(), {})
+            self.assertNotIn("clippy::duplicate_mod", generated)
+        for crate_dir in ("norn-cell", "norn-cell-do", "norn-checker", "norn-kernel"):
+            crate = fold.Crate(crate_dir)
+            self.assertTrue(fold._needs_duplicate_mod_allow(crate))
+            generated = fold.suites_source(crate, crate.foldable(), {})
+            self.assertIn("clippy::duplicate_mod", generated)
+
+    def test_pinned_target_stays_outside_foldable_targets(self) -> None:
+        crate = fold.Crate("norn-checker-wasm")
+        names = [target["name"] for target in crate.foldable()]
+        self.assertNotIn("parity", names)
+        self.assertEqual(names, ["admit_question", "restatement"])
+
+    def test_shared_support_block_roundtrips_and_rejects_inner_attrs(self) -> None:
+        sample = (
+            "//! header\n"
+            "#![allow(\n"
+            "    dead_code,\n"
+            "    unreachable_pub,\n"
+            "    reason = \"each suite keeps the visibility it had as its own test binary\"\n"
+            ")]\n\n"
+            f"{fold.SHARED_SUPPORT_HEADER}\n"
+            "#[allow(\n"
+            "    clippy::expect_used,\n"
+            "    reason = \"shared fixture\"\n"
+            ")]\n"
+            "#[path = \"support/hosted_read.rs\"]\n"
+            "mod hosted_read;\n"
+            "use hosted_read::Mapping;\n\n"
+            "#[cfg(feature = \"native\")]\n"
+            "#[path = \"alpha.rs\"]\n"
+            "mod alpha;\n"
+        )
+        support = fold.parse_shared_support(sample)
+        self.assertEqual(support[0], fold.SHARED_SUPPORT_HEADER)
+        self.assertEqual(fold.shared_support_names(support), {"hosted_read", "Mapping"})
+        parsed = fold.parse_suites(sample)
+        self.assertEqual(list(parsed.keys()), ["alpha"])
+        self.assertEqual(parsed["alpha"]["cfg"], 'feature = "native"')
+
+        bad = f"{fold.SHARED_SUPPORT_HEADER}\n#![allow(warnings)]\nmod support;\n"
+        with self.assertRaises(fold.Refused):
+            fold.parse_shared_support(bad)
 
     def test_uses_extern_crate_detects_real_shadowing_but_allows_local_module_import(self) -> None:
         self.assertTrue(fold.uses_extern_crate("use geo::Point;\n", "geo"))
@@ -192,6 +250,115 @@ class CommandAndFilterRewriteTests(unittest.TestCase):
             fold.module_cfg({"required-features": ["duckdb", "native"]}),
             'all(feature = "duckdb", feature = "native")',
         )
+
+    def test_shared_support_rejects_blank_line_use_and_grouped_use(self) -> None:
+        split_text = (
+            f"{fold.SHARED_SUPPORT_HEADER}\n"
+            "mod query_support;\n"
+            "\n"
+            "use query_support::governed;\n"
+            '#[path = "a.rs"]\n'
+            "mod a;\n"
+        )
+        with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(split_text)
+        before_marker = (
+            "use query_support::governed;\n"
+            f"{fold.SHARED_SUPPORT_HEADER}\n"
+            "mod query_support;\n"
+        )
+        with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(before_marker)
+        helper_after_blank = (
+            f"{fold.SHARED_SUPPORT_HEADER}\n"
+            "mod query_support;\n"
+            "\n"
+            "mod extra_helper;\n"
+            '#[path = "a.rs"]\n'
+            "mod a;\n"
+        )
+        with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(helper_after_blank)
+        with self.assertRaises(fold.Refused):
+            fold.shared_support_names([fold.SHARED_SUPPORT_HEADER, "use query_support::{governed, other};"])
+        with self.assertRaises(fold.Refused):
+            fold.shared_support_names([fold.SHARED_SUPPORT_HEADER, "#[cfg(test)] use fixture::{Helper, Other};"])
+        self.assertEqual(
+            fold.shared_support_names([fold.SHARED_SUPPORT_HEADER, "#[cfg(test)] mod helper;"]),
+            {"helper"},
+        )
+        for bad in (
+            '#[cfg(\n    test\n)] use std::sync::Once;\n#[path = "a.rs"]\nmod a;\n',
+            f'#![allow(unused_imports)] use std::sync::Once;\n{fold.SHARED_SUPPORT_HEADER}\nmod h;\n',
+            f'{fold.SHARED_SUPPORT_HEADER}\nmod h;\n\n#[cfg(test)] #[test] fn smoke() {{}}\n#[path = "a.rs"]\nmod a;\n',
+            f'{fold.SHARED_SUPPORT_HEADER}\nmod h;\n\n#[path = "a.rs"]\n#[cfg(feature = "extra")] mod a;\n',
+            '#! [allow(\n dead_code\n) ]\n#[test]\nfn smoke() {}\n/*\n)]\n//! */\n#[path = "a.rs"]\nmod a;\n',
+            '#[allow(\n dead_code\n) ]\n#[test]\nfn smoke() {}\n/*\n)]\n//! */\n#[path = "a.rs"]\nmod a;\n',
+            '#!allow_bad\n',
+            '#[cfg(test)] #[test] fn smoke() {} #[cfg(test)]\n#[path = "a.rs"]\nmod a;\n',
+            '#[cfg(feature = "a")]\n#[path = "a.rs"]\nmod a;\n#[cfg(not(feature = "a"))]\n#[path = "a.rs"]\nmod a;\n',
+        ):
+            with self.assertRaises(fold.Refused):
+                fold.split_suites_sections(bad)
+        with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(
+                '#![allow(\n dead_code\n) ]\n#[test]\nfn smoke() {}\n/*\n)]\n//! */\n#[path = "a.rs"]\nmod a;\n'
+            )
+        with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(
+                '#![allow(\n    reason = "x\\"\n)]\n//! ")] #[test] fn smoke() {}\n#[path = "a.rs"]\nmod a;\n'
+            )
+        with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(
+                '#[cfg(test /* )]\n#[path = "a.rs"]\nmod a;\n// */ )] #[test] fn smoke() {}\n#[path = "b.rs"]\nmod b;\n'
+            )
+        with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(
+                '// comment\x0c#[cfg(any())]\n#[path = "a.rs"]\nmod a;\n'
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            crate_dir = root / "crates" / "demo"
+            (crate_dir / "tests").mkdir(parents=True)
+            (crate_dir / "tests" / "a.rs").write_text("#[test] fn t() {}\n")
+            (crate_dir / "tests" / "suites.rs").write_bytes(
+                b'// comment\r#[cfg(any())]\n#[path = "a.rs"]\nmod a;\n'
+            )
+            (crate_dir / "Cargo.toml").write_text(
+                '[package]\nname = "demo"\nautotests = false\n\n'
+                '[[test]]\nname = "suites"\npath = "tests/suites.rs"\n'
+            )
+            orig_root = fold.ROOT
+            try:
+                fold.ROOT = root
+                with self.assertRaises(fold.Refused):
+                    fold.Crate("demo")
+            finally:
+                fold.ROOT = orig_root
+        with self.assertRaises(fold.Refused):
+            fold.shared_support_names(
+                [fold.SHARED_SUPPORT_HEADER, "use helpers::first; use helpers::second;"]
+            )
+
+    def test_pinned_target_requires_explicit_manifest_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            crate_dir = root / "crates" / "norn-checker-wasm"
+            (crate_dir / "tests").mkdir(parents=True)
+            (crate_dir / "tests" / "parity.rs").write_text("#[test] fn p() {}\n")
+            (crate_dir / "tests" / "suites.rs").write_text("")
+            (crate_dir / "Cargo.toml").write_text(
+                '[package]\nname = "norn-checker-wasm"\nautotests = false\n\n'
+                '[[test]]\nname = "suites"\npath = "tests/suites.rs"\n'
+            )
+            orig_root = fold.ROOT
+            try:
+                fold.ROOT = root
+                crate = fold.Crate("norn-checker-wasm")
+                with self.assertRaises(fold.Refused):
+                    crate.foldable()
+            finally:
+                fold.ROOT = orig_root
 
 
 if __name__ == "__main__":

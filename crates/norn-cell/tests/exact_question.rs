@@ -4,10 +4,10 @@
     missing_docs,
     reason = "native query conformance"
 )]
-mod query_support;
+
+use super::query_support::*;
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellError, CommitBatch, compute::Freshness};
-use query_support::*;
 
 /// [`query_support::load_batch`], committed raw (this suite is compiled in
 /// the crate, #1485 S6).
