@@ -9,7 +9,7 @@ use std::process::Command;
 use std::time::Instant;
 
 /// Every task a plan can select, in the planner's order.
-const TASKS: [&str; 23] = [
+const TASKS: [&str; 26] = [
     "test/heavy-1",
     "test/heavy-2",
     "test/heavy-3",
@@ -19,6 +19,9 @@ const TASKS: [&str; 23] = [
     "test/rest-1",
     "test/rest-2",
     "test/rest-3",
+    "test/rest-4",
+    "test/rest-5",
+    "test/rest-6",
     "phase/doctest",
     "phase/features",
     "phase/duckdb",
@@ -38,8 +41,8 @@ const TASKS: [&str; 23] = [
 /// by `scripts/bundle_durations.py` (never by hand). The hosted planner in core.sh reads the
 /// same file.
 const DURATIONS: &str = include_str!("bundle-durations.json");
-const TARGET_SECONDS: u32 = 660;
-const MAX_BUNDLES: usize = 6;
+const TARGET_SECONDS: u32 = 300;
+const MAX_BUNDLES: usize = 8;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -712,15 +715,15 @@ mod tests {
     // Byte-for-byte outputs from core.sh: full, norn-api, and norn-cell affected plans.
     const PYTHON_PLANS: &[&str] = &[
         concat!(
-            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["phase/integration-authoring", "phase/wasm"]}, {"id": "b1", "tasks": ["phase/browser", "phase/rivet", "phase/doctest"]}, {"id": "b2", "tasks": ["test/rest-2", "test/heavy-2", "test/heavy-3", "test/heavy-6", "test/heavy-5", "phase/integration-clients"]}, {"id": "b3", "tasks": ["test/rest-3", "phase/duckdb", "phase/doc"]}, {"id": "b4", "tasks": ["phase/integration-wasm", "phase/features"]}, {"id": "b5", "tasks": ["test/rest-1", "phase/guards", "test/heavy-1", "test/heavy-4", "phase/test-shards", "phase/clippy", "phase/provenance"]}]}"#,
+            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3", "rest-4", "rest-5", "rest-6"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 6, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["phase/integration-authoring", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/browser", "phase/doc"]}, {"id": "b2", "tasks": ["phase/integration-wasm", "phase/rivet"]}, {"id": "b3", "tasks": ["phase/guards", "test/heavy-2", "phase/clippy"]}, {"id": "b4", "tasks": ["phase/features", "phase/duckdb"]}, {"id": "b5", "tasks": ["test/rest-1", "test/rest-4", "test/heavy-3", "phase/doctest"]}, {"id": "b6", "tasks": ["test/rest-2", "test/rest-5", "test/heavy-6", "phase/integration-clients"]}, {"id": "b7", "tasks": ["test/rest-3", "test/rest-6", "test/heavy-1", "test/heavy-4", "test/heavy-5", "phase/test-shards", "phase/wasm"]}]}"#,
             "\n"
         ),
         concat!(
-            r#"{"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy", "doc", "rivet"], "packages": "norn-api norn-cell-do norn-cli", "rest_shards": 1, "reason": "changed: norn-api", "bundle": [{"id": "b0", "tasks": ["test/rest-1", "phase/clippy", "phase/doc"]}, {"id": "b1", "tasks": ["phase/guards", "phase/rivet", "phase/provenance"]}]}"#,
+            r#"{"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy", "doc", "rivet"], "packages": "norn-api norn-cell-do norn-cli", "rest_shards": 1, "reason": "changed: norn-api", "bundle": [{"id": "b0", "tasks": ["phase/guards", "phase/provenance"]}, {"id": "b1", "tasks": ["test/rest-1", "phase/doc"]}, {"id": "b2", "tasks": ["phase/rivet", "phase/clippy"]}]}"#,
             "\n"
         ),
         concat!(
-            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "doc", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["test/rest-2", "test/heavy-5", "phase/doc"]}, {"id": "b1", "tasks": ["test/rest-3", "test/heavy-6", "phase/provenance"]}, {"id": "b2", "tasks": ["test/rest-1", "test/heavy-2"]}, {"id": "b3", "tasks": ["phase/guards", "phase/rivet"]}, {"id": "b4", "tasks": ["phase/duckdb", "test/heavy-3", "test/heavy-4", "phase/clippy"]}]}"#,
+            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3", "rest-4", "rest-5", "rest-6"], "phase": ["guards", "provenance", "clippy", "doc", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 6, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["phase/guards", "phase/provenance"]}, {"id": "b1", "tasks": ["test/rest-1", "test/heavy-2"]}, {"id": "b2", "tasks": ["test/rest-2", "test/heavy-3"]}, {"id": "b3", "tasks": ["test/rest-3", "test/heavy-6"]}, {"id": "b4", "tasks": ["test/rest-4", "test/heavy-4"]}, {"id": "b5", "tasks": ["test/rest-5", "test/heavy-5", "phase/doc"]}, {"id": "b6", "tasks": ["test/rest-6", "phase/clippy"]}, {"id": "b7", "tasks": ["phase/duckdb", "phase/rivet"]}]}"#,
             "\n"
         ),
         concat!(
@@ -748,7 +751,7 @@ mod tests {
     /// `MAX_BUNDLES` non-empty bundles.
     #[test]
     fn packing_runs_every_planned_task_exactly_once() {
-        const BEFORE: [&str; 23] = [
+        const BEFORE: [&str; 26] = [
             "phase/browser",
             "phase/clippy",
             "phase/doc",
@@ -772,8 +775,11 @@ mod tests {
             "test/rest-1",
             "test/rest-2",
             "test/rest-3",
+            "test/rest-4",
+            "test/rest-5",
+            "test/rest-6",
         ];
-        const SUBSETS: u32 = 1 << 23;
+        const SUBSETS: u32 = 1 << 26;
         let mut inventory = TASKS.to_vec();
         inventory.sort_unstable();
         assert_eq!(inventory, BEFORE);
@@ -828,7 +834,7 @@ mod tests {
                 extra: BTreeMap::new(),
             };
             assert_eq!(packed(&plan), planned(&plan), "{mask:#x}");
-            mask = mask.saturating_add(37_777);
+            mask = mask.saturating_add(302_217);
         }
     }
 

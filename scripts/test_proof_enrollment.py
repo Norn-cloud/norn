@@ -248,7 +248,7 @@ class AffectedPlanTests(unittest.TestCase):
         self.assertEqual(combined["mode"], "affected")
         self.assertIn("heavy-1", combined["shard"])
         self.assertIn("heavy-3", combined["shard"])
-        self.assertEqual(combined["rest_shards"], 3)
+        self.assertEqual(combined["rest_shards"], 6)
         # norn-cell and norn-expr reach norn-checker-wasm, so the Studio browser rows run (#1113).
         # norn-cell is reached, so the DuckDB backend is built and tested too (#1206), and so is
         # the Rivet host's own workspace, which builds norn-cell by path (D131). Any reached Rust
@@ -343,8 +343,8 @@ class AffectedPlanTests(unittest.TestCase):
         expected = ["test/" + value for value in self.full["shard"]]
         expected += ["phase/" + value for value in self.full["phase"]]
         self.assertEqual(sorted(task for bundle in self.full["bundle"] for task in bundle["tasks"]), sorted(expected))
-        # Each bundle is one Boat start: the full plan fills the six-bundle budget exactly.
-        self.assertEqual(len(self.full["bundle"]), 6)
+        # Each bundle is one Boat start: the full plan fills the eight-bundle budget exactly.
+        self.assertEqual(len(self.full["bundle"]), 8)
         self.assertTrue(all(len(bundle["tasks"]) >= 2 for bundle in self.full["bundle"]))
         reordered = copy.deepcopy(self.full)
         reordered["shard"].reverse()

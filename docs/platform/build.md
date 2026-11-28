@@ -47,7 +47,7 @@ cargo build --config 'profile.dev.debug=true' --config 'profile.dev.package."*".
 
 ## Optional: a faster linker
 
-This is a local speed-up only. CI does not use it, and nothing in the repository turns it on. Linking with mold or wild can cut link time on large test binaries.
+CI uses `mold@3.0.0` (installed via `taiki-e/install-action` and scoped to `x86_64-unknown-linux-gnu` via `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C linker-features=-lld -C link-arg=-fuse-ld=mold"` in `.github/workflows/ci-policy.yml`, leaving `wasm32-unknown-unknown` builds untouched). Locally, fast linking remains opt-in and nothing in `.cargo/config.toml` turns it on. Linking with mold or wild can cut link time on large test binaries.
 
 Keep it scoped to one command. Do not add a linker to `.cargo/config.toml` in the repository, and do not export `RUSTFLAGS` in your shell profile: changing `RUSTFLAGS` changes Cargo's fingerprints, so every build that does not set the same flags rebuilds from scratch.
 
