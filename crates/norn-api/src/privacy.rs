@@ -24,11 +24,11 @@
 pub mod disclosure;
 
 pub use disclosure::{
-    DisclosedAnswer, DisclosedDocument, DisclosedObject, DisclosedObjectFindings,
-    DisclosedObjectHistory, DisclosedObjectLinks, DisclosedObjectPage, DisclosedObjectQueryPage,
-    DisclosedObjectVersion, DisclosedQuarantinedPage, DisclosedQueriedObject,
-    DisclosedSourceLineage, DisclosedTrace, DisclosedTransformLineage, DisclosedTransformPage,
-    serialize_disclosed,
+    DisclosedAnswer, DisclosedDocument, DisclosedForkAnswer, DisclosedObject,
+    DisclosedObjectFindings, DisclosedObjectHistory, DisclosedObjectLinks, DisclosedObjectPage,
+    DisclosedObjectQueryPage, DisclosedObjectVersion, DisclosedQuarantinedPage,
+    DisclosedQueriedObject, DisclosedSourceLineage, DisclosedTrace, DisclosedTransformLineage,
+    DisclosedTransformPage, serialize_disclosed,
 };
 
 use std::collections::BTreeMap;

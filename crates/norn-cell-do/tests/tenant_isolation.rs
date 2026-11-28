@@ -804,20 +804,25 @@ fn every_mcp_tool_has_a_row() {
 // ----------------------------------------------------------------- outsider
 
 /// The principals of another tenant, and of nobody, as B's host sees them.
-fn outsiders() -> Vec<Option<String>> {
-    let forged = SigningKey::from_bytes(&[9; 32]);
-    let b = seed::demo_scope().org_id;
-    vec![
-        None,
-        Some(user("org_a", "owner")),
-        Some(user("org_a", "admin")),
-        Some(user("org_a", "member")),
-        Some(user("org_a", "viewer")),
-        Some(signed(&key(), "service", "org_a", "owner")),
-        // B's own organization, signed by a key B's issuer never published.
-        Some(signed(&forged, "user", &b, "owner")),
-        Some("Bearer nonsense".to_owned()),
-    ]
+fn outsiders() -> &'static [Option<String>] {
+    static OUTSIDERS: std::sync::OnceLock<Vec<Option<String>>> = std::sync::OnceLock::new();
+    OUTSIDERS
+        .get_or_init(|| {
+            let forged = SigningKey::from_bytes(&[9; 32]);
+            let b = seed::demo_scope().org_id;
+            vec![
+                None,
+                Some(user("org_a", "owner")),
+                Some(user("org_a", "admin")),
+                Some(user("org_a", "member")),
+                Some(user("org_a", "viewer")),
+                Some(signed(&key(), "service", "org_a", "owner")),
+                // B's own organization, signed by a key B's issuer never published.
+                Some(signed(&forged, "user", &b, "owner")),
+                Some("Bearer nonsense".to_owned()),
+            ]
+        })
+        .as_slice()
 }
 
 /// A's principals at B, on every row and query: exactly a vacant scope's
