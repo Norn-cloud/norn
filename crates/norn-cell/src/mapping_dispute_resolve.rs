@@ -603,6 +603,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let suppressed_by_delete = !incoming.records.is_empty()
             && !incoming_claims.is_empty()
             && crate::mapping_delete::has_newer_or_incomparable_landed_delete(self, incoming)?;
+        let stale_delete = !incoming.deletes.is_empty()
+            && crate::mapping_delete::has_newer_or_incomparable_landed_source_version(
+                self, incoming,
+            )?;
         for mut claim in incoming_claims {
             if suppressed_by_delete {
                 break;
@@ -632,6 +636,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             withdrawal.supersedes = correction_supersedes(&contribution)?;
             scope.sources.insert(withdrawal.source_key.clone());
             fresh_claims.push((withdrawal, event_keys.clone()));
+        }
+        if stale_delete || suppressed_by_delete {
+            return Ok(fresh_claims);
         }
         let mut withdrawn = BTreeSet::new();
         for row in active_event_claims {

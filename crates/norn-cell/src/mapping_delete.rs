@@ -204,14 +204,18 @@ fn has_newer_or_incomparable_landed<E: SqlEngine>(
     )? {
         return Ok(true);
     }
-    // Match `_norn_inbox/source_event`'s exact partial-index predicate and
-    // leading 4 columns `(connectorInstance, partition, source, source_id)` so
-    // SQLite uses an index range scan instead of scanning `_norn_inbox`.
+    // Use `_norn_inbox/source_delete` when `deletes_only` (O(log D), zero rows
+    // on monotonic upsert histories) or `_norn_inbox/source_event` otherwise.
+    let kind_filter = if deletes_only {
+        " AND json_extract(i.\"observed\", '$.input.raw.kind') = 'delete'"
+    } else {
+        ""
+    };
     let rows = reader.conn.query(
         &format!(
             "SELECT i.\"observation_id\", i.\"observed\", i.\"consumed_commit_seq\" \
              FROM \"{inbox}\" i \
-             WHERE i.\"observation_id\" LIKE 'mapping-bundle:%' \
+             WHERE i.\"observation_id\" LIKE 'mapping-bundle:%'{kind_filter} \
                AND json_extract(i.\"observed\", '$.input.input.connectorInstance') = ?1 \
                AND json_extract(i.\"observed\", '$.input.input.partition') = ?2 \
                AND json_extract(i.\"observed\", '$.input.raw.source') = ?3 \
@@ -274,14 +278,68 @@ fn map_corrupt_err(err: CellError, corrupt: &dyn Fn(&str) -> CellError) -> CellE
 /// corrupted to hide a newer landed upsert, no-op observation, or tombstone
 /// delete, every candidate commit is authenticated directly from `_norn_receipt`
 /// and `_norn_export_journal`.
-fn has_newer_subject_history_bundle<E: SqlEngine>(
+fn collect_delete_history_commits<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     bundle: &crate::mapping_bundle::MappingBundle,
-    source: &str,
-    source_id: &str,
-    incoming_version: &norn_ir::SourceVersion,
-    deletes_only: bool,
-) -> Result<bool, CellError> {
+) -> Result<std::collections::BTreeSet<i64>, CellError> {
+    let mut commits = std::collections::BTreeSet::new();
+    for (ty, key) in bundle
+        .deletes
+        .iter()
+        .map(|d| (d.object_type.as_str(), d.key.as_str()))
+        .chain(
+            bundle
+                .records
+                .iter()
+                .map(|r| (r.object_type.as_str(), r.key.as_str())),
+        )
+    {
+        let buried = tombstone_key(&FactKey::new(ty, key));
+        let rows = reader.conn.query(
+            &format!(
+                "SELECT DISTINCT \"commit_seq\" FROM \"{}\" \
+                 WHERE \"world\" = ?1 AND \"id\" = ?2 AND \"object_type\" = ?3",
+                crate::system::FACT_VALUES,
+            ),
+            crate::engine::params![crate::MAIN_WORLD, buried.key, buried.object_type.as_str()],
+        )?;
+        for raw in rows {
+            commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
+        }
+    }
+    let del_events = reader.conn.query(
+        &format!(
+            "SELECT DISTINCT \"commit_seq\" FROM \"{}\" \
+             WHERE \"world\" = ?1 AND json_extract(\"event\", '$.op') = 'observed_deleted'",
+            crate::system::LEDGER,
+        ),
+        crate::engine::params![crate::MAIN_WORLD],
+    )?;
+    for raw in del_events {
+        commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
+    }
+    commits.extend(reader.withdrawal_claim_commits()?);
+    let zero_writes = reader.conn.query(
+        &format!(
+            "SELECT \"commit_seq\" FROM \"{}\" \
+             WHERE \"world\" = ?1 \
+               AND json_extract(\"receipt\", '$.consumed.kind') = 'observation' \
+               AND json_array_length(json_extract(\"receipt\", '$.written')) = 0",
+            crate::system::RECEIPT,
+        ),
+        crate::engine::params![crate::MAIN_WORLD],
+    )?;
+    for raw in zero_writes {
+        commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
+    }
+    Ok(commits)
+}
+
+fn collect_full_history_commits<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    bundle: &crate::mapping_bundle::MappingBundle,
+) -> Result<std::collections::BTreeSet<i64>, CellError> {
+    let mut commits = std::collections::BTreeSet::new();
     let mut subject_keys: Vec<(String, String)> = Vec::new();
     for (ty, key) in bundle
         .deletes
@@ -298,20 +356,18 @@ fn has_newer_subject_history_bundle<E: SqlEngine>(
         let buried = tombstone_key(&FactKey::new(ty, key));
         subject_keys.push((buried.object_type.as_str().to_owned(), buried.key));
     }
-    let mut candidate_commits = std::collections::BTreeSet::new();
     for (object_type, key) in &subject_keys {
-        let commit_rows = reader.conn.query(
+        for raw in reader.conn.query(
             &format!(
                 "SELECT DISTINCT \"commit_seq\" FROM \"{}\" \
                  WHERE \"world\" = ?1 AND \"id\" = ?2 AND \"object_type\" = ?3",
                 crate::system::FACT_VALUES,
             ),
             crate::engine::params![crate::MAIN_WORLD, key, object_type],
-        )?;
-        for raw in commit_rows {
-            candidate_commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
+        )? {
+            commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
         }
-        let deleted_rows = reader.conn.query(
+        for raw in reader.conn.query(
             &format!(
                 "SELECT DISTINCT \"commit_seq\" FROM \"{}\" \
                  WHERE \"world\" = ?1 \
@@ -321,12 +377,11 @@ fn has_newer_subject_history_bundle<E: SqlEngine>(
                 crate::system::LEDGER,
             ),
             crate::engine::params![crate::MAIN_WORLD, object_type, key],
-        )?;
-        for raw in deleted_rows {
-            candidate_commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
+        )? {
+            commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
         }
     }
-    let noop_rows = reader.conn.query(
+    for raw in reader.conn.query(
         &format!(
             "SELECT \"commit_seq\" FROM \"{}\" \
              WHERE \"world\" = ?1 \
@@ -336,10 +391,25 @@ fn has_newer_subject_history_bundle<E: SqlEngine>(
             crate::system::RECEIPT,
         ),
         crate::engine::params![crate::MAIN_WORLD],
-    )?;
-    for raw in noop_rows {
-        candidate_commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
+    )? {
+        commits.insert(crate::engine::SqlRow(raw).get::<i64>(0)?);
     }
+    Ok(commits)
+}
+
+fn has_newer_subject_history_bundle<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    bundle: &crate::mapping_bundle::MappingBundle,
+    source: &str,
+    source_id: &str,
+    incoming_version: &norn_ir::SourceVersion,
+    deletes_only: bool,
+) -> Result<bool, CellError> {
+    let candidate_commits = if deletes_only {
+        collect_delete_history_commits(reader, bundle)?
+    } else {
+        collect_full_history_commits(reader, bundle)?
+    };
     for seq_i64 in candidate_commits {
         let seq_u64 = u64::try_from(seq_i64).map_err(|err| CellError::LedgerCorrupt {
             seq: 0,
@@ -724,14 +794,26 @@ pub(crate) fn verify_delete_and_tombstone_eligibility<E: 'static, C, I, S: SqlEn
             CellError::SourceEvidenceChanged,
         ));
     }
-    let has_record_create = bundle.records.iter().any(|record| {
+    let mut has_record_create = false;
+    for record in &bundle.records {
         let target_key = FactKey::new(record.object_type.as_str(), &record.key);
-        commit.writes.iter().any(|w| {
-            w.key == target_key
-                && w.expected == FactVersion::ABSENT
-                && matches!(w.mutation, norn_kernel::FactMutation::Put { .. })
-        })
-    });
+        let puts_record = commit.writes.iter().any(|w| {
+            w.key == target_key && matches!(w.mutation, norn_kernel::FactMutation::Put { .. })
+        });
+        if puts_record
+            && reader
+                .object(
+                    crate::MAIN_WORLD,
+                    target_key.object_type.as_str(),
+                    &target_key.key,
+                )
+                .map_err(norn_kernel::CommitError::Host)?
+                .is_none()
+        {
+            has_record_create = true;
+            break;
+        }
+    }
     if has_record_create
         && has_newer_or_incomparable_landed_delete(reader, bundle)
             .map_err(norn_kernel::CommitError::Host)?

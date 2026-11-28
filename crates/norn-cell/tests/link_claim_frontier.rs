@@ -3290,3 +3290,103 @@ fn delete_before_create_blocks_stale_upsert_and_allows_newer_upsert() {
         BTreeSet::from(["demo/party/c".to_owned()])
     );
 }
+
+/// #1549 / #1028: Resolving a conflicting stale v2 delete (reusing v1's event ID)
+/// via `AcceptSecondAsCorrection` after a v3 property-only patch must succeed
+/// without emitting a blocked withdrawal and preserve both the v1 link and v3 patch.
+#[test]
+fn stale_delete_conflict_correction_resolves_cleanly_and_preserves_live_link() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("stale_delete_conflict_correction.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", Some("demo/party/b"));
+    let a_v3 = party_ref_row("P-A", "demo/party/a", "A v3 patched", None);
+    let del_v2 = party_ref_row("P-A", "demo/party/a", "A v2 del", None);
+    land_party(&mut cell, &b, "eb", "1", "p1");
+    land_party(&mut cell, &a_v1, "e1", "1", "p1");
+    land_party(&mut cell, &a_v3, "e3", "3", "p1");
+
+    // Conflicting v2 delete reuses v1's event ID `e1`.
+    let (raw_del, input_del) = raw_event(&cell, "erpnext", &del_v2, "e1", "2", "delete", "p1");
+    let (conflict_id, ins) = cell
+        .inject_mapping_bundle(&raw_del, &input_del)
+        .expect("inject conflict delete");
+    assert!(ins && conflict_id.starts_with("mapping-conflict:"));
+
+    resolve_dispute(
+        &mut cell,
+        &conflict_id,
+        DisputeDecision::AcceptSecondAsCorrection,
+        "ops:dana",
+        "resolve stale delete conflict",
+    );
+    assert_eq!(quarantine_count(&cell), 0);
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+    let party_a = cell
+        .store()
+        .read()
+        .object(MAIN_WORLD, "canon.Party", "demo/party/a")
+        .expect("read a")
+        .expect("party a stays live");
+    assert_eq!(
+        party_a
+            .values
+            .get("display_name")
+            .and_then(RuntimeValue::as_str),
+        Some("A v3 patched")
+    );
+}
+
+/// #1549: A physically deleted key retains a nonzero version; a stale upsert
+/// prepared after a physical removal must still be blocked by the delete guard
+/// when a newer source delete has landed.
+#[test]
+fn stale_upsert_cannot_recreate_physically_removed_key_after_newer_delete() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("physically_removed_recreate.sqlite");
+    let mut cell = setup_with(&path, linkless_parties);
+
+    let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", None);
+    land_party(&mut cell, &a_v1, "e1", "1", "p1");
+
+    // Physically delete `demo/party/a` via `CellHost::commit` so its version stays nonzero.
+    let mut del_commit = norn_kernel::CellCommit::empty();
+    del_commit.writes.push(norn_kernel::FactWrite {
+        key: FactKey::new("canon.Party", "demo/party/a"),
+        expected: norn_kernel::FactVersion(1),
+        mutation: norn_kernel::FactMutation::Delete,
+    });
+    norn_kernel::CellHost::commit(&mut cell, del_commit).expect("physical delete");
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, "canon.Party", "demo/party/a")
+            .expect("read")
+            .is_none()
+    );
+    assert!(
+        cell.store()
+            .read()
+            .version(MAIN_WORLD, "canon.Party", "demo/party/a")
+            .expect("ver")
+            > 0
+    );
+
+    // Land a v3 no-op delete, then verify stale v2 upsert cannot recreate `demo/party/a`.
+    let del_v3 = party_ref_row("P-A", "demo/party/a", "A v3 del", None);
+    capture_kind(&mut cell, "erpnext", &del_v3, "ed3", "3", "delete", "p1");
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A stale v2", None);
+    land_party(&mut cell, &a_v2, "eu2", "2", "p1");
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, "canon.Party", "demo/party/a")
+            .expect("read after stale v2")
+            .is_none()
+    );
+}

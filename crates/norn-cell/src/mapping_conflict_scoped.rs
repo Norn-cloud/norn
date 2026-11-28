@@ -949,3 +949,30 @@ pub(crate) fn record_commit_dispute_resolutions<E: SqlEngine>(
     }
     Ok(())
 }
+
+impl<E: SqlEngine> StoreReader<'_, E> {
+    /// Every recorded `mapping.dispute.resolve` decision.
+    ///
+    /// # Errors
+    /// Store query failures or unverified resolution index rows.
+    pub fn dispute_resolutions(
+        &self,
+    ) -> Result<Vec<crate::link_claim_frontier::DisputeResolutionRecord>, CellError> {
+        self.check_live()?;
+        let rows = self.conn.query(
+            &format!(
+                "SELECT \"dispute_id\", \"decision\", \"actor\", \"reason\", \"commit_seq\", \"receipt_hash\" \
+                 FROM \"{}\" ORDER BY \"commit_seq\", \"dispute_id\"",
+                crate::link_claim_frontier::DISPUTE_RESOLUTION
+            ),
+            params![],
+        )?;
+        rows.into_iter()
+            .map(|raw| {
+                let rec = decode_dispute_resolution_row(&SqlRow(raw))?;
+                self.verify_dispute_resolution_record(&rec)?;
+                Ok(rec)
+            })
+            .collect()
+    }
+}

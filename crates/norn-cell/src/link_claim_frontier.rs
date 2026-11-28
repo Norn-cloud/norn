@@ -52,6 +52,7 @@ pub(crate) const DDL: &[&str] = &[
     r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/source_role" ON "_norn_link_claim_frontier" ("source_key", "role", "commit_seq", "claim_ordinal") WHERE "active" = 1"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/target" ON "_norn_link_claim_frontier" ("target_key", "source_key", "role") WHERE "active" = 1 AND "target_key" IS NOT NULL"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/observation" ON "_norn_link_claim_frontier" ("observation_id")"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_link_claim_frontier/withdrawal" ON "_norn_link_claim_frontier" ("commit_seq") WHERE "target_key" IS NULL"#,
     r#"CREATE TABLE IF NOT EXISTS "_norn_dispute_resolution" (
   "dispute_id" TEXT NOT NULL PRIMARY KEY,
   "decision" TEXT NOT NULL CHECK ("decision" IN ('accept-first', 'accept-second-as-correction', 'reject')),
@@ -63,6 +64,8 @@ pub(crate) const DDL: &[&str] = &[
     r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/dispute_resolved" ON "_norn_ledger" ("world", json_extract("event", '$.disputeId'), "commit_seq") WHERE json_extract("event", '$.op') = 'dispute_resolved'"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/observed_deleted" ON "_norn_ledger" ("world", json_extract("event", '$.key.objectType'), json_extract("event", '$.key.key'), "commit_seq") WHERE json_extract("event", '$.op') = 'observed_deleted'"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_receipt/noop_observation" ON "_norn_receipt" ("world", "commit_seq") WHERE json_extract("receipt", '$.consumed.kind') = 'observation' AND (json_array_length(json_extract("receipt", '$.written')) = 0 OR json_extract("receipt", '$.consumed.observationId') LIKE 'mapping-page:%')"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_receipt/zero_write_obs" ON "_norn_receipt" ("world", "commit_seq") WHERE json_extract("receipt", '$.consumed.kind') = 'observation' AND json_array_length(json_extract("receipt", '$.written')) = 0"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_inbox/source_delete" ON "_norn_inbox" (json_extract("observed", '$.input.input.connectorInstance'), json_extract("observed", '$.input.input.partition'), json_extract("observed", '$.input.raw.source'), json_extract("observed", '$.input.raw.source_id')) WHERE "observation_id" LIKE 'mapping-bundle:%' AND json_extract("observed", '$.input.raw.kind') = 'delete' AND "consumed_commit_seq" IS NOT NULL"#,
 ];
 
 /// One row decoded from `_norn_link_claim_frontier`.
@@ -796,16 +799,16 @@ const SELECT_FRONTIER_COLS: &str = "\"claim_id\", \"contribution_id\", \"commit_
      \"source_version\", \"version_kind\", \"event_keys_json\", \"active\", \"claim_json\"";
 
 impl<E: SqlEngine> StoreReader<'_, E> {
-    pub(crate) fn ensure_frontier_consistent(&self) -> Result<(), CellError> {
+    pub(crate) fn ensure_frontier_consistent(&self) -> Result<Option<u64>, CellError> {
         self.check_live()?;
         let Some(scrub) = self.live_scrub.filter(|_| {
             self.conn.read_isolation() != crate::engine::ReadIsolation::ExclusiveSynchronous
         }) else {
-            return Ok(());
+            return Ok(None);
         };
-        let dv = self.conn.external_data_version().ok().flatten();
+        let dv = self.conn.external_data_version()?;
         if dv.is_some() && scrub.borrow().frontier_checked_dv() == dv {
-            return Ok(());
+            return Ok(dv);
         }
         if frontier_has_drift(self)? {
             return Err(CellError::LedgerCorrupt {
@@ -816,15 +819,35 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if let Some(dv) = dv {
             scrub.borrow_mut().set_frontier_checked_dv(dv);
         }
-        Ok(())
+        Ok(dv)
     }
 
-    fn query_frontier(
+    fn read_frontier_consistent<T>(
+        &self,
+        mut query: impl FnMut() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        for _ in 0..8 {
+            let dv_before = self.ensure_frontier_consistent()?;
+            let result = query()?;
+            let dv_after = dv_before
+                .map(|_| self.conn.external_data_version())
+                .transpose()?
+                .flatten();
+            if dv_after == dv_before {
+                return Ok(result);
+            }
+        }
+        Err(CellError::LedgerCorrupt {
+            seq: 0,
+            reason: "concurrent external writes prevented consistent frontier read".to_owned(),
+        })
+    }
+
+    fn query_frontier_raw(
         &self,
         where_clause: &str,
         bound: &[crate::engine::SqlValue],
     ) -> Result<Vec<FrontierRow>, CellError> {
-        self.ensure_frontier_consistent()?;
         let rows = self.conn.query(
             &format!(
                 "SELECT {SELECT_FRONTIER_COLS} FROM \"{LINK_CLAIM_FRONTIER}\" \
@@ -832,17 +855,34 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             ),
             bound,
         )?;
-        self.ensure_frontier_consistent()?;
         rows.into_iter().map(decode_frontier_row).collect()
     }
 
-    /// All committed link claims from `_norn_link_claim_frontier`.
+    fn query_frontier(
+        &self,
+        where_clause: &str,
+        bound: &[crate::engine::SqlValue],
+    ) -> Result<Vec<FrontierRow>, CellError> {
+        self.read_frontier_consistent(|| self.query_frontier_raw(where_clause, bound))
+    }
+
+    pub(crate) fn withdrawal_claim_commits(&self) -> Result<Vec<i64>, CellError> {
+        self.read_frontier_consistent(|| {
+            let rows = self.conn.query(
+                &format!(
+                    "SELECT DISTINCT \"commit_seq\" FROM \"{LINK_CLAIM_FRONTIER}\" \
+                     WHERE \"target_key\" IS NULL"
+                ),
+                params![],
+            )?;
+            rows.into_iter().map(|r| SqlRow(r).get::<i64>(0)).collect()
+        })
+    }
+
     pub(crate) fn all_frontier_claims(&self) -> Result<Vec<FrontierRow>, CellError> {
         self.query_frontier("", params![])
     }
 
-    /// All committed claims touching a specific canonical link endpoint pair
-    /// (both active and superseded, for `observed_link_provenance`).
     pub(crate) fn frontier_claims_for_endpoints(
         &self,
         source_key: &str,
@@ -855,42 +895,38 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )
     }
 
-    /// Active (`active = 1`) frontier claims touching `sources` or `targets`,
-    /// closed over every `(source_key, role)` group touched by a target match.
     pub(crate) fn active_frontier_for_scope(
         &self,
         sources: &BTreeSet<String>,
         targets: &BTreeSet<String>,
     ) -> Result<Vec<FrontierRow>, CellError> {
-        self.ensure_frontier_consistent()?;
-        let mut closed_sources = sources.clone();
-        if !targets.is_empty() {
-            let target_json = serde_json::to_string(targets)?;
-            let matched = self.conn.query(
-                &format!(
-                    "SELECT DISTINCT \"source_key\" FROM \"{LINK_CLAIM_FRONTIER}\" \
-                     WHERE \"active\" = 1 AND \"target_key\" IS NOT NULL \
-                       AND \"target_key\" IN (SELECT value FROM json_each(?1))"
-                ),
-                params![target_json],
-            )?;
-            for raw in matched {
-                let row = SqlRow(raw);
-                closed_sources.insert(row.get::<String>(0)?);
+        self.read_frontier_consistent(|| {
+            let mut closed_sources = sources.clone();
+            if !targets.is_empty() {
+                let target_json = serde_json::to_string(targets)?;
+                let matched = self.conn.query(
+                    &format!(
+                        "SELECT DISTINCT \"source_key\" FROM \"{LINK_CLAIM_FRONTIER}\" \
+                         WHERE \"active\" = 1 AND \"target_key\" IS NOT NULL \
+                           AND \"target_key\" IN (SELECT value FROM json_each(?1))"
+                    ),
+                    params![target_json],
+                )?;
+                for raw in matched {
+                    closed_sources.insert(SqlRow(raw).get::<String>(0)?);
+                }
             }
-        }
-        if closed_sources.is_empty() {
-            self.ensure_frontier_consistent()?;
-            return Ok(Vec::new());
-        }
-        let source_json = serde_json::to_string(&closed_sources)?;
-        self.query_frontier(
-            "WHERE \"active\" = 1 AND \"source_key\" IN (SELECT value FROM json_each(?1))",
-            params![source_json],
-        )
+            if closed_sources.is_empty() {
+                return Ok(Vec::new());
+            }
+            let source_json = serde_json::to_string(&closed_sources)?;
+            self.query_frontier_raw(
+                "WHERE \"active\" = 1 AND \"source_key\" IN (SELECT value FROM json_each(?1))",
+                params![source_json],
+            )
+        })
     }
 
-    /// Active (`active = 1`) frontier claims for one `contribution_id`.
     pub(crate) fn active_claims_for_contribution(
         &self,
         contribution_id: &str,
@@ -901,7 +937,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )
     }
 
-    /// Inactive (`active = 0`) frontier claims for one `contribution_id`.
     pub(crate) fn inactive_claims_for_contribution(
         &self,
         contribution_id: &str,
@@ -912,7 +947,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )
     }
 
-    /// Active (`active = 1`) frontier claims owned by `source_scope` for source deletes.
     pub(crate) fn active_claims_for_source_delete(
         &self,
         source_scope: &str,
@@ -927,7 +961,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )
     }
 
-    /// Active (`active = 1`) frontier claims matching NFC `event_keys`.
     pub(crate) fn active_claims_for_event_keys(
         &self,
         event_keys: &[String; 5],
@@ -937,29 +970,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             "WHERE \"active\" = 1 AND \"event_keys_json\" = ?1",
             params![keys_json],
         )
-    }
-
-    /// Every recorded `mapping.dispute.resolve` decision.
-    ///
-    /// # Errors
-    /// Store query failures or unverified resolution index rows.
-    pub fn dispute_resolutions(&self) -> Result<Vec<DisputeResolutionRecord>, CellError> {
-        self.check_live()?;
-        let rows = self.conn.query(
-            &format!(
-                "SELECT \"dispute_id\", \"decision\", \"actor\", \"reason\", \"commit_seq\", \"receipt_hash\" \
-                 FROM \"{DISPUTE_RESOLUTION}\" ORDER BY \"commit_seq\", \"dispute_id\""
-            ),
-            params![],
-        )?;
-        rows.into_iter()
-            .map(|raw| {
-                let rec =
-                    crate::mapping_conflict_scoped::decode_dispute_resolution_row(&SqlRow(raw))?;
-                self.verify_dispute_resolution_record(&rec)?;
-                Ok(rec)
-            })
-            .collect()
     }
 
     /// Look up the recorded resolution for one `dispute_id`, if resolved.
