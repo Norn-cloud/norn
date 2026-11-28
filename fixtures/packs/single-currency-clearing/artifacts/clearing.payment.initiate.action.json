@@ -1,0 +1,213 @@
+{
+  "artifactId": "clearing.payment.initiate.action",
+  "dependencies": [
+    {
+      "artifactId": "core.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "std.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Initiate pacs.008 payment instruction (maker)",
+  "namespace": "clearing",
+  "payload": {
+    "access": {
+      "artifactId": "clearing.usd.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "clearing.payment.initiate",
+    "createLinks": [
+      {
+        "link": "provider",
+        "targetIdField": "provider_id",
+        "targetType": "clearing.Participant"
+      },
+      {
+        "link": "receiver",
+        "targetIdField": "receiver_id",
+        "targetType": "clearing.Participant"
+      },
+      {
+        "link": "resource",
+        "targetIdField": "resource_id",
+        "targetType": "clearing.LiquidityBook"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "actor.subjectId",
+        "field": "maker_id",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "clearing.PaymentInstruction.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "clearing.PaymentInstruction",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "transfer_ownership",
+            "transfer_custody",
+            "consume",
+            "produce"
+          ],
+          "type": "string"
+        },
+        "amount_minor": {
+          "type": "string"
+        },
+        "creditor_bic": {
+          "type": "string"
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "debtor_bic": {
+          "type": "string"
+        },
+        "end_to_end_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "maker_id": {
+          "type": "string"
+        },
+        "message_profile": {
+          "enum": [
+            "pacs.008.001.10"
+          ],
+          "type": "string"
+        },
+        "msg_id": {
+          "type": "string"
+        },
+        "occurred_at": {
+          "type": "string"
+        },
+        "provider_id": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "string"
+        },
+        "receiver_id": {
+          "type": "string"
+        },
+        "resource_id": {
+          "type": "string"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "message_profile",
+        "msg_id",
+        "end_to_end_id",
+        "debtor_bic",
+        "creditor_bic",
+        "provider_id",
+        "receiver_id",
+        "resource_id",
+        "action",
+        "occurred_at",
+        "quantity",
+        "amount_minor",
+        "unit",
+        "currency",
+        "maker_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "provider_id"
+          }
+        },
+        "name": "provider",
+        "objectType": "clearing.Participant"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "receiver_id"
+          }
+        },
+        "name": "receiver",
+        "objectType": "clearing.Participant"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "resource_id"
+          }
+        },
+        "name": "resource",
+        "objectType": "clearing.LiquidityBook"
+      }
+    ],
+    "title": "Initiate pacs.008 payment instruction (maker)",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "clearing.PaymentInstruction"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/single-currency-clearing/artifacts/clearing.payment.initiate.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

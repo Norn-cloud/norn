@@ -1,0 +1,138 @@
+{
+  "artifactId": "clearing.payment.reserve.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Reserve USD clearing liquidity for approved payment",
+  "namespace": "clearing",
+  "payload": {
+    "access": {
+      "artifactId": "clearing.usd.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "clearing.payment.reserve",
+    "effectProgram": {
+      "entityArtifactId": "clearing.PaymentInstruction.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "id",
+      "objectKind": "clearing.PaymentInstruction",
+      "setFields": {
+        "reservation_id": "reservation_id"
+      },
+      "transition": "reserve"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_minor": {
+          "type": "string"
+        },
+        "balance_versions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "account": {
+                "type": "string"
+              },
+              "layer": {
+                "type": "string"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "account",
+              "unit",
+              "layer",
+              "version"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "reservation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "reservation_id",
+        "amount_minor",
+        "balance_versions"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "input.amount_minor == slice.payment.amount_minor"
+    ],
+    "quantityEffect": {
+      "balanceVersionsField": "balance_versions",
+      "ledgerId": "clearing_usd",
+      "operation": {
+        "kind": "reserve",
+        "parameters": {
+          "amount": {
+            "field": "amount_minor",
+            "scale": 2
+          }
+        },
+        "reservationIdField": "reservation_id",
+        "templateId": "usd_clearing_debit",
+        "ttlMs": 300000
+      }
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "id"
+          }
+        },
+        "name": "payment",
+        "objectType": "clearing.PaymentInstruction"
+      }
+    ],
+    "title": "Reserve USD clearing liquidity for approved payment",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "clearing.PaymentInstruction"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/single-currency-clearing/artifacts/clearing.payment.reserve.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

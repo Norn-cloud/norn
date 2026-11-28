@@ -1,0 +1,389 @@
+{
+  "artifactId": "clearing.PaymentInstruction.entity",
+  "dependencies": [
+    {
+      "artifactId": "core.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "std.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Pinned pacs.008.001.10 single-currency clearing instruction",
+  "namespace": "clearing",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        },
+        {
+          "name": "by_pacs008_msg",
+          "properties": [
+            "msg_id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.EconomicEvent"
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "completed",
+              "state": "settled"
+            },
+            {
+              "outcome": "compensated",
+              "state": "rejected"
+            },
+            {
+              "outcome": "cancelled",
+              "state": "expired"
+            }
+          ],
+          "immutable": [
+            "settled",
+            "rejected",
+            "expired"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "settled",
+            "rejected",
+            "expired"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "approve",
+              "to": "approved"
+            },
+            {
+              "from": [
+                "approved"
+              ],
+              "id": "reserve",
+              "to": "reserved"
+            },
+            {
+              "from": [
+                "reserved"
+              ],
+              "id": "settle",
+              "to": "settled"
+            },
+            {
+              "from": [
+                "draft",
+                "approved",
+                "reserved"
+              ],
+              "id": "reject",
+              "to": "rejected"
+            },
+            {
+              "from": [
+                "reserved"
+              ],
+              "id": "expire",
+              "to": "expired"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "provider",
+          "target": "clearing.Participant"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "receiver",
+          "target": "clearing.Participant"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "resource",
+          "target": "clearing.LiquidityBook"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "fulfils",
+          "target": "core.Commitment"
+        },
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "one"
+          },
+          "id": "reverses",
+          "target": "core.EconomicEvent"
+        }
+      ],
+      "name": "clearing.PaymentInstruction",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "message_profile",
+          "immutableAfterCreate": true,
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "pacs.008.001.10"
+              }
+            ]
+          }
+        },
+        {
+          "id": "msg_id",
+          "immutableAfterCreate": true,
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "end_to_end_id",
+          "immutableAfterCreate": true,
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "debtor_bic",
+          "immutableAfterCreate": true,
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "creditor_bic",
+          "immutableAfterCreate": true,
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "provider_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "receiver_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "resource_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "transfer_ownership",
+          "id": "action",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "transfer_ownership"
+              },
+              {
+                "value": "transfer_custody"
+              },
+              {
+                "value": "consume"
+              },
+              {
+                "value": "produce"
+              }
+            ]
+          }
+        },
+        {
+          "id": "occurred_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "quantity",
+          "immutableAfterCreate": true,
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.quantity",
+            "unitSource": [
+              "unit",
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "amount_minor",
+          "immutableAfterCreate": true,
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "immutableAfterCreate": true,
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "approved"
+              },
+              {
+                "value": "reserved"
+              },
+              {
+                "value": "settled"
+              },
+              {
+                "value": "rejected"
+              },
+              {
+                "value": "expired"
+              }
+            ]
+          }
+        },
+        {
+          "id": "maker_id",
+          "origin": "actor",
+          "protected": true,
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "screening_digest",
+          "origin": "receipt",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "screening_decision",
+          "origin": "receipt",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "clear"
+              },
+              {
+                "value": "hit"
+              },
+              {
+                "value": "error"
+              }
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "reservation_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "posting_id",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/single-currency-clearing/artifacts/clearing.PaymentInstruction.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

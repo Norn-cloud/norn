@@ -1,0 +1,254 @@
+{
+  "artifactId": "clearing.usd.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Single-currency USD clearing access policy",
+  "namespace": "clearing",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "clearing.usd.access",
+    "rules": [
+      {
+        "actions": [
+          "clearing.payment.initiate"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "maker"
+              ]
+            }
+          }
+        ],
+        "resourceType": "clearing.PaymentInstruction",
+        "ruleId": "makers_initiate",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "clearing.payment.approve",
+          "clearing.payment.reject"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "checker"
+              ]
+            }
+          }
+        ],
+        "resourceType": "clearing.PaymentInstruction",
+        "ruleId": "checkers_approve_or_reject",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "clearing.payment.reserve",
+          "clearing.payment.settle",
+          "clearing.payment.expire"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "clearing_operator"
+              ]
+            }
+          }
+        ],
+        "resourceType": "clearing.PaymentInstruction",
+        "ruleId": "operators_reserve_settle_expire",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "clearing.hold.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "clearing_operator"
+              ]
+            }
+          }
+        ],
+        "resourceType": "clearing.LiquidityHold",
+        "ruleId": "operators_record_hold",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "clearing.entry.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "clearing_operator"
+              ]
+            }
+          }
+        ],
+        "resourceType": "clearing.ClearingEntry",
+        "ruleId": "operators_record_entry",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "maker",
+                "checker",
+                "clearing_operator"
+              ]
+            }
+          }
+        ],
+        "resourceType": "clearing.PaymentInstruction",
+        "ruleId": "clearing_staff_read_payments",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "maker",
+                "checker",
+                "clearing_operator"
+              ]
+            }
+          }
+        ],
+        "resourceType": "clearing.Participant",
+        "ruleId": "clearing_staff_read_participants",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "maker",
+                "checker",
+                "clearing_operator"
+              ]
+            }
+          }
+        ],
+        "resourceType": "clearing.LiquidityBook",
+        "ruleId": "clearing_staff_read_books",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "maker",
+                "checker",
+                "clearing_operator"
+              ]
+            }
+          }
+        ],
+        "resourceType": "clearing.LiquidityHold",
+        "ruleId": "clearing_staff_read_holds",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "maker",
+                "checker",
+                "clearing_operator"
+              ]
+            }
+          }
+        ],
+        "resourceType": "clearing.ClearingEntry",
+        "ruleId": "clearing_staff_read_entries",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/single-currency-clearing/artifacts/clearing.usd.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
