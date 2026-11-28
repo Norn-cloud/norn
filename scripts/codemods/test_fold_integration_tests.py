@@ -109,7 +109,26 @@ class AllowRatchetTests(unittest.TestCase):
     def test_uses_extern_crate_detects_real_shadowing_but_allows_local_module_import(self) -> None:
         self.assertTrue(fold.uses_extern_crate("use geo::Point;\n", "geo"))
         self.assertTrue(fold.uses_extern_crate("use ::geo::Point;\n", "geo"))
+        self.assertTrue(fold.uses_extern_crate("use r#geo;\n", "geo"))
+        self.assertTrue(fold.uses_extern_crate("use ::r#geo::Point;\n", "geo"))
+        self.assertTrue(fold.uses_extern_crate("use {geo};\n", "geo"))
+        self.assertTrue(fold.uses_extern_crate("use {std::fmt, r#geo::Point};\n", "geo"))
+        self.assertTrue(fold.uses_extern_crate("use ::{std::fmt, {geo}};\n", "geo"))
+        self.assertTrue(fold.uses_extern_crate("extern crate geo;\n", "geo"))
         self.assertTrue(fold.uses_extern_crate("fn f() { let _ = geo::Point::new(0.0, 0.0); }\n", "geo"))
+        self.assertTrue(fold.uses_extern_crate("fn f() { let _ = r#geo::Point::new(0.0, 0.0); }\n", "geo"))
+        self.assertTrue(
+            fold.uses_extern_crate(
+                "#[cfg(any())]\nuse norn_builtins::geo;\nfn f() { let _ = geo::Point::new(0.0, 0.0); }\n",
+                "geo",
+            )
+        )
+        self.assertTrue(
+            fold.uses_extern_crate(
+                "use norn_builtins::geo::{self as g};\nfn f() { let _ = geo::Point::new(0.0, 0.0); }\n",
+                "geo",
+            )
+        )
         self.assertTrue(
             fold.uses_extern_crate(
                 "use norn_builtins::geo::{self, Foo};\nmod inner { fn f() { geo::call(); } }\n",
@@ -119,6 +138,12 @@ class AllowRatchetTests(unittest.TestCase):
         self.assertFalse(
             fold.uses_extern_crate(
                 "use norn_builtins::geo::{self, Foo};\nfn f() { geo::call(); }\n",
+                "geo",
+            )
+        )
+        self.assertFalse(
+            fold.uses_extern_crate(
+                "#![allow(unused)]\nuse norn_builtins::geo::{self, Foo};\nfn f() { geo::call(); }\n",
                 "geo",
             )
         )

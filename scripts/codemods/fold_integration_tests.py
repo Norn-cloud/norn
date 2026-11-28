@@ -358,6 +358,17 @@ def _tokenize_rust_code(text: str) -> list[tuple[str, int, int]]:
             elif ch == ":" and cursor + 1 < end and text[cursor + 1] == ":":
                 tokens.append(("::", cursor, cursor + 2))
                 cursor += 2
+            elif (
+                ch == "r"
+                and cursor + 2 < end
+                and text[cursor + 1] == "#"
+                and _is_rust_ident_char(text[cursor + 2])
+            ):
+                id_start = cursor
+                cursor += 3
+                while cursor < end and _is_rust_ident_char(text[cursor]):
+                    cursor += 1
+                tokens.append(("ident", id_start, cursor))
             elif _is_rust_ident_char(ch):
                 id_start = cursor
                 cursor += 1
@@ -409,85 +420,232 @@ def has_code_crate_path(text: str) -> bool:
     return False
 
 
+def _ident_name(word: str) -> str:
+    """Strip Rust's `r#` raw-identifier prefix when comparing identifier names."""
+    return word[2:] if word.startswith("r#") else word
+
+
+def _scan_use_statement(
+    text: str,
+    tokens: list[tuple[str, int, int]],
+    use_idx: int,
+    name: str,
+    *,
+    allow_local_binding: bool,
+) -> tuple[bool, bool, int]:
+    """Scan a `use ...;` statement starting at `use_idx`.
+
+    Returns `(references_extern, binds_name_locally, end_idx)` where `end_idx`
+    is the index of the terminating `;` (or last token if malformed).
+    """
+    cur_at_root = True
+    expect_segment = True
+    root_stack: list[bool] = []
+    # Track path prefix into brace groups so `...::<name>::{self, ...}` binds locally.
+    last_ident_was_name = False
+    last_ident_at_root = False
+    prefix_is_name_stack: list[bool] = []
+    binds_locally = False
+
+    cursor = use_idx + 1
+    while cursor < len(tokens):
+        kind, start, end = tokens[cursor]
+        if kind == "punct":
+            ch = text[start:end]
+            if ch == ";":
+                if (
+                    allow_local_binding
+                    and not root_stack
+                    and last_ident_was_name
+                    and not last_ident_at_root
+                ):
+                    binds_locally = True
+                return False, binds_locally, cursor
+            if ch == "{":
+                root_stack.append(cur_at_root)
+                prefix_is_name_stack.append(
+                    last_ident_was_name and not last_ident_at_root and not cur_at_root
+                )
+                expect_segment = True
+                last_ident_was_name = False
+                last_ident_at_root = False
+            elif ch == "}":
+                if root_stack:
+                    cur_at_root = root_stack.pop()
+                if prefix_is_name_stack:
+                    prefix_is_name_stack.pop()
+                expect_segment = False
+                last_ident_was_name = False
+                last_ident_at_root = False
+            elif ch == ",":
+                if root_stack:
+                    cur_at_root = root_stack[-1]
+                expect_segment = True
+                last_ident_was_name = False
+                last_ident_at_root = False
+            cursor += 1
+            continue
+        if kind == "::":
+            expect_segment = True
+            cursor += 1
+            continue
+        if kind == "ident":
+            word = _ident_name(text[start:end])
+            if word == "as":
+                # `...::geo as other` or `self as other` does not bind `geo`;
+                # `...::other as geo` binds `geo` locally if unattributed at top level.
+                last_ident_was_name = False
+                last_ident_at_root = False
+                expect_segment = False
+                if (
+                    allow_local_binding
+                    and cursor + 1 < len(tokens)
+                    and tokens[cursor + 1][0] == "ident"
+                    and _ident_name(text[tokens[cursor + 1][1] : tokens[cursor + 1][2]]) == name
+                ):
+                    binds_locally = True
+                cursor += 2
+                continue
+            if expect_segment:
+                if cur_at_root:
+                    if word == name:
+                        return True, False, cursor
+                    last_ident_was_name = False
+                    last_ident_at_root = True
+                    cur_at_root = False
+                else:
+                    if (
+                        allow_local_binding
+                        and word == "self"
+                        and prefix_is_name_stack
+                        and prefix_is_name_stack[-1]
+                    ):
+                        nxt_is_as = (
+                            cursor + 1 < len(tokens)
+                            and tokens[cursor + 1][0] == "ident"
+                            and text[tokens[cursor + 1][1] : tokens[cursor + 1][2]] == "as"
+                        )
+                        if not nxt_is_as:
+                            binds_locally = True
+                    last_ident_was_name = word == name
+                    last_ident_at_root = False
+                expect_segment = False
+        cursor += 1
+    return False, binds_locally, len(tokens) - 1
+
+
 def uses_extern_crate(text: str, name: str) -> bool:
     """Return True if `text` may resolve `name` to an external crate from the extern prelude.
 
     Declaring `mod <name>;` in `tests/suites.rs` shadows an identically named dependency in
     `use <name>...` paths across the crate. It is safe only when no test file imports `<name>`
-    from the root/extern prelude and every bare `<name>::` use is locally shadowed by a
-    `use <other>::...::<name>` import at file scope (with no inline `mod` blocks).
+    from the root/extern prelude and every bare `<name>::` use is locally shadowed by an
+    unconditional (unattributed) `use <other>::...::<name>` import at file scope (with no
+    inline `mod` blocks).
     """
     tokens = _tokenize_rust_code(text)
     locally_imported = False
     has_inline_mod = False
     has_bare_path = False
     brace_depth = 0
-    for idx, (kind, start, end) in enumerate(tokens):
+    stmt_has_attr = False
+    idx = 0
+    while idx < len(tokens):
+        kind, start, end = tokens[idx]
         if kind == "punct":
             ch = text[start:end]
+            if brace_depth == 0 and ch == "#":
+                # Outer attribute `#[...]` on the upcoming top-level item/use statement.
+                # Inner `#![...]` is crate/module-level and does not gate subsequent items.
+                if (
+                    idx + 1 < len(tokens)
+                    and tokens[idx + 1][0] == "punct"
+                    and text[tokens[idx + 1][1] : tokens[idx + 1][2]] == "["
+                ):
+                    stmt_has_attr = True
+                    bracket_depth = 0
+                    cursor = idx + 1
+                    while cursor < len(tokens):
+                        tk_kind, tk_s, tk_e = tokens[cursor]
+                        if tk_kind == "punct":
+                            bch = text[tk_s:tk_e]
+                            if bch == "[":
+                                bracket_depth += 1
+                            elif bch == "]":
+                                bracket_depth -= 1
+                                if bracket_depth == 0:
+                                    idx = cursor + 1
+                                    break
+                        cursor += 1
+                    else:
+                        idx = len(tokens)
+                    continue
             if ch == "{":
                 brace_depth += 1
             elif ch == "}":
                 brace_depth = max(0, brace_depth - 1)
+                if brace_depth == 0:
+                    stmt_has_attr = False
+            elif ch == ";" and brace_depth == 0:
+                stmt_has_attr = False
+            idx += 1
             continue
         if kind != "ident":
+            idx += 1
             continue
-        word = text[start:end]
-        if word == "mod":
+        raw_word = text[start:end]
+        word = _ident_name(raw_word)
+        if raw_word == "extern":
+            if (
+                idx + 2 < len(tokens)
+                and tokens[idx + 1][0] == "ident"
+                and text[tokens[idx + 1][1] : tokens[idx + 1][2]] == "crate"
+                and tokens[idx + 2][0] == "ident"
+                and _ident_name(text[tokens[idx + 2][1] : tokens[idx + 2][2]]) == name
+            ):
+                return True
+            idx += 1
+            continue
+        if raw_word == "mod":
             # Inline `mod foo { ... }` starts a new scope where bare `<name>::` reaches extern prelude.
             cursor = idx + 1
             if cursor < len(tokens) and tokens[cursor][0] == "ident":
-                if cursor + 1 < len(tokens) and tokens[cursor + 1][0] == "punct" and text[tokens[cursor + 1][1]:tokens[cursor + 1][2]] == "{":
+                if (
+                    cursor + 1 < len(tokens)
+                    and tokens[cursor + 1][0] == "punct"
+                    and text[tokens[cursor + 1][1] : tokens[cursor + 1][2]] == "{"
+                ):
                     has_inline_mod = True
+            idx += 1
             continue
-        if word == "use":
-            # Root `use <name>` or `use ::<name>` reaches the extern crate.
-            if idx + 1 < len(tokens):
-                nxt = tokens[idx + 1]
-                if nxt[0] == "ident" and text[nxt[1]:nxt[2]] == name:
-                    return True
-                if nxt[0] == "::" and idx + 2 < len(tokens) and tokens[idx + 2][0] == "ident" and text[tokens[idx + 2][1]:tokens[idx + 2][2]] == name:
-                    return True
+        if raw_word == "use":
+            refs_extern, binds_local, end_idx = _scan_use_statement(
+                text,
+                tokens,
+                idx,
+                name,
+                allow_local_binding=(brace_depth == 0 and not stmt_has_attr),
+            )
+            if refs_extern:
+                return True
+            if binds_local:
+                locally_imported = True
+            if brace_depth == 0:
+                stmt_has_attr = False
+            idx = end_idx + 1
             continue
         if word != name:
+            idx += 1
             continue
         prev = tokens[idx - 1] if idx > 0 else None
         nxt = tokens[idx + 1] if idx + 1 < len(tokens) else None
         if prev is not None and prev[0] == "::":
-            # Top-level `...::<name>::{self, ...}` or `...::<name>;` imports `<name>` locally.
-            if idx >= 2 and tokens[idx - 2][0] == "ident":
-                if brace_depth == 0:
-                    if nxt is not None and nxt[0] == "punct" and text[nxt[1]:nxt[2]] == ";":
-                        locally_imported = True
-                    elif (
-                        nxt is not None
-                        and nxt[0] == "::"
-                        and idx + 2 < len(tokens)
-                        and tokens[idx + 2][0] == "punct"
-                        and text[tokens[idx + 2][1]:tokens[idx + 2][2]] == "{"
-                    ):
-                        # Check if `self` is directly inside the brace list of `...::<name>::{ ... }`.
-                        depth = 0
-                        cursor = idx + 2
-                        while cursor < len(tokens):
-                            tk_kind, tk_s, tk_e = tokens[cursor]
-                            if tk_kind == "punct":
-                                ch = text[tk_s:tk_e]
-                                if ch == "{":
-                                    depth += 1
-                                elif ch == "}":
-                                    depth -= 1
-                                    if depth == 0:
-                                        break
-                            elif depth == 1 and tk_kind == "ident" and text[tk_s:tk_e] == "self":
-                                locally_imported = True
-                                break
-                            cursor += 1
-            else:
+            if not (idx >= 2 and tokens[idx - 2][0] == "ident"):
                 # Leading `::<name>` explicitly targets the extern prelude.
                 return True
         elif nxt is not None and nxt[0] == "::":
             has_bare_path = True
+        idx += 1
     if has_bare_path and (not locally_imported or has_inline_mod):
         return True
     return False
