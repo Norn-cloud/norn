@@ -1,3 +1,5 @@
+//! Golden corpus parity and standalone profile checker tests for `norn-authoring`.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 

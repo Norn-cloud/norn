@@ -5,7 +5,7 @@ use tsrs_compiler::Program;
 use tsrs_core::P;
 use tsrs_core::context::Context;
 
-use crate::INTRINSICS_VIRTUAL_PATH;
+use crate::{BoundedVfs, INTRINSICS_VIRTUAL_PATH};
 
 use super::resolve::{display_file_path, node_end, node_start, node_text, pos_of};
 use super::{FileReport, FileWalk, ProfileChecker, ProfileDiagnostic};
@@ -99,10 +99,12 @@ impl FileWalk<'_> {
         };
         let file = target_sf.file_name();
         let pinned_ok = if name == self.owner.profile.intrinsics_module {
-            file == INTRINSICS_VIRTUAL_PATH
+            file == INTRINSICS_VIRTUAL_PATH && self.vfs.is_pinned_file(file)
         } else {
-            self.effect_dist_prefix
-                .is_some_and(|prefix| file.starts_with(prefix))
+            self.vfs.is_pinned_file(file)
+                && self
+                    .effect_dist_prefix
+                    .is_some_and(|prefix| file.starts_with(prefix))
         };
         if !pinned_ok {
             self.report(
@@ -185,6 +187,7 @@ pub(super) fn local_imports(
 pub(super) fn import_diagnostics(
     owner: &ProfileChecker,
     program: &'static Program,
+    vfs: &BoundedVfs,
     effect_dist_prefix: Option<&str>,
     root: P<SourceFile>,
     walked: &mut HashMap<P<SourceFile>, FileReport>,
@@ -201,6 +204,7 @@ pub(super) fn import_diagnostics(
         let Some(found) = first_failure(
             owner,
             program,
+            vfs,
             effect_dist_prefix,
             target,
             &mut seen,
@@ -227,6 +231,7 @@ pub(super) fn import_diagnostics(
 fn first_failure(
     owner: &ProfileChecker,
     program: &'static Program,
+    vfs: &BoundedVfs,
     effect_dist_prefix: Option<&str>,
     sf: P<SourceFile>,
     seen: &mut HashSet<P<SourceFile>>,
@@ -237,7 +242,7 @@ fn first_failure(
     }
     let report = walked
         .entry(sf)
-        .or_insert_with(|| owner.walk_source_file(program, effect_dist_prefix, sf));
+        .or_insert_with(|| owner.walk_source_file(program, vfs, effect_dist_prefix, sf));
     if let Some(diag) = report.diagnostics.first() {
         return Some(format!(
             "{}:{}:{} {} ({})",
@@ -245,7 +250,9 @@ fn first_failure(
         ));
     }
     for (_, dep) in local_imports(program, sf) {
-        if let Some(found) = first_failure(owner, program, effect_dist_prefix, dep, seen, walked) {
+        if let Some(found) =
+            first_failure(owner, program, vfs, effect_dist_prefix, dep, seen, walked)
+        {
             return Some(found);
         }
     }

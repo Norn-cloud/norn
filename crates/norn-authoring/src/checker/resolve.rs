@@ -3,6 +3,7 @@ use tsrs_checker::{Checker, Type, TypeFlags, is_tuple_type_exported};
 use tsrs_core::P;
 use tsrs_scanner::{get_ecma_line_and_utf16_character_of_position, get_token_pos_of_node};
 
+use crate::BoundedVfs;
 use crate::program::{resolve_profile_module, strip_quoted_module_prefix};
 
 use super::{FileWalk, Position};
@@ -48,6 +49,7 @@ pub(super) fn resolve_symbol(
     checker: &mut Checker,
     intrinsics_module: &str,
     effect_dist_prefix: Option<&str>,
+    vfs: &BoundedVfs,
     node: P<Node>,
 ) -> ResolvedSymbol {
     let direct = if let Some(parent) = node.parent()
@@ -92,13 +94,12 @@ pub(super) fn resolve_symbol(
         };
     };
     let declaring_file = decl_sf.file_name();
-    let id = resolve_profile_module(declaring_file, intrinsics_module, effect_dist_prefix).map(
-        |module| {
+    let id = resolve_profile_module(declaring_file, intrinsics_module, effect_dist_prefix, vfs)
+        .map(|module| {
             let fqn = checker.get_fully_qualified_name_exported(target);
             let qualified = strip_quoted_module_prefix(&fqn);
             format!("{module}#{qualified}")
-        },
-    );
+        });
     ResolvedSymbol {
         id,
         namespace,
@@ -213,7 +214,7 @@ fn parse_radix_f64(digits: &str, radix: u32) -> f64 {
 
 pub(super) fn is_js_integer_literal(text: &str) -> bool {
     let val = parse_js_number(text);
-    val.is_finite() && val.fract().abs() <= f64::EPSILON
+    val.is_finite() && val.fract().abs().to_bits() == 0
 }
 
 fn root_identifier(mut expr: P<Node>) -> Option<P<Node>> {
@@ -258,6 +259,7 @@ impl FileWalk<'_> {
             self.checker,
             &self.owner.profile.intrinsics_module,
             self.effect_dist_prefix,
+            self.vfs,
             node,
         )
     }
@@ -380,5 +382,27 @@ impl FileWalk<'_> {
             | "@norn/authoring#Norn.resolveLocalTimestamp" => Some(TemporalKind::Timestamp),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_js_integer_literal;
+
+    #[test]
+    fn js_integer_literal_is_exact_without_epsilon() {
+        assert!(is_js_integer_literal("0"));
+        assert!(is_js_integer_literal("-0"));
+        assert!(is_js_integer_literal("42"));
+        assert!(is_js_integer_literal("-42"));
+        assert!(is_js_integer_literal("1e2"));
+        assert!(is_js_integer_literal("0x10"));
+        assert!(is_js_integer_literal("1_000"));
+
+        assert!(!is_js_integer_literal("1e-17"));
+        assert!(!is_js_integer_literal("1e-300"));
+        assert!(!is_js_integer_literal("5e-324"));
+        assert!(!is_js_integer_literal("1.5"));
+        assert!(!is_js_integer_literal("1e400"));
     }
 }

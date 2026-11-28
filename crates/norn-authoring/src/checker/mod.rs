@@ -182,6 +182,7 @@ impl ProfileChecker {
         files: &[&str],
     ) -> Result<Vec<FileReport>, AuthoringError> {
         let raw_program = program.raw_program();
+        let vfs = program.vfs();
         let effect_dist_prefix = program.effect_dist_prefix();
         let mut source_files = Vec::with_capacity(files.len());
         for &file in files {
@@ -193,10 +194,16 @@ impl ProfileChecker {
         for sf in source_files {
             let mut own = walked
                 .entry(sf)
-                .or_insert_with(|| self.walk_source_file(raw_program, effect_dist_prefix, sf))
+                .or_insert_with(|| self.walk_source_file(raw_program, vfs, effect_dist_prefix, sf))
                 .clone();
-            let import_diags =
-                imports::import_diagnostics(self, raw_program, effect_dist_prefix, sf, &mut walked);
+            let import_diags = imports::import_diagnostics(
+                self,
+                raw_program,
+                vfs,
+                effect_dist_prefix,
+                sf,
+                &mut walked,
+            );
             if !import_diags.is_empty() {
                 own.diagnostics.extend(import_diags);
                 sort_diagnostics(&mut own.diagnostics);
@@ -269,6 +276,7 @@ impl ProfileChecker {
                     &mut checker,
                     &self.profile.intrinsics_module,
                     effect_dist_prefix,
+                    program.vfs(),
                     target_node,
                 );
                 out.push((var_decl.name().text().to_owned(), resolved.id));
@@ -280,6 +288,7 @@ impl ProfileChecker {
     pub(super) fn walk_source_file(
         &self,
         program: &'static Program,
+        vfs: &BoundedVfs,
         effect_dist_prefix: Option<&str>,
         sf: P<SourceFile>,
     ) -> FileReport {
@@ -290,6 +299,7 @@ impl ProfileChecker {
             program,
             checker: &mut checker,
             sf,
+            vfs,
             effect_dist_prefix,
             diagnostics: Vec::new(),
             uses: Vec::new(),
@@ -417,6 +427,7 @@ pub(super) struct FileWalk<'a> {
     pub(super) program: &'static Program,
     pub(super) checker: &'a mut Checker,
     pub(super) sf: P<SourceFile>,
+    pub(super) vfs: &'a BoundedVfs,
     pub(super) effect_dist_prefix: Option<&'a str>,
     pub(super) diagnostics: Vec<ProfileDiagnostic>,
     pub(super) uses: Vec<SymbolUse>,

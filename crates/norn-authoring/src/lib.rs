@@ -23,6 +23,7 @@ mod fmt;
 mod profile;
 mod program;
 mod vfs;
+mod vfs_mount;
 
 pub use checker::{FileReport, Position, ProfileChecker, ProfileDiagnostic, SymbolUse};
 pub use error::AuthoringError;

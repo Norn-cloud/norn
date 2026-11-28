@@ -110,16 +110,22 @@ pub(crate) fn strip_quoted_module_prefix(fqn: &str) -> &str {
 }
 
 /// Maps a declaring virtual file path to its profile module name ONLY when it
-/// lives inside a pinned profile origin (the embedded `@norn/authoring`
-/// declarations or the explicitly configured pinned `effect` declaration root).
+/// belongs to a verified pinned mount in `vfs` (the embedded `@norn/authoring`
+/// declarations or a pinned file under the configured `effect` declaration
+/// root).
 ///
-/// Matches `resolveSymbol` in `tools/norn-ts/src/check.ts`: lookalike copies
-/// under arbitrary `node_modules/` directories never receive a profile ID.
+/// Matches `resolveSymbol` in `tools/norn-ts/src/check.ts`: caller files and
+/// lookalike copies under arbitrary `node_modules/` directories never receive a
+/// profile ID.
 pub(crate) fn resolve_profile_module(
     declaring_file: &str,
     intrinsics_module: &str,
     effect_dist_prefix: Option<&str>,
+    vfs: &BoundedVfs,
 ) -> Option<String> {
+    if !vfs.is_pinned_file(declaring_file) {
+        return None;
+    }
     if declaring_file == INTRINSICS_VIRTUAL_PATH {
         return Some(intrinsics_module.to_owned());
     }
@@ -449,6 +455,7 @@ impl AuthoringProgram {
             &declaring_file,
             &self.profile.intrinsics_module,
             self.effect_dist_prefix.as_deref(),
+            &self.vfs,
         )?;
         let fqn = checker.get_fully_qualified_name_exported(target);
         let qualified_name = strip_quoted_module_prefix(&fqn).to_owned();
