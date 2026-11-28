@@ -22,6 +22,8 @@ pub mod engine;
 mod lower;
 mod mirror;
 mod predicate;
+#[cfg(all(feature = "duckdb", feature = "native"))]
+mod settle;
 mod store_body;
 
 pub use assemble::{Prepared, bucket_value};

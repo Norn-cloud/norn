@@ -3013,9 +3013,15 @@ impl SqlEngine for CountedEngine {
     }
 
     fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
-        if sql.contains("observation_id LIKE 'mapping-conflict:%'")
+        let is_evidence_scan = sql.contains("observation_id LIKE 'mapping-conflict:%'")
             || sql.contains("observation_id LIKE 'mapping-identity:%'")
-        {
+            || (sql.contains("observation_id COLLATE NOCASE >=")
+                && matches!(
+                    params.first(),
+                    Some(SqlValue::Text(prefix))
+                        if prefix == "mapping-conflict:" || prefix == "mapping-identity:"
+                ));
+        if is_evidence_scan {
             self.counter
                 .evidence_reads
                 .set(self.counter.evidence_reads.get().saturating_add(1));

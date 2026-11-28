@@ -187,7 +187,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 
     /// Every captured identity dispute with its inbox position, in capture order.
     pub(crate) fn identity_evidence(&self) -> Result<Vec<(u64, IdentityEvidence)>, CellError> {
-        let rows = self.conn.query(&format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-identity:%' ORDER BY position"), params![])?;
+        // Case-insensitive range bounds (`:` = 0x3A, `;` = 0x3B) match `LIKE 'mapping-identity:%'`
+        // via `_norn_inbox/id_nocase` while still surfacing malformed mixed-case IDs for refusal.
+        // Bounds are bound as parameters so no literal `;` appears in SQL (`WriteRevision::read_only`).
+        let rows = self.conn.query(
+            &format!(
+                "SELECT position, observation_id, observed FROM {INBOX} \
+                 WHERE observation_id COLLATE NOCASE >= ?1 \
+                   AND observation_id COLLATE NOCASE < ?2 \
+                 ORDER BY position"
+            ),
+            params!["mapping-identity:", "mapping-identity;"],
+        )?;
         let mut evidence = Vec::new();
         for values in rows {
             let row = crate::engine::SqlRow(values);

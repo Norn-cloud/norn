@@ -34,7 +34,7 @@ pub(crate) const SOURCE_BINDING: &str = "_norn_source_binding";
 pub(crate) const SOURCE_EVIDENCE: &str = "_norn_source_evidence";
 
 /// Additive DDL for source-sync leases, cursors, recovery, bindings, evidence, and indexes.
-pub(crate) const DDL: [&str; 12] = [
+pub(crate) const DDL: [&str; 14] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_source_lease" (
   "connection_id" TEXT NOT NULL PRIMARY KEY,
   "lease_id" TEXT NOT NULL,
@@ -77,6 +77,8 @@ pub(crate) const DDL: [&str; 12] = [
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_source_evidence/captured" ON "_norn_source_evidence" ("captured_commit_seq", "observation_id", "connection_id")"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_inbox/conflict_accepted" ON "_norn_inbox" (json_extract("observed", '$.input.acceptedBundleId'), "observation_id") WHERE substr("observation_id", 1, 17) = 'mapping-conflict:'"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_inbox/bundle_mapping_consumed" ON "_norn_inbox" (json_extract("observed", '$.input.input.mapping'), "consumed_commit_seq") WHERE "observation_id" LIKE 'mapping-bundle:%'"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_inbox/id_nocase" ON "_norn_inbox" ("observation_id" COLLATE NOCASE)"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/root_first_version" ON "_norn_fact_values" ("world", "root_type", "commit_seq", "id") WHERE "version" = 1"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/connection_commit" ON "_norn_fact_values" ("world", "id", "commit_seq", "version") WHERE "root_type" = 'source.Connection'"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_fact_values/connection_mapping" ON "_norn_fact_values" ("world", "id", COALESCE(json_extract("snapshot", '$.values.mapping_id'), ''), "version") WHERE "root_type" = 'source.Connection'"#,
@@ -952,15 +954,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             ),
             params![connection_id],
         )?;
-        let mut out = Vec::with_capacity(rows.len());
-        for values in rows {
-            out.push(decode_pending(&SqlRow(values))?);
-        }
-        Ok(out)
+        rows.into_iter()
+            .map(|values| decode_pending(&SqlRow(values)))
+            .collect()
     }
 
-    /// Distinct datasets for `connection_id` that still have unprocessed
-    /// (`processed = 0`) captured source pages, without decoding page payloads.
+    /// Distinct datasets for `connection_id` that still have unprocessed (`processed = 0`)
+    /// captured source pages, without decoding page payloads.
     ///
     /// # Errors
     /// Store errors.
@@ -985,14 +985,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// Store errors.
     pub fn inbox_observation_exists(&self, observation_id: &str) -> Result<bool, CellError> {
-        let found = self.conn.query_optional(
-            &format!(
-                "SELECT 1 FROM \"{}\" WHERE \"observation_id\" = ?1",
-                crate::system::INBOX
-            ),
-            params![observation_id],
-            |_| Ok(()),
-        )?;
-        Ok(found.is_some())
+        let sql = format!(
+            "SELECT 1 FROM \"{}\" WHERE \"observation_id\" = ?1",
+            crate::system::INBOX
+        );
+        Ok(self
+            .conn
+            .query_optional(&sql, params![observation_id], |_| Ok(()))?
+            .is_some())
     }
 }
