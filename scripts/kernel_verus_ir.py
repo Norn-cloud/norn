@@ -472,7 +472,7 @@ def _artifact_thir_function(tree_body, flat_body):
         norm_ty = _artifact_thir_type(ty)
         if kind == "Deref":
             arg_match = re.match(
-                r"(?:\s*\{\s*arg:|\s*\()?\s*Expr \{\s*ty: ([^\n]+)",
+                r"(?:\s*\{(?:\s*arg:)?|\s*\()?\s*Expr \{\s*ty: ([^\n]+)",
                 tree_body[expr.end():],
             )
             require(arg_match is not None and _artifact_thir_type(arg_match[1]) == "&" + norm_ty,
