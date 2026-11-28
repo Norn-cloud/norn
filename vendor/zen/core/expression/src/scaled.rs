@@ -364,10 +364,6 @@ fn rounded_quotient(
     }
 }
 
-#[cfg(kani)]
-#[path = "../../../../../verification/ordered-fold-v1/scaled_kani.rs"]
-mod proof;
-
 #[cfg(test)]
 mod tests {
     use super::*;

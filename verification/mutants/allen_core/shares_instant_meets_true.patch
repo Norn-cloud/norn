@@ -1,0 +1,11 @@
+--- a/allen_core.rs
++++ b/allen_core.rs
+@@ -463,6 +463,6 @@
+         AllenRelation::Before
+-        | AllenRelation::Meets
+         | AllenRelation::MetBy
+         | AllenRelation::After => false,
+-        AllenRelation::Overlaps
++        AllenRelation::Meets
++        | AllenRelation::Overlaps
+         | AllenRelation::Starts

@@ -237,6 +237,26 @@ mod tests {
     }
 
     #[test]
+    fn runtime_error_code_classifies_every_variant() {
+        let cases = [
+            RuntimeValueError::Inexact {
+                number: String::new(),
+            },
+            RuntimeValueError::NonFinite,
+            RuntimeValueError::InvalidJson {
+                message: String::new(),
+            },
+        ];
+        for error in &cases {
+            let expected = match error {
+                RuntimeValueError::Inexact { .. } | RuntimeValueError::NonFinite => Some(INEXACT),
+                RuntimeValueError::InvalidJson { .. } => None,
+            };
+            assert_eq!(runtime_error_code(error), expected);
+        }
+    }
+
+    #[test]
     fn decimal_grammar() {
         for good in ["0", "-12", "19.990", "0.001", "10"] {
             assert!(is_decimal(good), "{good}");

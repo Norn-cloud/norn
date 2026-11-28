@@ -34,6 +34,30 @@ impl Rounding {
     }
 }
 
-#[cfg(kani)]
-#[path = "../../../verification/ordered-fold-v1/rounding_kani.rs"]
-mod proof;
+#[cfg(test)]
+mod tests {
+    use super::Rounding;
+
+    #[test]
+    fn omitted_and_explicit_refuse_have_one_canonical_mode() {
+        let all = [
+            Rounding::Refuse,
+            Rounding::TowardZero,
+            Rounding::HalfEven,
+            Rounding::HalfAwayFromZero,
+        ];
+        assert_eq!(
+            Rounding::effective(None),
+            Rounding::effective(Some(Rounding::Refuse))
+        );
+        for mode in all {
+            assert_eq!(Rounding::effective(Some(mode)), mode);
+            match mode {
+                Rounding::Refuse => assert!(mode.canonical_field().is_none()),
+                Rounding::TowardZero | Rounding::HalfEven | Rounding::HalfAwayFromZero => {
+                    assert!(mode.canonical_field().is_some());
+                }
+            }
+        }
+    }
+}

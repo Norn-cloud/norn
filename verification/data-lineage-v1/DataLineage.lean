@@ -45,7 +45,7 @@ Honest correspondence between each theorem group and the current `data.*` IR:
    exhaustive. Mirrors the partition slice of
    `verification/owl-time-v1/AllenIntervals.lean` (checked by `owl-time-allen-lean`,
    which also proves the classifier, converse dualities, scheduling compositions,
-   and pairs with `allen_kani.rs`).
+   and pairs with `owl-time-allen-verus` over `allen_core.rs`).
 
 4. `BFO-DISJOINT-1` (`GRAPH-ROLE-1`) & Target `DECLARED-DISJOINT`:
    - **Derived from `GRAPH-ROLE-1` (enforced by `norn-checker` today):**

@@ -1,0 +1,7 @@
+--- a/allen_core.rs
++++ b/allen_core.rs
+@@ -661,3 +661,3 @@
+                     EndpointOrder::Less => AllenRelation::Before,
+-                    EndpointOrder::Equal => AllenRelation::Meets,
++                    EndpointOrder::Equal => AllenRelation::Overlaps,
+                     EndpointOrder::Greater => AllenRelation::Overlaps,

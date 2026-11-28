@@ -1,0 +1,9 @@
+--- a/allen_core.rs
++++ b/allen_core.rs
+@@ -512,4 +512,4 @@
+             AllenRelation::Meets => match end_other_start {
+-                EndpointOrder::Equal => true,
+-                EndpointOrder::Less | EndpointOrder::Greater => false,
++                EndpointOrder::Equal | EndpointOrder::Less => true,
++                EndpointOrder::Greater => false,
+             },

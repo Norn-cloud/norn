@@ -1,0 +1,4 @@
+{
+  "order": 7,
+  "value": "bash scripts/verify-owl-time-inline-verus.sh all"
+}

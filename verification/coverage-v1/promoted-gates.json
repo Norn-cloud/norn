@@ -939,9 +939,9 @@
       "generatedArtifacts": []
     },
     {
-      "id": "owl-time-allen-kani",
+      "id": "owl-time-allen-verus",
       "profile": "full",
-      "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/owl-time-v1/allen_kani.rs",
+      "command": "bash scripts/verify-owl-time-inline-verus.sh all",
       "evidenceKind": "command",
       "role": "supporting-check",
       "classifications": [
