@@ -58,6 +58,21 @@ pub(crate) fn fixture_artifacts() -> Vec<ArtifactEnvelope> {
     artifacts
 }
 
+fn observed_tombstone_type() -> ObjectTypeDef {
+    serde_json::from_value(json!({
+        "name": norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE,
+        "properties": [
+            { "id": "objectType", "type": { "kind": "text" } },
+            { "id": "key", "type": { "kind": "text" } },
+            { "id": "at", "type": { "kind": "text" } },
+            { "id": "source", "type": { "kind": "text" } },
+            { "id": "mappingVersion", "type": { "kind": "text" } },
+            { "id": "provenance", "type": { "kind": "json-ext" } }
+        ]
+    }))
+    .expect("tombstone type")
+}
+
 /// A store at `path` with the artifacts installed after `edit`, its scope bound.
 pub(crate) fn store(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> CellStore {
     let mut artifacts = fixture_artifacts();
@@ -97,6 +112,12 @@ pub(crate) fn store(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) 
                 serde_json::from_value::<Vec<PropertyTypeDef>>(value.clone()).expect("properties"),
             );
         }
+    }
+    if !types
+        .iter()
+        .any(|t| t.name.as_str() == norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE)
+    {
+        types.push(observed_tombstone_type());
     }
     let model = Model::from_definitions_with_interfaces(&types, &properties, &interfaces)
         .expect("model")

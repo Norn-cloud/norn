@@ -475,6 +475,16 @@ impl<E: SqlEngine> CellStore<E> {
     }
 }
 
+fn table_exists<E: SqlEngine>(conn: &E, name: &str) -> Result<bool, CellError> {
+    Ok(conn
+        .query_optional(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            params![name],
+            |_row| Ok(()),
+        )?
+        .is_some())
+}
+
 /// Whether `obs_id` was already exported as a pending observation by an earlier
 /// commit (`<= prev_seq`). Consults the hash-verified export journal when
 /// present so pre-v13 commits that omitted an unattributed first capture never
@@ -502,47 +512,45 @@ pub(crate) fn already_exported_pending<E: SqlEngine>(
         return Ok(false);
     }
     let candidates = conflict_export_candidates(conn, obs_id, prev_seq)?;
-    if !candidates.is_empty() {
-        let has_journal = conn
-            .query_optional(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
-                params![],
-                |_row| Ok(()),
-            )?
-            .is_some();
-        let mut checked = std::collections::BTreeSet::new();
-        for (seq, fallback_exported) in candidates {
-            if has_journal {
-                if !checked.insert(seq) {
-                    continue;
-                }
-                if let Some(rec) = read_record(conn, seq)? {
-                    if rec
-                        .pending_observations
-                        .iter()
-                        .any(|p| p.observation_id == obs_id)
-                    {
-                        return Ok(true);
-                    }
-                    continue;
-                }
-                let seq_i64 = to_i64(seq, "export commit_seq")?;
-                let committed = conn
-                    .query_optional(
-                        &format!(
-                            "SELECT 1 FROM \"{}\" WHERE \"commit_seq\" = ?1",
-                            crate::system::RECEIPT
-                        ),
-                        params![seq_i64],
-                        |_row| Ok(()),
-                    )?
-                    .is_some();
-                if !committed && fallback_exported {
-                    return Ok(true);
-                }
-            } else if fallback_exported {
+    if candidates.is_empty() {
+        return Ok(false);
+    }
+    let mut by_seq = std::collections::BTreeMap::<u64, bool>::new();
+    for (seq, fallback_exported) in candidates {
+        *by_seq.entry(seq).or_insert(false) |= fallback_exported;
+    }
+    let has_journal = table_exists(conn, "_norn_export_journal")?;
+    let has_receipt = table_exists(conn, crate::system::RECEIPT)?;
+    for (seq, fallback_exported) in by_seq {
+        if has_journal && let Some(rec) = read_record(conn, seq)? {
+            if rec
+                .pending_observations
+                .iter()
+                .any(|p| p.observation_id == obs_id)
+            {
                 return Ok(true);
             }
+            continue;
+        }
+        if !fallback_exported {
+            continue;
+        }
+        let committed = if has_receipt {
+            let seq_i64 = to_i64(seq, "export commit_seq")?;
+            conn.query_optional(
+                &format!(
+                    "SELECT 1 FROM \"{}\" WHERE \"commit_seq\" = ?1",
+                    crate::system::RECEIPT
+                ),
+                params![seq_i64],
+                |_row| Ok(()),
+            )?
+            .is_some()
+        } else {
+            false
+        };
+        if !committed {
+            return Ok(true);
         }
     }
     Ok(false)
