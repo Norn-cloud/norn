@@ -470,8 +470,13 @@ fn verify_visible_pending_candidate<E: SqlEngine>(
             if !bundle_records_visible(input, allowed_evidence, &conflict.incoming)? {
                 return Ok(false);
             }
-            // 3. Verify against related retained source-event evidence; propagate any
-            //    verification error so a corrupted related bundle fails closed.
+            // 3. Verify all committed bundles bound to this event and compare against
+            //    related retained source-event evidence; propagate any verification error
+            //    so a corrupted accepted or related bundle fails closed.
+            let event_keys =
+                crate::mapping_identity::keys(&conflict.incoming.raw, &conflict.incoming.input)?
+                    .map(|k| norn_ir::canonical::nfc(&k));
+            reader.verify_committed_event_bundles(&event_keys)?;
             let expected = reader.mapping_conflict(&conflict.incoming)?;
             Ok(expected.as_ref() == Some(&conflict))
         }

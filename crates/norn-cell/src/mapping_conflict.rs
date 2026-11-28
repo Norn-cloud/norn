@@ -635,6 +635,30 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
     }
 
+    pub(crate) fn verify_committed_event_bundles(
+        &self,
+        event_keys: &[String; 5],
+    ) -> Result<(), CellError> {
+        let [c, p, s, sid, eid] = event_keys;
+        let [connector, partition, source, source_id, event_id]: [String; 5] =
+            serde_json::from_slice(&norn_ir::canonical::canonical_json_of(&(
+                c, p, s, sid, eid,
+            ))?)?;
+        let table = crate::system::CLAIM_ENDPOINT;
+        let rows = self.conn.query(
+            &format!(
+                "SELECT DISTINCT \"observation_id\" FROM \"{table}\" \
+                 WHERE \"side\" = 'event:' || json_array(?1, ?2, ?3, ?4, ?5)"
+            ),
+            params![&connector, &partition, &source, &source_id, &event_id],
+        )?;
+        for values in rows {
+            let observation_id: String = crate::engine::SqlRow(values).get(0)?;
+            self.verify_committed_bundle_event(&observation_id)?;
+        }
+        Ok(())
+    }
+
     fn event_has_committed_readable_bundle(
         &self,
         event_keys: &[String; 5],
@@ -653,6 +677,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             ),
             params![&connector, &partition, &source, &source_id, &event_id],
         )?;
+        let mut matched = false;
+        let mut checked = BTreeSet::new();
         for values in rows {
             let row = crate::engine::SqlRow(values);
             let subject_json: String = row.get(0)?;
@@ -662,10 +688,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             if !self.subject_matches_readable_active(&object_type, &subject_key, readable_map) {
                 continue;
             }
-            self.verify_committed_bundle_event(&observation_id)?;
-            return Ok(true);
+            if checked.insert(observation_id.clone()) {
+                self.verify_committed_bundle_event(&observation_id)?;
+            }
+            matched = true;
         }
-        Ok(false)
+        Ok(matched)
     }
 
     fn event_has_unconsumed_readable_bundle(
@@ -776,17 +804,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 }
                 continue;
             }
+            let verified_keys =
+                crate::mapping_identity::keys(&conflict.incoming.raw, &conflict.incoming.input)?
+                    .map(|key| norn_ir::canonical::nfc(&key));
+            self.verify_committed_event_bundles(&verified_keys)?;
             let expected = self.mapping_conflict(&conflict.incoming)?;
             if expected.as_ref() != Some(&conflict) {
                 continue;
             }
-            index.dispute(
-                crate::mapping_identity::keys(&conflict.incoming.raw, &conflict.incoming.input)?
-                    .map(|key| norn_ir::canonical::nfc(&key)),
-                position,
-                stored_id,
-                &conflict.finding,
-            );
+            index.dispute(verified_keys, position, stored_id, &conflict.finding);
             self.index_source_finding(index, &conflict.incoming, false, &conflict.finding)?;
         }
         Ok(())
@@ -842,12 +868,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 }
                 continue;
             }
-            index.dispute(
-                crate::mapping_identity::keys(&guard.bundle.raw, &guard.bundle.input)?,
-                position,
-                stored_id,
-                &guard.finding,
-            );
+            let verified_keys =
+                crate::mapping_identity::keys(&guard.bundle.raw, &guard.bundle.input)?;
+            self.verify_committed_event_bundles(
+                &verified_keys
+                    .clone()
+                    .map(|key| norn_ir::canonical::nfc(&key)),
+            )?;
+            index.dispute(verified_keys, position, stored_id, &guard.finding);
             self.index_source_finding(index, &guard.bundle, true, &guard.finding)?;
         }
         Ok(())

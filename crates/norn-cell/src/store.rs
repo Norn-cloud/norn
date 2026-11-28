@@ -2503,7 +2503,33 @@ impl<E: SqlEngine> CellStore<E> {
         crate::engine_release::upgrade(conn)?;
         crate::system::init_core_tables(conn)?;
         // Claim endpoints of bundles consumed before the table existed; a
-        // no-op for every bundle already indexed.
+        // no-op for every bundle already indexed. Refuse if any consumed
+        // mapping bundle is too corrupted to produce durable event/subject bindings.
+        let incomplete_backfill: Option<i64> = conn.query_optional(
+            &format!(
+                "SELECT 1 FROM \"{INBOX}\" i \
+                 WHERE i.\"observation_id\" >= 'mapping-bundle:' \
+                 AND i.\"observation_id\" < 'mapping-bundle;' \
+                 AND i.\"consumed_commit_seq\" IS NOT NULL \
+                 AND (json_valid(i.\"observed\") IS NOT 1 \
+                      OR json_type(i.\"observed\", '$.input.input.connectorInstance') IS NOT 'text' \
+                      OR json_type(i.\"observed\", '$.input.input.partition') IS NOT 'text' \
+                      OR json_type(i.\"observed\", '$.input.raw.source') IS NOT 'text' \
+                      OR json_type(i.\"observed\", '$.input.raw.source_id') IS NOT 'text' \
+                      OR json_type(i.\"observed\", '$.input.raw.event_id') IS NOT 'text' \
+                      OR json_type(i.\"observed\", '$.input.records') IS NOT 'array' \
+                      OR EXISTS (SELECT 1 FROM json_each(i.\"observed\", '$.input.records') AS r \
+                                 WHERE r.type IS NOT 'object' \
+                                    OR json_type(r.value, '$.objectType') IS NOT 'text' \
+                                    OR json_type(r.value, '$.key') IS NOT 'text')) \
+                 LIMIT 1"
+            ),
+            params![],
+            |row| row.get(0),
+        )?;
+        if incomplete_backfill.is_some() {
+            return Err(CellError::MappingBundleMismatch);
+        }
         conn.execute(&crate::system::claim_endpoints_of("1"), params![])?;
         crate::system::intern_marking_subjects(conn)?;
         export_journal::init(conn)?;
