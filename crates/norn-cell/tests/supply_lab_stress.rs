@@ -992,8 +992,12 @@ fn axis1_unit_partition_and_no_naive_additive_stock() -> Result<(), String> {
             .any(|finding| finding.starts_with("metric.validation.mixed_unit")),
         "{refused:?}"
     );
+    // `supply.InventorySnapshot`, hex-encoded as derived metric ids name it.
+    const INVENTORY_SNAPSHOT_PREFIX: &str =
+        "analysis.object_737570706c792e496e76656e746f7279536e617073686f74.";
     let names: Vec<String> = metrics(&stress.lab, "supply.InventorySnapshot")?
         .into_iter()
+        .filter(|(n, _, _)| n.starts_with(INVENTORY_SNAPSHOT_PREFIX))
         .map(|(n, _, _)| n)
         .collect();
     assert!(

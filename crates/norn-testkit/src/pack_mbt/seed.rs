@@ -587,7 +587,7 @@ fn seed_slice_entry<H: PackHost>(
                     &target_id,
                     input,
                     ctx.seq,
-                )?)
+                ))
         {
             return Err(err);
         }

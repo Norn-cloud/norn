@@ -5696,6 +5696,7 @@ fn evaluate_single_library_cut_with_access(
         .pack
         .retail_question("supply.retail.store_revenue_weekly")?;
     let (anchor_key, authority) = legal_entity_read_authority(book, legal_entity_id);
+    let allow_members = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
     let live_frontier = || Ok((book.source_cursors.clone(), book.watermarks.clone()));
     let input = CellViewInput {
         store: book.cell()?.store(),
@@ -5704,7 +5705,7 @@ fn evaluate_single_library_cut_with_access(
         context: book.query_context(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values: false,
-        member_access: evidence_access,
+        member_access: &allow_members,
         min_disclosed_bucket: 2,
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &live_frontier,

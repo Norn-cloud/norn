@@ -1336,9 +1336,10 @@ mod tests {
     #[test]
     fn action_derivation_environment_skips_sum_aggregates_without_catalog() {
         let raw = serde_json::json!({
-            "actionVersion": "0.1",
             "actionId": "example.rollup.record",
-            "name": "Record rollup",
+            "scopeRequired": [],
+            "idempotent": true,
+            "ledgered": true,
             "inputSchema": {
                 "type": "object",
                 "required": ["amount", "derived_total"],

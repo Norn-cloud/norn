@@ -529,13 +529,13 @@ pub(super) fn seed_update_target_via_creator<H: PackHost>(
     target_id: &str,
     input: &JsonObject,
     seq: u64,
-) -> Result<bool, String> {
+) -> bool {
     let Some(target_ty) = pack
         .object_types
         .iter()
         .find(|ty| ty.name.as_str() == target_ty_name)
     else {
-        return Ok(false);
+        return false;
     };
     for (_overlap, creator, object_id_field) in create_only_candidates(pack, target_ty_name, input)
     {
@@ -594,10 +594,10 @@ pub(super) fn seed_update_target_via_creator<H: PackHost>(
             commit_action(host, catalog, &call, &Seeder),
             Ok(ActionOutcome::Committed { .. })
         ) {
-            return Ok(true);
+            return true;
         }
     }
-    Ok(false)
+    false
 }
 
 #[cfg(test)]
