@@ -832,6 +832,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             ),
             bound,
         )?;
+        self.ensure_frontier_consistent()?;
         rows.into_iter().map(decode_frontier_row).collect()
     }
 
@@ -879,6 +880,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
         }
         if closed_sources.is_empty() {
+            self.ensure_frontier_consistent()?;
             return Ok(Vec::new());
         }
         let source_json = serde_json::to_string(&closed_sources)?;

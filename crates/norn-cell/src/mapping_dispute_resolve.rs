@@ -599,7 +599,14 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             Ok(supersedes)
         };
         let mut covered_contributions = BTreeSet::new();
-        for mut claim in incoming.link_claims()? {
+        let incoming_claims = incoming.link_claims()?;
+        let suppressed_by_delete = !incoming.records.is_empty()
+            && !incoming_claims.is_empty()
+            && crate::mapping_delete::has_newer_or_incomparable_landed_delete(self, incoming)?;
+        for mut claim in incoming_claims {
+            if suppressed_by_delete {
+                break;
+            }
             claim.observation_id = dispute_id.to_owned();
             let contribution = claim.contribution_id()?;
             covered_contributions.insert(contribution.clone());

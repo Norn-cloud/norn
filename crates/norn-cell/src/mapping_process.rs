@@ -597,11 +597,20 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         commit: &mut CellCommit<ObservationEvent, RuntimeObject, RuntimeObject>,
         authorization: &mut ObservationAuthorization,
     ) -> Result<(), CellError> {
+        let mut suppressed_by_newer_delete = None;
         for record in &bundle.records {
             if record.invocations.len() != 1 {
                 return Err(CellError::UnsupportedMappingProfile);
             }
             let key = FactKey::new(record.object_type.as_str(), &record.key);
+            if crate::mapping_delete::record_suppressed_by_newer_delete(
+                self,
+                bundle,
+                &key,
+                &mut suppressed_by_newer_delete,
+            )? {
+                continue;
+            }
             let slice = crate::mapping_delete::upsert_slice(self, bundle, &key)?;
             let mut values = record
                 .invocations

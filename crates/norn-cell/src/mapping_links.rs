@@ -251,6 +251,12 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             let event_keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
                 .map(|k| norn_ir::canonical::nfc(&k));
             let mut raw_claims = bundle.link_claims()?;
+            if !bundle.records.is_empty()
+                && !raw_claims.is_empty()
+                && crate::mapping_delete::has_newer_or_incomparable_landed_delete(self, bundle)?
+            {
+                raw_claims.clear();
+            }
             if !bundle.deletes.is_empty() {
                 raw_claims.extend(self.delete_withdrawal_claims(bundle, &batch_history)?);
             }

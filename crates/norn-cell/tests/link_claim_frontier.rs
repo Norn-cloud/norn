@@ -3159,3 +3159,134 @@ fn omitted_corroborating_claim_on_open_cell_fails_closed_on_retarget() {
         BTreeSet::from(["demo/party/b".to_owned()])
     );
 }
+
+/// #1549 / #1028: After a v1 link assertion and a v3 property-only patch on the
+/// same source record, a late v2 delete must skip BOTH the object deletion AND
+/// link withdrawal so the live link remains intact.
+#[test]
+fn stale_delete_after_property_only_patch_preserves_live_link() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("stale_delete_property_patch.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    land_party(&mut cell, &b, "eb", "1", "p1");
+    let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", Some("demo/party/b"));
+    land_party(&mut cell, &a_v1, "ea1", "1", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+
+    // v3 property-only patch (no link claim emitted; v1 link claim stays active).
+    let a_v3 = party_ref_row("P-A", "demo/party/a", "A v3 patched", None);
+    land_party(&mut cell, &a_v3, "ea3", "3", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+
+    // Late v2 delete must NOT withdraw the live link A -> B or tombstone A.
+    let del_v2 = party_ref_row("P-A", "demo/party/a", "A v2", None);
+    capture_kind(&mut cell, "erpnext", &del_v2, "eadel2", "2", "delete", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()]),
+        "stale v2 delete after v3 property patch must preserve live v1 link"
+    );
+    let party_a = cell
+        .store()
+        .read()
+        .object(MAIN_WORLD, "canon.Party", "demo/party/a")
+        .expect("read a")
+        .expect("party a must remain live");
+    assert_eq!(
+        party_a
+            .values
+            .get("display_name")
+            .and_then(RuntimeValue::as_str),
+        Some("A v3 patched")
+    );
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence after stale delete");
+}
+
+/// #1549 / #1028: A v3 delete arriving before any upsert for an absent subject
+/// must prevent a late v2 upsert (including when the v3 delete's inbox row is
+/// hidden) from resurrecting the subject or emitting stale link claims, while a
+/// newer v4 upsert still creates the subject cleanly.
+#[test]
+fn delete_before_create_blocks_stale_upsert_and_allows_newer_upsert() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("delete_before_create.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    land_party(&mut cell, &b, "eb", "1", "p1");
+    land_party(&mut cell, &c, "ec", "1", "p1");
+
+    // 1. v3 delete arrives before any create (absent subject -> no-op delete).
+    let del_v3 = party_ref_row("P-A", "demo/party/a", "A v3 del", None);
+    let obs_del3 = capture_kind(&mut cell, "erpnext", &del_v3, "ed3", "3", "delete", "p1");
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, "canon.Party", "demo/party/a")
+            .expect("read a")
+            .is_none()
+    );
+
+    // 2. Late v2 upsert must NOT create A or emit link claim A -> B.
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A stale v2", Some("demo/party/b"));
+    land_party(&mut cell, &a_v2, "eu2", "2", "p1");
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, "canon.Party", "demo/party/a")
+            .expect("read a after stale v2")
+            .is_none()
+    );
+    assert!(refers_targets(&cell, "demo/party/a").is_empty());
+
+    // 3. Even if v3 delete's inbox row is hidden, a stale v1 upsert still cannot create A.
+    rewrite_inbox_observed(
+        &path,
+        &obs_del3,
+        "\"source_id\":\"P-A\"",
+        "\"source_id\":\"P-HIDE\"",
+    );
+    let a_v1 = party_ref_row("P-A", "demo/party/a", "A stale v1", Some("demo/party/b"));
+    land_party(&mut cell, &a_v1, "eu1", "1", "p1");
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, "canon.Party", "demo/party/a")
+            .expect("read a after hidden-delete stale v1")
+            .is_none()
+    );
+    assert!(refers_targets(&cell, "demo/party/a").is_empty());
+
+    // 4. A strictly newer v4 upsert creates A cleanly with only its v4 link A -> C.
+    let a_v4 = party_ref_row("P-A", "demo/party/a", "A fresh v4", Some("demo/party/c"));
+    land_party(&mut cell, &a_v4, "eu4", "4", "p1");
+    let party_a = cell
+        .store()
+        .read()
+        .object(MAIN_WORLD, "canon.Party", "demo/party/a")
+        .expect("read a v4")
+        .expect("v4 creates a");
+    assert_eq!(
+        party_a
+            .values
+            .get("display_name")
+            .and_then(RuntimeValue::as_str),
+        Some("A fresh v4")
+    );
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/c".to_owned()])
+    );
+}

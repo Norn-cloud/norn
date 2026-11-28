@@ -3439,7 +3439,9 @@ impl<E: SqlEngine> CellStore<E> {
             }
             let transaction_disputes = RefCell::default();
             let reader = StoreReader::new(&self.conn, &self.model)
-                .with_mapping_plans(&self.mapping_plans).with_transaction_source_disputes(&transaction_disputes);
+                .with_mapping_plans(&self.mapping_plans)
+                .with_transaction_source_disputes(&transaction_disputes)
+                .with_live_scrub(&self.scrub);
             if effective_batch.logical_time < reader.clock_floor()? {
                 return Err(CellError::Quantity(norn_kernel::quantity::QuantityError::ClockRegression).into());
             }

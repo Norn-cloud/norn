@@ -133,6 +133,11 @@ pub(crate) fn parse_verified_frontier_version<E: SqlEngine>(
         .flatten())
 }
 
+fn bundle_is_delete(bundle: &crate::mapping_bundle::MappingBundle) -> bool {
+    !bundle.deletes.is_empty()
+        || bundle.raw.get("kind").and_then(RuntimeValue::as_str) == Some("delete")
+}
+
 /// True when any already-landed bundle or accepted correction for `bundle`'s
 /// source record (same mapping, dataset, connector instance, partition, source,
 /// and `source_id`) or active non-reject frontier claim on its deleted subjects
@@ -142,22 +147,43 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     bundle: &crate::mapping_bundle::MappingBundle,
 ) -> Result<bool, CellError> {
+    has_newer_or_incomparable_landed(reader, bundle, false)
+}
+
+/// True when a strictly newer (or incomparable) `kind == "delete"` bundle or
+/// accepted delete correction for `bundle`'s source record has already landed
+/// (including absent-subject no-op deletes, preventing delete-before-create
+/// resurrection by stale upserts).
+pub(crate) fn has_newer_or_incomparable_landed_delete<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    bundle: &crate::mapping_bundle::MappingBundle,
+) -> Result<bool, CellError> {
+    has_newer_or_incomparable_landed(reader, bundle, true)
+}
+
+fn has_newer_or_incomparable_landed<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    bundle: &crate::mapping_bundle::MappingBundle,
+    deletes_only: bool,
+) -> Result<bool, CellError> {
     let kind = reader.bundle_version_kind(bundle)?;
     let incoming_version = crate::mapping_links::parse_source_version(bundle, kind)?;
-    let scope = bundle.source_scope()?;
-    for delete in &bundle.deletes {
-        for row in reader.active_claims_for_source_delete(
-            &scope,
-            delete.object_type.as_str(),
-            &delete.key,
-        )? {
-            if reader.is_reject_carry_claim(&row)? {
-                continue;
-            }
-            if let Some(frontier_ver) = parse_verified_frontier_version(reader, &row)? {
-                match frontier_ver.try_cmp(&incoming_version) {
-                    Ok(std::cmp::Ordering::Greater) | Err(_) => return Ok(true),
-                    Ok(std::cmp::Ordering::Less | std::cmp::Ordering::Equal) => {}
+    if !deletes_only {
+        let scope = bundle.source_scope()?;
+        for delete in &bundle.deletes {
+            for row in reader.active_claims_for_source_delete(
+                &scope,
+                delete.object_type.as_str(),
+                &delete.key,
+            )? {
+                if reader.is_reject_carry_claim(&row)? {
+                    continue;
+                }
+                if let Some(frontier_ver) = parse_verified_frontier_version(reader, &row)? {
+                    match frontier_ver.try_cmp(&incoming_version) {
+                        Ok(std::cmp::Ordering::Greater) | Err(_) => return Ok(true),
+                        Ok(std::cmp::Ordering::Less | std::cmp::Ordering::Equal) => {}
+                    }
                 }
             }
         }
@@ -168,7 +194,14 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
     let Some(source_id) = bundle.raw.get("source_id").and_then(RuntimeValue::as_str) else {
         return Ok(false);
     };
-    if has_newer_subject_history_bundle(reader, bundle, source, source_id, &incoming_version)? {
+    if has_newer_subject_history_bundle(
+        reader,
+        bundle,
+        source,
+        source_id,
+        &incoming_version,
+        deletes_only,
+    )? {
         return Ok(true);
     }
     // Match `_norn_inbox/source_event`'s exact partial-index predicate and
@@ -210,11 +243,20 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
             continue;
         }
         let landed = authenticated_landed_bundle(reader, &obs_id, consumed_u64, &encoded)?;
-        if landed_bundle_is_newer(reader, &landed, &incoming_version)? {
+        if (!deletes_only || bundle_is_delete(&landed))
+            && landed_bundle_is_newer(reader, &landed, &incoming_version)?
+        {
             return Ok(true);
         }
     }
-    has_newer_landed_correction(reader, bundle, source, source_id, &incoming_version)
+    has_newer_landed_correction(
+        reader,
+        bundle,
+        source,
+        source_id,
+        &incoming_version,
+        deletes_only,
+    )
 }
 
 fn map_corrupt_err(err: CellError, corrupt: &dyn Fn(&str) -> CellError) -> CellError {
@@ -238,6 +280,7 @@ fn has_newer_subject_history_bundle<E: SqlEngine>(
     source: &str,
     source_id: &str,
     incoming_version: &norn_ir::SourceVersion,
+    deletes_only: bool,
 ) -> Result<bool, CellError> {
     let mut subject_keys: Vec<(String, String)> = Vec::new();
     for (ty, key) in bundle
@@ -312,6 +355,7 @@ fn has_newer_subject_history_bundle<E: SqlEngine>(
             source,
             source_id,
             incoming_version,
+            deletes_only,
         )? {
             return Ok(true);
         }
@@ -329,6 +373,7 @@ fn subject_commit_has_newer_bundle<E: SqlEngine>(
     source: &str,
     source_id: &str,
     incoming_version: &norn_ir::SourceVersion,
+    deletes_only: bool,
 ) -> Result<bool, CellError> {
     let corrupt = |msg: &str| CellError::LedgerCorrupt {
         seq: commit_seq,
@@ -401,23 +446,27 @@ fn subject_commit_has_newer_bundle<E: SqlEngine>(
             .collect()
     };
     for (obs_id, auth_observed) in candidates {
-        let landed = decode_and_recheck_bundle(reader, &obs_id, &auth_observed, &corrupt)?;
+        let landed = decode_verified_journal_bundle(&obs_id, &auth_observed, &corrupt)?;
         if landed.input.mapping == incoming.input.mapping
             && landed.input.dataset == incoming.input.dataset
             && landed.input.connector_instance == incoming.input.connector_instance
             && landed.input.partition == incoming.input.partition
             && landed.raw.get("source").and_then(RuntimeValue::as_str) == Some(source)
             && landed.raw.get("source_id").and_then(RuntimeValue::as_str) == Some(source_id)
-            && landed_bundle_is_newer(reader, &landed, incoming_version)?
+            && (!deletes_only || bundle_is_delete(&landed))
         {
-            return Ok(true);
+            reader
+                .recheck_mapping_bundle(&landed)
+                .map_err(|err| corrupt(&format!("bundle failed recheck: {err}")))?;
+            if landed_bundle_is_newer(reader, &landed, incoming_version)? {
+                return Ok(true);
+            }
         }
     }
     Ok(false)
 }
 
-fn decode_and_recheck_bundle<E: SqlEngine>(
-    reader: &StoreReader<'_, E>,
+fn decode_verified_journal_bundle(
     obs_id: &str,
     auth_observed: &RuntimeValue,
     corrupt: &dyn Fn(&str) -> CellError,
@@ -432,6 +481,16 @@ fn decode_and_recheck_bundle<E: SqlEngine>(
     if obs_id != format!("mapping-bundle:{}", landed.digest) {
         return Err(corrupt("bundle digest mismatch"));
     }
+    Ok(landed)
+}
+
+fn decode_and_recheck_bundle<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    obs_id: &str,
+    auth_observed: &RuntimeValue,
+    corrupt: &dyn Fn(&str) -> CellError,
+) -> Result<crate::mapping_bundle::MappingBundle, CellError> {
+    let landed = decode_verified_journal_bundle(obs_id, auth_observed, corrupt)?;
     reader
         .recheck_mapping_bundle(&landed)
         .map_err(|err| corrupt(&format!("bundle failed recheck: {err}")))?;
@@ -531,6 +590,7 @@ fn has_newer_landed_correction<E: SqlEngine>(
     source: &str,
     source_id: &str,
     incoming_version: &norn_ir::SourceVersion,
+    deletes_only: bool,
 ) -> Result<bool, CellError> {
     let resolution_rows = reader.conn.query(
         &format!(
@@ -557,6 +617,7 @@ fn has_newer_landed_correction<E: SqlEngine>(
             && landed.input.partition == bundle.input.partition
             && landed.raw.get("source").and_then(RuntimeValue::as_str) == Some(source)
             && landed.raw.get("source_id").and_then(RuntimeValue::as_str) == Some(source_id)
+            && (!deletes_only || bundle_is_delete(&landed))
             && landed_bundle_is_newer(reader, &landed, incoming_version)?
         {
             matched = true;
@@ -581,6 +642,46 @@ fn landed_bundle_is_newer<E: SqlEngine>(
     })
 }
 
+fn is_delete_withdrawal_claim(
+    write: &norn_kernel::FactWrite,
+    delete: &crate::mapping_bundle::MappedDelete,
+) -> bool {
+    if write.key.object_type.as_str() != norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE {
+        return false;
+    }
+    let norn_kernel::FactMutation::Put { values } = &write.mutation else {
+        return false;
+    };
+    crate::link_claim_frontier::parse_claim_from_values(&write.key.key, values).is_ok_and(|claim| {
+        claim.source_type == delete.object_type
+            && claim.source_key == delete.key
+            && claim.target.is_none()
+    })
+}
+
+/// True when `key` is currently absent and `bundle`'s source record already has
+/// a strictly newer (or incomparable) landed delete, suppressing stale
+/// delete-before-create resurrection.
+pub(crate) fn record_suppressed_by_newer_delete<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    bundle: &crate::mapping_bundle::MappingBundle,
+    key: &FactKey,
+    cached: &mut Option<bool>,
+) -> Result<bool, CellError> {
+    if reader
+        .object(crate::MAIN_WORLD, key.object_type.as_str(), &key.key)?
+        .is_some()
+    {
+        return Ok(false);
+    }
+    if let Some(suppressed) = *cached {
+        return Ok(suppressed);
+    }
+    let suppressed = has_newer_or_incomparable_landed_delete(reader, bundle)?;
+    *cached = Some(suppressed);
+    Ok(suppressed)
+}
+
 /// Transaction-time guard rechecking delete and tombstone-lift eligibility
 /// inside the commit write transaction so a concurrent newer linkless commit
 /// cannot race past pre-transaction preparation.
@@ -590,22 +691,24 @@ pub(crate) fn verify_delete_and_tombstone_eligibility<E: 'static, C, I, S: SqlEn
     commit: &CellCommit<E, C, I>,
 ) -> Result<(), norn_kernel::CommitError<CellError>> {
     // Fast path: check whether `commit` actually attempts a delete mutation
-    // (tombstone Put / `ObservedDeleted` event) or tombstone lift (Delete)
-    // BEFORE running any landed-version query, keeping ordinary upserts O(0).
-    let has_delete_effect =
-        bundle.deletes.iter().any(|delete| {
-            let target_key = FactKey::new(delete.object_type.as_str(), &delete.key);
-            let buried = tombstone_key(&target_key);
-            commit.writes.iter().any(|w| {
-                w.key == buried && matches!(w.mutation, norn_kernel::FactMutation::Put { .. })
-            }) || commit.events.iter().any(|event| {
-                let any: &dyn std::any::Any = event;
-                matches!(
-                    any.downcast_ref::<ObservationEvent>(),
-                    Some(ObservationEvent::ObservedDeleted { key, .. }) if *key == target_key
-                )
-            })
-        });
+    // (tombstone Put / withdrawal claim / link removal / `ObservedDeleted`),
+    // tombstone lift (Delete), or absent-record create BEFORE querying history.
+    let has_delete_effect = bundle.deletes.iter().any(|delete| {
+        let target_key = FactKey::new(delete.object_type.as_str(), &delete.key);
+        let buried = tombstone_key(&target_key);
+        commit.writes.iter().any(|w| {
+            (w.key == buried && matches!(w.mutation, norn_kernel::FactMutation::Put { .. }))
+                || is_delete_withdrawal_claim(w, delete)
+        }) || commit.links.iter().any(|l| {
+            l.key.source == target_key && matches!(l.mutation, norn_kernel::LinkMutation::Remove)
+        }) || commit.events.iter().any(|event| {
+            let any: &dyn std::any::Any = event;
+            matches!(
+                any.downcast_ref::<ObservationEvent>(),
+                Some(ObservationEvent::ObservedDeleted { key, .. }) if *key == target_key
+            )
+        })
+    });
     let has_tombstone_lift = bundle.records.iter().any(|record| {
         let buried = tombstone_key(&FactKey::new(record.object_type.as_str(), &record.key));
         commit
@@ -613,11 +716,25 @@ pub(crate) fn verify_delete_and_tombstone_eligibility<E: 'static, C, I, S: SqlEn
             .iter()
             .any(|w| w.key == buried && matches!(w.mutation, norn_kernel::FactMutation::Delete))
     });
-    if !has_delete_effect && !has_tombstone_lift {
-        return Ok(());
+    if (has_delete_effect || has_tombstone_lift)
+        && has_newer_or_incomparable_landed_source_version(reader, bundle)
+            .map_err(norn_kernel::CommitError::Host)?
+    {
+        return Err(norn_kernel::CommitError::Host(
+            CellError::SourceEvidenceChanged,
+        ));
     }
-    if has_newer_or_incomparable_landed_source_version(reader, bundle)
-        .map_err(norn_kernel::CommitError::Host)?
+    let has_record_create = bundle.records.iter().any(|record| {
+        let target_key = FactKey::new(record.object_type.as_str(), &record.key);
+        commit.writes.iter().any(|w| {
+            w.key == target_key
+                && w.expected == FactVersion::ABSENT
+                && matches!(w.mutation, norn_kernel::FactMutation::Put { .. })
+        })
+    });
+    if has_record_create
+        && has_newer_or_incomparable_landed_delete(reader, bundle)
+            .map_err(norn_kernel::CommitError::Host)?
     {
         return Err(norn_kernel::CommitError::Host(
             CellError::SourceEvidenceChanged,
@@ -744,6 +861,11 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             )>,
         >,
     ) -> Result<Vec<norn_ir::mapping::ObservedLinkClaim>, CellError> {
+        if bundle.deletes.is_empty()
+            || has_newer_or_incomparable_landed_source_version(self, bundle)?
+        {
+            return Ok(Vec::new());
+        }
         let scope = bundle.source_scope()?;
         let mut withdrawals = Vec::new();
         for delete in &bundle.deletes {
