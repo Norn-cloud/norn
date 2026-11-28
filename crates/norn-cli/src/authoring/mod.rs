@@ -742,6 +742,67 @@ struct CompiledCheckSource {
     app_root: Option<TrustedDir>,
 }
 
+fn resolve_app_root_dir(
+    app_root: Option<AppRootMatch>,
+    start_dir: TrustedDir,
+) -> Option<TrustedDir> {
+    match app_root {
+        Some(AppRootMatch::SameAsStart) => Some(start_dir),
+        Some(AppRootMatch::Ancestor(dir)) => Some(dir),
+        None => None,
+    }
+}
+
+fn compile_check_dir_target(
+    root_dir: TrustedDir,
+    app_root: Option<AppRootMatch>,
+    req: &CheckSourceRequest<'_>,
+    budget: &mut InvocationBudget,
+) -> Result<CompiledCheckSource, AuthoringFailure> {
+    let manifest = if matches!(app_root, Some(AppRootMatch::SameAsStart)) {
+        read_norn_manifest_from_dir(&root_dir, budget).map_err(AuthoringFailure::Io)?
+    } else {
+        None
+    };
+    let ancestor_scope = if req.org.is_none() && req.env.is_none() {
+        match app_root.as_ref() {
+            Some(AppRootMatch::Ancestor(dir)) => {
+                read_norn_scope_from_dir(dir, budget).map_err(AuthoringFailure::Io)?
+            }
+            Some(AppRootMatch::SameAsStart) | None => None,
+        }
+    } else {
+        None
+    };
+    let default_scope = manifest
+        .as_ref()
+        .and_then(|app| app.org_id.as_deref().zip(app.environment_id.as_deref()))
+        .or_else(|| {
+            ancestor_scope
+                .as_ref()
+                .map(|(org, env)| (org.as_str(), env.as_str()))
+        });
+    let (resolved_org, resolved_env) =
+        resolve_check_scope(req, default_scope).map_err(AuthoringFailure::Io)?;
+    validate_non_empty_scope("--org", &resolved_org)?;
+    validate_non_empty_scope("--env", &resolved_env)?;
+    let opts = CompileDirOptions {
+        org: &resolved_org,
+        env: &resolved_env,
+        forbid_unsafe_zen: req.forbid_unsafe_zen,
+        tool_root: req.tool_root,
+        boundary_root: req.boundary_root,
+        allow_empty: false,
+    };
+    let artifacts_json = compile_directory_pinned(&root_dir, manifest.as_ref(), &opts, budget)?;
+    Ok(CompiledCheckSource {
+        artifacts_json,
+        org: resolved_org,
+        env: resolved_env,
+        app_root: resolve_app_root_dir(app_root, root_dir),
+    })
+}
+
 fn compile_check_source_pinned(
     target: PinnedSourceTarget,
     app_root: Option<AppRootMatch>,
@@ -750,54 +811,7 @@ fn compile_check_source_pinned(
 ) -> Result<CompiledCheckSource, AuthoringFailure> {
     match target {
         PinnedSourceTarget::Directory(root_dir) => {
-            let manifest = if matches!(app_root, Some(AppRootMatch::SameAsStart)) {
-                read_norn_manifest_from_dir(&root_dir, budget).map_err(AuthoringFailure::Io)?
-            } else {
-                None
-            };
-            let ancestor_scope = if req.org.is_none() && req.env.is_none() {
-                match app_root.as_ref() {
-                    Some(AppRootMatch::Ancestor(dir)) => {
-                        read_norn_scope_from_dir(dir, budget).map_err(AuthoringFailure::Io)?
-                    }
-                    Some(AppRootMatch::SameAsStart) | None => None,
-                }
-            } else {
-                None
-            };
-            let default_scope = manifest
-                .as_ref()
-                .and_then(|app| app.org_id.as_deref().zip(app.environment_id.as_deref()))
-                .or_else(|| {
-                    ancestor_scope
-                        .as_ref()
-                        .map(|(org, env)| (org.as_str(), env.as_str()))
-                });
-            let (resolved_org, resolved_env) =
-                resolve_check_scope(req, default_scope).map_err(AuthoringFailure::Io)?;
-            validate_non_empty_scope("--org", &resolved_org)?;
-            validate_non_empty_scope("--env", &resolved_env)?;
-            let opts = CompileDirOptions {
-                org: &resolved_org,
-                env: &resolved_env,
-                forbid_unsafe_zen: req.forbid_unsafe_zen,
-                tool_root: req.tool_root,
-                boundary_root: req.boundary_root,
-                allow_empty: false,
-            };
-            let artifacts_json =
-                compile_directory_pinned(&root_dir, manifest.as_ref(), &opts, budget)?;
-            let app_root_dir = match app_root {
-                Some(AppRootMatch::SameAsStart) => Some(root_dir),
-                Some(AppRootMatch::Ancestor(dir)) => Some(dir),
-                None => None,
-            };
-            Ok(CompiledCheckSource {
-                artifacts_json,
-                org: resolved_org,
-                env: resolved_env,
-                app_root: app_root_dir,
-            })
+            compile_check_dir_target(root_dir, app_root, req, budget)
         }
         PinnedSourceTarget::File {
             parent_dir,
@@ -839,16 +853,11 @@ fn compile_check_source_pinned(
                 &opts,
                 budget,
             )?;
-            let app_root_dir = match app_root {
-                Some(AppRootMatch::SameAsStart) => Some(parent_dir),
-                Some(AppRootMatch::Ancestor(dir)) => Some(dir),
-                None => None,
-            };
             Ok(CompiledCheckSource {
                 artifacts_json,
                 org: resolved_org,
                 env: resolved_env,
-                app_root: app_root_dir,
+                app_root: resolve_app_root_dir(app_root, parent_dir),
             })
         }
     }
