@@ -143,43 +143,75 @@ impl DefinitionCompiler<'_> {
             }
         }
         if kind == Kind::ArrayLiteralExpression {
-            Self::charge_literal(expansion, 1, 2, e)?;
-            let mut arr = Vec::new();
-            for item in self.list(checker, e)? {
-                Self::charge_literal(expansion, 0, 2, item)?;
-                arr.push(self.json(checker, expansion, item, depth.saturating_add(1))?);
-            }
-            return Ok(Value::Array(arr));
+            return self.json_array(checker, expansion, e, depth);
         }
         if kind == Kind::ObjectLiteralExpression {
-            Self::charge_literal(expansion, 1, 2, e)?;
-            let mut obj = Map::new();
-            for (key, value) in self.record(checker, e)?.iter() {
-                if key == "__proto__" {
-                    return Err(CompileError::new(
-                        "NORN-FLOW-LITERAL",
-                        "__proto__ is not a portable JSON member name",
-                        value.parent().unwrap_or(value),
-                    ));
-                }
-                Self::charge_literal(
-                    expansion,
-                    0,
-                    escaped_json_string_len(key).saturating_add(4),
-                    value,
-                )?;
-                obj.insert(
-                    key.to_owned(),
-                    self.json(checker, expansion, value, depth.saturating_add(1))?,
-                );
-            }
-            return Ok(Value::Object(obj));
+            return self.json_object(checker, expansion, e, depth);
         }
         Err(CompileError::new(
             "NORN-FLOW-LITERAL",
             "expected literal JSON data",
             e,
         ))
+    }
+
+    fn json_array(
+        &mut self,
+        checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
+        e: P<Node>,
+        depth: usize,
+    ) -> Result<Value, CompileError> {
+        Self::charge_literal(expansion, 1, 2, e)?;
+        let mut arr = Vec::new();
+        let next_depth = depth.saturating_add(1);
+        for &el in e.as_array_literal_expression().elements.nodes() {
+            let ek = el.kind();
+            if ek == Kind::SpreadElement || ek == Kind::OmittedExpression {
+                return Err(CompileError::new(
+                    "NORN-FLOW-LITERAL",
+                    "array elements must be listed explicitly",
+                    el,
+                ));
+            }
+            self.guard(el)?;
+            Self::charge_literal(expansion, 1, 2, el)?;
+            arr.push(self.json(checker, expansion, el, next_depth)?);
+        }
+        Ok(Value::Array(arr))
+    }
+
+    fn json_object(
+        &mut self,
+        checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
+        e: P<Node>,
+        depth: usize,
+    ) -> Result<Value, CompileError> {
+        Self::charge_literal(expansion, 1, 2, e)?;
+        let mut obj = Map::new();
+        let next_depth = depth.saturating_add(1);
+        for &prop in e.as_object_literal_expression().properties.nodes() {
+            self.guard(prop)?;
+            let (key_node, value) = Self::plain_member_nodes(prop)?;
+            let key = key_node.text();
+            if key == "__proto__" {
+                return Err(CompileError::new(
+                    "NORN-FLOW-LITERAL",
+                    "__proto__ is not a portable JSON member name",
+                    prop,
+                ));
+            }
+            Self::charge_literal(
+                expansion,
+                1,
+                escaped_json_string_len(key).saturating_add(4),
+                prop,
+            )?;
+            let lowered = self.json(checker, expansion, value, next_depth)?;
+            obj.insert(key.to_owned(), lowered);
+        }
+        Ok(Value::Object(obj))
     }
 
     pub(crate) fn when_value(

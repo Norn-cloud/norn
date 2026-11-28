@@ -213,3 +213,216 @@ effectiveFrom: \"2026-01-01T00:00:00Z\", review: {{ state: \"active\" }}, scopeR
     );
     Ok(())
 }
+
+#[test]
+fn regression_schema_preflight_charges_expanded_enum_bytes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let profile = Profile::load()?;
+    let checker = ProfileChecker::new(profile.clone());
+    let (_, mut vfs) = mount_pinned_packages(&profile)?;
+
+    let big_lit = "a".repeat(2_048);
+    let mut schema_src = format!(
+        "import {{ Schema }} from \"effect\"\n\
+const BigEnum = Schema.Literal(\"{big_lit}\")\n\
+export const Wide = Schema.Struct({{\n"
+    );
+    for i in 0_usize..20 {
+        writeln!(schema_src, "  f{i}: BigEnum,")?;
+    }
+    schema_src.push_str("})\n");
+
+    let mut entity_src = format!(
+        "import {{ Schema }} from \"effect\"\nimport {{ Norn }} from \"@norn/authoring\"\n\
+const BigEnum = Schema.Literal(\"{big_lit}\")\n\
+export const WideType = Norn.type({{ name: \"demo.Wide\", title: \"Wide\", version: \"1.0.0\", \
+properties: Schema.Struct({{\n"
+    );
+    for i in 0_usize..20 {
+        writeln!(entity_src, "  f{i}: BigEnum,")?;
+    }
+    entity_src.push_str("}) })\n");
+
+    let (schema_p, entity_p) = ("/reg/enum_bytes.ts", "/reg/enum_entity.ts");
+    vfs.add_file(schema_p, schema_src)?;
+    vfs.add_file(entity_p, entity_src)?;
+    let program = AuthoringProgram::new(vfs, &[schema_p, entity_p], profile)?
+        .with_effect_dist_prefix(PINNED_EFFECT_DIST_PREFIX);
+
+    let tight = CompilerLimits {
+        max_output_bytes: 16_000,
+        ..CompilerLimits::default()
+    };
+    let ValueSchemasCompileOutcome::Err { diagnostics } =
+        compile_value_schemas_program(&checker, &program, schema_p, tight)?
+    else {
+        return Err("expected shared large enum schema to refuse in preflight".into());
+    };
+    assert!(
+        diagnostics.iter().any(|d| d.code == "NORN-FLOW-UNBOUNDED"),
+        "expected NORN-FLOW-UNBOUNDED for schema enum bytes, got: {diagnostics:?}"
+    );
+
+    let entity_out = compile_definitions_program(&checker, &program, &[entity_p], |_| {
+        DefinitionsCompileOptions {
+            envelope: EnvelopeOptions {
+                scope: demo_scope(),
+                source_path: "reg/enum_entity.ts".to_owned(),
+                registry_package_path: None,
+            },
+            limits: tight,
+            ..DefinitionsCompileOptions::default()
+        }
+    })?;
+    let Some(DefinitionsCompileOutcome::Err { diagnostics }) = entity_out.first() else {
+        return Err("expected shared large enum entity properties to refuse in preflight".into());
+    };
+    assert!(
+        diagnostics.iter().any(|d| d.code == "NORN-FLOW-UNBOUNDED"),
+        "expected NORN-FLOW-UNBOUNDED for entity enum bytes, got: {diagnostics:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn regression_decision_flat_if_return_chain_linear_and_bounded()
+-> Result<(), Box<dyn std::error::Error>> {
+    let profile = Profile::load()?;
+    let checker = ProfileChecker::new(profile.clone());
+    let (_, mut vfs) = mount_pinned_packages(&profile)?;
+
+    let mut ok_src = String::from(
+        "import { Schema } from \"effect\"\nimport { Norn } from \"@norn/authoring\"\n\
+export const ChainOk = Norn.decision({ id: \"demo.rule.chain_ok\", title: \"Chain\", version: \"1.0.0\", \
+contract: \"sub_decision\", scopeRequired: [\"orgId\"], \
+input: Schema.Struct({ x: Schema.Int }), output: Schema.Struct({ y: Schema.Int }) }, input => {\n",
+    );
+    for i in 0_usize..60 {
+        writeln!(ok_src, "  if (input.x > {i}) return {{ y: {i} }}")?;
+    }
+    ok_src.push_str("  return { y: 0 }\n})\n");
+
+    let mut over_src = String::from(
+        "import { Schema } from \"effect\"\nimport { Norn } from \"@norn/authoring\"\n\
+export const ChainOver = Norn.decision({ id: \"demo.rule.chain_over\", title: \"ChainOver\", version: \"1.0.0\", \
+contract: \"sub_decision\", scopeRequired: [\"orgId\"], \
+input: Schema.Struct({ x: Schema.Int }), output: Schema.Struct({ y: Schema.Int }) }, input => {\n",
+    );
+    for i in 0_usize..80 {
+        writeln!(over_src, "  if (input.x > {i}) return {{ y: {i} }}")?;
+    }
+    over_src.push_str("  return { y: 0 }\n})\n");
+
+    let (ok_p, over_p) = ("/reg/chain_ok.ts", "/reg/chain_over.ts");
+    vfs.add_file(ok_p, ok_src)?;
+    vfs.add_file(over_p, over_src)?;
+    let program = AuthoringProgram::new(vfs, &[ok_p, over_p], profile)?
+        .with_effect_dist_prefix(PINNED_EFFECT_DIST_PREFIX);
+
+    let ok_out =
+        compile_definitions_program(&checker, &program, &[ok_p], |_| DefinitionsCompileOptions {
+            envelope: EnvelopeOptions {
+                scope: demo_scope(),
+                source_path: "reg/chain_ok.ts".to_owned(),
+                registry_package_path: None,
+            },
+            ..DefinitionsCompileOptions::default()
+        })?;
+    assert!(
+        matches!(ok_out.first(), Some(DefinitionsCompileOutcome::Ok(_))),
+        "expected 60-branch flat if-return chain to compile within budget, got: {ok_out:?}"
+    );
+
+    let over_out = compile_definitions_program(&checker, &program, &[over_p], |_| {
+        DefinitionsCompileOptions {
+            envelope: EnvelopeOptions {
+                scope: demo_scope(),
+                source_path: "reg/chain_over.ts".to_owned(),
+                registry_package_path: None,
+            },
+            limits: CompilerLimits {
+                max_expansion_work: 1_000,
+                ..CompilerLimits::default()
+            },
+            ..DefinitionsCompileOptions::default()
+        }
+    })?;
+    let Some(DefinitionsCompileOutcome::Err { diagnostics }) = over_out.first() else {
+        return Err("expected 80-branch flat if-return chain to trip work budget".into());
+    };
+    assert!(
+        diagnostics.iter().any(|d| d.code == "NORN-FLOW-UNBOUNDED"),
+        "expected NORN-FLOW-UNBOUNDED for flat if-return chain, got: {diagnostics:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn regression_literal_streaming_budget_for_objects_and_arrays()
+-> Result<(), Box<dyn std::error::Error>> {
+    let profile = Profile::load()?;
+    let checker = ProfileChecker::new(profile);
+
+    let key_pad = "k".repeat(64);
+    let mut obj_src = String::from("import { Norn } from \"@norn/authoring\"\nconst OBJ = {\n");
+    for i in 0_usize..120 {
+        writeln!(obj_src, "  \"{key_pad}_{i}\": 1,")?;
+    }
+    obj_src.push_str(
+        "}\nexport const ObjLit = Norn.setting({ id: \"demo.setting.obj_lit\", title: \"Obj\", version: \"1.0.0\", \
+settingKey: \"demo.obj\", valueType: \"json\", value: [OBJ, OBJ, OBJ], \
+effectiveFrom: \"2026-01-01T00:00:00Z\", review: { state: \"active\" }, scopeRequired: [\"orgId\"] })\n",
+    );
+
+    let mut arr_src = String::from("import { Norn } from \"@norn/authoring\"\nconst ARR = [");
+    for i in 0_usize..200 {
+        if i > 0 {
+            arr_src.push_str(", ");
+        }
+        arr_src.push('1');
+    }
+    arr_src.push_str(
+        "]\nexport const ArrLit = Norn.setting({ id: \"demo.setting.arr_lit\", title: \"Arr\", version: \"1.0.0\", \
+settingKey: \"demo.arr\", valueType: \"json\", value: ARR, \
+effectiveFrom: \"2026-01-01T00:00:00Z\", review: { state: \"active\" }, scopeRequired: [\"orgId\"] })\n",
+    );
+
+    let mut vfs = BoundedVfs::default();
+    vfs.add_file("/r/obj_lit.ts", obj_src)?;
+    vfs.add_file("/r/arr_lit.ts", arr_src)?;
+    let out = compile_definitions_vfs(
+        &checker,
+        vfs,
+        &["/r/obj_lit.ts", "/r/arr_lit.ts"],
+        None,
+        |file| DefinitionsCompileOptions {
+            envelope: EnvelopeOptions {
+                scope: demo_scope(),
+                source_path: file.trim_start_matches('/').to_owned(),
+                registry_package_path: None,
+            },
+            limits: if file == "/r/obj_lit.ts" {
+                CompilerLimits {
+                    max_output_bytes: 4_000,
+                    ..CompilerLimits::default()
+                }
+            } else {
+                CompilerLimits {
+                    max_expansion_work: 150,
+                    ..CompilerLimits::default()
+                }
+            },
+            ..DefinitionsCompileOptions::default()
+        },
+    )?;
+    for idx in 0_usize..2 {
+        let Some(DefinitionsCompileOutcome::Err { diagnostics }) = out.get(idx) else {
+            return Err(format!("literal case {idx} unexpectedly compiled").into());
+        };
+        assert!(
+            diagnostics.iter().any(|d| d.code == "NORN-FLOW-UNBOUNDED"),
+            "literal case {idx} expected NORN-FLOW-UNBOUNDED, got: {diagnostics:?}"
+        );
+    }
+    Ok(())
+}

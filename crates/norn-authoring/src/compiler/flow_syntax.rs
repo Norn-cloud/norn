@@ -23,7 +23,6 @@ use super::flow_source_map::{
     FLOW_MAX_ROWS, FlowDef, FlowSourceMapAnnotation, FlowSourceMapStepKind, FnRef, SourceLocation,
     Step, TaggedErrorDecl,
 };
-use super::flow_syntax_steps::branch_statements;
 use super::types::{CompileError, CompilerLimits, SchemaBudget, check_closure, source_location_of};
 use super::value_schema::{BudgetExceeded, ExpansionBudget, ValueSchema};
 
@@ -85,6 +84,8 @@ struct DecisionWalk<'a> {
     fn_node: P<Node>,
     rows: &'a mut Vec<DecisionRow>,
     steps: usize,
+    env: Env,
+    conditions: Vec<Expr>,
     checker: &'a mut Checker,
     expansion: &'a mut ExpansionBudget,
     hooks: Option<&'a mut dyn DecisionHooks>,
@@ -435,11 +436,13 @@ impl<'a> SyntaxCompiler<'a> {
                 fn_node,
                 rows: &mut rows,
                 steps: 0,
+                env,
+                conditions: Vec::new(),
                 checker,
                 expansion,
                 hooks,
             };
-            self.visit_decision_statements(stmts, env, None, 0, &mut walk)?;
+            self.visit_decision_statements(stmts, &[], 0, &mut walk)?;
         } else {
             let val = self.data(body, &env, checker, expansion, hooks)?;
             rows.push(DecisionRow {
@@ -451,49 +454,78 @@ impl<'a> SyntaxCompiler<'a> {
         Ok(rows)
     }
 
-    fn visit_decision_statements(
+    fn visit_decision_statements<'s>(
         &mut self,
-        statements: &[P<Node>],
-        mut env: Env,
-        mut condition: Option<Expr>,
+        statements: &'s [P<Node>],
+        tails: &[&'s [P<Node>]],
         branch_depth: usize,
         walk: &mut DecisionWalk<'_>,
     ) -> Result<(), CompileError> {
+        let cond_len = walk.conditions.len();
+        let mut bound: Vec<(P<Symbol>, Option<Expr>)> = Vec::new();
+        let result = self.visit_decision_loop(statements, tails, branch_depth, &mut bound, walk);
+        walk.conditions.truncate(cond_len);
+        for (sym, prev) in bound.into_iter().rev() {
+            if let Some(old) = prev {
+                walk.env.insert(sym, old);
+            } else {
+                walk.env.remove(&sym);
+            }
+        }
+        result
+    }
+
+    fn visit_decision_loop<'s>(
+        &mut self,
+        statements: &'s [P<Node>],
+        tails: &[&'s [P<Node>]],
+        branch_depth: usize,
+        bound: &mut Vec<(P<Symbol>, Option<Expr>)>,
+        walk: &mut DecisionWalk<'_>,
+    ) -> Result<(), CompileError> {
+        let mut cur_stmts = statements;
+        let mut tail_end = tails.len();
         let mut idx = 0_usize;
-        while let Some(&statement) = statements.get(idx) {
+        loop {
+            let Some(&statement) = cur_stmts.get(idx) else {
+                if tail_end == 0 {
+                    return Err(CompileError::new(
+                        "NORN-FLOW-RESULT",
+                        "decision must return a value on every path",
+                        walk.fn_node,
+                    ));
+                }
+                tail_end = tail_end.saturating_sub(1);
+                let Some(&next_stmts) = tails.get(tail_end) else {
+                    return Err(CompileError::new(
+                        "NORN-FLOW-RESULT",
+                        "decision must return a value on every path",
+                        walk.fn_node,
+                    ));
+                };
+                cur_stmts = next_stmts;
+                idx = 0;
+                continue;
+            };
             self.check_decision_step(statement, walk)?;
             let kind = statement.kind();
             if kind == Kind::VariableStatement {
-                self.bind_decision_var(statement, &mut env, walk)?;
+                self.bind_decision_var(statement, bound, walk)?;
                 idx = idx.saturating_add(1);
                 continue;
             }
             if kind == Kind::ReturnStatement
                 && let Some(ret_expr) = statement.as_return_statement().expression()
             {
-                let value = self.data(
-                    ret_expr,
-                    &env,
-                    walk.checker,
-                    walk.expansion,
-                    walk.hooks.as_deref_mut(),
-                )?;
-                walk.rows.push(DecisionRow {
-                    condition,
-                    value,
-                    at: self.at(ret_expr),
-                });
+                self.emit_decision_return(statement, ret_expr, walk)?;
                 return Ok(());
             }
             if kind == Kind::IfStatement {
-                let rest = statements.get(idx.saturating_add(1)..).unwrap_or(&[]);
-                let Some((next_env, else_cond)) =
-                    self.visit_decision_if(statement, rest, env, condition, branch_depth, walk)?
-                else {
+                let rest = cur_stmts.get(idx.saturating_add(1)..).unwrap_or(&[]);
+                let active_tails = tails.get(..tail_end).unwrap_or(&[]);
+                if self.visit_decision_if(statement, rest, active_tails, branch_depth, walk)? {
                     return Ok(());
-                };
-                env = next_env;
-                condition = Some(else_cond);
+                }
                 idx = idx.saturating_add(1);
                 continue;
             }
@@ -503,22 +535,46 @@ impl<'a> SyntaxCompiler<'a> {
                 statement,
             ));
         }
-        Err(CompileError::new(
-            "NORN-FLOW-RESULT",
-            "decision must return a value on every path",
-            walk.fn_node,
-        ))
     }
 
-    fn visit_decision_if(
+    fn emit_decision_return(
         &mut self,
         statement: P<Node>,
-        rest: &[P<Node>],
-        env: Env,
-        condition: Option<Expr>,
+        ret_expr: P<Node>,
+        walk: &mut DecisionWalk<'_>,
+    ) -> Result<(), CompileError> {
+        if walk.rows.len() >= FLOW_MAX_ROWS {
+            return Err(CompileError::new(
+                "NORN-FLOW-UNBOUNDED",
+                "decision exceeds the 1024-row bound",
+                walk.fn_node,
+            ));
+        }
+        self.check_decision_work(statement, walk.conditions.len(), walk)?;
+        let condition = build_conjunction(&walk.conditions);
+        let value = self.data(
+            ret_expr,
+            &walk.env,
+            walk.checker,
+            walk.expansion,
+            walk.hooks.as_deref_mut(),
+        )?;
+        walk.rows.push(DecisionRow {
+            condition,
+            value,
+            at: self.at(ret_expr),
+        });
+        Ok(())
+    }
+
+    fn visit_decision_if<'s>(
+        &mut self,
+        statement: P<Node>,
+        rest: &'s [P<Node>],
+        active_tails: &[&'s [P<Node>]],
         branch_depth: usize,
         walk: &mut DecisionWalk<'_>,
-    ) -> Result<Option<(Env, Expr)>, CompileError> {
+    ) -> Result<bool, CompileError> {
         let next_depth = branch_depth.saturating_add(1);
         if next_depth > self.limits.max_depth {
             return Err(CompileError::new(
@@ -530,30 +586,53 @@ impl<'a> SyntaxCompiler<'a> {
         let if_stmt = statement.as_if_statement();
         let test = self.data(
             if_stmt.expression,
-            &env,
+            &walk.env,
             walk.checker,
             walk.expansion,
             walk.hooks.as_deref_mut(),
         )?;
-        let mut then_seq = branch_statements(if_stmt.then_statement);
-        then_seq.extend_from_slice(rest);
-        let then_cond = match &condition {
-            Some(prev) => Expr::and(prev.clone(), test.clone()),
-            None => test.clone(),
+        let single_rest = [rest];
+        let mut extended_tails: Vec<&'s [P<Node>]> = Vec::new();
+        let branch_tails: &[&'s [P<Node>]] = if rest.is_empty() {
+            active_tails
+        } else if active_tails.is_empty() {
+            &single_rest
+        } else {
+            extended_tails.reserve(active_tails.len().saturating_add(1));
+            extended_tails.extend_from_slice(active_tails);
+            extended_tails.push(rest);
+            &extended_tails
         };
-        self.visit_decision_statements(&then_seq, env.clone(), Some(then_cond), next_depth, walk)?;
-        let neg = Expr::not(test);
-        let else_cond = match condition {
-            Some(prev) => Expr::and(prev, neg),
-            None => neg,
+        let single_then = [if_stmt.then_statement];
+        let then_stmts: &[P<Node>] = if if_stmt.then_statement.kind() == Kind::Block {
+            if_stmt.then_statement.as_block().statements.nodes()
+        } else {
+            &single_then
         };
+        walk.conditions.push(test);
+        let then_res = self.visit_decision_statements(then_stmts, branch_tails, next_depth, walk);
+        let popped_test = walk.conditions.pop();
+        then_res?;
+        let Some(neg_target) = popped_test else {
+            return Err(CompileError::new(
+                "NORN-FLOW-UNBOUNDED",
+                "decision condition stack corrupted",
+                statement,
+            ));
+        };
+        self.check_decision_work(statement, 1, walk)?;
+        walk.conditions.push(Expr::not(neg_target));
         if let Some(else_stmt) = if_stmt.else_statement {
-            let mut else_seq = branch_statements(else_stmt);
-            else_seq.extend_from_slice(rest);
-            self.visit_decision_statements(&else_seq, env, Some(else_cond), next_depth, walk)?;
-            return Ok(None);
+            let single_else = [else_stmt];
+            let else_stmts: &[P<Node>] = if else_stmt.kind() == Kind::Block {
+                else_stmt.as_block().statements.nodes()
+            } else {
+                &single_else
+            };
+            self.visit_decision_statements(else_stmts, branch_tails, next_depth, walk)?;
+            return Ok(true);
         }
-        Ok(Some((env, else_cond)))
+        Ok(false)
     }
 
     fn check_decision_step(
@@ -561,18 +640,7 @@ impl<'a> SyntaxCompiler<'a> {
         statement: P<Node>,
         walk: &mut DecisionWalk<'_>,
     ) -> Result<(), CompileError> {
-        self.check_budget(statement)?;
-        walk.steps = walk.steps.saturating_add(1);
-        if walk.steps > self.limits.max_expansion_work {
-            return Err(CompileError::new(
-                "NORN-FLOW-UNBOUNDED",
-                "decision statement walk exceeds the compiler step bound",
-                statement,
-            ));
-        }
-        walk.expansion.reserve(1).map_err(|BudgetExceeded(msg)| {
-            CompileError::new("NORN-FLOW-UNBOUNDED", msg, statement)
-        })?;
+        self.check_decision_work(statement, 1, walk)?;
         if walk.rows.len() >= FLOW_MAX_ROWS {
             return Err(CompileError::new(
                 "NORN-FLOW-UNBOUNDED",
@@ -583,10 +651,30 @@ impl<'a> SyntaxCompiler<'a> {
         Ok(())
     }
 
+    fn check_decision_work(
+        &self,
+        statement: P<Node>,
+        units: usize,
+        walk: &mut DecisionWalk<'_>,
+    ) -> Result<(), CompileError> {
+        self.check_budget(statement)?;
+        walk.steps = walk.steps.saturating_add(units);
+        if walk.steps > self.limits.max_expansion_work {
+            return Err(CompileError::new(
+                "NORN-FLOW-UNBOUNDED",
+                "decision statement walk exceeds the compiler step bound",
+                statement,
+            ));
+        }
+        walk.expansion
+            .reserve(units)
+            .map_err(|BudgetExceeded(msg)| CompileError::new("NORN-FLOW-UNBOUNDED", msg, statement))
+    }
+
     fn bind_decision_var(
         &mut self,
         statement: P<Node>,
-        env: &mut Env,
+        bound: &mut Vec<(P<Symbol>, Option<Expr>)>,
         walk: &mut DecisionWalk<'_>,
     ) -> Result<(), CompileError> {
         let decls = statement
@@ -614,15 +702,22 @@ impl<'a> SyntaxCompiler<'a> {
             let sym = self.symbol(walk.checker, vd.name())?;
             let val = self.data(
                 init,
-                env,
+                &walk.env,
                 walk.checker,
                 walk.expansion,
                 walk.hooks.as_deref_mut(),
             )?;
-            env.insert(sym, val);
+            let prev = walk.env.insert(sym, val);
+            bound.push((sym, prev));
         }
         Ok(())
     }
+}
+
+fn build_conjunction(conditions: &[Expr]) -> Option<Expr> {
+    let mut iter = conditions.iter();
+    let first = iter.next()?.clone();
+    Some(iter.fold(first, |acc, clause| Expr::and(acc, clause.clone())))
 }
 
 pub(crate) fn json_scalar_to_string(value: &Value) -> String {

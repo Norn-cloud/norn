@@ -15,7 +15,7 @@ use tsrs_core::P;
 use crate::BoundedVfs;
 use crate::checker::resolve::{node_text, resolve_symbol};
 
-use super::types::{CompileError, is_string_literal_like};
+use super::types::{CompileError, CompilerLimits, is_string_literal_like};
 use super::value_types::PropertyType;
 
 pub(crate) const MAX_SCHEMA_DEPTH: usize = 32;
@@ -83,6 +83,13 @@ pub(crate) fn projection_err(message: impl Into<String>, node: P<Node>) -> Compi
     CompileError::new("NORN-FLOW-SCHEMA-PROJECTION", message, node)
 }
 
+/// Memoized expanded node count and escaped JSON byte lower bound for a schema DAG node.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ExpandedCost {
+    pub(crate) nodes: usize,
+    pub(crate) bytes: usize,
+}
+
 /// Structural Effect Schema reader and projector (`SchemaProjection` in `schema.ts`).
 pub(crate) struct SchemaProjection<'a> {
     intrinsics_module: &'a str,
@@ -91,9 +98,10 @@ pub(crate) struct SchemaProjection<'a> {
     started: Instant,
     max_millis: u64,
     pub(crate) max_expanded: usize,
+    pub(crate) max_output_bytes: usize,
     memo: HashMap<P<Node>, Rc<SchemaNode>>,
     active: HashSet<P<Node>>,
-    pub(crate) sizes: HashMap<usize, usize>,
+    pub(crate) sizes: HashMap<usize, ExpandedCost>,
     next_id: usize,
 }
 
@@ -103,16 +111,16 @@ impl<'a> SchemaProjection<'a> {
         effect_dist_prefix: Option<&'a str>,
         vfs: &'a BoundedVfs,
         started: Instant,
-        max_millis: u64,
-        max_expanded: usize,
+        limits: CompilerLimits,
     ) -> Self {
         Self {
             intrinsics_module,
             effect_dist_prefix,
             vfs,
             started,
-            max_millis,
-            max_expanded,
+            max_millis: limits.max_millis,
+            max_expanded: limits.max_nodes,
+            max_output_bytes: limits.max_output_bytes,
             memo: HashMap::new(),
             active: HashSet::new(),
             sizes: HashMap::new(),
@@ -756,5 +764,26 @@ impl<'a> SchemaProjection<'a> {
             return Err(CompileError::new("NORN-FLOW-LITERAL", msg, expr));
         }
         Ok(value)
+    }
+}
+
+pub(crate) fn flatten_union(schema: &SchemaNode) -> Vec<&SchemaNode> {
+    match &schema.kind {
+        SchemaNodeKind::Union(members) => {
+            let mut out = Vec::new();
+            for m in members {
+                out.extend(flatten_union(m));
+            }
+            out
+        }
+        SchemaNodeKind::String
+        | SchemaNodeKind::Int
+        | SchemaNodeKind::Finite
+        | SchemaNodeKind::Boolean
+        | SchemaNodeKind::Null
+        | SchemaNodeKind::Literals(_)
+        | SchemaNodeKind::Struct(_)
+        | SchemaNodeKind::Array(_)
+        | SchemaNodeKind::ValueType(_) => vec![schema],
     }
 }

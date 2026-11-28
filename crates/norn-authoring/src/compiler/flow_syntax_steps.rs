@@ -457,14 +457,6 @@ impl SyntaxCompiler<'_> {
     }
 }
 
-pub(super) fn branch_statements(body: P<Node>) -> Vec<P<Node>> {
-    if body.kind() == Kind::Block {
-        body.as_block().statements.nodes().to_vec()
-    } else {
-        vec![body]
-    }
-}
-
 fn switch_clauses(stmt: P<Node>) -> Result<Vec<SwitchGroup>, CompileError> {
     let mut groups = Vec::new();
     let mut labels = Vec::new();

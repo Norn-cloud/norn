@@ -257,8 +257,7 @@ impl<'a> DefinitionCompiler<'a> {
             config.effect_dist_prefix,
             config.vfs,
             config.started,
-            config.limits.max_millis,
-            config.limits.max_nodes,
+            config.limits,
         );
         Self {
             intrinsics_module: config.intrinsics_module,
@@ -512,6 +511,32 @@ impl<'a> DefinitionCompiler<'a> {
         Ok(members)
     }
 
+    pub(crate) fn plain_member_nodes(prop: P<Node>) -> Result<(P<Node>, P<Node>), CompileError> {
+        let pk = prop.kind();
+        if pk == Kind::PropertyAssignment {
+            let pa = prop.as_property_assignment();
+            let name = pa.name();
+            let nk = name.kind();
+            if nk != Kind::Identifier && nk != Kind::StringLiteral {
+                return Err(CompileError::new(
+                    "NORN-FLOW-LITERAL",
+                    "expected plain name: value members",
+                    prop,
+                ));
+            }
+            return Ok((name, pa.initializer()));
+        }
+        if pk == Kind::ShorthandPropertyAssignment {
+            let name = prop.as_shorthand_property_assignment().name();
+            return Ok((name, name));
+        }
+        Err(CompileError::new(
+            "NORN-FLOW-LITERAL",
+            "expected plain name: value members",
+            prop,
+        ))
+    }
+
     pub(crate) fn record(
         &self,
         checker: &mut Checker,
@@ -528,28 +553,8 @@ impl<'a> DefinitionCompiler<'a> {
         let mut out = Members::default();
         for &prop in o.as_object_literal_expression().properties.nodes() {
             self.guard(prop)?;
-            let pk = prop.kind();
-            if pk == Kind::PropertyAssignment {
-                let pa = prop.as_property_assignment();
-                let nk = pa.name().kind();
-                if nk != Kind::Identifier && nk != Kind::StringLiteral {
-                    return Err(CompileError::new(
-                        "NORN-FLOW-LITERAL",
-                        "expected plain name: value members",
-                        prop,
-                    ));
-                }
-                out.insert(pa.name().text().to_owned(), pa.initializer());
-            } else if pk == Kind::ShorthandPropertyAssignment {
-                let name = prop.as_shorthand_property_assignment().name();
-                out.insert(name.text().to_owned(), name);
-            } else {
-                return Err(CompileError::new(
-                    "NORN-FLOW-LITERAL",
-                    "expected plain name: value members",
-                    prop,
-                ));
-            }
+            let (name, value) = Self::plain_member_nodes(prop)?;
+            out.insert(name.text().to_owned(), value);
         }
         Ok(out)
     }

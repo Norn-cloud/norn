@@ -21,6 +21,8 @@ const NORN1_DOMAIN_TAG: &[u8] = b"norn.canonical.json/norn1\0";
 pub(crate) const MAX_SAFE_INTEGER_I64: i64 = 9_007_199_254_740_991;
 /// Minimum safe IEEE-754 integer (`-(2^53 - 1)`), matching JavaScript `Number.MIN_SAFE_INTEGER`.
 pub(crate) const MIN_SAFE_INTEGER_I64: i64 = -9_007_199_254_740_991;
+/// Maximum safe IEEE-754 unsigned integer (`2^53 - 1`).
+const MAX_SAFE_INTEGER_U64: u64 = 9_007_199_254_740_991;
 
 /// Error returned when a value violates the canonical JSON data contract.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -92,13 +94,16 @@ pub(crate) fn js_key_cmp(left: &str, right: &str) -> Ordering {
 /// Validates and normalizes `value` into canonical JSON form:
 ///
 /// - Rejects `__proto__` object member names.
+/// - Rejects `i64`/`u64` integers outside the IEEE-754 safe integer range
+///   `-(2^53 - 1)..=(2^53 - 1)` (`-9_007_199_254_740_991..=9_007_199_254_740_991`)
+///   so canonical formatting matches JavaScript `Number` without silent rounding.
 /// - Normalizes `-0.0` to `0`.
 /// - Recursively sorts object members in JavaScript `toJson` enumeration order.
 ///
 /// # Errors
 ///
-/// Returns [`CanonicalError`] if any member name is `__proto__` or a number is
-/// non-finite.
+/// Returns [`CanonicalError`] if any member name is `__proto__`, a number is
+/// non-finite, or an integer lies outside `-(2^53 - 1)..=(2^53 - 1)`.
 pub fn to_canonical_json(value: &Value) -> Result<Value, CanonicalError> {
     to_canonical_at(value, "$")
 }
@@ -137,9 +142,25 @@ fn to_canonical_at(value: &Value, path: &str) -> Result<Value, CanonicalError> {
 
 fn normalize_number(num: &Number, path: &str) -> Result<Value, CanonicalError> {
     if let Some(i) = num.as_i64() {
+        if !(MIN_SAFE_INTEGER_I64..=MAX_SAFE_INTEGER_I64).contains(&i) {
+            return Err(CanonicalError::new(
+                path,
+                format!(
+                    "integer {i} is outside the IEEE-754 safe integer range -(2^53 - 1)..=(2^53 - 1)"
+                ),
+            ));
+        }
         return Ok(Value::Number(Number::from(i)));
     }
     if let Some(u) = num.as_u64() {
+        if u > MAX_SAFE_INTEGER_U64 {
+            return Err(CanonicalError::new(
+                path,
+                format!(
+                    "integer {u} is outside the IEEE-754 safe integer range -(2^53 - 1)..=(2^53 - 1)"
+                ),
+            ));
+        }
         return Ok(Value::Number(Number::from(u)));
     }
     let Some(f) = num.as_f64() else {
@@ -170,10 +191,14 @@ fn normalize_number(num: &Number, path: &str) -> Result<Value, CanonicalError> {
 /// two-space indentation, and a single trailing newline, matching
 /// `canonicalJson` in `tools/norn-ts/src/canonical.ts`.
 ///
+/// Integers must fall within the IEEE-754 safe integer range
+/// `-(2^53 - 1)..=(2^53 - 1)` (`-9_007_199_254_740_991..=9_007_199_254_740_991`)
+/// so formatted output never silently diverges from JavaScript `Number`.
+///
 /// # Errors
 ///
-/// Returns [`CanonicalError`] if `value` contains `__proto__` or a non-finite
-/// number.
+/// Returns [`CanonicalError`] if `value` contains `__proto__`, a non-finite
+/// number, or an integer outside `-(2^53 - 1)..=(2^53 - 1)`.
 pub fn canonical_json(value: &Value) -> Result<String, CanonicalError> {
     let normalized = to_canonical_json(value)?;
     let mut out = String::new();
@@ -185,10 +210,14 @@ pub fn canonical_json(value: &Value) -> Result<String, CanonicalError> {
 /// Formats `value` as compact canonical JSON (sorted by `UTF-16` code units,
 /// no indentation or trailing newline), matching `JSON.stringify(toJson(value))`.
 ///
+/// Integers must fall within the IEEE-754 safe integer range
+/// `-(2^53 - 1)..=(2^53 - 1)` (`-9_007_199_254_740_991..=9_007_199_254_740_991`)
+/// so formatted output never silently diverges from JavaScript `Number`.
+///
 /// # Errors
 ///
-/// Returns [`CanonicalError`] if `value` contains `__proto__` or a non-finite
-/// number.
+/// Returns [`CanonicalError`] if `value` contains `__proto__`, a non-finite
+/// number, or an integer outside `-(2^53 - 1)..=(2^53 - 1)`.
 pub fn compact_canonical_json(value: &Value) -> Result<String, CanonicalError> {
     let normalized = to_canonical_json(value)?;
     let mut out = String::new();
@@ -625,6 +654,30 @@ mod tests {
     fn rejects_proto_key() {
         let input = json!({ "__proto__": 1 });
         assert!(to_canonical_json(&input).is_err());
+    }
+
+    #[test]
+    fn rejects_integers_outside_safe_ieee754_range() -> Result<(), Box<dyn std::error::Error>> {
+        let max_safe = json!(9_007_199_254_740_991_i64);
+        let max_safe_u = json!(9_007_199_254_740_991_u64);
+        let min_safe = json!(-9_007_199_254_740_991_i64);
+        assert_eq!(compact_canonical_json(&max_safe)?, "9007199254740991");
+        assert_eq!(compact_canonical_json(&max_safe_u)?, "9007199254740991");
+        assert_eq!(compact_canonical_json(&min_safe)?, "-9007199254740991");
+        assert_eq!(canonical_json(&max_safe)?, "9007199254740991\n");
+        assert_eq!(canonical_json(&min_safe)?, "-9007199254740991\n");
+
+        for unsafe_val in [
+            json!(9_007_199_254_740_993_u64),
+            json!(-9_007_199_254_740_993_i64),
+            json!(u64::MAX),
+            json!(i64::MIN),
+        ] {
+            assert!(to_canonical_json(&unsafe_val).is_err());
+            assert!(canonical_json(&unsafe_val).is_err());
+            assert!(compact_canonical_json(&unsafe_val).is_err());
+        }
+        Ok(())
     }
 
     #[test]

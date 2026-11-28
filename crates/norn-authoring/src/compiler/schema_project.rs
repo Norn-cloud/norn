@@ -11,11 +11,11 @@ use tsrs_core::P;
 
 use crate::checker::resolve::node_text;
 
-use super::canonical::is_snake_ident;
+use super::canonical::{escaped_json_string_len, is_snake_ident};
 
 use super::schema::{
-    MAX_SCHEMA_DEPTH, NullableMode, ProjectedProperty, PropertyProjection, SchemaNode,
-    SchemaNodeKind, SchemaProjection, projection_err,
+    ExpandedCost, MAX_SCHEMA_DEPTH, NullableMode, ProjectedProperty, PropertyProjection,
+    SchemaNode, SchemaNodeKind, SchemaProjection, flatten_union, projection_err,
 };
 use super::types::CompileError;
 use super::value_schema::{BudgetExceeded, ExpansionBudget, ObjectSchema, ValueSchema};
@@ -380,42 +380,74 @@ impl SchemaProjection<'_> {
         Ok(dec)
     }
 
-    fn expanded_size(&mut self, schema: &SchemaNode) -> Result<usize, CompileError> {
+    fn expanded_cost(&mut self, schema: &SchemaNode) -> Result<ExpandedCost, CompileError> {
         if let Some(&known) = self.sizes.get(&schema.id) {
             return Ok(known);
         }
         self.guard(schema.node)?;
-        let cap = self.max_expanded.saturating_add(1);
-        let mut size = 1_usize;
-        match &schema.kind {
+        let node_cap = self.max_expanded.saturating_add(1);
+        let byte_cap = self.max_output_bytes.saturating_add(1);
+        let mut nodes = 1_usize;
+        let bytes = match &schema.kind {
             SchemaNodeKind::Literals(vals) => {
-                size = size.saturating_add(vals.len()).min(cap);
+                nodes = nodes.saturating_add(vals.len()).min(node_cap);
+                let mut total = 27_usize.min(byte_cap);
+                for v in vals {
+                    total = total
+                        .saturating_add(escaped_json_string_len(v).saturating_add(1))
+                        .min(byte_cap);
+                    if total >= byte_cap {
+                        break;
+                    }
+                }
+                total
             }
             SchemaNodeKind::Struct(fields) => {
+                let mut total = 2_usize.min(byte_cap);
                 for f in fields {
-                    let s = self.expanded_size(&f.schema)?;
-                    size = size.saturating_add(s).min(cap);
+                    let child = self.expanded_cost(&f.schema)?;
+                    nodes = nodes.saturating_add(child.nodes).min(node_cap);
+                    let key_bytes = escaped_json_string_len(&f.name).saturating_add(3);
+                    total = total
+                        .saturating_add(key_bytes)
+                        .saturating_add(child.bytes)
+                        .min(byte_cap);
+                    if nodes >= node_cap || total >= byte_cap {
+                        break;
+                    }
                 }
+                total
             }
             SchemaNodeKind::Array(items) => {
-                let s = self.expanded_size(items)?;
-                size = size.saturating_add(s).min(cap);
+                let child = self.expanded_cost(items)?;
+                nodes = nodes.saturating_add(child.nodes).min(node_cap);
+                24_usize.saturating_add(child.bytes).min(byte_cap)
             }
             SchemaNodeKind::Union(members) => {
+                let mut total = 2_usize.min(byte_cap);
                 for m in members {
-                    let s = self.expanded_size(m)?;
-                    size = size.saturating_add(s).min(cap);
+                    let child = self.expanded_cost(m)?;
+                    nodes = nodes.saturating_add(child.nodes).min(node_cap);
+                    total = total
+                        .saturating_add(child.bytes)
+                        .saturating_add(1)
+                        .min(byte_cap);
+                    if nodes >= node_cap || total >= byte_cap {
+                        break;
+                    }
                 }
+                total
             }
+            SchemaNodeKind::ValueType(vt) => vt.estimated_json_bytes().min(byte_cap),
             SchemaNodeKind::String
             | SchemaNodeKind::Int
             | SchemaNodeKind::Finite
             | SchemaNodeKind::Boolean
-            | SchemaNodeKind::Null
-            | SchemaNodeKind::ValueType(_) => {}
-        }
-        self.sizes.insert(schema.id, size);
-        Ok(size)
+            | SchemaNodeKind::Null => 15_usize.min(byte_cap),
+        };
+        let cost = ExpandedCost { nodes, bytes };
+        self.sizes.insert(schema.id, cost);
+        Ok(cost)
     }
 
     fn bounded(
@@ -430,17 +462,19 @@ impl SchemaProjection<'_> {
                 schema.node,
             ));
         }
-        let size = self.expanded_size(schema)?;
-        if size > self.max_expanded {
+        let cost = self.expanded_cost(schema)?;
+        if cost.nodes > self.max_expanded || cost.bytes > self.max_output_bytes {
             return Err(CompileError::new(
                 "NORN-FLOW-UNBOUNDED",
-                "schema expands beyond the compiler size bound (shared definitions are counted at every use)",
+                "schema expands beyond the compiler size or byte bound (shared definitions are counted at every use)",
                 schema.node,
             ));
         }
-        expansion.reserve(size).map_err(|BudgetExceeded(msg)| {
-            CompileError::new("NORN-FLOW-UNBOUNDED", msg, schema.node)
-        })
+        expansion
+            .charge_literal(cost.nodes, cost.bytes)
+            .map_err(|BudgetExceeded(msg)| {
+                CompileError::new("NORN-FLOW-UNBOUNDED", msg, schema.node)
+            })
     }
 
     /// Projects a struct schema to `EntityIR` v2 properties in declaration order.
@@ -752,26 +786,5 @@ impl SchemaProjection<'_> {
                 ))
             }
         }
-    }
-}
-
-fn flatten_union(schema: &SchemaNode) -> Vec<&SchemaNode> {
-    match &schema.kind {
-        SchemaNodeKind::Union(members) => {
-            let mut out = Vec::new();
-            for m in members {
-                out.extend(flatten_union(m));
-            }
-            out
-        }
-        SchemaNodeKind::String
-        | SchemaNodeKind::Int
-        | SchemaNodeKind::Finite
-        | SchemaNodeKind::Boolean
-        | SchemaNodeKind::Null
-        | SchemaNodeKind::Literals(_)
-        | SchemaNodeKind::Struct(_)
-        | SchemaNodeKind::Array(_)
-        | SchemaNodeKind::ValueType(_) => vec![schema],
     }
 }

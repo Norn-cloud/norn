@@ -6,6 +6,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use super::canonical::escaped_json_string_len;
+
 /// Wire spellings of the shared `norn_ir::Rounding` contract.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -384,6 +386,53 @@ impl PropertyType {
         }
     }
 
+    /// Lower-bound JSON byte estimate for schema expansion preflight.
+    #[must_use]
+    pub(crate) fn estimated_json_bytes(&self) -> usize {
+        match self {
+            Self::Text { .. } | Self::Date => 15,
+            Self::Integer { additivity } => {
+                18_usize.saturating_add(additivity_bytes(additivity.as_ref()))
+            }
+            Self::Boolean => 18,
+            Self::Timestamp { .. } => 32,
+            Self::Duration => 19,
+            Self::DecimalBinding { group } => {
+                34_usize.saturating_add(escaped_json_string_len(group))
+            }
+            Self::Enum { values } => {
+                let mut bytes = 27_usize;
+                for item in values {
+                    bytes = bytes
+                        .saturating_add(escaped_json_string_len(&item.value))
+                        .saturating_add(12);
+                    if let Some(desc) = &item.description {
+                        bytes = bytes
+                            .saturating_add(escaped_json_string_len(desc))
+                            .saturating_add(16);
+                    }
+                }
+                bytes
+            }
+            Self::Ref {
+                name,
+                additivity,
+                unit_source,
+            } => {
+                let mut bytes = 24_usize
+                    .saturating_add(escaped_json_string_len(name))
+                    .saturating_add(additivity_bytes(additivity.as_ref()));
+                for src in unit_source {
+                    bytes = bytes
+                        .saturating_add(escaped_json_string_len(src))
+                        .saturating_add(1);
+                }
+                bytes
+            }
+            Self::Decimal(dec) => decimal_bytes(dec),
+        }
+    }
+
     /// Serializes this property type to canonical `EntityIR` JSON.
     #[must_use]
     pub fn to_json(&self) -> Value {
@@ -498,4 +547,57 @@ pub(crate) fn registry_value_type(name: &str) -> Option<PropertyType> {
         }),
         _ => None,
     }
+}
+
+fn additivity_bytes(additivity: Option<&PropertyAdditivity>) -> usize {
+    match additivity {
+        None => 0,
+        Some(
+            PropertyAdditivity::Undeclared
+            | PropertyAdditivity::Additive
+            | PropertyAdditivity::SemiAdditive
+            | PropertyAdditivity::NonAdditive,
+        ) => 32,
+        Some(PropertyAdditivity::Ratio {
+            numerator,
+            denominator,
+        }) => 56_usize
+            .saturating_add(escaped_json_string_len(numerator))
+            .saturating_add(escaped_json_string_len(denominator)),
+    }
+}
+
+fn decimal_bytes(dec: &DecimalType) -> usize {
+    let mut bytes = 26_usize.saturating_add(additivity_bytes(dec.additivity.as_ref()));
+    if let Some(unit) = &dec.unit {
+        bytes = bytes
+            .saturating_add(28)
+            .saturating_add(escaped_json_string_len(&unit.system))
+            .saturating_add(escaped_json_string_len(&unit.code));
+    }
+    if let Some(cs) = &dec.currency_source {
+        bytes = bytes
+            .saturating_add(40)
+            .saturating_add(escaped_json_string_len(&cs.property));
+        for link in &cs.links {
+            bytes = bytes
+                .saturating_add(escaped_json_string_len(link))
+                .saturating_add(1);
+        }
+    }
+    if let Some(pu) = &dec.per_unit {
+        bytes = bytes
+            .saturating_add(31)
+            .saturating_add(escaped_json_string_len(&pu.system))
+            .saturating_add(escaped_json_string_len(&pu.code));
+    }
+    if dec.rounding.is_some() {
+        bytes = bytes.saturating_add(24);
+    }
+    for src in &dec.unit_source {
+        bytes = bytes
+            .saturating_add(escaped_json_string_len(src))
+            .saturating_add(1);
+    }
+    bytes
 }
