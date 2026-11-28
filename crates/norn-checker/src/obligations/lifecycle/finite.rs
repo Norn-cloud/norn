@@ -96,7 +96,10 @@ fn freeze(
     let mut rows = vec![Row::new()];
     let mut fields = BTreeMap::new();
     for property in &object.properties {
-        require(!property.computed, "computed scalar context is unsupported")?;
+        require(
+            !property.is_computed(),
+            "computed scalar context is unsupported",
+        )?;
         let EffectiveKind::Base(kind) = &property.kind else {
             return Err("unresolved scalar context type".into());
         };

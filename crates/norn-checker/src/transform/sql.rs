@@ -1080,7 +1080,7 @@ impl Lowering<'_> {
             let properties = object
                 .properties
                 .iter()
-                .filter(|property| !property.computed);
+                .filter(|property| !property.is_computed());
             properties.map(|property| property.id.as_str().to_owned())
         });
         std::iter::once("id".to_owned()).chain(stored).collect()

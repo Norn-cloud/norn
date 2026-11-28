@@ -126,11 +126,7 @@ fn effective_property_unchanged(left: &EffectiveProperty, right: &EffectivePrope
         && left.kind == right.kind
         && left.constraints == right.constraints
         && left.nullable == right.nullable
-        && left.default == right.default
-        && left.protected() == right.protected()
-        && left.computed == right.computed
-        && left.computed_inputs == right.computed_inputs
-        && left.computed_reads_all == right.computed_reads_all
+        && left.property_kind == right.property_kind
         && left.markings == right.markings
         && left.record_members().len() == right.record_members().len()
         && left
@@ -706,7 +702,7 @@ fn reads_only_direct_stored_properties(expression: &str, object: &EffectiveObjec
     reads.fields.iter().all(|field| {
         object
             .property(field)
-            .is_some_and(|prop| !prop.computed && prop.unsupported().is_none())
+            .is_some_and(|prop| !prop.is_computed() && prop.unsupported().is_none())
     })
 }
 

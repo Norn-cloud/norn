@@ -262,7 +262,7 @@ impl UxChecker<'_, '_, '_> {
         };
         let property_type_ = property_type(property);
         if property.nullable
-            || property.computed
+            || property.is_computed()
             || !property_type_
                 .as_ref()
                 .is_some_and(|ty| matches!(ty, Type::Integer | Type::Text { .. }))
@@ -523,8 +523,8 @@ impl UxChecker<'_, '_, '_> {
         }
         for property in parent.properties.iter().filter(|property| {
             !property.nullable
-                && !property.computed
-                && property.default.is_none()
+                && !property.is_computed()
+                && property.default().is_none()
                 && parent.lifecycle(property.id.as_str()).is_none()
         }) {
             let presented = self.ux.fields.iter().any(|field| {

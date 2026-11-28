@@ -1,8 +1,8 @@
 //! Reconstruct quantity caches exclusively from verified, typed receipts.
 use super::{
-    BTreeMap, BTreeSet, CellError, QuantityError, QuantityOperation, QuantityPosting,
-    QuantityReservation, QuantityState, Receipt, SqlEngine, SqlValue, canonical_json,
-    prepare_quantity, to_i64,
+    BTreeMap, BTreeSet, CellError, OriginalPostingState, QuantityError, QuantityOperation,
+    QuantityPosting, QuantityReservation, QuantityState, Receipt, SqlEngine, SqlValue,
+    canonical_json, prepare_quantity, to_i64,
 };
 
 use serde::{Deserialize, Serialize};
@@ -132,8 +132,7 @@ impl QuantityReplay {
         let ledger = ledgers.entry((world.clone(), id.clone())).or_default();
         let state = &mut ledger.state;
         state.reservation = None;
-        state.original = None;
-        state.original_reversed = false;
+        state.original = OriginalPostingState::Absent;
         state.identity_exists = false;
         match &request.operation {
             QuantityOperation::Define { .. } => {}
@@ -165,8 +164,13 @@ impl QuantityReplay {
                 original_id,
                 posting_id,
             } => {
-                state.original = ledger.postings.get(original_id).cloned();
-                state.original_reversed = ledger.reversed.contains(original_id);
+                state.original = match ledger.postings.get(original_id).cloned() {
+                    None => OriginalPostingState::Absent,
+                    Some(posting) if ledger.reversed.contains(original_id) => {
+                        OriginalPostingState::AlreadyReversed(posting)
+                    }
+                    Some(posting) => OriginalPostingState::Active(posting),
+                };
                 state.identity_exists = ledger.postings.contains_key(posting_id);
             }
         }
@@ -248,7 +252,7 @@ impl QuantityReplay {
                 ],
             )?;
             let timer_id = super::expiry_timer_id(world, id, &reservation_id)?;
-            if value.status == "open" {
+            if value.status.is_open() {
                 put(
                     timers,
                     1,
@@ -326,7 +330,7 @@ impl QuantityReplay {
         for (request, result) in requests.iter().zip(results.iter()) {
             self.request(body, request, result, history, postings)?;
             if let Some((id, value)) = &result.reservation
-                && value.status == "open"
+                && value.status.is_open()
             {
                 timers.push(super::expiry_timer_id(&body.world, &request.ledger_id, id)?);
             }

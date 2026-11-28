@@ -195,7 +195,7 @@ impl Side {
 /// `Some` scale and unit for a fixed decimal, `None` for text.
 fn numeric(property: &EffectiveProperty) -> Lowered<Option<(u32, Option<UnitRef>)>> {
     demand(
-        !property.computed
+        !property.is_computed()
             && !property.nullable
             && property
                 .constraints

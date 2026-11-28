@@ -337,7 +337,7 @@ fn lower_sum(
         .ok_or_else(refuse)?;
     let property = object.property(property.as_str()).ok_or_else(refuse)?;
     // A nullable property is summed over its present values; nulls are counted, never read as 0.
-    if property.computed
+    if property.is_computed()
         || !matches!(
             property.kind,
             EffectiveKind::Base(PropertyType::Decimal { .. } | PropertyType::Integer { .. })
@@ -403,7 +403,7 @@ fn linked_time(
         time.kind,
         EffectiveKind::Base(PropertyType::Timestamp { .. } | PropertyType::Date {})
     );
-    (is_time && !time.nullable && !time.computed).then(|| LinkedTime {
+    (is_time && !time.nullable && !time.is_computed()).then(|| LinkedTime {
         link: link.clone(),
         target_type: object.name.clone(),
         property: time.clone(),

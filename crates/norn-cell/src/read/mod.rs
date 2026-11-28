@@ -365,6 +365,36 @@ pub(crate) fn decode_row(
 
 pub(crate) type PendingDigests = BTreeMap<(String, String, u64), String>;
 
+/// Cache attachment on a [`StoreReader`]: absent, shared across reads with
+/// revision checking, or scoped to one read-only transaction pass.
+#[derive(Debug)]
+pub(crate) enum ScopedCache<'a, T> {
+    None,
+    Shared(&'a std::cell::RefCell<T>),
+    InTransaction(&'a std::cell::RefCell<T>),
+}
+
+impl<T> Clone for ScopedCache<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for ScopedCache<'_, T> {}
+
+impl<'a, T> ScopedCache<'a, T> {
+    pub(crate) const fn as_ref(self) -> Option<&'a std::cell::RefCell<T>> {
+        match self {
+            Self::None => None,
+            Self::Shared(cache) | Self::InTransaction(cache) => Some(cache),
+        }
+    }
+
+    pub(crate) const fn is_in_transaction(self) -> bool {
+        matches!(self, Self::InTransaction(_))
+    }
+}
+
 /// Committed-state reads over one engine, including its active commit
 /// transaction when called during a commit.
 #[derive(Debug, Clone, Copy)]
@@ -373,15 +403,12 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
     model: &'a Model,
     quantity_boundary: Option<crate::quantity::FormatBoundary>,
     pub(crate) pending_digests: Option<(u64, &'a PendingDigests)>,
-    pub(crate) source_disputes_transaction: bool,
-    pub(crate) source_disputes:
-        Option<&'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>>,
+    pub(crate) source_disputes: ScopedCache<'a, crate::mapping_conflict::SourceDisputeIndex>,
     pub(crate) mapping_plans:
         Option<&'a std::cell::RefCell<crate::mapping_bundle::MappingPlanCache>>,
-    pub(crate) verified_receipts: Option<&'a std::cell::RefCell<crate::history::VerifiedReceipts>>,
-    /// The receipt cache belongs to one read-only pass inside a transaction:
-    /// nothing writes while it lives, so it holds without a read revision.
-    pub(crate) verified_receipts_transaction: bool,
+    /// The receipt cache is either shared across reads (revision-checked) or
+    /// belongs to one read-only pass inside a transaction where nothing writes.
+    pub(crate) verified_receipts: ScopedCache<'a, crate::history::VerifiedReceipts>,
     /// OPEN-CHECKPOINT-1 (#1551 round 4): which history reads wait for the
     /// cell's scrub. Open on every reader but the store's served one.
     pub(crate) history_gate: crate::scrub::Gate,
@@ -402,11 +429,9 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             model,
             quantity_boundary: None,
             pending_digests: None,
-            source_disputes: None,
+            source_disputes: ScopedCache::None,
             mapping_plans: None,
-            source_disputes_transaction: false,
-            verified_receipts: None,
-            verified_receipts_transaction: false,
+            verified_receipts: ScopedCache::None,
             history_gate: crate::scrub::Gate::OPEN,
             live_scrub: None,
             live_fork: None,
@@ -533,8 +558,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         mut self,
         receipts: &'a std::cell::RefCell<crate::history::VerifiedReceipts>,
     ) -> Self {
-        self.verified_receipts = Some(receipts);
-        self.verified_receipts_transaction = true;
+        self.verified_receipts = ScopedCache::InTransaction(receipts);
         self
     }
 
@@ -542,7 +566,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         mut self,
         receipts: &'a std::cell::RefCell<crate::history::VerifiedReceipts>,
     ) -> Self {
-        self.verified_receipts = Some(receipts);
+        self.verified_receipts = ScopedCache::Shared(receipts);
         self
     }
 
@@ -560,7 +584,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         mut self,
         index: &'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>,
     ) -> Self {
-        self.source_disputes = Some(index);
+        self.source_disputes = ScopedCache::Shared(index);
         self
     }
 
@@ -576,8 +600,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         mut self,
         index: &'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>,
     ) -> Self {
-        self.source_disputes = Some(index);
-        self.source_disputes_transaction = true;
+        self.source_disputes = ScopedCache::InTransaction(index);
         self
     }
 

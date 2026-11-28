@@ -262,7 +262,7 @@ fn lower(
     for (index, property) in object.properties.iter().enumerate() {
         let id = property.id.as_str();
         demand(
-            !property.computed
+            !property.is_computed()
                 && !property.nullable
                 && property
                     .constraints
@@ -391,7 +391,7 @@ fn lower(
     for property in &object.properties {
         let id = property.id.as_str();
         if id != identity && !fields.contains_key(id) {
-            let default = serde_json::to_value(&property.default).map_err(|_error| "default")?;
+            let default = serde_json::to_value(property.default()).map_err(|_error| "default")?;
             fields.insert(id.to_owned(), scaled(text(&default)?, scale)?.to_string());
             origins.insert(
                 assignments.get(id).ok_or("default target")?.clone(),

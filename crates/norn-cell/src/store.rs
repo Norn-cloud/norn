@@ -3657,7 +3657,7 @@ impl<E: SqlEngine> CellStore<E> {
             if let (Some(requests), Some(results)) = (&body.quantity, &body.quantity_result) {
                 for (request, result) in requests.iter().zip(results.iter()) {
                     if let Some((id, reservation)) = &result.reservation
-                        && reservation.status == "open" {
+                        && reservation.status.is_open() {
                         body.scheduled.push(crate::quantity::expiry_timer_id(&effective_batch.world, &request.ledger_id, id)?);
                     }
                 }

@@ -266,7 +266,7 @@ impl EffectiveObjectType {
                 "unknown stored property {id:?}"
             )));
         };
-        if property.computed {
+        if property.is_computed() {
             return Err(InstanceError::ConstraintViolation(format!(
                 "computed property {id:?} is read-only"
             )));
@@ -321,48 +321,77 @@ pub enum EffectiveKind {
     Unresolved,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum WriteAuthority {
+/// Who may write a stored property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteAuthority {
+    /// FA-PROTECT-1: only rule outputs or the ACTOR-STAMP-1 create stamp write it.
     RulesOnly,
+    /// Callers and rules may write it.
     CallersAndRules,
 }
 
+/// Whether a stored property may be mutated after object creation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PostCreateMutability {
+pub enum PostCreateMutability {
+    /// Updates after creation are permitted.
     Mutable,
+    /// ORIGIN-DATAFLOW-1: writes after creation are forbidden.
     Immutable,
+}
+
+/// Effective-property dependencies read by a computed property's expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComputedInputs {
+    /// The expression reads or passes through the whole object root, so
+    /// runtime metadata must union every property input.
+    AllObjectProperties,
+    /// Direct effective-property dependencies read by the computed expression.
+    Named(Vec<PropertyId>),
+}
+
+/// Closed storage/derivation kind of an [`EffectiveProperty`].
+///
+/// Eliminates impossible states such as a computed property carrying a stored
+/// default, write authority, write origin, or post-create mutability, or a
+/// stored property carrying computed input dependencies.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PropertyKind {
+    /// Stored property persisted in cell facts.
+    Stored {
+        /// Who may write this stored property.
+        write_authority: WriteAuthority,
+        /// Whether writes after creation are forbidden.
+        post_create: PostCreateMutability,
+        /// Declared write-origin constraint, if any.
+        origin: Option<norn_ir::PropertyOrigin>,
+        /// The effective literal default (IR encoding), if declared.
+        default: Option<DefaultValue>,
+    },
+    /// Derived, read-only property evaluated from a declarative expression.
+    Computed {
+        /// Effective-property dependencies read by the computed expression.
+        inputs: ComputedInputs,
+    },
 }
 
 /// One effective property with every constraint set that applies to it.
 #[derive(Debug, Clone)]
 pub struct EffectiveProperty {
-    write_authority: WriteAuthority,
-    origin: Option<norn_ir::PropertyOrigin>,
-    post_create: PostCreateMutability,
     /// The property id: the key in object payloads.
     pub id: PropertyId,
     /// The resolved type.
     pub kind: EffectiveKind,
+    /// Closed storage/derivation kind (stored write/default metadata or computed inputs).
+    pub property_kind: PropertyKind,
     /// Effective markings from the property, its shared types, inherited
     /// overrides, interfaces, type-level declarations, and computed inputs.
     pub markings: Vec<norn_ir::MarkingId>,
-    /// Direct effective-property dependencies read by a computed expression.
-    /// Stored properties have an empty list.
-    pub computed_inputs: Vec<String>,
-    /// Whether the computed expression reads or passes through the whole
-    /// object root, so runtime metadata must union every property input.
-    pub computed_reads_all: bool,
     /// Every constraint set that applies: the property's own, each catalog
     /// definition's on its `ref` chain, and each one it narrows (an
     /// overridden property, an interface requirement). They conjoin.
     pub constraints: Vec<PropertyConstraints>,
     /// Whether a value may be absent.
     pub nullable: bool,
-    /// The effective literal default (IR encoding); `None` for a computed
-    /// property.
-    pub default: Option<DefaultValue>,
-    /// Whether the property is computed (derived and read-only).
-    pub computed: bool,
     /// Every `pattern` of `constraints` with its compiled form (`None`
     /// when it does not compile).
     patterns: Vec<(String, Option<regex_lite::Regex>)>,
@@ -383,33 +412,88 @@ pub enum InstanceError {
 
 impl EffectiveProperty {
     pub(crate) fn protect(&mut self) {
-        self.write_authority = WriteAuthority::RulesOnly;
+        if let PropertyKind::Stored {
+            write_authority, ..
+        } = &mut self.property_kind
+        {
+            *write_authority = WriteAuthority::RulesOnly;
+        }
     }
 
     pub(crate) fn set_immutable_after_create(&mut self) {
-        self.post_create = PostCreateMutability::Immutable;
+        if let PropertyKind::Stored { post_create, .. } = &mut self.property_kind {
+            *post_create = PostCreateMutability::Immutable;
+        }
     }
 
-    pub(crate) fn set_origin(&mut self, origin: norn_ir::PropertyOrigin) {
-        self.origin = Some(origin);
+    pub(crate) fn set_origin(&mut self, value: norn_ir::PropertyOrigin) {
+        if let PropertyKind::Stored { origin, .. } = &mut self.property_kind {
+            *origin = Some(value);
+        }
+    }
+
+    pub(crate) fn set_computed_inputs(&mut self, value: ComputedInputs) {
+        if let PropertyKind::Computed { inputs } = &mut self.property_kind {
+            *inputs = value;
+        }
+    }
+
+    /// Whether the property is computed (derived and read-only).
+    #[must_use]
+    pub const fn is_computed(&self) -> bool {
+        matches!(self.property_kind, PropertyKind::Computed { .. })
+    }
+
+    /// Effective-property dependencies read by a computed expression;
+    /// `None` for stored properties.
+    #[must_use]
+    pub const fn computed_inputs(&self) -> Option<&ComputedInputs> {
+        match &self.property_kind {
+            PropertyKind::Stored { .. } => None,
+            PropertyKind::Computed { inputs } => Some(inputs),
+        }
+    }
+
+    /// The effective literal default (IR encoding); `None` when absent or computed.
+    #[must_use]
+    pub const fn default(&self) -> Option<&DefaultValue> {
+        match &self.property_kind {
+            PropertyKind::Stored { default, .. } => default.as_ref(),
+            PropertyKind::Computed { .. } => None,
+        }
     }
 
     /// FA-PROTECT-1: only rule outputs or the ACTOR-STAMP-1 create stamp write it.
     #[must_use]
     pub const fn protected(&self) -> bool {
-        matches!(self.write_authority, WriteAuthority::RulesOnly)
+        matches!(
+            self.property_kind,
+            PropertyKind::Stored {
+                write_authority: WriteAuthority::RulesOnly,
+                ..
+            }
+        )
     }
 
     /// ORIGIN-DATAFLOW-1: declared write-origin constraint, if any.
     #[must_use]
     pub const fn origin(&self) -> Option<norn_ir::PropertyOrigin> {
-        self.origin
+        match &self.property_kind {
+            PropertyKind::Stored { origin, .. } => *origin,
+            PropertyKind::Computed { .. } => None,
+        }
     }
 
     /// ORIGIN-DATAFLOW-1: whether writes after creation are forbidden.
     #[must_use]
     pub const fn immutable_after_create(&self) -> bool {
-        matches!(self.post_create, PostCreateMutability::Immutable)
+        matches!(
+            self.property_kind,
+            PropertyKind::Stored {
+                post_create: PostCreateMutability::Immutable,
+                ..
+            }
+        )
     }
 
     /// Resolved members of the closed record, including referenced constraints.
@@ -445,33 +529,34 @@ impl EffectiveProperty {
         constraints: Vec<PropertyConstraints>,
         nullable: bool,
     ) -> Self {
-        let computed = property.is_read_only();
+        let property_kind = if property.is_read_only() {
+            PropertyKind::Computed {
+                inputs: ComputedInputs::Named(Vec::new()),
+            }
+        } else {
+            PropertyKind::Stored {
+                write_authority: if property.protected {
+                    WriteAuthority::RulesOnly
+                } else {
+                    WriteAuthority::CallersAndRules
+                },
+                post_create: if property.immutable_after_create {
+                    PostCreateMutability::Immutable
+                } else {
+                    PostCreateMutability::Mutable
+                },
+                origin: property.origin,
+                default: property.default.clone(),
+            }
+        };
         let patterns = compile_patterns(&constraints);
         Self {
             id: property.id.clone(),
             kind,
+            property_kind,
             markings: Vec::new(),
-            computed_inputs: Vec::new(),
-            computed_reads_all: false,
             constraints,
             nullable,
-            default: if computed {
-                None
-            } else {
-                property.default.clone()
-            },
-            computed,
-            write_authority: if property.protected {
-                WriteAuthority::RulesOnly
-            } else {
-                WriteAuthority::CallersAndRules
-            },
-            origin: property.origin,
-            post_create: if property.immutable_after_create {
-                PostCreateMutability::Immutable
-            } else {
-                PostCreateMutability::Mutable
-            },
             patterns,
             record_members: Vec::new(),
         }
@@ -485,7 +570,9 @@ impl EffectiveProperty {
         let constraints = resolved.constraints().into_iter().cloned().collect();
         let mut property = Self::new(resolved.property, kind, constraints, resolved.nullable());
         // An override without its own default keeps the inherited one.
-        property.default = resolved.default.cloned();
+        if let PropertyKind::Stored { default, .. } = &mut property.property_kind {
+            *default = resolved.default.cloned();
+        }
         property.markings = markings;
         property.prepare_record(resolved.catalog, 0);
         property
@@ -1159,7 +1246,7 @@ impl EffectiveProperty {
     /// property, or a default that does not check against the instance rules,
     /// which admission should have rejected).
     pub fn default_value(&self) -> Result<Option<Value>, InstanceError> {
-        let Some(default) = self.default.as_ref().filter(|_| !self.computed) else {
+        let Some(default) = self.default() else {
             return Ok(None);
         };
         if let Some(reason) = self.unsupported() {

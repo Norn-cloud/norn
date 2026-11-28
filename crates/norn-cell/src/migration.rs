@@ -1119,8 +1119,8 @@ fn effective_property_contract_changed(
             return Ok(true);
         };
         if !candidate_property.same_contract(previous_property)
-            || candidate_property.default != previous_property.default
-            || candidate_property.computed != previous_property.computed
+            || candidate_property.default() != previous_property.default()
+            || candidate_property.is_computed() != previous_property.is_computed()
         {
             return Ok(true);
         }
@@ -1160,8 +1160,8 @@ fn effective_temporal_contract_changed(
             return Ok(true);
         };
         if !candidate_property.same_contract(previous_property)
-            || candidate_property.default != previous_property.default
-            || candidate_property.computed != previous_property.computed
+            || candidate_property.default() != previous_property.default()
+            || candidate_property.is_computed() != previous_property.is_computed()
         {
             return Ok(true);
         }
@@ -1170,7 +1170,7 @@ fn effective_temporal_contract_changed(
 }
 
 fn is_temporal_effective_property(property: &EffectiveProperty) -> bool {
-    !property.computed
+    !property.is_computed()
         && matches!(
             &property.kind,
             EffectiveKind::Base(PropertyType::Date {} | PropertyType::Timestamp { .. })
@@ -3678,7 +3678,7 @@ fn declared_default(
         }
     };
     let declared = if let Some(property) = effective_property {
-        property.default.as_ref()
+        property.default()
     } else if let Some((source, link_id)) = link {
         model
             .link(source, link_id)?

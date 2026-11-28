@@ -8,8 +8,8 @@
 mod quantity_support;
 use norn_ir::quantity_ledger::{EvaluatedLedgerLeg, QuantityOperation};
 use norn_kernel::quantity::{
-    QuantityBalance, QuantityError, QuantityKey, QuantityPosting, QuantityState,
-    prepare_quantity as raw_prepare_quantity, quantity_legs,
+    OriginalPostingState, QuantityBalance, QuantityError, QuantityKey, QuantityPosting,
+    QuantityState, ReservationStatus, prepare_quantity as raw_prepare_quantity, quantity_legs,
 };
 use quantity_support::{define, pack, post, request, reserve};
 
@@ -71,7 +71,7 @@ fn pinned_pack_and_revision_bound_are_checked_before_mutation() {
 #[test]
 fn min_negation_and_exact_head_overflow_are_typed_refusals() {
     let mut current = state();
-    current.original = Some(QuantityPosting {
+    current.original = OriginalPostingState::Active(QuantityPosting {
         reverses: None,
         legs: vec![EvaluatedLedgerLeg {
             leg_id: "min".into(),
@@ -322,6 +322,36 @@ fn a_reservation_never_outgrows_its_own_reader() {
         .expect("canonical")
         .len();
     assert!(bytes.saturating_mul(2) > MAX_QUANTITY_RECORD_BYTES);
+}
+
+#[test]
+fn reservation_status_wire_encoding_is_closed_and_fails_closed() {
+    for (status, expected) in [
+        (ReservationStatus::Open, "open"),
+        (ReservationStatus::Posted, "posted"),
+        (ReservationStatus::Void, "void"),
+        (ReservationStatus::Expired, "expired"),
+    ] {
+        assert_eq!(status.as_str(), expected);
+        assert_eq!(status.to_string(), expected);
+        assert_eq!(ReservationStatus::try_from(expected), Ok(status));
+        assert_eq!(expected.parse::<ReservationStatus>(), Ok(status));
+        let json = serde_json::to_string(&status).expect("serialize status");
+        assert_eq!(json, format!("\"{expected}\""));
+        assert_eq!(
+            serde_json::from_str::<ReservationStatus>(&json).expect("deserialize status"),
+            status
+        );
+    }
+    assert_eq!(
+        ReservationStatus::try_from("cancelled"),
+        Err(QuantityError::Corrupt)
+    );
+    assert_eq!(
+        "OPEN".parse::<ReservationStatus>(),
+        Err(QuantityError::Corrupt)
+    );
+    assert!(serde_json::from_str::<ReservationStatus>("\"cancelled\"").is_err());
 }
 
 fn prepare_quantity(

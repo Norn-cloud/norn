@@ -1464,7 +1464,7 @@ impl Defined<'_> {
                     && id.as_str() != program.target().object_id_field
                     && view.is_some_and(|view| {
                         view.property(id.as_str())
-                            .is_some_and(|property| !property.computed)
+                            .is_some_and(|property| !property.is_computed())
                             && view.lifecycle(id.as_str()).is_none()
                             && !view.keys.iter().any(|key| key.components.contains(id))
                     })
@@ -1851,11 +1851,9 @@ fn owned_rows_effect_findings(
         ));
         return findings;
     };
-    if !effective
-        .properties
-        .iter()
-        .any(|property| !property.computed && effective.lifecycle(property.id.as_str()).is_none())
-    {
+    if !effective.properties.iter().any(|property| {
+        !property.is_computed() && effective.lifecycle(property.id.as_str()).is_none()
+    }) {
         findings.push(finding(
             codes::TARGET_NOT_WRITABLE,
             "parent-and-rows effects require a stored non-lifecycle parent property for row-only CAS touches".to_owned(),
@@ -1993,7 +1991,7 @@ fn owned_rows_effect_findings(
         {
             continue;
         }
-        if property.computed || property.protected() {
+        if property.is_computed() || property.protected() {
             findings.push(finding(
                 codes::TARGET_NOT_WRITABLE,
                 format!(
@@ -2393,7 +2391,7 @@ impl<'a> Model<'a> {
                     effective
                         .properties
                         .iter()
-                        .filter(|property| property.computed)
+                        .filter(|property| property.is_computed())
                         .map(|property| property.id.0.clone())
                         .collect(),
                     Ok(effective.lifecycles.clone()),

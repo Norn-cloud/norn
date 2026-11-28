@@ -296,15 +296,14 @@ impl<'a> TypeCatalog<'a> {
             return Ok(values);
         };
         for property in &effective.properties {
-            if property.computed {
+            if property.is_computed() {
                 continue;
             }
             let name = property.id.as_str();
             let value = match submitted.get(name) {
                 Some(value) => value.clone(),
                 None => property
-                    .default
-                    .as_ref()
+                    .default()
                     .map(|default| property.runtime_default_literal(&default.0))
                     .transpose()?
                     .unwrap_or(RuntimeValue::Null),
@@ -465,11 +464,11 @@ impl<'a> TypeCatalog<'a> {
             return Ok(values);
         };
         for property in &effective.properties {
-            if property.computed || submitted.contains_key(property.id.as_str()) {
+            if property.is_computed() || submitted.contains_key(property.id.as_str()) {
                 continue;
             }
             let name = property.id.as_str();
-            let Some(default) = &property.default else {
+            let Some(default) = property.default() else {
                 continue;
             };
             let value = property.runtime_default_literal(&default.0)?;
@@ -517,15 +516,14 @@ impl<'a> TypeCatalog<'a> {
         crate::decision_links::check_submitted_link_keys(&effective_link.properties, submitted)?;
         let mut values = JsonObject::new();
         for property in &effective_link.properties {
-            if property.computed {
+            if property.is_computed() {
                 continue;
             }
             let name = property.id.as_str();
             let value = match submitted.get(name) {
                 Some(value) => value.clone(),
                 None => property
-                    .default
-                    .as_ref()
+                    .default()
                     .map(|default| property.runtime_default_literal(&default.0))
                     .transpose()?
                     .unwrap_or(RuntimeValue::Null),
@@ -709,7 +707,7 @@ impl<'a> TypeCatalog<'a> {
     ) -> JsonValue {
         self.effective_type(object_type)
             .and_then(|effective| effective.property(property_name))
-            .filter(|property| !property.computed && is_temporal_property(property))
+            .filter(|property| !property.is_computed() && is_temporal_property(property))
             .map_or_else(
                 || value.clone(),
                 |property| property.canonical_runtime_value(value),
@@ -741,7 +739,7 @@ impl<'a> TypeCatalog<'a> {
                 object_type
                     .properties
                     .iter()
-                    .any(|property| !property.computed && is_temporal_property(property))
+                    .any(|property| !property.is_computed() && is_temporal_property(property))
             },
         );
         Ok(declared || temporal)
@@ -947,7 +945,7 @@ impl<'a> TypeCatalog<'a> {
         let Some(effective) = self.effective_property(object_type, property) else {
             return Ok(None);
         };
-        if effective.computed
+        if effective.is_computed()
             || !matches!(
                 effective.kind,
                 EffectiveKind::Base(PropertyType::Decimal { .. } | PropertyType::Record { .. })
@@ -1201,7 +1199,7 @@ impl<'a> TypeCatalog<'a> {
         property: &PropertyId,
     ) -> Option<&norn_ir::JsonValue> {
         self.effective_property(object_type, property)
-            .and_then(|property| property.default.as_ref())
+            .and_then(EffectiveProperty::default)
             .map(|default| &default.0)
     }
 }

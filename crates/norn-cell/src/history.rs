@@ -374,12 +374,15 @@ impl<'c, E: SqlEngine> StoreReader<'c, E> {
         let Some(version) = self.definitions_version_at(commit_seq)? else {
             return Ok(None);
         };
-        let revision = if self.verified_receipts_transaction {
-            Some((0, 0))
-        } else {
-            self.conn.read_cache_revision()?
+        let cache_entry = match self.verified_receipts {
+            crate::read::ScopedCache::None => None,
+            crate::read::ScopedCache::InTransaction(cache) => Some((cache, (0, 0), true)),
+            crate::read::ScopedCache::Shared(cache) => self
+                .conn
+                .read_cache_revision()?
+                .map(|revision| (cache, revision, false)),
         };
-        if let (Some(cache), Some(revision)) = (self.verified_receipts, revision) {
+        if let Some((cache, revision, _)) = cache_entry {
             let cache = cache.borrow();
             if cache.revision == Some(revision)
                 && let Some(model) = cache.models.get(&version)
@@ -395,9 +398,8 @@ impl<'c, E: SqlEngine> StoreReader<'c, E> {
         }
         let installation = self.retained_definition_install(&installed)?;
         let model = Arc::new(Self::retained_model_from(&installed, &installation)?);
-        if let (Some(cache), Some(revision)) = (self.verified_receipts, revision)
-            && (self.verified_receipts_transaction
-                || self.conn.read_cache_revision()? == Some(revision))
+        if let Some((cache, revision, in_transaction)) = cache_entry
+            && (in_transaction || self.conn.read_cache_revision()? == Some(revision))
         {
             let mut cache = cache.borrow_mut();
             if cache.revision != Some(revision) {
@@ -417,12 +419,15 @@ impl<'c, E: SqlEngine> StoreReader<'c, E> {
     /// receipt once rather than N times.
     fn verified_receipt_at(&self, commit: u64) -> Result<Option<Arc<Receipt>>, CellError> {
         // Inside a transaction-scoped pass the revision is the pass itself.
-        let revision = if self.verified_receipts_transaction {
-            Some((0, 0))
-        } else {
-            self.conn.read_cache_revision()?
+        let cache_entry = match self.verified_receipts {
+            crate::read::ScopedCache::None => None,
+            crate::read::ScopedCache::InTransaction(cache) => Some((cache, (0, 0), true)),
+            crate::read::ScopedCache::Shared(cache) => self
+                .conn
+                .read_cache_revision()?
+                .map(|revision| (cache, revision, false)),
         };
-        if let (Some(cache), Some(revision)) = (self.verified_receipts, revision) {
+        if let Some((cache, revision, _)) = cache_entry {
             let cache = cache.borrow();
             if cache.revision == Some(revision)
                 && let Some(receipt) = cache.receipts.get(&commit)
@@ -437,9 +442,8 @@ impl<'c, E: SqlEngine> StoreReader<'c, E> {
             return Err(unproven_snapshot());
         }
         let receipt = Arc::new(receipt);
-        if let (Some(cache), Some(revision)) = (self.verified_receipts, revision)
-            && (self.verified_receipts_transaction
-                || self.conn.read_cache_revision()? == Some(revision))
+        if let Some((cache, revision, in_transaction)) = cache_entry
+            && (in_transaction || self.conn.read_cache_revision()? == Some(revision))
         {
             let mut cache = cache.borrow_mut();
             if cache.revision != Some(revision) || cache.receipts.len() >= VERIFIED_RECEIPTS {

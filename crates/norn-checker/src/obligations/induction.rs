@@ -229,7 +229,7 @@ fn independent_reads(expression: &str, object: &EffectiveObjectType) -> Option<B
         || reads.fields.iter().any(|field| {
             object
                 .property(field)
-                .is_none_or(|property| property.computed || property.unsupported().is_some())
+                .is_none_or(|property| property.is_computed() || property.unsupported().is_some())
         })
     {
         return None;

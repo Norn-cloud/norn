@@ -123,7 +123,7 @@ fn patch_read_properties(
         }
     }
     for property in &effective.properties {
-        if !property.computed
+        if !property.is_computed()
             && matches!(
                 &property.kind,
                 norn_checker::EffectiveKind::Base(

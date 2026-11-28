@@ -761,15 +761,19 @@ impl Model {
         let mut dependencies = object
             .properties
             .iter()
-            .filter(|property| property.computed)
-            .map(|property| {
-                (
-                    property.id.as_str().to_owned(),
-                    (
-                        property.computed_inputs.iter().cloned().collect(),
-                        property.computed_reads_all,
+            .filter_map(|property| {
+                let inputs = property.computed_inputs()?;
+                let (fields, reads_all) = match inputs {
+                    norn_checker::ComputedInputs::AllObjectProperties => (BTreeSet::new(), true),
+                    norn_checker::ComputedInputs::Named(fields) => (
+                        fields
+                            .iter()
+                            .map(|id| id.as_str().to_owned())
+                            .collect::<BTreeSet<_>>(),
+                        false,
                     ),
-                )
+                };
+                Some((property.id.as_str().to_owned(), (fields, reads_all)))
             })
             .collect::<BTreeMap<String, (BTreeSet<String>, bool)>>();
         for key in &object.keys {

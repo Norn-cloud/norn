@@ -524,7 +524,7 @@ fn schema_target(target: &Resolved<'_>, resolved: &[Resolved<'_>], property: &st
         candidate
             .effective_object_type
             .property(property)
-            .is_some_and(|effective| !effective.computed)
+            .is_some_and(|effective| !effective.is_computed())
     };
     declares(target) || !resolved.iter().any(declares)
 }
@@ -544,7 +544,7 @@ fn check_stored_member(
         None => target
             .effective_object_type
             .property(property)
-            .filter(|effective| !effective.computed)
+            .filter(|effective| !effective.is_computed())
             .map_or_else(
                 || {
                     Err(InstanceError::ConstraintViolation(format!(
@@ -585,7 +585,7 @@ fn check_schema_values(
     let Some(effective) = target.effective_object_type.property(property) else {
         return Vec::new();
     };
-    if effective.computed {
+    if effective.is_computed() {
         return Vec::new();
     }
     let mut findings = Vec::new();

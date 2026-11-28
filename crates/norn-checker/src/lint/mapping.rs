@@ -138,7 +138,7 @@ fn target_members<'s>(
         for property in &effective.properties {
             properties.insert(
                 property.id.as_str(),
-                !property.nullable && property.default.is_none() && !property.computed,
+                !property.nullable && property.default().is_none() && !property.is_computed(),
             );
         }
     } else {

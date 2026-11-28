@@ -159,23 +159,26 @@ fn property_and_computed_markings_accumulate_from_shared_types_and_interfaces() 
         person
             .property("email")
             .expect("stored property")
-            .computed_inputs
-            .len(),
-        0
+            .computed_inputs(),
+        None
     );
     assert_eq!(
         person
             .property("email_copy")
             .expect("computed property")
-            .computed_inputs,
-        vec!["email".to_owned()]
+            .computed_inputs(),
+        Some(&norn_checker::ComputedInputs::Named(vec![
+            norn_ir::PropertyId("email".to_owned())
+        ]))
     );
     assert_eq!(
         person
             .property("email_derived")
             .expect("transitively computed property")
-            .computed_inputs,
-        vec!["email_copy".to_owned()]
+            .computed_inputs(),
+        Some(&norn_checker::ComputedInputs::Named(vec![
+            norn_ir::PropertyId("email_copy".to_owned())
+        ]))
     );
 }
 
@@ -652,7 +655,7 @@ fn record_member_refs_enforce_catalog_constraints_and_exact_defaults() {
         .expect("valid catalog");
     let property = object.property("point").expect("point");
     let default = property
-        .runtime_default_literal(&property.default.as_ref().expect("default").0)
+        .runtime_default_literal(&property.default().expect("default").0)
         .expect("exact default");
     property
         .check_runtime_value(&default)

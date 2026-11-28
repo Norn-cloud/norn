@@ -252,7 +252,7 @@ pub(super) fn apply_post_slice_derivations<X>(
 pub(super) fn is_owned_row_property_restricted(
     prop: &norn_checker::entity_instance::EffectiveProperty,
 ) -> bool {
-    prop.computed
+    prop.is_computed()
         || prop.protected()
         || prop.immutable_after_create()
         || prop.origin().is_some_and(|origin| {
@@ -263,7 +263,7 @@ pub(super) fn is_owned_row_property_restricted(
 pub(super) fn is_stored_patch_origin_restricted(
     prop: &norn_checker::entity_instance::EffectiveProperty,
 ) -> bool {
-    prop.computed
+    prop.is_computed()
         || prop.protected()
         || prop
             .origin()

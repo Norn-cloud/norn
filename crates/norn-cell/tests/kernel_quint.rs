@@ -931,7 +931,9 @@ fn projection_trust_quint_traces() {
 
 #[test]
 fn quantity_closed_slice_refusal_matches_pure_kernel() {
-    use norn_kernel::quantity::{QuantityError, QuantityState, prepare_quantity};
+    use norn_kernel::quantity::{
+        QuantityError, QuantityState, ReservationStatus, prepare_quantity,
+    };
     let dir = tempfile::tempdir().expect("directory");
     let db = dir.path().join("cell.sqlite");
     let mut store = initialized(&db);
@@ -952,7 +954,7 @@ fn quantity_closed_slice_refusal_matches_pure_kernel() {
         .quantity_reservation("main", "proof", "r0")
         .expect("read")
         .expect("closed record");
-    assert_eq!(closed.status, "void");
+    assert_eq!(closed.status, ReservationStatus::Void);
     let subset = request(
         json!({"kind":"void","reservation_id":"r0", "resolution":{"kind":"subset",
         "legs":[{"legId":"out","amountUnscaled":"-1"},{"legId":"dest","amountUnscaled":"1"}]}}),

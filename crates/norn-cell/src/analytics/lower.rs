@@ -22,7 +22,7 @@ const fn refused() -> CellError {
 
 /// The storage kind of a stored property; computed properties are not stored.
 pub(crate) fn column_kind(property: &EffectiveProperty) -> Option<ColumnKind> {
-    if property.computed {
+    if property.is_computed() {
         return None;
     }
     Some(match &property.kind {

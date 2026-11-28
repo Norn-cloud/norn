@@ -231,7 +231,7 @@ pub(super) fn fire_transition_set_fields_findings(
         !id.as_str().starts_with("_norn")
             && view.is_some_and(|view| {
                 view.property(id.as_str())
-                    .is_some_and(|property| !property.computed && !property.protected())
+                    .is_some_and(|property| !property.is_computed() && !property.protected())
                     && view.lifecycle(id.as_str()).is_none()
                     && !view.keys.iter().any(|key| key.components.contains(id))
             })
@@ -297,7 +297,7 @@ pub(super) fn fire_transition_set_fields_findings(
 }
 
 pub(super) fn is_owned_row_property_restricted(property: &EffectiveProperty) -> bool {
-    property.computed
+    property.is_computed()
         || property.protected()
         || property.immutable_after_create()
         || property.origin().is_some_and(|origin| {

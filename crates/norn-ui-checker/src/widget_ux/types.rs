@@ -135,7 +135,7 @@ impl UxChecker<'_, '_, '_> {
             let row_fields = row_object
                 .properties
                 .iter()
-                .filter(|property| !property.computed)
+                .filter(|property| !property.is_computed())
                 .filter_map(|property| {
                     property_type(property).map(|type_| (property.id.as_str().to_owned(), type_))
                 })

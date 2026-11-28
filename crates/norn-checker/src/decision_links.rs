@@ -321,7 +321,7 @@ fn check_link_values_schema(
         }
         let writable: Vec<&EffectiveProperty> = matching_props
             .into_iter()
-            .filter(|property| !property.computed)
+            .filter(|property| !property.is_computed())
             .collect();
         if writable.is_empty() {
             findings.push(finding(

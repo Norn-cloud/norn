@@ -13,7 +13,7 @@ use norn_cell::{
     CellError, CellStore, CommitBatch, CommitOutcome, CommitPoint, Model, SqliteCell, StoreOptions,
 };
 use norn_ir::quantity_ledger::QuantityOperation;
-use norn_kernel::quantity::{QuantityError, QuantityKey};
+use norn_kernel::quantity::{QuantityError, QuantityKey, ReservationStatus};
 use norn_kernel::{CellCommit, FactKey, FactMutation, FactVersion, FactWrite, LogicalTime};
 use norn_testkit::proptest::prelude::*;
 use quantity_support::{define, parameters, post, request, reserve};
@@ -1349,7 +1349,7 @@ fn persisted_reservation_vector_deadline_and_status_remain_pinned() {
                 }
             }
             Damage::Deadline => record.expires_at = 101,
-            Damage::Status => record.status = "posted".into(),
+            Damage::Status => record.status = ReservationStatus::Posted,
         }
         let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
         engine
@@ -1776,7 +1776,7 @@ fn conserving_partial_post_and_void_preserve_identity_deadline_and_retry() {
         .quantity_reservation("main", "stock", "partial")
         .expect("read")
         .expect("reservation");
-    assert_eq!(remaining.status, "open");
+    assert_eq!(remaining.status, ReservationStatus::Open);
     assert_eq!(remaining.expires_at, 100);
     assert_eq!(
         remaining

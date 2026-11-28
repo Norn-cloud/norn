@@ -644,7 +644,7 @@ impl<'a> Context<'a> {
             let properties = object
                 .properties
                 .iter()
-                .filter(|property| !property.computed && property.id.as_str() != "id")
+                .filter(|property| !property.is_computed() && property.id.as_str() != "id")
                 .map(|property| property.id.as_str().to_owned())
                 .collect();
             inputs.insert(

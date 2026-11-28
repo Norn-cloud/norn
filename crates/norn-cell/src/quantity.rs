@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::quantity_ledger::{QuantityOperation, QuantityRequest};
 use norn_kernel::quantity::{
-    QuantityBalance, QuantityError, QuantityKey, QuantityPosting, QuantityReservation,
-    QuantityState, preflight_quantity, prepare_quantity, quantity_legs,
+    OriginalPostingState, QuantityBalance, QuantityError, QuantityKey, QuantityPosting,
+    QuantityReservation, QuantityState, preflight_quantity, prepare_quantity, quantity_legs,
 };
 use serde::de::DeserializeOwned;
 
@@ -822,18 +822,29 @@ fn state<S: SqlEngine>(
             original_id,
             posting_id,
         } => {
-            state.original = posting(engine, world, &request.ledger_id, original_id)?;
-            if state
-                .original
+            let original = posting(engine, world, &request.ledger_id, original_id)?;
+            if let Some(original) = original
                 .as_ref()
-                .is_some_and(|original| original.reverses.is_none())
+                .filter(|original| original.reverses.is_none())
             {
-                verify_original(engine, world, &request.ledger_id, original_id, &state)?;
+                verify_original(
+                    engine,
+                    world,
+                    &request.ledger_id,
+                    original_id,
+                    state.version,
+                    original,
+                )?;
             }
             state.identity_exists =
                 posting(engine, world, &request.ledger_id, posting_id)?.is_some();
-            state.original_reversed =
-                verified_reversed(engine, world, &request.ledger_id, original_id)?;
+            let reversed = verified_reversed(engine, world, &request.ledger_id, original_id)?;
+            state.original = match (original, reversed) {
+                (None, false) => OriginalPostingState::Absent,
+                (None, true) => return Err(QuantityError::Corrupt.into()),
+                (Some(posting), false) => OriginalPostingState::Active(posting),
+                (Some(posting), true) => OriginalPostingState::AlreadyReversed(posting),
+            };
         }
     }
     if let QuantityOperation::PostReservation { reservation_id, .. }
@@ -933,7 +944,7 @@ pub(crate) fn apply<S: SqlEngine>(
             )?;
         }
         let timer_id = expiry_timer_id(&batch.world, &request.ledger_id, id)?;
-        if reservation.status == "open" {
+        if reservation.status.is_open() {
             engine.execute(
                 r#"INSERT INTO "_norn_timer" ("timer_id","due","timer","commit_seq") VALUES (?1,?2,?3,?4)
                 ON CONFLICT ("timer_id") DO UPDATE SET "due"=excluded."due", "timer"=excluded."timer", "commit_seq"=excluded."commit_seq""#,
@@ -1218,9 +1229,9 @@ fn verify_original<S: SqlEngine>(
     world: &str,
     ledger: &str,
     id: &str,
-    state: &QuantityState,
+    ledger_version: u64,
+    original: &QuantityPosting,
 ) -> Result<(), CellError> {
-    let original = state.original.as_ref().ok_or(QuantityError::Corrupt)?;
     let (commit_seq, recorded_version) = engine.query_row(
         r#"SELECT "commit_seq", "version" FROM "_norn_quantity_posting" WHERE "world"=?1 AND "ledger"=?2 AND "id"=?3"#,
         params![world, ledger, id], |row| Ok((row.get::<i64>(0)?, to_u64(row.get(1)?, "quantity posting version")?)),
@@ -1235,7 +1246,7 @@ fn verify_original<S: SqlEngine>(
         .quantity_result(ledger)
         .map(|result| result.version)
             != Some(recorded_version)
-        || recorded_version > state.version
+        || recorded_version > ledger_version
     {
         return Err(QuantityError::Corrupt.into());
     }

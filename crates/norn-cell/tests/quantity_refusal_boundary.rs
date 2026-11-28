@@ -13,7 +13,7 @@ use norn_ir::quantity_ledger::{
     QuantityResolution, QuantitySlice,
 };
 use norn_kernel::quantity::{
-    QuantityError, QuantityState, prepare_quantity, quantity_balance_keys,
+    QuantityError, QuantityState, ReservationStatus, prepare_quantity, quantity_balance_keys,
 };
 use quantity_support::{define, post, request, reserve};
 
@@ -485,7 +485,7 @@ fn all_sixteen_quint_terminal_mismatches_are_retained_as_reduced_trace_regressio
             .quantity_reservation("main", "stock", &reservation_id)
             .expect("read")
             .expect("record");
-        assert_eq!(closed.status, "expired");
+        assert_eq!(closed.status, ReservationStatus::Expired);
         assert_eq!(closed.remaining, []);
         assert_eq!(case["outcome"], "terminal");
         let state = QuantityState {
