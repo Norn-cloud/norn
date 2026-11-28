@@ -7,12 +7,13 @@ use ruff_python_ast::{
 use ruff_python_parser::parse_module;
 use ruff_text_size::Ranged;
 
+use crate::budget::check_body_budget;
 use crate::error::{
     CODE_FLOAT_LITERAL, CODE_FORBIDDEN_ATTR, CODE_FORBIDDEN_CALL, CODE_FORBIDDEN_CONTROL_FLOW,
     CODE_FORBIDDEN_NAME, CODE_SYNTAX, CODE_UNBOUNDED, PyAuthoringError, SourceSpan,
 };
 use crate::line_table::LineTable;
-use crate::sandbox::{FORBIDDEN_INTERNAL_ATTRS, MAX_SOURCE_BYTES, is_forbidden_name};
+use crate::sandbox::{FORBIDDEN_INTERNAL_ATTRS, SandboxLimits, is_forbidden_name};
 
 /// Closed allowlist of standalone functions callable inside Norn expression callbacks.
 pub const ALLOWED_CALLBACK_FUNCS: &[&str] = &[
@@ -48,13 +49,28 @@ pub const ALLOWED_CALLBACK_METHODS: &[&str] = &["eq", "is_not_null", "is_null", 
 ///
 /// # Errors
 ///
-/// Returns [`PyAuthoringError`] if parsing fails or the callback violates the
-/// closed expression profile.
+/// Returns [`PyAuthoringError`] if source-byte, AST node, or AST depth budgets are
+/// exceeded, parsing fails, or the callback violates the closed expression profile.
 pub fn validate_callback_source(source: &str, filename: &str) -> Result<(), PyAuthoringError> {
-    if source.len() > MAX_SOURCE_BYTES {
+    validate_callback_source_with_limits(source, filename, SandboxLimits::default())
+}
+
+/// Validates a standalone Python callback against the closed callback AST profile
+/// with explicit [`SandboxLimits`] enforced before recursive expression traversal.
+///
+/// # Errors
+///
+/// Returns [`PyAuthoringError`] on budget exhaustion, syntax errors, or callback
+/// profile violations.
+pub fn validate_callback_source_with_limits(
+    source: &str,
+    filename: &str,
+    limits: SandboxLimits,
+) -> Result<(), PyAuthoringError> {
+    if source.len() > limits.max_source_bytes {
         return Err(PyAuthoringError::spanned(
             CODE_UNBOUNDED,
-            format!("source exceeds {MAX_SOURCE_BYTES} byte limit"),
+            format!("source exceeds {} byte limit", limits.max_source_bytes),
             SourceSpan::new(filename, 1, 0),
         ));
     }
@@ -66,7 +82,15 @@ pub fn validate_callback_source(source: &str, filename: &str) -> Result<(), PyAu
             lines.span_at(err.location.start()),
         )
     })?;
+    if let Some(unsupported) = parsed_mod.unsupported_syntax_errors().first() {
+        return Err(PyAuthoringError::spanned(
+            CODE_SYNTAX,
+            unsupported.to_string(),
+            lines.span_at(unsupported.range().start()),
+        ));
+    }
     let body: &[Stmt] = parsed_mod.suite();
+    let _stats = check_body_budget(body, &lines, limits)?;
     match body {
         [Stmt::FunctionDef(func_def)] => validate_function_callback(func_def, &lines),
         [Stmt::Expr(expr_stmt)] => {

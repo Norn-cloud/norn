@@ -18,6 +18,7 @@ use ruff_python_ast::{Expr, ModModule, Number, Parameter, Stmt};
 use ruff_python_parser::parse_module;
 use ruff_text_size::Ranged;
 
+use crate::budget::check_body_budget;
 use crate::error::{
     CODE_FLOAT_LITERAL, CODE_FORBIDDEN_ATTR, CODE_FORBIDDEN_CALL, CODE_FORBIDDEN_CONTROL_FLOW,
     CODE_FORBIDDEN_IMPORT, CODE_FORBIDDEN_NAME, CODE_FORBIDDEN_SYNTAX, CODE_SYNTAX, CODE_UNBOUNDED,
@@ -327,14 +328,9 @@ pub(crate) fn parse_and_validate_module(
     }
 
     let module = parsed.into_syntax();
-    let mut walker = SandboxVisitor {
-        lines,
-        limits,
-        node_count: 0,
-        depth: 0,
-        max_depth_seen: 0,
-        error: None,
-    };
+    let stats = check_body_budget(&module.body, lines, limits)?;
+
+    let mut walker = SandboxVisitor { lines, error: None };
     walker.visit_body(&module.body);
 
     if let Some(err) = walker.error {
@@ -344,8 +340,8 @@ pub(crate) fn parse_and_validate_module(
     let spans = collect_top_level_spans(&module.body, lines);
     let report = PreflightReport {
         spans,
-        ast_node_count: walker.node_count,
-        max_depth_seen: walker.max_depth_seen,
+        ast_node_count: stats.ast_node_count,
+        max_depth_seen: stats.max_depth_seen,
     };
     Ok((module, report))
 }
@@ -454,10 +450,6 @@ fn check_alias_asname(asname: Option<&str>, span: &SourceSpan) -> Result<(), PyA
 
 struct SandboxVisitor<'a> {
     lines: &'a LineTable<'a>,
-    limits: SandboxLimits,
-    node_count: usize,
-    depth: usize,
-    max_depth_seen: usize,
     error: Option<PyAuthoringError>,
 }
 
@@ -466,44 +458,6 @@ impl SandboxVisitor<'_> {
         if self.error.is_none() {
             self.error = Some(err);
         }
-    }
-
-    fn enter_node(&mut self, span: SourceSpan) -> bool {
-        if self.error.is_some() {
-            return false;
-        }
-        self.node_count = self.node_count.saturating_add(1);
-        if self.node_count > self.limits.max_ast_nodes {
-            self.fail(PyAuthoringError::spanned(
-                CODE_UNBOUNDED,
-                format!(
-                    "source exceeds {} AST node limit",
-                    self.limits.max_ast_nodes
-                ),
-                span,
-            ));
-            return false;
-        }
-        self.depth = self.depth.saturating_add(1);
-        if self.depth > self.max_depth_seen {
-            self.max_depth_seen = self.depth;
-        }
-        if self.depth > self.limits.max_ast_depth {
-            self.fail(PyAuthoringError::spanned(
-                CODE_UNBOUNDED,
-                format!(
-                    "source exceeds {} AST depth limit",
-                    self.limits.max_ast_depth
-                ),
-                span,
-            ));
-            return false;
-        }
-        true
-    }
-
-    fn leave_node(&mut self) {
-        self.depth = self.depth.saturating_sub(1);
     }
 
     fn check_stmt(&mut self, stmt: &Stmt, span: &SourceSpan) {
@@ -828,34 +782,32 @@ impl SandboxVisitor<'_> {
 
 impl<'a> Visitor<'a> for SandboxVisitor<'_> {
     fn visit_stmt(&mut self, stmt: &'a Stmt) {
-        let span = self.lines.span_at(stmt.range().start());
-        if !self.enter_node(span.clone()) {
+        if self.error.is_some() {
             return;
         }
+        let span = self.lines.span_at(stmt.range().start());
         self.check_stmt(stmt, &span);
         if self.error.is_none() {
             visitor::walk_stmt(self, stmt);
         }
-        self.leave_node();
     }
 
     fn visit_expr(&mut self, expr: &'a Expr) {
-        let span = self.lines.span_at(expr.range().start());
-        if !self.enter_node(span.clone()) {
+        if self.error.is_some() {
             return;
         }
+        let span = self.lines.span_at(expr.range().start());
         self.check_expr(expr, &span);
         if self.error.is_none() {
             visitor::walk_expr(self, expr);
         }
-        self.leave_node();
     }
 
     fn visit_parameter(&mut self, parameter: &'a Parameter) {
-        let span = self.lines.span_at(parameter.range().start());
-        if !self.enter_node(span.clone()) {
+        if self.error.is_some() {
             return;
         }
+        let span = self.lines.span_at(parameter.range().start());
         let name = parameter.name.id.as_str();
         if name.starts_with("__") || is_forbidden_name(name) {
             self.fail(PyAuthoringError::spanned(
@@ -867,6 +819,5 @@ impl<'a> Visitor<'a> for SandboxVisitor<'_> {
         if self.error.is_none() {
             visitor::walk_parameter(self, parameter);
         }
-        self.leave_node();
     }
 }

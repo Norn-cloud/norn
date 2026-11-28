@@ -7,6 +7,7 @@
 //! declarative IR without executing Python, and format Python authoring
 //! sources deterministically in-process.
 
+mod budget;
 pub mod decimal;
 pub mod error;
 pub mod expr;
@@ -20,12 +21,14 @@ pub use decimal::{MAX_DECIMAL_DIGITS, MAX_DECIMAL_EXPONENT, format_exact_decimal
 pub use error::{
     CODE_EXPRESSION, CODE_FLOAT_LITERAL, CODE_FORBIDDEN_ATTR, CODE_FORBIDDEN_CALL,
     CODE_FORBIDDEN_CONTROL_FLOW, CODE_FORBIDDEN_IMPORT, CODE_FORBIDDEN_NAME, CODE_FORBIDDEN_SYNTAX,
-    CODE_FORMAT, CODE_SYNTAX, CODE_UNBOUNDED, CODE_UNKNOWN_FIELD, PyAuthoringError, SourceSpan,
+    CODE_FORMAT, CODE_RAW_EXPR, CODE_SYNTAX, CODE_UNBOUNDED, CODE_UNKNOWN_FIELD, PyAuthoringError,
+    SourceSpan,
 };
 pub use expr::{
     ALLOWED_CALLBACK_FUNCS, ALLOWED_CALLBACK_METHODS, BinaryOp, CompareOp, LogicalOp, LowerContext,
-    ZenExpr, ZenLiteral, lower_callback_source, lower_module_callbacks, render_zen_string,
-    validate_callback_source,
+    ZenExpr, ZenLiteral, lower_callback_source, lower_callback_source_with_limits,
+    lower_module_callbacks, render_zen_string, validate_callback_source,
+    validate_callback_source_with_limits,
 };
 pub use fmt::{
     FormatConfig, FormatQuoteStyle, format_python_source, format_python_source_with, is_formatted,

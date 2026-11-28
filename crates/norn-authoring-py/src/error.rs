@@ -22,6 +22,8 @@ pub const CODE_FORBIDDEN_SYNTAX: &str = "NORN-PY-FORBIDDEN-SYNTAX";
 pub const CODE_FORBIDDEN_CONTROL_FLOW: &str = "NORN-PY-FORBIDDEN-CONTROL-FLOW";
 /// Stable diagnostic code for invalid ZEN expressions, literals, or `Decimal` bounds.
 pub const CODE_EXPRESSION: &str = "NORN-PY-EXPRESSION";
+/// Stable diagnostic code when a callback or boolean combinator receives a raw literal instead of a closed `Expr`.
+pub const CODE_RAW_EXPR: &str = "NORN-PY-RAW-EXPR";
 /// Stable diagnostic code when a callback references an undeclared field on a symbolic subject.
 pub const CODE_UNKNOWN_FIELD: &str = "NORN-PY-UNKNOWN-FIELD";
 /// Stable diagnostic code for formatter configuration, layout, or printing errors.

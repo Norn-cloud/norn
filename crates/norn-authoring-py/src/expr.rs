@@ -9,9 +9,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{CODE_EXPRESSION, PyAuthoringError, SourceSpan};
 
-pub use crate::expr_lower::{lower_callback_source, lower_module_callbacks};
+pub use crate::expr_lower::{
+    lower_callback_source, lower_callback_source_with_limits, lower_module_callbacks,
+};
 pub use crate::expr_validate::{
     ALLOWED_CALLBACK_FUNCS, ALLOWED_CALLBACK_METHODS, validate_callback_source,
+    validate_callback_source_with_limits,
 };
 
 /// Comparison operators admitted in `norn-expr` / ZEN.
