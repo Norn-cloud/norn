@@ -319,3 +319,94 @@ fn pinned_mount_ignores_internal_symlinks() -> Result<(), Box<dyn std::error::Er
     ));
     Ok(())
 }
+
+#[test]
+fn generic_mount_rejects_effect_namespace_and_remount_replaces_stale_files()
+-> Result<(), Box<dyn std::error::Error>> {
+    let profile = Profile::load()?;
+    let pid = std::process::id();
+    let base = std::env::temp_dir().join(format!("norn-authoring-remount-{pid}"));
+    if base.exists() {
+        std::fs::remove_dir_all(&base)?;
+    }
+
+    let v1_dir = base.join("effect-v1");
+    let v1_dist = v1_dir.join("dist");
+    let v1_stale_dir = v1_dist.join("stale");
+    std::fs::create_dir_all(&v1_stale_dir)?;
+    let valid_pkg = format!(
+        "{{\"name\":\"effect\",\"version\":\"{}\"}}\n",
+        profile.pins.effect.version
+    );
+    std::fs::write(v1_dir.join("package.json"), &valid_pkg)?;
+    std::fs::write(
+        v1_dist.join("Effect.d.ts"),
+        "export declare function gen(): void\n",
+    )?;
+    std::fs::write(
+        v1_stale_dir.join("Legacy.d.ts"),
+        "export declare function legacy(): void\n",
+    )?;
+
+    let v2_dir = base.join("effect-v2");
+    let v2_dist = v2_dir.join("dist");
+    std::fs::create_dir_all(&v2_dist)?;
+    std::fs::write(v2_dir.join("package.json"), &valid_pkg)?;
+    std::fs::write(
+        v2_dist.join("Effect.d.ts"),
+        "export declare function succeed(): void\n",
+    )?;
+
+    let mut vfs = BoundedVfs::default();
+
+    // Generic mount API must reject `/node_modules/effect`, any descendant, and any ancestor.
+    for forbidden in [
+        PINNED_EFFECT_VIRTUAL_ROOT,
+        "/node_modules/effect/sub",
+        "/node_modules",
+    ] {
+        let res = vfs.mount_pinned_package_dir(forbidden, &v1_dir);
+        assert!(
+            matches!(res, Err(AuthoringError::InvalidPath { .. })),
+            "expected InvalidPath for mount_pinned_package_dir({forbidden:?}), got {res:?}"
+        );
+    }
+
+    // Also reject direct add_pinned_file under `/node_modules/effect/`.
+    let direct_effect = vfs.add_pinned_file(
+        "/node_modules/effect/dist/Effect.d.ts",
+        "export declare function gen(): void\n",
+    );
+    assert!(matches!(
+        direct_effect,
+        Err(AuthoringError::InvalidPath { .. })
+    ));
+
+    // Mount v1 through the validated effect mount API.
+    let first_count = vfs.mount_pinned_effect_dir(&v1_dir, &profile)?;
+    assert_eq!(first_count, 3);
+    let stale_file = format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist/stale/Legacy.d.ts");
+    let stale_dir = format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist/stale");
+    assert!(vfs.is_pinned_file(&stale_file));
+    assert!(vfs.file_exists(&stale_file));
+    assert!(vfs.directory_exists(&stale_dir));
+
+    // Re-mount v2 over the same effect root: stale files and stale directories must vanish.
+    let second_count = vfs.mount_pinned_effect_dir(&v2_dir, &profile)?;
+    std::fs::remove_dir_all(&base)?;
+
+    assert_eq!(second_count, 2);
+    assert!(!vfs.is_pinned_file(&stale_file));
+    assert!(!vfs.file_exists(&stale_file));
+    assert!(vfs.read_file(&stale_file).is_none());
+    assert!(!vfs.directory_exists(&stale_dir));
+    let dist_entries = vfs.get_accessible_entries(&format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist"));
+    assert_eq!(dist_entries.files, vec!["Effect.d.ts".to_owned()]);
+    assert!(dist_entries.directories.is_empty());
+    assert_eq!(
+        vfs.read_file(&format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist/Effect.d.ts"))
+            .as_deref(),
+        Some("export declare function succeed(): void\n")
+    );
+    Ok(())
+}

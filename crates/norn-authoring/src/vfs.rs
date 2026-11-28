@@ -10,7 +10,7 @@ use crate::{AuthoringError, INTRINSICS_DTS};
 pub const INTRINSICS_VIRTUAL_PATH: &str = "/@norn/authoring/index.d.ts";
 
 /// Canonical virtual root reserved for `@norn/authoring` declarations.
-const INTRINSICS_VIRTUAL_PREFIX: &str = "/@norn/authoring/";
+pub(crate) const INTRINSICS_VIRTUAL_PREFIX: &str = "/@norn/authoring/";
 
 /// Canonical virtual root where the pinned `effect` package declarations are mounted.
 pub const PINNED_EFFECT_VIRTUAL_ROOT: &str = "/node_modules/effect";
@@ -18,7 +18,7 @@ pub const PINNED_EFFECT_VIRTUAL_ROOT: &str = "/node_modules/effect";
 /// Canonical virtual prefix for pinned `effect` declaration files under `dist/`.
 pub const PINNED_EFFECT_DIST_PREFIX: &str = "/node_modules/effect/dist/";
 
-const PINNED_EFFECT_VIRTUAL_PREFIX: &str = "/node_modules/effect/";
+pub(crate) const PINNED_EFFECT_VIRTUAL_PREFIX: &str = "/node_modules/effect/";
 const BUNDLED_SCHEME: &str = "bundled:///";
 
 pub(crate) const MAX_PINNED_FILES: usize = 4_096;
@@ -386,9 +386,11 @@ impl BoundedVfs {
     /// # Errors
     ///
     /// Returns [`AuthoringError::InvalidPath`] if `path` is malformed,
-    /// collides with `/@norn/authoring/`, or collides with an existing caller
-    /// file, or [`AuthoringError::VfsQuotaExceeded`] if pinned safety limits
-    /// are exceeded.
+    /// collides with `/@norn/authoring/`, collides with `/node_modules/effect/`
+    /// (which must be mounted via [`Self::mount_pinned_effect_dir`]), or
+    /// collides with an existing caller file, or
+    /// [`AuthoringError::VfsQuotaExceeded`] if pinned safety limits are
+    /// exceeded.
     pub fn add_pinned_file(
         &mut self,
         path: &str,
@@ -404,6 +406,13 @@ impl BoundedVfs {
             return Err(AuthoringError::InvalidPath {
                 path: normalized,
                 reason: "reserved for pinned @norn/authoring declarations".to_owned(),
+            });
+        }
+        if path_under_prefix(&normalized, PINNED_EFFECT_VIRTUAL_PREFIX) {
+            return Err(AuthoringError::InvalidPath {
+                path: normalized,
+                reason: "use mount_pinned_effect_dir to mount the version-pinned effect package"
+                    .to_owned(),
             });
         }
         if self.files.contains_key(&normalized) {
@@ -445,6 +454,17 @@ impl BoundedVfs {
         record_ancestor_dirs(&normalized, &mut self.directories);
         self.pinned_files.insert(normalized.clone(), text);
         Ok(normalized)
+    }
+
+    pub(crate) fn rebuild_directories(&mut self) {
+        self.directories.clear();
+        self.directories.insert("/".to_owned());
+        if self.include_intrinsics {
+            record_ancestor_dirs(INTRINSICS_VIRTUAL_PATH, &mut self.directories);
+        }
+        for path in self.files.keys().chain(self.pinned_files.keys()) {
+            record_ancestor_dirs(path, &mut self.directories);
+        }
     }
 
     fn read_virtual(&self, normalized: &str) -> Option<&str> {
