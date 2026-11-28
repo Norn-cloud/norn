@@ -1,0 +1,92 @@
+{
+  "artifactId": "data.Dataset.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Dataset",
+  "namespace": "data",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "A logical dataset governed by a schema URI and optional freshness SLA (W3C DCAT v3 dcat:Dataset + ISO/IEC 11179).",
+      "invariants": [
+        {
+          "expression": "(self.freshness_sla_ms == null) or ((self.freshness_sla_ms ?? 0) > 0)",
+          "id": "positive_freshness_sla",
+          "message": "freshness_sla_ms must be null or strictly positive."
+        },
+        {
+          "expression": "self.schema_uri != ''",
+          "id": "non_empty_schema_uri",
+          "message": "schema_uri must be non-empty."
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Accountable steward or owning agent (W3C DCAT dcterms:publisher / PROV-O prov:Agent).",
+          "id": "owner",
+          "target": "core.Agent"
+        }
+      ],
+      "name": "data.Dataset",
+      "properties": [
+        {
+          "id": "dataset_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "schema_uri",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "freshness_sla_ms",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "table"
+              },
+              {
+                "value": "stream"
+              },
+              {
+                "value": "log"
+              },
+              {
+                "value": "metric_cube"
+              },
+              {
+                "value": "document_corpus"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.Dataset.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

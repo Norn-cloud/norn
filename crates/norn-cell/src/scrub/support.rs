@@ -96,7 +96,12 @@ impl DefInstallCursor {
         if budget.remaining() < LEDGER_ENTRY_MAX_ROWS {
             return Ok(false);
         }
-        let entries = reader.scrub_ledger_page(self.receipt.body.first_event_seq, 1, budget)?;
+        let entries = reader.scrub_ledger_page(
+            self.receipt.body.first_event_seq,
+            1,
+            self.receipt.body.fork_pin.as_ref(),
+            budget,
+        )?;
         CellStore::<E>::verify_definition_install(
             versions,
             self.version_index,

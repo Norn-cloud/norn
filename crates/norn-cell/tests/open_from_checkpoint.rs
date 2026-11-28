@@ -1953,6 +1953,8 @@ fn measured_model() -> norn_cell::Model {
         properties: vec![
             Property {
                 protected: false,
+                origin: None,
+                immutable_after_create: false,
                 id: PropertyId("unit".to_owned()),
                 description: None,
                 property_type: PropertyType::Text { format: None },
@@ -1963,6 +1965,8 @@ fn measured_model() -> norn_cell::Model {
             },
             Property {
                 protected: false,
+                origin: None,
+                immutable_after_create: false,
                 id: PropertyId("amount".to_owned()),
                 description: None,
                 property_type: PropertyType::Decimal {

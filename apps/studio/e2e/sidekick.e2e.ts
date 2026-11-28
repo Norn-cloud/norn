@@ -75,9 +75,11 @@ test("sidekick: Home's Ask bar opens Sidekick, which answers through a Norn tool
   expect((sent[0]?.params?._meta as Record<string, unknown>)["norn.cloud/grant"]).toBe(GRANT)
   expect(JSON.stringify(sent.slice(1))).not.toContain(GRANT)
   expect(sent[2]?.params?.prompt).toEqual([{ type: "text", text: "What's our weekly yield?" }])
-  await page.screenshot({ path: "test-results/sidekick-light.png" })
-  await page.emulateMedia({ colorScheme: "dark" })
-  await page.screenshot({ path: "test-results/sidekick-dark.png" })
+  if (process.env.SHOTS) {
+    await page.screenshot({ path: "test-results/sidekick-light.png" })
+    await page.emulateMedia({ colorScheme: "dark" })
+    await page.screenshot({ path: "test-results/sidekick-dark.png" })
+  }
 })
 
 test("sidekick: where no bridge serves it, the rail has no Sidekick and Ask goes to Metrics", async ({ page }) => {

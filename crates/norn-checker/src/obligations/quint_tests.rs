@@ -22,6 +22,8 @@ pub(super) fn fixture() -> Vec<Value> {
         .into_iter()
         .map(|id| norn_ir::Property {
             protected: false,
+            origin: None,
+            immutable_after_create: false,
             id: norn_ir::PropertyId(id.into()),
             description: None,
             property_type: if id == "id" {

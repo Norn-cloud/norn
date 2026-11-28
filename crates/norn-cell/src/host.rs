@@ -98,6 +98,7 @@ pub(crate) struct CommitOptions<'a> {
     pub(crate) mode: crate::function_receipt::ReceiptCommitMode,
     pub(crate) stamp: Option<norn_kernel::CreatorStampProof>,
     pub(crate) settling: Option<crate::store::ParkedSettlement>,
+    pub(crate) source_fence: crate::source_cursor::SourceReportFence<'a>,
 }
 
 /// The simulated outside world: maps a performed command to the kernel input
@@ -1668,9 +1669,27 @@ where
 
     pub(crate) fn commit_observed_evidence(
         &mut self,
+        commit: CellCommit<E, C, I>,
+        authorization: &ObservationAuthorization,
+        mapped: &[crate::mapping_bundle::MappingBundle],
+    ) -> Result<CommitReceipt, CommitError<CellError>>
+    where
+        E: From<ObservationEvent>,
+    {
+        self.commit_observed_evidence_with_fence(
+            commit,
+            authorization,
+            mapped,
+            crate::source_cursor::SourceReportFence::default(),
+        )
+    }
+
+    pub(crate) fn commit_observed_evidence_with_fence(
+        &mut self,
         mut commit: CellCommit<E, C, I>,
         authorization: &ObservationAuthorization,
         mapped: &[crate::mapping_bundle::MappingBundle],
+        source_fence: crate::source_cursor::SourceReportFence<'_>,
     ) -> Result<CommitReceipt, CommitError<CellError>>
     where
         E: From<ObservationEvent>,
@@ -1686,6 +1705,7 @@ where
                 authorization: Some(authorization),
                 references: &references,
                 mapped,
+                source_fence,
                 ..Default::default()
             },
         )
@@ -1714,6 +1734,7 @@ where
             mode,
             stamp,
             settling,
+            source_fence,
         } = options;
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1823,6 +1844,8 @@ where
             }
         }
         let guard = |reader: &StoreReader<'_, S>| {
+            crate::mapping_conflict::verify_source_fence_in_tx(reader, source_fence)
+                .map_err(CommitError::Host)?;
             let mapping_proof = crate::link_guard::verify_mapping_links(reader, &commit, mapped)?;
             if authorization.is_none() {
                 for key in commit

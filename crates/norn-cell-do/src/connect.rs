@@ -352,6 +352,12 @@ impl Connect {
         })
     }
 
+    /// Scoped `(connection_id -> mapping_id)` bindings from `NORN_SOURCES` for QUERY-FRESH-1.
+    #[must_use]
+    pub fn configured_mappings(&self) -> BTreeMap<String, String> {
+        self.sources.configured_mappings()
+    }
+
     /// The upload `id` names, when its object lies under a prefix the cell
     /// serving `scope_key` writes: as remembered, or, after a restart, rebuilt
     /// from the id itself once its seal checks (UPLOAD-ID-1).
@@ -551,26 +557,32 @@ impl Connect {
             return Some(Routed::reply(server::outside::<E>(request)));
         };
         Some(match route {
-            Route::Sync(id) => match self.sources.claim(id, Trigger::Manual, &actor, now_ms) {
-                Ok(run) => Routed {
-                    response: json_response(202, &json!({"run": run})),
-                    start_sync: Some(id.to_owned()),
-                    then: None,
-                },
-                Err(ClaimError::Running) => Routed::reply(refused(
-                    409,
-                    "source.sync_running",
-                    "a sync of this connection is running",
-                )),
-                Err(ClaimError::Busy(other)) => Routed::reply(refused(
-                    409,
-                    "source.cell_busy",
-                    &format!("{other} is syncing; one sync runs per cell at a time"),
-                )),
-                Err(ClaimError::Unknown) => {
-                    Routed::reply(refused(404, "source.unknown", "no such connection"))
+            Route::Sync(id) => {
+                let claimed = self
+                    .sources
+                    .claim_on(host, id, Trigger::Manual, &actor, now_ms);
+                match claimed {
+                    Ok(Ok(run)) => Routed {
+                        response: json_response(202, &json!({"run": run})),
+                        start_sync: Some(id.to_owned()),
+                        then: None,
+                    },
+                    Ok(Err(ClaimError::Running)) => Routed::reply(refused(
+                        409,
+                        "source.sync_running",
+                        "a sync of this connection is running",
+                    )),
+                    Ok(Err(ClaimError::Busy(other))) => Routed::reply(refused(
+                        409,
+                        "source.cell_busy",
+                        &format!("{other} is syncing; one sync runs per cell at a time"),
+                    )),
+                    Ok(Err(ClaimError::Unknown)) => {
+                        Routed::reply(refused(404, "source.unknown", "no such connection"))
+                    }
+                    Err(message) => Routed::reply(refused(503, "source.ingest", &message)),
                 }
-            },
+            }
             Route::Begin => Routed::reply(self.begin(&host.scope().key(), request.body, now_ms)),
             Route::Complete(id) => {
                 let actor = actor.clone();
@@ -1118,18 +1130,11 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str, bound: &LoadBo
     json_response(
         200,
         &json!({
-            "source": recorded.source,
-            "mapping": recorded.mapping,
-            "rows": ingested.len(),
-            "landed": landed,
-            "alreadyLanded": already,
-            "quarantined": quarantined,
-            "quarantineReasons": reasons,
-            "quarantine": explained,
-            "pages": report.pages,
-            "commits": report.commits,
-            // Resume with `snapshot[next..]` when the work budget stopped
-            // the load; null when every row is reported.
+            "source": recorded.source, "mapping": recorded.mapping, "rows": ingested.len(),
+            "landed": landed, "alreadyLanded": already, "quarantined": quarantined,
+            "quarantineReasons": reasons, "quarantine": explained,
+            "pages": report.pages, "commits": report.commits,
+            // Resume with `snapshot[next..]` when the work budget stopped; null when done.
             "next": report.next,
         }),
     )

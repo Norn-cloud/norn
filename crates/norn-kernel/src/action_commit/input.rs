@@ -9,7 +9,10 @@ use norn_ir::{
 use crate::cell_host::JsonObject;
 use crate::decision_commit::{DecisionRefusal, expr_value};
 use crate::limits::EnvelopeLimits;
+use crate::observations::LogicalTime;
 
+use super::post_slice::{clock_derived_fields, validate_pre_slice_partial};
+use super::slice::LoadedActionSlice;
 use super::types::{
     ActionCallRecord, ActionDerivedValue, ActionDerivedValueRef, ActionInputPreparation,
     ActionRefusal,
@@ -289,7 +292,7 @@ pub fn prepare_action_input<'a, X>(
     action: &'a ActionRoot,
     raw_input: &'a JsonObject,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
-    prepare_action_input_inner(action, raw_input, None, None, None)
+    prepare_action_input_inner(action, raw_input, None, None, None, None)
 }
 
 /// Prepares one action call's input, binding the opaque result to the action
@@ -314,6 +317,33 @@ pub fn prepare_action_input_for_call<'a, X>(
         Some(action_artifact_id),
         Some(action_version),
         Some(actor),
+        None,
+    )
+}
+
+/// ACTION-CLOCK-1: prepares one action call's pre-slice input with both the
+/// authenticated principal (`actor.subjectId`) and the server commit clock
+/// (`clock.nowMillis`, `clock.nowIso`).
+///
+/// # Errors
+///
+/// Refuses missing required input, spoofed actor/clock fields, invalid derived
+/// values or final input, expression failures, and size limits.
+pub(super) fn prepare_action_input_for_call_at<'a, X>(
+    action: &'a ActionRoot,
+    raw_input: &'a JsonObject,
+    action_artifact_id: &'a str,
+    action_version: &'a str,
+    actor: &str,
+    now: LogicalTime,
+) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
+    prepare_action_input_inner(
+        action,
+        raw_input,
+        Some(action_artifact_id),
+        Some(action_version),
+        Some(actor),
+        Some(now),
     )
 }
 
@@ -328,12 +358,21 @@ fn normalize_action_input<X>(
     .map_err(|violation| ActionRefusal::InvalidInput {
         field: violation.path,
     })?;
-    // ACTION-ACTOR-1: identity is never caller-supplied, not even as a value
-    // the derivation would overwrite, nor as a `null` the normalization below
-    // would drop: the raw input is checked before anything is removed.
+    // ACTION-ACTOR-1 / ACTION-CLOCK-1: server-stamped identity and clock fields
+    // are never caller-supplied, not even as `null` or a value that derivation
+    // would overwrite.
     if let Some(field) = actor_derived_fields(action)
         .into_iter()
+        .chain(clock_derived_fields(action))
         .find(|field| raw_input.contains_key(field))
+    {
+        return Err(ActionRefusal::InvalidInput { field });
+    }
+    // ORIGIN-DATAFLOW-1: purely server-derived fields (never reading caller
+    // input) refuse non-null caller overrides.
+    if let Some(field) = norn_expr::schema::trusted_server_derived_fields(action)
+        .into_iter()
+        .find(|field| raw_input.get(field).is_some_and(|v| !v.is_null()))
     {
         return Err(ActionRefusal::InvalidInput { field });
     }
@@ -362,6 +401,7 @@ fn prepare_action_input_inner<'a, X>(
     action_artifact_id: Option<&'a str>,
     action_version: Option<&'a str>,
     actor: Option<&str>,
+    now: Option<LogicalTime>,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
     let profile = ResourceLimitProfile::norn_limits_v1();
     let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
@@ -393,42 +433,31 @@ fn prepare_action_input_inner<'a, X>(
     }
     let raw_bytes = check_receipt_input_bound::<X>(raw_input)?;
     let mut effective_input = normalized;
-    for derivation in &action.derive {
-        if derivation.input_required && !raw_input.contains_key(&derivation.field) {
-            return Err(ActionRefusal::InvalidInput {
-                field: derivation.field.clone(),
-            });
-        }
-        if !derivation.input_required && !effective_input.contains_key(&derivation.field) {
-            effective_input.insert(derivation.field.clone(), RuntimeValue::Null);
-        }
-    }
-    check_canonical_object_bound::<X>("effective input", &effective_input, max_input_bytes)?;
-    let effective_bytes = if action.derive.is_empty() && effective_input == *raw_input {
-        0 // Raw input already describes the exact execution value.
-    } else {
-        canonical_object_bytes::<X>(&effective_input)?
-    };
-    let mut receipt_evidence_bytes = raw_bytes
-        .saturating_add(effective_bytes)
-        .saturating_add(128);
-    if receipt_evidence_bytes > max_receipt_bytes {
-        return Err(ActionRefusal::InputBoundExceeded {
-            subject: "action call receipt evidence".to_owned(),
-            actual_bytes: receipt_evidence_bytes,
-            max_bytes: max_receipt_bytes,
-        });
-    }
+    let mut receipt_evidence_bytes = super::post_slice::seed_derived_slots_and_receipt_bytes::<X>(
+        action,
+        raw_input,
+        &mut effective_input,
+        raw_bytes,
+        max_input_bytes,
+        max_receipt_bytes,
+    )?;
     let mut derived_values = Vec::with_capacity(action.derive.len());
     let mut remaining_fuel = TurnFuel::turn(&profile);
+    let pre_slice_limit =
+        norn_expr::schema::first_slice_derivation_index(action).unwrap_or(action.derive.len());
 
-    for (index, derivation) in action.derive.iter().enumerate() {
+    for (index, derivation) in action.derive.iter().take(pre_slice_limit).enumerate() {
         let (value, next_receipt_bytes) = prepare_action_derivation(
-            action,
+            &DerivationEvalEnv {
+                action,
+                effective_input: &effective_input,
+                actor,
+                now,
+                slice: None,
+                catalog_env: None,
+            },
             index,
             derivation,
-            &effective_input,
-            actor,
             &mut remaining_fuel,
             receipt_evidence_bytes,
         )?;
@@ -448,7 +477,11 @@ fn prepare_action_input_inner<'a, X>(
         check_canonical_object_bound::<X>("effective input", &effective_input, max_input_bytes)?;
     }
 
-    validate_action_input(action, &effective_input)?;
+    if pre_slice_limit == action.derive.len() {
+        validate_action_input(action, &effective_input)?;
+    } else {
+        validate_pre_slice_partial(action, pre_slice_limit, &mut effective_input)?;
+    }
     Ok(ActionInputPreparation {
         action,
         raw_input,
@@ -544,7 +577,7 @@ pub(super) fn reserved_action_identity(raw_input: &JsonObject) -> Option<(&'stat
 }
 
 fn reserved_identity_member(input: &JsonObject) -> Option<&'static str> {
-    ["actor", "approved"]
+    ["actor", "approved", "clock"]
         .into_iter()
         .find(|field| input.contains_key(*field))
 }
@@ -571,100 +604,128 @@ fn action_derivation_destination(
     declared
 }
 
-/// ACTION-ACTOR-1: bind actor data only from the authenticated call principal.
+/// ACTION-ACTOR-1 / ACTION-CLOCK-1: bind actor and commit clock data only from
+/// the authenticated call context, plus loaded slice/aggregates when post-slice.
 fn action_derivation_context<X>(
+    action: &ActionRoot,
     effective_input: &JsonObject,
     actor: Option<&str>,
+    now: Option<LogicalTime>,
+    slice: Option<&LoadedActionSlice>,
     derivation: &norn_ir::ActionInputDerivation,
 ) -> Result<ExprValue, ActionRefusal<X>> {
-    let mut context = action_expression_context(effective_input, &JsonObject::new(), None)
+    let empty_slice = JsonObject::new();
+    let slice_values = slice.map_or(&empty_slice, |loaded| &loaded.values);
+    let aggregates = slice
+        .filter(|_| !action.aggregates.is_empty())
+        .map(|loaded| &loaded.aggregates);
+    let mut context = action_expression_context(effective_input, slice_values, aggregates)
         .map_err(|reason| ActionRefusal::DerivationFailed {
             field: derivation.field.clone(),
             expression: derivation.expression.as_str().to_owned(),
             reason,
         })?;
-    if let Some(principal) = actor {
-        let ExprValue::Object(fields) = &mut context else {
-            return Err(ActionRefusal::InvalidInput {
-                field: "actor".into(),
-            });
-        };
-        fields.insert(
-            "actor".into(),
-            ExprValue::Object(BTreeMap::from([(
-                "subjectId".into(),
-                ExprValue::String(principal.into()),
-            )])),
-        );
+    if let ExprValue::Object(fields) = &mut context {
+        if let Some(principal) = actor {
+            fields.insert(
+                "actor".into(),
+                ExprValue::Object(BTreeMap::from([(
+                    "subjectId".into(),
+                    ExprValue::String(principal.into()),
+                )])),
+            );
+        }
+        if let Some(instant) = now {
+            let millis = instant.as_millis();
+            let now_iso = norn_expr::temporal::format_utc_millis(millis).map_err(|error| {
+                ActionRefusal::DerivationFailed {
+                    field: derivation.field.clone(),
+                    expression: derivation.expression.as_str().to_owned(),
+                    reason: format!("commit clock out of range: {error}"),
+                }
+            })?;
+            let signed_millis =
+                i64::try_from(millis).map_err(|_error| ActionRefusal::DerivationFailed {
+                    field: derivation.field.clone(),
+                    expression: derivation.expression.as_str().to_owned(),
+                    reason: "commit clock millis out of i64 range".to_owned(),
+                })?;
+            let now_millis = expr_value(&RuntimeValue::from(signed_millis)).map_err(|reason| {
+                ActionRefusal::DerivationFailed {
+                    field: derivation.field.clone(),
+                    expression: derivation.expression.as_str().to_owned(),
+                    reason: format!("commit clock millis invalid: {reason}"),
+                }
+            })?;
+            fields.insert(
+                "clock".into(),
+                ExprValue::Object(BTreeMap::from([
+                    ("nowMillis".into(), now_millis),
+                    ("nowIso".into(), ExprValue::String(now_iso)),
+                ])),
+            );
+        }
     }
     Ok(context)
 }
 
-fn prepare_action_derivation<X>(
-    action: &ActionRoot,
+pub(super) struct DerivationEvalEnv<'a> {
+    pub(super) action: &'a ActionRoot,
+    pub(super) effective_input: &'a JsonObject,
+    pub(super) actor: Option<&'a str>,
+    pub(super) now: Option<LogicalTime>,
+    pub(super) slice: Option<&'a LoadedActionSlice>,
+    pub(super) catalog_env: Option<&'a norn_expr::ZenTypeEnv>,
+}
+
+pub(super) fn prepare_action_derivation<X>(
+    eval_env: &DerivationEvalEnv<'_>,
     completed: usize,
     derivation: &norn_ir::ActionInputDerivation,
-    effective_input: &JsonObject,
-    actor: Option<&str>,
     remaining_fuel: &mut TurnFuel,
     receipt_evidence_bytes: usize,
 ) -> Result<(RuntimeValue, usize), ActionRefusal<X>> {
-    let context = action_derivation_context(effective_input, actor, derivation)?;
-    let expression = Expression::compile(derivation.expression.as_str()).map_err(|error| {
-        ActionRefusal::DerivationFailed {
-            field: derivation.field.clone(),
-            expression: derivation.expression.as_str().to_owned(),
-            reason: error.to_string(),
-        }
-    })?;
-    let env =
-        norn_expr::schema::action_derivation_environment(action, completed).map_err(|reason| {
-            ActionRefusal::DerivationFailed {
-                field: derivation.field.clone(),
-                expression: derivation.expression.as_str().to_owned(),
-                reason,
-            }
-        })?;
-    let expected = action_derivation_destination(action, derivation, &env);
+    let fail = |reason: String| ActionRefusal::DerivationFailed {
+        field: derivation.field.clone(),
+        expression: derivation.expression.as_str().to_owned(),
+        reason,
+    };
+    let context = action_derivation_context(
+        eval_env.action,
+        eval_env.effective_input,
+        eval_env.actor,
+        eval_env.now,
+        eval_env.slice,
+        derivation,
+    )?;
+    let expression =
+        Expression::compile(derivation.expression.as_str()).map_err(|e| fail(e.to_string()))?;
+    let env = if eval_env.slice.is_some() {
+        norn_expr::schema::action_slice_derivation_environment(
+            eval_env.action,
+            eval_env.catalog_env,
+            completed,
+        )
+    } else {
+        norn_expr::schema::action_derivation_environment(eval_env.action, completed)
+    }
+    .map_err(&fail)?;
+    let expected = action_derivation_destination(eval_env.action, derivation, &env);
     let attempt = remaining_fuel
         .spend(|budget| expression.evaluate_admitted_metered(&context, budget, &env, &expected));
-    let evaluated = attempt
-        .result
-        .map_err(|error| ActionRefusal::DerivationFailed {
-            field: derivation.field.clone(),
-            expression: derivation.expression.as_str().to_owned(),
-            reason: error.to_string(),
-        })?;
-    let value = expression_value_to_runtime(evaluated.value()).map_err(|reason| {
-        ActionRefusal::DerivationFailed {
-            field: derivation.field.clone(),
-            expression: derivation.expression.as_str().to_owned(),
-            reason,
-        }
-    })?;
+    let evaluated = attempt.result.map_err(|e| fail(e.to_string()))?;
+    let value = expression_value_to_runtime(evaluated.value()).map_err(&fail)?;
     let encoded = norn_ir::canonical::canonical_json_of(&ActionDerivedValueRef {
         field: &derivation.field,
         value: &value,
     })
-    .map_err(|error| ActionRefusal::DerivationFailed {
-        field: derivation.field.clone(),
-        expression: derivation.expression.as_str().to_owned(),
-        reason: error.to_string(),
-    })?;
+    .map_err(|e| fail(e.to_string()))?;
     let value_bytes = norn_ir::canonical::canonical_json_of(&value)
-        .map_err(|error| ActionRefusal::DerivationFailed {
-            field: derivation.field.clone(),
-            expression: derivation.expression.as_str().to_owned(),
-            reason: error.to_string(),
-        })?
+        .map_err(|e| fail(e.to_string()))?
         .len();
-    let effective_growth = if let Some(previous) = effective_input.get(&derivation.field) {
+    let effective_growth = if let Some(previous) = eval_env.effective_input.get(&derivation.field) {
         let previous_bytes = norn_ir::canonical::canonical_json_of(previous)
-            .map_err(|error| ActionRefusal::DerivationFailed {
-                field: derivation.field.clone(),
-                expression: derivation.expression.as_str().to_owned(),
-                reason: error.to_string(),
-            })?
+            .map_err(|e| fail(e.to_string()))?
             .len();
         (
             value_bytes >= previous_bytes,
@@ -672,18 +733,14 @@ fn prepare_action_derivation<X>(
         )
     } else {
         let field_bytes = norn_ir::canonical::canonical_json_of(&derivation.field)
-            .map_err(|error| ActionRefusal::DerivationFailed {
-                field: derivation.field.clone(),
-                expression: derivation.expression.as_str().to_owned(),
-                reason: error.to_string(),
-            })?
+            .map_err(|e| fail(e.to_string()))?
             .len();
         (
             true,
             field_bytes
                 .saturating_add(1)
                 .saturating_add(value_bytes)
-                .saturating_add(usize::from(!effective_input.is_empty())),
+                .saturating_add(usize::from(!eval_env.effective_input.is_empty())),
         )
     };
     let receipt_evidence_bytes = if effective_growth.0 {
@@ -696,7 +753,7 @@ fn prepare_action_derivation<X>(
     Ok((value, receipt_evidence_bytes))
 }
 
-fn canonical_object_bytes<X>(object: &JsonObject) -> Result<usize, ActionRefusal<X>> {
+pub(super) fn canonical_object_bytes<X>(object: &JsonObject) -> Result<usize, ActionRefusal<X>> {
     norn_ir::canonical::canonical_json_of(object)
         .map(|bytes| bytes.len())
         .map_err(|error| ActionRefusal::DerivationFailed {

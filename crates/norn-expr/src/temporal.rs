@@ -525,6 +525,21 @@ fn shift(reading: DateTime, seconds: i64) -> Option<DateTime> {
     Some(reading.date().checked_add(days).ok()?.to_datetime(time))
 }
 
+/// Formats a UTC epoch millisecond instant in canonical RFC 3339 (`Z`) form
+/// matching `Norn.timestamp("utc")` (`ACTION-CLOCK-1`).
+///
+/// # Errors
+///
+/// Returns [`TemporalError::InstantOutOfRange`] when `millis` exceeds `jiff`'s
+/// supported millisecond range or year `0000..=9999`.
+pub fn format_utc_millis(millis: u64) -> Result<String, TemporalError> {
+    let signed = i64::try_from(millis).map_err(|_error| TemporalError::InstantOutOfRange)?;
+    let instant =
+        Timestamp::from_millisecond(signed).map_err(|_error| TemporalError::InstantOutOfRange)?;
+    let utc = TimeZone::UTC.to_datetime(instant);
+    rfc3339_utc(&utc).map_err(|_error| TemporalError::InstantOutOfRange)
+}
+
 /// RFC 3339 with `Z` and the shortest exact fraction of 0, 3, 6 or 9 digits.
 fn rfc3339_utc(utc: &DateTime) -> Result<String, TemporalError> {
     if !(0..=9_999).contains(&utc.year()) {

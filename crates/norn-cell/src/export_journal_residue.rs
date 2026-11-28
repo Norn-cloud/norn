@@ -104,12 +104,15 @@ impl Context {
 pub(crate) fn eligible(record: &ExportRecord) -> bool {
     record.format == EXPORT_FORMAT
         && record.batch.world == MAIN_WORLD
+        && record.receipt.body.fork_pin.is_none()
         && record.quantity_input.is_none()
         && record.consumed_input.is_none()
         && record.initial_model.is_none()
         && record.definition_install.is_none()
         && record.automation_continuation.is_none()
         && record.automation_inline.is_none()
+        && record.source_evidence.is_empty()
+        && record.pending_observations.is_empty()
         // A result body is shared with the ledger's payload copy only by
         // the packed encoding; such a batch keeps it.
         && !record
@@ -343,6 +346,7 @@ impl ResidueCursor {
                 event,
                 prev_hash: row.get(4)?,
                 hash: row.get(5)?,
+                fork_pin: None,
             });
         }
         Ok(())
@@ -376,6 +380,8 @@ impl ResidueCursor {
             storage_version: self.residue.storage_version,
             automation_continuation: None,
             automation_inline: None,
+            source_evidence: Vec::new(),
+            pending_observations: Vec::new(),
         })
     }
 }

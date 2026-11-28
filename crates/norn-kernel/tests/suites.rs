@@ -50,6 +50,8 @@ mod limits;
 mod location_hierarchy;
 #[path = "outbox_ledger.rs"]
 mod outbox_ledger;
+#[path = "pr_a_runtime.rs"]
+mod pr_a_runtime;
 #[path = "predicate_slice_and_links.rs"]
 mod predicate_slice_and_links;
 #[path = "psm_action_laws.rs"]

@@ -246,13 +246,26 @@ fn dump_projection(model: &Model, table_name: &str) -> Option<DumpProjection> {
     Some(DumpProjection { columns, order_by })
 }
 
-/// Norn1 hash of one ledger entry.
+/// Norn1 hash of one ledger entry (`main` world or pre-Unit-2b prefix).
 pub(crate) fn entry_hash(
     seq: u64,
     commit_seq: u64,
     world: &str,
     event: &Value,
     prev: &str,
+) -> Result<String, CellError> {
+    entry_hash_with_pin(seq, commit_seq, world, event, prev, None)
+}
+
+/// Norn1 hash of one ledger entry, domain-separated by [`crate::fork::ForkPin`]
+/// for commits newly minted inside a fork (`FORK-EVIDENCE-1`, Unit 2b).
+pub(crate) fn entry_hash_with_pin(
+    seq: u64,
+    commit_seq: u64,
+    world: &str,
+    event: &Value,
+    prev: &str,
+    fork_pin: Option<&crate::fork::ForkPin>,
 ) -> Result<String, CellError> {
     /// The hashed form of one ledger entry.
     #[derive(Serialize)]
@@ -263,6 +276,8 @@ pub(crate) fn entry_hash(
         world: &'a str,
         event: &'a Value,
         prev: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fork_pin: Option<&'a crate::fork::ForkPin>,
     }
     hash_json(&Hashed {
         seq,
@@ -270,6 +285,7 @@ pub(crate) fn entry_hash(
         world,
         event,
         prev,
+        fork_pin,
     })
 }
 
@@ -482,6 +498,20 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     pub(crate) fn check_history(&self, what: &'static str) -> Result<(), CellError> {
         self.check_live()?;
         self.history_gate.history(what)
+    }
+
+    /// Whether `_norn_fact_values` may contain writes from an external SQLite
+    /// connection since this handle verified history at open/scrub.
+    pub(crate) fn has_unverified_external_writes(&self) -> Result<bool, CellError> {
+        if self.conn.read_isolation() == crate::engine::ReadIsolation::ExclusiveSynchronous {
+            return Ok(false);
+        }
+        let Some(scrub) = self.live_scrub else {
+            return Ok(true);
+        };
+        let baseline = scrub.borrow().baseline_dv();
+        let current = self.conn.external_data_version()?;
+        Ok(baseline.is_none() || current.is_none() || current != baseline)
     }
 
     /// S8/S12: fail closed on a durable fence first, then gate ledger reads

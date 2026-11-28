@@ -15,6 +15,17 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
     /// Changed pins/outputs refuse `core.boundary.bundle_mismatch`. Source deletes
     /// remain outside this mapping-bundle profile.
     pub fn process_mapping_bundle(&mut self, observation_id: &str) -> Result<bool, CellError> {
+        self.process_mapping_bundle_with_fence(
+            observation_id,
+            crate::source_cursor::SourceReportFence::default(),
+        )
+    }
+
+    pub(crate) fn process_mapping_bundle_with_fence(
+        &mut self,
+        observation_id: &str,
+        source_fence: crate::source_cursor::SourceReportFence<'_>,
+    ) -> Result<bool, CellError> {
         let Some(pending) = self.store().read().pending_observation(observation_id)? else {
             return Ok(false);
         };
@@ -68,8 +79,15 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         authorization
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-        self.commit_observed_evidence(commit, &authorization, &bundles)
-            .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
+        self.commit_observed_evidence_with_fence(commit, &authorization, &bundles, source_fence)
+            .map_err(|e| {
+                if let norn_kernel::CommitError::Host(err @ CellError::SourceLeaseFenced { .. }) = e
+                {
+                    err
+                } else {
+                    CellError::ObservationCommit(Box::new(e))
+                }
+            })?;
         Ok(true)
     }
 }
@@ -176,6 +194,56 @@ impl MappingOutcome {
     }
 }
 
+impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
+    /// See [`crate::CellStore::capture_source_page`].
+    /// # Errors
+    /// Lease fencing, cursor conflict, framing refusals, or store errors.
+    pub fn capture_source_page(
+        &mut self,
+        raws: &[Observed<RuntimeValue>],
+        input: Option<&crate::mapping_bundle::MappingInput>,
+        advance: &crate::source_cursor::CursorAdvanceSpec,
+        max_run_rows: usize,
+        expected_binding: Option<(&str, &str)>,
+    ) -> Result<crate::mapping_page::CapturedSourcePage, CellError> {
+        self.store_mut()
+            .capture_source_page(raws, input, advance, max_run_rows, expected_binding)
+    }
+
+    /// See [`crate::CellStore::capture_source_dispute_row`].
+    /// # Errors
+    /// Lease fencing, cursor conflict, framing refusals, or store errors.
+    pub fn capture_source_dispute_row(
+        &mut self,
+        raw: &Observed<RuntimeValue>,
+        input: &crate::mapping_bundle::MappingInput,
+        advance: &crate::source_cursor::CursorAdvanceSpec,
+        pending_key: &str,
+        expected_binding: Option<(&str, &str)>,
+    ) -> Result<crate::mapping_page::CapturedPage, CellError> {
+        self.store_mut().capture_source_dispute_row(
+            raw,
+            input,
+            advance,
+            pending_key,
+            expected_binding,
+        )
+    }
+
+    /// See [`crate::CellStore::capture_source_report_checked`].
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`], framing refusals, or store errors.
+    pub fn capture_source_report_checked(
+        &mut self,
+        raws: &[Observed<RuntimeValue>],
+        input: &crate::mapping_bundle::MappingInput,
+        fence: crate::source_cursor::SourceReportFence<'_>,
+    ) -> Result<crate::mapping_page::CapturedPage, CellError> {
+        self.store_mut()
+            .capture_source_report_checked(raws, input, fence)
+    }
+}
+
 impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
     /// [`Self::process_mapping_bundle`] for a sync: a bundle the mapping or the
     /// cell refuses is not an error but quarantined evidence, left pending in
@@ -186,6 +254,23 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
     pub fn process_mapping_outcome(
         &mut self,
         observation_id: &str,
+    ) -> Result<MappingOutcome, CellError> {
+        self.process_mapping_outcome_checked(
+            observation_id,
+            crate::source_cursor::SourceReportFence::default(),
+        )
+    }
+
+    /// Like [`Self::process_mapping_outcome`], additionally verifying `fence`
+    /// (active source lease and connector mapping revision pin) inside the
+    /// SQLite commit transaction.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store failures.
+    pub fn process_mapping_outcome_checked(
+        &mut self,
+        observation_id: &str,
+        fence: crate::source_cursor::SourceReportFence<'_>,
     ) -> Result<MappingOutcome, CellError> {
         if observation_id.starts_with("mapping-conflict:")
             || observation_id.starts_with("mapping-identity:")
@@ -221,7 +306,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             reasons.dedup();
             return Ok(MappingOutcome::Quarantined(reasons));
         }
-        match self.process_mapping_bundle(observation_id) {
+        match self.process_mapping_bundle_with_fence(observation_id, fence) {
             Ok(true) => Ok(MappingOutcome::Landed),
             Ok(false) => Ok(MappingOutcome::AlreadyLanded),
             Err(error) if crate::mapping_page::is_store_failure(&error) => Err(error),
@@ -229,6 +314,91 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                 QuarantineReason::refused(&error),
             ])),
         }
+    }
+
+    /// Like [`Self::process_mapping_page`], additionally verifying `fence`
+    /// (active source lease and connector mapping revision pin) inside the
+    /// SQLite commit transaction that promotes the page.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store failures.
+    pub fn process_mapping_page_checked(
+        &mut self,
+        page_id: &str,
+        fence: crate::source_cursor::SourceReportFence<'_>,
+    ) -> Result<Option<Vec<(String, MappingOutcome)>>, CellError> {
+        let Some((observed, members)) = self.pending_page(page_id)? else {
+            return Ok(None);
+        };
+        match self.commit_page_with_fence(&observed, &members, fence) {
+            Ok(()) => Ok(Some(
+                members
+                    .into_iter()
+                    .map(|(id, _)| (id, MappingOutcome::Landed))
+                    .collect(),
+            )),
+            Err(error) if crate::mapping_page::is_store_failure(&error) => Err(error),
+            Err(_refused) => {
+                let mut outcomes = Vec::with_capacity(members.len());
+                for (id, _) in members {
+                    let outcome = self.process_mapping_outcome_checked(&id, fence)?;
+                    outcomes.push((id, outcome));
+                }
+                if let Some((page_obs, remaining)) = self.pending_page(page_id)?
+                    && remaining.is_empty()
+                {
+                    self.commit_page_with_fence(&page_obs, &[], fence)?;
+                }
+                Ok(Some(outcomes))
+            }
+        }
+    }
+
+    /// Like [`Self::try_mapping_page`], additionally verifying `fence` inside
+    /// the SQLite commit transaction.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store failures.
+    pub fn try_mapping_page_checked(
+        &mut self,
+        page_id: &str,
+        fence: crate::source_cursor::SourceReportFence<'_>,
+    ) -> Result<crate::mapping_page::PageAttempt, CellError> {
+        let Some((observed, members)) = self.pending_page(page_id)? else {
+            return Ok(crate::mapping_page::PageAttempt::Consumed);
+        };
+        match self.commit_page_with_fence(&observed, &members, fence) {
+            Ok(()) => Ok(crate::mapping_page::PageAttempt::Landed(
+                members
+                    .into_iter()
+                    .map(|(id, _)| (id, MappingOutcome::Landed))
+                    .collect(),
+            )),
+            Err(error) if crate::mapping_page::is_store_failure(&error) => Err(error),
+            Err(_refused) => Ok(crate::mapping_page::PageAttempt::Refused(
+                members.into_iter().map(|(id, _)| id).collect(),
+            )),
+        }
+    }
+
+    /// Like [`Self::finish_mapping_page`], additionally verifying `fence`
+    /// inside the SQLite commit transaction.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store failures.
+    pub fn finish_mapping_page_checked(
+        &mut self,
+        page_id: &str,
+        fence: crate::source_cursor::SourceReportFence<'_>,
+    ) -> Result<bool, CellError> {
+        let Some((observed, members)) = self.pending_page(page_id)? else {
+            return Ok(false);
+        };
+        if !members.is_empty() {
+            return Ok(false);
+        }
+        self.commit_page_with_fence(&observed, &[], fence)?;
+        Ok(true)
     }
 
     /// MAP-REPROCESS-1: explicitly re-derive one quarantined `mapping-bundle:`
@@ -468,6 +638,326 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 .map(|r| r.values),
         };
         Ok(norn_kernel::FactSlice::from([(key.clone(), state)]))
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum RawInputDigest<'a> {
+    Object(std::collections::BTreeMap<&'a str, &'a RuntimeValue>),
+    Other(&'a RuntimeValue),
+}
+
+fn raw_input_digest(value: &RuntimeValue) -> RawInputDigest<'_> {
+    if let RuntimeValue::Object(map) = value {
+        RawInputDigest::Object(
+            map.iter()
+                .filter(|(k, _)| k.as_str() != "extracted_at")
+                .map(|(k, v)| (k.as_str(), v))
+                .collect(),
+        )
+    } else {
+        RawInputDigest::Other(value)
+    }
+}
+
+fn value_canonical_eq(retained: &RuntimeValue, delivered: &RuntimeValue) -> bool {
+    match (retained.canonical_json(), delivered.canonical_json()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => retained == delivered,
+    }
+}
+
+fn raw_input_matches(
+    retained: &RuntimeValue,
+    delivered: &RuntimeValue,
+    skip_id_keys: bool,
+) -> bool {
+    let ignored = |k: &str| {
+        k == "extracted_at" || (skip_id_keys && matches!(k, "source" | "source_id" | "event_id"))
+    };
+    let exact_id = |k: &str| matches!(k, "source" | "source_id" | "event_id");
+    match (retained, delivered) {
+        (RuntimeValue::Object(a), RuntimeValue::Object(b)) => {
+            a.iter()
+                .filter(|(k, _)| !ignored(k.as_str()))
+                .all(|(k, v)| {
+                    b.get(k).is_some_and(|dv| {
+                        if exact_id(k.as_str()) {
+                            v == dv
+                        } else {
+                            value_canonical_eq(v, dv)
+                        }
+                    })
+                })
+                && b.keys()
+                    .filter(|k| !ignored(k.as_str()))
+                    .all(|k| a.contains_key(k))
+        }
+        _ => value_canonical_eq(retained, delivered),
+    }
+}
+
+fn raw_str_bytes(raw: &RuntimeValue, key: &str) -> Option<Vec<u8>> {
+    raw.get(key)
+        .and_then(RuntimeValue::as_str)
+        .map(|s| s.as_bytes().to_vec())
+}
+
+#[derive(serde::Serialize)]
+struct SourceRowDigestV3<'a> {
+    observation_id: &'a str,
+    source: &'a str,
+    source_id: &'a str,
+    mapping_version: &'a str,
+    identity_bytes: [Option<Vec<u8>>; 3],
+    input: RawInputDigest<'a>,
+}
+
+pub(crate) fn source_page_digest_v3(
+    advance: &crate::source_cursor::CursorAdvanceSpec,
+    input: Option<&crate::mapping_bundle::MappingInput>,
+    observations: &[Observed<RuntimeValue>],
+) -> Result<String, CellError> {
+    #[derive(serde::Serialize)]
+    struct DigestInput<'a> {
+        connection_id: &'a str,
+        dataset: &'a str,
+        mapping: Option<&'a str>,
+        input_dataset: Option<&'a str>,
+        connector_instance: Option<&'a str>,
+        connector_instance_bytes: Option<Vec<u8>>,
+        partition: Option<&'a str>,
+        partition_bytes: Option<Vec<u8>>,
+        rows: Vec<SourceRowDigestV3<'a>>,
+        expected_previous_cursor: Option<&'a str>,
+        next_cursor: Option<&'a str>,
+    }
+    let rows = observations
+        .iter()
+        .map(|raw| SourceRowDigestV3 {
+            observation_id: raw.id.0.as_str(),
+            source: raw.provenance.source.as_str(),
+            source_id: raw.provenance.source_id.as_str(),
+            mapping_version: raw.provenance.mapping_version.as_str(),
+            identity_bytes: [
+                raw_str_bytes(&raw.input, "source"),
+                raw_str_bytes(&raw.input, "source_id"),
+                raw_str_bytes(&raw.input, "event_id"),
+            ],
+            input: raw_input_digest(&raw.input),
+        })
+        .collect();
+    let payload = DigestInput {
+        connection_id: &advance.connection_id,
+        dataset: &advance.dataset,
+        mapping: input.map(|i| i.mapping.as_str()),
+        input_dataset: input.map(|i| i.dataset.as_str()),
+        connector_instance: input.map(|i| i.connector_instance.as_str()),
+        connector_instance_bytes: input.map(|i| i.connector_instance.as_bytes().to_vec()),
+        partition: input.map(|i| i.partition.as_str()),
+        partition_bytes: input.map(|i| i.partition.as_bytes().to_vec()),
+        rows,
+        expected_previous_cursor: advance.expected_previous_cursor.as_deref(),
+        next_cursor: advance.next_cursor.as_deref(),
+    };
+    Ok(norn_ir::canonical::domain_hash_hex(
+        b"norn.source.page.v3\0",
+        &payload,
+    )?)
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct LegacyReplayCheck<'a> {
+    pub(crate) mapping: Option<&'a str>,
+    pub(crate) input: Option<&'a crate::mapping_bundle::MappingInput>,
+    pub(crate) active_binding: Option<&'a str>,
+    pub(crate) delivered: Option<&'a [Observed<RuntimeValue>]>,
+}
+
+fn identity_matches(
+    bundle: &MappingBundle,
+    orig_id: Option<&[Vec<u8>; 5]>,
+    input: Option<&crate::mapping_bundle::MappingInput>,
+    delivered: Option<&Observed<RuntimeValue>>,
+) -> bool {
+    if let Some(inp) = input {
+        if bundle.input.dataset != inp.dataset {
+            return false;
+        }
+        let ok = match orig_id {
+            Some(orig) => {
+                inp.connector_instance.as_bytes() == orig[0].as_slice()
+                    && inp.partition.as_bytes() == orig[1].as_slice()
+            }
+            None => {
+                bundle.input.connector_instance == inp.connector_instance
+                    && bundle.input.partition == inp.partition
+            }
+        };
+        if !ok {
+            return false;
+        }
+    }
+    if let Some(raw) = delivered {
+        if let Some(orig) = orig_id
+            && (raw_str_bytes(&raw.input, "source").as_deref() != Some(orig[2].as_slice())
+                || raw_str_bytes(&raw.input, "source_id").as_deref() != Some(orig[3].as_slice())
+                || raw_str_bytes(&raw.input, "event_id").as_deref() != Some(orig[4].as_slice()))
+        {
+            return false;
+        }
+        if !raw_input_matches(&bundle.raw, &raw.input, orig_id.is_some()) {
+            return false;
+        }
+    }
+    true
+}
+
+pub(crate) fn legacy_source_replay_allowed<E: SqlEngine>(
+    conn: &E,
+    records: &[String],
+    check: LegacyReplayCheck<'_>,
+) -> Result<bool, CellError> {
+    let mapping = check.input.map(|i| i.mapping.as_str()).or(check.mapping);
+    if mapping.is_some() && check.active_binding.is_none() {
+        return Ok(false);
+    }
+    if check
+        .delivered
+        .is_some_and(|rows| rows.len() != records.len())
+    {
+        return Ok(false);
+    }
+    let inbox = crate::system::INBOX;
+    let mut saw_evidence = false;
+    for (idx, id) in records.iter().enumerate() {
+        let Some(encoded) = conn.query_optional(
+            &format!("SELECT \"observed\" FROM \"{inbox}\" WHERE \"observation_id\" = ?1"),
+            crate::engine::params![id.as_str()],
+            |row| row.get::<String>(0),
+        )?
+        else {
+            return Ok(false);
+        };
+        let Some((bundle, orig_id)) =
+            crate::mapping_conflict::decode_evidence_with_identity(id, &encoded)
+        else {
+            return Ok(false);
+        };
+        saw_evidence = true;
+        if mapping.is_some_and(|m| bundle.input.mapping != m) {
+            return Ok(false);
+        }
+        if let Some(pin) = check.active_binding
+            && !bundle
+                .artifact_pins
+                .iter()
+                .any(|(art_id, ver, sha)| format!("{art_id}@{ver}#{sha}") == pin)
+        {
+            return Ok(false);
+        }
+        let delivered = check.delivered.and_then(|rows| rows.get(idx));
+        if !identity_matches(&bundle, orig_id.as_ref(), check.input, delivered) {
+            return Ok(false);
+        }
+    }
+    Ok(saw_evidence || (records.is_empty() && mapping.is_none()))
+}
+
+impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
+    /// See [`crate::CellStore::acquire_source_lease`].
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store errors.
+    pub fn acquire_source_lease(
+        &mut self,
+        connection_id: &str,
+        lease_id: &str,
+        now_ms: u64,
+        ttl_ms: u64,
+    ) -> Result<crate::source_cursor::SourceLease, CellError> {
+        self.store_mut()
+            .acquire_source_lease(connection_id, lease_id, now_ms, ttl_ms)
+    }
+
+    /// See [`crate::CellStore::release_source_lease`].
+    /// # Errors
+    /// Store errors.
+    pub fn release_source_lease(
+        &mut self,
+        connection_id: &str,
+        lease_id: &str,
+        generation: u64,
+    ) -> Result<bool, CellError> {
+        self.store_mut()
+            .release_source_lease(connection_id, lease_id, generation)
+    }
+
+    /// See [`crate::CellStore::seed_source_cursors`].
+    /// # Errors
+    /// Lease fencing or store errors.
+    pub fn seed_source_cursors(
+        &mut self,
+        connection_id: &str,
+        lease: &crate::source_cursor::SourceLease,
+        now_ms: u64,
+        cursors: &std::collections::BTreeMap<String, String>,
+        expected_binding: Option<(&str, &str)>,
+    ) -> Result<(), CellError> {
+        self.store_mut().seed_source_cursors(
+            connection_id,
+            lease,
+            now_ms,
+            cursors,
+            expected_binding,
+        )
+    }
+
+    /// See [`crate::CellStore::commit_source_page_cursor`].
+    /// # Errors
+    /// Lease fencing, cursor conflict, or store errors.
+    pub fn commit_source_page_cursor(
+        &mut self,
+        advance: &crate::source_cursor::CursorAdvanceSpec,
+        digest: &str,
+        pages: &[String],
+        records: &[String],
+        expected_binding: Option<(&str, &str)>,
+    ) -> Result<(), CellError> {
+        self.store_mut().commit_source_page_cursor(
+            advance,
+            digest,
+            pages,
+            records,
+            expected_binding,
+        )
+    }
+
+    /// See [`crate::CellStore::complete_source_pending`].
+    /// # Errors
+    /// Store errors.
+    pub fn complete_source_pending(
+        &mut self,
+        connection_id: &str,
+        dataset: &str,
+        page_digest: &str,
+    ) -> Result<(), CellError> {
+        self.store_mut()
+            .complete_source_pending(connection_id, dataset, page_digest)
+    }
+
+    /// See [`crate::CellStore::complete_source_pending_checked`].
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store errors.
+    pub fn complete_source_pending_checked(
+        &mut self,
+        connection_id: &str,
+        dataset: &str,
+        page_digest: &str,
+        lease: Option<(&str, &str, u64, u64)>,
+    ) -> Result<(), CellError> {
+        self.store_mut()
+            .complete_source_pending_checked(connection_id, dataset, page_digest, lease)
     }
 }
 

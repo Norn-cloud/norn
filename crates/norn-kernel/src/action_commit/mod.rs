@@ -35,6 +35,7 @@ mod automation_input;
 mod input;
 mod owned_rows;
 mod parameter;
+mod post_slice;
 mod predicate;
 mod receipt;
 mod series;
@@ -67,6 +68,7 @@ pub use approval::{
 };
 pub use automation_input::{AutomationInputViolation, validate_automation_static_input};
 pub use input::{actor_derived_fields, prepare_action_input, prepare_action_input_for_call};
+pub use post_slice::{action_reads_clock, clock_derived_fields};
 pub use types::{
     ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,
     ActionCall, ActionCallRecord, ActionDenial, ActionDerivedValue, ActionInputPreparation,
@@ -128,6 +130,11 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
+    if post_slice::action_reads_clock(call.action) {
+        return Err(ActionRefusal::InvalidInput {
+            field: "clock".to_owned(),
+        });
+    }
     commit_action_inner(
         host,
         catalog,
@@ -262,12 +269,13 @@ where
                 field: "$prepared_input".to_owned(),
             });
         }
-        None => prepare_action_input_for_call::<H::Error>(
+        None => input::prepare_action_input_for_call_at::<H::Error>(
             action,
             &call.input,
             call.action_artifact_id,
             call.action_version,
             &call.actor,
+            call.turn.now,
         )?,
     };
     match action.effect_program.as_ref() {
@@ -281,6 +289,7 @@ where
             lifecycle,
             transition,
             accept_receipt,
+            set_fields,
             ..
         }) => commit_transition(
             host,
@@ -293,6 +302,7 @@ where
             lifecycle,
             transition,
             accept_receipt.as_ref(),
+            set_fields,
             envelope,
         ),
         Some(ActionEffectProgram::UpsertInputObject {

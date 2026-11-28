@@ -1,10 +1,13 @@
-use norn_ir::{FactChange, ObjectTypeName, ResourceLimitProfile};
+use std::collections::BTreeMap;
+
+use norn_ir::{FactChange, ObjectTypeName, PropertyId, ResourceLimitProfile};
 
 use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
 use crate::decision_commit::{FactEvent, TypeCatalog};
 use crate::limits::{EnvelopeLimits, SliceMeter};
 
 use super::input::check_action_record_size;
+use super::post_slice::apply_post_slice_derivations;
 use super::receipt::resolve_receipt_effect;
 use super::slice::{
     ActionSliceContext, LoadedActionSlice, check_action_preconditions, load_action_slice,
@@ -34,6 +37,7 @@ pub(super) fn commit_transition<H>(
     lifecycle: &norn_ir::PropertyId,
     transition: &norn_ir::TransitionId,
     accept_receipt: Option<&norn_ir::ReceiptAcceptance>,
+    set_fields: &BTreeMap<PropertyId, String>,
     envelope: EnvelopePolicy<'_>,
 ) -> Result<ActionOutcome, ActionRefusal<H::Error>>
 where
@@ -59,6 +63,7 @@ where
             field: object_id_field.to_owned(),
         });
     };
+    let object_id = object_id.clone();
     if object_id.trim().is_empty() {
         return Err(ActionRefusal::InvalidInput {
             field: object_id_field.to_owned(),
@@ -71,7 +76,7 @@ where
 
     let target = FactKey {
         object_type: object_type.clone(),
-        key: object_id.clone(),
+        key: object_id,
     };
     let state = authorize_target(
         host,
@@ -107,6 +112,17 @@ where
         &state,
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
+    apply_post_slice_derivations(
+        catalog,
+        call,
+        &mut preparation,
+        &slice,
+        usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
+    )?;
+    record.effective_input = preparation.recorded_effective_input();
+    record
+        .derived_values
+        .clone_from(&preparation.derived_values);
     preparation.precondition_outcomes = check_action_preconditions(
         catalog,
         action,
@@ -151,6 +167,29 @@ where
         }
         None => None,
     };
+    // TRANSITION-PATCH-1: atomically apply declared companion property patches
+    // from derived/validated action input alongside the lifecycle transition.
+    for (property, source_field) in set_fields {
+        if accept_receipt.is_some_and(|declaration| {
+            property == &declaration.digest_property
+                || declaration.result_bindings.contains_key(property)
+        }) {
+            return Err(ActionRefusal::UnsupportedEffect {
+                action_id: action.action_id.clone(),
+            });
+        }
+        let Some(value) = preparation.effective_input.get(source_field).cloned() else {
+            return Err(ActionRefusal::InvalidInput {
+                field: source_field.clone(),
+            });
+        };
+        changes.push(FactChange::Set {
+            object_type: object_type.clone(),
+            key: target.key.clone(),
+            property: property.clone(),
+            value,
+        });
+    }
     let change = FactChange::Transition {
         object_type,
         // The owned target key: no borrow of the preparation outlives the writer.

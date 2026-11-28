@@ -1,0 +1,109 @@
+{
+  "artifactId": "data.PipelineRun.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Pipeline run",
+  "namespace": "data",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Reference provenance execution activity implementing data.Activity and inheriting core.TimeInterval.proper_interval.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "run_id"
+          ]
+        }
+      ],
+      "implements": [
+        "data.Activity"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Steward or system agent that ran the pipeline.",
+          "id": "actor",
+          "target": "data.Steward"
+        }
+      ],
+      "name": "data.PipelineRun",
+      "properties": [
+        {
+          "id": "run_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "starts_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "id": "ends_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "timezone",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.iana_timezone"
+          }
+        },
+        {
+          "id": "activity_kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "sync"
+              },
+              {
+                "value": "transform"
+              },
+              {
+                "value": "training"
+              },
+              {
+                "value": "evaluation"
+              },
+              {
+                "value": "restatement"
+              },
+              {
+                "value": "export"
+              }
+            ]
+          }
+        },
+        {
+          "id": "code_digest",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.PipelineRun.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -240,10 +240,18 @@ pub fn synthesize_object(
                 .map(|state| (lc.property.as_str(), state.as_str()))
         })
         .collect();
-    let key_props: BTreeSet<&str> = object_type
+    let primary_key_props: BTreeSet<&str> = object_type
         .identity
         .first()
         .map_or_default(|spec| spec.properties.iter().map(PropertyId::as_str).collect());
+    let all_key_props: BTreeSet<&str> = object_type
+        .identity
+        .iter()
+        .flat_map(|spec| spec.properties.iter().map(PropertyId::as_str))
+        .collect();
+
+    let witness_subject =
+        super::witness_seed::positive_law_witness_for(pack, object_type.name.as_str(), seed);
 
     let props = effective_properties(pack, object_type);
     let mut values = JsonObject::new();
@@ -256,8 +264,16 @@ pub fn synthesize_object(
             values.insert(id.to_owned(), JsonValue::String((*init).to_owned()));
             continue;
         }
-        if key_props.contains(id) {
+        if primary_key_props.contains(id) {
             values.insert(id.to_owned(), JsonValue::String(key.to_owned()));
+            continue;
+        }
+        if !all_key_props.contains(id)
+            && let Some(witness) = witness_subject
+            && let Some(witness_val) = witness.get(id)
+            && super::witness_seed::witness_value_matches_property(witness_val, prop, &shared)
+        {
+            values.insert(id.to_owned(), witness_val.clone());
             continue;
         }
         if let Some(default) = prop.default
@@ -274,7 +290,7 @@ pub fn synthesize_object(
         object_type,
         &props,
         &initial_by_prop,
-        &key_props,
+        &all_key_props,
         &mut values,
     );
     values
@@ -682,9 +698,9 @@ fn lifecycle_property_names<'a>(
         .collect()
 }
 
-struct EffectiveProp<'a> {
+pub(super) struct EffectiveProp<'a> {
     id: &'a PropertyId,
-    property_type: &'a PropertyType,
+    pub(super) property_type: &'a PropertyType,
     read_only: bool,
     protected: bool,
     nullable: bool,
@@ -755,7 +771,7 @@ fn non_lifecycle_bool_properties(
         .collect()
 }
 
-fn resolve_property_type<'a>(
+pub(super) fn resolve_property_type<'a>(
     ty: &'a PropertyType,
     shared: &'a BTreeMap<&'a str, &'a PropertyTypeDef>,
 ) -> &'a PropertyType {

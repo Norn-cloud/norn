@@ -3524,7 +3524,15 @@ export interface components {
             lifecycle: components["schemas"]["NornIrPropertyId"];
             objectIdField: string;
             objectKind: string;
+            setFields?: components["schemas"]["NornIrActionEffectProgramOneOf1PropertySetFields"];
             transition: components["schemas"]["NornIrTransitionId"];
+        };
+        /**
+         * @description TRANSITION-PATCH-1: writable target properties patched from derived/validated
+         *     action input fields atomically with the transition (e.g. `generation -> next_generation`).
+         */
+        NornIrActionEffectProgramOneOf1PropertySetFields: {
+            [key: string]: string;
         };
         /**
          * @description Atomically mutate a parent and its declared ordered child rows.
@@ -8505,12 +8513,19 @@ export interface components {
             description?: string;
             /** @description Unique id within the object type. */
             id: string;
+            /** @description ORIGIN-DATAFLOW-1: once created, no update, patch, or transition may overwrite this property. */
+            immutableAfterCreate?: boolean;
             /**
              * @description Classification markings declared on this property. Markings from
              *     property types, interfaces, supertypes, and computed inputs are unioned
              *     by the checker and cannot be removed by narrowing. Omitted when empty.
              */
             markings?: components["schemas"]["NornIrMarkingId"][];
+            /**
+             * @description ORIGIN-DATAFLOW-1: declared write-origin constraint for this property.
+             * @enum {string}
+             */
+            origin?: "caller" | "actor" | "receipt" | "derived" | "clock" | "default";
             /** @description FA-PROTECT-1: only sealed rule outputs may write this inherited field. */
             protected?: boolean;
             /** @description The value kind: inline, or a shared property type through `ref`. */
@@ -8603,6 +8618,16 @@ export interface components {
              */
             value: string;
         };
+        /**
+         * @description ORIGIN-DATAFLOW-1: declared write-origin provenance of a stored property.
+         *
+         *     Every non-`Caller` origin restricts which action mechanisms may write the
+         *     property at admission time (and `immutableAfterCreate` is additionally
+         *     enforced on every non-observation commit in `norn-kernel`), eliminating
+         *     caller-spoofed timestamps, derived calculations, and external evidence.
+         * @enum {string}
+         */
+        NornIrPropertyOrigin: "caller" | "actor" | "receipt" | "derived" | "clock" | "default";
         /** @description A property on a resolved data binding. */
         NornIrPropertyRef: {
             /** @description Data binding whose object type owns the property. */

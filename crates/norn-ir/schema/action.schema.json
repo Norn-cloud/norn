@@ -418,6 +418,16 @@
             "objectKind": {
               "type": "string"
             },
+            "setFields": {
+              "description": "TRANSITION-PATCH-1: writable target properties patched from derived/validated\naction input fields atomically with the transition (e.g. `generation -> next_generation`).",
+              "type": "object",
+              "additionalProperties": false,
+              "patternProperties": {
+                "^[a-z][a-z0-9_]*$": {
+                  "type": "string"
+                }
+              }
+            },
             "transition": {
               "$ref": "#/$defs/TransitionId"
             }

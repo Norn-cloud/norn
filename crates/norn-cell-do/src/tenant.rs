@@ -781,7 +781,11 @@ impl<E: SqlEngine> Tenant<E> {
         {
             return Served::Cell(response);
         }
-        Served::Cell(self.handle_admitted(principals, request, member))
+        let clock_ms = now_ms.max(request.now.saturating_mul(1_000));
+        let configured = connect
+            .as_deref()
+            .map(crate::connect::Connect::configured_mappings);
+        Served::Cell(self.handle_admitted(principals, request, member, clock_ms, configured))
     }
 
     /// Serve one request; every outcome is a status and a JSON document.
@@ -790,30 +794,30 @@ impl<E: SqlEngine> Tenant<E> {
         principals: &dyn PrincipalResolver,
         request: &Request<'_>,
     ) -> Response {
-        let admitted = self.outside(false).admit::<E>(principals, request);
-        match admitted {
-            Ok(Admitted::Member(caller)) => self.handle_admitted(principals, request, Some(caller)),
-            Ok(Admitted::Provisioner) => self.handle_admitted(principals, request, None),
+        let clock_ms = request.now.saturating_mul(1_000);
+        match self.outside(false).admit::<E>(principals, request) {
+            Ok(Admitted::Member(caller)) => {
+                self.handle_admitted(principals, request, Some(caller), clock_ms, None)
+            }
+            Ok(Admitted::Provisioner) => {
+                self.handle_admitted(principals, request, None, clock_ms, None)
+            }
             Err(response) => response,
         }
     }
 
-    /// Serve a request the gate admitted: a verified member (`member`), or a
-    /// provisioner of a scope's first cell on `POST /v1/cell:provision`.
+    /// Serve a request the gate admitted: a verified member or provisioner.
     fn handle_admitted(
         &mut self,
         principals: &dyn PrincipalResolver,
         request: &Request<'_>,
         member: Option<crate::policy::Caller>,
+        clock_ms: u64,
+        configured: Option<std::collections::BTreeMap<String, String>>,
     ) -> Response {
         if request.path == PROVISION_PATH {
             return server::respond_at(self.provision(principals, request), request.now);
         }
-        // A caller who is not a verified member of the organization never
-        // gets here (the gate answers them as a scope with no cell answers,
-        // on every route, before the cell does any work of its own:
-        // #1297 r1 B1, TENANT-ISOLATION-1). Only a provisioner is admitted
-        // without membership, and only to provision.
         let Some(caller) = member else {
             return server::respond_at(Err(norn_api::authz::read_denied()), request.now);
         };
@@ -850,17 +854,13 @@ impl<E: SqlEngine> Tenant<E> {
                 {
                     return response;
                 }
-                // A cell that publishes no questions answers ad-hoc questions
-                // over its derived metrics; a revision whose metrics do not
-                // derive serves receipt handles only.
-                let derived = match (&serving.questions, &self.derived) {
-                    // A revision whose metrics do not derive publishes none.
-                    (None, Some(derived)) => derived
-                        .questions(&serving.host)
-                        .ok()
-                        .filter(|runtime| !AdHocQuestions::<E>::definitions(runtime).is_empty()),
-                    _ => None,
-                };
+                let derived = self
+                    .derived
+                    .as_ref()
+                    .filter(|_| serving.questions.is_none())
+                    .and_then(|d| d.questions_at(&serving.host, clock_ms).ok())
+                    .map(|rt| rt.with_configured(configured))
+                    .filter(|r| !AdHocQuestions::<E>::definitions(r).is_empty());
                 let questions = serving
                     .questions
                     .as_ref()

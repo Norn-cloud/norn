@@ -11,7 +11,13 @@ use tokio::sync::Notify;
 
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
-use crate::export::{EXPORT_FORMAT, ExportRecord};
+use crate::export::{EXPORT_FORMAT, ExportRecord, SourceEvidenceEntry};
+#[cfg(all(test, feature = "native"))]
+pub(crate) use crate::export_evidence::{members_valid, restore_source_evidence};
+pub(crate) use crate::export_evidence::{
+    read_late_source_evidence, read_source_evidence, reprocessed_target,
+    restore_late_source_evidence, restore_observation_input,
+};
 use crate::model::Model;
 use crate::read::{LedgerEntry, StoreReader, to_i64, to_u64};
 use crate::store::{CellStore, CommitBatch, Consumption, DefinitionInstallRecord, Receipt};
@@ -78,14 +84,24 @@ pub(crate) fn consumed_input<E: SqlEngine>(
                     members.extend(reader.pending_observation(&id)?);
                 }
                 members
+            } else if observation_id.starts_with("mapping-bundle:") {
+                reprocessed_target(&pending.observed, observation_id)
+                    .map(|id| reader.pending_observation(id))
+                    .transpose()?
+                    .flatten()
+                    .into_iter()
+                    .collect()
             } else {
                 Vec::new()
             };
+            let source_evidence =
+                read_source_evidence(reader.conn, &pending.observation_id, &members)?;
             preimage(&ConsumedInput::Observation {
                 position: pending.position,
                 observation_id: pending.observation_id,
                 observed: pending.observed,
                 members,
+                source_evidence,
             })
         }
         Consumption::Result {
@@ -120,6 +136,24 @@ pub(crate) fn consumed_input<E: SqlEngine>(
     }
 }
 
+/// Decode one `ConsumedInput::Observation` preimage without buffering decimals.
+pub(crate) fn decode_observation_input(input: &Value) -> Result<ConsumedInput, String> {
+    let row: crate::PendingObservation = norn_ir::runtime::decode(input)?;
+    let members = input
+        .get("members")
+        .map_or_else(|| Ok(Vec::new()), norn_ir::runtime::decode)?;
+    let source_evidence = input
+        .get("sourceEvidence")
+        .map_or_else(|| Ok(Vec::new()), norn_ir::runtime::decode)?;
+    Ok(ConsumedInput::Observation {
+        position: row.position,
+        observation_id: row.observation_id,
+        observed: row.observed,
+        members,
+        source_evidence,
+    })
+}
+
 /// The preimage of a consumed delivery, as recorded in the export.
 #[derive(Debug, Serialize)]
 #[serde(
@@ -136,6 +170,9 @@ pub(crate) enum ConsumedInput {
         /// order; absent for every other delivery.
         #[serde(skip_serializing_if = "Vec::is_empty")]
         members: Vec<crate::PendingObservation>,
+        /// Durable `_norn_source_evidence` attribution rows for this delivery.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        source_evidence: Vec<SourceEvidenceEntry>,
     },
     Result {
         position: u64,
@@ -245,6 +282,7 @@ pub(crate) fn record<E: SqlEngine>(
     for entry in &entries {
         reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
     }
+    let (pending_observations, source_evidence) = read_late_source_evidence(engine, commit_seq)?;
     let bindings = bindings(engine)?;
     let export = ExportRecord {
         format: EXPORT_FORMAT.to_owned(),
@@ -269,6 +307,8 @@ pub(crate) fn record<E: SqlEngine>(
         storage_version,
         automation_continuation: automation.continuation,
         automation_inline: automation.inline,
+        source_evidence,
+        pending_observations,
     };
     // The record's hash and its stored encoding both start from its canonical
     // text; canonicalize it once. A steady-state main-world record stores its

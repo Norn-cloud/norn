@@ -44,6 +44,8 @@ mod core_time;
 mod core_units;
 #[path = "core_value_types.rs"]
 mod core_value_types;
+#[path = "data_ontology.rs"]
+mod data_ontology;
 #[path = "defined_concepts.rs"]
 mod defined_concepts;
 #[path = "definition_catalog.rs"]
@@ -124,6 +126,8 @@ mod ontology_registry;
 mod owned_collections;
 #[path = "path_mapping.rs"]
 mod path_mapping;
+#[path = "pr_a_origin_clock_slice_patch.rs"]
+mod pr_a_origin_clock_slice_patch;
 #[path = "pr_c_honesty_and_red_team.rs"]
 mod pr_c_honesty_and_red_team;
 #[path = "predicate_slice_and_links.rs"]

@@ -16,6 +16,7 @@ test/connector.test.ts
 test/constitution.test.ts
 test/core-rea.test.ts
 test/dashboard.test.ts
+test/data-pack.test.ts
 test/decisions.test.ts
 test/dev-install.test.ts
 test/dev-loop.test.ts
@@ -42,6 +43,7 @@ test/new-developer.test.ts
 test/ontology-pack.test.ts
 test/pack-link.test.ts
 test/packaging.test.ts
+test/pr-a-authoring.test.ts
 test/pr-c-scope-key.test.ts
 test/predicate-slice-and-owned-collections.test.ts
 test/principal-inputs.test.ts

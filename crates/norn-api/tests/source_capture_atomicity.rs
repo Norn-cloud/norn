@@ -291,6 +291,17 @@ mod tests {
         (host, fail_cursor_write, fail_ledger_write)
     }
 
+    fn open_native_host_at(artifacts: &[ArtifactEnvelope], path: &Path) -> DevHost<NativeEngine> {
+        let (model, input) = admit_and_model(artifacts);
+        let engine = NativeEngine::open(path, StoreOptions::default()).expect("open sqlite");
+        let mut store = CellStore::from_engine(engine, model.clone()).expect("open store");
+        let scope = cell_scope();
+        store
+            .install_definitions(model, input, Some(0), &scope.key())
+            .expect("install");
+        DevHost::from_store(store, scope, |_| BTreeMap::new()).expect("open host")
+    }
+
     fn reopen_native_host(artifacts: &[ArtifactEnvelope], path: &Path) -> DevHost<NativeEngine> {
         let (model, _input) = admit_and_model(artifacts);
         let engine = NativeEngine::open(path, StoreOptions::default()).expect("reopen sqlite");
@@ -1512,6 +1523,772 @@ mod tests {
             host.source_cursors("erpnext.rest")
                 .expect("cursors")
                 .contains_key(&dataset)
+        );
+    }
+
+    /// Regression 12: stale mapping revisions are fenced inside `reset_source_cursors`,
+    /// `bind_source_mapping`, and `seed_source_cursors` before any cursor/binding mutation.
+    #[test]
+    fn stale_mapping_revision_fences_reset_bind_and_seed() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let active = host
+            .active_mapping_binding("erpnext.rest.mapping")
+            .expect("active binding")
+            .expect("mapping installed");
+        let stale = "erpnext.rest.mapping@0.0.0#stale";
+        assert_ne!(active, stale);
+        let lease = host
+            .acquire_source_lease("erpnext.rest", "run-stale-rev", T0, RUN_LEASE_MS)
+            .expect("lease");
+        let seed = BTreeMap::from([(
+            "Party".to_owned(),
+            r#"{"version":"2026-01-01 00:00:00","id":"CUST-1"}"#.to_owned(),
+        )]);
+        assert!(matches!(
+            host.reset_source_cursors("erpnext.rest", ("erpnext.rest.mapping", stale), &lease, T0),
+            Err(SourceCaptureError::LeaseFenced(_))
+        ));
+        assert!(matches!(
+            host.bind_source_mapping(
+                "erpnext.rest",
+                ("erpnext.rest.mapping", stale),
+                &lease,
+                T0,
+                &seed,
+            ),
+            Err(SourceCaptureError::LeaseFenced(_))
+        ));
+        assert!(matches!(
+            host.seed_source_cursors(
+                "erpnext.rest",
+                &lease,
+                T0,
+                &seed,
+                Some(("erpnext.rest.mapping", stale)),
+            ),
+            Err(SourceCaptureError::LeaseFenced(_))
+        ));
+        assert!(
+            host.source_mapping_binding("erpnext.rest")
+                .expect("binding")
+                .is_none()
+        );
+        assert!(
+            host.source_cursors("erpnext.rest")
+                .expect("cursors")
+                .is_empty()
+        );
+    }
+
+    /// Regression 13: legacy binding and cursor seeding commit atomically in one
+    /// SQLite transaction; a fault during cursor seeding rolls back the binding.
+    #[test]
+    fn bind_source_mapping_rolls_back_binding_on_seed_cursor_fault() {
+        let (host, fail_cursor, _fail_ledger) = open_faultable_host(&rest_artifacts(&[]), None);
+        let active = host
+            .active_mapping_binding("erpnext.rest.mapping")
+            .expect("active binding")
+            .expect("mapping installed");
+        let lease = host
+            .acquire_source_lease("erpnext.rest", "run-atomic-seed", T0, RUN_LEASE_MS)
+            .expect("lease");
+        let seed = BTreeMap::from([(
+            "Party".to_owned(),
+            r#"{"version":"2026-01-01 00:00:00","id":"CUST-1"}"#.to_owned(),
+        )]);
+        fail_cursor.store(true, Ordering::Release);
+        assert!(
+            host.bind_source_mapping(
+                "erpnext.rest",
+                ("erpnext.rest.mapping", &active),
+                &lease,
+                T0,
+                &seed,
+            )
+            .is_err()
+        );
+        assert!(
+            host.source_mapping_binding("erpnext.rest")
+                .expect("binding")
+                .is_none(),
+            "binding must roll back when legacy cursor seed faults"
+        );
+        assert!(
+            host.source_cursors("erpnext.rest")
+                .expect("cursors")
+                .is_empty()
+        );
+        fail_cursor.store(false, Ordering::Release);
+        host.bind_source_mapping(
+            "erpnext.rest",
+            ("erpnext.rest.mapping", &active),
+            &lease,
+            T0,
+            &seed,
+        )
+        .expect("atomic bind+seed");
+        assert_eq!(
+            host.source_mapping_binding("erpnext.rest")
+                .expect("binding")
+                .as_deref(),
+            Some(active.as_str())
+        );
+        assert!(
+            host.source_cursors("erpnext.rest")
+                .expect("cursors")
+                .contains_key("Party")
+        );
+    }
+
+    /// Regression 14: when the sources report pack is installed, a real store
+    /// error during end-of-run `report()` fails the run instead of returning `ok`.
+    #[test]
+    fn report_write_fault_with_report_pack_installed_fails_finish() {
+        let (host, _fail_cursor, fail_ledger) = open_faultable_host(&rest_artifacts(&[]), None);
+        let profile = profile_of("erpnext");
+        let mut sources = rest_sources(ERPNEXT_CONFIG);
+        sources
+            .claim("erpnext.rest", Trigger::Manual, "user:owner@demo", T0)
+            .expect("claim");
+        let mut step = sources.step(&host, "erpnext.rest", None, T0);
+        let mut t = T0;
+        let feed_count = profile.feeds.len();
+        let mut seen = 0_usize;
+        let summary = loop {
+            match step {
+                Step::Request(req) => {
+                    seen += 1;
+                    let feed = profile
+                        .feeds
+                        .iter()
+                        .find(|f| req.url.contains(f.request.path.as_str()))
+                        .expect("feed");
+                    let body = empty_page(&profile, &feed.dataset).to_string();
+                    if seen == feed_count {
+                        // Fault ledger writes for the final `source.Connection` / `source.SyncRun` report.
+                        fail_ledger.store(true, Ordering::Release);
+                    }
+                    t = t.saturating_add(1);
+                    step = sources.step(&host, "erpnext.rest", Some((200, body.as_bytes())), t);
+                }
+                Step::Continue => {
+                    t = t.saturating_add(1);
+                    step = sources.step(&host, "erpnext.rest", None, t);
+                }
+                Step::Done(summary) => break summary,
+            }
+        };
+        assert_eq!(summary.outcome, "failed", "{summary:#?}");
+        assert!(summary.error.is_some());
+    }
+
+    /// Regression 15: a failed `source.Connection` report (e.g. auth failure)
+    /// without `_norn_source_binding` never proves legacy cursor ownership for
+    /// `legacy_cursors_match_mapping_binding`.
+    #[test]
+    fn failed_legacy_connection_report_does_not_prove_cursor_binding() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let active = host
+            .active_mapping_binding("erpnext.rest.mapping")
+            .expect("active binding")
+            .expect("mapping installed");
+        let legacy_wm = BTreeMap::from([(
+            "Party".to_owned(),
+            Watermark {
+                version: "2026-01-01 00:00:00".into(),
+                id: norn_ir::RuntimeValue::String("CUST-LEGACY".into()),
+            },
+        )]);
+        let legacy_json = serde_json::to_string(&legacy_wm).expect("json");
+        let connect_profile = PullProfile {
+            source: "norn-connect".into(),
+            pipeline: "norn-connect/1".into(),
+            feeds: Vec::new(),
+            token: None,
+        };
+        let failed_conn = norn_api::pull::Row {
+            dataset: "connection".into(),
+            source_id: "erpnext.rest".into(),
+            version: "auth-fail/end".into(),
+            payload: norn_ir::runtime_object! {
+                "id" => "erpnext.rest", "system" => "erpnext", "label" => "ERPNext REST",
+                "target" => "http://erpnext-rest:8000", "auth" => "api_key", "status" => "failed",
+                "last_sync_started_at" => RECORDED_AT, "last_sync_ended_at" => RECORDED_AT,
+                "last_trigger" => "manual", "watermark" => legacy_json.as_str(),
+                "rows_read" => 0_u64, "rows_landed" => 0_u64, "rows_quarantined" => 0_u64,
+                "quarantine_reasons" => "", "last_error_code" => "source.auth",
+                "last_error_message" => "missing secret",
+                "connector_id" => "erpnext.rest.connector",
+                "source_schema_id" => "erpnext.rest.source",
+                "mapping_id" => "erpnext.rest.mapping",
+            },
+        };
+        let raw = observation(&connect_profile, &failed_conn, T0).expect("raw");
+        host.ingest(&[(
+            raw,
+            MappingInput {
+                mapping: "norn.connect.mapping".into(),
+                dataset: "connection".into(),
+                connector_instance: "cell".into(),
+                partition: "connection".into(),
+                recorded_at: norn_ir::provenance::UtcTimestamp(RECORDED_AT.into()),
+            },
+        )])
+        .expect("record failed connection");
+        assert!(
+            !host
+                .legacy_cursors_match_mapping_binding(
+                    "erpnext.rest",
+                    "erpnext.rest.mapping",
+                    &active,
+                )
+                .expect("legacy check"),
+            "failed report must never bless legacy cursors"
+        );
+    }
+
+    /// Regression 16: a second `Sources` instance with missing auth secrets is
+    /// fenced at lease acquisition before auth runs and never overwrites an
+    /// active worker's `source.Connection`.
+    #[test]
+    fn preflight_auth_failure_requires_lease_and_cannot_clobber_active_worker() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let mut worker_a = rest_sources(ERPNEXT_CONFIG);
+        worker_a
+            .claim("erpnext.rest", Trigger::Manual, "user:worker-a@demo", T0)
+            .expect("claim a");
+        let Step::Request(_) = worker_a.step(&host, "erpnext.rest", None, T0) else {
+            panic!("worker A must acquire lease and issue first request");
+        };
+        let conn_before = host
+            .host_object("source.Connection", "erpnext.rest")
+            .expect("read")
+            .expect("worker A connection");
+        assert_eq!(
+            conn_before.get("status").and_then(RuntimeValue::as_str),
+            Some("syncing")
+        );
+
+        let mut worker_b = Sources::with_allowed_hosts(
+            &cell_scope(),
+            ERPNEXT_CONFIG,
+            &BTreeMap::new(),
+            SANDBOX_HOSTS,
+        )
+        .expect("no secrets");
+        // Same-millisecond claim (`T0`, identical `{connection}/{now_ms}` run id)
+        // must still be fenced while worker A holds the active lease.
+        worker_b
+            .claim("erpnext.rest", Trigger::Manual, "user:worker-b@demo", T0)
+            .expect("claim b");
+        let Step::Done(summary_b) = worker_b.step(&host, "erpnext.rest", None, T0) else {
+            panic!("worker B must fail immediately when lease is held");
+        };
+        assert_eq!(summary_b.outcome, "failed");
+        assert_eq!(
+            summary_b.error.as_ref().map(|(c, _)| c.as_str()),
+            Some("source.lease_fenced"),
+            "same-ms lease check must precede auth failure: {summary_b:#?}"
+        );
+        let conn_after = host
+            .host_object("source.Connection", "erpnext.rest")
+            .expect("read")
+            .expect("connection after b");
+        assert_eq!(
+            conn_after.get("status").and_then(RuntimeValue::as_str),
+            Some("syncing"),
+            "fenced worker B must not overwrite worker A's syncing status"
+        );
+    }
+
+    /// Regression 17: an empty follow-up sync after a quarantined row stays
+    /// `partial` until the quarantined source row is corrected or resolved.
+    #[test]
+    fn empty_sync_after_unresolved_quarantine_stays_partial_until_corrected() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let profile = profile_of("erpnext");
+        let dataset = "Party".to_owned();
+        let (rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
+        let mut bad_row = rows[0].clone();
+        if let RuntimeValue::Object(obj) = &mut bad_row.0.input {
+            if let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload") {
+                payload.insert("custom_norn_ref".into(), RuntimeValue::Null);
+            }
+            let digest = norn_ir::canonical::HashProfile::Norn1
+                .hash_json(serde_json::to_string(&obj["payload"]).expect("json"))
+                .expect("digest");
+            obj.insert("payload_digest".into(), RuntimeValue::String(digest));
+            obj.insert(
+                "event_id".into(),
+                RuntimeValue::String("quarantine-party-1".into()),
+            );
+        }
+        let lease = host
+            .acquire_source_lease("erpnext.rest", "run-q-empty", T0, RUN_LEASE_MS)
+            .expect("lease");
+        let advance = CursorAdvanceSpec {
+            connection_id: "erpnext.rest".into(),
+            dataset: dataset.clone(),
+            lease_id: lease.lease_id.clone(),
+            generation: lease.generation,
+            now_ms: T0.saturating_add(1),
+            expected_previous_cursor: None,
+            next_cursor: Some(next_wm.cursor_json().expect("json")),
+            renew_ttl_ms: Some(RUN_LEASE_MS),
+        };
+        let outcomes = host
+            .ingest_source_page(&[bad_row], &advance)
+            .expect("capture quarantined row");
+        assert!(matches!(
+            outcomes[0].outcome,
+            MappingOutcome::Quarantined(_)
+        ));
+        host.release_source_lease("erpnext.rest", &lease.lease_id, lease.generation)
+            .expect("release");
+        assert!(
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.rest"))
+                .expect("unresolved")
+                .contains(&dataset)
+        );
+
+        let mut sources = rest_sources(ERPNEXT_CONFIG);
+        let t1 = T0.saturating_add(10);
+        sources
+            .claim("erpnext.rest", Trigger::Manual, "user:owner@demo", t1)
+            .expect("claim");
+        let summary = run_erpnext_sync(&host, &mut sources, &profile, t1, BTreeMap::new());
+        assert_eq!(summary.outcome, "partial", "{summary:#?}");
+        let conn = host
+            .host_object("source.Connection", "erpnext.rest")
+            .expect("read")
+            .expect("connection");
+        assert_eq!(
+            conn.get("status").and_then(RuntimeValue::as_str),
+            Some("partial")
+        );
+
+        let with_version = |ver: &str, event_id: &str| {
+            let mut row = rows[0].clone();
+            if let RuntimeValue::Object(obj) = &mut row.0.input {
+                obj.insert("source_version".into(), RuntimeValue::String(ver.into()));
+                obj.insert("event_id".into(), RuntimeValue::String(event_id.into()));
+            }
+            row
+        };
+        // Landing an OLDER source version must NOT clear the unresolved quarantine.
+        host.ingest(&[with_version("2020-01-01 00:00:00", "older-party-1")])
+            .expect("land older version");
+        assert!(
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.rest"))
+                .expect("still unresolved")
+                .contains(&dataset)
+        );
+        // Landing a STRICTLY NEWER corrected version clears unresolved quarantine.
+        host.ingest(&[with_version("2099-01-01 00:00:00", "corrected-party-1")])
+            .expect("land newer version");
+        assert!(
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.rest"))
+                .expect("cleared")
+                .is_empty()
+        );
+        let t2 = T0.saturating_add(20);
+        sources
+            .claim("erpnext.rest", Trigger::Manual, "user:owner@demo", t2)
+            .expect("claim 2");
+        assert_eq!(
+            run_erpnext_sync(&host, &mut sources, &profile, t2, BTreeMap::new()).outcome,
+            "ok"
+        );
+    }
+
+    /// Regression 18: v3 and legacy B3 v2 replay accept exact retries and reject
+    /// changed `partition`, `redaction`, `feed_mode`, or `mapping`.
+    fn assert_replay_mutations_conflict(
+        host: &DevHost<NativeEngine>,
+        rows: &[(norn_kernel::Observed<RuntimeValue>, MappingInput)],
+        advance: &CursorAdvanceSpec,
+        include_feed_and_mapping: bool,
+    ) {
+        let mut cases = Vec::new();
+        let mut bad_part = rows.to_vec();
+        for (_, inp) in &mut bad_part {
+            inp.partition = "Party-other".into();
+        }
+        cases.push(bad_part);
+        let mut bad_redact = rows.to_vec();
+        if let RuntimeValue::Object(o) = &mut bad_redact[0].0.input {
+            o.insert(
+                "redaction".into(),
+                RuntimeValue::String("pii-masked".into()),
+            );
+        }
+        cases.push(bad_redact);
+        if include_feed_and_mapping {
+            let mut bad_feed = rows.to_vec();
+            if let RuntimeValue::Object(o) = &mut bad_feed[0].0.input {
+                o.insert(
+                    "feed_mode".into(),
+                    RuntimeValue::String("delta_patch".into()),
+                );
+            }
+            cases.push(bad_feed);
+            let mut bad_map = rows.to_vec();
+            for (_, inp) in &mut bad_map {
+                inp.mapping = "odoo.rest.mapping".into();
+            }
+            cases.push(bad_map);
+        }
+        for mutated in cases {
+            assert!(matches!(
+                host.capture_source_page_planned(&mutated, advance, 10),
+                Err(SourceCaptureError::CursorConflict(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn legacy_v2_page_digest_replays_idempotently_across_upgrade() {
+        let artifacts = rest_artifacts(&[]);
+        let db = TempDb::new("legacy-v2-digest-replay");
+        let dataset = "Party".to_owned();
+        let (rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
+        let delivered: Vec<_> = rows.iter().map(|(raw, _)| raw.clone()).collect();
+        let (advance, orig_records, v2_digest) = {
+            let host = open_native_host_at(&artifacts, db.path());
+            let lease = host
+                .acquire_source_lease("erpnext.rest", "run-v2-upgrade", T0, RUN_LEASE_MS)
+                .expect("lease");
+            let advance = CursorAdvanceSpec {
+                connection_id: "erpnext.rest".into(),
+                dataset: dataset.clone(),
+                lease_id: lease.lease_id.clone(),
+                generation: lease.generation,
+                now_ms: T0.saturating_add(1),
+                expected_previous_cursor: None,
+                next_cursor: Some(next_wm.cursor_json().expect("json")),
+                renew_ttl_ms: Some(RUN_LEASE_MS),
+            };
+            let v2_digest =
+                norn_cell::source_cursor::page_digest_v2(&advance, &delivered).expect("v2 digest");
+            let norn_api::host::SourceCapturePlan::Captured(pending) = host
+                .capture_source_page_planned(&rows, &advance, 10)
+                .expect("initial capture")
+            else {
+                panic!("expected normal capture");
+            };
+            host.complete_source_pending("erpnext.rest", &dataset, &pending.page_digest)
+                .expect("complete");
+            assert_replay_mutations_conflict(&host, &rows, &advance, false);
+            (advance, pending.records, v2_digest)
+        };
+        {
+            let engine = NativeEngine::open(db.path(), StoreOptions::default()).expect("sqlite");
+            engine
+                .execute(
+                    "UPDATE \"_norn_source_cursor\" SET \"page_digest\" = ?1 \
+                     WHERE \"connection_id\" = ?2 AND \"dataset\" = ?3",
+                    &[
+                        SqlValue::Text(v2_digest.clone()),
+                        SqlValue::Text("erpnext.rest".into()),
+                        SqlValue::Text(dataset),
+                    ],
+                )
+                .expect("rewrite to v2 digest");
+        }
+        let reopened = reopen_native_host(&artifacts, db.path());
+        let norn_api::host::SourceCapturePlan::Captured(replayed) = reopened
+            .capture_source_page_planned(&rows, &advance, 10)
+            .expect("v2 digest replay must succeed under same mapping revision")
+        else {
+            panic!("expected idempotent replay");
+        };
+        assert_eq!(replayed.page_digest, v2_digest);
+        assert_eq!(replayed.records, orig_records);
+        assert_replay_mutations_conflict(&reopened, &rows, &advance, true);
+    }
+
+    /// Regression 19: two connections sharing one mapping isolate quarantine
+    /// attribution per connection so a quarantine on connection A never marks
+    /// connection B `partial`.
+    #[test]
+    fn sibling_connections_sharing_mapping_isolate_quarantine_attribution() {
+        let host = open_native_host(&rest_artifacts(&[]));
+        let profile = profile_of("erpnext");
+        let dataset = "Party".to_owned();
+        let (rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
+        let mut bad_row = rows[0].clone();
+        if let RuntimeValue::Object(obj) = &mut bad_row.0.input {
+            if let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload") {
+                payload.insert("custom_norn_ref".into(), RuntimeValue::Null);
+            }
+            let digest = norn_ir::canonical::HashProfile::Norn1
+                .hash_json(serde_json::to_string(&obj["payload"]).expect("json"))
+                .expect("digest");
+            obj.insert("payload_digest".into(), RuntimeValue::String(digest));
+            obj.insert(
+                "event_id".into(),
+                RuntimeValue::String("quarantine-conn-a-1".into()),
+            );
+        }
+        let lease_a = host
+            .acquire_source_lease("erpnext.a", "run-conn-a", T0, RUN_LEASE_MS)
+            .expect("lease a");
+        let advance_a = CursorAdvanceSpec {
+            connection_id: "erpnext.a".into(),
+            dataset: dataset.clone(),
+            lease_id: lease_a.lease_id.clone(),
+            generation: lease_a.generation,
+            now_ms: T0,
+            expected_previous_cursor: None,
+            next_cursor: Some(next_wm.cursor_json().expect("json")),
+            renew_ttl_ms: Some(RUN_LEASE_MS),
+        };
+        let outcomes = host
+            .ingest_source_page(&[bad_row], &advance_a)
+            .expect("capture quarantined row on erpnext.a");
+        assert!(matches!(
+            outcomes[0].outcome,
+            MappingOutcome::Quarantined(_)
+        ));
+        host.release_source_lease("erpnext.a", &lease_a.lease_id, lease_a.generation)
+            .expect("release a");
+        assert!(
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.a"))
+                .expect("a quarantined")
+                .contains(&dataset)
+        );
+        assert!(
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.b"))
+                .expect("b clean")
+                .is_empty(),
+            "connection B sharing the mapping must not inherit connection A's quarantine"
+        );
+
+        let two_conns = r#"[
+          {"id": "erpnext.a", "system": "erpnext", "label": "ERPNext A",
+           "connector": "erpnext.rest.connector", "mapping": "erpnext.rest.mapping",
+           "instance": "sandbox", "baseUrl": "http://erpnext-rest:8000",
+           "orgId": "org_demo", "environmentId": "dev", "secretRefs": ["erpnext_rest_token"]},
+          {"id": "erpnext.b", "system": "erpnext", "label": "ERPNext B",
+           "connector": "erpnext.rest.connector", "mapping": "erpnext.rest.mapping",
+           "instance": "sandbox", "baseUrl": "http://erpnext-rest:8000",
+           "orgId": "org_demo", "environmentId": "dev", "secretRefs": ["erpnext_rest_token"]}
+        ]"#;
+        let mut sources = rest_sources(two_conns);
+        let run_one = |sources: &mut Sources, id: &str, now_ms: u64| {
+            sources
+                .claim(id, Trigger::Manual, "user:owner@demo", now_ms)
+                .expect("claim");
+            let mut step = sources.step(&host, id, None, now_ms);
+            loop {
+                match step {
+                    Step::Done(summary) => return summary,
+                    Step::Continue => step = sources.step(&host, id, None, now_ms),
+                    Step::Request(req) => {
+                        let feed = profile
+                            .feeds
+                            .iter()
+                            .find(|f| req.url.contains(f.request.path.as_str()))
+                            .expect("feed");
+                        let body = empty_page(&profile, &feed.dataset).to_string();
+                        step = sources.step(&host, id, Some((200, body.as_bytes())), now_ms);
+                    }
+                }
+            }
+        };
+        let sum_a = run_one(&mut sources, "erpnext.a", T0.saturating_add(10));
+        assert_eq!(sum_a.outcome, "partial", "{sum_a:#?}");
+        let sum_b = run_one(&mut sources, "erpnext.b", T0.saturating_add(20));
+        assert_eq!(sum_b.outcome, "ok", "{sum_b:#?}");
+    }
+
+    /// Regression 20a: v3 replay distinguishes non-NFC vs NFC identity bytes,
+    /// while legacy v2 replay admits an unchanged non-NFC `mapping-identity:`
+    /// retry (even with decomposed Unicode in non-identity payload fields) and
+    /// rejects a different NFC identity spelling.
+    #[test]
+    fn unicode_identity_bytes_fenced_in_v3_and_preserved_in_v2_replay() {
+        let artifacts = rest_artifacts(&[]);
+        let db = TempDb::new("unicode-identity-replay");
+        let dataset = "Party".to_owned();
+        let (base_rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
+        let mut decomposed_rows = vec![base_rows[0].clone()];
+        decomposed_rows[0].1.partition = "Party-e\u{0301}".into();
+        if let RuntimeValue::Object(obj) = &mut decomposed_rows[0].0.input {
+            if let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload") {
+                payload.insert(
+                    "customer_name".into(),
+                    RuntimeValue::String("Cafe\u{0301} Corp".into()),
+                );
+            }
+            let digest = norn_ir::canonical::HashProfile::Norn1
+                .hash_json(serde_json::to_string(&obj["payload"]).expect("json"))
+                .expect("digest");
+            obj.insert("payload_digest".into(), RuntimeValue::String(digest));
+        }
+        let mut composed_rows = decomposed_rows.clone();
+        composed_rows[0].1.partition = "Party-\u{00e9}".into();
+        let delivered: Vec<_> = decomposed_rows.iter().map(|(raw, _)| raw.clone()).collect();
+        let (advance, orig_records, v2_digest) = {
+            let host = open_native_host_at(&artifacts, db.path());
+            let lease = host
+                .acquire_source_lease("erpnext.rest", "run-decomposed", T0, RUN_LEASE_MS)
+                .expect("lease");
+            let advance = CursorAdvanceSpec {
+                connection_id: "erpnext.rest".into(),
+                dataset: dataset.clone(),
+                lease_id: lease.lease_id.clone(),
+                generation: lease.generation,
+                now_ms: T0.saturating_add(1),
+                expected_previous_cursor: None,
+                next_cursor: Some(next_wm.cursor_json().expect("json")),
+                renew_ttl_ms: Some(RUN_LEASE_MS),
+            };
+            let v2_digest =
+                norn_cell::source_cursor::page_digest_v2(&advance, &delivered).expect("v2");
+            let norn_api::host::SourceCapturePlan::Captured(pending) = host
+                .capture_source_page_planned(&decomposed_rows, &advance, 10)
+                .expect("capture non-NFC identity")
+            else {
+                panic!("expected capture");
+            };
+            assert!(pending.records[0].starts_with("mapping-identity:"));
+            host.complete_source_pending("erpnext.rest", &dataset, &pending.page_digest)
+                .expect("complete");
+            // V3 must reject NFC spelling against captured NFD spelling.
+            assert!(matches!(
+                host.capture_source_page_planned(&composed_rows, &advance, 10),
+                Err(SourceCaptureError::CursorConflict(_))
+            ));
+            (advance, pending.records, v2_digest)
+        };
+        {
+            let engine = NativeEngine::open(db.path(), StoreOptions::default()).expect("sqlite");
+            engine
+                .execute(
+                    "UPDATE \"_norn_source_cursor\" SET \"page_digest\" = ?1 \
+                     WHERE \"connection_id\" = ?2 AND \"dataset\" = ?3",
+                    &[
+                        SqlValue::Text(v2_digest.clone()),
+                        SqlValue::Text("erpnext.rest".into()),
+                        SqlValue::Text(dataset),
+                    ],
+                )
+                .expect("rewrite v2");
+        }
+        let reopened = reopen_native_host(&artifacts, db.path());
+        // Legacy v2 exact retry with unchanged NFD identity + NFD payload must succeed.
+        let norn_api::host::SourceCapturePlan::Captured(replayed) = reopened
+            .capture_source_page_planned(&decomposed_rows, &advance, 10)
+            .expect("v2 exact non-NFC retry must succeed")
+        else {
+            panic!("expected replay");
+        };
+        assert_eq!(replayed.page_digest, v2_digest);
+        assert_eq!(replayed.records, orig_records);
+        // Legacy v2 retry with NFC identity spelling must conflict.
+        assert!(matches!(
+            reopened.capture_source_page_planned(&composed_rows, &advance, 10),
+            Err(SourceCaptureError::CursorConflict(_))
+        ));
+    }
+
+    /// Regression 20b: if connection A captured a legacy pre-upgrade quarantine
+    /// (no `_norn_source_evidence` row) and sibling connection B redelivers it
+    /// after upgrade, A must retain unresolved quarantine attribution, and an
+    /// unattributed legacy correction must not clear A's quarantine.
+    #[test]
+    fn legacy_quarantine_redelivered_by_sibling_stays_attributed_to_original_connection() {
+        let artifacts = rest_artifacts(&[]);
+        let db = TempDb::new("legacy-quarantine-sibling");
+        let dataset = "Party".to_owned();
+        let (rows, next_wm) = sealed_page_for("erpnext", &dataset, T0);
+        let mut bad_row = rows[0].clone();
+        if let RuntimeValue::Object(obj) = &mut bad_row.0.input {
+            if let Some(RuntimeValue::Object(payload)) = obj.get_mut("payload") {
+                payload.insert("custom_norn_ref".into(), RuntimeValue::Null);
+            }
+            let digest = norn_ir::canonical::HashProfile::Norn1
+                .hash_json(serde_json::to_string(&obj["payload"]).expect("json"))
+                .expect("digest");
+            obj.insert("payload_digest".into(), RuntimeValue::String(digest));
+            obj.insert(
+                "event_id".into(),
+                RuntimeValue::String("legacy-q-sibling-1".into()),
+            );
+        }
+        let cursor_json = next_wm.cursor_json().expect("json");
+        let ingest_bad = |host: &DevHost<NativeEngine>, conn: &str, t: u64| {
+            let lease = host
+                .acquire_source_lease(conn, &format!("run-leg-{conn}"), t, RUN_LEASE_MS)
+                .expect("lease");
+            let adv = CursorAdvanceSpec {
+                connection_id: conn.into(),
+                dataset: dataset.clone(),
+                lease_id: lease.lease_id.clone(),
+                generation: lease.generation,
+                now_ms: t,
+                expected_previous_cursor: None,
+                next_cursor: Some(cursor_json.clone()),
+                renew_ttl_ms: Some(RUN_LEASE_MS),
+            };
+            let out = host
+                .ingest_source_page(std::slice::from_ref(&bad_row), &adv)
+                .expect("cap");
+            assert!(matches!(out[0].outcome, MappingOutcome::Quarantined(_)));
+            host.release_source_lease(conn, &lease.lease_id, lease.generation)
+                .expect("rel");
+        };
+        ingest_bad(&open_native_host_at(&artifacts, db.path()), "erpnext.a", T0);
+        // Simulate pre-upgrade store where `_norn_source_evidence` was empty.
+        NativeEngine::open(db.path(), StoreOptions::default())
+            .expect("sqlite")
+            .execute("DELETE FROM \"_norn_source_evidence\"", &[])
+            .expect("clear evidence");
+        let host = reopen_native_host(&artifacts, db.path());
+        ingest_bad(&host, "erpnext.b", T0.saturating_add(10));
+        assert!(
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.a"))
+                .expect("a still quarantined")
+                .contains(&dataset),
+            "sibling B's post-upgrade attribution must not hide legacy quarantine from A"
+        );
+        // Verify a landed unscoped correction clears A, then strip its attribution
+        // (simulating an unattributed pre-upgrade landed row) and verify A's veto returns.
+        let mut corr_row = rows[0].clone();
+        if let RuntimeValue::Object(obj) = &mut corr_row.0.input {
+            obj.insert(
+                "source_version".into(),
+                RuntimeValue::String("2099-01-01 00:00:00".into()),
+            );
+            obj.insert(
+                "event_id".into(),
+                RuntimeValue::String("legacy-corr-1".into()),
+            );
+        }
+        let landed = host.ingest(&[corr_row]).expect("land correction");
+        assert!(matches!(
+            landed[0].outcome,
+            MappingOutcome::Landed | MappingOutcome::AlreadyLanded
+        ));
+        assert!(
+            host.unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.a"))
+                .expect("explicit unscoped correction clears A")
+                .is_empty()
+        );
+        NativeEngine::open(db.path(), StoreOptions::default())
+            .expect("sqlite")
+            .execute(
+                "DELETE FROM \"_norn_source_evidence\" WHERE \"observation_id\" = ?1",
+                &[SqlValue::Text(landed[0].observation_id.clone())],
+            )
+            .expect("strip correction attribution");
+        let reopened = reopen_native_host(&artifacts, db.path());
+        assert!(
+            reopened
+                .unresolved_quarantined_datasets("erpnext.rest.mapping", Some("erpnext.a"))
+                .expect("unattributed legacy correction must not clear A")
+                .contains(&dataset)
         );
     }
 }

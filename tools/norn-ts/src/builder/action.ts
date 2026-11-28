@@ -104,7 +104,7 @@ export interface ActionQuantityEffect {
 /** `ActionEffectProgram`: the closed, declarative authority-bearing operations. */
 export type ActionEffect =
   | ({ readonly kind: "upsert_input_object"; readonly writeMode?: UpsertWriteMode } & EffectTarget)
-  | ({ readonly kind: "fire_transition"; readonly lifecycle: string; readonly transition: string; readonly acceptReceipt?: ReceiptAcceptance } & EffectTarget)
+  | ({ readonly kind: "fire_transition"; readonly lifecycle: string; readonly transition: string; readonly acceptReceipt?: ReceiptAcceptance; readonly setFields?: Readonly<Record<string, string>> } & EffectTarget)
   | ({
       readonly kind: "mutate_parent_with_rows"
       readonly parentValuesField: string
@@ -195,8 +195,22 @@ export function target(type: Pick<ObjectTypeDef, "name" | "version">, objectIdFi
 }
 
 /** Fire one declared transition of `lifecycle` on the object the input names. */
-export function fireTransition(type: Pick<ObjectTypeDef, "name" | "version">, objectIdField: string, lifecycle: string, transition: string, acceptReceipt?: ReceiptAcceptance): ActionEffect {
-  return { kind: "fire_transition", ...target(type, objectIdField), lifecycle, transition, ...(acceptReceipt ? { acceptReceipt } : {}) }
+export function fireTransition(
+  type: Pick<ObjectTypeDef, "name" | "version">,
+  objectIdField: string,
+  lifecycle: string,
+  transition: string,
+  acceptReceipt?: ReceiptAcceptance,
+  setFields?: Readonly<Record<string, string>>,
+): ActionEffect {
+  return {
+    kind: "fire_transition",
+    ...target(type, objectIdField),
+    lifecycle,
+    transition,
+    ...(acceptReceipt ? { acceptReceipt } : {}),
+    ...(setFields && Object.keys(setFields).length > 0 ? { setFields: { ...setFields } } : {}),
+  }
 }
 
 /** Upsert the object the input describes. */

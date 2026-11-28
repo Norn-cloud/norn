@@ -1,0 +1,94 @@
+{
+  "artifactId": "data.TelemetryEvent.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Telemetry event",
+  "namespace": "data",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Reference append-only observation implementing data.Observation.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "observation_id"
+          ]
+        }
+      ],
+      "implements": [
+        "data.Observation"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional catalog dataset this telemetry event belongs to.",
+          "id": "dataset",
+          "target": "data.CatalogDataset"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Sensor or system steward that captured this event.",
+          "id": "observed_by",
+          "target": "data.Steward"
+        }
+      ],
+      "name": "data.TelemetryEvent",
+      "properties": [
+        {
+          "id": "observation_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "occurred_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "id": "observed_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "id": "source_system",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "observable_property",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "payload_digest",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.TelemetryEvent.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

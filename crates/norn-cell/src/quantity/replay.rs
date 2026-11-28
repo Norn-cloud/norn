@@ -1,11 +1,11 @@
 //! Reconstruct quantity caches exclusively from verified, typed receipts.
-use serde::{Deserialize, Serialize};
-
 use super::{
     BTreeMap, BTreeSet, CellError, QuantityError, QuantityOperation, QuantityPosting,
     QuantityReservation, QuantityState, Receipt, SqlEngine, SqlValue, canonical_json,
     prepare_quantity, to_i64,
 };
+
+use serde::{Deserialize, Serialize};
 
 impl<T> std::ops::Deref for crate::store::QuantityBatch<T> {
     type Target = [T];
@@ -41,6 +41,27 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for crate::store::QuantityBatch<
             Shape::One(one) => vec![one],
             Shape::Many(many) => many,
         }))
+    }
+}
+
+impl crate::store::ReceiptBody {
+    pub(crate) fn quantity_requests(&self) -> &[norn_ir::quantity_ledger::QuantityRequest] {
+        self.quantity.as_ref().map_or(&[], |requests| &requests.0)
+    }
+
+    pub(crate) fn quantity_result(
+        &self,
+        ledger: &str,
+    ) -> Option<&norn_kernel::quantity::QuantityResult> {
+        let requests = self.quantity.as_ref()?;
+        let results = self.quantity_result.as_ref()?;
+        if requests.len() != results.len() {
+            return None;
+        }
+        requests
+            .iter()
+            .zip(results.iter())
+            .find_map(|(request, result)| (request.ledger_id == ledger).then_some(result))
     }
 }
 
