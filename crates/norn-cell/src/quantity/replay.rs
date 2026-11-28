@@ -1,9 +1,48 @@
 //! Reconstruct quantity caches exclusively from verified, typed receipts.
+use serde::{Deserialize, Serialize};
+
 use super::{
     BTreeMap, BTreeSet, CellError, QuantityError, QuantityOperation, QuantityPosting,
     QuantityReservation, QuantityState, Receipt, SqlEngine, SqlValue, canonical_json,
     prepare_quantity, to_i64,
 };
+
+impl<T> std::ops::Deref for crate::store::QuantityBatch<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        &self.0
+    }
+}
+
+impl<T> From<T> for crate::store::QuantityBatch<T> {
+    fn from(value: T) -> Self {
+        Self(vec![value])
+    }
+}
+
+impl<T: Serialize> Serialize for crate::store::QuantityBatch<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0.as_slice() {
+            [one] => one.serialize(serializer),
+            many => many.serialize(serializer),
+        }
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for crate::store::QuantityBatch<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Shape<T> {
+            One(T),
+            Many(Vec<T>),
+        }
+        Ok(Self(match Shape::deserialize(deserializer)? {
+            Shape::One(one) => vec![one],
+            Shape::Many(many) => many,
+        }))
+    }
+}
 
 #[derive(Default, Clone)]
 struct Ledger {

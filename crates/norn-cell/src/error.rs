@@ -152,6 +152,23 @@ pub enum CellError {
     /// log, as evidence.
     #[error("core.world.fork_evidence_forbidden")]
     ForkEvidenceForbidden,
+    /// FORK-LIFE-1: a discarded, expired or promoted fork accepts no open,
+    /// read, or commit.
+    #[error("core.world.fork_closed: fork `{world}` is {state}")]
+    ForkClosed {
+        /// The closed fork's world id.
+        world: String,
+        /// The terminal fork state (`discarded`, `expired`, or `promoted`).
+        state: String,
+    },
+    /// FORK-MERGE-1: promotion replays commands under main's current state,
+    /// authority, definitions, and laws; refused when replay fails or the
+    /// material outcome changed.
+    #[error("core.world.merge_refused: {reason}")]
+    ForkMergeRefused {
+        /// Typed refusal detail explaining why promotion did not commit.
+        reason: Box<crate::fork_merge::ForkMergeRefusalReason>,
+    },
 
     /// Missing or mismatched independent historical value proof.
     #[error("historical value proof refused: {0}")]
