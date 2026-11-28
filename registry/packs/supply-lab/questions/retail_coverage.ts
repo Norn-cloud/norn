@@ -41,10 +41,10 @@ export interface RetailCoverageManifest {
 
 export const RetailCombinedViewCoverage: RetailCoverageManifest = {
   requiredFeeds: [
-    "supply.pos_sales",
-    "supply.store_counts",
-    "supply.retail_receipts",
-    "supply.unit_costs",
+    "supply.pos_sales.mapping",
+    "supply.store_counts.mapping",
+    "supply.retail_receipts.mapping",
+    "supply.unit_costs.mapping",
   ],
   feedMaxAgeMs: 60_000,
   evidenceTypes: [
