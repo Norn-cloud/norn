@@ -363,10 +363,13 @@ test("Polar failing to answer fails the webhook, so Polar delivers it again; not
 
 test("a correctly signed subscription webhook updates the entitlement record and unpaid drops to free", async () => {
   const env = stage(true)
+  const active = { plan: "pro", status: "active", cells: 3, members: 10, provider: "polar", provider_ref: "sub_1" }
   expect((await webhook(env, "subscription.active", subscription({ modified_at: "2026-11-19T10:00:00Z" }))).status).toBe(200)
-  expect(row(env)).toMatchObject({ plan: "pro", status: "active", cells: 3, members: 10, provider: "polar", provider_ref: "sub_1" })
+  expect(row(env)).toMatchObject(active)
   expect((await webhook(env, "order.paid", { id: "ord_1" })).status).toBeLessThan(500)
-  await webhook(env, "subscription.updated", subscription({ status: "unpaid", modified_at: "2026-11-19T11:00:00Z" }))
+  expect(row(env)).toMatchObject(active)
+  expect(await entitlementOf(billingDb(env), SETTINGS, "user_1")).toMatchObject({ plan: "pro", status: "active" })
+  expect((await webhook(env, "subscription.updated", subscription({ status: "unpaid", modified_at: "2026-11-19T11:00:00Z" }))).status).toBe(200)
   expect(row(env)).toMatchObject({ status: "canceled", plan: "free" })
   expect(await entitlementOf(billingDb(env), SETTINGS, "user_1")).toMatchObject({ plan: "free", status: "canceled" })
 })

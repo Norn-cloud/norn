@@ -162,6 +162,18 @@ test("set-active validates slug/id, provisioning state, leaks no org existence, 
   }
 
   for (const body of [
+    { organizationId: "org_prov" },
+    { organizationSlug: "prov-slug" },
+    { organizationId: "org_ready" },
+    { organizationSlug: "ready-slug" },
+  ]) {
+    const res = await mutate(env, "POST", "/api/auth/organization/set-active", body, { cookie: bob.cookie })
+    expect({ body, status: res.status }).toEqual({ body, status: 403 })
+    expect((await res.json()) as Record<string, unknown>).toEqual({ code: "WORKSPACE_ACCESS_DENIED", message: WORKSPACE_ACCESS_DENIED_MESSAGE })
+    expect(activeOrgOf(db, bob.userId)).toBe(bob.organizationId)
+  }
+
+  for (const body of [
     { organizationId: "org_does_not_exist" },
     { organizationId: "org_bob_ready" },
     { organizationId: "org_bob_prov" },

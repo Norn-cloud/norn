@@ -584,6 +584,9 @@ test("S3 generation isolation: unredeemed codes, legacy grants, prior consents, 
     expect(() => insertVerification(sqlite, id, ident, { ...stolenCodePayload, ...overrides })).toThrow("oauth.membership_invalid")
   }
 
+  // Unsupported optional UserInfo claims in `query.claims` (filtered out by Better Auth before
+  // storing `oauthConsent.requestedUserInfoClaims`) do not break approval, while an unconsented
+  // supported standard claim (`name`) still aborts in SQLite.
   const clientD = await register(env)
   const { oauthQuery: queryD, ctx: ctxD } = await beginConsent(env, cookie6, clientD, pkce().challenge, CLAUDE, {
     scope: "openid",

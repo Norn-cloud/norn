@@ -808,7 +808,9 @@ test("inspectTarGzArchive refuses tar header precedence differentials and ambigu
     writeFileSync(zeroGapArchive, Bun.gzipSync(singleZeroThenEntry))
     expect(() => inspectTarGzArchive(zeroGapArchive, "zero-gap.tar.gz")).toThrow("unexpected archive header after zero block")
 
-    // GNU tar parser differentials: leading NUL, UTF-8 BOM, NBSP, newline, and all-space size fields.
+    // Leading-NUL octal size ("\00000001000\0"): GNU tar skips one leading NUL and reads 512,
+    // which would hide a trailing symlink header if the inspector stopped at byte 0.
+    // UTF-8 BOM, Unicode NBSP, newline, and all-space size fields: GNU tar rejects them while TextDecoder/.trim() would accept.
     const smuggledBase = new Uint8Array(512 * 5)
     smuggledBase.set(firstBlock({ name: "decoy.txt", typeflag: "0", content: new Uint8Array(0) }), 0)
     smuggledBase.set(firstBlock({ name: "evil", typeflag: "2", linkname: "/etc" }), 1024)

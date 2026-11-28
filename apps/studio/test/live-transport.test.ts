@@ -28,6 +28,8 @@ const unopenable = (incidentId: string, explanation = "the cell cannot open") =>
 const serializeOutcome = (value: unknown) =>
   JSON.stringify(value, (_key, v: unknown) => (v instanceof Error ? { ...v, message: v.message } : v))
 const settled = (result: { readonly isError: boolean; readonly isFetching: boolean }) => result.isError && !result.isFetching
+const terminal = (result: { readonly isError: boolean; readonly isSuccess: boolean; readonly isFetching: boolean }) =>
+  (result.isError || result.isSuccess) && !result.isFetching
 
 function server(routes: Record<string, readonly [number, string]>, me: readonly [number, unknown] = [200, ME]) {
   const calls: string[] = []
@@ -163,7 +165,7 @@ test("Retry after a scope outage does not refetch the stale outage mode query or
     const scopeObs = new QueryObserver(client, studioScopeQuery())
     const outageObs = new QueryObserver(client, modeQuery(undefined, true, client))
     track(scopeObs.subscribe(() => {}))
-    await until(scopeObs, settled)
+    await until(scopeObs, terminal)
     expect(client.getQueryState(["studio-scope"])?.status).toBe("error")
 
     track(outageObs.subscribe(() => {}))
@@ -202,8 +204,10 @@ test("the workspace Retry reads an errored page again only after the mode settle
     })
     track(scopeObs.subscribe(() => {}))
     track(page.subscribe(() => {}))
-    await until(scopeObs, settled)
-    await until(page, settled)
+    await until(scopeObs, terminal)
+    await until(page, terminal)
+    expect(client.getQueryState(["studio-scope"])?.status).toBe("error")
+    expect(client.getQueryState(["page-read"])?.status).toBe("error")
 
     failMe = false
     meCalls = 0

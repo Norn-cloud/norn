@@ -91,6 +91,7 @@ export function createSqliteD1(
     const results: { results: unknown[] }[] = []
     db.transaction(() => {
       for (const s of list) {
+        checkFail(s.sql)
         if (/\breturning\b/i.test(s.sql)) {
           results.push({ results: db.query(s.sql).all(...s.args) })
         } else {
@@ -104,6 +105,8 @@ export function createSqliteD1(
   return { prepare: (sql: string) => statement(sql), batch } as unknown as D1Database
 }
 
+const activeSqlRaces = new WeakSet<Database>()
+
 /** Run `before` once immediately ahead of the first prepared SQL statement matching `pattern`, restoring `db.prepare` in `finally`. */
 export async function withSqlRace<T>(
   db: Database,
@@ -111,25 +114,35 @@ export async function withSqlRace<T>(
   before: (run: (sql: string, ...params: SQLQueryBindings[]) => void) => void,
   action: () => Promise<T>,
 ): Promise<{ readonly result: T; readonly raced: boolean }> {
-  const origPrepare = db.prepare.bind(db)
+  if (activeSqlRaces.has(db)) {
+    throw new Error("withSqlRace: overlapping race hook on the same database")
+  }
+  activeSqlRaces.add(db)
+  const origDescriptor = Object.getOwnPropertyDescriptor(db, "prepare")
+  const origPrepare = db.prepare
   const runRaw = (sql: string, ...params: SQLQueryBindings[]) => {
-    origPrepare(sql).run(...params)
+    origPrepare.call(db, sql).run(...params)
   }
   const matches = typeof pattern === "string"
     ? (sql: string) => sql.toLowerCase().includes(pattern.toLowerCase())
     : (sql: string) => pattern.test(sql)
   let raced = false
-  db.prepare = ((sql: string, ...rest: unknown[]) => {
-    if (!raced && matches(sql)) {
-      raced = true
-      before(runRaw)
-    }
-    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
-  }) as typeof db.prepare
   try {
+    db.prepare = ((sql: string, ...rest: unknown[]) => {
+      if (!raced && matches(sql)) {
+        raced = true
+        before(runRaw)
+      }
+      return (origPrepare as (this: Database, ...args: unknown[]) => ReturnType<typeof origPrepare>).call(db, sql, ...rest)
+    }) as typeof db.prepare
     return { result: await action(), raced }
   } finally {
-    db.prepare = origPrepare
+    if (origDescriptor !== undefined) {
+      Object.defineProperty(db, "prepare", origDescriptor)
+    } else {
+      delete (db as Partial<Database>).prepare
+    }
+    activeSqlRaces.delete(db)
   }
 }
 

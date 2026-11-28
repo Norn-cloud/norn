@@ -379,8 +379,10 @@ test("a fixed value for a property without a declared type is left to the gatewa
 })
 
 test("a binding is installed, edited and retired as a scoped cell definition; no environment refuses before calling cell", async () => {
-  const { send, signUp } = stage()
+  const { send, signUp, db } = stage()
   const owner = await signUp("ada@example.com")
+  const ownerOrgId = (db.query("SELECT organizationId FROM member WHERE userId = (SELECT id FROM user WHERE email = ?)").get("ada@example.com") as { organizationId: string }).organizationId
+  expect(ownerOrgId).toMatch(/.+/)
   let version = 0
   const { host, seen } = cellHost((path, payload) => path === "/v1/definitions:install" ? Response.json({ installed: true, id: payload.id, version: ++version, receipt: { receiptHash: "r", commitSeq: version, recordedAtMs: 1 } }) : Response.json({ installed: true, id: "x", version: ++version, receipt: {} }))
   const added = (await send("/bindings", { ...body("POST", githubTool({ label: "Issues" })), cookie: owner }, { host })).body.binding as Record<string, unknown> & { id: string; manifestDigest: string }
@@ -389,18 +391,20 @@ test("a binding is installed, edited and retired as a scoped cell definition; no
     label: "Issues", inputMapping: {}, runRole: "member",
   } } })
   expect(seen[0]?.body).not.toHaveProperty("expectedVersion")
-  expect(new URLSearchParams(seen[0]?.query).get("orgId")).toBeString()
-  expect(new URLSearchParams(seen[0]?.query).get("environmentId")).toBe("analytics")
   expect(added).toMatchObject({ definition: { id: `studio.binding.${added.id}`, version: 1 }, connectorRef: "executor:github/list_issues@dpl_1" })
 
   const edited = (await send(`/bindings/${added.id}`, { ...body("PATCH", { label: "Open issues" }), cookie: owner }, { host })).body.binding
-  expect(seen[1]?.body).toMatchObject({ id: `studio.binding.${added.id}`, expectedVersion: 1 })
+  expect(seen[1]).toMatchObject({ path: "/v1/definitions:install", body: { id: `studio.binding.${added.id}`, expectedVersion: 1 } })
   expect(edited).toMatchObject({ definition: { version: 2 } })
 
   expect((await send(`/bindings/${added.id}`, { method: "DELETE", cookie: owner }, { host })).body).toEqual({ removed: added.id, retired: `studio.binding.${added.id}` })
   expect(seen[2]).toMatchObject({ path: `/v1/definitions/studio.binding.${added.id}:retire`, body: { expectedVersion: 2 } })
-  const scope = seen[0]?.query ?? ""
-  expect(seen.map((r) => r.query)).toEqual([scope, scope, scope])
+  expect(seen.map((r) => r.path)).toEqual(["/v1/definitions:install", "/v1/definitions:install", `/v1/definitions/studio.binding.${added.id}:retire`])
+  for (const call of seen) {
+    const query = new URLSearchParams(call.query)
+    expect(query.get("orgId")).toBe(ownerOrgId)
+    expect(query.get("environmentId")).toBe("analytics")
+  }
 
   const lone = await signUp("lone@example.com", "owner", undefined, false)
   const other = cellHost(() => Response.json({}))
