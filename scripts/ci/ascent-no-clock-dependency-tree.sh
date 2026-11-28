@@ -50,7 +50,7 @@ run_gate() {
     fi
   done
   cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." || return "$?"
-  tree="$(cargo tree --locked --offline --target all \
+  tree="$(CARGO_TERM_COLOR=never cargo tree --color never --locked --offline --target all \
     -p norn-checker -p norn-datalog --edges normal,build \
     --prefix none --format '{p}')" || return "$?"
   check_tree <<<"${tree}" || return "$?"
@@ -94,6 +94,25 @@ self_test() {
   assert_tree 1 'indented dependency' "${valid}"$'\n  web_time v1.1.0'
   assert_tree 1 'truncated path' "${valid}"$'\nexample v1.2.3 (/repo/example'
   assert_tree 1 'empty output' ''
+  # Ambient CARGO_TERM_COLOR=always must never leak ANSI escapes into cargo tree.
+  status=0
+  (
+    export CARGO_TERM_COLOR=always
+    cargo() {
+      if [[ "${CARGO_TERM_COLOR:-}" != never ]]; then return 41; fi
+      case " $* " in
+        *" --color never "*) ;;
+        *) return 42 ;;
+      esac
+      printf '%s\n' "${valid}"
+    }
+    run_gate
+  ) >/dev/null 2>&1 || status="$?"
+  if [[ "${status}" -ne 0 ]]; then
+    printf 'FAIL: color disabling guard (status %s, expected 0)\n' "${status}" >&2
+    return 1
+  fi
+  count=$((count + 1))
   # Only explicit self-test mode installs this function, inside a subshell.
   # Valid stdout must never hide a nonzero Cargo status. No real Cargo runs.
   status=0
