@@ -18,7 +18,6 @@ use norn_ir::verification::{LawIR, LawResponse};
 use norn_ir::view::ViewIrPayload;
 use norn_ir::widget::WidgetRoot;
 use norn_ir::{ActionEffectProgram, ArtifactEnvelope, ArtifactKind, ArtifactPayload};
-use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::lifecycle_writes::FactSchema;
@@ -61,17 +60,21 @@ fn payload_json(artifact: &ArtifactEnvelope) -> Result<Value, ProjectionError> {
     })
 }
 
-fn decode_payload<T: DeserializeOwned>(
+fn decode_error(
     artifact_id: &str,
     kind: ArtifactKind,
-    payload: Value,
-) -> Result<T, ProjectionError> {
-    serde_json::from_value(payload).map_err(|error| {
-        ProjectionError::Invalid(format!(
-            "failed to decode {} artifact `{artifact_id}`: {error}",
-            kind_name(&kind)
-        ))
-    })
+    error: &serde_json::Error,
+) -> ProjectionError {
+    ProjectionError::Invalid(format!(
+        "failed to decode {} artifact `{artifact_id}`: {error}",
+        kind_name(&kind)
+    ))
+}
+
+macro_rules! decode_payload {
+    ($id:expr, $kind:expr, $payload:expr) => {
+        serde_json::from_value($payload).map_err(|error| decode_error($id, $kind, &error))
+    };
 }
 
 pub(super) struct Universe {
@@ -169,7 +172,7 @@ impl Universe {
         let payload = payload_json(artifact)?;
         match kind {
             ArtifactKind::Entity => {
-                let root: EntityRoot = decode_payload(id, kind, payload)?;
+                let root: EntityRoot = decode_payload!(id, kind, payload)?;
                 match root {
                     EntityRoot::V2(v2) => {
                         let type_name = v2.object_type.name.as_str().to_owned();
@@ -201,19 +204,19 @@ impl Universe {
                 }
             }
             ArtifactKind::Action => {
-                let action: ActionRoot = decode_payload(id, kind, payload)?;
+                let action: ActionRoot = decode_payload!(id, kind, payload)?;
                 self.action_owners.insert(action.action_id, id.to_owned());
             }
             ArtifactKind::Rule => {
-                let rule: RuleRoot = decode_payload(id, kind, payload)?;
+                let rule: RuleRoot = decode_payload!(id, kind, payload)?;
                 self.rule_owners.insert(rule.rule_id, id.to_owned());
             }
             ArtifactKind::Law => {
-                let law: LawIR = decode_payload(id, kind, payload)?;
+                let law: LawIR = decode_payload!(id, kind, payload)?;
                 self.law_owners.insert(law.id, id.to_owned());
             }
             ArtifactKind::Widget => {
-                let widget: WidgetRoot = decode_payload(id, kind, payload)?;
+                let widget: WidgetRoot = decode_payload!(id, kind, payload)?;
                 self.widget_owners.insert(widget.widget_id, id.to_owned());
             }
             ArtifactKind::Relation
@@ -358,7 +361,7 @@ impl<'a> Projection<'a> {
         if artifact.kind() != ArtifactKind::Entity {
             return Ok(());
         }
-        let root: EntityRoot = decode_payload(
+        let root: EntityRoot = decode_payload!(
             &artifact.artifact_id,
             artifact.kind(),
             payload_json(artifact)?,
@@ -411,7 +414,7 @@ impl<'a> Projection<'a> {
         match &artifact.payload {
             ArtifactPayload::Entity(_) => self.ingest_entity(id, payload)?,
             ArtifactPayload::Relation(_) => {
-                let rel: RelationRoot = decode_payload(id, kind, payload)?;
+                let rel: RelationRoot = decode_payload!(id, kind, payload)?;
                 self.add_type_edge(id, &rel.from)?;
                 self.add_type_edge(id, &rel.to)?;
             }
@@ -420,14 +423,14 @@ impl<'a> Projection<'a> {
             ArtifactPayload::Policy(_) => self.ingest_policy(id, payload)?,
             ArtifactPayload::Law(_) => self.ingest_law(id, payload)?,
             ArtifactPayload::Derived(_) => {
-                let view: ViewIrPayload = decode_payload(id, kind, payload)?;
+                let view: ViewIrPayload = decode_payload!(id, kind, payload)?;
                 for input in &view.inputs {
                     self.add_edge(id, &input.artifact_id)?;
                 }
             }
             ArtifactPayload::Mapping(_) => self.ingest_mapping(id, payload)?,
             ArtifactPayload::DefinedConcept(_) => {
-                let concept: DefinedConceptRoot = decode_payload(id, kind, payload)?;
+                let concept: DefinedConceptRoot = decode_payload!(id, kind, payload)?;
                 self.add_specialization(id, &concept.base.artifact_id)?;
                 for dep in &concept.dependencies {
                     self.add_edge(id, &dep.artifact_id)?;
@@ -435,19 +438,19 @@ impl<'a> Projection<'a> {
             }
             ArtifactPayload::Widget(_) => self.ingest_widget(id, payload)?,
             ArtifactPayload::Model(_) => {
-                let model: ModelRoot = decode_payload(id, kind, payload)?;
+                let model: ModelRoot = decode_payload!(id, kind, payload)?;
                 self.add_type_edge(id, model.input.object_type().as_str())?;
                 if let Some(predictions) = &model.predictions {
                     self.add_type_edge(id, predictions.object_type.as_str())?;
                 }
             }
             ArtifactPayload::Customization(_) => {
-                let custom: CustomizationRoot = decode_payload(id, kind, payload)?;
+                let custom: CustomizationRoot = decode_payload!(id, kind, payload)?;
                 self.add_edge(id, &custom.target_artifact.artifact_id)?;
             }
             ArtifactPayload::Labels(_) => self.ingest_labels(id, payload)?,
             ArtifactPayload::BusinessPack(_) => {
-                let pack_root: BusinessPackRoot = decode_payload(id, kind, payload)?;
+                let pack_root: BusinessPackRoot = decode_payload!(id, kind, payload)?;
                 if let BusinessPackRoot::Composition(pack) = pack_root {
                     for member in &pack.artifacts {
                         self.add_edge(id, &member.artifact_id)?;
@@ -462,7 +465,7 @@ impl<'a> Projection<'a> {
     }
 
     fn ingest_entity(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
-        let root: EntityRoot = decode_payload(id, ArtifactKind::Entity, payload)?;
+        let root: EntityRoot = decode_payload!(id, ArtifactKind::Entity, payload)?;
         match root {
             EntityRoot::V2(v2) => {
                 let name = v2.object_type.name.as_str();
@@ -525,7 +528,7 @@ impl<'a> Projection<'a> {
     }
 
     fn ingest_action(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
-        let action: ActionRoot = decode_payload(id, ArtifactKind::Action, payload)?;
+        let action: ActionRoot = decode_payload!(id, ArtifactKind::Action, payload)?;
         let mut target_types = BTreeSet::new();
         for write in &action.writes {
             self.add_type_edge(id, &write.entity_kind)?;
@@ -598,7 +601,7 @@ impl<'a> Projection<'a> {
         artifact: &ArtifactEnvelope,
         payload: Value,
     ) -> Result<(), ProjectionError> {
-        let rule: RuleRoot = decode_payload(id, ArtifactKind::Rule, payload)?;
+        let rule: RuleRoot = decode_payload!(id, ArtifactKind::Rule, payload)?;
         for slice in &rule.slice {
             self.add_type_edge(id, slice.object_type.as_str())?;
         }
@@ -629,7 +632,7 @@ impl<'a> Projection<'a> {
     }
 
     fn ingest_policy(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
-        let policy: PolicyRoot = decode_payload(id, ArtifactKind::Policy, payload)?;
+        let policy: PolicyRoot = decode_payload!(id, ArtifactKind::Policy, payload)?;
         match policy {
             PolicyRoot::Access(access) => {
                 for rule in &access.rules {
@@ -658,7 +661,7 @@ impl<'a> Projection<'a> {
     }
 
     fn ingest_law(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
-        let law: LawIR = decode_payload(id, ArtifactKind::Law, payload)?;
+        let law: LawIR = decode_payload!(id, ArtifactKind::Law, payload)?;
         self.add_type_edge(id, &law.subject)?;
         self.law_subjects.push((id.to_owned(), law.subject.clone()));
         for ty in law.scope.object_types.iter().chain(&law.scope.commitments) {
@@ -679,7 +682,7 @@ impl<'a> Projection<'a> {
     }
 
     fn ingest_mapping(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
-        let doc: MappingDocument = decode_payload(id, ArtifactKind::Mapping, payload)?;
+        let doc: MappingDocument = decode_payload!(id, ArtifactKind::Mapping, payload)?;
         match doc {
             MappingDocument::SourceRecord(mapping) => {
                 self.add_edge(id, &mapping.source.schema_id)?;
@@ -720,7 +723,7 @@ impl<'a> Projection<'a> {
     }
 
     fn ingest_widget(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
-        let widget: WidgetRoot = decode_payload(id, ArtifactKind::Widget, payload)?;
+        let widget: WidgetRoot = decode_payload!(id, ArtifactKind::Widget, payload)?;
         for data in &widget.data_dependencies {
             self.add_type_edge(id, &data.object_kind)?;
         }
@@ -739,7 +742,7 @@ impl<'a> Projection<'a> {
     }
 
     fn ingest_labels(&mut self, id: &str, payload: Value) -> Result<(), ProjectionError> {
-        let labels: LabelCatalogRoot = decode_payload(id, ArtifactKind::Labels, payload)?;
+        let labels: LabelCatalogRoot = decode_payload!(id, ArtifactKind::Labels, payload)?;
         for entry in &labels.entries {
             match &entry.target {
                 LabelTarget::ObjectType { object_type }
