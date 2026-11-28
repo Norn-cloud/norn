@@ -554,7 +554,7 @@ impl<'a> SyntaxCompiler<'a> {
             .iter()
             .map(|(_, w)| *w)
             .fold(0_usize, usize::saturating_add)
-            .saturating_add(walk.conditions.len());
+            .saturating_add(walk.conditions.len().saturating_sub(1));
         self.check_decision_work(statement, clone_work, walk)?;
         let condition = build_conjunction(&walk.conditions);
         let value = self.data(
