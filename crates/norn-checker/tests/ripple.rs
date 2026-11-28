@@ -52,11 +52,13 @@ fn entity_v2(
             { "id": "id", "type": { "kind": "text" } }
         ]
     });
-    if let Some(parent) = extends {
-        object_type["extends"] = json!(parent);
-    }
-    if !implements.is_empty() {
-        object_type["implements"] = json!(implements);
+    if let Some(map) = object_type.as_object_mut() {
+        if let Some(parent) = extends {
+            map.insert("extends".to_owned(), json!(parent));
+        }
+        if !implements.is_empty() {
+            map.insert("implements".to_owned(), json!(implements));
+        }
     }
     envelope(
         artifact_id,
