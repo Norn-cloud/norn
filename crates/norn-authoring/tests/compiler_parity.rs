@@ -280,7 +280,7 @@ fn standalone_definitions_and_source_schema_binding_without_effect_package()
         return Err(format!("expected defs.ts to compile, got: {:?}", outcomes.first()).into());
     };
     assert_eq!(ok_out.artifacts.len(), 3);
-    assert!(ok_out.warnings.is_empty());
+    assert_eq!(ok_out.warnings, Vec::new());
     let source_art = ok_out
         .artifacts
         .iter()
