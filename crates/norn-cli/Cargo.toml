@@ -14,7 +14,7 @@ path = "src/main.rs"
 norn-ir = { path = "../norn-ir" }
 norn-expr = { path = "../norn-expr" }
 norn-decisions = { path = "../norn-decisions" }
-norn-api = { path = "../norn-api" }
+norn-api = { path = "../norn-api", features = ["native"] }
 norn-authoring = { path = "../norn-authoring" }
 norn-authoring-py = { path = "../norn-authoring-py" }
 norn-checker-wasm = { path = "../norn-checker-wasm" }

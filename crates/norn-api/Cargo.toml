@@ -13,6 +13,10 @@ autotests = false
 name = "suites"
 path = "tests/suites.rs"
 
+[features]
+default = []
+native = ["norn-cell/native"]
+
 [dependencies]
 # Host token verification (HOST-PRINCIPAL, #817): Ed25519 JWTs, pure Rust, wasm32-clean.
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }

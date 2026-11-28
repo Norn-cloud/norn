@@ -7,6 +7,7 @@ mod cell_render;
 mod cli_contract;
 mod eval;
 mod explain;
+mod local;
 mod mcp;
 mod red_team;
 mod remote;
@@ -85,6 +86,10 @@ enum Command {
     Question(authoring::QuestionArgs),
     /// Compile standalone `Norn.dashboard` declarations from a `TypeScript` module.
     Dashboard(authoring::DashboardArgs),
+    /// Run declarative scenario suites against an isolated in-memory local cell.
+    Test(local::TestArgs),
+    /// Run a loopback-only local HTTP/1.1 development cell.
+    Dev(local::DevArgs),
     /// List the available human operations and their input schemas.
     #[command(
         long_about = "List the available human operations and their input schemas. Returns tools and a catalogDigest, with at most 32 tools per page. Follow nextCursor using --cursor until it is absent. A cursor is bound to this working directory and catalog; restart without it after a revision. Only installed backends appear; discovery never installs definitions."
@@ -296,6 +301,8 @@ fn run(command: Command) -> authoring::CommandOutput {
         Command::Profile(args) => authoring::execute_profile(&args),
         Command::Question(args) => authoring::execute_question(&args),
         Command::Dashboard(args) => authoring::execute_dashboard(&args),
+        Command::Test(args) => local::execute_test(&args),
+        Command::Dev(args) => local::execute_dev(&args),
         Command::Openapi => legacy_to_output(
             norn_api::openapi::openapi_json()
                 .map(|document| (document, true))
