@@ -4905,7 +4905,7 @@ fn observed_line_finding_alias_pin_admission_and_mismatched_catalog_refusal() ->
             assert_eq!(refusal(&receipt), None);
             assert_ne!(
                 last_entry_findings(&cell),
-                [] as [&norn_ir::DataQualityFinding; 0]
+                Vec::<&norn_ir::DataQualityFinding>::new()
             );
             assert_eq!(cell.load(&line)?.values, Some(observed.clone()));
         } else {
