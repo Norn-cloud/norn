@@ -321,40 +321,22 @@ fn pinned_mount_ignores_internal_symlinks() -> Result<(), Box<dyn std::error::Er
 }
 
 #[test]
-fn generic_mount_rejects_effect_namespace_and_remount_replaces_stale_files()
+fn generic_mount_and_pinned_file_reject_reserved_and_overlapping_roots()
 -> Result<(), Box<dyn std::error::Error>> {
-    let profile = Profile::load()?;
     let pid = std::process::id();
-    let base = std::env::temp_dir().join(format!("norn-authoring-remount-{pid}"));
-    if base.exists() {
-        std::fs::remove_dir_all(&base)?;
+    let pkg_dir = std::env::temp_dir().join(format!("norn-authoring-overlap-{pid}"));
+    if pkg_dir.exists() {
+        std::fs::remove_dir_all(&pkg_dir)?;
     }
-
-    let v1_dir = base.join("effect-v1");
-    let v1_dist = v1_dir.join("dist");
-    let v1_stale_dir = v1_dist.join("stale");
-    std::fs::create_dir_all(&v1_stale_dir)?;
-    let valid_pkg = format!(
-        "{{\"name\":\"effect\",\"version\":\"{}\"}}\n",
-        profile.pins.effect.version
-    );
-    std::fs::write(v1_dir.join("package.json"), &valid_pkg)?;
+    let dist = pkg_dir.join("dist");
+    std::fs::create_dir_all(&dist)?;
     std::fs::write(
-        v1_dist.join("Effect.d.ts"),
-        "export declare function gen(): void\n",
+        pkg_dir.join("package.json"),
+        "{\"name\":\"demo\",\"version\":\"1.0.0\"}\n",
     )?;
     std::fs::write(
-        v1_stale_dir.join("Legacy.d.ts"),
-        "export declare function legacy(): void\n",
-    )?;
-
-    let v2_dir = base.join("effect-v2");
-    let v2_dist = v2_dir.join("dist");
-    std::fs::create_dir_all(&v2_dist)?;
-    std::fs::write(v2_dir.join("package.json"), &valid_pkg)?;
-    std::fs::write(
-        v2_dist.join("Effect.d.ts"),
-        "export declare function succeed(): void\n",
+        dist.join("Index.d.ts"),
+        "export declare const ok: boolean\n",
     )?;
 
     let mut vfs = BoundedVfs::default();
@@ -365,31 +347,111 @@ fn generic_mount_rejects_effect_namespace_and_remount_replaces_stale_files()
         "/node_modules/effect/sub",
         "/node_modules",
     ] {
-        let res = vfs.mount_pinned_package_dir(forbidden, &v1_dir);
+        let res = vfs.mount_pinned_package_dir(forbidden, &pkg_dir);
         assert!(
             matches!(res, Err(AuthoringError::InvalidPath { .. })),
             "expected InvalidPath for mount_pinned_package_dir({forbidden:?}), got {res:?}"
         );
     }
 
-    // Also reject direct add_pinned_file under `/node_modules/effect/`.
-    let direct_effect = vfs.add_pinned_file(
+    // Reject direct add_pinned_file under `/node_modules/effect/` or its ancestors,
+    // as well as `/@norn` ancestors of `/@norn/authoring/`.
+    for forbidden_file in [
         "/node_modules/effect/dist/Effect.d.ts",
-        "export declare function gen(): void\n",
-    );
+        "/node_modules",
+        "/@norn",
+    ] {
+        let res = vfs.add_pinned_file(forbidden_file, "export declare function gen(): void\n");
+        assert!(
+            matches!(res, Err(AuthoringError::InvalidPath { .. })),
+            "expected InvalidPath for add_pinned_file({forbidden_file:?}), got {res:?}"
+        );
+    }
+
+    // Strict ancestor/descendant mount overlaps are rejected.
+    vfs.mount_pinned_package_dir("/__norn_pinned__/a", &pkg_dir)?;
+    let child_overlap = vfs.mount_pinned_package_dir("/__norn_pinned__/a/b", &pkg_dir);
     assert!(matches!(
-        direct_effect,
+        child_overlap,
+        Err(AuthoringError::InvalidPath { .. })
+    ));
+    vfs.mount_pinned_package_dir("/__norn_pinned__/c/d", &pkg_dir)?;
+    let parent_overlap = vfs.mount_pinned_package_dir("/__norn_pinned__/c", &pkg_dir);
+    assert!(matches!(
+        parent_overlap,
         Err(AuthoringError::InvalidPath { .. })
     ));
 
-    // Mount v1 through the validated effect mount API.
+    std::fs::remove_dir_all(&pkg_dir)?;
+    Ok(())
+}
+
+#[test]
+fn effect_remount_preserves_on_failure_and_evicts_stale_files_on_success()
+-> Result<(), Box<dyn std::error::Error>> {
+    let profile = Profile::load()?;
+    let pid = std::process::id();
+    let base = std::env::temp_dir().join(format!("norn-authoring-remount-{pid}"));
+    if base.exists() {
+        std::fs::remove_dir_all(&base)?;
+    }
+
+    let valid_pkg = format!(
+        "{{\"name\":\"effect\",\"version\":\"{}\"}}\n",
+        profile.pins.effect.version
+    );
+    let v1_dir = base.join("effect-v1");
+    let v1_stale_dir = v1_dir.join("dist").join("stale");
+    std::fs::create_dir_all(&v1_stale_dir)?;
+    std::fs::write(v1_dir.join("package.json"), &valid_pkg)?;
+    std::fs::write(
+        v1_dir.join("dist").join("Effect.d.ts"),
+        "export declare function gen(): void\n",
+    )?;
+    std::fs::write(
+        v1_stale_dir.join("Legacy.d.ts"),
+        "export declare function legacy(): void\n",
+    )?;
+
+    let bad_dir = base.join("effect-bad");
+    std::fs::create_dir_all(bad_dir.join("dist"))?;
+    std::fs::write(
+        bad_dir.join("package.json"),
+        "{\"name\":\"effect\",\"version\":\"0.0.0-bad\"}\n",
+    )?;
+    std::fs::write(
+        bad_dir.join("dist").join("Effect.d.ts"),
+        "export declare function broken(): void\n",
+    )?;
+
+    let v2_dir = base.join("effect-v2");
+    std::fs::create_dir_all(v2_dir.join("dist"))?;
+    std::fs::write(v2_dir.join("package.json"), &valid_pkg)?;
+    std::fs::write(
+        v2_dir.join("dist").join("Effect.d.ts"),
+        "export declare function succeed(): void\n",
+    )?;
+
+    let mut vfs = BoundedVfs::default();
     let first_count = vfs.mount_pinned_effect_dir(&v1_dir, &profile)?;
     assert_eq!(first_count, 3);
     let stale_file = format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist/stale/Legacy.d.ts");
     let stale_dir = format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist/stale");
     assert!(vfs.is_pinned_file(&stale_file));
-    assert!(vfs.file_exists(&stale_file));
     assert!(vfs.directory_exists(&stale_dir));
+
+    // A failed remount over an existing valid effect mount must leave prior files intact.
+    let failed_remount = vfs.mount_pinned_effect_dir(&bad_dir, &profile);
+    assert!(matches!(
+        failed_remount,
+        Err(AuthoringError::PinMismatch { .. })
+    ));
+    assert!(vfs.is_pinned_file(&stale_file));
+    assert_eq!(
+        vfs.read_file(&format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist/Effect.d.ts"))
+            .as_deref(),
+        Some("export declare function gen(): void\n")
+    );
 
     // Re-mount v2 over the same effect root: stale files and stale directories must vanish.
     let second_count = vfs.mount_pinned_effect_dir(&v2_dir, &profile)?;
@@ -408,5 +470,41 @@ fn generic_mount_rejects_effect_namespace_and_remount_replaces_stale_files()
             .as_deref(),
         Some("export declare function succeed(): void\n")
     );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn pinned_mount_skips_unreadable_non_declaration_files() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let pid = std::process::id();
+    let base = std::env::temp_dir().join(format!("norn-authoring-unreadable-readme-{pid}"));
+    if base.exists() {
+        std::fs::remove_dir_all(&base)?;
+    }
+    let dist_dir = base.join("dist");
+    std::fs::create_dir_all(&dist_dir)?;
+    std::fs::write(
+        base.join("package.json"),
+        "{\"name\":\"demo\",\"version\":\"1.0.0\"}\n",
+    )?;
+    std::fs::write(
+        dist_dir.join("Index.d.ts"),
+        "export declare const ok: boolean\n",
+    )?;
+    let readme = base.join("README.md");
+    std::fs::write(&readme, "unreadable readme\n")?;
+    std::fs::set_permissions(&readme, std::fs::Permissions::from_mode(0o000))?;
+
+    let mut vfs = BoundedVfs::default();
+    let mount_res = vfs.mount_pinned_package_dir("/__norn_pinned__/readme_test", &base);
+    std::fs::set_permissions(&readme, std::fs::Permissions::from_mode(0o644))?;
+    std::fs::remove_dir_all(&base)?;
+
+    let mounted = mount_res?;
+    assert_eq!(mounted, 2);
+    assert!(vfs.is_pinned_file("/__norn_pinned__/readme_test/dist/Index.d.ts"));
+    assert!(!vfs.file_exists("/__norn_pinned__/readme_test/README.md"));
     Ok(())
 }

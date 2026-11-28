@@ -152,6 +152,12 @@ pub(crate) fn path_under_prefix(normalized: &str, prefix_with_slash: &str) -> bo
     normalized == trimmed || normalized.starts_with(prefix_with_slash)
 }
 
+pub(crate) fn prefixes_overlap(a_with_slash: &str, b_with_slash: &str) -> bool {
+    let a_trimmed = a_with_slash.trim_end_matches('/');
+    let b_trimmed = b_with_slash.trim_end_matches('/');
+    path_under_prefix(a_trimmed, b_with_slash) || path_under_prefix(b_trimmed, a_with_slash)
+}
+
 /// Read-only, symlink-free, quota-bounded in-memory [`tsrs_vfs::FS`].
 ///
 /// Serves:
@@ -402,17 +408,24 @@ impl BoundedVfs {
             ));
         }
         let normalized = normalize_virtual_path(path)?;
-        if self.include_intrinsics && path_under_prefix(&normalized, INTRINSICS_VIRTUAL_PREFIX) {
+        let as_prefix = format!("{normalized}/");
+        if self.include_intrinsics && prefixes_overlap(&as_prefix, INTRINSICS_VIRTUAL_PREFIX) {
             return Err(AuthoringError::InvalidPath {
                 path: normalized,
                 reason: "reserved for pinned @norn/authoring declarations".to_owned(),
             });
         }
-        if path_under_prefix(&normalized, PINNED_EFFECT_VIRTUAL_PREFIX) {
+        if prefixes_overlap(&as_prefix, PINNED_EFFECT_VIRTUAL_PREFIX) {
             return Err(AuthoringError::InvalidPath {
                 path: normalized,
                 reason: "use mount_pinned_effect_dir to mount the version-pinned effect package"
                     .to_owned(),
+            });
+        }
+        if self.directories.contains(&normalized) {
+            return Err(AuthoringError::InvalidPath {
+                path: normalized,
+                reason: "cannot mount pinned file over an existing directory path".to_owned(),
             });
         }
         if self.files.contains_key(&normalized) {
