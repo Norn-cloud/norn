@@ -1,11 +1,3 @@
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::indexing_slicing,
-    missing_docs,
-    reason = "integration-test assertions"
-)]
-
 use norn_checker::decode_artifact_json;
 use norn_checker::ripple::{
     ImpactKind, RIPPLE_FORMAT, RippleStatus, compute_ripple_effects,
@@ -15,6 +7,7 @@ use norn_graph::Budget;
 use norn_ir::ArtifactEnvelope;
 use serde_json::{Value, json};
 
+#[allow(clippy::expect_used, reason = "test fixture helper")]
 fn envelope(
     artifact_id: &str,
     kind: &str,
@@ -170,6 +163,7 @@ fn widget_for_action(
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "test assertion")]
 fn multi_hop_transitive_ripple_across_core_subtype_action_law_widget() {
     let holding = entity_v2("core.Holding", "core.Holding", None, &[], vec![]);
     let metal = entity_v2(
@@ -275,6 +269,7 @@ fn multi_hop_transitive_ripple_across_core_subtype_action_law_widget() {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "test assertion")]
 fn removed_dependency_marks_dependents_as_broken() {
     let base = entity_v2("core.Item", "core.Item", None, &[], vec![]);
     let action = action_upsert(
@@ -345,8 +340,12 @@ fn cycle_safe_and_input_order_independent_deterministic_ordering() {
         .collect();
     assert_eq!(ids, vec!["cycle.A", "cycle.B", "cycle.C"]);
     assert_eq!(
-        forward.ripples[2].via,
-        vec!["cycle.A", "cycle.B", "cycle.C"]
+        forward.ripples.get(2).map(|entry| &entry.via),
+        Some(&vec![
+            "cycle.A".to_owned(),
+            "cycle.B".to_owned(),
+            "cycle.C".to_owned(),
+        ])
     );
 }
 
@@ -419,6 +418,7 @@ fn budget_exhaustion_fails_closed_with_unknown_and_no_silent_truncation() {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "test assertion")]
 fn tight_budget_during_projection_returns_unknown_with_budget_exceeded_and_empty_ripples() {
     let a = entity_v2("proj.A", "proj.A", None, &[], vec![]);
     let b = entity_v2(
@@ -456,6 +456,7 @@ fn tight_budget_during_projection_returns_unknown_with_budget_exceeded_and_empty
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "test assertion")]
 fn malformed_artifact_projection_error_fails_closed_with_unknown() {
     let valid = entity_v2("err.Base", "err.Base", None, &[], vec![]);
     let malformed = envelope(
