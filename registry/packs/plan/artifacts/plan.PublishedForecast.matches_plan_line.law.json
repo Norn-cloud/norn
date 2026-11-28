@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "A published plan-grain forecast must align identically with its target PlanLine's version, entity, store, category, brand, month, currency, and unit.",
+  "name": "A published plan-grain forecast must align identically with its target PlanLine's grain and derive exact Forecast - Plan variances.",
   "namespace": "plan",
   "payload": {
     "id": "plan.PublishedForecast.matches_plan_line",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/plan/plan.ts"
     },
-    "rationale": "A published plan-grain forecast must align identically with its target PlanLine's version, entity, store, category, brand, month, currency, and unit.",
+    "rationale": "A published plan-grain forecast must align identically with its target PlanLine's grain and derive exact Forecast - Plan variances.",
     "response": {
-      "expression": "(((((((self.plan_version_id == self.plan_line.plan_version_id) and (self.entity_id == self.plan_line.entity_id)) and (self.store_id == self.plan_line.store_id)) and (self.category == self.plan_line.category)) and (self.brand == self.plan_line.brand)) and (self.plan_month == self.plan_line.plan_month)) and (self.currency == self.plan_line.currency)) and (self.unit == self.plan_line.unit)",
+      "expression": "((((((((((self.plan_version_id == self.plan_line.plan_version_id) and (self.entity_id == self.plan_line.entity_id)) and (self.store_id == self.plan_line.store_id)) and (self.category == self.plan_line.category)) and (self.brand == self.plan_line.brand)) and (self.plan_month == self.plan_line.plan_month)) and (self.currency == self.plan_line.currency)) and (self.unit == self.plan_line.unit)) and (self.forecast_sales_retail_variance == (self.forecast_sales_retail - self.plan_line.planned_sales_retail))) and (self.forecast_sales_cost_variance == (self.forecast_sales_cost - self.plan_line.planned_sales_cost))) and (self.forecast_sales_qty_variance == (self.forecast_sales_qty - self.plan_line.planned_sales_qty))",
       "kind": "predicate"
     },
     "scope": {

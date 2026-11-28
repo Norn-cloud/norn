@@ -31,13 +31,18 @@
     ],
     "derive": [
       {
-        "expression": "slice.order.currency",
-        "field": "currency",
+        "expression": "date(input.plan_month + '-01')",
+        "field": "period_month_date",
         "inputRequired": false
       },
       {
-        "expression": "date(input.plan_month + '-01')",
-        "field": "period_month_date",
+        "expression": "timestamp(input.plan_month + '-01T00:00:00Z')",
+        "field": "period_start",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.order.currency",
+        "field": "currency",
         "inputRequired": false
       }
     ],
@@ -69,6 +74,9 @@
         "period_month_date": {
           "type": "string"
         },
+        "period_start": {
+          "type": "string"
+        },
         "plan_month": {
           "type": "string"
         },
@@ -85,6 +93,7 @@
         "entity_id",
         "plan_month",
         "period_month_date",
+        "period_start",
         "currency"
       ],
       "type": "object"

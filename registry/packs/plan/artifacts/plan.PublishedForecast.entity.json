@@ -287,6 +287,45 @@
           }
         },
         {
+          "id": "forecast_sales_retail_variance",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "forecast_sales_cost_variance",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "forecast_sales_qty_variance",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
           "default": "draft",
           "id": "status",
           "type": {

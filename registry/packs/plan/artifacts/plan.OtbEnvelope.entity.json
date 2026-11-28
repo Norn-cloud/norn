@@ -26,6 +26,18 @@
             "brand",
             "plan_month"
           ]
+        },
+        {
+          "name": "active_grain",
+          "properties": [
+            "entity_id",
+            "store_id",
+            "category",
+            "brand",
+            "plan_month",
+            "currency",
+            "active_grain_slot"
+          ]
         }
       ],
       "implements": [
@@ -240,6 +252,12 @@
         {
           "id": "requested_by",
           "protected": true,
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "active_grain_slot",
           "type": {
             "kind": "text"
           }

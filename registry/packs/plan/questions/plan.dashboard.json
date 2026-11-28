@@ -288,7 +288,7 @@
         "question": {
           "aggregate": [
             {
-              "metric": "analysis.object_737570706c792e506f7353616c65.net_revenue.by_sold_at"
+              "metric": "analysis.object_706c616e2e41637475616c506c616e56617269616e6365.sales_retail_variance.by_period_start"
             }
           ],
           "calendar": "iso_utc",
@@ -299,9 +299,11 @@
           "groupBy": [
             {
               "path": {
-                "links": [
-                  "store"
-                ],
+                "property": "plan_version_id"
+              }
+            },
+            {
+              "path": {
                 "property": "entity_id"
               }
             },
@@ -312,10 +314,12 @@
             },
             {
               "path": {
-                "links": [
-                  "sku"
-                ],
                 "property": "category"
+              }
+            },
+            {
+              "path": {
+                "property": "brand"
               }
             },
             {
@@ -326,19 +330,19 @@
             {
               "grain": "month",
               "path": {
-                "property": "sold_at"
+                "property": "period_start"
               }
             }
           ],
           "irVersion": "0.1",
-          "name": "plan.actual_pos_revenue_monthly",
-          "objectSet": "supply.PosSale",
+          "name": "plan.actual_vs_plan_sales_variance_monthly",
+          "objectSet": "plan.ActualPlanVariance",
           "window": {
             "end": "2027-01-01T00:00:00Z",
             "start": "2026-07-01T00:00:00Z"
           }
         },
-        "title": "Actual POS revenue, monthly",
+        "title": "Actual vs Plan retail sales variance, monthly",
         "view": {
           "chart": "bar",
           "kind": "chart"
@@ -355,7 +359,7 @@
         "question": {
           "aggregate": [
             {
-              "metric": "analysis.object_706c616e2e5075626c6973686564466f726563617374.forecast_sales_retail.by_period_start"
+              "metric": "analysis.object_706c616e2e5075626c6973686564466f726563617374.forecast_sales_retail_variance.by_period_start"
             }
           ],
           "calendar": "iso_utc",
@@ -421,14 +425,14 @@
             }
           ],
           "irVersion": "0.1",
-          "name": "plan.published_forecast_sales_monthly",
+          "name": "plan.forecast_vs_plan_sales_variance_monthly",
           "objectSet": "plan.PublishedForecast",
           "window": {
             "end": "2027-01-01T00:00:00Z",
             "start": "2026-07-01T00:00:00Z"
           }
         },
-        "title": "Published forecast sales, monthly",
+        "title": "Forecast vs Plan retail sales variance, monthly",
         "view": {
           "chart": "line",
           "kind": "chart"

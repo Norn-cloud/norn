@@ -1,6 +1,6 @@
 import { Norn } from "@norn/authoring"
 import { PosSale } from "../supply-lab/retail.ts"
-import { OtbEnvelope, OtbPoBinding, PlanLine, PublishedForecast } from "./plan.ts"
+import { ActualPlanVariance, OtbEnvelope, OtbPoBinding, PlanLine, PublishedForecast } from "./plan.ts"
 
 // Declared planning, OTB, and variance questions over the Q3–Q4 2026 retail
 // planning horizon (2026-07-01 .. 2027-01-01). Every question partitions
@@ -143,6 +143,42 @@ export const PublishedForecastSalesMonthly = Norn.question({
   asOf: window, population: { kind: "authorized_objects" },
 })
 
+/**
+ * Governed `Actual - Plan` retail sales variance at full plan grain
+ * `(plan_version x entity x store x category x brand x currency x ISO month)`,
+ * directly evaluable at both historical knowledge cutoffs (`evaluate_question_known_at`)
+ * and live head across late sale restatements.
+ */
+export const ActualVsPlanSalesVarianceMonthly = Norn.question({
+  name: "plan.actual_vs_plan_sales_variance_monthly", of: ActualPlanVariance,
+  measure: Norn.metricId({ kind: "sum", of: ActualPlanVariance, property: "sales_retail_variance", time: "period_start" }),
+  where: [],
+  by: [
+    { property: "plan_version_id" }, { property: "entity_id" }, { property: "store_id" },
+    { property: "category" }, { property: "brand" }, { property: "currency" },
+    { property: "period_start", grain: "month" },
+  ],
+  asOf: window, population: { kind: "authorized_objects" },
+})
+
+/**
+ * Governed `Forecast - Plan` retail sales variance at full plan grain pinning
+ * `plan_version_id`, `model_version`, and `forecast_revision` (`status != 'draft'`),
+ * directly evaluable at both historical knowledge cutoffs (`evaluate_question_known_at`)
+ * and live head across forecast revision supersessions.
+ */
+export const ForecastVsPlanSalesVarianceMonthly = Norn.question({
+  name: "plan.forecast_vs_plan_sales_variance_monthly", of: PublishedForecast,
+  measure: Norn.metricId({ kind: "sum", of: PublishedForecast, property: "forecast_sales_retail_variance", time: "period_start" }),
+  where: [{ property: "status", operator: "ne", value: "draft" }],
+  by: [
+    { property: "plan_version_id" }, { property: "model_version" }, { property: "forecast_revision" },
+    { property: "entity_id" }, { property: "store_id" }, { property: "category" }, { property: "brand" },
+    { property: "currency" }, { property: "period_start", grain: "month" },
+  ],
+  asOf: window, population: { kind: "authorized_objects" },
+})
+
 export const PlanOtbDashboard = Norn.dashboard({
   title: "Merchandise planning & Open-to-Buy",
   tiles: [
@@ -150,7 +186,7 @@ export const PlanOtbDashboard = Norn.dashboard({
     { title: "Planned purchase budget at cost, monthly", question: PlannedReceiptsCostMonthly, view: "bar" },
     { title: "Planned EOM stock at cost, monthly", question: PlannedEomStockCostMonthly, view: "line" },
     { title: "Approved OTB budget, monthly", question: OtbApprovedBudgetMonthly, view: "bar" },
-    { title: "Actual POS revenue, monthly", question: ActualPosRevenueMonthly, view: "bar" },
-    { title: "Published forecast sales, monthly", question: PublishedForecastSalesMonthly, view: "line" },
+    { title: "Actual vs Plan retail sales variance, monthly", question: ActualVsPlanSalesVarianceMonthly, view: "bar" },
+    { title: "Forecast vs Plan retail sales variance, monthly", question: ForecastVsPlanSalesVarianceMonthly, view: "line" },
   ],
 })

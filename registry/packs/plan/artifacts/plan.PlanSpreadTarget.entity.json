@@ -132,6 +132,13 @@
           }
         },
         {
+          "id": "period_start",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
           "id": "currency",
           "type": {
             "kind": "enum",
@@ -182,7 +189,31 @@
           }
         },
         {
+          "id": "target_total_quanta",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "target_total_weight",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
           "id": "target_remainder_quanta",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "remainder_cutoff_frac",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "remainder_cutoff_bucket",
           "type": {
             "kind": "integer"
           }

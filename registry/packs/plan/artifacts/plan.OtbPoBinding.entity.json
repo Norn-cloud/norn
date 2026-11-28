@@ -138,24 +138,6 @@
           },
           "id": "po_destination",
           "target": "plan.PoDestination"
-        },
-        {
-          "cardinality": {
-            "from": "many",
-            "required": true,
-            "to": "one"
-          },
-          "id": "owner_entity",
-          "target": "supply.LegalEntity"
-        },
-        {
-          "cardinality": {
-            "from": "many",
-            "required": true,
-            "to": "one"
-          },
-          "id": "store",
-          "target": "supply.Store"
         }
       ],
       "name": "plan.OtbPoBinding",
@@ -379,6 +361,16 @@
             },
             "kind": "decimal",
             "scale": 6
+          }
+        },
+        {
+          "id": "authorized_binding_seq",
+          "type": {
+            "additivity": {
+              "kind": "non_additive"
+            },
+            "kind": "decimal",
+            "scale": 0
           }
         },
         {

@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.PoDestination.promised_in_plan_month.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PoDestination.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A purchase order's promised_at instant must fall strictly within the exact proleptic Gregorian calendar month of plan_month (including Feb 28 non-leap vs Feb 29 leap years).",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.PoDestination.promised_in_plan_month",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A purchase order's promised_at instant must fall strictly within the exact proleptic Gregorian calendar month of plan_month (including Feb 28 non-leap vs Feb 29 leap years).",
+    "response": {
+      "expression": "all([seconds_between(timestamp(self.period_start), timestamp(self.order.promised_at))] as b0, (b0 >= 0) and all([days_between(date(take(self.plan_month, 4) + '-03-01'), date(self.period_month_date))] as b1, b0 < (((b1 == -28) ? 28 : ((b1 == -29) ? 29 : (((((b1 == 31) or (b1 == 92)) or (b1 == 184)) or (b1 == 245)) ? 30 : 31))) * 86400)))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PoDestination"
+      ],
+      "root": {
+        "id": "plan.PoDestination",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PoDestination"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PoDestination.promised_in_plan_month.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

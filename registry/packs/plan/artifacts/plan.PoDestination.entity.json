@@ -79,6 +79,13 @@
           }
         },
         {
+          "id": "period_start",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
           "id": "currency",
           "type": {
             "kind": "enum",

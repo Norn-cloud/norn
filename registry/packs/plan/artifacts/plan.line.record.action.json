@@ -49,7 +49,17 @@
       },
       {
         "expression": "0",
+        "field": "spread_weight",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
         "field": "spread_base_quanta",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "spread_frac_remainder",
         "inputRequired": false
       },
       {
@@ -218,6 +228,9 @@
         "spread_bucket_index": {
           "type": "integer"
         },
+        "spread_frac_remainder": {
+          "type": "integer"
+        },
         "spread_remainder_cost": {
           "nornType": {
             "kind": "decimal",
@@ -226,6 +239,9 @@
           "type": "number"
         },
         "spread_remainder_quanta": {
+          "type": "integer"
+        },
+        "spread_weight": {
           "type": "integer"
         },
         "store_id": {
@@ -264,7 +280,9 @@
         "planned_markdowns_retail",
         "planned_fine_metal_g",
         "spread_bucket_index",
+        "spread_weight",
         "spread_base_quanta",
+        "spread_frac_remainder",
         "spread_remainder_quanta",
         "spread_base_receipts_cost",
         "spread_remainder_cost",

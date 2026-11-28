@@ -21,11 +21,11 @@ export const Pack = Norn.ontologyPack({
       files: [
         {
           path: PLAN_SOURCE_FILE,
-          sha256: "523ccb2c26848c8cf7e4e1fd00b27e78c5c7fd218e2024c8f661c831d53bac3e",
+          sha256: "29eaf7ee56a8cf00e10e2905a98b231d29c3b6daeb363a5df08173dfaeab1a47",
         },
         {
           path: ACTIONS_SOURCE_FILE,
-          sha256: "6ad23cc92d1ee8fd7fa7f0fbd2232b81d127c9f72029870bf9fbe75bf6058ff1",
+          sha256: "9a78af39491ce26e19aadea7ddd2f065612063d8bea1d83db6011398d09b04f2",
         },
       ],
     },
@@ -42,6 +42,7 @@ export const Pack = Norn.ontologyPack({
     { termId: "norn.plan.otb.envelope", label: "OTB envelope", definition: "An approved purchase-at-cost budget ceiling (planned or unplanned with override approval); an internal planning target, never a core.Commitment.", termKind: "class", status: "active", semanticAuthority: "semantic_only" },
     { termId: "norn.plan.otb.po.binding", label: "OTB PO binding", definition: "A governed binding between an open supply.OrderLine commitment and an active OTB envelope conserving recognized receipts, unreceived authorized PO value, and cancelled releases.", termKind: "class", status: "active", semanticAuthority: "semantic_only" },
     { termId: "norn.plan.published.forecast", label: "Published plan forecast", definition: "A plan-grain forecast revision pinned to a production ml.ModelVersion and explicit forecast_revision for Forecast - Plan variance questions.", termKind: "class", status: "active", semanticAuthority: "semantic_only" },
+    { termId: "norn.plan.actual.variance", label: "Actual vs Plan variance snapshot", definition: "Governed plan-grain Actual - Plan variance snapshot backing bitemporal knowledge-cutoff variance questions across late sale restatements.", termKind: "class", status: "active", semanticAuthority: "semantic_only" },
     { termId: "norn.plan.guard.amount.nonpositive", label: "Non-positive OTB override or binding amount guard", definition: "An unplanned OTB override budget or authorized PO binding amount that must be strictly positive is zero or negative.", termKind: "predicate", status: "active", semanticAuthority: "semantic_only" },
     { termId: "norn.plan.guard.otb.exceeded", label: "OTB budget ceiling guard", definition: "Authorizing a purchase order line would push total consumed OTB above the envelope's approved purchase-at-cost budget or target an unapproved/absent envelope.", termKind: "predicate", status: "active", semanticAuthority: "semantic_only" },
     { termId: "norn.plan.guard.spread.drift", label: "Top-down spread conservation guard", definition: "Child plan lines under a top-down spread target do not sum exactly to the parent target and deterministic rounding remainder.", termKind: "predicate", status: "active", semanticAuthority: "semantic_only" },
@@ -56,6 +57,7 @@ export const Pack = Norn.ontologyPack({
     { mappingId: "map.norn.plan.otb.envelope", termId: "norn.plan.otb.envelope", sourceId: "source.plan", externalIri: "https://norn.cloud/registry/packs/plan/0.1.0#plan.OtbEnvelope", relation: "close_match", justification: "Declares `plan.OtbEnvelope` in `registry/packs/plan/plan.ts`.", evidenceRefs: [PLAN_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a (agent, proposed)", reviewedAt: REVIEWED_AT },
     { mappingId: "map.norn.plan.otb.po.binding", termId: "norn.plan.otb.po.binding", sourceId: "source.plan", externalIri: "https://norn.cloud/registry/packs/plan/0.1.0#plan.OtbPoBinding", relation: "close_match", justification: "Declares `plan.OtbPoBinding` in `registry/packs/plan/plan.ts`.", evidenceRefs: [PLAN_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a (agent, proposed)", reviewedAt: REVIEWED_AT },
     { mappingId: "map.norn.plan.published.forecast", termId: "norn.plan.published.forecast", sourceId: "source.plan", externalIri: "https://norn.cloud/registry/packs/plan/0.1.0#plan.PublishedForecast", relation: "close_match", justification: "Declares `plan.PublishedForecast` in `registry/packs/plan/plan.ts`.", evidenceRefs: [PLAN_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a (agent, proposed)", reviewedAt: REVIEWED_AT },
+    { mappingId: "map.norn.plan.actual.variance", termId: "norn.plan.actual.variance", sourceId: "source.plan", externalIri: "https://norn.cloud/registry/packs/plan/0.1.0#plan.ActualPlanVariance", relation: "close_match", justification: "Declares `plan.ActualPlanVariance` in `registry/packs/plan/plan.ts`.", evidenceRefs: [PLAN_SOURCE_FILE], confidenceBasisPoints: 10000, reviewedBy: "lane-a (agent, proposed)", reviewedAt: REVIEWED_AT },
   ],
   shapes: [
     { shapeId: "shape.norn.plan.sku.profile", termId: "norn.plan.sku.profile", closed: true, fields: [{ fieldId: "sku_id", valueType: "string", minCount: 1, maxCount: 1 }, { fieldId: "brand", valueType: "string", minCount: 1, maxCount: 1 }] },
@@ -67,5 +69,6 @@ export const Pack = Norn.ontologyPack({
     { shapeId: "shape.norn.plan.otb.envelope", termId: "norn.plan.otb.envelope", closed: true, fields: [{ fieldId: "envelope_id", valueType: "string", minCount: 1, maxCount: 1 }, { fieldId: "approved_budget_cost", valueType: "decimal", minCount: 1, maxCount: 1 }] },
     { shapeId: "shape.norn.plan.otb.po.binding", termId: "norn.plan.otb.po.binding", closed: true, fields: [{ fieldId: "binding_id", valueType: "string", minCount: 1, maxCount: 1 }, { fieldId: "otb_consumed_cost", valueType: "decimal", minCount: 1, maxCount: 1 }] },
     { shapeId: "shape.norn.plan.published.forecast", termId: "norn.plan.published.forecast", closed: true, fields: [{ fieldId: "forecast_id", valueType: "string", minCount: 1, maxCount: 1 }, { fieldId: "forecast_sales_retail", valueType: "decimal", minCount: 1, maxCount: 1 }] },
+    { shapeId: "shape.norn.plan.actual.variance", termId: "norn.plan.actual.variance", closed: true, fields: [{ fieldId: "variance_id", valueType: "string", minCount: 1, maxCount: 1 }, { fieldId: "sales_retail_variance", valueType: "decimal", minCount: 1, maxCount: 1 }] },
   ],
 })

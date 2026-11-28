@@ -39,24 +39,6 @@
             "required": true,
             "to": "one"
           },
-          "id": "plan_version",
-          "target": "plan.PlanVersion"
-        },
-        {
-          "cardinality": {
-            "from": "many",
-            "required": true,
-            "to": "one"
-          },
-          "id": "plan_line",
-          "target": "plan.PlanLine"
-        },
-        {
-          "cardinality": {
-            "from": "many",
-            "required": true,
-            "to": "one"
-          },
           "id": "owner_entity",
           "target": "supply.LegalEntity"
         },

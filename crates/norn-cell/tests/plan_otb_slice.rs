@@ -453,10 +453,18 @@ impl PlanBook {
     }
 
     fn transform(&self, artifact_id: &str) -> Result<TransformResult, String> {
+        self.transform_with_access(artifact_id, |_| Ok(RowAccess::Read))
+    }
+
+    fn transform_with_access(
+        &self,
+        artifact_id: &str,
+        access: impl FnMut(&norn_cell::ObjectRecord) -> Result<RowAccess, CellError>,
+    ) -> Result<TransformResult, String> {
         let plan = self.pack.transform_plan(artifact_id)?;
         self.cell
             .store()
-            .evaluate_transform(&plan, "main", &self.scope, |_| Ok(RowAccess::Read))
+            .evaluate_transform(&plan, "main", &self.scope, access)
             .map_err(|err| format!("transform {artifact_id}: {err}"))
     }
 }
@@ -725,7 +733,11 @@ fn seed_locked_plan_and_envelope(book: &mut PlanBook) -> Result<(), String> {
     book.ok(
         "plan.otb_envelope.activate_planned",
         "planner:amal",
-        json!({"envelope_id": "ENV-DRY-SEP"}),
+        json!({
+            "envelope_id": "ENV-DRY-SEP", "entity_id": "LE-SOLE", "store_id": "ST-CFC",
+            "category": "dry_goods", "brand": "nile_foods", "plan_month": "2026-09",
+            "currency": "EGP"
+        }),
     )
 }
 
@@ -764,14 +776,36 @@ fn create_draft_po_with_destination(
     )
 }
 
-fn otb_auth_input(binding_id: &str, envelope_id: &str, po_id: &str, line_id: &str) -> Value {
+fn otb_auth_input_grain(
+    binding_id: &str,
+    envelope_id: &str,
+    po_id: &str,
+    line_id: &str,
+    sku_id: &str,
+    category: &str,
+    brand: &str,
+) -> Value {
     json!({
         "binding_id": binding_id, "envelope_id": envelope_id,
-        "po_id": po_id, "line_id": line_id,
+        "po_id": po_id, "line_id": line_id, "sku_id": sku_id,
+        "entity_id": "LE-SOLE", "store_id": "ST-CFC",
+        "category": category, "brand": brand, "plan_month": "2026-09", "currency": "EGP",
         "expected_payment_date": "2026-10-25T00:00:00Z",
         "payment_terms_days": 45,
         "as_of": "2026-09-06T10:00:00Z"
     })
+}
+
+fn otb_auth_input(binding_id: &str, envelope_id: &str, po_id: &str, line_id: &str) -> Value {
+    otb_auth_input_grain(
+        binding_id,
+        envelope_id,
+        po_id,
+        line_id,
+        "SKU-DRY-1",
+        "dry_goods",
+        "nile_foods",
+    )
 }
 
 struct PartialReceipt<'a> {
@@ -1377,8 +1411,8 @@ fn gold_spread_payload(line: &GoldSpreadLine<'_>) -> Value {
         "planned_sales_qty": line.sales_qty, "planned_receipts_retail": line.receipts_retail,
         "planned_receipts_qty": line.receipts_qty, "planned_markdowns_cost": line.markdowns_cost,
         "planned_markdowns_retail": line.markdowns_retail, "planned_fine_metal_g": line.fine_metal_g,
-        "spread_bucket_index": line.bucket_index, "spread_base_quanta": 500_000,
-        "spread_remainder_quanta": line.remainder_quanta,
+        "spread_bucket_index": line.bucket_index, "spread_weight": 1,
+        "spread_base_quanta": 500_000, "spread_remainder_quanta": line.remainder_quanta,
         "planned_eom_stock_cost": line.eom_cost, "planned_eom_stock_retail": line.eom_retail,
         "planned_eom_stock_qty": line.eom_qty
     })
@@ -1403,7 +1437,9 @@ fn seed_spread_version_and_target(book: &mut PlanBook) -> Result<(), String> {
             "entity_id": "LE-SOLE", "category": "gold_jewelry", "brand": "nile_gold",
             "plan_month": "2026-09", "currency": "EGP",
             "rounding_rule": "largest_remainder", "bucket_count": 2,
-            "allocation_quantum_cost": "0.010000", "target_remainder_quanta": 1,
+            "allocation_quantum_cost": "0.010000", "target_total_quanta": 1_000_001,
+            "target_total_weight": 2, "target_remainder_quanta": 1,
+            "remainder_cutoff_frac": 1, "remainder_cutoff_bucket": 1,
             "target_sales_retail": "100000.000000", "target_sales_cost": "75000.000000",
             "target_receipts_cost": "10000.010000", "target_receipts_retail": "13500.000000",
             "target_markdowns_cost": "200.000000", "target_markdowns_retail": "300.000000",
@@ -1753,7 +1789,15 @@ fn otb_atomic_fail_closed_guards_block_bypass_missing_envelope_and_wrong_categor
     let (missing_code, _) = book.refused(
         "plan.otb.authorize_po_line",
         "ops:karim",
-        otb_auth_input("OTB-NO-ENV", "ENV-MISSING", "PO-SP", "PO-SP/1"),
+        otb_auth_input_grain(
+            "OTB-NO-ENV",
+            "ENV-MISSING",
+            "PO-SP",
+            "PO-SP/1",
+            "SKU-SPARE-1",
+            "spares",
+            "unplanned",
+        ),
     )?;
     assert_eq!(missing_code, "action.slice_object_missing");
     assert_eq!(
@@ -1767,7 +1811,15 @@ fn otb_atomic_fail_closed_guards_block_bypass_missing_envelope_and_wrong_categor
     let (wrong_cat_code, _) = book.refused(
         "plan.otb.authorize_po_line",
         "ops:karim",
-        otb_auth_input("OTB-WRONG-CAT", "ENV-DRY-SEP", "PO-SP", "PO-SP/1"),
+        otb_auth_input_grain(
+            "OTB-WRONG-CAT",
+            "ENV-DRY-SEP",
+            "PO-SP",
+            "PO-SP/1",
+            "SKU-SPARE-1",
+            "spares",
+            "unplanned",
+        ),
     )?;
     assert_eq!(wrong_cat_code, "action.precondition_failed");
     assert_eq!(
@@ -1806,10 +1858,14 @@ fn unplanned_otb_override_requires_independent_approval_before_po_submit() -> Re
             "approved_budget_cost": "2500.000000", "override_reason": "Emergency chiller spares"
         }),
     )?;
+    let spares_activate = json!({
+        "envelope_id": "ENV-UNPLANNED-SPARES", "entity_id": "LE-SOLE", "store_id": "ST-CFC",
+        "category": "spares", "brand": "unplanned", "plan_month": "2026-09", "currency": "EGP"
+    });
     let (activate_bypass, _) = book.refused(
         "plan.otb_envelope.activate_planned",
         "planner:amal",
-        json!({"envelope_id": "ENV-UNPLANNED-SPARES"}),
+        spares_activate.clone(),
     )?;
     assert_eq!(activate_bypass, "action.precondition_failed");
     book.ok(
@@ -1820,7 +1876,15 @@ fn unplanned_otb_override_requires_independent_approval_before_po_submit() -> Re
     let (pending_code, _) = book.refused(
         "plan.otb.authorize_po_line",
         "ops:karim",
-        otb_auth_input("OTB-SP-PENDING", "ENV-UNPLANNED-SPARES", "PO-SP", "PO-SP/1"),
+        otb_auth_input_grain(
+            "OTB-SP-PENDING",
+            "ENV-UNPLANNED-SPARES",
+            "PO-SP",
+            "PO-SP/1",
+            "SKU-SPARE-1",
+            "spares",
+            "unplanned",
+        ),
     )?;
     assert_eq!(pending_code, "action.precondition_failed");
     assert_eq!(
@@ -1832,18 +1896,26 @@ fn unplanned_otb_override_requires_independent_approval_before_po_submit() -> Re
     let (self_approve, _) = book.refused(
         "plan.otb_envelope.approve_override",
         "planner:amal",
-        json!({"envelope_id": "ENV-UNPLANNED-SPARES"}),
+        spares_activate.clone(),
     )?;
     assert_eq!(self_approve, "action.permission_denied");
     book.ok(
         "plan.otb_envelope.approve_override",
         "director:salma",
-        json!({"envelope_id": "ENV-UNPLANNED-SPARES"}),
+        spares_activate,
     )?;
     book.ok(
         "plan.otb.authorize_po_line",
         "ops:karim",
-        otb_auth_input("OTB-SP-OK", "ENV-UNPLANNED-SPARES", "PO-SP", "PO-SP/1"),
+        otb_auth_input_grain(
+            "OTB-SP-OK",
+            "ENV-UNPLANNED-SPARES",
+            "PO-SP",
+            "PO-SP/1",
+            "SKU-SPARE-1",
+            "spares",
+            "unplanned",
+        ),
     )?;
     assert_eq!(
         book.fact_field("supply.PurchaseOrder", "PO-SP", "status")?
@@ -2041,10 +2113,36 @@ fn bitemporal_actual_vs_plan_variance_and_late_restatement_of_existing_sale() ->
             "currency": "EGP", "sold_at": "2026-09-10T14:00:00Z"
         }),
     )?;
+    book.ok(
+        "plan.variance.record_actual_vs_plan",
+        "planner:amal",
+        json!({
+            "variance_id": "VAR-DRY-SEP", "slot_id": "SLOT-DRY-SEP",
+            "entity_id": "LE-SOLE", "store_id": "ST-CFC", "category": "dry_goods",
+            "period_start": "2026-09-01T00:00:00Z", "period_end": "2026-10-01T00:00:00Z",
+            "currency": "EGP", "unit": "each", "cost_status": "costed",
+            "actual_sales_retail": "12000.000000", "actual_sales_cost": "7200.000000",
+            "actual_sales_qty": "120.000000"
+        }),
+    )?;
     let cutoff_k1 = book.last_cutoff()?;
     let rev_k1 = book.answer_known_at("plan.actual_pos_revenue_monthly", cutoff_k1)?;
+    let var_q_k1 = book.answer_known_at("plan.actual_vs_plan_sales_variance_monthly", cutoff_k1)?;
     let bucket = ["LE-SOLE", "ST-CFC", "dry_goods", "EGP", "2026-09-01"];
+    let var_bucket = [
+        "PV-2026-V1",
+        "LE-SOLE",
+        "ST-CFC",
+        "dry_goods",
+        "nile_foods",
+        "EGP",
+        "2026-09-01",
+    ];
     assert_eq!(bucket_decimal(&rev_k1, &bucket).as_deref(), Some("12000"));
+    assert_eq!(
+        bucket_decimal(&var_q_k1, &var_bucket).as_deref(),
+        Some("-6000")
+    );
     assert_actual_variance(&book, "-6000", "-3600", "-60")?;
 
     // Genuine late restatement updating the EXISTING contribution `SALE-SEP-1` in-place.
@@ -2056,13 +2154,34 @@ fn bitemporal_actual_vs_plan_variance_and_late_restatement_of_existing_sale() ->
             "net_revenue": "15500.000000", "sold_at": "2026-09-10T14:00:00Z"
         }),
     )?;
+    book.ok(
+        "plan.variance.refresh_actual_vs_plan",
+        "planner:amal",
+        json!({
+            "variance_id": "VAR-DRY-SEP", "slot_id": "SLOT-DRY-SEP",
+            "entity_id": "LE-SOLE", "store_id": "ST-CFC", "category": "dry_goods",
+            "period_start": "2026-09-01T00:00:00Z", "period_end": "2026-10-01T00:00:00Z",
+            "currency": "EGP", "unit": "each", "cost_status": "costed",
+            "actual_sales_retail": "15500.000000", "actual_sales_cost": "9300.000000",
+            "actual_sales_qty": "155.000000"
+        }),
+    )?;
     let cutoff_k2 = book.last_cutoff()?;
     assert_eq!(
         book.answer_known_at("plan.actual_pos_revenue_monthly", cutoff_k1)?,
         rev_k1
     );
+    assert_eq!(
+        book.answer_known_at("plan.actual_vs_plan_sales_variance_monthly", cutoff_k1)?,
+        var_q_k1
+    );
     let rev_k2 = book.answer_known_at("plan.actual_pos_revenue_monthly", cutoff_k2)?;
+    let var_q_k2 = book.answer_known_at("plan.actual_vs_plan_sales_variance_monthly", cutoff_k2)?;
     assert_eq!(bucket_decimal(&rev_k2, &bucket).as_deref(), Some("15500"));
+    assert_eq!(
+        bucket_decimal(&var_q_k2, &var_bucket).as_deref(),
+        Some("-2500")
+    );
     assert_actual_variance(&book, "-2500", "-1500", "-25")
 }
 
@@ -2070,7 +2189,6 @@ fn seed_published_forecast(
     book: &mut PlanBook,
     forecast_id: &str,
     revision: &str,
-    published_at: &str,
     sales_retail: &str,
     sales_cost: &str,
     sales_qty: &str,
@@ -2083,7 +2201,7 @@ fn seed_published_forecast(
             "plan_line_id": "PL-DRY-SEP", "model_version": "supply.demand_forecast@1",
             "forecast_revision": revision, "entity_id": "LE-SOLE", "store_id": "ST-CFC",
             "category": "dry_goods", "brand": "nile_foods", "plan_month": "2026-09",
-            "period_start": "2026-09-01T00:00:00Z", "published_at": published_at,
+            "period_start": "2026-09-01T00:00:00Z",
             "currency": "EGP", "unit": "each",
             "forecast_sales_retail": sales_retail, "forecast_sales_cost": sales_cost,
             "forecast_sales_qty": sales_qty, "forecast_fine_metal_g": "0.000000"
@@ -2105,19 +2223,45 @@ fn forecast_vs_plan_variance_preserves_pinned_revision_after_supersession() -> R
         &mut book,
         "PF-DRY-R1",
         "rev-2026-09-w2",
-        "2026-09-12T08:00:00Z",
         "19250.500000",
         "11400.000000",
         "192.000000",
     )?;
     let cutoff_r1 = book.last_cutoff()?;
     let fc_q_r1 = book.answer_known_at("plan.published_forecast_sales_monthly", cutoff_r1)?;
+    let fc_var_q_r1 =
+        book.answer_known_at("plan.forecast_vs_plan_sales_variance_monthly", cutoff_r1)?;
+    let r1_bucket = [
+        "PV-2026-V1",
+        "supply.demand_forecast@1",
+        "rev-2026-09-w2",
+        "LE-SOLE",
+        "ST-CFC",
+        "dry_goods",
+        "nile_foods",
+        "EGP",
+        "2026-09-01",
+    ];
+    let r2_bucket = [
+        "PV-2026-V1",
+        "supply.demand_forecast@1",
+        "rev-2026-09-w3",
+        "LE-SOLE",
+        "ST-CFC",
+        "dry_goods",
+        "nile_foods",
+        "EGP",
+        "2026-09-01",
+    ];
+    assert_eq!(
+        bucket_decimal(&fc_var_q_r1, &r1_bucket).as_deref(),
+        Some("1250.5")
+    );
 
     seed_published_forecast(
         &mut book,
         "PF-DRY-R2",
         "rev-2026-09-w3",
-        "2026-09-19T08:00:00Z",
         "20100.000000",
         "12000.000000",
         "201.000000",
@@ -2130,54 +2274,38 @@ fn forecast_vs_plan_variance_preserves_pinned_revision_after_supersession() -> R
 
     let fc_var = book.transform("plan.forecast_vs_plan_variance")?;
     assert_eq!(fc_var.rows.len(), 2);
-    let rev1 = fc_var
-        .rows
-        .iter()
-        .find(|row| row_str(&row.values, "forecast_revision").as_deref() == Some("rev-2026-09-w2"))
-        .ok_or("missing superseded forecast revision R1")?;
-    assert_eq!(
-        row_str(&rev1.values, "status").as_deref(),
-        Some("superseded")
-    );
-    assert_eq!(
-        row_str(&rev1.values, "sales_retail_variance").as_deref(),
-        Some("1250.5")
-    );
-    let rev2 = fc_var
-        .rows
-        .iter()
-        .find(|row| row_str(&row.values, "forecast_revision").as_deref() == Some("rev-2026-09-w3"))
-        .ok_or("missing published forecast revision R2")?;
-    assert_eq!(
-        row_str(&rev2.values, "status").as_deref(),
-        Some("published")
-    );
-    assert_eq!(
-        row_str(&rev2.values, "sales_retail_variance").as_deref(),
-        Some("2100")
-    );
+    for (rev, status, expected_var) in [
+        ("rev-2026-09-w2", "superseded", "1250.5"),
+        ("rev-2026-09-w3", "published", "2100"),
+    ] {
+        let row = fc_var
+            .rows
+            .iter()
+            .find(|r| row_str(&r.values, "forecast_revision").as_deref() == Some(rev))
+            .ok_or_else(|| format!("missing forecast revision {rev}"))?;
+        assert_eq!(row_str(&row.values, "status").as_deref(), Some(status));
+        assert_eq!(
+            row_str(&row.values, "sales_retail_variance").as_deref(),
+            Some(expected_var)
+        );
+    }
     assert_eq!(
         book.answer_known_at("plan.published_forecast_sales_monthly", cutoff_r1)?,
         fc_q_r1
     );
+    assert_eq!(
+        book.answer_known_at("plan.forecast_vs_plan_sales_variance_monthly", cutoff_r1)?,
+        fc_var_q_r1
+    );
     let fc_live = book.answer("plan.published_forecast_sales_monthly")?;
     assert_eq!(
-        bucket_decimal(
-            &fc_live,
-            &[
-                "PV-2026-V1",
-                "supply.demand_forecast@1",
-                "rev-2026-09-w2",
-                "LE-SOLE",
-                "ST-CFC",
-                "dry_goods",
-                "nile_foods",
-                "EGP",
-                "2026-09-01"
-            ]
-        )
-        .as_deref(),
+        bucket_decimal(&fc_live, &r1_bucket).as_deref(),
         Some("19250.5")
+    );
+    let fc_var_live = book.answer("plan.forecast_vs_plan_sales_variance_monthly")?;
+    assert_eq!(
+        bucket_decimal(&fc_var_live, &r2_bucket).as_deref(),
+        Some("2100")
     );
     Ok(())
 }
@@ -2234,5 +2362,760 @@ fn separate_entity_currency_and_ucum_fine_metal_partitioning() -> Result<(), Str
         bucket_decimal(&eom_usd, &["PV-USD-V1", "ST-LUX", "USD", "2026-09-01"]).as_deref(),
         Some("8000")
     );
+    Ok(())
+}
+
+fn seed_v2_plan_and_draft_envelope(book: &mut PlanBook) -> Result<(), String> {
+    book.ok(
+        "plan.version.create_revision",
+        "planner:amal",
+        json!({
+            "plan_version_id": "PV-2026-V2", "entity_id": "LE-SOLE",
+            "plan_code": "FY2026-AUTUMN", "revision_number": 2, "currency": "EGP",
+            "effective_from": "2026-09-01T00:00:00Z", "effective_to": "2026-10-01T00:00:00Z",
+            "supersedes_version_id": "PV-2026-V1"
+        }),
+    )?;
+    book.ok(
+        "plan.line.record",
+        "planner:amal",
+        json!({
+            "plan_line_id": "PL-DRY-SEP-V2", "plan_version_id": "PV-2026-V2",
+            "entity_id": "LE-SOLE", "store_id": "ST-CFC",
+            "category": "dry_goods", "brand": "nile_foods", "plan_month": "2026-09",
+            "period_start": "2026-09-01T00:00:00Z", "as_of": "2026-09-30T23:59:59Z",
+            "currency": "EGP", "unit": "each",
+            "planned_sales_retail": "18000.000000", "planned_sales_cost": "10800.000000",
+            "planned_sales_qty": "180.000000", "planned_receipts_cost": "10000.000000",
+            "planned_receipts_retail": "16500.000000", "planned_receipts_qty": "166.000000",
+            "planned_markdowns_cost": "300.000000", "planned_markdowns_retail": "500.000000",
+            "planned_fine_metal_g": "0.000000",
+            "planned_eom_stock_cost": "4200.000000", "planned_eom_stock_retail": "7000.000000",
+            "planned_eom_stock_qty": "70.000000"
+        }),
+    )?;
+    lock_plan_version(book, "PV-2026-V2")?;
+    book.ok(
+        "plan.otb_envelope.create_planned",
+        "planner:amal",
+        json!({
+            "envelope_id": "ENV-DRY-SEP-V2", "plan_version_id": "PV-2026-V2",
+            "plan_line_id": "PL-DRY-SEP-V2", "entity_id": "LE-SOLE", "store_id": "ST-CFC",
+            "category": "dry_goods", "brand": "nile_foods", "plan_month": "2026-09",
+            "period_start": "2026-09-01T00:00:00Z", "currency": "EGP"
+        }),
+    )
+}
+
+#[test]
+fn otb_envelope_supersession_never_resets_spend_across_revisions() -> Result<(), String> {
+    let mut book = PlanBook::open("org_plan_r2_b1", "prod", "plan-r2-blocker1.sqlite")?;
+    seed_locked_plan_and_envelope(&mut book)?;
+    create_draft_po_with_destination(
+        &mut book,
+        "PO-V1",
+        "PO-V1/1",
+        "SKU-DRY-1",
+        "100.000000",
+        "60.0000",
+    )?;
+    book.ok(
+        "plan.otb.authorize_po_line",
+        "ops:karim",
+        otb_auth_input("OTB-V1", "ENV-DRY-SEP", "PO-V1", "PO-V1/1"),
+    )?;
+    seed_v2_plan_and_draft_envelope(&mut book)?;
+
+    let activate_v2 = json!({
+        "envelope_id": "ENV-DRY-SEP-V2", "entity_id": "LE-SOLE", "store_id": "ST-CFC",
+        "category": "dry_goods", "brand": "nile_foods", "plan_month": "2026-09", "currency": "EGP"
+    });
+    let (dual_active_code, _) = book.refused(
+        "plan.otb_envelope.activate_planned",
+        "planner:amal",
+        activate_v2.clone(),
+    )?;
+    assert_eq!(dual_active_code, "action.precondition_failed");
+
+    book.ok(
+        "plan.version.supersede",
+        "director:salma",
+        json!({"plan_version_id": "PV-2026-V1", "successor_version_id": "PV-2026-V2"}),
+    )?;
+    create_draft_po_with_destination(
+        &mut book,
+        "PO-STALE",
+        "PO-STALE/1",
+        "SKU-DRY-1",
+        "10.000000",
+        "50.0000",
+    )?;
+    let (stale_ver_code, _) = book.refused(
+        "plan.otb.authorize_po_line",
+        "ops:karim",
+        otb_auth_input("OTB-STALE", "ENV-DRY-SEP", "PO-STALE", "PO-STALE/1"),
+    )?;
+    assert_eq!(stale_ver_code, "action.precondition_failed");
+
+    book.ok(
+        "plan.otb_envelope.close",
+        "director:salma",
+        json!({"envelope_id": "ENV-DRY-SEP"}),
+    )?;
+    book.ok(
+        "plan.otb_envelope.activate_planned",
+        "planner:amal",
+        activate_v2,
+    )?;
+
+    // Active V2 envelope MUST still deduct open V1 spend (6000 -> 4000 remaining, NOT 10000).
+    let pos = book.transform("plan.otb_position")?;
+    assert_eq!(pos.rows.len(), 1);
+    let row = pos.rows.first().ok_or("missing V2 otb_position row")?;
+    assert_eq!(
+        row_str(&row.values, "envelope_id").as_deref(),
+        Some("ENV-DRY-SEP-V2")
+    );
+    assert_eq!(
+        row_str(&row.values, "plan_version_id").as_deref(),
+        Some("PV-2026-V2")
+    );
+    assert_otb_position(&book, "0", "6000", "0", "4000")?;
+
+    for (po_id, line_id, qty) in [
+        ("PO-V2-BREACH", "PO-V2-BREACH/1", "100.000000"),
+        ("PO-V2-OK", "PO-V2-OK/1", "70.000000"),
+    ] {
+        create_draft_po_with_destination(&mut book, po_id, line_id, "SKU-DRY-1", qty, "50.0000")?;
+    }
+    let (breach_code, _) = book.refused(
+        "plan.otb.authorize_po_line",
+        "ops:karim",
+        otb_auth_input(
+            "OTB-V2-BREACH",
+            "ENV-DRY-SEP-V2",
+            "PO-V2-BREACH",
+            "PO-V2-BREACH/1",
+        ),
+    )?;
+    assert_eq!(breach_code, "action.precondition_failed");
+    book.ok(
+        "plan.otb.authorize_po_line",
+        "ops:karim",
+        otb_auth_input("OTB-V2-OK", "ENV-DRY-SEP-V2", "PO-V2-OK", "PO-V2-OK/1"),
+    )?;
+    assert_otb_position(&book, "0", "9500", "0", "500")
+}
+
+#[test]
+fn cancelled_po_between_physical_receipt_and_line_reconciliation_recovers_otb() -> Result<(), String>
+{
+    let mut book = PlanBook::open("org_plan_r2_b2", "prod", "plan-r2-blocker2.sqlite")?;
+    seed_locked_plan_and_envelope(&mut book)?;
+    create_draft_po_with_destination(
+        &mut book,
+        "PO-RACE",
+        "PO-RACE/1",
+        "SKU-DRY-1",
+        "100.000000",
+        "60.0000",
+    )?;
+    book.ok(
+        "plan.otb.authorize_po_line",
+        "ops:karim",
+        otb_auth_input("OTB-RACE", "ENV-DRY-SEP", "PO-RACE", "PO-RACE/1"),
+    )?;
+
+    // Physical receipt commits BEFORE `supply.line.record_received` runs, then PO cancels.
+    book.ok(
+        "supply.receipt.record",
+        "clerk:hana",
+        json!({
+            "receipt_id": "RC-PRE-CANCEL", "supplier_id": "SUP-NILE", "warehouse_id": "WH-MAIN",
+            "line_id": "PO-RACE/1", "received_qty": "30.000000", "damaged_qty": "0.000000",
+            "unit": "each", "received_at": "2026-09-08T10:00:00Z"
+        }),
+    )?;
+    book.ok("supply.po.cancel", "ops:karim", json!({"po_id": "PO-RACE"}))?;
+
+    // Release refuses while line received_qty (0) lags physical receipts (30).
+    let (unreconciled_code, _) = book.refused(
+        "plan.otb.release_cancelled_po",
+        "ops:karim",
+        json!({
+            "binding_id": "OTB-RACE", "po_id": "PO-RACE", "line_id": "PO-RACE/1",
+            "as_of": "2026-09-09T10:00:00Z"
+        }),
+    )?;
+    assert_eq!(unreconciled_code, "action.precondition_failed");
+
+    // New physical receipts after cancellation remain strictly refused, and over-reconciliation refuses.
+    let (late_rc_code, _) = book.refused(
+        "supply.receipt.record",
+        "clerk:hana",
+        json!({
+            "receipt_id": "RC-LATE", "supplier_id": "SUP-NILE", "warehouse_id": "WH-MAIN",
+            "line_id": "PO-RACE/1", "received_qty": "5.000000", "damaged_qty": "0.000000",
+            "unit": "each", "received_at": "2026-09-09T11:00:00Z"
+        }),
+    )?;
+    assert_eq!(late_rc_code, "action.precondition_failed");
+    let (over_reconcile_code, _) = book.refused(
+        "supply.line.record_received",
+        "clerk:hana",
+        json!({
+            "line_id": "PO-RACE/1", "po_id": "PO-RACE", "sku_id": "SKU-DRY-1",
+            "promised_at": "2026-09-10T00:00:00Z", "ordered_qty": "100.000000",
+            "received_qty": "40.000000", "unit": "each", "unit_price": "60.0000", "currency": "EGP"
+        }),
+    )?;
+    assert_eq!(over_reconcile_code, "core.laws.violated");
+
+    // Monotonic reconciliation to exact committed physical receipts (30) succeeds, then OTB releases cleanly.
+    book.ok(
+        "supply.line.record_received",
+        "clerk:hana",
+        json!({
+            "line_id": "PO-RACE/1", "po_id": "PO-RACE", "sku_id": "SKU-DRY-1",
+            "promised_at": "2026-09-10T00:00:00Z", "ordered_qty": "100.000000",
+            "received_qty": "30.000000", "unit": "each", "unit_price": "60.0000", "currency": "EGP"
+        }),
+    )?;
+    book.ok(
+        "plan.otb.release_cancelled_po",
+        "ops:karim",
+        json!({
+            "binding_id": "OTB-RACE", "po_id": "PO-RACE", "line_id": "PO-RACE/1",
+            "as_of": "2026-09-09T12:00:00Z"
+        }),
+    )?;
+    assert_otb_position(&book, "1800", "0", "4200", "8200")
+}
+
+fn feb_plan_line_payload(
+    plan_line_id: &str,
+    plan_version_id: &str,
+    plan_month: &str,
+    period_start: &str,
+    as_of: &str,
+) -> Value {
+    json!({
+        "plan_line_id": plan_line_id, "plan_version_id": plan_version_id,
+        "entity_id": "LE-SOLE", "store_id": "ST-CFC",
+        "category": "dry_goods", "brand": "nile_foods", "plan_month": plan_month,
+        "period_start": period_start, "as_of": as_of,
+        "currency": "EGP", "unit": "each",
+        "planned_sales_retail": "1000.000000", "planned_sales_cost": "600.000000",
+        "planned_sales_qty": "10.000000", "planned_receipts_cost": "600.000000",
+        "planned_receipts_retail": "1000.000000", "planned_receipts_qty": "10.000000",
+        "planned_markdowns_cost": "0.000000", "planned_markdowns_retail": "0.000000",
+        "planned_fine_metal_g": "0.000000",
+        "planned_eom_stock_cost": "200.000000", "planned_eom_stock_retail": "350.000000",
+        "planned_eom_stock_qty": "3.000000"
+    })
+}
+
+fn three_bucket_spread_payload(
+    plan_line_id: &str,
+    store_id: &str,
+    bucket_index: i64,
+    remainder_quanta: i64,
+) -> Value {
+    json!({
+        "plan_line_id": plan_line_id, "plan_version_id": "PV-FEB-2026",
+        "spread_target_id": "SP-3B", "entity_id": "LE-SOLE", "store_id": store_id,
+        "category": "gold_jewelry", "brand": "nile_gold", "plan_month": "2026-02",
+        "period_start": "2026-02-01T00:00:00Z", "as_of": "2026-02-28T23:59:59Z",
+        "currency": "EGP", "unit": "g",
+        "planned_sales_retail": "10.000000", "planned_sales_cost": "6.000000",
+        "planned_sales_qty": "1.000000", "planned_receipts_retail": "1.000000",
+        "planned_receipts_qty": "1.000000", "planned_markdowns_cost": "0.000000",
+        "planned_markdowns_retail": "0.000000", "planned_fine_metal_g": "1.000000",
+        "spread_bucket_index": bucket_index, "spread_weight": 1,
+        "spread_base_quanta": 33, "spread_remainder_quanta": remainder_quanta,
+        "planned_eom_stock_cost": "1.000000", "planned_eom_stock_retail": "2.000000",
+        "planned_eom_stock_qty": "1.000000"
+    })
+}
+
+#[test]
+fn february_calendar_alignment_non_leap_and_leap_years() -> Result<(), String> {
+    let mut book = PlanBook::open("org_plan_r2_m1a", "prod", "plan-r2-major1-feb.sqlite")?;
+    seed_retail_base(&mut book, "LE-SOLE", "EGP", &["ST-CFC"])?;
+    for (pv, code, start, end) in [
+        (
+            "PV-FEB-2026",
+            "FY2026-FEB",
+            "2026-02-01T00:00:00Z",
+            "2026-03-01T00:00:00Z",
+        ),
+        (
+            "PV-FEB-2024",
+            "FY2024-FEB",
+            "2024-02-01T00:00:00Z",
+            "2024-03-01T00:00:00Z",
+        ),
+    ] {
+        book.ok(
+            "plan.version.create",
+            "planner:amal",
+            json!({
+                "plan_version_id": pv, "entity_id": "LE-SOLE",
+                "plan_code": code, "revision_number": 1, "currency": "EGP",
+                "effective_from": start, "effective_to": end
+            }),
+        )?;
+    }
+
+    // Non-leap 2026-02 (Feb 28 ok, Mar 1 refused) and leap 2024-02 (Feb 29 ok, Feb 28 refused).
+    for (id, pv, ym, start, bad_eom, ok_eom) in [
+        (
+            "FEB26",
+            "PV-FEB-2026",
+            "2026-02",
+            "2026-02-01T00:00:00Z",
+            "2026-03-01T23:59:59Z",
+            "2026-02-28T23:59:59Z",
+        ),
+        (
+            "FEB24",
+            "PV-FEB-2024",
+            "2024-02",
+            "2024-02-01T00:00:00Z",
+            "2024-02-28T23:59:59Z",
+            "2024-02-29T23:59:59Z",
+        ),
+    ] {
+        let (code, _) = book.refused(
+            "plan.line.record",
+            "planner:amal",
+            feb_plan_line_payload(&format!("PL-{id}-BAD"), pv, ym, start, bad_eom),
+        )?;
+        assert_eq!(code, "core.laws.violated");
+        book.ok(
+            "plan.line.record",
+            "planner:amal",
+            feb_plan_line_payload(&format!("PL-{id}-OK"), pv, ym, start, ok_eom),
+        )?;
+    }
+
+    // PoDestination refuses charging a 2026-03-01 promised PO to 2026-02; admits 2026-02-28 & 2024-02-29.
+    for (po_id, promised_at) in [
+        ("PO-MAR1", "2026-03-01T12:00:00Z"),
+        ("PO-FEB28", "2026-02-28T23:00:00Z"),
+        ("PO-FEB29", "2024-02-29T18:00:00Z"),
+    ] {
+        book.ok(
+            "supply.po.create",
+            "planner:amal",
+            json!({"po_id": po_id, "supplier_id": "SUP-NILE", "promised_at": promised_at, "currency": "EGP"}),
+        )?;
+    }
+    let (mar1_po_code, _) = book.refused(
+        "plan.po_destination.assign",
+        "planner:amal",
+        json!({"po_id": "PO-MAR1", "store_id": "ST-CFC", "entity_id": "LE-SOLE", "plan_month": "2026-02"}),
+    )?;
+    assert_eq!(mar1_po_code, "core.laws.violated");
+    book.ok(
+        "plan.po_destination.assign",
+        "planner:amal",
+        json!({"po_id": "PO-FEB28", "store_id": "ST-CFC", "entity_id": "LE-SOLE", "plan_month": "2026-02"}),
+    )?;
+    book.ok(
+        "plan.po_destination.assign",
+        "planner:amal",
+        json!({"po_id": "PO-FEB29", "store_id": "ST-CFC", "entity_id": "LE-SOLE", "plan_month": "2024-02"}),
+    )
+}
+
+#[test]
+fn spread_bucket_uniqueness_and_deterministic_rank_enforcement() -> Result<(), String> {
+    let mut book = PlanBook::open("org_plan_r2_m1b", "prod", "plan-r2-major1-spread.sqlite")?;
+    seed_retail_base(
+        &mut book,
+        "LE-SOLE",
+        "EGP",
+        &["ST-CFC", "ST-MOE", "ST-CITY"],
+    )?;
+    book.ok(
+        "plan.version.create",
+        "planner:amal",
+        json!({
+            "plan_version_id": "PV-FEB-2026", "entity_id": "LE-SOLE",
+            "plan_code": "FY2026-FEB", "revision_number": 1, "currency": "EGP",
+            "effective_from": "2026-02-01T00:00:00Z", "effective_to": "2026-03-01T00:00:00Z"
+        }),
+    )?;
+
+    // 3-bucket spread: enforce unique buckets (blocks `[2, 2, 2]`) AND deterministic largest-remainder winner.
+    book.ok(
+        "plan.spread_target.create",
+        "planner:amal",
+        json!({
+            "spread_target_id": "SP-3B", "plan_version_id": "PV-FEB-2026",
+            "entity_id": "LE-SOLE", "category": "gold_jewelry", "brand": "nile_gold",
+            "plan_month": "2026-02", "currency": "EGP",
+            "rounding_rule": "largest_remainder", "bucket_count": 3,
+            "allocation_quantum_cost": "0.010000", "target_total_quanta": 100,
+            "target_total_weight": 3, "target_remainder_quanta": 1,
+            "remainder_cutoff_frac": 1, "remainder_cutoff_bucket": 1,
+            "target_sales_retail": "30.000000", "target_sales_cost": "18.000000",
+            "target_receipts_cost": "1.000000", "target_receipts_retail": "3.000000",
+            "target_markdowns_cost": "0.000000", "target_markdowns_retail": "0.000000",
+            "target_eom_stock_cost": "3.000000", "target_fine_metal_g": "3.000000"
+        }),
+    )?;
+    let (wrong_winner_code, _) = book.refused(
+        "plan.line.record_spread",
+        "planner:amal",
+        three_bucket_spread_payload("PL-3B-BAD-WIN", "ST-MOE", 2, 1),
+    )?;
+    assert_eq!(wrong_winner_code, "core.laws.violated");
+    let (skipped_winner_code, _) = book.refused(
+        "plan.line.record_spread",
+        "planner:amal",
+        three_bucket_spread_payload("PL-3B-SKIP-WIN", "ST-CFC", 1, 0),
+    )?;
+    assert_eq!(skipped_winner_code, "core.laws.violated");
+
+    book.ok(
+        "plan.line.record_spread",
+        "planner:amal",
+        three_bucket_spread_payload("PL-3B-1", "ST-CFC", 1, 1),
+    )?;
+    book.ok(
+        "plan.line.record_spread",
+        "planner:amal",
+        three_bucket_spread_payload("PL-3B-2", "ST-MOE", 2, 0),
+    )?;
+    let (dup_bucket_code, _) = book.refused(
+        "plan.line.record_spread",
+        "planner:amal",
+        three_bucket_spread_payload("PL-3B-DUP2", "ST-CITY", 2, 0),
+    )?;
+    assert_eq!(dup_bucket_code, "action.precondition_failed");
+
+    book.ok(
+        "plan.line.record_spread",
+        "planner:amal",
+        three_bucket_spread_payload("PL-3B-3", "ST-CITY", 3, 0),
+    )?;
+    book.ok(
+        "plan.spread_target.seal",
+        "planner:amal",
+        json!({"spread_target_id": "SP-3B"}),
+    )
+}
+
+fn seed_unprofiled_sku_and_sale(book: &mut PlanBook) -> Result<(), String> {
+    book.ok(
+        "supply.sku.register",
+        "eng:dina",
+        json!({"sku_id": "SKU-UNPROFILED", "category": "dry_goods", "unit_of_measure": "each", "shelf_life_days": 90}),
+    )?;
+    book.ok(
+        "supply.unit_cost.record",
+        "eng:dina",
+        json!({
+            "sku_id": "SKU-UNPROFILED", "cost_ref": "COST-UNPROF-1", "owner_entity_id": "LE-SOLE",
+            "supplier_id": "SUP-NILE", "unit_cost": "50.0000", "currency": "EGP",
+            "effective_from": "2026-08-01T00:00:00Z"
+        }),
+    )?;
+    book.ok(
+        "supply.pos_sale.record",
+        "clerk:hana",
+        json!({
+            "sale_id": "SALE-UNPROF-1", "store_id": "ST-CFC", "sku_id": "SKU-UNPROFILED",
+            "sold_qty": "30.000000", "unit": "each", "net_revenue": "3000.000000",
+            "applied_unit_cost": "50.0000", "cost_status": "costed", "costed_ref": "COST-UNPROF-1",
+            "currency": "EGP", "sold_at": "2026-09-11T14:00:00Z"
+        }),
+    )
+}
+
+#[test]
+fn active_plan_line_supersession_and_unprofiled_sales_preservation() -> Result<(), String> {
+    let mut book = PlanBook::open("org_plan_r2_m2", "prod", "plan-r2-major2.sqlite")?;
+    seed_locked_plan_and_envelope(&mut book)?;
+    book.ok(
+        "supply.pos_sale.record",
+        "clerk:hana",
+        json!({
+            "sale_id": "SALE-PROF-1", "store_id": "ST-CFC", "sku_id": "SKU-DRY-1",
+            "sold_qty": "120.000000", "unit": "each", "net_revenue": "12000.000000",
+            "applied_unit_cost": "60.0000", "cost_status": "costed", "costed_ref": "COST-DRY-1",
+            "currency": "EGP", "sold_at": "2026-09-10T14:00:00Z"
+        }),
+    )?;
+    seed_unprofiled_sku_and_sale(&mut book)?;
+
+    // Unprofiled sale MUST NOT vanish silently from `plan.actual_vs_plan_variance`.
+    let var_v1 = book.transform("plan.actual_vs_plan_variance")?;
+    assert_eq!(var_v1.rows.len(), 2);
+    let unprof = var_v1
+        .rows
+        .iter()
+        .find(|row| row_str(&row.values, "sp_brand").as_deref() == Some("__unprofiled__"))
+        .ok_or("missing unprofiled sale row in actual_vs_plan_variance")?;
+    assert_eq!(
+        row_str(&unprof.values, "actual_sales_retail").as_deref(),
+        Some("3000")
+    );
+    assert_eq!(
+        row_str(&unprof.values, "profile_complete").as_deref(),
+        Some("false")
+    );
+    assert_eq!(
+        row_str(&unprof.values, "plan_matched").as_deref(),
+        Some("false")
+    );
+    assert_eq!(
+        row_str(&unprof.values, "sales_retail_variance").as_deref(),
+        Some("null")
+    );
+
+    // Supersede `PV-2026-V1` -> `PV-2026-V2` and re-point `SLOT-DRY-SEP` without deadlock.
+    book.ok(
+        "plan.version.create_revision",
+        "planner:amal",
+        json!({
+            "plan_version_id": "PV-2026-V2", "entity_id": "LE-SOLE",
+            "plan_code": "FY2026-AUTUMN", "revision_number": 2, "currency": "EGP",
+            "effective_from": "2026-09-01T00:00:00Z", "effective_to": "2026-10-01T00:00:00Z",
+            "supersedes_version_id": "PV-2026-V1"
+        }),
+    )?;
+    record_dry_goods_plan_line(
+        &mut book,
+        "PL-DRY-SEP-V2",
+        "PV-2026-V2",
+        "20000.000000",
+        "12000.000000",
+        "200.000000",
+    )?;
+    lock_plan_version(&mut book, "PV-2026-V2")?;
+    book.ok(
+        "plan.baseline.supersede",
+        "director:salma",
+        json!({
+            "slot_id": "SLOT-DRY-SEP", "plan_version_id": "PV-2026-V2",
+            "plan_line_id": "PL-DRY-SEP-V2"
+        }),
+    )?;
+    book.ok(
+        "plan.version.supersede",
+        "director:salma",
+        json!({"plan_version_id": "PV-2026-V1", "successor_version_id": "PV-2026-V2"}),
+    )?;
+
+    let var_v2 = book.transform("plan.actual_vs_plan_variance")?;
+    let prof_v2 = var_v2
+        .rows
+        .iter()
+        .find(|row| row_str(&row.values, "sp_brand").as_deref() == Some("nile_foods"))
+        .ok_or("missing profiled row after baseline supersession")?;
+    assert_eq!(
+        row_str(&prof_v2.values, "plan_version_id").as_deref(),
+        Some("PV-2026-V2")
+    );
+    assert_eq!(
+        row_str(&prof_v2.values, "sales_retail_variance").as_deref(),
+        Some("-8000")
+    );
+    Ok(())
+}
+
+#[test]
+fn forecast_publish_rechecks_production_model_and_stamps_commit_time() -> Result<(), String> {
+    let mut book = PlanBook::open("org_plan_r2_m3", "prod", "plan-r2-major3.sqlite")?;
+    seed_locked_plan_and_envelope(&mut book)?;
+    seed_production_model_version(&mut book, "supply.demand_forecast@1")?;
+
+    for (forecast_id, revision) in [
+        ("PF-LIVE", "rev-2026-09-live"),
+        ("PF-RETIRED", "rev-2026-09-retired"),
+    ] {
+        book.ok(
+            "plan.forecast.record",
+            "eng:dina",
+            json!({
+                "forecast_id": forecast_id, "plan_version_id": "PV-2026-V1",
+                "plan_line_id": "PL-DRY-SEP", "model_version": "supply.demand_forecast@1",
+                "forecast_revision": revision, "entity_id": "LE-SOLE", "store_id": "ST-CFC",
+                "category": "dry_goods", "brand": "nile_foods", "plan_month": "2026-09",
+                "period_start": "2026-09-01T00:00:00Z", "currency": "EGP", "unit": "each",
+                "forecast_sales_retail": "19000.000000", "forecast_sales_cost": "11000.000000",
+                "forecast_sales_qty": "190.000000", "forecast_fine_metal_g": "0.000000"
+            }),
+        )?;
+    }
+
+    let draft_ts = book
+        .fact_field("plan.PublishedForecast", "PF-LIVE", "published_at")?
+        .ok_or("missing draft published_at")?;
+    book.ok(
+        "plan.forecast.publish",
+        "eng:dina",
+        json!({"forecast_id": "PF-LIVE"}),
+    )?;
+    let published_ts = book
+        .fact_field("plan.PublishedForecast", "PF-LIVE", "published_at")?
+        .ok_or("missing published published_at")?;
+    assert_ne!(
+        draft_ts, published_ts,
+        "publish must re-stamp published_at from Norn.commitTime()"
+    );
+
+    // Retire the model version after draft creation; publishing the draft MUST refuse.
+    book.ok(
+        "ml.modelversion.retire",
+        "director:salma",
+        json!({"version_id": "supply.demand_forecast@1"}),
+    )?;
+    let (retired_code, _) = book.refused(
+        "plan.forecast.publish",
+        "eng:dina",
+        json!({"forecast_id": "PF-RETIRED"}),
+    )?;
+    assert_eq!(retired_code, "action.precondition_failed");
+    assert_eq!(
+        book.fact_field("plan.PublishedForecast", "PF-RETIRED", "status")?
+            .as_deref(),
+        Some("draft")
+    );
+    Ok(())
+}
+
+fn read_roles_for_resource(
+    policy: &ArtifactEnvelope,
+    resource: &str,
+) -> Result<BTreeSet<String>, String> {
+    let payload = serde_json::to_value(policy.payload.to_json_value())
+        .map_err(|err| format!("policy json: {err}"))?;
+    let rules = payload
+        .get("rules")
+        .and_then(Value::as_array)
+        .ok_or("missing access policy rules")?;
+    let mut roles = BTreeSet::new();
+    for rule in rules {
+        if rule.get("resourceType").and_then(Value::as_str) != Some(resource) {
+            continue;
+        }
+        let reads = rule
+            .get("actions")
+            .and_then(Value::as_array)
+            .is_some_and(|acts| acts.iter().any(|act| act.as_str() == Some("norn.read")));
+        if !reads {
+            continue;
+        }
+        if let Some(clauses) = rule.get("allOf").and_then(Value::as_array) {
+            for clause in clauses {
+                if let Some(any_of) = clause
+                    .get("role")
+                    .and_then(|role| role.get("anyOf"))
+                    .and_then(Value::as_array)
+                {
+                    for role in any_of.iter().filter_map(Value::as_str) {
+                        roles.insert(role.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    Ok(roles)
+}
+
+#[test]
+fn otb_position_complete_binding_coverage_and_aligned_read_policy() -> Result<(), String> {
+    let mut book = PlanBook::open("org_plan_r2_m4", "prod", "plan-r2-major4.sqlite")?;
+    let policy = book
+        .pack
+        .candidate
+        .iter()
+        .find(|art| art.artifact_id.as_str() == "plan.access.policy")
+        .ok_or("missing plan.access.policy")?;
+    let env_roles = read_roles_for_resource(policy, "plan.OtbEnvelope")?;
+    let binding_roles = read_roles_for_resource(policy, "plan.OtbPoBinding")?;
+    assert!(!env_roles.is_empty());
+    assert_eq!(
+        env_roles, binding_roles,
+        "OtbEnvelope and OtbPoBinding must share identical norn.read role sets"
+    );
+
+    seed_locked_plan_and_envelope(&mut book)?;
+    create_draft_po_with_destination(
+        &mut book,
+        "PO-C1",
+        "PO-C1/1",
+        "SKU-DRY-1",
+        "100.000000",
+        "60.0000",
+    )?;
+    book.ok(
+        "plan.otb.authorize_po_line",
+        "ops:karim",
+        otb_auth_input("OTB-C1", "ENV-DRY-SEP", "PO-C1", "PO-C1/1"),
+    )?;
+    create_draft_po_with_destination(
+        &mut book,
+        "PO-C2",
+        "PO-C2/1",
+        "SKU-DRY-1",
+        "40.000000",
+        "50.0000",
+    )?;
+    book.ok(
+        "plan.otb.authorize_po_line",
+        "ops:karim",
+        otb_auth_input("OTB-C2", "ENV-DRY-SEP", "PO-C2", "PO-C2/1"),
+    )?;
+
+    let full = book.transform("plan.otb_position")?;
+    assert!(full.complete);
+    let full_row = full.rows.first().ok_or("missing full otb_position row")?;
+    assert_eq!(
+        row_str(&full_row.values, "bindings_complete").as_deref(),
+        Some("true")
+    );
+    assert_eq!(
+        row_str(&full_row.values, "remaining_otb_cost").as_deref(),
+        Some("2000")
+    );
+
+    // Count-only access on bindings marks the transform incomplete with withheld counts.
+    let count_only = book.transform_with_access("plan.otb_position", |record| {
+        if record.object_type == "plan.OtbPoBinding" {
+            Ok(RowAccess::Count)
+        } else {
+            Ok(RowAccess::Read)
+        }
+    })?;
+    assert!(!count_only.complete);
+    assert_eq!(count_only.withheld.get("binding").copied(), Some(2));
+
+    // Partial visibility (binding #1 restricted, binding #2 visible) MUST withhold remaining_otb_cost as null.
+    for hidden_mode in [RowAccess::Count, RowAccess::None] {
+        let partial = book.transform_with_access("plan.otb_position", |record| {
+            if record.object_type == "plan.OtbPoBinding" && record.id == "OTB-C1" {
+                Ok(hidden_mode)
+            } else {
+                Ok(RowAccess::Read)
+            }
+        })?;
+        let partial_row = partial
+            .rows
+            .first()
+            .ok_or("missing partial otb_position row")?;
+        assert_eq!(
+            row_str(&partial_row.values, "bindings_complete").as_deref(),
+            Some("false")
+        );
+        assert_eq!(
+            row_str(&partial_row.values, "remaining_otb_cost").as_deref(),
+            Some("null")
+        );
+    }
     Ok(())
 }

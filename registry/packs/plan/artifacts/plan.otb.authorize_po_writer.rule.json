@@ -34,12 +34,7 @@
               {
                 "id": "out_facts",
                 "key": "facts",
-                "value": "[{op: 'create', objectType: 'plan.OtbPoBinding', key: event.input.binding_id, values: {binding_id: event.input.binding_id, envelope_id: event.input.envelope_id, plan_version_id: event.input.plan_version_id, entity_id: event.input.entity_id, store_id: event.input.store_id, sku_id: event.input.sku_id, category: event.input.category, brand: event.input.brand, plan_month: event.input.plan_month, po_id: event.input.po_id, line_id: event.input.line_id, currency: event.input.currency, unit: event.input.unit, ordered_qty: event.input.ordered_qty, received_qty: 0, unit_cost: event.input.unit_cost, authorized_cost: event.input.authorized_cost, recognized_receipt_cost: 0, unreceived_authorized_cost: event.input.authorized_cost, cancelled_released_cost: 0, otb_consumed_cost: event.input.authorized_cost, envelope_cap_snapshot: event.input.envelope_cap_snapshot, prior_consumed_snapshot: event.input.prior_consumed_snapshot, expected_payment_date: event.input.expected_payment_date, payment_terms_days: event.input.payment_terms_days, as_of: event.input.as_of, authorized_by: event.actor, status: 'authorized'}}]"
-              },
-              {
-                "id": "out_links",
-                "key": "links",
-                "value": "[{op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'envelope', targetType: 'plan.OtbEnvelope', targetKey: event.input.envelope_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'order', targetType: 'supply.PurchaseOrder', targetKey: event.input.po_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'order_line', targetType: 'supply.OrderLine', targetKey: event.input.line_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'sku', targetType: 'supply.Sku', targetKey: event.input.sku_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'sku_profile', targetType: 'plan.SkuProfile', targetKey: event.input.sku_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'po_destination', targetType: 'plan.PoDestination', targetKey: event.input.po_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'owner_entity', targetType: 'supply.LegalEntity', targetKey: event.input.entity_id}, {op: 'add', sourceType: 'plan.OtbPoBinding', sourceKey: event.input.binding_id, link: 'store', targetType: 'supply.Store', targetKey: event.input.store_id}]"
+                "value": "[{op: 'create', objectType: 'plan.OtbPoBinding', key: event.input.binding_id, values: {binding_id: event.input.binding_id, envelope_id: event.input.envelope_id, plan_version_id: event.input.plan_version_id, entity_id: event.input.entity_id, store_id: event.input.store_id, sku_id: event.input.sku_id, category: event.input.category, brand: event.input.brand, plan_month: event.input.plan_month, po_id: event.input.po_id, line_id: event.input.line_id, currency: event.input.currency, unit: event.input.unit, ordered_qty: event.input.ordered_qty, received_qty: 0, unit_cost: event.input.unit_cost, authorized_cost: event.input.authorized_cost, recognized_receipt_cost: 0, unreceived_authorized_cost: event.input.authorized_cost, cancelled_released_cost: 0, otb_consumed_cost: event.input.authorized_cost, envelope_cap_snapshot: event.input.envelope_cap_snapshot, prior_consumed_snapshot: event.input.prior_consumed_snapshot, authorized_binding_seq: event.input.authorized_binding_seq, expected_payment_date: event.input.expected_payment_date, payment_terms_days: event.input.payment_terms_days, as_of: event.input.as_of, authorized_by: event.actor, status: 'authorized'}}]"
               },
               {
                 "id": "out_commands",
@@ -78,6 +73,13 @@
               "properties": {
                 "as_of": {
                   "type": "string"
+                },
+                "authorized_binding_seq": {
+                  "nornType": {
+                    "kind": "decimal",
+                    "scale": 0
+                  },
+                  "type": "number"
                 },
                 "authorized_cost": {
                   "nornType": {
@@ -181,7 +183,8 @@
                 "unit_cost",
                 "authorized_cost",
                 "envelope_cap_snapshot",
-                "prior_consumed_snapshot"
+                "prior_consumed_snapshot",
+                "authorized_binding_seq"
               ],
               "type": "object"
             },
@@ -243,6 +246,13 @@
                 "properties": {
                   "as_of": {
                     "type": "string"
+                  },
+                  "authorized_binding_seq": {
+                    "nornType": {
+                      "kind": "decimal",
+                      "scale": 0
+                    },
+                    "type": "number"
                   },
                   "authorized_by": {
                     "type": "string"
@@ -393,6 +403,7 @@
                   "otb_consumed_cost",
                   "envelope_cap_snapshot",
                   "prior_consumed_snapshot",
+                  "authorized_binding_seq",
                   "expected_payment_date",
                   "payment_terms_days",
                   "as_of",
@@ -412,67 +423,6 @@
           },
           "type": "array"
         },
-        "links": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "link": {
-                "enum": [
-                  "envelope",
-                  "order",
-                  "order_line",
-                  "sku",
-                  "sku_profile",
-                  "po_destination",
-                  "owner_entity",
-                  "store"
-                ],
-                "type": "string"
-              },
-              "op": {
-                "enum": [
-                  "add"
-                ],
-                "type": "string"
-              },
-              "sourceKey": {
-                "type": "string"
-              },
-              "sourceType": {
-                "enum": [
-                  "plan.OtbPoBinding"
-                ],
-                "type": "string"
-              },
-              "targetKey": {
-                "type": "string"
-              },
-              "targetType": {
-                "enum": [
-                  "plan.OtbEnvelope",
-                  "supply.PurchaseOrder",
-                  "supply.OrderLine",
-                  "supply.Sku",
-                  "plan.SkuProfile",
-                  "plan.PoDestination",
-                  "supply.LegalEntity",
-                  "supply.Store"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "op",
-              "sourceType",
-              "sourceKey",
-              "link",
-              "targetType",
-              "targetKey"
-            ],
-            "type": "object"
-          },
-          "type": "array"
-        },
         "timers": {
           "items": {
             "additionalProperties": false,
@@ -484,7 +434,6 @@
       },
       "required": [
         "facts",
-        "links",
         "commands",
         "timers"
       ],

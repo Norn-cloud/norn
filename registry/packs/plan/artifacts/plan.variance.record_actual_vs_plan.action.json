@@ -1,0 +1,378 @@
+{
+  "artifactId": "plan.variance.record_actual_vs_plan.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record an Actual minus Plan variance snapshot",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.variance.record_actual_vs_plan",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "net_revenue"
+        },
+        "filter": {
+          "currency": "currency",
+          "store_id": "store_id"
+        },
+        "maxItems": 200,
+        "name": "store_sales_retail",
+        "objectType": "supply.PosSale",
+        "window": {
+          "end": "period_end",
+          "endInclusive": false,
+          "property": "sold_at",
+          "start": "period_start",
+          "startInclusive": true
+        }
+      },
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "sold_qty"
+        },
+        "filter": {
+          "store_id": "store_id",
+          "unit": "unit"
+        },
+        "maxItems": 200,
+        "name": "store_sales_qty",
+        "objectType": "supply.PosSale",
+        "window": {
+          "end": "period_end",
+          "endInclusive": false,
+          "property": "sold_at",
+          "start": "period_start",
+          "startInclusive": true
+        }
+      }
+    ],
+    "createLinks": [
+      {
+        "link": "baseline",
+        "targetIdField": "slot_id",
+        "targetType": "plan.ActivePlanLine"
+      },
+      {
+        "link": "owner_entity",
+        "targetIdField": "entity_id",
+        "targetType": "supply.LegalEntity"
+      },
+      {
+        "link": "store",
+        "targetIdField": "store_id",
+        "targetType": "supply.Store"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "clock.nowIso",
+        "field": "as_of",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.slot.plan_version_id",
+        "field": "plan_version_id",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.slot.plan_line_id",
+        "field": "plan_line_id",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.slot.brand",
+        "field": "brand",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.slot.plan_month",
+        "field": "plan_month",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.plan_line.planned_sales_retail",
+        "field": "planned_sales_retail",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.actual_sales_retail - slice.plan_line.planned_sales_retail",
+        "field": "sales_retail_variance",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.plan_line.planned_sales_cost",
+        "field": "planned_sales_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "(input.cost_status == 'costed') ? (input.actual_sales_cost - slice.plan_line.planned_sales_cost) : 0",
+        "field": "sales_cost_variance",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.plan_line.planned_sales_qty",
+        "field": "planned_sales_qty",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.actual_sales_qty - slice.plan_line.planned_sales_qty",
+        "field": "sales_qty_variance",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.ActualPlanVariance.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "variance_id",
+      "objectKind": "plan.ActualPlanVariance",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "actual_sales_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "actual_sales_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "actual_sales_retail": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "as_of": {
+          "type": "string"
+        },
+        "brand": {
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "dry_goods",
+            "chilled",
+            "pharma",
+            "spares"
+          ],
+          "type": "string"
+        },
+        "cost_status": {
+          "enum": [
+            "costed",
+            "missing_cost"
+          ],
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "period_end": {
+          "type": "string"
+        },
+        "period_start": {
+          "type": "string"
+        },
+        "plan_line_id": {
+          "type": "string"
+        },
+        "plan_month": {
+          "type": "string"
+        },
+        "plan_version_id": {
+          "type": "string"
+        },
+        "planned_sales_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_sales_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_sales_retail": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sales_cost_variance": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sales_qty_variance": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sales_retail_variance": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "slot_id": {
+          "type": "string"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        },
+        "variance_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variance_id",
+        "slot_id",
+        "plan_version_id",
+        "plan_line_id",
+        "entity_id",
+        "store_id",
+        "category",
+        "brand",
+        "plan_month",
+        "period_start",
+        "period_end",
+        "currency",
+        "unit",
+        "cost_status",
+        "actual_sales_retail",
+        "planned_sales_retail",
+        "sales_retail_variance",
+        "actual_sales_cost",
+        "planned_sales_cost",
+        "sales_cost_variance",
+        "actual_sales_qty",
+        "planned_sales_qty",
+        "sales_qty_variance",
+        "as_of"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "variance_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variance_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((((((input.entity_id == slice.slot.entity_id) and (input.store_id == slice.slot.store_id)) and (input.category == slice.slot.category)) and (input.currency == slice.slot.currency)) and (input.unit == slice.slot.unit)) and (timestamp(input.period_start) == timestamp(slice.plan_line.period_start))) and (input.actual_sales_retail <= aggregates.store_sales_retail)) and (input.actual_sales_qty <= aggregates.store_sales_qty)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "slot_id"
+          }
+        },
+        "name": "slot",
+        "objectType": "plan.ActivePlanLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "slot",
+            "property": "plan_line_id"
+          }
+        },
+        "name": "plan_line",
+        "objectType": "plan.PlanLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      }
+    ],
+    "title": "Record an Actual minus Plan variance snapshot",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "plan.ActualPlanVariance"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.variance.record_actual_vs_plan.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.PlanLine.eom_snapshot_aligned.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PlanLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A plan line's semi-additive EOM stock snapshot timestamp as_of must equal the exact final UTC second of its proleptic Gregorian calendar month (Feb 28 in non-leap years, Feb 29 in leap years).",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.PlanLine.eom_snapshot_aligned",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A plan line's semi-additive EOM stock snapshot timestamp as_of must equal the exact final UTC second of its proleptic Gregorian calendar month (Feb 28 in non-leap years, Feb 29 in leap years).",
+    "response": {
+      "expression": "all([days_between(date(take(self.plan_month, 4) + '-03-01'), date(self.period_month_date))] as b0, seconds_between(timestamp(self.period_start), timestamp(self.as_of)) == ((((b0 == -28) ? 28 : ((b0 == -29) ? 29 : (((((b0 == 31) or (b0 == 92)) or (b0 == 184)) or (b0 == 245)) ? 30 : 31))) * 86400) - 1))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PlanLine"
+      ],
+      "root": {
+        "id": "plan.PlanLine",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PlanLine"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanLine.eom_snapshot_aligned.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

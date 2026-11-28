@@ -46,6 +46,28 @@
         "targetType": "supply.Store"
       }
     ],
+    "derive": [
+      {
+        "expression": "clock.nowIso",
+        "field": "published_at",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.forecast_sales_retail - slice.plan_line.planned_sales_retail",
+        "field": "forecast_sales_retail_variance",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.forecast_sales_cost - slice.plan_line.planned_sales_cost",
+        "field": "forecast_sales_cost_variance",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.forecast_sales_qty - slice.plan_line.planned_sales_qty",
+        "field": "forecast_sales_qty_variance",
+        "inputRequired": false
+      }
+    ],
     "effectProgram": {
       "entityArtifactId": "plan.PublishedForecast.entity",
       "entityArtifactVersion": "0.1.0",
@@ -101,6 +123,13 @@
           },
           "type": "number"
         },
+        "forecast_sales_cost_variance": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
         "forecast_sales_qty": {
           "nornType": {
             "kind": "decimal",
@@ -108,7 +137,21 @@
           },
           "type": "number"
         },
+        "forecast_sales_qty_variance": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
         "forecast_sales_retail": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "forecast_sales_retail_variance": {
           "nornType": {
             "kind": "decimal",
             "scale": 6
@@ -164,7 +207,10 @@
         "forecast_sales_retail",
         "forecast_sales_cost",
         "forecast_sales_qty",
-        "forecast_fine_metal_g"
+        "forecast_fine_metal_g",
+        "forecast_sales_retail_variance",
+        "forecast_sales_cost_variance",
+        "forecast_sales_qty_variance"
       ],
       "type": "object"
     },

@@ -73,7 +73,7 @@
               "column": "unit"
             }
           ],
-          "input": "sale_with_dims",
+          "input": "sale_resolved",
           "measures": [
             {
               "column": "sold_qty",
@@ -101,6 +101,11 @@
               "column": "costed_ref",
               "fn": "count",
               "name": "costed_lines"
+            },
+            {
+              "column": "profile_ref",
+              "fn": "count",
+              "name": "profiled_lines"
             }
           ],
           "op": "aggregate"
@@ -117,8 +122,66 @@
           "input": "sale",
           "op": "scan"
         },
+        "sale_resolved": {
+          "columns": [
+            {
+              "expression": "input.id",
+              "name": "id"
+            },
+            {
+              "expression": "input.st_entity_id",
+              "name": "st_entity_id"
+            },
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.sk_category",
+              "name": "sk_category"
+            },
+            {
+              "expression": "input.sp_brand ?? '__unprofiled__'",
+              "name": "sp_brand"
+            },
+            {
+              "expression": "input.sp_brand",
+              "name": "profile_ref"
+            },
+            {
+              "expression": "input.unit",
+              "name": "unit"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.sold_at",
+              "name": "sold_at"
+            },
+            {
+              "expression": "input.sold_qty",
+              "name": "sold_qty"
+            },
+            {
+              "expression": "input.net_revenue",
+              "name": "net_revenue"
+            },
+            {
+              "expression": "input.cogs_amount",
+              "name": "cogs_amount"
+            },
+            {
+              "expression": "input.costed_ref",
+              "name": "costed_ref"
+            }
+          ],
+          "input": "sale_with_dims",
+          "op": "project"
+        },
         "sale_with_dims": {
-          "kind": "inner",
+          "kind": "left",
           "left": "sale_with_sku",
           "on": {
             "key": {
@@ -217,6 +280,14 @@
               "name": "plan_month"
             },
             {
+              "expression": "input.profiled_lines == input.sale_lines",
+              "name": "profile_complete"
+            },
+            {
+              "expression": "input.pl_plan_line_id != null",
+              "name": "plan_matched"
+            },
+            {
               "expression": "input.pl_planned_sales_retail",
               "name": "planned_sales_retail"
             },
@@ -225,7 +296,7 @@
               "name": "actual_sales_retail"
             },
             {
-              "expression": "input.actual_sales_retail - input.pl_planned_sales_retail",
+              "expression": "input.pl_planned_sales_retail != null ? (input.actual_sales_retail - (input.pl_planned_sales_retail ?? input.actual_sales_retail)) : null",
               "name": "sales_retail_variance"
             },
             {
@@ -241,7 +312,7 @@
               "name": "effective_actual_sales_cost"
             },
             {
-              "expression": "input.costed_lines == input.sale_lines ? (input.actual_sales_cost - input.pl_planned_sales_cost) : null",
+              "expression": "(input.pl_planned_sales_cost != null and input.costed_lines == input.sale_lines) ? (input.actual_sales_cost - (input.pl_planned_sales_cost ?? input.actual_sales_cost)) : null",
               "name": "sales_cost_variance"
             },
             {
@@ -253,7 +324,7 @@
               "name": "actual_sales_qty"
             },
             {
-              "expression": "input.actual_sales_qty - input.pl_planned_sales_qty",
+              "expression": "input.pl_planned_sales_qty != null ? (input.actual_sales_qty - (input.pl_planned_sales_qty ?? input.actual_sales_qty)) : null",
               "name": "sales_qty_variance"
             }
           ],
@@ -261,7 +332,7 @@
           "op": "project"
         },
         "with_baseline": {
-          "kind": "inner",
+          "kind": "left",
           "left": "at_plan_grain",
           "on": {
             "key": {
@@ -282,7 +353,7 @@
           "right": "baseline"
         },
         "with_plan": {
-          "kind": "inner",
+          "kind": "left",
           "left": "with_baseline",
           "on": {
             "key": {

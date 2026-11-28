@@ -33,6 +33,7 @@ export const Pack = Norn.packLink({
     { termId: "norn.plan.otb.envelope", reason: "canon_gap", note: "Internal OTB purchase-at-cost budget ceiling; explicitly NOT norn.core.commitment (open supply.OrderLines remain the commitments consuming it)." },
     { termId: "norn.plan.otb.po.binding", reason: "system_specific", note: "Pack-level OTB budget consumption ledger binding supply.OrderLine commitments to plan.OtbEnvelope ceilings." },
     { termId: "norn.plan.published.forecast", reason: "canon_gap", note: "The canon ontology pack has no pinned plan-grain ML forecast revision class yet." },
+    { termId: "norn.plan.actual.variance", reason: "system_specific", note: "Pack-level Actual - Plan variance snapshot pinning active baseline and bitemporal variance measures for knowledge-cutoff queries." },
     { termId: "norn.plan.guard.otb.exceeded", reason: "canon_gap", note: "The canon ontology pack has no purchase-budget or capacity-ceiling guard predicate yet; OTB refusal is an internal budget-envelope ceiling check, not an invoice allocation-exceeds-outstanding guard." },
     { termId: "norn.plan.guard.spread.drift", reason: "canon_gap", note: "The canon ontology pack has no top-down plan spread conservation guard predicate yet." },
   ],

@@ -12,6 +12,13 @@
       "version": "0.1.0"
     },
     "actionId": "plan.forecast.publish",
+    "derive": [
+      {
+        "expression": "clock.nowIso",
+        "field": "published_at",
+        "inputRequired": false
+      }
+    ],
     "effectProgram": {
       "entityArtifactId": "plan.PublishedForecast.entity",
       "entityArtifactVersion": "0.1.0",
@@ -19,6 +26,9 @@
       "lifecycle": "status",
       "objectIdField": "forecast_id",
       "objectKind": "plan.PublishedForecast",
+      "setFields": {
+        "published_at": "published_at"
+      },
       "transition": "publish"
     },
     "idempotent": true,
@@ -27,10 +37,14 @@
       "properties": {
         "forecast_id": {
           "type": "string"
+        },
+        "published_at": {
+          "type": "string"
         }
       },
       "required": [
-        "forecast_id"
+        "forecast_id",
+        "published_at"
       ],
       "type": "object"
     },
@@ -47,9 +61,34 @@
       ],
       "type": "object"
     },
+    "preconditions": [
+      "slice.model.status == 'production'"
+    ],
     "scopeRequired": [
       "orgId",
       "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "forecast_id"
+          }
+        },
+        "name": "forecast",
+        "objectType": "plan.PublishedForecast"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "forecast",
+            "property": "model_version"
+          }
+        },
+        "name": "model",
+        "objectType": "ml.ModelVersion"
+      }
     ],
     "title": "Publish a plan-grain forecast revision",
     "writes": [

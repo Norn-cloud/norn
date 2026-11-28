@@ -14,16 +14,6 @@
     "actionId": "plan.baseline.activate",
     "createLinks": [
       {
-        "link": "plan_version",
-        "targetIdField": "plan_version_id",
-        "targetType": "plan.PlanVersion"
-      },
-      {
-        "link": "plan_line",
-        "targetIdField": "plan_line_id",
-        "targetType": "plan.PlanLine"
-      },
-      {
         "link": "owner_entity",
         "targetIdField": "entity_id",
         "targetType": "supply.LegalEntity"

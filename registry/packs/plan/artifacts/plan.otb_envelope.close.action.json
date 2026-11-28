@@ -19,6 +19,9 @@
       "lifecycle": "status",
       "objectIdField": "envelope_id",
       "objectKind": "plan.OtbEnvelope",
+      "setFields": {
+        "active_grain_slot": "envelope_id"
+      },
       "transition": "close"
     },
     "idempotent": true,

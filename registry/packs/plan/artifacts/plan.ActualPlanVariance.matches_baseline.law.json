@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.ActualPlanVariance.matches_baseline.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.ActualPlanVariance.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "An Actual - Plan variance snapshot must align identically with its governing ActivePlanLine baseline slot.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.ActualPlanVariance.matches_baseline",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "An Actual - Plan variance snapshot must align identically with its governing ActivePlanLine baseline slot.",
+    "response": {
+      "expression": "(((((((self.slot_id == self.baseline.slot_id) and (self.entity_id == self.baseline.entity_id)) and (self.store_id == self.baseline.store_id)) and (self.category == self.baseline.category)) and (self.brand == self.baseline.brand)) and (self.plan_month == self.baseline.plan_month)) and (self.currency == self.baseline.currency)) and (self.unit == self.baseline.unit)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.ActualPlanVariance"
+      ],
+      "root": {
+        "id": "plan.ActualPlanVariance",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.ActualPlanVariance"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.ActualPlanVariance.matches_baseline.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

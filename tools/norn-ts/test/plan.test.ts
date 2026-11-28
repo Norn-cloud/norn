@@ -39,6 +39,8 @@ test("plan pack questions lower to their committed QuestionIR", () => {
     "plan.actual_pos_revenue_monthly",
     "plan.actual_pos_units_monthly",
     "plan.published_forecast_sales_monthly",
+    "plan.actual_vs_plan_sales_variance_monthly",
+    "plan.forecast_vs_plan_sales_variance_monthly",
   ])
   golden("plan.questions.json", result.questions)
 })

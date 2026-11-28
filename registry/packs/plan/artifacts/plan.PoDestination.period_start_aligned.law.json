@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.PoDestination.period_start_aligned.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PoDestination.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A purchase order destination's period_start must equal the exact opening UTC instant of its canonical YYYY-MM plan_month.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.PoDestination.period_start_aligned",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A purchase order destination's period_start must equal the exact opening UTC instant of its canonical YYYY-MM plan_month.",
+    "response": {
+      "expression": "timestamp(self.period_start) == timestamp(self.plan_month + '-01T00:00:00Z')",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PoDestination"
+      ],
+      "root": {
+        "id": "plan.PoDestination",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PoDestination"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PoDestination.period_start_aligned.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

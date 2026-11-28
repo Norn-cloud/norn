@@ -133,6 +133,20 @@
         "reviewedBy": "lane-a (agent, proposed)",
         "sourceId": "source.plan",
         "termId": "norn.plan.published.forecast"
+      },
+      {
+        "confidenceBasisPoints": 10000,
+        "evidenceRefs": [
+          "registry/packs/plan/plan.ts"
+        ],
+        "externalIri": "https://norn.cloud/registry/packs/plan/0.1.0#plan.ActualPlanVariance",
+        "justification": "Declares `plan.ActualPlanVariance` in `registry/packs/plan/plan.ts`.",
+        "mappingId": "map.norn.plan.actual.variance",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-28T00:00:00Z",
+        "reviewedBy": "lane-a (agent, proposed)",
+        "sourceId": "source.plan",
+        "termId": "norn.plan.actual.variance"
       }
     ],
     "packId": "norn.ontology-pack.plan",
@@ -309,6 +323,25 @@
         ],
         "shapeId": "shape.norn.plan.published.forecast",
         "termId": "norn.plan.published.forecast"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "variance_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          },
+          {
+            "fieldId": "sales_retail_variance",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          }
+        ],
+        "shapeId": "shape.norn.plan.actual.variance",
+        "termId": "norn.plan.actual.variance"
       }
     ],
     "sources": [
@@ -317,11 +350,11 @@
         "files": [
           {
             "path": "registry/packs/plan/plan.ts",
-            "sha256": "523ccb2c26848c8cf7e4e1fd00b27e78c5c7fd218e2024c8f661c831d53bac3e"
+            "sha256": "29eaf7ee56a8cf00e10e2905a98b231d29c3b6daeb363a5df08173dfaeab1a47"
           },
           {
             "path": "registry/packs/plan/actions.ts",
-            "sha256": "6ad23cc92d1ee8fd7fa7f0fbd2232b81d127c9f72029870bf9fbe75bf6058ff1"
+            "sha256": "9a78af39491ce26e19aadea7ddd2f065612063d8bea1d83db6011398d09b04f2"
           }
         ],
         "importMode": "map_only",
@@ -422,6 +455,14 @@
         "semanticAuthority": "semantic_only",
         "status": "active",
         "termId": "norn.plan.published.forecast",
+        "termKind": "class"
+      },
+      {
+        "definition": "Governed plan-grain Actual - Plan variance snapshot backing bitemporal knowledge-cutoff variance questions across late sale restatements.",
+        "label": "Actual vs Plan variance snapshot",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.actual.variance",
         "termKind": "class"
       },
       {

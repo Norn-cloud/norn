@@ -39,6 +39,11 @@
         "expression": "'unplanned'",
         "field": "envelope_kind",
         "inputRequired": false
+      },
+      {
+        "expression": "input.envelope_id",
+        "field": "active_grain_slot",
+        "inputRequired": false
       }
     ],
     "effectProgram": {
@@ -55,6 +60,9 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "active_grain_slot": {
+          "type": "string"
+        },
         "approved_budget_cost": {
           "nornType": {
             "kind": "decimal",
@@ -121,7 +129,8 @@
         "envelope_kind",
         "approved_budget_cost",
         "override_reason",
-        "requested_by"
+        "requested_by",
+        "active_grain_slot"
       ],
       "type": "object"
     },

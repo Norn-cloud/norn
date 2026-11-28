@@ -88,6 +88,11 @@
         "termId": "norn.plan.published.forecast"
       },
       {
+        "note": "Pack-level Actual - Plan variance snapshot pinning active baseline and bitemporal variance measures for knowledge-cutoff queries.",
+        "reason": "system_specific",
+        "termId": "norn.plan.actual.variance"
+      },
+      {
         "note": "The canon ontology pack has no purchase-budget or capacity-ceiling guard predicate yet; OTB refusal is an internal budget-envelope ceiling check, not an invoice allocation-exceeds-outstanding guard.",
         "reason": "canon_gap",
         "termId": "norn.plan.guard.otb.exceeded"

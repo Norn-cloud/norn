@@ -38,6 +38,11 @@
         "inputRequired": false
       },
       {
+        "expression": "timestamp(input.plan_month + '-01T00:00:00Z')",
+        "field": "period_start",
+        "inputRequired": false
+      },
+      {
         "expression": "input.target_remainder_quanta * input.allocation_quantum_cost",
         "field": "target_rounding_remainder_cost",
         "inputRequired": false
@@ -87,11 +92,20 @@
         "period_month_date": {
           "type": "string"
         },
+        "period_start": {
+          "type": "string"
+        },
         "plan_month": {
           "type": "string"
         },
         "plan_version_id": {
           "type": "string"
+        },
+        "remainder_cutoff_bucket": {
+          "type": "integer"
+        },
+        "remainder_cutoff_frac": {
+          "type": "integer"
         },
         "rounding_rule": {
           "enum": [
@@ -173,6 +187,12 @@
             "scale": 6
           },
           "type": "number"
+        },
+        "target_total_quanta": {
+          "type": "integer"
+        },
+        "target_total_weight": {
+          "type": "integer"
         }
       },
       "required": [
@@ -183,11 +203,16 @@
         "brand",
         "plan_month",
         "period_month_date",
+        "period_start",
         "currency",
         "rounding_rule",
         "bucket_count",
         "allocation_quantum_cost",
+        "target_total_quanta",
+        "target_total_weight",
         "target_remainder_quanta",
+        "remainder_cutoff_frac",
+        "remainder_cutoff_bucket",
         "target_sales_retail",
         "target_sales_cost",
         "target_receipts_cost",

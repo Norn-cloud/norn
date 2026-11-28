@@ -26,10 +26,31 @@
           "property": "otb_consumed_cost"
         },
         "filter": {
-          "envelope_id": "envelope_id"
+          "brand": "brand",
+          "category": "category",
+          "currency": "currency",
+          "entity_id": "entity_id",
+          "plan_month": "plan_month",
+          "store_id": "store_id"
         },
         "maxItems": 200,
         "name": "consumed_otb_cost",
+        "objectType": "plan.OtbPoBinding"
+      },
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "brand": "brand",
+          "category": "category",
+          "currency": "currency",
+          "entity_id": "entity_id",
+          "plan_month": "plan_month",
+          "store_id": "store_id"
+        },
+        "maxItems": 200,
+        "name": "grain_binding_count",
         "objectType": "plan.OtbPoBinding"
       },
       {
@@ -44,45 +65,66 @@
         "objectType": "supply.OrderLine"
       }
     ],
+    "createLinks": [
+      {
+        "link": "envelope",
+        "source": {
+          "idField": "binding_id",
+          "objectType": "plan.OtbPoBinding"
+        },
+        "targetIdField": "envelope_id",
+        "targetType": "plan.OtbEnvelope"
+      },
+      {
+        "link": "order",
+        "source": {
+          "idField": "binding_id",
+          "objectType": "plan.OtbPoBinding"
+        },
+        "targetIdField": "po_id",
+        "targetType": "supply.PurchaseOrder"
+      },
+      {
+        "link": "order_line",
+        "source": {
+          "idField": "binding_id",
+          "objectType": "plan.OtbPoBinding"
+        },
+        "targetIdField": "line_id",
+        "targetType": "supply.OrderLine"
+      },
+      {
+        "link": "sku",
+        "source": {
+          "idField": "binding_id",
+          "objectType": "plan.OtbPoBinding"
+        },
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      },
+      {
+        "link": "sku_profile",
+        "source": {
+          "idField": "binding_id",
+          "objectType": "plan.OtbPoBinding"
+        },
+        "targetIdField": "sku_id",
+        "targetType": "plan.SkuProfile"
+      },
+      {
+        "link": "po_destination",
+        "source": {
+          "idField": "binding_id",
+          "objectType": "plan.OtbPoBinding"
+        },
+        "targetIdField": "po_id",
+        "targetType": "plan.PoDestination"
+      }
+    ],
     "derive": [
       {
         "expression": "slice.envelope.plan_version_id",
         "field": "plan_version_id",
-        "inputRequired": false
-      },
-      {
-        "expression": "slice.store.entity_id",
-        "field": "entity_id",
-        "inputRequired": false
-      },
-      {
-        "expression": "slice.po_destination.store_id",
-        "field": "store_id",
-        "inputRequired": false
-      },
-      {
-        "expression": "slice.order_line.sku_id",
-        "field": "sku_id",
-        "inputRequired": false
-      },
-      {
-        "expression": "slice.sku.category",
-        "field": "category",
-        "inputRequired": false
-      },
-      {
-        "expression": "slice.sku_profile.brand",
-        "field": "brand",
-        "inputRequired": false
-      },
-      {
-        "expression": "slice.po_destination.plan_month",
-        "field": "plan_month",
-        "inputRequired": false
-      },
-      {
-        "expression": "slice.order_line.currency",
-        "field": "currency",
         "inputRequired": false
       },
       {
@@ -114,6 +156,11 @@
         "expression": "aggregates.consumed_otb_cost",
         "field": "prior_consumed_snapshot",
         "inputRequired": false
+      },
+      {
+        "expression": "aggregates.grain_binding_count + 1",
+        "field": "authorized_binding_seq",
+        "inputRequired": false
       }
     ],
     "effectProgram": {
@@ -134,6 +181,13 @@
       "properties": {
         "as_of": {
           "type": "string"
+        },
+        "authorized_binding_seq": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 0
+          },
+          "type": "number"
         },
         "authorized_cost": {
           "nornType": {
@@ -221,23 +275,24 @@
         "envelope_id",
         "po_id",
         "line_id",
-        "expected_payment_date",
-        "payment_terms_days",
-        "as_of",
-        "plan_version_id",
+        "sku_id",
         "entity_id",
         "store_id",
-        "sku_id",
         "category",
         "brand",
         "plan_month",
         "currency",
+        "expected_payment_date",
+        "payment_terms_days",
+        "as_of",
+        "plan_version_id",
         "unit",
         "ordered_qty",
         "unit_cost",
         "authorized_cost",
         "envelope_cap_snapshot",
-        "prior_consumed_snapshot"
+        "prior_consumed_snapshot",
+        "authorized_binding_seq"
       ],
       "type": "object"
     },
@@ -255,7 +310,7 @@
       "type": "object"
     },
     "preconditions": [
-      "(((((((((((((((((((slice.order.status == 'draft') and (aggregates.po_line_count == 1)) and (slice.order_line.po_id == input.po_id)) and (slice.order_line.received_qty == 0)) and (slice.envelope.status == 'active')) and (slice.store.status == 'active')) and (slice.owner_entity.status == 'active')) and (slice.order.currency == slice.order_line.currency)) and (slice.order_line.currency == slice.po_destination.currency)) and (slice.order_line.currency == slice.store.currency)) and (slice.order_line.currency == slice.envelope.currency)) and (slice.order_line.unit == slice.sku.unit_of_measure)) and (slice.envelope.entity_id == slice.store.entity_id)) and (slice.envelope.entity_id == slice.po_destination.entity_id)) and (slice.envelope.store_id == slice.po_destination.store_id)) and (slice.envelope.category == slice.sku.category)) and (slice.envelope.category == slice.sku_profile.category)) and (slice.envelope.brand == slice.sku_profile.brand)) and (slice.envelope.plan_month == slice.po_destination.plan_month)) and ((aggregates.consumed_otb_cost + input.authorized_cost) <= slice.envelope.approved_budget_cost)"
+      "((((((((((((((((((((((((((((slice.order.status == 'draft') and (aggregates.po_line_count == 1)) and (slice.order_line.po_id == input.po_id)) and (slice.order_line.sku_id == input.sku_id)) and (slice.order_line.received_qty == 0)) and (slice.envelope.status == 'active')) and (slice.envelope.active_grain_slot == 'ACTIVE')) and ((slice.plan_version.status == 'approved') or (slice.plan_version.status == 'locked'))) and (slice.store.status == 'active')) and (slice.owner_entity.status == 'active')) and (input.entity_id == slice.store.entity_id)) and (input.entity_id == slice.po_destination.entity_id)) and (input.store_id == slice.po_destination.store_id)) and (input.category == slice.sku.category)) and (input.category == slice.sku_profile.category)) and (input.brand == slice.sku_profile.brand)) and (input.plan_month == slice.po_destination.plan_month)) and (input.currency == slice.order.currency)) and (slice.order.currency == slice.order_line.currency)) and (slice.order_line.currency == slice.po_destination.currency)) and (slice.order_line.currency == slice.store.currency)) and (slice.order_line.currency == slice.envelope.currency)) and (slice.order_line.unit == slice.sku.unit_of_measure)) and (slice.envelope.entity_id == input.entity_id)) and (slice.envelope.store_id == input.store_id)) and (slice.envelope.category == input.category)) and (slice.envelope.brand == input.brand)) and (slice.envelope.plan_month == input.plan_month)) and ((aggregates.consumed_otb_cost + input.authorized_cost) <= slice.envelope.approved_budget_cost)"
     ],
     "scopeRequired": [
       "orgId",
@@ -285,7 +340,7 @@
       {
         "key": {
           "property": {
-            "from": "order_line",
+            "from": "input",
             "property": "sku_id"
           }
         },
@@ -295,7 +350,7 @@
       {
         "key": {
           "property": {
-            "from": "order_line",
+            "from": "input",
             "property": "sku_id"
           }
         },
@@ -341,6 +396,16 @@
         },
         "name": "envelope",
         "objectType": "plan.OtbEnvelope"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "envelope",
+            "property": "plan_version_id"
+          }
+        },
+        "name": "plan_version",
+        "objectType": "plan.PlanVersion"
       }
     ],
     "synchronousRule": {

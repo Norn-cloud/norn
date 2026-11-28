@@ -15,8 +15,15 @@ import {
  * Open-to-Buy (OTB) position over the active/approved `plan.OtbEnvelope`
  * population (excluding draft, pending_override, and closed envelopes):
  *   `remaining_otb_cost = approved_budget_cost - recognized_receipts_cost - unreceived_authorized_po_cost`
- * Newly approved envelopes with zero POs appear with `recognized = 0`,
- * `unreceived = 0`, `cancelled = 0`, and `remaining_otb_cost = approved_budget_cost`.
+ * - Aggregates `OtbPoBinding` across the entire merchandise grain
+ *   `(entity_id, store_id, category, brand, plan_month, currency)` so
+ *   outstanding commitments from superseded revisions ALWAYS count against the
+ *   governing active envelope's cap.
+ * - Enforces complete binding coverage: Branch 2 (`zero_po`) ONLY admits active
+ *   envelopes with `binding_count == 0`, and Branch 1 (`with_bindings`)
+ *   withholds `remaining_otb_cost` as `null` (`bindings_complete = false`) if
+ *   fewer bindings are visible than `env_binding_count`, so partial visibility
+ *   can never fabricate full remaining budget.
  */
 export const OtbPosition = Norn.transform({
   id: "plan.otb_position", title: "Open-to-Buy remaining envelope position", version: "0.1.0",
@@ -25,67 +32,118 @@ export const OtbPosition = Norn.transform({
     envelope: { op: "scan", input: "envelope" },
     active_envelope: { op: "filter", input: "envelope", predicate: "input.status == 'active'" },
     binding: { op: "scan", input: "binding" },
-    // Branch 1: active envelopes that have one or more PO bindings.
-    per_envelope: {
+    // Branch 1: active envelopes joined to grain-wide PO commitments across all revisions.
+    per_grain: {
       op: "aggregate", input: "binding",
-      groupBy: [{ column: "envelope_id" }, { column: "currency" }],
+      groupBy: [
+        { column: "entity_id" }, { column: "store_id" }, { column: "category" },
+        { column: "brand" }, { column: "plan_month" }, { column: "currency" },
+      ],
       measures: [
         { name: "recognized_receipts_cost", fn: "sum", column: "recognized_receipt_cost", label: "Recognized receipts at cost" },
         { name: "unreceived_authorized_po_cost", fn: "sum", column: "unreceived_authorized_cost", label: "Unreceived authorized PO value" },
         { name: "cancelled_released_cost", fn: "sum", column: "cancelled_released_cost", label: "Cancelled released balance" },
         { name: "po_line_count", fn: "count" },
+        { name: "max_binding_seq", fn: "max", column: "authorized_binding_seq" },
+      ],
+    },
+    per_grain_active_key: {
+      op: "project", input: "per_grain", columns: [
+        { name: "entity_id", expression: "input.entity_id" },
+        { name: "store_id", expression: "input.store_id" },
+        { name: "category", expression: "input.category" },
+        { name: "brand", expression: "input.brand" },
+        { name: "plan_month", expression: "input.plan_month" },
+        { name: "currency", expression: "input.currency" },
+        { name: "active_grain_slot", expression: "'ACTIVE'" },
+        { name: "recognized_receipts_cost", expression: "input.recognized_receipts_cost" },
+        { name: "unreceived_authorized_po_cost", expression: "input.unreceived_authorized_po_cost" },
+        { name: "cancelled_released_cost", expression: "input.cancelled_released_cost" },
+        { name: "po_line_count", expression: "input.po_line_count" },
+        { name: "max_binding_seq", expression: "input.max_binding_seq" },
       ],
     },
     joined_active: {
-      op: "join", left: "per_envelope", right: "active_envelope",
-      on: { key: { left: ["envelope_id"], right: "primary" } }, kind: "inner", prefix: "env_",
+      op: "join", left: "per_grain_active_key", right: "active_envelope",
+      on: {
+        key: {
+          left: ["entity_id", "store_id", "category", "brand", "plan_month", "currency", "active_grain_slot"],
+          right: "active_grain",
+        },
+      },
+      kind: "inner", prefix: "env_",
     },
     with_bindings: {
       op: "project", input: "joined_active", columns: [
-        { name: "envelope_id", expression: "input.envelope_id" },
+        { name: "entity_id", expression: "input.entity_id" },
+        { name: "store_id", expression: "input.store_id" },
+        { name: "category", expression: "input.category" },
+        { name: "brand", expression: "input.brand" },
+        { name: "plan_month", expression: "input.plan_month" },
         { name: "currency", expression: "input.currency" },
+        { name: "envelope_id", expression: "input.env_envelope_id" },
         { name: "plan_version_id", expression: "input.env_plan_version_id" },
-        { name: "entity_id", expression: "input.env_entity_id" },
-        { name: "store_id", expression: "input.env_store_id" },
-        { name: "category", expression: "input.env_category" },
-        { name: "brand", expression: "input.env_brand" },
-        { name: "plan_month", expression: "input.env_plan_month" },
         { name: "envelope_kind", expression: "input.env_envelope_kind" },
         { name: "approved_budget_cost", expression: "input.env_approved_budget_cost" },
         { name: "recognized_receipts_cost", expression: "input.recognized_receipts_cost + 0" },
         { name: "unreceived_authorized_po_cost", expression: "input.unreceived_authorized_po_cost + 0" },
         { name: "cancelled_released_cost", expression: "input.cancelled_released_cost + 0" },
-        { name: "remaining_otb_cost", expression: "input.env_approved_budget_cost - input.recognized_receipts_cost - input.unreceived_authorized_po_cost" },
+        { name: "bindings_complete", expression: "input.po_line_count == input.max_binding_seq" },
+        { name: "remaining_otb_cost", expression: "input.po_line_count == input.max_binding_seq ? (input.env_approved_budget_cost - input.recognized_receipts_cost - input.unreceived_authorized_po_cost) : null" },
         { name: "po_line_count", expression: "input.po_line_count + 0" },
         { name: "has_bindings", expression: "1" },
       ],
     },
-    // Branch 2: every active envelope at zero consumption so zero-PO active envelopes appear.
+    // Branch 2: active envelopes with zero visible PO bindings at the exact same
+    // 6-column merchandise grain (deduped below in favour of `with_bindings`;
+    // `VIEW-READ-1` + `HOST-READ-2` coverage gates fail closed whenever any
+    // `binding` row is withheld).
     active_keys: {
       op: "aggregate", input: "active_envelope",
-      groupBy: [{ column: "envelope_id" }, { column: "currency" }],
+      groupBy: [
+        { column: "entity_id" }, { column: "store_id" }, { column: "category" },
+        { column: "brand" }, { column: "plan_month" }, { column: "currency" },
+      ],
       measures: [{ name: "env_rows", fn: "count" }],
     },
+    active_keys_slot: {
+      op: "project", input: "active_keys", columns: [
+        { name: "entity_id", expression: "input.entity_id" },
+        { name: "store_id", expression: "input.store_id" },
+        { name: "category", expression: "input.category" },
+        { name: "brand", expression: "input.brand" },
+        { name: "plan_month", expression: "input.plan_month" },
+        { name: "currency", expression: "input.currency" },
+        { name: "active_grain_slot", expression: "'ACTIVE'" },
+      ],
+    },
     active_full: {
-      op: "join", left: "active_keys", right: "active_envelope",
-      on: { key: { left: ["envelope_id"], right: "primary" } }, kind: "inner", prefix: "env_",
+      op: "join", left: "active_keys_slot", right: "active_envelope",
+      on: {
+        key: {
+          left: ["entity_id", "store_id", "category", "brand", "plan_month", "currency", "active_grain_slot"],
+          right: "active_grain",
+        },
+      },
+      kind: "inner", prefix: "env_",
     },
     zero_po: {
       op: "project", input: "active_full", columns: [
-        { name: "envelope_id", expression: "input.envelope_id" },
+        { name: "entity_id", expression: "input.entity_id" },
+        { name: "store_id", expression: "input.store_id" },
+        { name: "category", expression: "input.category" },
+        { name: "brand", expression: "input.brand" },
+        { name: "plan_month", expression: "input.plan_month" },
         { name: "currency", expression: "input.currency" },
+        { name: "envelope_id", expression: "input.env_envelope_id" },
         { name: "plan_version_id", expression: "input.env_plan_version_id" },
-        { name: "entity_id", expression: "input.env_entity_id" },
-        { name: "store_id", expression: "input.env_store_id" },
-        { name: "category", expression: "input.env_category" },
-        { name: "brand", expression: "input.env_brand" },
-        { name: "plan_month", expression: "input.env_plan_month" },
         { name: "envelope_kind", expression: "input.env_envelope_kind" },
         { name: "approved_budget_cost", expression: "input.env_approved_budget_cost" },
         { name: "recognized_receipts_cost", expression: "input.env_approved_budget_cost - input.env_approved_budget_cost" },
         { name: "unreceived_authorized_po_cost", expression: "input.env_approved_budget_cost - input.env_approved_budget_cost" },
         { name: "cancelled_released_cost", expression: "input.env_approved_budget_cost - input.env_approved_budget_cost" },
-        { name: "remaining_otb_cost", expression: "input.env_approved_budget_cost + 0" },
+        { name: "bindings_complete", expression: "true" },
+        { name: "remaining_otb_cost", expression: "true ? (input.env_approved_budget_cost + 0) : null" },
         { name: "po_line_count", expression: "0" },
         { name: "has_bindings", expression: "0" },
       ],
@@ -93,25 +151,26 @@ export const OtbPosition = Norn.transform({
     combined: { op: "union", inputs: ["with_bindings", "zero_po"], branch: "source_branch" },
     deduped: {
       op: "dedupe", input: "combined",
-      key: ["envelope_id", "currency"],
+      key: ["entity_id", "store_id", "category", "brand", "plan_month", "currency"],
       orderBy: [{ column: "has_bindings", direction: "desc" }, { column: "source_branch", direction: "asc" }],
       keep: "first",
     },
     position: {
       op: "project", input: "deduped", columns: [
-        { name: "envelope_id", expression: "input.envelope_id" },
-        { name: "currency", expression: "input.currency" },
-        { name: "plan_version_id", expression: "input.plan_version_id" },
         { name: "entity_id", expression: "input.entity_id" },
         { name: "store_id", expression: "input.store_id" },
         { name: "category", expression: "input.category" },
         { name: "brand", expression: "input.brand" },
         { name: "plan_month", expression: "input.plan_month" },
+        { name: "currency", expression: "input.currency" },
+        { name: "envelope_id", expression: "input.envelope_id" },
+        { name: "plan_version_id", expression: "input.plan_version_id" },
         { name: "envelope_kind", expression: "input.envelope_kind" },
         { name: "approved_budget_cost", expression: "input.approved_budget_cost" },
         { name: "recognized_receipts_cost", expression: "input.recognized_receipts_cost" },
         { name: "unreceived_authorized_po_cost", expression: "input.unreceived_authorized_po_cost" },
         { name: "cancelled_released_cost", expression: "input.cancelled_released_cost" },
+        { name: "bindings_complete", expression: "input.bindings_complete" },
         { name: "remaining_otb_cost", expression: "input.remaining_otb_cost" },
         { name: "po_line_count", expression: "input.po_line_count" },
       ],
@@ -171,10 +230,27 @@ export const ActualSalesAtPlanGrain = Norn.transform({
     },
     sale_with_dims: {
       op: "join", left: "sale_with_sku", right: "sku_profile",
-      on: { key: { left: ["sku_id"], right: "primary" } }, kind: "inner", prefix: "sp_",
+      on: { key: { left: ["sku_id"], right: "primary" } }, kind: "left", prefix: "sp_",
+    },
+    sale_resolved: {
+      op: "project", input: "sale_with_dims", columns: [
+        { name: "id", expression: "input.id" },
+        { name: "st_entity_id", expression: "input.st_entity_id" },
+        { name: "store_id", expression: "input.store_id" },
+        { name: "sk_category", expression: "input.sk_category" },
+        { name: "sp_brand", expression: "input.sp_brand ?? '__unprofiled__'" },
+        { name: "profile_ref", expression: "input.sp_brand" },
+        { name: "unit", expression: "input.unit" },
+        { name: "currency", expression: "input.currency" },
+        { name: "sold_at", expression: "input.sold_at" },
+        { name: "sold_qty", expression: "input.sold_qty" },
+        { name: "net_revenue", expression: "input.net_revenue" },
+        { name: "cogs_amount", expression: "input.cogs_amount" },
+        { name: "costed_ref", expression: "input.costed_ref" },
+      ],
     },
     at_plan_grain: {
-      op: "aggregate", input: "sale_with_dims",
+      op: "aggregate", input: "sale_resolved",
       groupBy: [
         { column: "st_entity_id" }, { column: "store_id" }, { column: "sk_category" },
         { column: "sp_brand" }, { column: "unit" }, { column: "currency" },
@@ -186,6 +262,7 @@ export const ActualSalesAtPlanGrain = Norn.transform({
         { name: "actual_sales_cost", fn: "sum", column: "cogs_amount", label: "Actual COGS" },
         { name: "sale_lines", fn: "count" },
         { name: "costed_lines", fn: "count", column: "costed_ref" },
+        { name: "profiled_lines", fn: "count", column: "profile_ref" },
       ],
     },
     summary: {
@@ -199,6 +276,7 @@ export const ActualSalesAtPlanGrain = Norn.transform({
         { name: "sold_at", expression: "input.sold_at" },
         { name: "actual_sales_qty", expression: "input.actual_sales_qty" },
         { name: "actual_sales_retail", expression: "input.actual_sales_retail" },
+        { name: "profile_complete", expression: "input.profiled_lines == input.sale_lines" },
         { name: "cost_complete", expression: "input.costed_lines == input.sale_lines" },
         { name: "effective_actual_sales_cost", expression: "input.costed_lines == input.sale_lines ? input.actual_sales_cost : null" },
       ],
@@ -210,10 +288,11 @@ export const ActualSalesAtPlanGrain = Norn.transform({
 /**
  * Complete `Actual - Plan` variance at FULL plan grain
  * `(entity_id x store_id x category x brand x ISO month x currency x unit)`:
- * aggregates `PosSale` (joined with `Store`, `Sku`, `SkuProfile`) to plan grain
- * FIRST, then joins once onto `ActivePlanLine` and `PlanLine`, explicitly
- * pinning `plan_version_id`, `plan_line_id`, and withholding cost variance when
- * any contributing sale lacks verified cost.
+ * aggregates `PosSale` (left-joined with `SkuProfile` so unprofiled sales NEVER
+ * vanish silently) to plan grain FIRST, then left-joins once onto
+ * `ActivePlanLine` and `PlanLine`, explicitly pinning `plan_version_id`,
+ * `plan_line_id`, surfacing `profile_complete` and `plan_matched`, and
+ * withholding variance whenever a SKU is unprofiled, unmatched, or lacks cost.
  */
 export const ActualVsPlanVariance = Norn.transform({
   id: "plan.actual_vs_plan_variance", title: "Actual minus Plan variance at full plan grain", version: "0.1.0",
@@ -238,10 +317,27 @@ export const ActualVsPlanVariance = Norn.transform({
     },
     sale_with_dims: {
       op: "join", left: "sale_with_sku", right: "sku_profile",
-      on: { key: { left: ["sku_id"], right: "primary" } }, kind: "inner", prefix: "sp_",
+      on: { key: { left: ["sku_id"], right: "primary" } }, kind: "left", prefix: "sp_",
+    },
+    sale_resolved: {
+      op: "project", input: "sale_with_dims", columns: [
+        { name: "id", expression: "input.id" },
+        { name: "st_entity_id", expression: "input.st_entity_id" },
+        { name: "store_id", expression: "input.store_id" },
+        { name: "sk_category", expression: "input.sk_category" },
+        { name: "sp_brand", expression: "input.sp_brand ?? '__unprofiled__'" },
+        { name: "profile_ref", expression: "input.sp_brand" },
+        { name: "unit", expression: "input.unit" },
+        { name: "currency", expression: "input.currency" },
+        { name: "sold_at", expression: "input.sold_at" },
+        { name: "sold_qty", expression: "input.sold_qty" },
+        { name: "net_revenue", expression: "input.net_revenue" },
+        { name: "cogs_amount", expression: "input.cogs_amount" },
+        { name: "costed_ref", expression: "input.costed_ref" },
+      ],
     },
     at_plan_grain: {
-      op: "aggregate", input: "sale_with_dims",
+      op: "aggregate", input: "sale_resolved",
       groupBy: [
         { column: "st_entity_id" }, { column: "store_id" }, { column: "sk_category" },
         { column: "sp_brand" }, { column: "sold_at", grain: "month", label: "Actual month" },
@@ -253,6 +349,7 @@ export const ActualVsPlanVariance = Norn.transform({
         { name: "actual_sales_cost", fn: "sum", column: "cogs_amount", label: "Actual COGS" },
         { name: "sale_lines", fn: "count" },
         { name: "costed_lines", fn: "count", column: "costed_ref" },
+        { name: "profiled_lines", fn: "count", column: "profile_ref" },
       ],
     },
     with_baseline: {
@@ -263,12 +360,12 @@ export const ActualVsPlanVariance = Norn.transform({
           right: "plan_grain_slot",
         },
       },
-      kind: "inner", prefix: "bl_",
+      kind: "left", prefix: "bl_",
     },
     with_plan: {
       op: "join", left: "with_baseline", right: "plan_line",
       on: { key: { left: ["bl_plan_line_id"], right: "primary" } },
-      kind: "inner", prefix: "pl_",
+      kind: "left", prefix: "pl_",
     },
     variance: {
       op: "project", input: "with_plan", columns: [
@@ -282,16 +379,18 @@ export const ActualVsPlanVariance = Norn.transform({
         { name: "plan_version_id", expression: "input.pl_plan_version_id" },
         { name: "plan_line_id", expression: "input.pl_plan_line_id" },
         { name: "plan_month", expression: "input.pl_plan_month" },
+        { name: "profile_complete", expression: "input.profiled_lines == input.sale_lines" },
+        { name: "plan_matched", expression: "input.pl_plan_line_id != null" },
         { name: "planned_sales_retail", expression: "input.pl_planned_sales_retail" },
         { name: "actual_sales_retail", expression: "input.actual_sales_retail" },
-        { name: "sales_retail_variance", expression: "input.actual_sales_retail - input.pl_planned_sales_retail" },
+        { name: "sales_retail_variance", expression: "input.pl_planned_sales_retail != null ? (input.actual_sales_retail - (input.pl_planned_sales_retail ?? input.actual_sales_retail)) : null" },
         { name: "planned_sales_cost", expression: "input.pl_planned_sales_cost" },
         { name: "cost_complete", expression: "input.costed_lines == input.sale_lines" },
         { name: "effective_actual_sales_cost", expression: "input.costed_lines == input.sale_lines ? input.actual_sales_cost : null" },
-        { name: "sales_cost_variance", expression: "input.costed_lines == input.sale_lines ? (input.actual_sales_cost - input.pl_planned_sales_cost) : null" },
+        { name: "sales_cost_variance", expression: "(input.pl_planned_sales_cost != null and input.costed_lines == input.sale_lines) ? (input.actual_sales_cost - (input.pl_planned_sales_cost ?? input.actual_sales_cost)) : null" },
         { name: "planned_sales_qty", expression: "input.pl_planned_sales_qty" },
         { name: "actual_sales_qty", expression: "input.actual_sales_qty" },
-        { name: "sales_qty_variance", expression: "input.actual_sales_qty - input.pl_planned_sales_qty" },
+        { name: "sales_qty_variance", expression: "input.pl_planned_sales_qty != null ? (input.actual_sales_qty - (input.pl_planned_sales_qty ?? input.actual_sales_qty)) : null" },
       ],
     },
   },

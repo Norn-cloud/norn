@@ -46,6 +46,11 @@
         "inputRequired": false
       },
       {
+        "expression": "input.envelope_id",
+        "field": "active_grain_slot",
+        "inputRequired": false
+      },
+      {
         "expression": "slice.plan_line.planned_receipts_cost",
         "field": "approved_budget_cost",
         "inputRequired": false
@@ -65,6 +70,9 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "active_grain_slot": {
+          "type": "string"
+        },
         "approved_budget_cost": {
           "nornType": {
             "kind": "decimal",
@@ -131,7 +139,8 @@
         "currency",
         "envelope_kind",
         "approved_budget_cost",
-        "requested_by"
+        "requested_by",
+        "active_grain_slot"
       ],
       "type": "object"
     },

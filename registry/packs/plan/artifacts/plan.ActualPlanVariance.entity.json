@@ -1,0 +1,319 @@
+{
+  "artifactId": "plan.ActualPlanVariance.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Actual minus Plan variance snapshot",
+  "namespace": "plan",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "variance_id"
+          ]
+        },
+        {
+          "name": "variance_grain",
+          "properties": [
+            "entity_id",
+            "store_id",
+            "category",
+            "brand",
+            "plan_month",
+            "currency",
+            "unit"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "baseline",
+          "target": "plan.ActivePlanLine"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "owner_entity",
+          "target": "supply.LegalEntity"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "store",
+          "target": "supply.Store"
+        }
+      ],
+      "name": "plan.ActualPlanVariance",
+      "properties": [
+        {
+          "id": "variance_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "slot_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "plan_version_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "plan_line_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "entity_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "store_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "category",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "dry_goods"
+              },
+              {
+                "value": "chilled"
+              },
+              {
+                "value": "pharma"
+              },
+              {
+                "value": "spares"
+              }
+            ]
+          }
+        },
+        {
+          "id": "brand",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "plan_month",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "period_start",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "each"
+              },
+              {
+                "value": "kg"
+              },
+              {
+                "value": "l"
+              }
+            ]
+          }
+        },
+        {
+          "id": "cost_status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "costed"
+              },
+              {
+                "value": "missing_cost"
+              }
+            ]
+          }
+        },
+        {
+          "id": "actual_sales_retail",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "planned_sales_retail",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "sales_retail_variance",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "actual_sales_cost",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "planned_sales_cost",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "sales_cost_variance",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "actual_sales_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "planned_sales_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "sales_qty_variance",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "as_of",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.ActualPlanVariance.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

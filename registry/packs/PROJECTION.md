@@ -10,7 +10,7 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 | `norn.link.erpnext.canon` | 59 | 40 | 8 | 11 | 0 |
 | `norn.link.frappe-hrms.workforce` | 34 | 34 | 0 | 0 | 0 |
 | `norn.link.odoo.canon` | 42 | 27 | 3 | 11 | 1 |
-| `norn.link.plan.canon` | 14 | 1 | 4 | 9 | 0 |
+| `norn.link.plan.canon` | 15 | 1 | 5 | 9 | 0 |
 | `norn.link.shopify.canon` | 35 | 14 | 5 | 16 | 0 |
 | `norn.link.supply-lab.canon` | 20 | 2 | 2 | 16 | 0 |
 
@@ -212,6 +212,7 @@ None.
 ### Residual (system-specific)
 
 - `norn.plan.active.baseline`
+- `norn.plan.actual.variance`
 - `norn.plan.otb.po.binding`
 - `norn.plan.po.destination`
 - `norn.plan.sku.profile`

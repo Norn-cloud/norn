@@ -155,7 +155,8 @@
       },
       {
         "actions": [
-          "plan.baseline.activate"
+          "plan.baseline.activate",
+          "plan.baseline.supersede"
         ],
         "allOf": [
           {
@@ -193,6 +194,31 @@
         ],
         "resourceType": "supply.PosSale",
         "ruleId": "restate_actual_sale",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "plan.variance.record_actual_vs_plan",
+          "plan.variance.refresh_actual_vs_plan"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "merch_director",
+                "ops_manager"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.ActualPlanVariance",
+        "ruleId": "actual_plan_variance",
         "scope": {
           "dimensions": [
             "org",
@@ -338,6 +364,266 @@
         ],
         "resourceType": "plan.PublishedForecast",
         "ruleId": "published_forecast",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "merch_director",
+                "ops_manager",
+                "warehouse_clerk",
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.OtbEnvelope",
+        "ruleId": "read_otb_envelope",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "merch_director",
+                "ops_manager",
+                "warehouse_clerk",
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.OtbPoBinding",
+        "ruleId": "read_otb_po_binding",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "merch_director",
+                "ops_manager",
+                "warehouse_clerk",
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.PlanVersion",
+        "ruleId": "read_plan_version",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "merch_director",
+                "ops_manager",
+                "warehouse_clerk",
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.PlanSpreadTarget",
+        "ruleId": "read_plan_spread_target",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "merch_director",
+                "ops_manager",
+                "warehouse_clerk",
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.PlanLine",
+        "ruleId": "read_plan_line",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "merch_director",
+                "ops_manager",
+                "warehouse_clerk",
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.ActivePlanLine",
+        "ruleId": "read_active_plan_line",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "merch_director",
+                "ops_manager",
+                "warehouse_clerk",
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.SkuProfile",
+        "ruleId": "read_sku_profile",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "merch_director",
+                "ops_manager",
+                "warehouse_clerk",
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.PoDestination",
+        "ruleId": "read_po_destination",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "merch_director",
+                "ops_manager",
+                "warehouse_clerk",
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.PublishedForecast",
+        "ruleId": "read_published_forecast",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "norn.read"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "merch_director",
+                "ops_manager",
+                "warehouse_clerk",
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.ActualPlanVariance",
+        "ruleId": "read_actual_plan_variance",
         "scope": {
           "dimensions": [
             "org",

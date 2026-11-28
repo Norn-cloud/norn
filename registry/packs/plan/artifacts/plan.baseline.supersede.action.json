@@ -1,0 +1,112 @@
+{
+  "artifactId": "plan.baseline.supersede.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Supersede an active plan baseline slot",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.baseline.supersede",
+    "effectProgram": {
+      "entityArtifactId": "plan.ActivePlanLine.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "slot_id",
+      "objectKind": "plan.ActivePlanLine",
+      "writeMode": {
+        "kind": "update_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_line_id": {
+          "type": "string"
+        },
+        "plan_version_id": {
+          "type": "string"
+        },
+        "slot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot_id",
+        "plan_version_id",
+        "plan_line_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "slot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((((((((slice.new_version.status == 'locked') and ((slice.new_version.supersedes_version_id ?? '') == slice.existing.plan_version_id)) and (input.plan_version_id == slice.new_plan_line.plan_version_id)) and (slice.existing.entity_id == slice.new_plan_line.entity_id)) and (slice.existing.store_id == slice.new_plan_line.store_id)) and (slice.existing.category == slice.new_plan_line.category)) and (slice.existing.brand == slice.new_plan_line.brand)) and (slice.existing.plan_month == slice.new_plan_line.plan_month)) and (date(slice.existing.period_month_date) == date(slice.new_plan_line.period_month_date))) and (slice.existing.currency == slice.new_plan_line.currency)) and (slice.existing.unit == slice.new_plan_line.unit)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "slot_id"
+          }
+        },
+        "name": "existing",
+        "objectType": "plan.ActivePlanLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "plan_version_id"
+          }
+        },
+        "name": "new_version",
+        "objectType": "plan.PlanVersion"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "plan_line_id"
+          }
+        },
+        "name": "new_plan_line",
+        "objectType": "plan.PlanLine"
+      }
+    ],
+    "title": "Supersede an active plan baseline slot",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "plan.ActivePlanLine"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.baseline.supersede.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

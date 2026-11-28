@@ -312,7 +312,19 @@
           }
         },
         {
+          "id": "spread_weight",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
           "id": "spread_base_quanta",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "spread_frac_remainder",
           "type": {
             "kind": "integer"
           }

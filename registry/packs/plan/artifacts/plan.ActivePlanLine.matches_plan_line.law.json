@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "An active plan baseline slot must pin a locked PlanVersion and match its PlanLine's exact grain, month date, currency, and unit.",
+  "name": "An active plan baseline slot must align with its store, owning legal entity, functional currency, and canonical YYYY-MM period_month_date.",
   "namespace": "plan",
   "payload": {
     "id": "plan.ActivePlanLine.matches_plan_line",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/plan/plan.ts"
     },
-    "rationale": "An active plan baseline slot must pin a locked PlanVersion and match its PlanLine's exact grain, month date, currency, and unit.",
+    "rationale": "An active plan baseline slot must align with its store, owning legal entity, functional currency, and canonical YYYY-MM period_month_date.",
     "response": {
-      "expression": "(((((((((((self.plan_version_id == self.plan_version.plan_version_id) and (self.plan_version.status == 'locked')) and (self.plan_line_id == self.plan_line.plan_line_id)) and (self.plan_version_id == self.plan_line.plan_version_id)) and (self.entity_id == self.plan_line.entity_id)) and (self.store_id == self.plan_line.store_id)) and (self.category == self.plan_line.category)) and (self.brand == self.plan_line.brand)) and (self.plan_month == self.plan_line.plan_month)) and (self.period_month_date == self.plan_line.period_month_date)) and (self.currency == self.plan_line.currency)) and (self.unit == self.plan_line.unit)",
+      "expression": "((((((self.entity_id == self.owner_entity.entity_id) and (self.entity_id == self.store.entity_id)) and (self.store_id == self.store.store_id)) and (self.currency == self.owner_entity.functional_currency)) and (self.currency == self.store.currency)) and (len(self.plan_month) == 7)) and (date(self.period_month_date) == date(self.plan_month + '-01'))",
       "kind": "predicate"
     },
     "scope": {
