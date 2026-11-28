@@ -362,70 +362,24 @@ impl Cell {
     }
 }
 
-/// Days since 1970-01-01 of a proleptic Gregorian date (Hinnant's
-/// algorithm, in saturating arithmetic: every year here is 0000–9999).
+/// Days since 1970-01-01 of a proleptic Gregorian date (saturating adapter
+/// over [`norn_ir::calendar::days_from_civil`]: every year here is 0000–9999).
 pub(super) fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
-    let year = if month <= 2 {
-        year.saturating_sub(1)
+    norn_ir::calendar::days_from_civil(year, month, day).unwrap_or(if year < 0 {
+        i64::MIN
     } else {
-        year
-    };
-    let era = year.div_euclid(400);
-    let yoe = year.rem_euclid(400);
-    let month = i64::from(month);
-    let shifted = if month > 2 {
-        month.saturating_sub(3)
-    } else {
-        month.saturating_add(9)
-    };
-    let doy = shifted
-        .saturating_mul(153)
-        .saturating_add(2)
-        .div_euclid(5)
-        .saturating_add(i64::from(day))
-        .saturating_sub(1);
-    let doe = yoe
-        .saturating_mul(365)
-        .saturating_add(yoe.div_euclid(4))
-        .saturating_sub(yoe.div_euclid(100))
-        .saturating_add(doy);
-    era.saturating_mul(146_097)
-        .saturating_add(doe)
-        .saturating_sub(719_468)
+        i64::MAX
+    })
 }
 
-/// The proleptic Gregorian date of a day since 1970-01-01.
+/// The proleptic Gregorian date of a day since 1970-01-01 (saturating adapter
+/// over [`norn_ir::calendar::civil_from_days`]).
 pub(super) fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days.saturating_add(719_468);
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = doe
-        .saturating_sub(doe.div_euclid(1460))
-        .saturating_add(doe.div_euclid(36_524))
-        .saturating_sub(doe.div_euclid(146_096))
-        .div_euclid(365);
-    let doy = doe.saturating_sub(
-        yoe.saturating_mul(365)
-            .saturating_add(yoe.div_euclid(4))
-            .saturating_sub(yoe.div_euclid(100)),
-    );
-    let mp = doy.saturating_mul(5).saturating_add(2).div_euclid(153);
-    let day = doy
-        .saturating_sub(mp.saturating_mul(153).saturating_add(2).div_euclid(5))
-        .saturating_add(1);
-    let month = if mp < 10 {
-        mp.saturating_add(3)
-    } else {
-        mp.saturating_sub(9)
-    };
-    let year = yoe
-        .saturating_add(era.saturating_mul(400))
-        .saturating_add(i64::from(month <= 2));
-    (
-        year,
-        u32::try_from(month).unwrap_or(1),
-        u32::try_from(day).unwrap_or(1),
-    )
+    norn_ir::calendar::civil_from_days(days).unwrap_or((
+        if days < 0 { i64::MIN } else { i64::MAX },
+        1,
+        1,
+    ))
 }
 
 /// Whether `year-month-day` is a real date.

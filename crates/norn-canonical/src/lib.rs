@@ -717,6 +717,59 @@ pub fn canonical_json_of<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, Ca
     canonical_json_of_text(value)
 }
 
+/// Exact UTF-8 byte length of [`canonical_json_of`] for `value`, counted
+/// without allocating the final canonical output buffer.
+///
+/// Enforces every validation and canonicalization rule of [`canonical_json_of`]
+/// (nesting depth, NFC duplicate-key checks, number validation and expansion
+/// budgets), returning the exact same length and errors as
+/// `canonical_json_of(value).map(|bytes| bytes.len())`.
+///
+/// # Errors
+///
+/// As [`canonical_json_of`].
+///
+/// # Panics
+///
+/// Debug builds only: if the direct byte count and the text path ever produce
+/// different lengths, which is a bug in this crate.
+pub fn canonical_json_byte_len<T: Serialize + ?Sized>(
+    value: &T,
+) -> Result<usize, CanonicalJsonError> {
+    if let Some(direct) = direct::to_value(value)
+        && let Ok(len) = serialized_byte_len(&direct)
+    {
+        #[cfg(debug_assertions)]
+        assert_eq!(
+            canonical_json_of_text(value).map(|bytes| bytes.len()),
+            Ok(len),
+            "the direct Norn1 byte length differs from the text path"
+        );
+        return Ok(len);
+    }
+    canonical_json_byte_len_text(value)
+}
+
+fn serialized_byte_len(value: &JsonValue) -> Result<usize, CanonicalJsonError> {
+    let mut counter = ByteCounter(0);
+    let mut number_bytes = 0;
+    write_value(value, &mut counter, 0, true, &mut number_bytes)?;
+    Ok(counter.0)
+}
+
+fn canonical_json_byte_len_text<T: Serialize + ?Sized>(
+    value: &T,
+) -> Result<usize, CanonicalJsonError> {
+    let bytes = serde_json::to_vec(value).map_err(|error| CanonicalJsonError::Serialize {
+        message: error.to_string(),
+    })?;
+    let tree = parse(&bytes)?;
+    let mut counter = ByteCounter(0);
+    let mut number_bytes = 0;
+    write_value(&tree, &mut counter, 0, false, &mut number_bytes)?;
+    Ok(counter.0)
+}
+
 /// [`canonical_json_of`] through Serde JSON text: encode, parse, re-serialize.
 fn canonical_json_of_text<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, CanonicalJsonError> {
     let bytes = serde_json::to_vec(value).map_err(|error| CanonicalJsonError::Serialize {
@@ -1550,9 +1603,52 @@ fn lower_hex(digest: [u8; 32]) -> String {
     output
 }
 
-fn write_value(
+/// Destination for Norn1 canonical JSON output: either a materialized
+/// [`String`] or a zero-allocation byte counter ([`ByteCounter`]).
+trait CanonicalSink {
+    fn push_char(&mut self, ch: char);
+    fn push_str(&mut self, text: &str);
+    fn push_unicode_escape(&mut self, ch: char);
+}
+
+impl CanonicalSink for String {
+    fn push_char(&mut self, ch: char) {
+        self.push(ch);
+    }
+
+    fn push_str(&mut self, text: &str) {
+        self.push_str(text);
+    }
+
+    fn push_unicode_escape(&mut self, ch: char) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "fmt::Write for String is infallible; its trait signature still returns Result"
+        )]
+        let _ = std::fmt::Write::write_fmt(self, format_args!("\\u{:04x}", u32::from(ch)));
+    }
+}
+
+struct ByteCounter(usize);
+
+impl CanonicalSink for ByteCounter {
+    fn push_char(&mut self, ch: char) {
+        self.0 = self.0.saturating_add(ch.len_utf8());
+    }
+
+    fn push_str(&mut self, text: &str) {
+        self.0 = self.0.saturating_add(text.len());
+    }
+
+    fn push_unicode_escape(&mut self, _ch: char) {
+        // C0 controls (`\u{0}..=\u{1f}`) always format as 6 ASCII bytes: `\u00XX`.
+        self.0 = self.0.saturating_add(6);
+    }
+}
+
+fn write_value<S: CanonicalSink>(
     value: &JsonValue,
-    output: &mut String,
+    output: &mut S,
     depth: usize,
     normalize: bool,
     number_bytes: &mut usize,
@@ -1582,26 +1678,26 @@ fn write_value(
             }
         }
         JsonValue::Array(values) => {
-            output.push('[');
+            output.push_char('[');
             let mut first = true;
             for value in values {
                 if !first {
-                    output.push(',');
+                    output.push_char(',');
                 }
                 first = false;
                 let child_depth = next_depth(depth, 0)?;
                 write_value(value, output, child_depth, normalize, number_bytes)?;
             }
-            output.push(']');
+            output.push_char(']');
         }
         JsonValue::Object(values) => write_object(values, output, depth, normalize, number_bytes)?,
     }
     Ok(())
 }
 
-fn write_object(
+fn write_object<S: CanonicalSink>(
     values: &BTreeMap<String, JsonValue>,
-    output: &mut String,
+    output: &mut S,
     depth: usize,
     normalize: bool,
     number_bytes: &mut usize,
@@ -1611,20 +1707,20 @@ fn write_object(
             unicode_normalization::is_nfc_quick(key.chars())
                 == unicode_normalization::IsNormalized::Yes
         });
-    output.push('{');
+    output.push_char('{');
     if already_sorted {
         let mut first = true;
         for (key, value) in values {
             if !first {
-                output.push(',');
+                output.push_char(',');
             }
             first = false;
             write_string_raw(key, output);
-            output.push(':');
+            output.push_char(':');
             let child_depth = next_depth(depth, 0)?;
             write_value(value, output, child_depth, normalize, number_bytes)?;
         }
-        output.push('}');
+        output.push_char('}');
         return Ok(());
     }
 
@@ -1647,25 +1743,25 @@ fn write_object(
     let mut first = true;
     for (key, value) in entries {
         if !first {
-            output.push(',');
+            output.push_char(',');
         }
         first = false;
         write_string_raw(&key, output);
-        output.push(':');
+        output.push_char(':');
         let child_depth = next_depth(depth, 0)?;
         write_value(value, output, child_depth, normalize, number_bytes)?;
     }
-    output.push('}');
+    output.push_char('}');
     Ok(())
 }
 
-fn write_string(value: &str, output: &mut String) {
+fn write_string<S: CanonicalSink>(value: &str, output: &mut S) {
     let normalized = nfc_borrowed(value);
     write_string_raw(&normalized, output);
 }
 
-fn write_string_raw(value: &str, output: &mut String) {
-    output.push('"');
+fn write_string_raw<S: CanonicalSink>(value: &str, output: &mut S) {
+    output.push_char('"');
     // Runs that need no escape are copied whole; only `"`, `\\` and the C0
     // controls (all ASCII) are escaped, exactly as one character at a time.
     let mut rest = value;
@@ -1681,11 +1777,11 @@ fn write_string_raw(value: &str, output: &mut String) {
         rest = characters.as_str();
     }
     output.push_str(rest);
-    output.push('"');
+    output.push_char('"');
 }
 
 /// One character [`write_string`] escapes.
-fn write_escaped(character: char, output: &mut String) {
+fn write_escaped<S: CanonicalSink>(character: char, output: &mut S) {
     match character {
         '"' => output.push_str("\\\""),
         '\\' => output.push_str("\\\\"),
@@ -1694,14 +1790,7 @@ fn write_escaped(character: char, output: &mut String) {
         '\n' => output.push_str("\\n"),
         '\r' => output.push_str("\\r"),
         '\t' => output.push_str("\\t"),
-        character => {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "fmt::Write for String is infallible; its trait signature still returns Result"
-            )]
-            let _ =
-                std::fmt::Write::write_fmt(output, format_args!("\\u{:04x}", u32::from(character)));
-        }
+        character => output.push_unicode_escape(character),
     }
 }
 
@@ -3029,6 +3118,14 @@ mod direct_equivalence {
             let mut output = String::new();
             super::write_string(&value, &mut output);
             prop_assert_eq!(output, write_string_by_character(&value));
+        }
+
+        #[test]
+        fn canonical_json_byte_len_agrees_with_canonical_json_of(value in arb_value()) {
+            prop_assert_eq!(
+                super::canonical_json_byte_len(&value),
+                super::canonical_json_of(&value).map(|bytes| bytes.len())
+            );
         }
     }
 

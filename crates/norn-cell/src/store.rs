@@ -91,16 +91,16 @@ fn source_field_markings(
 }
 
 fn preflight_mask_policy_changes(previous: Option<&str>, candidate: &str) -> Result<(), CellError> {
-    let catalog = |encoded: &str| {
-        let artifacts: Vec<norn_ir::ArtifactEnvelope> =
-            serde_json::from_str(encoded).map_err(CellError::Json)?;
-        Ok::<_, CellError>(norn_checker::marking_catalog_from_artifacts(&artifacts))
-    };
     let Some(previous) = previous else {
         return Ok(());
     };
-    let old = catalog(previous)?;
-    let new = catalog(candidate)?;
+    let previous_artifacts: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_str(previous).map_err(CellError::Json)?;
+    let candidate_artifacts: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_str(candidate).map_err(CellError::Json)?;
+    let old = norn_checker::marking_catalog_from_artifacts(&previous_artifacts);
+    let new = norn_checker::marking_catalog_from_artifacts(&candidate_artifacts);
+    let mut reveal_indexes: Option<(RevealRuleIndex, RevealRuleIndex)> = None;
     for (id, marking) in old {
         let weakens = new
             .get(&id)
@@ -112,11 +112,15 @@ fn preflight_mask_policy_changes(previous: Option<&str>, candidate: &str) -> Res
             )));
         }
         // PRIVACY-2: no rule may newly allow revealing a declared marking.
-        let (before, after) = (
-            reveal_rules(previous, id.as_str())?,
-            reveal_rules(candidate, id.as_str())?,
-        );
-        if let Some(rule) = after.difference(&before).next() {
+        if reveal_indexes.is_none() {
+            reveal_indexes = Some((
+                RevealRuleIndex::from_artifacts(&previous_artifacts)?,
+                RevealRuleIndex::from_artifacts(&candidate_artifacts)?,
+            ));
+        }
+        if let Some((before, after)) = &reveal_indexes
+            && let Some(rule) = after.first_widened(before, id.as_str())
+        {
             return Err(CellError::DefinitionMigrationRefused(format!(
                 "install widens who may reveal `{}` (rule {rule}); reveal grants on a declared marking are never widened in place",
                 id.as_str()
@@ -126,45 +130,103 @@ fn preflight_mask_policy_changes(previous: Option<&str>, candidate: &str) -> Res
     Ok(())
 }
 
-/// The `norn.reveal` rules of every `AccessIR` policy in `encoded` that can
-/// apply to `marking`, without their ids (a renamed rule is the same rule).
-fn reveal_rules(encoded: &str, marking: &str) -> Result<BTreeSet<String>, CellError> {
-    let artifacts: Vec<norn_ir::ArtifactEnvelope> =
-        serde_json::from_str(encoded).map_err(CellError::Json)?;
-    let mut rules = BTreeSet::new();
-    for artifact in artifacts
-        .iter()
-        .filter(|artifact| artifact.kind() == norn_ir::ArtifactKind::Policy)
-    {
-        let Ok(norn_ir::access::PolicyRoot::Access(access)) =
-            serde_json::to_value(artifact.payload.to_json_value())
-                .and_then(serde_json::from_value::<norn_ir::access::PolicyRoot>)
-        else {
-            continue;
-        };
-        for rule in &access.rules {
-            let reveals = rule.resource_type.as_str() == "norn.Marking"
-                && rule.actions.iter().any(|action| action == "norn.reveal");
-            let names = rule.all_of.iter().all(|condition| match condition {
-                norn_ir::access::AccessCondition::Marking(marking_condition) => marking_condition
-                    .any_of
-                    .iter()
-                    .any(|id| id.as_str() == marking),
-                norn_ir::access::AccessCondition::Role(_)
-                | norn_ir::access::AccessCondition::Rel(_)
-                | norn_ir::access::AccessCondition::Context(_)
-                | norn_ir::access::AccessCondition::Resource(_)
-                | norn_ir::access::AccessCondition::Entitlement(_) => true,
-            });
-            if reveals && names {
-                let mut unnamed = rule.clone();
-                unnamed.rule_id.clear();
-                unnamed.actions = vec!["norn.reveal".to_owned()];
-                rules.insert(serde_json::to_string(&unnamed).map_err(CellError::Json)?);
+/// The normalized `norn.reveal` rules of every `AccessIR` policy in one
+/// artifact set, indexed once by marking id (without their rule ids, so a
+/// renamed rule is the same rule).
+struct RevealRuleIndex {
+    /// Rules with no `Marking` condition; they apply to every declared marking.
+    unscoped: BTreeSet<String>,
+    /// Rules constrained by one or more `Marking` conditions, keyed by marking id.
+    by_marking: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl RevealRuleIndex {
+    fn from_artifacts(artifacts: &[norn_ir::ArtifactEnvelope]) -> Result<Self, CellError> {
+        let mut unscoped = BTreeSet::new();
+        let mut by_marking = BTreeMap::<String, BTreeSet<String>>::new();
+        for artifact in artifacts {
+            let Ok(rules) = norn_ir::access::decode_policy_reveal_rules(artifact) else {
+                continue;
+            };
+            for mut rule in rules {
+                let mut scoped_markings: Option<BTreeSet<String>> = None;
+                for condition in &rule.all_of {
+                    match condition {
+                        norn_ir::access::AccessCondition::Marking(marking_condition) => {
+                            let ids: BTreeSet<String> = marking_condition
+                                .any_of
+                                .iter()
+                                .map(|id| id.as_str().to_owned())
+                                .collect();
+                            scoped_markings = Some(match scoped_markings {
+                                None => ids,
+                                Some(existing) => existing.intersection(&ids).cloned().collect(),
+                            });
+                        }
+                        norn_ir::access::AccessCondition::Role(_)
+                        | norn_ir::access::AccessCondition::Rel(_)
+                        | norn_ir::access::AccessCondition::Context(_)
+                        | norn_ir::access::AccessCondition::Resource(_)
+                        | norn_ir::access::AccessCondition::Entitlement(_) => {}
+                    }
+                }
+                if matches!(&scoped_markings, Some(markings) if markings.is_empty()) {
+                    continue;
+                }
+                rule.rule_id.clear();
+                let serialized = serde_json::to_string(&rule).map_err(CellError::Json)?;
+                match scoped_markings {
+                    None => {
+                        unscoped.insert(serialized);
+                    }
+                    Some(markings) => {
+                        for marking in markings {
+                            by_marking
+                                .entry(marking)
+                                .or_default()
+                                .insert(serialized.clone());
+                        }
+                    }
+                }
             }
         }
+        Ok(Self {
+            unscoped,
+            by_marking,
+        })
     }
-    Ok(rules)
+
+    fn contains(&self, marking: &str, rule: &str) -> bool {
+        self.unscoped.contains(rule)
+            || self
+                .by_marking
+                .get(marking)
+                .is_some_and(|rules| rules.contains(rule))
+    }
+
+    /// The lexicographically smallest rule in `self` applicable to `marking`
+    /// that is not present in `before` for `marking`.
+    fn first_widened<'a>(&'a self, before: &Self, marking: &str) -> Option<&'a str> {
+        let from_unscoped = self
+            .unscoped
+            .iter()
+            .find(|rule| !before.contains(marking, rule.as_str()))
+            .map(String::as_str);
+        let from_marking = self
+            .by_marking
+            .get(marking)
+            .and_then(|rules| {
+                rules
+                    .iter()
+                    .find(|rule| !before.contains(marking, rule.as_str()))
+            })
+            .map(String::as_str);
+        match (from_unscoped, from_marking) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) | (None, Some(a)) => Some(a),
+            (None, None) => None,
+        }
+    }
 }
 
 fn preflight_source_marking_changes<E: SqlEngine>(

@@ -1005,12 +1005,12 @@ pub(super) fn admit_action_fact_record<X>(
     let Some(values) = values else {
         return Ok(());
     };
-    let bytes = norn_ir::canonical::canonical_json_of(values)
-        .map_err(|error| ActionRefusal::SliceUnavailable {
+    let bytes = norn_ir::canonical::canonical_json_byte_len(values).map_err(|error| {
+        ActionRefusal::SliceUnavailable {
             entry: entry_name.to_owned(),
             reason: error.to_string(),
-        })?
-        .len();
+        }
+    })?;
     meter
         .admit_record(u64::try_from(bytes).unwrap_or(u64::MAX), relation_depth)
         .map_err(|error| ActionRefusal::SliceUnavailable {

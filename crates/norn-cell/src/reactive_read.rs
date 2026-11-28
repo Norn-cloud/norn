@@ -975,9 +975,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let metadata = self.conn.query(&lengths, &bindings)?;
         let mut admitted = 0_usize;
         let mut complete = metadata.len() <= cap;
-        for values in metadata.iter().take(cap) {
+        for values in metadata.into_iter().take(cap) {
             budget.rows = budget.rows.saturating_sub(1);
-            let size = to_u64(SqlRow(values.clone()).get::<i64>(0)?, "scan metadata bytes")?;
+            let size = to_u64(SqlRow(values).get::<i64>(0)?, "scan metadata bytes")?;
             if !budget.charge(size) {
                 complete = false;
                 break;
@@ -1143,9 +1143,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let metadata = self.conn.query(&metadata_sql, &bindings)?;
         let mut admitted = 0_usize;
         let mut complete = metadata.len() <= cap;
-        for values in metadata.iter().take(cap) {
+        for values in metadata.into_iter().take(cap) {
             budget.rows = budget.rows.saturating_sub(1);
-            let size = to_u64(SqlRow(values.clone()).get::<i64>(0)?, "scan metadata bytes")?;
+            let size = to_u64(SqlRow(values).get::<i64>(0)?, "scan metadata bytes")?;
             if !budget.charge(size) {
                 complete = false;
                 break;

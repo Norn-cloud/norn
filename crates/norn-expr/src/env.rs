@@ -1078,6 +1078,10 @@ struct Derivation<'d, 'e> {
     catalog: BTreeMap<&'d str, &'d PropertyTypeDef>,
     objects: BTreeMap<&'d str, &'d ObjectTypeDef>,
     interfaces: BTreeMap<&'d str, &'d InterfaceDef>,
+    /// Extensions pre-grouped by target object type name, carrying their
+    /// original slice index so multi-level chains preserve exact declaration
+    /// order without scanning `defs.extensions` per type.
+    extensions_by_target: BTreeMap<&'d str, Vec<(usize, &'d ObjectTypeExtension)>>,
     value_records: BTreeMap<String, RecordType>,
     intersection_members: BTreeMap<String, BTreeSet<String>>,
     /// Interface property types by declaring site: each ancestor's structured
@@ -1120,6 +1124,14 @@ impl<'d, 'e> Derivation<'d, 'e> {
                 });
             }
         }
+        let mut extensions_by_target: BTreeMap<&'d str, Vec<(usize, &'d ObjectTypeExtension)>> =
+            BTreeMap::new();
+        for (index, ext) in defs.extensions.iter().enumerate() {
+            extensions_by_target
+                .entry(ext.target.as_str())
+                .or_default()
+                .push((index, ext));
+        }
         Self {
             defs,
             registry_types,
@@ -1128,6 +1140,7 @@ impl<'d, 'e> Derivation<'d, 'e> {
             catalog,
             objects,
             interfaces,
+            extensions_by_target,
             value_records: BTreeMap::new(),
             intersection_members: BTreeMap::new(),
             interface_property_types: BTreeMap::new(),
@@ -1378,23 +1391,33 @@ impl<'d, 'e> Derivation<'d, 'e> {
                 }
             }
         }
-        for ext in self.defs.extensions {
-            let target = ext.target.as_str();
-            if !chain.iter().any(|def| def.name.as_str() == target) {
-                continue;
+        if !self.extensions_by_target.is_empty() {
+            let mut applicable: Vec<(usize, &'d ObjectTypeExtension)> = Vec::new();
+            let mut matched_targets = 0_usize;
+            for def in chain {
+                if let Some(entries) = self.extensions_by_target.get(def.name.as_str()) {
+                    applicable.extend(entries.iter().copied());
+                    matched_targets = matched_targets.saturating_add(1);
+                }
             }
-            for property in &ext.properties {
-                let field = self.property_field(target, property);
-                insert_field(self.errors, name, &mut fields, property.id.as_str(), field);
+            if matched_targets > 1 {
+                applicable.sort_unstable_by_key(|(index, _)| *index);
             }
-            for link in &ext.links {
-                let field = self.link_field(target, link);
-                insert_field(self.errors, name, &mut fields, link.id.as_str(), field);
-                if target == name {
-                    declared_links.push(DeclaredLink {
-                        source: target,
-                        link,
-                    });
+            for (_, ext) in applicable {
+                let target = ext.target.as_str();
+                for property in &ext.properties {
+                    let field = self.property_field(target, property);
+                    insert_field(self.errors, name, &mut fields, property.id.as_str(), field);
+                }
+                for link in &ext.links {
+                    let field = self.link_field(target, link);
+                    insert_field(self.errors, name, &mut fields, link.id.as_str(), field);
+                    if target == name {
+                        declared_links.push(DeclaredLink {
+                            source: target,
+                            link,
+                        });
+                    }
                 }
             }
         }

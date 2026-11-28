@@ -463,7 +463,8 @@ fn parse_rfc3339_instant(raw: &str) -> Result<(i64, u32), SourceVersionError> {
         .ok_or_else(|| bad("missing timezone offset"))?;
     let (nanos, tz) = parse_fraction_and_tz(rest, bad)?;
     let offset_seconds = parse_tz_offset(tz, bad)?;
-    let days = days_from_civil(year, month, day)?;
+    let days =
+        crate::calendar::days_from_civil(year, month, day).ok_or(SourceVersionError::Empty)?;
     let day_seconds = days
         .checked_mul(86_400)
         .ok_or_else(|| bad("timestamp out of i64 range"))?;
@@ -565,42 +566,6 @@ fn days_in_month(year: i64, month: u32) -> u32 {
         2 => 28,
         _ => 0,
     }
-}
-
-/// Howard Hinnant's civil-to-days algorithm (days since 1970-01-01) using
-/// `div_euclid`/`rem_euclid` and checked arithmetic (zero `/` or `%`).
-fn days_from_civil(year: i64, month: u32, day: u32) -> Result<i64, SourceVersionError> {
-    let y = if month <= 2 {
-        year.checked_sub(1).ok_or(SourceVersionError::Empty)?
-    } else {
-        year
-    };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let m = i64::from(month);
-    let m_shifted = if month > 2 {
-        m.checked_sub(3)
-    } else {
-        m.checked_add(9)
-    }
-    .ok_or(SourceVersionError::Empty)?;
-    let doy = m_shifted
-        .checked_mul(153)
-        .and_then(|v| v.checked_add(2))
-        .map(|v| v.div_euclid(5))
-        .and_then(|v| v.checked_add(i64::from(day)))
-        .and_then(|v| v.checked_sub(1))
-        .ok_or(SourceVersionError::Empty)?;
-    let doe = yoe
-        .checked_mul(365)
-        .and_then(|v| v.checked_add(yoe.div_euclid(4)))
-        .and_then(|v| v.checked_sub(yoe.div_euclid(100)))
-        .and_then(|v| v.checked_add(doy))
-        .ok_or(SourceVersionError::Empty)?;
-    era.checked_mul(146_097)
-        .and_then(|v| v.checked_add(doe))
-        .and_then(|v| v.checked_sub(719_468))
-        .ok_or(SourceVersionError::Empty)
 }
 
 /// Tri-state field update emitted by mapping evaluation and consumed by the

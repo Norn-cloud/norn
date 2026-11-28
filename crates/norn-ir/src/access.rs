@@ -24,6 +24,71 @@ use crate::rule::JsonObject;
 pub const DISCLOSE_REFUSAL_DETAIL_ACTION: &str = "norn.disclose_refusal_detail";
 /// Host resource whose identity is the admitted action id.
 pub const REFUSAL_DETAIL_RESOURCE: &str = "norn.RefusalDetail";
+/// The `AccessIR` action and capability of a marking reveal.
+pub const REVEAL_ACTION: &str = "norn.reveal";
+/// The synthetic resource type a reveal rule governs.
+pub const MARKING_RESOURCE_TYPE: &str = "norn.Marking";
+
+/// Decode the `norn.reveal` rules on `norn.Marking` from a single `Policy`
+/// artifact, narrowing each rule's `actions` to `[REVEAL_ACTION]`.
+///
+/// Non-`Policy` artifacts and non-`AccessIR` policy forms yield an empty list.
+///
+/// # Errors
+/// Returns the decode error message when a `Policy` artifact payload fails to
+/// decode into [`PolicyRoot`].
+pub fn decode_policy_reveal_rules(
+    artifact: &crate::ArtifactEnvelope,
+) -> Result<Vec<AccessRule>, String> {
+    let crate::ArtifactPayload::Policy(policy) = &artifact.payload else {
+        return Ok(Vec::new());
+    };
+    let root = PolicyRoot::deserialize(
+        serde::de::IntoDeserializer::<serde::de::value::Error>::into_deserializer(
+            policy.to_json_value(),
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    let PolicyRoot::Access(access) = root else {
+        return Ok(Vec::new());
+    };
+    Ok(access
+        .rules
+        .into_iter()
+        .filter(|rule| {
+            rule.resource_type.as_str() == MARKING_RESOURCE_TYPE
+                && rule.actions.iter().any(|action| action == REVEAL_ACTION)
+        })
+        .map(|mut rule| {
+            rule.actions = vec![REVEAL_ACTION.to_owned()];
+            rule
+        })
+        .collect())
+}
+
+/// Extract every `norn.reveal` rule on `norn.Marking` from all `AccessIR`
+/// policy artifacts in `artifacts`, paired with each owning policy's
+/// `artifact_id`. Each returned rule has `actions` narrowed to
+/// `[REVEAL_ACTION]`.
+///
+/// # Errors
+/// Returns `(artifact_id, error)` for the first `Policy` artifact whose
+/// payload fails to decode into [`PolicyRoot`].
+pub fn extract_reveal_rules(
+    artifacts: &[crate::ArtifactEnvelope],
+) -> Result<Vec<(&str, AccessRule)>, (&str, String)> {
+    let mut rules = Vec::new();
+    for artifact in artifacts {
+        if artifact.kind() != crate::ArtifactKind::Policy {
+            continue;
+        }
+        let policy_rules = decode_policy_reveal_rules(artifact)
+            .map_err(|error| (artifact.artifact_id.as_str(), error))?;
+        let policy_id = artifact.artifact_id.as_str();
+        rules.extend(policy_rules.into_iter().map(|rule| (policy_id, rule)));
+    }
+    Ok(rules)
+}
 
 /// Typed payload of a `policy` (Access) artifact.
 ///

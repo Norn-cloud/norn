@@ -566,7 +566,7 @@ fn target<'a>(value: &'a mut Value, path: &[PathPart]) -> Result<&'a mut Value, 
 /// require equal bytes.
 pub(crate) fn encode_export(
     engine: &impl SqlEngine,
-    record: &crate::export::ExportRecord,
+    record: &crate::export_journal::ExportRecordRef<'_>,
     canonical: &str,
 ) -> Result<String, CellError> {
     let scope = normalized(&record.batch.scope)?;
@@ -625,7 +625,7 @@ pub(crate) fn encode_export(
 /// node's body, pack the value and canonicalize the inline value again.
 fn encode_parsed(
     engine: &impl SqlEngine,
-    record: &crate::export::ExportRecord,
+    record: &crate::export_journal::ExportRecordRef<'_>,
     canonical: &str,
     scope: String,
     world: String,
@@ -652,7 +652,7 @@ fn encode_parsed(
 /// Index a packed record's references and write its envelope.
 fn finish_export(
     engine: &impl SqlEngine,
-    record: &crate::export::ExportRecord,
+    record: &crate::export_journal::ExportRecordRef<'_>,
     scope: String,
     world: String,
     inline: String,
