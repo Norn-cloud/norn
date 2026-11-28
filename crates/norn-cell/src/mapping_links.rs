@@ -213,21 +213,25 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .as_ref()
                 .map(|t| fact(&t.object_type, &t.key))
         };
-        let group_by_sr = |list: &[Entry]| {
-            let mut groups = BTreeMap::<_, Vec<&Entry>>::new();
+        fn group_by_sr<'a>(
+            list: &'a [Entry],
+            model: CommitModel<'_, '_>,
+        ) -> BTreeMap<(FactKey, String), Vec<&'a Entry>> {
+            let mut groups = BTreeMap::<_, Vec<&'a Entry>>::new();
             for entry in list {
+                let source = model.canonical(&FactKey::new(
+                    entry.claim.source_type.as_str(),
+                    &entry.claim.source_key,
+                ));
                 groups
-                    .entry((
-                        fact(&entry.claim.source_type, &entry.claim.source_key),
-                        entry.claim.role.clone(),
-                    ))
+                    .entry((source, entry.claim.role.clone()))
                     .or_default()
                     .push(entry);
             }
             groups
-        };
-        let full_groups = group_by_sr(&all_entries);
-        let active_groups = group_by_sr(&active_entries);
+        }
+        let full_groups = group_by_sr(&all_entries, model);
+        let active_groups = group_by_sr(&active_entries, model);
         for (group_key, full_group) in &full_groups {
             let full_non_sup: BTreeMap<String, Standing> = full_group
                 .iter()

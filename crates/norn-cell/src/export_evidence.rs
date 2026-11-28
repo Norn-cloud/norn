@@ -150,49 +150,56 @@ fn conflict_accepted_bundle_id(observed: &Value) -> Option<&str> {
 
 use crate::export_journal::already_exported_pending;
 
-fn append_conflict_dependencies<E: SqlEngine>(
-    conn: &E,
+struct ConflictDepContext<'a> {
     prev_seq: i64,
     current_seq: i64,
     include_consumed_conflict_deps: bool,
-    consumed: Option<&crate::store::Consumption>,
-    batch_events: &[Value],
+    consumed: Option<&'a crate::store::Consumption>,
+    batch_events: &'a [Value],
+}
+
+fn append_conflict_dependencies<E: SqlEngine>(
+    conn: &E,
+    ctx: &ConflictDepContext<'_>,
     pending: &mut Vec<crate::PendingObservation>,
     seen_pending: &mut BTreeSet<String>,
+    out: &mut Vec<SourceEvidenceEntry>,
 ) -> Result<(), CellError> {
     let inbox = crate::system::INBOX;
-    let mut dep_ids: Vec<(String, bool)> = pending
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    // Merge per-bundle `allow_retired_at_current` flags with OR so a pending
+    // conflict referencing `dep_id` never masks a same-commit legacy resolution
+    // that just retired `dep_id` at `current_seq`.
+    let mut deps: BTreeMap<String, bool> = BTreeMap::new();
+    for row in pending
         .iter()
-        .filter(|row| row.observation_id.starts_with("mapping-conflict:"))
-        .filter_map(|row| {
-            conflict_accepted_bundle_id(&row.observed).map(|id| (id.to_owned(), false))
-        })
-        .collect();
+        .filter(|r| r.observation_id.starts_with("mapping-conflict:"))
+    {
+        if let Some(id) = conflict_accepted_bundle_id(&row.observed) {
+            deps.entry(id.to_owned()).or_insert(false);
+        }
+    }
     // Drive conflict dependency lookup strictly from the current commit's
     // consumed observation and `dispute_resolved` events (O(1) PK lookups;
     // zero scan of retained conflict history on unrelated commits).
-    if include_consumed_conflict_deps {
+    if ctx.include_consumed_conflict_deps {
         let mut conflict_ids: Vec<(&str, bool)> = Vec::new();
-        if let Some(crate::store::Consumption::Observation { observation_id }) = consumed
+        if let Some(crate::store::Consumption::Observation { observation_id }) = ctx.consumed
             && observation_id.starts_with("mapping-conflict:")
         {
             conflict_ids.push((observation_id.as_str(), false));
         }
-        if consumed.is_none() {
-            for event in batch_events {
+        if ctx.consumed.is_none() {
+            for event in ctx.batch_events {
                 if event.get("op").and_then(Value::as_str) == Some("dispute_resolved")
                     && let Some(id) = event.get("disputeId").and_then(Value::as_str)
                     && id.starts_with("mapping-conflict:")
                 {
-                    // Legacy no-consumption resolution (`accept-first`,
-                    // `accept-second-as-correction`, or `reject`) has no
-                    // `consumed_input.members`; carry the first capture even
-                    // if this same commit just retired it at `current_seq`.
                     conflict_ids.push((id, true));
                 }
             }
         }
-        for (conflict_id, allow_retired_at_current) in conflict_ids {
+        for (conflict_id, allow_retired) in conflict_ids {
             let dep: Option<Option<String>> = conn.query_optional(
                 &format!(
                     "SELECT json_extract(\"observed\", '$.input.acceptedBundleId') \
@@ -204,13 +211,37 @@ fn append_conflict_dependencies<E: SqlEngine>(
             if let Some(Some(id)) = dep
                 && id.starts_with("mapping-bundle:")
             {
-                dep_ids.push((id, allow_retired_at_current));
+                *deps.entry(id).or_insert(false) |= allow_retired;
             }
         }
     }
-    for (dep_id, allow_retired_at_current) in dep_ids {
+    for (dep_id, allow_retired_at_current) in deps {
+        if allow_retired_at_current {
+            // Preserve any same-window `_norn_source_evidence` attribution on a
+            // first capture retired at `current_seq` by a no-consumption legacy
+            // resolution (the main query skips `consumed_commit_seq == current_seq`).
+            let retired_ev = conn.query(
+                &format!(
+                    "SELECT e.\"connection_id\", e.\"captured_commit_seq\" \
+                     FROM \"{table}\" e \
+                     JOIN \"{inbox}\" i ON i.\"observation_id\" = e.\"observation_id\" \
+                     WHERE e.\"observation_id\" = ?1 \
+                       AND e.\"captured_commit_seq\" = ?2 \
+                       AND i.\"consumed_commit_seq\" = ?3"
+                ),
+                params![dep_id.as_str(), ctx.prev_seq, ctx.current_seq],
+            )?;
+            for raw in retired_ev {
+                let row = SqlRow(raw);
+                out.push(SourceEvidenceEntry {
+                    observation_id: dep_id.clone(),
+                    connection_id: row.get(0)?,
+                    captured_commit_seq: row.get(1)?,
+                });
+            }
+        }
         if !seen_pending.insert(dep_id.clone())
-            || already_exported_pending(conn, &dep_id, prev_seq)?
+            || already_exported_pending(conn, &dep_id, ctx.prev_seq)?
         {
             continue;
         }
@@ -221,7 +252,7 @@ fn append_conflict_dependencies<E: SqlEngine>(
                      WHERE \"observation_id\" = ?1 \
                        AND (\"consumed_commit_seq\" IS NULL OR \"consumed_commit_seq\" = ?2)"
                 ),
-                params![dep_id.as_str(), current_seq],
+                params![dep_id.as_str(), ctx.current_seq],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?
         } else {
@@ -320,16 +351,14 @@ pub(crate) fn read_late_source_evidence_for_version<E: SqlEngine>(
             });
         }
     }
-    append_conflict_dependencies(
-        conn,
+    let ctx = ConflictDepContext {
         prev_seq,
         current_seq,
         include_consumed_conflict_deps,
         consumed,
         batch_events,
-        &mut pending,
-        &mut seen_pending,
-    )?;
+    };
+    append_conflict_dependencies(conn, &ctx, &mut pending, &mut seen_pending, &mut out)?;
     if pending.is_empty() && out.is_empty() {
         return Ok((pending, out));
     }
