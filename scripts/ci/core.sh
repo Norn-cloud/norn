@@ -213,12 +213,18 @@ prepare_inputs() {
   export NORN_UPSTREAM_FIXTURE_DIR="$upstream"
   (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile)
   bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/core --org org_demo --env dev --out "$upstream/core-artifacts.json"
-  bun -e 'const artifacts = await Bun.file(process.argv[1]).json(); for (const [id, path] of [["toy.contacts.source", "fixtures/ir/synthetic-contact.source_schema.json"], ["toy.rows", "fixtures/ir/synthetic-rows.mapping.json"]]) { const artifact = artifacts.find((value) => value.artifactId === id); if (!artifact) throw new Error(`missing ${id}`); await Bun.write(path, JSON.stringify(artifact, null, 2) + "\n"); }' "$upstream/core-artifacts.json"
+  bun -e 'const artifacts = await Bun.file(process.argv[1]).json(); for (const [id, path] of [["toy.contacts.source", "fixtures/ir/synthetic-contact.source_schema.json"], ["toy.rows", "fixtures/ir/synthetic-rows.mapping.json"]]) { const artifact = artifacts.find((value) => value.artifactId === id); if (!artifact) throw new Error(`missing ${id}`); const next = JSON.stringify(artifact, null, 2) + "\n"; const file = Bun.file(path); if (!(await file.exists()) || (await file.text()) !== next) await Bun.write(path, next); }' "$upstream/core-artifacts.json"
 }
 use_jsonschema() {
-  [[ -x $upstream/venv/bin/python3 ]] || python3 -m venv "$upstream/venv"
-  export PATH="$upstream/venv/bin:$PATH"
-  python3 -m pip install --disable-pip-version-check --no-input jsonschema==4.25.1 PyYAML==6.0.3
+  if command -v uv > /dev/null 2>&1; then
+    [[ -x $upstream/venv/bin/python3 ]] || uv venv --quiet --python python3 "$upstream/venv"
+    export PATH="$upstream/venv/bin:$PATH"
+    uv pip install --quiet --python "$upstream/venv/bin/python3" jsonschema==4.25.1 PyYAML==6.0.3
+  else
+    [[ -x $upstream/venv/bin/python3 ]] || python3 -m venv "$upstream/venv"
+    export PATH="$upstream/venv/bin:$PATH"
+    python3 -m pip install --disable-pip-version-check --no-input jsonschema==4.25.1 PyYAML==6.0.3
+  fi
 }
 # Workflow lint (#1348 CI-R2): pinned actionlint and zizmor release binaries, checked against
 # their sha256. Their configs live in the gated
@@ -257,16 +263,22 @@ run_authoring_tests() (
   cd tools/norn-ts
   bun install --frozen-lockfile --backend copyfile
   bun run typecheck
-  bun test --timeout 60000 --shard=1/2 --reporter=junit --reporter-outfile="$upstream/authoring-1.xml" &
-  first=$!
-  bun test --timeout 60000 --shard=2/2 --reporter=junit --reporter-outfile="$upstream/authoring-2.xml" &
-  second=$!
+  bun test --timeout 60000 --shard=1/4 --reporter=junit --reporter-outfile="$upstream/authoring-1.xml" &
+  s1=$!
+  bun test --timeout 60000 --shard=2/4 --reporter=junit --reporter-outfile="$upstream/authoring-2.xml" &
+  s2=$!
+  bun test --timeout 60000 --shard=3/4 --reporter=junit --reporter-outfile="$upstream/authoring-3.xml" &
+  s3=$!
+  bun test --timeout 60000 --shard=4/4 --reporter=junit --reporter-outfile="$upstream/authoring-4.xml" &
+  s4=$!
   status=0
-  wait "$first" || status=1
-  wait "$second" || status=1
+  wait "$s1" || status=1
+  wait "$s2" || status=1
+  wait "$s3" || status=1
+  wait "$s4" || status=1
   (( status == 0 )) || exit "$status"
   # Update the inventory whenever an authoring test file is added or removed.
-  python3 - ../../scripts/ci/authoring-test-files.txt "$upstream/authoring-1.xml" "$upstream/authoring-2.xml" <<'PYTHON'
+  python3 - ../../scripts/ci/authoring-test-files.txt "$upstream/authoring-1.xml" "$upstream/authoring-2.xml" "$upstream/authoring-3.xml" "$upstream/authoring-4.xml" <<'PYTHON'
 import collections
 import sys
 import xml.etree.ElementTree as ET
@@ -565,10 +577,10 @@ PY
       bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/quickstart --org example --env local --out "$upstream/task.json"
       printf "{}\n" > "$upstream/context.json"
       "$NORN_BIN" check --artifacts "$upstream/task.json" --context "$upstream/context.json" > "$upstream/check.json"
-      # runnable-docs runs each release test the status matrix names; build
-      # them in one Cargo invocation so its bounded runs only execute (#1171 integrated gate).
+      # runnable-docs runs each release test the status matrix names; prebuild
+      # each unique (-p pkg, target) pair matching the matrix commands so feature
+      # unification matches and each bounded run only executes (#1171, #1951).
       local runnable_docs_raw
-      local -a runnable_docs_args
       runnable_docs_raw=$(
         python3 - docs/authoring/runnable/status.md <<'PY'
 import pathlib, re, sys
@@ -578,23 +590,25 @@ commands = [cmd for cmd in re.findall(r"`([^`]+)`", text) if re.match(r"^cargo\s
 if not commands:
     sys.exit(f"integration-authoring: no runnable-docs release tests found in {path}")
 pattern = re.compile(r"^cargo test --locked -p ([a-z0-9-]+) (?:(--lib)|--test ([a-z0-9_]+)) [a-z_:]+ -- --exact$")
-pkgs, targets = set(), set()
+pairs = set()
 for cmd in commands:
     match = pattern.fullmatch(cmd)
     if not match:
         sys.exit(f"integration-authoring: unsupported runnable-docs cargo test command in {path}: {cmd}")
-    pkgs.add(match.group(1))
-    targets.add(("--lib",) if match.group(2) else ("--test", match.group(3)))
-for pkg in sorted(pkgs):
-    print("-p")
-    print(pkg)
-for target in sorted(targets):
-    for arg in target:
-        print(arg)
+    pairs.add((match.group(1), "--lib", "") if match.group(2) else (match.group(1), "--test", match.group(3)))
+for pkg, flag, target in sorted(pairs):
+    print(f"{pkg}\t{flag}\t{target}")
 PY
       )
-      mapfile -t runnable_docs_args <<< "$runnable_docs_raw"
-      cargo test --locked --no-run "${runnable_docs_args[@]}"
+      local pkg flag target
+      while IFS=$'\t' read -r pkg flag target; do
+        [[ -n $pkg ]] || continue
+        if [[ -n $target ]]; then
+          cargo test --locked --no-run -p "$pkg" "$flag" "$target"
+        else
+          cargo test --locked --no-run -p "$pkg" "$flag"
+        fi
+      done <<< "$runnable_docs_raw"
       run_authoring_tests
       ;;
     integration-wasm)
@@ -629,8 +643,13 @@ PY
       require_fresh "$CARGO_TARGET_DIR/debug/norn"
       "$CARGO_TARGET_DIR/debug/norn" openapi > sdks/openapi/norn-api.openapi.json
       (cd packages/norn-sdk && bun run generate)
-      python3 -m venv "$upstream/openapi-venv"
-      "$upstream/openapi-venv/bin/python" -m pip install --disable-pip-version-check --no-input openapi-spec-validator==0.9.0
+      if command -v uv > /dev/null 2>&1; then
+        uv venv --quiet --python python3 "$upstream/openapi-venv"
+        uv pip install --quiet --python "$upstream/openapi-venv/bin/python" openapi-spec-validator==0.9.0
+      else
+        python3 -m venv "$upstream/openapi-venv"
+        "$upstream/openapi-venv/bin/python" -m pip install --disable-pip-version-check --no-input openapi-spec-validator==0.9.0
+      fi
       "$upstream/openapi-venv/bin/python" -m openapi_spec_validator sdks/openapi/norn-api.openapi.json
       git diff --exit-code -- sdks/openapi/norn-api.openapi.json packages/norn-sdk/src/generated/norn-api.ts
       # The Python client is generated here from the checked document, never checked in;

@@ -824,7 +824,7 @@ def integration_partition_canaries() -> None:
                 (core.replace(" integration-wasm ", " "), "integration phases must each be registered once"),
                 (core.replace(command, ""), "integration check must run exactly once"),
                 (core.replace(command, command * 2), "integration check must run exactly once"),
-                (core.replace("--shard=2/2", "--shard=1/2"),
+                (core.replace("--shard=2/4", "--shard=1/4"),
                  "authoring shards must execute and check coverage exactly once"),
                 (core.replace('  (( status == 0 )) || exit "$status"\n', ""),
                  "authoring shards must execute and check coverage exactly once"),
@@ -1165,7 +1165,7 @@ def workflow_sccache_canaries(source: str) -> None:
                 result = subprocess.run(["bash", "-c", start["run"]], capture_output=True, text=True, timeout=30,
                                         env={**base, "RUNNER_ENVIRONMENT": runner, "GITHUB_ENV": str(github_env)})
                 exported = dict(line.split("=", 1) for line in github_env.read_text().splitlines() if line)
-                wrapper = str(root / "tmp" / "sccache-rustc")
+                wrapper = str(root / "tmp" / "sccache-fallback" / "sccache")
                 expected = {"SCCACHE_GHA_ENABLED": "true" if runner == "github-hosted" else "false",
                             **({"RUSTC_WRAPPER": wrapper} if starts else {})}
                 if result.returncode != 0 or exported != expected:
@@ -1686,7 +1686,7 @@ def workflow_context_canaries(source: str, trusted_source: str) -> None:
                 ("cache keys exported to later steps", lambda job: next(step for step in job["steps"]
                     if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                     next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
-                    .replace('if sccache --start-server; then', 'echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" >> "$GITHUB_ENV"\nif sccache --start-server; then'))),
+                    .replace('if [ -n "$real_sccache" ] && "$real_sccache" --start-server; then', 'echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" >> "$GITHUB_ENV"\nif [ -n "$real_sccache" ] && "$real_sccache" --start-server; then'))),
                 ("pull requests write the shared cache", lambda job: next(step for step in job["steps"]
                     if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                     next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
