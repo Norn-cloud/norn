@@ -1315,7 +1315,7 @@ mod tests {
         let consumed = crate::Consumption::Observation {
             observation_id: c_obs.id.0.clone(),
         };
-        let pre = crate::export_journal::consumed_input(&store.read(), Some(&consumed))
+        let pre = crate::export_journal::consumed_input(&store.read(), Some(&consumed), true)
             .expect("consumed_input")
             .expect("preimage");
         store
@@ -1387,16 +1387,17 @@ mod tests {
         let consumed = crate::Consumption::Observation {
             observation_id: r_obs.id.0.clone(),
         };
-        let pre = crate::export_journal::consumed_input(&store.read(), Some(&consumed))
+        let pre = crate::export_journal::consumed_input(&store.read(), Some(&consumed), true)
             .expect("consumed_input")
             .expect("preimage");
         let replayed = open_installed_store(&artifacts);
         crate::export_journal::restore_late_source_evidence(&replayed.read(), 2, &p2, &ev2)
             .expect("restore c2 quarantine");
         assert_eq!(replay_observation_preimage(&replayed, 4, &pre), (1, 2));
-        let round_trip = crate::export_journal::consumed_input(&replayed.read(), Some(&consumed))
-            .expect("replayed consumed_input")
-            .expect("replayed preimage");
+        let round_trip =
+            crate::export_journal::consumed_input(&replayed.read(), Some(&consumed), true)
+                .expect("replayed consumed_input")
+                .expect("replayed preimage");
         assert_eq!(round_trip, pre);
         for conn in [&store.conn, &replayed.conn] {
             conn.execute(
@@ -1458,7 +1459,7 @@ mod tests {
         let c_consumed = crate::Consumption::Observation {
             observation_id: c_obs.id.0.clone(),
         };
-        let c_pre = crate::export_journal::consumed_input(&store.read(), Some(&c_consumed))
+        let c_pre = crate::export_journal::consumed_input(&store.read(), Some(&c_consumed), true)
             .expect("c pre")
             .expect("pre");
         store
