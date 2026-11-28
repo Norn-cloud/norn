@@ -506,6 +506,179 @@ Thir {
         with self.assertRaisesRegex(SystemExit, "converse literals"):
             gate["compare"](vir, thir.replace("Pu128(1)", "Pu128(2)", 1))
 
+    def test_compare_vir_and_thir_rejects_redirected_local_read(self):
+        vir = """(@ "allen_core.rs:1:1: 1:2" (Function
+ (Fun :path allen_core::converse) :mode Exec :params (
+  (@ "allen_core.rs:1:20: 1:28" (Param :name (VarIdent "relation" (VarIdentDisambiguate RustcId 1))
+   :typ (Typ Datatype (Dt Path allen_core::t%AllenRelation) () ())))
+  (@ "allen_core.rs:1:30: 1:35" (Param :name (VarIdent "other" (VarIdentDisambiguate RustcId 2))
+   :typ (Typ Datatype (Dt Path allen_core::t%AllenRelation) () ()))))
+ :body (@@ "allen_core.rs:2:5: 4:6" (> Match
+  (@@ "allen_core.rs:2:11: 2:19" (> ReadPlace (@@ "allen_core.rs:2:11: 2:19" (Place Local (VarIdent "relation" (VarIdentDisambiguate RustcId 1))) (Typ Datatype (Dt Path allen_core::t%AllenRelation) () ())) (UnfinalizedReadKind :preliminary_kind (ReadKind Copy) :id 1)) (Typ Datatype (Dt Path allen_core::t%AllenRelation) () ()))
+  ((Arm
+    :pattern (@@ "allen_core.rs:3:9: 3:30" (Pattern Constructor (Dt Path allen_core::t%AllenRelation) "Before" ()) (Typ Datatype (Dt Path allen_core::t%AllenRelation) () ()))
+    :guard (@@ "allen_core.rs:3:9: 3:30" (> Const (Constant Bool true)) (Typ Bool))
+    :body (@@ "allen_core.rs:3:34: 3:54" (> Ctor (Dt Path allen_core::t%AllenRelation) "After" ()) (Typ Datatype (Dt Path allen_core::t%AllenRelation) () ())))))
+  (Typ Datatype (Dt Path allen_core::t%AllenRelation) () ()))))
+(@ "allen_core.rs:5:1: 5:2" (Function
+ (Fun :path allen_core::shares_instant) :mode Exec :params ()
+ :body (@@ "allen_core.rs:5:10: 5:14" (> Const (Constant Bool true)) (Typ Bool))))
+(@ "allen_core.rs:6:1: 6:2" (Function
+ (Fun :path allen_core::holds) :mode Exec :params ()
+ :body (@@ "allen_core.rs:6:10: 6:15" (> Const (Constant Bool false)) (Typ Bool))))
+(@ "allen_core.rs:7:1: 7:2" (Function
+ (Fun :path allen_core::classify) :mode Exec :params ()
+ :body (@@ "allen_core.rs:7:10: 7:14" (> Ctor (Dt Path core::t%option::t%Option) "None" ()) (Typ Datatype (Dt Path core::t%option::t%Option) ((Typ Datatype (Dt Path allen_core::t%AllenRelation) () ())) ()))))
+"""
+        thir = """DefId(0:1 ~ norn_expr[abcd]::temporal::allen_core::converse):
+Thir {
+    params: [
+        Param {
+            pat: Some(Pat {
+                ty: temporal::allen_core::AllenRelation,
+                span: crates/norn-expr/src/temporal/allen_core.rs:1:20: 1:28,
+                kind: PatKind {
+                    Binding {
+                        name: "relation"
+                        mode: ByValue
+                        var: LocalVarId(
+                            HirId(DefId(0:1).1),
+                        )
+                        ty: temporal::allen_core::AllenRelation
+                    }
+                }
+            })
+        },
+        Param {
+            pat: Some(Pat {
+                ty: temporal::allen_core::AllenRelation,
+                span: crates/norn-expr/src/temporal/allen_core.rs:1:30: 1:35,
+                kind: PatKind {
+                    Binding {
+                        name: "other"
+                        mode: ByValue
+                        var: LocalVarId(
+                            HirId(DefId(0:1).2),
+                        )
+                        ty: temporal::allen_core::AllenRelation
+                    }
+                }
+            })
+        }
+    ]
+    exprs: [
+        Expr {
+            ty: temporal::allen_core::AllenRelation
+            temp_scope_id: 1
+            span: crates/norn-expr/src/temporal/allen_core.rs:2:5: 4:6
+            kind:
+                Match {
+                    scrutinee:
+                        Expr {
+                            ty: temporal::allen_core::AllenRelation
+                            temp_scope_id: 1
+                            span: crates/norn-expr/src/temporal/allen_core.rs:2:11: 2:19
+                            kind:
+                                VarRef { id: LocalVarId(HirId(DefId(0:1).1)) }
+                        }
+                    arms: [
+                        Arm {
+                            pattern:
+                                Pat {
+                                    ty: temporal::allen_core::AllenRelation
+                                    span: crates/norn-expr/src/temporal/allen_core.rs:3:9: 3:30
+                                    kind: PatKind {
+                                        Variant {
+                                            adt_def: temporal::allen_core::AllenRelation
+                                            args: []
+                                            variant_index: VariantIdx(0)
+                                            subpatterns: []
+                                        }
+                                    }
+                                }
+                            body:
+                                Expr {
+                                    ty: temporal::allen_core::AllenRelation
+                                    temp_scope_id: 1
+                                    span: crates/norn-expr/src/temporal/allen_core.rs:3:34: 3:54
+                                    kind:
+                                        Adt {
+                                            adt_def: temporal::allen_core::AllenRelation
+                                            variant_index: VariantIdx(12)
+                                            args: []
+                                            user_ty: None
+                                            fields: []
+                                            base: None
+                                        }
+                                }
+                        }
+                    ]
+                }
+        }
+    ]
+}
+DefId(0:2 ~ norn_expr[abcd]::temporal::allen_core::shares_instant):
+Thir {
+    params: []
+    exprs: [
+        Expr {
+            ty: bool
+            temp_scope_id: 1
+            span: crates/norn-expr/src/temporal/allen_core.rs:5:10: 5:14
+            kind:
+                Literal {
+                    lit: Spanned { node: Bool(true), span: crates/norn-expr/src/temporal/allen_core.rs:5:10: 5:14 (#0) }
+                    neg: false
+                }
+        }
+    ]
+}
+DefId(0:3 ~ norn_expr[abcd]::temporal::allen_core::holds):
+Thir {
+    params: []
+    exprs: [
+        Expr {
+            ty: bool
+            temp_scope_id: 1
+            span: crates/norn-expr/src/temporal/allen_core.rs:6:10: 6:15
+            kind:
+                Literal {
+                    lit: Spanned { node: Bool(false), span: crates/norn-expr/src/temporal/allen_core.rs:6:10: 6:15 (#0) }
+                    neg: false
+                }
+        }
+    ]
+}
+DefId(0:4 ~ norn_expr[abcd]::temporal::allen_core::classify):
+Thir {
+    params: []
+    exprs: [
+        Expr {
+            ty: std::option::Option<temporal::allen_core::AllenRelation>
+            temp_scope_id: 1
+            span: crates/norn-expr/src/temporal/allen_core.rs:7:10: 7:14
+            kind:
+                Adt {
+                    adt_def: std::option::Option
+                    variant_index: VariantIdx(0)
+                    args: [temporal::allen_core::AllenRelation]
+                    user_ty: None
+                    fields: []
+                    base: None
+                }
+        }
+    ]
+}
+"""
+        gate["compare"](vir, thir)
+        swapped = thir.replace(
+            "VarRef { id: LocalVarId(HirId(DefId(0:1).1)) }",
+            "VarRef { id: LocalVarId(HirId(DefId(0:1).2)) }",
+            1,
+        )
+        with self.assertRaisesRegex(SystemExit, "converse local_reads"):
+            gate["compare"](vir, swapped)
+
 
 if __name__ == "__main__":
     unittest.main()

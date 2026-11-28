@@ -347,11 +347,20 @@ def inventory():
         "literals": Counter(),
         "ctors": Counter(),
         "logical_ops": Counter(),
+        "local_reads": Counter(),
         "locals": Counter(),
         "calls": Counter(),
         "literal_patterns": Counter(),
         "pattern_variants": Counter(),
     }
+
+
+def _normalize_local_id(raw):
+    text = " ".join(raw.strip().rstrip(",").split())
+    if text.startswith("LocalVarId(") and text.endswith(")"):
+        text = text[len("LocalVarId(") : -1].strip().rstrip(",").strip()
+    require(bool(text), f"empty THIR local id {raw!r}")
+    return text
 
 
 def record_binding(out, location, variable, ty):
@@ -442,6 +451,9 @@ def visit_vir(node, out):
             case [">", "Logical", ["LogicalOp", op], _, _]:
                 out["expressions"].add((span(location), vir_type(ty)))
                 out["logical_ops"][span(location), op] += 1
+            case ["Place", "Local", ["VarIdent", var_name, *_]] | [">", "Var", ["VarIdent", var_name, *_]]:
+                out["expressions"].add((span(location), vir_type(ty)))
+                out["local_reads"][span(location), var_name.strip('"')] += 1
             case [">", *_] | ["Place", *_]:
                 out["expressions"].add((span(location), vir_type(ty)))
         if body[:2] == [">", "Call"]:
@@ -493,7 +505,10 @@ VARIANT_PATTERN = re.compile(
     r"\bPat \{\n\s*ty: ([^\n]+)\n\s*span: ([^\n]+)\n\s*kind: PatKind \{\n\s*Variant \{",
     re.M,
 )
-BINDING = re.compile(r'^ *Binding \{\n\s*name: "(\w+)"\n\s*mode: .*\n\s*var: .*\n\s*ty: (.*)$', re.M)
+BINDING = re.compile(
+    r'^ *Binding \{\n\s*name: "(\w+)"\n\s*mode: [^\n]+\n\s*var: (LocalVarId\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)|[^\n]+)\n\s*ty: ([^\n]+)$',
+    re.M,
+)
 
 
 def _top_level_fields(block):
@@ -589,6 +604,16 @@ def _kind_block(body, expr_match):
 
 def thir_function(body):
     out = inventory()
+    var_names = {}
+    bindings = list(BINDING.finditer(body))
+    require(len(bindings) == len(re.findall(r"^ *Binding \{$", body, re.M)), "unparsed THIR binding")
+    for binding in bindings:
+        pat = body.rindex("Pat {\n", 0, binding.start())
+        location = re.search(r"Pat \{\n\s*ty: [^\n]+\n\s*span: ([^\n]+)", body[pat:])[1]
+        var_id = _normalize_local_id(binding[2])
+        require(var_id not in var_names, f"duplicate THIR local id {var_id!r}")
+        var_names[var_id] = binding[1]
+        record_binding(out, location, binding[1], thir_type(binding[3]))
     expressions = list(EXPR_HEADER.finditer(body))
     require(len(expressions) == len(re.findall(r"^ *Expr \{$", body, re.M)), "unparsed THIR expression")
     for expr in expressions:
@@ -612,6 +637,12 @@ def thir_function(body):
             op = _top_level_fields(_kind_block(body, expr)).get("op")
             require(op in ("And", "Or"), f"unsupported THIR LogicalOp {op!r}")
             out["logical_ops"][expr_span, op] += 1
+        elif kind == "VarRef":
+            raw_id = _top_level_fields(_kind_block(body, expr)).get("id")
+            require(raw_id is not None, f"missing THIR VarRef id at {expr_span}")
+            var_id = _normalize_local_id(raw_id)
+            require(var_id in var_names, f"unresolved THIR VarRef id {var_id!r} at {expr_span}")
+            out["local_reads"][expr_span, var_names[var_id]] += 1
     for ty, location, value in LITERAL_PATTERN.findall(body):
         out["literal_patterns"][span(location), thir_type(ty), value] += 1
     require(len(LITERAL_PATTERN.findall(body)) == body.count("Constant {"), "unparsed THIR constant pattern")
@@ -625,12 +656,6 @@ def thir_function(body):
         dt_name = thir_type(pat_ty).split("<", 1)[0]
         block, _ = _braced_block(body, pat.end() - 1)
         out["pattern_variants"][span(location), dt_name, _parse_thir_variant(dt_name, block)] += 1
-    bindings = list(BINDING.finditer(body))
-    require(len(bindings) == len(re.findall(r"^ *Binding \{$", body, re.M)), "unparsed THIR binding")
-    for binding in bindings:
-        pat = body.rindex("Pat {\n", 0, binding.start())
-        location = re.search(r"Pat \{\n\s*ty: [^\n]+\n\s*span: ([^\n]+)", body[pat:])[1]
-        record_binding(out, location, binding[1], thir_type(binding[2]))
     return out
 
 

@@ -353,13 +353,11 @@ mod tests {
                 value,
                 log: Rc::clone(&log),
             };
-            (
-                log,
-                point("start", first_start),
-                point("end", first_end),
-                point("other_start", second_start),
-                point("other_end", second_end),
-            )
+            let start = point("start", first_start);
+            let end = point("end", first_end);
+            let other_start = point("other_start", second_start);
+            let other_end = point("other_end", second_end);
+            (log, start, end, other_start, other_end)
         };
 
         // Improper first interval short-circuits after exactly 1 comparison.
