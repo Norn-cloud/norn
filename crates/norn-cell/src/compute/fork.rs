@@ -184,6 +184,7 @@ impl<E: SqlEngine> CellStore<E> {
         let Some(pin) = self.fork_pin().cloned() else {
             return Err(CellError::WorldSimulationForbidden);
         };
+        self.refuse_closed_fork()?;
         if context.world != MAIN_WORLD && context.world != pin.world {
             return Err(CellError::ForkInvalidWorld);
         }
