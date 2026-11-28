@@ -892,10 +892,28 @@ function computeLocalRipples(
             }
           }
         }
-        for (const pathMap of Array.isArray(payload.pathMappings) ? payload.pathMappings.map(obj) : []) {
-          if (!pathMap) continue
-          for (const entityId of [...strings(pathMap.sourceEntities), ...strings(pathMap.targetEntities)]) {
-            const err = addEdge(id, entityId); if (err) return err
+        if (payload.pathMappings !== undefined) {
+          if (!Array.isArray(payload.pathMappings)) {
+            return projectionUnknown(`malformed mapping artifact \`${id}\`: pathMappings must be an array`)
+          }
+          for (const rawPathMap of payload.pathMappings) {
+            const pathMap = obj(rawPathMap)
+            if (!pathMap) {
+              return projectionUnknown(`malformed mapping artifact \`${id}\`: pathMappings entries must be objects`)
+            }
+            for (const field of ["sourceEntities", "targetEntities"] as const) {
+              const endpoints = pathMap[field]
+              if (endpoints === undefined) continue
+              if (!Array.isArray(endpoints)) {
+                return projectionUnknown(`malformed mapping artifact \`${id}\`: pathMappings.${field} must be an array`)
+              }
+              for (const entityId of endpoints) {
+                if (typeof entityId !== "string") {
+                  return projectionUnknown(`malformed mapping artifact \`${id}\`: pathMappings.${field} must contain strings`)
+                }
+                const err = addEdge(id, entityId); if (err) return err
+              }
+            }
           }
         }
         for (const ent of Array.isArray(payload.entitlements) ? payload.entitlements.map(obj) : []) {

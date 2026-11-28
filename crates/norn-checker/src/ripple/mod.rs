@@ -23,7 +23,7 @@ use norn_graph::{Budget, Direction, Error as GraphError, Graph, Limit, reachabil
 use norn_ir::{ArtifactEnvelope, ArtifactKind};
 use serde_json::{Map, Value, json};
 
-use self::project::{Projection, ProjectionError, Universe};
+use self::project::{ProjectedGraph, Projection, ProjectionError, Universe};
 
 /// Format tag of [`RippleReport::to_json_value`].
 pub const RIPPLE_FORMAT: &str = "norn-checker/ripple@1";
@@ -281,10 +281,11 @@ pub fn compute_ripple_effects_with_budget(
     if let Err(error) = projection.collect(before_artifacts, after_artifacts) {
         return RippleReport::from_projection_error(root_list, error);
     }
+    let projected = projection.into_graph();
 
     let graph = Graph {
         nodes: universe.all_ids.iter().cloned().collect(),
-        edges: projection.edges.iter().cloned().collect(),
+        edges: projected.edges.iter().cloned().collect(),
     };
     let remaining_budget = Budget {
         max_nodes: budget.max_nodes,
@@ -319,9 +320,28 @@ pub fn compute_ripple_effects_with_budget(
             );
         }
     };
+    let reachability_edges = projected
+        .edges
+        .iter()
+        .filter(|(_, dependency)| reached.contains(dependency))
+        .count();
+    let reachability_steps = graph
+        .nodes
+        .len()
+        .saturating_add(graph.edges.len())
+        .saturating_add(root_list.len())
+        .saturating_add(reached.len())
+        .saturating_add(reachability_edges);
+    steps = steps.saturating_add(reachability_steps);
+    if steps > budget.max_steps {
+        return RippleReport::unknown_budget(
+            root_list,
+            BudgetRefusal::from_limit(Limit::Steps, budget.max_steps),
+        );
+    }
 
     let (triggered_by, best_via) =
-        match trace_paths(&universe.roots, &projection.edges, budget, &mut steps) {
+        match trace_paths(&universe.roots, &projected.edges, budget, &mut steps) {
             Ok(paths) => paths,
             Err(refusal) => return RippleReport::unknown_budget(root_list, refusal),
         };
@@ -339,7 +359,7 @@ pub fn compute_ripple_effects_with_budget(
         let via = best_via
             .get(&artifact_id)
             .map_or_else(|| vec![artifact_id.clone()], Clone::clone);
-        let impact_kind = classify_impact(&artifact_id, &via, &universe, &projection);
+        let impact_kind = classify_impact(&artifact_id, &via, &universe, &projected);
         ripples.push(RippleEntry {
             artifact_id,
             kind,
@@ -454,7 +474,7 @@ fn classify_impact(
     artifact_id: &str,
     via: &[String],
     universe: &Universe,
-    projection: &Projection<'_>,
+    projection: &ProjectedGraph,
 ) -> ImpactKind {
     if universe.roots.contains(artifact_id) {
         return ImpactKind::DirectChange;

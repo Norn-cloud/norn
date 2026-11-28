@@ -233,6 +233,12 @@ impl Universe {
     }
 }
 
+pub(super) struct ProjectedGraph {
+    pub(super) edges: BTreeSet<(String, String)>,
+    pub(super) specialization_edges: BTreeSet<(String, String)>,
+    pub(super) broken_dependents: BTreeSet<String>,
+}
+
 pub(super) struct Projection<'a> {
     universe: &'a Universe,
     budget: Budget,
@@ -257,6 +263,14 @@ impl<'a> Projection<'a> {
             type_parents: BTreeMap::new(),
             type_writers: BTreeMap::new(),
             law_subjects: Vec::new(),
+        }
+    }
+
+    pub(super) fn into_graph(self) -> ProjectedGraph {
+        ProjectedGraph {
+            edges: self.edges,
+            specialization_edges: self.specialization_edges,
+            broken_dependents: self.broken_dependents,
         }
     }
 
@@ -761,7 +775,7 @@ impl<'a> Projection<'a> {
         let mut children_by_parent: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (child, parents) in &self.type_parents {
             for parent in parents {
-                self.tick()?;
+                tick_step(self.steps, self.budget)?;
                 children_by_parent
                     .entry(parent.clone())
                     .or_default()

@@ -349,6 +349,33 @@ test("planDiff fallback projects pathMappings, law-interpretation layers, code-p
   expect(malformedPlan.rippleBudgetExceeded).toBeUndefined()
   expect(malformedPlan.rippleReason).toContain("bad.Entity")
   expect(renderPlan(malformedPlan)).toContain("transitive ripples: UNKNOWN")
+
+  // Malformed pathMappings entries or non-string endpoint IDs fail closed to unknown.
+  const nullPathMapping = envelope("erp.bad_null.mapping", "mapping", [], {
+    format: "norn.mapping/1",
+    source: { schemaId: "erp.src" },
+    pathMappings: [null],
+  })
+  const nullPathPlan = planDiff(
+    [srcSchema, srcEntityAfter, nullPathMapping],
+    [srcSchema, srcEntityBefore, nullPathMapping],
+  )
+  expect(nullPathPlan.rippleStatus).toBe("unknown")
+  expect(nullPathPlan.ripples).toEqual([])
+  expect(nullPathPlan.rippleReason).toContain("pathMappings")
+
+  const badEndpointMapping = envelope("erp.bad_endpoint.mapping", "mapping", [], {
+    format: "norn.mapping/1",
+    source: { schemaId: "erp.src" },
+    pathMappings: [{ sourceEntities: [123] }],
+  })
+  const badEndpointPlan = planDiff(
+    [srcSchema, srcEntityAfter, badEndpointMapping],
+    [srcSchema, srcEntityBefore, badEndpointMapping],
+  )
+  expect(badEndpointPlan.rippleStatus).toBe("unknown")
+  expect(badEndpointPlan.ripples).toEqual([])
+  expect(badEndpointPlan.rippleReason).toContain("sourceEntities")
 })
 
 test("hosted plan summary renders nested DefinitionsPlan.ripples object for both exact and unknown reports", async () => {
