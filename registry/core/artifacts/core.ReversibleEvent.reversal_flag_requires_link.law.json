@@ -1,0 +1,51 @@
+{
+  "artifactId": "core.ReversibleEvent.reversal_flag_requires_link.law",
+  "dependencies": [
+    {
+      "artifactId": "core.ReversibleEvent.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "An event marked as a reversal must link to its original",
+  "namespace": "core",
+  "payload": {
+    "condition": "self.is_reversal == true",
+    "id": "core.ReversibleEvent.reversal_flag_requires_link",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "core",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/core/src/rea.ts"
+    },
+    "rationale": "Setting `is_reversal == true` requires an explicit `reverses` link to the posted original event.",
+    "response": {
+      "expression": "self.reverses != null",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "core.ReversibleEvent"
+      ],
+      "root": {
+        "id": "core.ReversibleEvent",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "core.ReversibleEvent"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.ReversibleEvent.reversal_flag_requires_link.law.json"
+  },
+  "scope": {},
+  "version": "0.2.0"
+}

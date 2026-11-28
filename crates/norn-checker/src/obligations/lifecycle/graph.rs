@@ -2,7 +2,7 @@
 use super::super::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
 use super::finite::{Bounds, Row, Snapshot};
 use norn_expr::{EvaluationBudget, Expression, Value};
-use norn_ir::{LawModality, LawResponse, LawSeverity, PropertyTypeName, RuntimeValue};
+use norn_ir::{LawModality, LawResponse, PropertyTypeName, RuntimeValue};
 use std::collections::{BTreeMap, BTreeSet};
 
 const WORK: u64 = 2_000_000;
@@ -173,12 +173,8 @@ fn compile_laws<'a>(inputs: &'a Snapshot, work: &mut u64) -> Result<Vec<Predicat
                 "unsupported lifecycle law {identity}: non-predicate response"
             ));
         };
-        if law.timing.is_some()
-            || !law.exceptions.is_empty()
-            || !law.scope.lifecycle_states.is_empty()
-            || !law.scope.commitments.is_empty()
-            || law.severity != LawSeverity::Error
-            || !matches!(law.modality, LawModality::Always {} | LawModality::Never {})
+        if crate::law_support::classify_law_support(law).proof
+            != crate::law_support::LawProofSupport::FiniteCheckable
         {
             return Err(format!(
                 "unsupported lifecycle law {identity}: timing, exceptions, scope, modality or advisory severity"

@@ -83,6 +83,7 @@ pub mod law_enrollment;
 pub mod law_examples;
 pub mod law_exceptions;
 pub mod law_honesty;
+pub mod law_support;
 pub mod naming_series;
 pub mod norm_precedence;
 pub mod object_types;

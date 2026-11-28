@@ -8,7 +8,7 @@
       "priority": "P0",
       "kind": "safety",
       "statement": "Every admitted exchange or journal effect nets to zero in every unit, and so does every book built only through the core posting primitives.",
-      "owner": "norn.core physics pack; kernel accounting-leg commit check",
+      "owner": "norn.core physics pack (core.ValuedEvent.effects_balance, core.ValuedLedgerEffect.currency_matches_event); kernel accounting-leg commit check",
       "assumptions": [
         "Amounts are exact integers at one declared precision per unit.",
         "Value moves only through types that declare an accounting leg; an undeclared type is a marked boundary where the inherited claim stops."
@@ -44,7 +44,7 @@
       "priority": "P0",
       "kind": "safety",
       "statement": "A correction is a new entry linked to its posted original with exactly negated legs, so the pair nets to zero on every account and unit; an entry is reversed at most once and a reversal is never reversed.",
-      "owner": "norn.core physics pack",
+      "owner": "norn.core physics pack (1-hop parity & non-re-reversal laws: core.EconomicEvent.reversal_matches_original, core.ReversibleEvent.no_reversal_of_reversal, core.ReversibleEvent.reversal_flag_requires_link); kernel reversal primitive for per-resource/account cancellation",
       "assumptions": [
         "A partial correction is a full reversal followed by a new posting."
       ],
@@ -79,7 +79,7 @@
       "priority": "P0",
       "kind": "safety",
       "statement": "Holds (escrow, reservations, quota use) are never negative and never exceed the balance they are held against, so available quantity is never negative.",
-      "owner": "norn.core physics pack; kernel quantity ledger",
+      "owner": "norn.core physics pack (core.Hold.measure_matches_resource, core.HoldableResource.open_holds_within_quantity, core.Hold lifecycle); kernel quantity ledger",
       "assumptions": [
         "Every hold, release and consumption goes through the quantity ledger in one cell transaction."
       ],
@@ -96,7 +96,7 @@
       "priority": "P0",
       "kind": "liveness",
       "statement": "A commitment ends fulfilled, cancelled or breached and is never dropped: terminal states are absorbing, no operation removes a commitment, and once its due time passes the deadline event ends it.",
-      "owner": "norn.core physics pack; cell clock deadline timer",
+      "owner": "norn.core physics pack (core.Commitment lifecycle); cell clock deadline timer",
       "assumptions": [
         "The cell clock raises the deadline event for every open commitment once its due time is reached (timer fairness)."
       ],
