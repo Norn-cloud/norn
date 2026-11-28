@@ -231,7 +231,11 @@ pub(crate) fn deontic_rule_json(
     })
 }
 
-pub(crate) fn boolean_entity_envelope(artifact_id: &str, object_name: &str, rules: Value) -> Value {
+pub(crate) fn boolean_entity_envelope(
+    artifact_id: &str,
+    object_name: &str,
+    rules: &Value,
+) -> Value {
     let namespace = object_name.split('.').next().unwrap_or("core");
     json!({
         "irVersion": "0.1",

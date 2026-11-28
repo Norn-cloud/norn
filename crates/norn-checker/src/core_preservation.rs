@@ -719,23 +719,19 @@ fn check_core_law_enrollment(
             let Some(env) = bound_env.as_ref() else {
                 continue;
             };
-            check_law_binding_on_subtype(artifact, type_name, law, env, findings);
+            let relaxed = effective
+                .interfaces
+                .iter()
+                .find(|iface| iface.as_str() == subject && is_core_name(iface.as_str()))
+                .and_then(|iface| view.env()?.clone().bind_interface_self(iface).ok())
+                .is_some_and(|iface_env| interface_law_strictly_valid(law, &iface_env));
+            check_law_binding_on_subtype(artifact, type_name, law, env, relaxed, findings);
         }
     }
 }
 
-fn check_law_binding_on_subtype(
-    artifact: &ArtifactEnvelope,
-    type_name: &str,
-    law: &LawIR,
-    env: &norn_expr::ZenTypeEnv,
-    findings: &mut Vec<Diagnostic>,
-) {
-    let compiled_condition = law
-        .condition
-        .as_ref()
-        .and_then(|cond| Expression::compile(cond.as_str()).ok());
-    let mut exprs: Vec<(&str, &str, bool)> = Vec::new();
+fn law_predicate_slots(law: &LawIR) -> Vec<(&'static str, &str, bool)> {
+    let mut exprs = Vec::new();
     if let Some(cond) = &law.condition {
         exprs.push(("condition", cond.as_str(), false));
     }
@@ -748,14 +744,59 @@ fn check_law_binding_on_subtype(
     if let LawResponse::Predicate { expression } = &law.response {
         exprs.push(("response", expression.as_str(), true));
     }
-    for (slot, source, guarded) in exprs {
+    exprs
+}
+
+fn interface_law_strictly_valid(law: &LawIR, env: &norn_expr::ZenTypeEnv) -> bool {
+    let compiled_condition = if let Some(cond) = &law.condition {
+        let Ok(compiled) = Expression::compile(cond.as_str()) else {
+            return false;
+        };
+        Some(compiled)
+    } else {
+        None
+    };
+    for (_, source, guarded) in law_predicate_slots(law) {
+        let Ok(compiled) = Expression::compile(source) else {
+            return false;
+        };
+        let ok = if guarded && let Some(cond) = &compiled_condition {
+            norn_expr::check_expression_under(&compiled, cond, env, &Type::Bool).is_ok()
+        } else {
+            norn_expr::check_expression(&compiled, env, &Type::Bool).is_ok()
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+fn check_law_binding_on_subtype(
+    artifact: &ArtifactEnvelope,
+    type_name: &str,
+    law: &LawIR,
+    env: &norn_expr::ZenTypeEnv,
+    relaxed: bool,
+    findings: &mut Vec<Diagnostic>,
+) {
+    let compiled_condition = law
+        .condition
+        .as_ref()
+        .and_then(|cond| Expression::compile(cond.as_str()).ok());
+    for (slot, source, guarded) in law_predicate_slots(law) {
         let Ok(compiled) = Expression::compile(source) else {
             continue;
         };
-        let checked = if guarded && let Some(cond) = &compiled_condition {
-            norn_expr::check_inherited_expression_under(&compiled, cond, env, &Type::Bool)
-        } else {
-            norn_expr::check_inherited_expression(&compiled, env, &Type::Bool)
+        let checked = match (relaxed, guarded, &compiled_condition) {
+            (true, true, Some(cond)) => {
+                norn_expr::check_inherited_expression_under(&compiled, cond, env, &Type::Bool)
+            }
+            (true, _, _) => norn_expr::check_inherited_expression(&compiled, env, &Type::Bool),
+            (false, true, Some(cond)) => {
+                norn_expr::check_expression_under(&compiled, cond, env, &Type::Bool)
+            }
+            (false, _, _) => norn_expr::check_expression(&compiled, env, &Type::Bool),
         };
         if let Err(errors) = checked {
             let detail = errors.first().map_or_else(

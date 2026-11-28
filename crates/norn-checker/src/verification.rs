@@ -839,10 +839,11 @@ impl LawContext<'_> {
             .interfaces
             .iter()
             .find(|i| i.name.as_str() == law.subject);
-        if let Some(interface) = interface {
+        let is_interface_law = interface.is_some_and(|interface| {
+            let before = out.len();
             self.check_interface(law, artifact, interface, out);
-        }
-        let is_interface_law = interface.is_some();
+            out.len() == before
+        });
         for name in targets {
             let Some(Ok(subject)) = self.catalog.object_type_named(&name) else {
                 out.push(finding(

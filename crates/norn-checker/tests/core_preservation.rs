@@ -68,7 +68,7 @@ fn assert_core_link_witness(
     (expected_contract.clone(), actual_contract.clone())
 }
 
-fn check_single_boolean_entity(entity_id: &str, subject: &str, rules: Value) -> Vec<Diagnostic> {
+fn check_single_boolean_entity(entity_id: &str, subject: &str, rules: &Value) -> Vec<Diagnostic> {
     let registry = BTreeSet::<PropertyTypeName>::new();
     let entity = decode_envelopes(vec![boolean_entity_envelope(entity_id, subject, rules)]);
     check_artifact_set(
@@ -302,7 +302,7 @@ fn normative_defeated_by_precedence_admits_yielding_to_core_and_refuses_defeatin
             &[],
         ),
     ]);
-    let lawful_findings = check_single_boolean_entity(entity_id, subject, yielding_rules);
+    let lawful_findings = check_single_boolean_entity(entity_id, subject, &yielding_rules);
     assert!(
         errors_of(&lawful_findings).is_empty(),
         "downstream rule lawfully yielding to core.* via defeatedBy must be admitted: {lawful_findings:#?}"
@@ -329,7 +329,7 @@ fn normative_defeated_by_precedence_admits_yielding_to_core_and_refuses_defeatin
             &["acme.sales_override"],
         ),
     ]);
-    let attack_findings = check_single_boolean_entity(entity_id, subject, defeating_rules);
+    let attack_findings = check_single_boolean_entity(entity_id, subject, &defeating_rules);
     let diag = attack_findings
         .iter()
         .find(|d| d.code == core_codes::CONSTITUTIONAL_DEFEAT)
