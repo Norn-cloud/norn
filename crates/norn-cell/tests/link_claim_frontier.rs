@@ -188,7 +188,7 @@ fn party_ref_row(name: &str, key: &str, label: &str, refers: Option<&str>) -> Va
     })
 }
 
-fn export_records_and_head(cell: &Cell) -> (Vec<norn_cell::ExportRecord>, String) {
+fn export_records_and_head(cell: &Cell) -> (Vec<norn_cell::export::ExportRecord>, String) {
     let records: Vec<_> = (1..=cell.store().export_commit_count().expect("head"))
         .map(|seq| {
             cell.store()

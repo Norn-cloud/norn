@@ -3405,7 +3405,17 @@ impl<E: SqlEngine> CellStore<E> {
                 let _pinned = crate::mapping_bundle::PinnedPlans::open(&self.mapping_plans);
                 guard(&reader).map_err(GuardedError::Guard)?
             };
-            let consumed_input = export_journal::consumed_input(&reader, effective_batch.consumes.as_ref())?;
+            let legacy_dispute_resolution = matches!(
+                origin,
+                CommitOrigin::Retained(record)
+                    if record.storage_version.unwrap_or(1)
+                        < crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
+            );
+            let consumed_input = export_journal::consumed_input(
+                &reader,
+                effective_batch.consumes.as_ref(),
+                !legacy_dispute_resolution,
+            )?;
             let commit_seq = reader.next_commit_seq()?;
             let commit_model = installation
                 .as_ref()
@@ -3422,12 +3432,6 @@ impl<E: SqlEngine> CellStore<E> {
             let legacy_outbox = matches!(
                 origin,
                 CommitOrigin::Retained(record) if record.storage_version.unwrap_or(1) < 11
-            );
-            let legacy_dispute_resolution = matches!(
-                origin,
-                CommitOrigin::Retained(record)
-                    if record.storage_version.unwrap_or(1)
-                        < crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
             );
             let mut writer = Writer::new(&self.conn, commit_model, effective_batch, commit_seq)
                 .with_legacy_outbox(legacy_outbox)

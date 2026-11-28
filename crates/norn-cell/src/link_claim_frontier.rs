@@ -583,31 +583,16 @@ fn expected_dispute_resolutions<E: SqlEngine>(
             |row| row.get::<i64>(0),
         )?
         .is_some();
-    let rows = if has_export_journal {
-        conn.query(
-            &format!(
-                "SELECT l.\"commit_seq\", l.\"event\", r.\"receipt_hash\", r.\"receipt\", \
-                        ej.\"record\" \
-                 FROM \"{LEDGER}\" l \
-                 JOIN \"{RECEIPT}\" r ON r.\"commit_seq\" = l.\"commit_seq\" \
-                 LEFT JOIN \"_norn_export_journal\" ej ON ej.\"commit_seq\" = l.\"commit_seq\" \
-                 WHERE l.\"world\" = ?1 AND json_extract(l.\"event\", '$.op') = 'dispute_resolved' \
-                 ORDER BY l.\"commit_seq\", json_extract(l.\"event\", '$.disputeId')"
-            ),
-            params![crate::MAIN_WORLD],
-        )?
-    } else {
-        conn.query(
-            &format!(
-                "SELECT l.\"commit_seq\", l.\"event\", r.\"receipt_hash\", r.\"receipt\", NULL \
-                 FROM \"{LEDGER}\" l \
-                 JOIN \"{RECEIPT}\" r ON r.\"commit_seq\" = l.\"commit_seq\" \
-                 WHERE l.\"world\" = ?1 AND json_extract(l.\"event\", '$.op') = 'dispute_resolved' \
-                 ORDER BY l.\"commit_seq\", json_extract(l.\"event\", '$.disputeId')"
-            ),
-            params![crate::MAIN_WORLD],
-        )?
-    };
+    let rows = conn.query(
+        &format!(
+            "SELECT l.\"commit_seq\", l.\"event\", r.\"receipt_hash\", r.\"receipt\" \
+             FROM \"{LEDGER}\" l \
+             JOIN \"{RECEIPT}\" r ON r.\"commit_seq\" = l.\"commit_seq\" \
+             WHERE l.\"world\" = ?1 AND json_extract(l.\"event\", '$.op') = 'dispute_resolved' \
+             ORDER BY l.\"commit_seq\", json_extract(l.\"event\", '$.disputeId')"
+        ),
+        params![crate::MAIN_WORLD],
+    )?;
     let mut out = Vec::with_capacity(rows.len());
     for raw in rows {
         let row = SqlRow(raw);
@@ -615,19 +600,14 @@ fn expected_dispute_resolutions<E: SqlEngine>(
         let event_text: String = row.get(1)?;
         let receipt_hash: String = row.get(2)?;
         let receipt_text: String = row.get(3)?;
-        let journal_text: Option<String> = row.get(4)?;
-        // Enforce the exact same retained storage-version gate as replay:
-        // pre-v13 export records never populate `_norn_dispute_resolution`,
-        // even if a legacy application event matched the payload shape.
-        if let Some(ref text) = journal_text {
-            let record_json: serde_json::Value = serde_json::from_str(text)?;
-            let version = record_json
-                .get("storageVersion")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(1);
-            if version < u64::from(FRONTIER_STORAGE_VERSION) {
-                continue;
-            }
+        // Enforce the exact same retained storage-version gate as replay using
+        // the hash-verified packed-format journal decoder: pre-v13 records
+        // never populate `_norn_dispute_resolution`.
+        if has_export_journal
+            && let Some(record) = crate::export_journal::read_record(conn, commit_seq)?
+            && record.storage_version.unwrap_or(1) < FRONTIER_STORAGE_VERSION
+        {
+            continue;
         }
         let event = Value::from_json_text(&event_text).map_err(|error| {
             CellError::Encoding(format!("invalid dispute_resolved ledger event: {error}"))

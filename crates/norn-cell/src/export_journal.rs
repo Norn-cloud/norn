@@ -67,6 +67,7 @@ pub(crate) fn read_record(
 pub(crate) fn consumed_input<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     consumed: Option<&Consumption>,
+    include_conflict_members: bool,
 ) -> Result<Option<Value>, CellError> {
     let Some(consumed) = consumed else {
         return Ok(None);
@@ -91,7 +92,7 @@ pub(crate) fn consumed_input<E: SqlEngine>(
                     .flatten()
                     .into_iter()
                     .collect()
-            } else if observation_id.starts_with("mapping-conflict:") {
+            } else if include_conflict_members && observation_id.starts_with("mapping-conflict:") {
                 pending
                     .observed
                     .get("input")

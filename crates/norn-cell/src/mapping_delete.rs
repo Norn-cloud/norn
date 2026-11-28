@@ -130,7 +130,7 @@ fn has_newer_landed_source_version<E: SqlEngine>(
     };
     let rows = reader.conn.query(
         &format!(
-            "SELECT json_extract(i.\"observed\", '$.input.raw.source_version') \
+            "SELECT i.\"observed\" \
              FROM \"{inbox}\" i \
              WHERE i.\"consumed_commit_seq\" IS NOT NULL \
                AND substr(i.\"observation_id\", 1, 15) = 'mapping-bundle:' \
@@ -156,20 +156,18 @@ fn has_newer_landed_source_version<E: SqlEngine>(
         ],
     )?;
     for raw in rows {
-        let ver: Option<String> = crate::engine::SqlRow(raw).get(0)?;
-        if let Some(ver) = ver
-            && let Ok(parsed) = norn_ir::SourceVersion::parse(kind, &ver)
-            && parsed.try_cmp(&incoming_version).ok() == Some(std::cmp::Ordering::Greater)
+        let encoded: String = crate::engine::SqlRow(raw).get(0)?;
+        if let Ok(observed) = serde_json::from_str::<norn_kernel::Observed<RuntimeValue>>(&encoded)
+            && let Ok(landed) =
+                norn_ir::runtime::decode::<crate::mapping_bundle::MappingBundle>(&observed.input)
+            && landed_bundle_is_newer(reader, &landed, &incoming_version)?
         {
             return Ok(true);
         }
     }
     let corrected_rows = reader.conn.query(
         &format!(
-            "SELECT COALESCE( \
-                 json_extract(i.\"observed\", '$.input.incoming.raw.source_version'), \
-                 json_extract(i.\"observed\", '$.input.bundle.raw.source_version') \
-             ) \
+            "SELECT i.\"observation_id\", i.\"observed\" \
              FROM \"{inbox}\" i \
              JOIN \"{res}\" r ON r.\"dispute_id\" = i.\"observation_id\" \
              WHERE r.\"decision\" = 'accept-second-as-correction' \
@@ -210,15 +208,43 @@ fn has_newer_landed_source_version<E: SqlEngine>(
         ],
     )?;
     for raw in corrected_rows {
-        let ver: Option<String> = crate::engine::SqlRow(raw).get(0)?;
-        if let Some(ver) = ver
-            && let Ok(parsed) = norn_ir::SourceVersion::parse(kind, &ver)
-            && parsed.try_cmp(&incoming_version).ok() == Some(std::cmp::Ordering::Greater)
+        let row = crate::engine::SqlRow(raw);
+        let obs_id: String = row.get(0)?;
+        let encoded: String = row.get(1)?;
+        let Ok(observed) = serde_json::from_str::<norn_kernel::Observed<RuntimeValue>>(&encoded)
+        else {
+            continue;
+        };
+        let landed = if obs_id.starts_with("mapping-conflict:") {
+            norn_ir::runtime::decode::<crate::mapping_conflict::MappingConflict>(&observed.input)
+                .ok()
+                .map(|c| c.incoming)
+        } else if obs_id.starts_with("mapping-identity:") {
+            norn_ir::runtime::decode::<crate::mapping_identity::IdentityEvidence>(&observed.input)
+                .ok()
+                .map(|i| i.bundle)
+        } else {
+            None
+        };
+        if let Some(landed) = landed
+            && landed_bundle_is_newer(reader, &landed, &incoming_version)?
         {
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+/// Compare a landed bundle's source version parsed under its OWN declared
+/// `VersionKind` against `incoming_version`, refusing incomparable kinds.
+fn landed_bundle_is_newer<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    landed: &crate::mapping_bundle::MappingBundle,
+    incoming_version: &norn_ir::SourceVersion,
+) -> Result<bool, CellError> {
+    let landed_kind = reader.bundle_version_kind(landed)?;
+    let landed_version = crate::mapping_links::parse_source_version(landed, landed_kind)?;
+    Ok(landed_version.try_cmp(incoming_version).ok() == Some(std::cmp::Ordering::Greater))
 }
 
 fn delete_slice<E: SqlEngine>(
