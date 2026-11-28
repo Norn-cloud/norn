@@ -198,6 +198,31 @@ fn core_rea_interfaces_admit_with_materialized_value_types_and_pinned_dependenci
         include_str!("../../../registry/core/artifacts/core.Process.interface.json"),
         include_str!("../../../registry/core/artifacts/core.Conversion.interface.json"),
         include_str!("../../../registry/core/artifacts/core.Exchange.interface.json"),
+        include_str!("../../../registry/core/artifacts/core.HoldableResource.interface.json"),
+        include_str!("../../../registry/core/artifacts/core.ValuedEvent.interface.json"),
+        include_str!("../../../registry/core/artifacts/core.ValuedLedgerEffect.interface.json"),
+        include_str!("../../../registry/core/artifacts/core.ReversibleEvent.interface.json"),
+        include_str!(
+            "../../../registry/core/artifacts/core.Hold.measure_matches_resource.law.json"
+        ),
+        include_str!(
+            "../../../registry/core/artifacts/core.EconomicEvent.reversal_matches_original.law.json"
+        ),
+        include_str!(
+            "../../../registry/core/artifacts/core.ReversibleEvent.no_reversal_of_reversal.law.json"
+        ),
+        include_str!(
+            "../../../registry/core/artifacts/core.ReversibleEvent.reversal_flag_requires_link.law.json"
+        ),
+        include_str!(
+            "../../../registry/core/artifacts/core.HoldableResource.open_holds_within_quantity.law.json"
+        ),
+        include_str!(
+            "../../../registry/core/artifacts/core.ValuedEvent.effects_balance.law.json"
+        ),
+        include_str!(
+            "../../../registry/core/artifacts/core.ValuedLedgerEffect.currency_matches_event.law.json"
+        ),
     ]
     .into_iter()
     .map(serde_json::from_str)

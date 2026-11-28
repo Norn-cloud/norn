@@ -1,0 +1,52 @@
+{
+  "artifactId": "core.ReversibleEvent.interface",
+  "dependencies": [
+    {
+      "artifactId": "core.EconomicEvent.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Reversible economic event",
+  "namespace": "core",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "An economic event that tracks `is_reversal` explicitly and narrows `reverses` to `core.ReversibleEvent` so one-hop LAW-LINK-1 enforcement prevents reversing a reversal (core.law.correction_is_linked_reversal).",
+      "extends": [
+        "core.EconomicEvent"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "one"
+          },
+          "description": "The posted reversible event this event exactly reverses.",
+          "id": "reverses",
+          "target": "core.ReversibleEvent"
+        }
+      ],
+      "name": "core.ReversibleEvent",
+      "properties": [
+        {
+          "id": "is_reversal",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.ReversibleEvent.interface.json"
+  },
+  "scope": {},
+  "version": "0.2.0"
+}

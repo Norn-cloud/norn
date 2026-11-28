@@ -35,6 +35,71 @@
           "message": "A commitment must carry either a unit or a currency, never both or neither."
         }
       ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "completed",
+              "state": "fulfilled"
+            },
+            {
+              "outcome": "cancelled",
+              "state": "cancelled"
+            },
+            {
+              "outcome": "breached_visible",
+              "state": "breached"
+            }
+          ],
+          "immutable": [
+            "fulfilled",
+            "cancelled",
+            "breached"
+          ],
+          "initial": [
+            "requested",
+            "promised"
+          ],
+          "property": "status",
+          "terminal": [
+            "fulfilled",
+            "cancelled",
+            "breached"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "requested"
+              ],
+              "id": "promise",
+              "to": "promised"
+            },
+            {
+              "from": [
+                "promised"
+              ],
+              "id": "fulfil",
+              "to": "fulfilled"
+            },
+            {
+              "from": [
+                "requested",
+                "promised"
+              ],
+              "id": "cancel",
+              "to": "cancelled"
+            },
+            {
+              "from": [
+                "requested",
+                "promised"
+              ],
+              "id": "breach",
+              "to": "breached"
+            }
+          ]
+        }
+      ],
       "links": [
         {
           "cardinality": {

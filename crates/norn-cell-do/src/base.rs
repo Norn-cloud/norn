@@ -18,19 +18,40 @@ use norn_api::provision::TrustedBase;
 use crate::seed::SeedError;
 
 /// The trusted base: one artifact envelope each.
-pub const SOURCES: [&str; 22] = [
+pub const SOURCES: [&str; 33] = [
     include_str!("../../../registry/core/artifacts/core.Agent.interface.json"),
     include_str!("../../../registry/core/artifacts/core.AgentRole.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Claim.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Commitment.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Conversion.interface.json"),
     include_str!("../../../registry/core/artifacts/core.EconomicEvent.interface.json"),
+    include_str!(
+        "../../../registry/core/artifacts/core.EconomicEvent.reversal_matches_original.law.json"
+    ),
     include_str!("../../../registry/core/artifacts/core.Exchange.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Hold.interface.json"),
+    include_str!("../../../registry/core/artifacts/core.Hold.measure_matches_resource.law.json"),
+    include_str!("../../../registry/core/artifacts/core.HoldableResource.interface.json"),
+    include_str!(
+        "../../../registry/core/artifacts/core.HoldableResource.open_holds_within_quantity.law.json"
+    ),
     include_str!("../../../registry/core/artifacts/core.LedgerEffect.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Process.interface.json"),
     include_str!("../../../registry/core/artifacts/core.Resource.interface.json"),
+    include_str!("../../../registry/core/artifacts/core.ReversibleEvent.interface.json"),
+    include_str!(
+        "../../../registry/core/artifacts/core.ReversibleEvent.no_reversal_of_reversal.law.json"
+    ),
+    include_str!(
+        "../../../registry/core/artifacts/core.ReversibleEvent.reversal_flag_requires_link.law.json"
+    ),
     include_str!("../../../registry/core/artifacts/core.TimeInterval.interface.json"),
+    include_str!("../../../registry/core/artifacts/core.ValuedEvent.effects_balance.law.json"),
+    include_str!("../../../registry/core/artifacts/core.ValuedEvent.interface.json"),
+    include_str!(
+        "../../../registry/core/artifacts/core.ValuedLedgerEffect.currency_matches_event.law.json"
+    ),
+    include_str!("../../../registry/core/artifacts/core.ValuedLedgerEffect.interface.json"),
     include_str!("../../../registry/core/artifacts/core.analytics.Restatement.entity.json"),
     include_str!(
         "../../../registry/core/artifacts/core.analytics.RestatementEvidence.interface.json"

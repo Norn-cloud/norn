@@ -1,0 +1,50 @@
+{
+  "artifactId": "core.HoldableResource.interface",
+  "dependencies": [
+    {
+      "artifactId": "core.Resource.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "core.Hold.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Holdable resource",
+  "namespace": "core",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "A conserved resource that supports open holds/escrows/reservations through inverse link `holds` and enforces core.law.escrow_non_negative at commit.",
+      "extends": [
+        "core.Resource"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "many"
+          },
+          "description": "Holds placed against this resource (inverse of core.Hold.resource).",
+          "id": "holds",
+          "target": "core.Hold"
+        }
+      ],
+      "name": "core.HoldableResource",
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.HoldableResource.interface.json"
+  },
+  "scope": {},
+  "version": "0.2.0"
+}

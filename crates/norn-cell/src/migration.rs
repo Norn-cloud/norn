@@ -398,6 +398,13 @@ fn validate_candidate_laws<E: SqlEngine>(
     if candidate.law_artifacts().is_empty() {
         return Ok(0);
     }
+    let support_findings = crate::admitted::check_candidate_law_support(candidate);
+    if !support_findings.is_empty() {
+        return Err(CellError::DefinitionLawRefused {
+            findings: support_findings,
+            checked: 0,
+        });
+    }
     let catalog = TypeCatalog::new(candidate.object_types())
         .with_interfaces(candidate.interfaces())
         .with_governing_laws(candidate.law_artifacts())

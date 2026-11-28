@@ -270,9 +270,32 @@ fn main() -> DemoResult<()> {
     rehearse(&input)
 }
 
+#[cfg(test)]
+fn rehearse_jewelry_demo() -> DemoResult<()> {
+    // Re-scope the admission-only App-root law to its single Entity subject so
+    // live cell installation admits it under LawSupport (see lifecycle_correspondence.rs).
+    let mut declarations: serde_json::Value = serde_json::from_str(include_str!(
+        "../../norn-checker/tests/fixtures/jewelry_demo.json"
+    ))?;
+    if let Some(items) = declarations.as_array_mut() {
+        for item in items {
+            if item.get("kind").and_then(serde_json::Value::as_str) == Some("law")
+                && let Some(scope) = item
+                    .get_mut("payload")
+                    .and_then(|p| p.get_mut("scope"))
+                    .and_then(serde_json::Value::as_object_mut)
+            {
+                scope.insert(
+                    "root".to_owned(),
+                    serde_json::json!({"kind": "entity", "id": "demo.Melt"}),
+                );
+            }
+        }
+    }
+    rehearse(&serde_json::to_string(&declarations)?)
+}
+
 #[test]
 fn authored_catalog_reads_and_refusals_use_kernel_pdp() -> DemoResult<()> {
-    rehearse(include_str!(
-        "../../norn-checker/tests/fixtures/jewelry_demo.json"
-    ))
+    rehearse_jewelry_demo()
 }

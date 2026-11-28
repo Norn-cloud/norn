@@ -160,3 +160,46 @@ fn decode<T: serde::de::DeserializeOwned>(payload: &ArtifactPayload) -> Result<T
         payload.to_json_value(),
     )?)?)
 }
+
+/// Check every candidate law artifact against the shared `LawSupport` rules
+/// upfront so unsupported scopes/semantics or malformed exception trees fail
+/// closed at install time even when the governed type has zero live rows yet.
+pub(crate) fn check_candidate_law_support(
+    candidate: &Model,
+) -> Vec<crate::error::DefinitionLawFinding> {
+    let mut findings = Vec::new();
+    for artifact in candidate.law_artifacts() {
+        let decoded = serde_json::to_value(artifact.payload.to_json_value())
+            .and_then(serde_json::from_value::<norn_ir::LawIR>);
+        match decoded {
+            Ok(law) => {
+                if let Some(reason) = norn_checker::law_support::classify_law_support(&law)
+                    .runtime
+                    .reason()
+                {
+                    findings.push(crate::error::DefinitionLawFinding {
+                        object_type: law.subject.clone(),
+                        id: artifact.artifact_id.clone(),
+                        law: Some(law.id.clone()),
+                        message: format!(
+                            "core.laws.unsupported_semantics: law {} cannot be installed: {reason}",
+                            law.id
+                        ),
+                        unchecked: true,
+                    });
+                }
+            }
+            Err(error) => findings.push(crate::error::DefinitionLawFinding {
+                object_type: artifact.name.clone(),
+                id: artifact.artifact_id.clone(),
+                law: None,
+                message: format!(
+                    "core.laws.unresolved_scope: law {} failed to decode: {error}",
+                    artifact.artifact_id
+                ),
+                unchecked: true,
+            }),
+        }
+    }
+    findings
+}
