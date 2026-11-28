@@ -264,6 +264,15 @@ fn parse_manifest_targets(
         }
     }
 
+    if let Some(default_name) = default_target.as_deref()
+        && !profiles.contains_key(default_name)
+    {
+        return Err(format!(
+            "{}: `defaultTarget` `{default_name}` was not found in `targets`",
+            manifest_display.display()
+        ));
+    }
+
     Ok(ManifestTargets {
         default_target,
         scope_org,
