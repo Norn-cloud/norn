@@ -50,6 +50,27 @@ fn statement_module_specifier(stmt: P<Node>) -> Option<P<Node>> {
     }
 }
 
+fn synthetic_virtual_file_name(file_name: &str) -> &'static str {
+    let ext = file_name.rsplit_once('.').map_or("", |(_, suffix)| suffix);
+    if ext.eq_ignore_ascii_case("tsx") {
+        "/input.tsx"
+    } else if ext.eq_ignore_ascii_case("mts") {
+        "/input.mts"
+    } else if ext.eq_ignore_ascii_case("cts") {
+        "/input.cts"
+    } else if ext.eq_ignore_ascii_case("jsx") {
+        "/input.jsx"
+    } else if ext.eq_ignore_ascii_case("mjs") {
+        "/input.mjs"
+    } else if ext.eq_ignore_ascii_case("cjs") {
+        "/input.cjs"
+    } else if ext.eq_ignore_ascii_case("js") {
+        "/input.js"
+    } else {
+        "/input.ts"
+    }
+}
+
 /// Extracts static relative (`./` and `../`) module specifiers from top-level
 /// `TypeScript` `import` and `export ... from` declarations using `tsrs_parser`.
 ///
@@ -61,11 +82,7 @@ fn statement_module_specifier(stmt: P<Node>) -> Option<P<Node>> {
 /// source order.
 #[must_use]
 pub fn extract_relative_module_specifiers(source: &str, file_name: &str) -> Vec<String> {
-    let effective_name = if file_name.is_empty() {
-        "input.ts"
-    } else {
-        file_name
-    };
+    let effective_name = synthetic_virtual_file_name(file_name);
     let region = Region::new_scratch(64_usize.saturating_mul(1_024));
     {
         let _scope = region.enter();
