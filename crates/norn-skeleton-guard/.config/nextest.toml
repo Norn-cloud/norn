@@ -8,3 +8,14 @@ slow-timeout = { period = "120s" }
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# Start the known-slow tail tests first in CI so they run alongside the rest
+# of their shard instead of straggling solo at the end (#1951).
+[[profile.ci.overrides]]
+filter = '''
+  test(=provision::a_fault_anywhere_in_provisioning_leaves_nothing_half_made) |
+  test(=tenant_isolation::another_tenants_principal_at_b_learns_nothing) |
+  test(=dataset_laws::the_fuel_bound_pays_the_typed_property_charge) |
+  test(=suites::definitions_install::data_quarantine_redelivery_persists_one_finding_and_correction_recovers)
+'''
+priority = 100

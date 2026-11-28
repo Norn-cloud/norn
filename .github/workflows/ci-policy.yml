@@ -107,7 +107,7 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.5
       # Compiler outputs (sccache on the Actions cache: runs read the scopes of
       # their own ref, its base and main, and write only their own), the Cargo
       # home with registry and installed tools (saved only by main) and Bun's
@@ -146,15 +146,21 @@ jobs:
             # without this configuration, on the local cache only.
             echo "::notice::sccache: local disk, then the shared R2 cache ($mode)"
           fi
-          # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
+          # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`, and
+          # cc-rs wraps C/C++ builds (libduckdb-sys, ring, zstd-sys, libsqlite3-sys) only when
+          # RUSTC_WRAPPER's file stem is `sccache` (cc::rustc_wrapper_fallback). Keep the wrapper
+          # off PATH and invoke the real sccache by absolute path so it can never recurse; when
           # sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
           # cannot restart), compile again with plain rustc. A compiler failure keeps its exit
           # status and diagnostics, also after a `sccache: warning:` (a local compile).
-          wrapper="$RUNNER_TEMP/sccache-rustc"
-          cat > "$wrapper" <<'WRAPPER'
-          #!/usr/bin/env bash
+          real_sccache=$(command -v sccache || true)
+          wrapper_dir="$RUNNER_TEMP/sccache-fallback"
+          mkdir -p "$wrapper_dir"
+          wrapper="$wrapper_dir/sccache"
+          printf '#!/usr/bin/env bash\nreal_sccache=%q\n' "$real_sccache" > "$wrapper"
+          cat >> "$wrapper" <<'WRAPPER'
           log=$(mktemp) || exec "$@"
-          sccache "$@" 2> "$log"
+          "$real_sccache" "$@" 2> "$log"
           status=$?
           if [ "$status" -ne 0 ] && grep -q '^sccache: error: ' "$log"; then
             echo "::warning::sccache failed ($(grep -m1 '^sccache: error: ' "$log")); compiling with plain rustc" >&2
@@ -166,7 +172,7 @@ jobs:
           exit "$status"
           WRAPPER
           chmod +x "$wrapper"
-          if sccache --start-server; then
+          if [ -n "$real_sccache" ] && "$real_sccache" --start-server; then
             echo "RUSTC_WRAPPER=$wrapper" >> "$GITHUB_ENV"
           else
             echo "::warning::sccache server unavailable; compiling with plain rustc"
@@ -179,7 +185,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock') }}
+          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'tools/norn-proofs/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock', 'packages/norn-react/bun.lock', 'apps/studio/bun.lock', 'apps/sidekick-bridge/bun.lock') }}
       # Pinned interop schemas; erpnext_runtime.py re-checks every digest.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -187,7 +193,7 @@ jobs:
           key: norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129
+          tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129,uv@0.13.10
       - name: Audit Actions secret inventory
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -272,7 +278,7 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.5
       # Compiler outputs (sccache on the Actions cache: runs read the scopes of
       # their own ref, its base and main, and write only their own), the Cargo
       # home with registry and installed tools (saved only by main) and Bun's
@@ -329,15 +335,21 @@ jobs:
             # without this configuration, on the local cache only.
             echo "::notice::sccache: local disk, then the shared R2 cache ($mode)"
           fi
-          # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`: when
+          # A cache outage must never fail a build. cargo runs `<wrapper> <rustc> <args>`, and
+          # cc-rs wraps C/C++ builds (libduckdb-sys, ring, zstd-sys, libsqlite3-sys) only when
+          # RUSTC_WRAPPER's file stem is `sccache` (cc::rustc_wrapper_fallback). Keep the wrapper
+          # off PATH and invoke the real sccache by absolute path so it can never recurse; when
           # sccache itself fails (it reports `sccache: error: ...`, e.g. a dead server that
           # cannot restart), compile again with plain rustc. A compiler failure keeps its exit
           # status and diagnostics, also after a `sccache: warning:` (a local compile).
-          wrapper="$RUNNER_TEMP/sccache-rustc"
-          cat > "$wrapper" <<'WRAPPER'
-          #!/usr/bin/env bash
+          real_sccache=$(command -v sccache || true)
+          wrapper_dir="$RUNNER_TEMP/sccache-fallback"
+          mkdir -p "$wrapper_dir"
+          wrapper="$wrapper_dir/sccache"
+          printf '#!/usr/bin/env bash\nreal_sccache=%q\n' "$real_sccache" > "$wrapper"
+          cat >> "$wrapper" <<'WRAPPER'
           log=$(mktemp) || exec "$@"
-          sccache "$@" 2> "$log"
+          "$real_sccache" "$@" 2> "$log"
           status=$?
           if [ "$status" -ne 0 ] && grep -q '^sccache: error: ' "$log"; then
             echo "::warning::sccache failed ($(grep -m1 '^sccache: error: ' "$log")); compiling with plain rustc" >&2
@@ -349,7 +361,7 @@ jobs:
           exit "$status"
           WRAPPER
           chmod +x "$wrapper"
-          if sccache --start-server; then
+          if [ -n "$real_sccache" ] && "$real_sccache" --start-server; then
             echo "RUSTC_WRAPPER=$wrapper" >> "$GITHUB_ENV"
           else
             echo "::warning::sccache server unavailable; compiling with plain rustc"
@@ -362,7 +374,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock') }}
+          key: bun-${{ hashFiles('tools/norn-ts/bun.lock', 'tools/norn-proofs/bun.lock', 'packages/norn-sdk/bun.lock', 'packages/norn-demo-ui/bun.lock', 'packages/norn-react/bun.lock', 'apps/studio/bun.lock', 'apps/sidekick-bridge/bun.lock') }}
       # Pinned interop schemas; erpnext_runtime.py re-checks every digest.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -370,7 +382,7 @@ jobs:
           key: norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129
+          tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129,uv@0.13.10
       - run: bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"
   full:
     needs: [plan, core, test]
