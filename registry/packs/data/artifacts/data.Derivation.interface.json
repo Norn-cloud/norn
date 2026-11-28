@@ -1,0 +1,63 @@
+{
+  "artifactId": "data.Derivation.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Derivation",
+  "namespace": "data",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "A qualified provenance derivation edge linking an input snapshot, an execution activity, and an output snapshot (W3C PROV-O prov:Derivation / prov:wasDerivedFrom + OpenLineage).",
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Upstream dataset snapshot derived from (W3C PROV-O prov:entity on prov:Derivation / prov:used).",
+          "id": "input_snapshot",
+          "target": "data.DatasetSnapshot"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Downstream dataset snapshot produced by the derivation (W3C PROV-O subject of prov:qualifiedDerivation / prov:wasDerivedFrom).",
+          "id": "output_snapshot",
+          "target": "data.DatasetSnapshot"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Execution activity bridging input_snapshot and output_snapshot (W3C PROV-O prov:hadActivity).",
+          "id": "activity",
+          "target": "data.Activity"
+        }
+      ],
+      "name": "data.Derivation",
+      "properties": [
+        {
+          "id": "derivation_id",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.Derivation.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

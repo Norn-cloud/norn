@@ -98,10 +98,14 @@ pub const CHANNEL: &[StorageVersion] = &[
         version: 11,
         change: "D1: immutable per-generation outbox ledger (_norn_outbox_record), durable outbox reconciliation (EffectRow::ReconcileOutbox and EffectRow::RecordCompensation), fail-closed same-generation PayloadDiverged, and ambiguous-dispatch reissue gating; upgrading backfills _norn_outbox_record from _norn_outbox, _norn_perform_claim, _norn_run, and restore:perform_fence:*",
     },
+    StorageVersion {
+        version: 12,
+        change: "Core 08 Fork Unit 2b (#1947, FORK-EVIDENCE-1): newly minted fork commits bind their durable ForkPin into ReceiptBody.fork_pin, WrittenRow.fork_world, and LedgerEntry.fork_pin/hash, enabling auditable fork-local simulated Decision Card evidence while refusing fork-bound receipts as main evidence at every nesting depth",
+    },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 11;
+pub const STORAGE_VERSION: u32 = 12;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -366,7 +370,11 @@ fn migrate_to<E: SqlEngine>(engine: &E, to: u32) -> Result<(), CellError> {
         // Version 9 (#1533 Part 2) adds `_norn_export_context` the same way,
         // through the export journal's schema statements. Packed journal rows
         // stay as written and decode beside residue rows.
-        2..=7 | 9 => Ok(()),
+        // Version 12 (Core 08 Fork Unit 2b, #1947): newly minted fork commits
+        // bind `ForkPin` into `ReceiptBody.fork_pin`, `WrittenRow.fork_world`,
+        // and `LedgerEntry` hashes; existing main-world cells at <= 11 carry no
+        // fork-bound commits and need no rewrite.
+        2..=7 | 9 | 12 => Ok(()),
         // Version 8 (#1533 Part 1): sparse markings are backward-compatible with
         // legacy stored `'[]'` rows (no marking row is rewritten); add and
         // backfill `_norn_marking_snapshot.nonempty_slots`, and drop the two

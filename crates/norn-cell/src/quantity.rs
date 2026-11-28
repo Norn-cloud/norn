@@ -12,7 +12,7 @@ use serde::de::DeserializeOwned;
 
 use crate::codec::{canonical_json, hash_json};
 use crate::engine::{SqlEngine, SqlRow, SqlValue, params};
-use crate::read::{LedgerEntry, StoreReader, entry_hash, to_i64, to_u64};
+use crate::read::{LedgerEntry, StoreReader, to_i64, to_u64};
 use crate::{CellError, CommitBatch, Model, Receipt, ReceiptBody};
 
 mod replay;
@@ -202,21 +202,21 @@ pub(crate) fn validate_boundary<S: SqlEngine>(
         |row| Ok((row.get::<String>(0)?, row.get::<String>(1)?, row.get::<String>(2)?, row.get::<String>(3)?, row.get::<i64>(4)?)),
     )?.ok_or(QuantityError::Corrupt)?;
     let event = norn_ir::RuntimeValue::from_json_text(&evidence.1)?;
+    let receipt = receipt_evidence(engine, &evidence.0, boundary.commit_seq)?;
     if boundary.seq == 0
         || boundary.commit_seq == 0
         || evidence.4 != to_i64(boundary.commit_seq, "quantity boundary commit")?
         || event != boundary_event(boundary)?
-        || entry_hash(
+        || !crate::fork_evidence::receipt_entry_hash_ok(
+            &receipt,
             boundary.seq,
-            boundary.commit_seq,
-            &evidence.0,
             &event,
             &evidence.2,
-        )? != evidence.3
+            &evidence.3,
+        )?
     {
         return Err(QuantityError::Corrupt.into());
     }
-    let receipt = receipt_evidence(engine, &evidence.0, boundary.commit_seq)?;
     if receipt.first_event_seq != boundary.seq
         || receipt.event_count < 2
         || receipt.quantity.is_none()
@@ -1150,7 +1150,7 @@ fn transition_requests<S: SqlEngine>(
         let event = norn_ir::RuntimeValue::from_json_text(&event)?;
         if event != transition_event(request)?
             || previous.as_ref().is_some_and(|prior| prior != &prev)
-            || entry_hash(seq, receipt.commit_seq, world, &event, &prev)? != hash
+            || !crate::fork_evidence::receipt_entry_hash_ok(&receipt, seq, &event, &prev, &hash)?
         {
             return Err(QuantityError::Corrupt.into());
         }

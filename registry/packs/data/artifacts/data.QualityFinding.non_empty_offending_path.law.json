@@ -1,0 +1,50 @@
+{
+  "artifactId": "data.QualityFinding.non_empty_offending_path.law",
+  "dependencies": [
+    {
+      "artifactId": "data.QualityFinding.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A data quality finding must pinpoint the non-empty offending path within the evaluated snapshot.",
+  "namespace": "data",
+  "payload": {
+    "id": "data.QualityFinding.non_empty_offending_path",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "data",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/data/data.ts"
+    },
+    "rationale": "A data quality finding must pinpoint the non-empty offending path within the evaluated snapshot.",
+    "response": {
+      "expression": "self.offending_path != ''",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "data.QualityFinding"
+      ],
+      "root": {
+        "id": "data.QualityFinding",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "data.QualityFinding"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.QualityFinding.non_empty_offending_path.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

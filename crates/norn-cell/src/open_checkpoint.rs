@@ -214,28 +214,47 @@ pub(crate) enum Loaded {
 }
 
 /// The HMAC-SHA256, under `key`, of `checkpoint` bound to the cell
-/// identity `cell_id`: a domain tag, the identity and every column, in one
-/// canonical JSON array (RFC 8785 via `norn_ir::canonical::canonical_json_of`).
+/// identity `cell_id` and (for forks) the durable [`crate::fork::ForkPin`]:
+/// a domain tag, the identity and every column, in one canonical JSON array
+/// (RFC 8785 via `norn_ir::canonical::canonical_json_of`).
 fn mac(
     key: &CheckpointKey,
     cell_id: &str,
+    fork_pin: Option<&crate::fork::ForkPin>,
     checkpoint: &OpenCheckpoint,
 ) -> Result<hmac::Hmac<transparency_sha2::Sha256>, CellError> {
     use hmac::{KeyInit as _, Mac as _};
-    let message = norn_ir::canonical::canonical_json_of(&(
-        "norn.open-checkpoint.mac/1",
-        cell_id,
-        checkpoint.head.commits,
-        checkpoint.head.seq,
-        &checkpoint.head.hash,
-        &checkpoint.receipts_root,
-        checkpoint
-            .boundary
-            .map(|boundary| (boundary.seq, boundary.commit_seq)),
-        &checkpoint.quantity_receipts,
-        checkpoint.export.as_ref().map(|pin| (pin.seq, &pin.hash)),
-        &checkpoint.definitions,
-    ))?;
+    let boundary = checkpoint
+        .boundary
+        .map(|boundary| (boundary.seq, boundary.commit_seq));
+    let export = checkpoint.export.as_ref().map(|pin| (pin.seq, &pin.hash));
+    let message = match fork_pin {
+        None => norn_ir::canonical::canonical_json_of(&(
+            "norn.open-checkpoint.mac/1",
+            cell_id,
+            checkpoint.head.commits,
+            checkpoint.head.seq,
+            &checkpoint.head.hash,
+            &checkpoint.receipts_root,
+            boundary,
+            &checkpoint.quantity_receipts,
+            export,
+            &checkpoint.definitions,
+        ))?,
+        Some(pin) => norn_ir::canonical::canonical_json_of(&(
+            "norn.open-checkpoint.fork.mac/1",
+            cell_id,
+            pin,
+            checkpoint.head.commits,
+            checkpoint.head.seq,
+            &checkpoint.head.hash,
+            &checkpoint.receipts_root,
+            boundary,
+            &checkpoint.quantity_receipts,
+            export,
+            &checkpoint.definitions,
+        ))?,
+    };
     let mut mac = hmac::Hmac::<transparency_sha2::Sha256>::new_from_slice(&key.0)
         .map_err(|_length| CellError::Encoding("open-checkpoint key length".to_owned()))?;
     mac.update(&message);
@@ -342,8 +361,9 @@ pub(crate) fn load(engine: &impl SqlEngine) -> Result<Loaded, CellError> {
     let Some((checkpoint, tag)) = decode_with_tag(&row) else {
         return Ok(Loaded::Unauthentic);
     };
-    let verified =
-        mac(&key, cell_id.as_str(), &checkpoint).is_ok_and(|mac| mac.verify_slice(&tag).is_ok());
+    let fork_pin = crate::fork::read_pin_unvalidated_state(engine)?;
+    let verified = mac(&key, cell_id.as_str(), fork_pin.as_ref(), &checkpoint)
+        .is_ok_and(|mac| mac.verify_slice(&tag).is_ok());
     Ok(if verified {
         Loaded::Authentic(checkpoint)
     } else {
@@ -468,8 +488,9 @@ pub(crate) fn record(
     else {
         return Ok(false);
     };
+    let fork_pin = crate::fork::read_pin_unvalidated_state(engine)?;
     let tag = root_hex(
-        &mac(&key, cell_id.as_str(), checkpoint)?
+        &mac(&key, cell_id.as_str(), fork_pin.as_ref(), checkpoint)?
             .finalize()
             .into_bytes(),
     );
@@ -652,30 +673,51 @@ mod tests {
     fn verifies(
         key: &CheckpointKey,
         cell: &str,
+        fork_pin: Option<&crate::fork::ForkPin>,
         row: &OpenCheckpoint,
         tag: &[u8],
     ) -> Result<bool, CellError> {
-        Ok(mac(key, cell, row)?.verify_slice(tag).is_ok())
+        Ok(mac(key, cell, fork_pin, row)?.verify_slice(tag).is_ok())
     }
 
-    /// #1551 round 4: the MAC binds every column, the cell's identity and
-    /// the key. A row MAC'd for one cell does not verify for another, and
-    /// one changed column, or another key, fails it.
+    /// #1551 round 4: the MAC binds every column, the cell's identity, the
+    /// fork pin, and the key. A row MAC'd for one cell or fork does not verify
+    /// for another or for `main`, and one changed column, or another key, fails it.
     #[test]
     fn the_mac_binds_the_row_the_cell_and_the_key() -> Result<(), CellError> {
         let key = CheckpointKey::from_bytes(random_bytes()?);
         let row = checkpoint();
-        let tag = mac(&key, "cell-a", &row)?.finalize().into_bytes();
-        assert!(verifies(&key, "cell-a", &row, &tag)?);
+        let tag = mac(&key, "cell-a", None, &row)?.finalize().into_bytes();
+        assert!(verifies(&key, "cell-a", None, &row, &tag)?);
         assert!(
-            !verifies(&key, "cell-b", &row, &tag)?,
+            !verifies(&key, "cell-b", None, &row, &tag)?,
             "copied across cells"
         );
         let mut changed = row.clone();
         changed.receipts_root = "r2".to_owned();
-        assert!(!verifies(&key, "cell-a", &changed, &tag)?, "a changed root");
+        assert!(
+            !verifies(&key, "cell-a", None, &changed, &tag)?,
+            "a changed root"
+        );
         let other = CheckpointKey::from_bytes(random_bytes()?);
-        assert!(!verifies(&other, "cell-a", &row, &tag)?, "another key");
+        assert!(
+            !verifies(&other, "cell-a", None, &row, &tag)?,
+            "another key"
+        );
+        let pin = crate::fork::ForkPin {
+            world: "decision-1".to_owned(),
+            parent: crate::store::MAIN_WORLD.to_owned(),
+            base: crate::LedgerHead::genesis(),
+            main_horizon: 0,
+        };
+        let fork_tag = mac(&key, "cell-a", Some(&pin), &row)?
+            .finalize()
+            .into_bytes();
+        assert!(verifies(&key, "cell-a", Some(&pin), &row, &fork_tag)?);
+        assert!(
+            !verifies(&key, "cell-a", None, &row, &fork_tag)?,
+            "fork checkpoint must never verify as main"
+        );
         Ok(())
     }
 

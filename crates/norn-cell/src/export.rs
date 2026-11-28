@@ -140,6 +140,12 @@ impl ExportRecord {
     pub fn advance(&self, head: &ExportManifest) -> Result<ExportManifest, ExportError> {
         let body = &self.receipt.body;
         let invalid = |reason: &str| ExportError::Invalid(reason.to_owned());
+        if body.fork_pin.is_some()
+            || body.written.iter().any(|row| row.fork_world.is_some())
+            || self.entries.iter().any(|entry| entry.fork_pin.is_some())
+        {
+            return Err(ExportError::Cell(CellError::ForkEvidenceForbidden));
+        }
         if self.format != EXPORT_FORMAT
             || self.store_format != STORE_FORMAT
             || head.store_format != STORE_FORMAT
@@ -216,6 +222,13 @@ impl ExportRecord {
     /// # Errors
     /// The manifest disagrees with the journal's head or identity.
     pub fn validate_manifest(&self, manifest: &ExportManifest) -> Result<(), ExportError> {
+        let body = &self.receipt.body;
+        if body.fork_pin.is_some()
+            || body.written.iter().any(|row| row.fork_world.is_some())
+            || self.entries.iter().any(|entry| entry.fork_pin.is_some())
+        {
+            return Err(ExportError::Cell(CellError::ForkEvidenceForbidden));
+        }
         let ledger_seq = match self.entries.last() {
             Some(entry) => entry.seq,
             None => self

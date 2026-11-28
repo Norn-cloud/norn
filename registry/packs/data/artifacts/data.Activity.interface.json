@@ -1,0 +1,78 @@
+{
+  "artifactId": "data.Activity.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Activity",
+  "namespace": "data",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "A time-bounded provenance execution activity extending core.TimeInterval so starts_at < ends_at always holds (W3C PROV-O prov:Activity + W3C OWL-Time).",
+      "extends": [
+        "core.TimeInterval"
+      ],
+      "invariants": [
+        {
+          "expression": "self.code_digest != ''",
+          "id": "non_empty_code_digest",
+          "message": "code_digest must be non-empty."
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Accountable agent associated with this activity (W3C PROV-O prov:wasAssociatedWith).",
+          "id": "actor",
+          "target": "core.Agent"
+        }
+      ],
+      "name": "data.Activity",
+      "properties": [
+        {
+          "id": "activity_kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "sync"
+              },
+              {
+                "value": "transform"
+              },
+              {
+                "value": "training"
+              },
+              {
+                "value": "evaluation"
+              },
+              {
+                "value": "restatement"
+              },
+              {
+                "value": "export"
+              }
+            ]
+          }
+        },
+        {
+          "id": "code_digest",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.Activity.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

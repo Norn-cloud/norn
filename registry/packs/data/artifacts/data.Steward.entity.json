@@ -1,0 +1,66 @@
+{
+  "artifactId": "data.Steward.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Data steward",
+  "namespace": "data",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Concrete accountable agent (person, organization, or system) implementing core.Agent for dataset ownership, activity execution, and observation capture.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "steward_id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Agent"
+      ],
+      "name": "data.Steward",
+      "properties": [
+        {
+          "id": "steward_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "id": "kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "person"
+              },
+              {
+                "value": "organization"
+              },
+              {
+                "value": "system"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.Steward.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
