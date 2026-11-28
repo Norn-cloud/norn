@@ -74,5 +74,7 @@ mod registry_ref_invariants;
 mod result_reconciliation;
 #[path = "snapshot_observe.rs"]
 mod snapshot_observe;
+#[path = "support.rs"]
+mod support;
 #[path = "temporal_intervals.rs"]
 mod temporal_intervals;

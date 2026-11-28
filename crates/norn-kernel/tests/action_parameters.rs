@@ -16,20 +16,18 @@
 //! - Concurrent candidate edit (winning AND non-winning) and link-membership
 //!   phantom mutations refused as stale precondition reads.
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::convert::Infallible;
 
+use super::support::{AllowAll as Allow, HookCell};
 use norn_checker::parameter::ParameterError;
 use norn_ir::{ActionRoot, Decimal, ObjectTypeDef, RuleRoot, RuntimeValue};
-use norn_kernel::cell_host::{BoundedFact, JsonObject};
+use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     ACTION_CALL_TYPE, ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionCallRecord,
     ActionDenial, ActionOutcome, ActionParameterPin, ActionReadAuthzRequest,
-    ActionReadTypeAuthzRequest, ActionRefusal, CellCommit, CellHost, Command, CommitError,
-    CommitReceipt, DecisionBinding, DecisionTurn, DueTimer, FactEvent, FactKey, FactMutation,
-    FactState, FactWrite, LinkKey, LinkMutation, LinkReadTarget, LinkState, LinkWrite, LogicalTime,
-    Observed, Performed, SynchronousRule, TypeCatalog, World, commit_action,
+    ActionReadTypeAuthzRequest, ActionRefusal, CellCommit, CellHost, Command, DecisionBinding,
+    DecisionTurn, FactEvent, FactKey, FactMutation, FactWrite, LinkKey, LinkMutation, LinkWrite,
+    LogicalTime, SynchronousRule, TypeCatalog, World, commit_action,
 };
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::json;
@@ -369,19 +367,6 @@ fn tax_rule() -> SynchronousRule {
         },
     )
     .expect("admitted tax rule")
-}
-
-struct Allow;
-impl ActionAuthorizer for Allow {
-    fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        Ok(())
-    }
-    fn authorize_read(&self, _: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        Ok(())
-    }
-    fn authorize_read_type(&self, _: &ActionReadTypeAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        Ok(())
-    }
 }
 
 struct DenySettingKey(String);
@@ -926,75 +911,6 @@ fn parameter_slice_refuses_overlap_wrong_scope_malformed_and_unauthorized_candid
     assert_eq!(malformed_err.code(), "setting.validation.invalid_payload");
 }
 
-type RaceHook = Box<dyn FnOnce(&mut Cell)>;
-
-struct RacingHost {
-    inner: RefCell<Cell>,
-    on_commit: RefCell<Option<RaceHook>>,
-}
-
-impl RacingHost {
-    fn new(store: Cell, on_commit: impl FnOnce(&mut Cell) + 'static) -> Self {
-        Self {
-            inner: RefCell::new(store),
-            on_commit: RefCell::new(Some(Box::new(on_commit))),
-        }
-    }
-}
-
-impl CellHost for RacingHost {
-    type Error = Infallible;
-    type Event = FactEvent;
-    type Command = JsonObject;
-    type Input = JsonObject;
-
-    fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
-        self.inner.borrow().load(key)
-    }
-    fn load_bounded(
-        &self,
-        key: &FactKey,
-        max_bytes: u64,
-    ) -> Result<Option<BoundedFact>, Self::Error> {
-        self.inner.borrow().load_bounded(key, max_bytes)
-    }
-    fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error> {
-        self.inner.borrow().load_link(key)
-    }
-    fn read_link_targets(
-        &self,
-        source: &FactKey,
-        link: &str,
-        max_targets: usize,
-        max_key_bytes: u64,
-    ) -> Result<Option<Vec<LinkReadTarget>>, Self::Error> {
-        self.inner
-            .borrow()
-            .read_link_targets(source, link, max_targets, max_key_bytes)
-    }
-    fn commit(
-        &mut self,
-        commit: CellCommit<Self::Event, Self::Command, Self::Input>,
-    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
-        if let Some(race) = self.on_commit.borrow_mut().take() {
-            race(self.inner.get_mut());
-        }
-        self.inner.get_mut().commit(commit)
-    }
-    fn perform(&mut self) -> Result<Option<Performed<Self::Input>>, Self::Error> {
-        self.inner.get_mut().perform()
-    }
-    fn observe(&mut self) -> Result<Option<Observed<Self::Input>>, Self::Error> {
-        self.inner.get_mut().observe()
-    }
-    fn clock(&mut self) -> Result<Option<DueTimer<Self::Input>>, Self::Error> {
-        self.inner.get_mut().clock()
-    }
-    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Self::Error> {
-        self.inner.get_mut().publish(receipt)
-    }
-}
-
 fn seeded_race_cell() -> Cell {
     let mut store = new_cell();
     let _ = seed_june_july_settings(&mut store);
@@ -1020,7 +936,7 @@ fn parameter_slice_concurrent_candidate_edit_and_link_mutation_refuse_stale_read
     );
 
     // 1. Concurrent edit of a NON-winning candidate setting still triggers conflict.
-    let mut non_winner_race = RacingHost::new(seeded_race_cell(), |store| {
+    let mut non_winner_race = HookCell::on_commit_once(seeded_race_cell(), |store| {
         put(
             store,
             FactKey::new("billing.NumericSetting", "vat-july"),
@@ -1044,12 +960,12 @@ fn parameter_slice_concurrent_candidate_edit_and_link_mutation_refuse_stale_read
             if key == &FactKey::new("billing.NumericSetting", "vat-july")
     ));
     assert_eq!(
-        load_invoice(&non_winner_race.inner.borrow(), "inv-race").get("status"),
+        load_invoice(&non_winner_race.cell(), "inv-race").get("status"),
         Some(&RuntimeValue::String("draft".to_owned()))
     );
 
     // 2. Concurrent link addition (phantom candidate setting) triggers LinkReadConflict.
-    let mut phantom_link_race = RacingHost::new(seeded_race_cell(), |store| {
+    let mut phantom_link_race = HookCell::on_commit_once(seeded_race_cell(), |store| {
         let phantom = FactKey::new("billing.NumericSetting", "vat-phantom");
         put(
             store,

@@ -15,6 +15,7 @@
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 
+use super::support::{AllowAction as Allow, demo_scope as scope};
 use norn_ir::function::{
     CacheOrigin, Digest, ExecutionProvenance, FunctionOutcome, FunctionReceipt, ResourceUse,
     RunRef, SuccessOutcome,
@@ -27,11 +28,10 @@ use norn_kernel::receipt_binding::{
 };
 use norn_kernel::result_reconciliation::{Acceptance, AcceptedResult, CommandState, ResultRecord};
 use norn_kernel::{
-    ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome, CellCommit,
-    CellHost, Command, CommandId, CommitError, CommitReceipt, Consumed, DecisionTurn, DueTimer,
-    Effect, FactEvent, FactKey, FactMutation, FactState, FactVersion, FactWrite, FreshnessPolicy,
-    Generation, IdempotencyKey, LinkKey, LinkState, LogicalTime, Observed, Performed, TypeCatalog,
-    World, commit_action,
+    ActionCall, ActionOutcome, CellCommit, CellHost, Command, CommandId, CommitError,
+    CommitReceipt, Consumed, DecisionTurn, DueTimer, Effect, FactEvent, FactKey, FactMutation,
+    FactState, FactVersion, FactWrite, FreshnessPolicy, Generation, IdempotencyKey, LinkKey,
+    LinkState, LogicalTime, Observed, Performed, TypeCatalog, World, commit_action,
 };
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::json;
@@ -88,14 +88,6 @@ fn decide_action() -> ActionRoot {
         }
     }))
     .unwrap()
-}
-
-struct Allow;
-
-impl ActionAuthorizer for Allow {
-    fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        Ok(())
-    }
 }
 
 /// The issued receipt and its persisted acceptance, as a host keeps them.
@@ -164,13 +156,6 @@ impl CellHost for ReceiptCell {
     fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Infallible> {
         self.cell.publish(receipt)
     }
-}
-
-fn scope() -> BTreeMap<String, String> {
-    BTreeMap::from([
-        ("orgId".to_owned(), "org_demo".to_owned()),
-        ("environmentId".to_owned(), "dev".to_owned()),
-    ])
 }
 
 fn decide<'a>(action: &'a ActionRoot, run: &str, receipt: &str, key: &str) -> ActionCall<'a> {

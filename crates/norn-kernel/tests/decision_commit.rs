@@ -36,12 +36,11 @@ use norn_kernel::{
     prepare_decision_with_limits, prepare_decision_with_source_owned_targets,
 };
 use norn_testkit::Settings;
-use norn_testkit::cell_host::MemoryCell;
 use norn_testkit::proptest::prelude::*;
 use serde_json::json;
 use std::convert::Infallible;
 
-type Cell = MemoryCell<FactEvent, JsonObject, JsonObject>;
+use super::support::{Cell, new_cell as cell};
 
 const ORDER: &str = "commerce.SalesOrder";
 const BIG: &str = "commerce.BigOrder";
@@ -190,10 +189,6 @@ fn turn(id: &str) -> DecisionTurn {
         world: World::Main,
         consumes: None,
     }
-}
-
-fn cell() -> Cell {
-    MemoryCell::new(|command: &Command<JsonObject>| command.payload.clone())
 }
 
 fn key(object_type: &str, key: &str) -> FactKey {
@@ -823,77 +818,138 @@ fn decision_refuses_false_guard_and_unknown_transition() {
 }
 
 #[test]
-fn admitted_offset_timestamps_are_canonical_before_transition_guards() {
-    let types = timestamp_guard_type("self.a != self.b");
-    let catalog = TypeCatalog::new(&types);
-    let mut cell = cell().with_types(types.clone());
-    let row = seed_timestamp_guard_row(
-        &mut cell,
-        "legacy-offsets",
-        "2024-02-29T10:00:00Z",
-        "2024-02-29T12:00:00+02:00",
-    );
-    let slice = load_slice(&cell, [row.clone()]).unwrap();
-    let output = output(json!({
-        "facts": [transition("temporal.Guarded", "legacy-offsets", "accept")],
-        "commands": [], "timers": []
-    }));
+fn offset_timestamps_canonicalize_before_transition_guards() {
+    // (guard, with_types, seeded_b, set_a, expected_refusal, expected_status)
+    let cases = [
+        (
+            "self.a != self.b",
+            true,
+            "2024-02-29T12:00:00+02:00",
+            None,
+            Some("decision.guard_false"),
+            "draft",
+        ),
+        (
+            "self.a != self.b",
+            false,
+            "2024-02-29T10:00:00Z",
+            Some("2024-02-29T12:00:00+02:00"),
+            Some("decision.guard_false"),
+            "draft",
+        ),
+        (
+            "self.a == self.b",
+            false,
+            "2024-02-29T10:00:00Z",
+            Some("2024-02-29T12:00:00+02:00"),
+            None,
+            "accepted",
+        ),
+    ];
+    for (idx, (guard, with_types, seeded_b, set_a, expected_refusal, expected_status)) in
+        cases.into_iter().enumerate()
+    {
+        let types = timestamp_guard_type(guard);
+        let catalog = TypeCatalog::new(&types);
+        let mut cell = if with_types {
+            cell().with_types(types.clone())
+        } else {
+            cell()
+        };
+        let id = format!("ts-case-{idx}");
+        let row = seed_timestamp_guard_row(&mut cell, &id, "2024-02-29T10:00:00Z", seeded_b);
+        let slice = load_slice(&cell, [row.clone()]).unwrap();
+        let mut facts = Vec::new();
+        if let Some(ts) = set_a {
+            facts.push(set("temporal.Guarded", &id, "a", &json!(ts)));
+        }
+        facts.push(transition("temporal.Guarded", &id, "accept"));
+        let out = output(json!({ "facts": facts, "commands": [], "timers": [] }));
 
-    let refusal =
-        commit_decision(&mut cell, &catalog, &slice, &turn("legacy"), &output).unwrap_err();
-    assert_eq!(refusal.code(), "decision.guard_false");
-    assert_eq!(status(&cell, &row), Some(JsonValue::String("draft".into())));
+        let result = commit_decision(&mut cell, &catalog, &slice, &turn(&id), &out);
+        assert_eq!(
+            result.as_ref().err().map(DecisionRefusal::code),
+            expected_refusal,
+            "case {idx}"
+        );
+        assert_eq!(
+            status(&cell, &row),
+            Some(JsonValue::String(expected_status.into())),
+            "case {idx}"
+        );
+        if expected_refusal.is_none() {
+            assert!(
+                !cell
+                    .load(&row)
+                    .unwrap()
+                    .values
+                    .unwrap()
+                    .contains_key("optional_at"),
+                "an absent legacy field stays absent in working state"
+            );
+        }
+    }
 }
 
-#[test]
-fn set_timestamp_is_canonical_before_following_transition_guard() {
-    let types = timestamp_guard_type("self.a != self.b");
-    let catalog = TypeCatalog::new(&types);
-    let mut cell = cell();
-    let row = seed_timestamp_guard_row(
-        &mut cell,
-        "set-offset",
-        "2024-02-29T10:00:00Z",
-        "2024-02-29T10:00:00Z",
-    );
-    let slice = load_slice(&cell, [row.clone()]).unwrap();
-    let set_then_transition = output(json!({
-        "facts": [
-            set("temporal.Guarded", "set-offset", "a", &json!("2024-02-29T12:00:00+02:00")),
-            transition("temporal.Guarded", "set-offset", "accept")
-        ],
-        "commands": [], "timers": []
-    }));
+proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn prop_offset_timestamps_canonicalize_across_utc_offsets(offset_hours in -11_i32..=11) {
+        let local_hour = 12_i32.saturating_add(offset_hours);
+        let sign = if offset_hours < 0 { '-' } else { '+' };
+        let offset_ts = format!(
+            "2024-02-29T{local_hour:02}:00:00{sign}{:02}:00",
+            offset_hours.unsigned_abs()
+        );
+        let types = timestamp_guard_type("self.a == self.b");
+        let catalog = TypeCatalog::new(&types);
+        let mut cell = cell();
+        let row = seed_timestamp_guard_row(
+            &mut cell,
+            "prop-offset",
+            "2024-02-29T12:00:00Z",
+            "2024-02-29T12:00:00Z",
+        );
+        let slice = load_slice(&cell, [row.clone()]).unwrap();
 
-    let refusal = commit_decision(
-        &mut cell,
-        &catalog,
-        &slice,
-        &turn("set-offset"),
-        &set_then_transition,
-    )
-    .unwrap_err();
-    assert_eq!(refusal.code(), "decision.guard_false");
-    assert_eq!(status(&cell, &row), Some(JsonValue::String("draft".into())));
+        let set_only = output(json!({
+            "facts": [set("temporal.Guarded", "prop-offset", "a", &json!(offset_ts))],
+            "commands": [], "timers": []
+        }));
+        let prepared =
+            prepare_decision::<Infallible>(&catalog, &slice, &turn("prop-set"), &set_only)
+                .unwrap();
+        let matched_utc_set = matches!(
+            prepared.events.as_slice(),
+            [FactEvent::Set { value: JsonValue::String(value), .. }]
+                if value == "2024-02-29T12:00:00Z"
+        );
+        prop_assert!(
+            matched_utc_set,
+            "expected normalized UTC timestamp set event, got {:?}",
+            prepared.events
+        );
 
-    let set_only = output(json!({
-        "facts": [set(
-            "temporal.Guarded",
-            "set-offset",
-            "a",
-            &json!("2024-02-29T12:00:00+02:00")
-        )],
-        "commands": [], "timers": []
-    }));
-    let prepared =
-        prepare_decision::<Infallible>(&catalog, &slice, &turn("set-only"), &set_only).unwrap();
-    assert!(matches!(
-        prepared.events.as_slice(),
-        [FactEvent::Set {
-            value: JsonValue::String(value),
-            ..
-        }] if value == "2024-02-29T10:00:00Z"
-    ));
+        let set_then_transition = output(json!({
+            "facts": [
+                set("temporal.Guarded", "prop-offset", "a", &json!(offset_ts)),
+                transition("temporal.Guarded", "prop-offset", "accept")
+            ],
+            "commands": [], "timers": []
+        }));
+        commit_decision(
+            &mut cell,
+            &catalog,
+            &slice,
+            &turn("prop-transition"),
+            &set_then_transition,
+        )
+        .unwrap();
+        prop_assert_eq!(
+            status(&cell, &row),
+            Some(JsonValue::String("accepted".into()))
+        );
+    }
 }
 
 #[test]
@@ -987,49 +1043,6 @@ fn existing_object_writes_emit_one_sorted_versioned_modified_snapshot() {
             .events
             .iter()
             .any(|event| matches!(event, FactEvent::Modified { .. }))
-    );
-}
-
-#[test]
-fn canonical_set_value_can_satisfy_following_transition_guard() {
-    let types = timestamp_guard_type("self.a == self.b");
-    let catalog = TypeCatalog::new(&types);
-    let mut cell = cell();
-    let row = seed_timestamp_guard_row(
-        &mut cell,
-        "set-equal",
-        "2024-02-29T10:00:00Z",
-        "2024-02-29T10:00:00Z",
-    );
-    let slice = load_slice(&cell, [row.clone()]).unwrap();
-    let set_then_transition = output(json!({
-        "facts": [
-            set("temporal.Guarded", "set-equal", "a", &json!("2024-02-29T12:00:00+02:00")),
-            transition("temporal.Guarded", "set-equal", "accept")
-        ],
-        "commands": [], "timers": []
-    }));
-
-    commit_decision(
-        &mut cell,
-        &catalog,
-        &slice,
-        &turn("set-equal"),
-        &set_then_transition,
-    )
-    .unwrap();
-    assert_eq!(
-        status(&cell, &row),
-        Some(JsonValue::String("accepted".into()))
-    );
-    assert!(
-        !cell
-            .load(&row)
-            .unwrap()
-            .values
-            .unwrap()
-            .contains_key("optional_at"),
-        "an absent legacy field stays absent in working state"
     );
 }
 
@@ -2006,173 +2019,147 @@ fn decision_over_a_listed_slice_writes_every_member_or_none() {
     );
 }
 
-/// #3079: a list entry reads a linked subtype object as its concrete type,
-/// while the decision names the link's declared (super)type. The kernel
-/// resolves the write to the object it read, so `set` and `transition`
-/// commit under the read version, and nothing is refused as not in the
-/// slice.
+/// #3079: subtype read-slice resolution and working-copy identity invariants:
+/// - Writes naming a declared supertype reach an existing subtype the slice read, never an unread one.
+/// - Creating a subtype in working state (with or without an absent subtype read) does not authorize
+///   base-typed alias writes, while exact-typed writes succeed on the working copy.
+/// - A base-typed create is never redirected through an absent subtype read.
 #[test]
-fn decision_writes_naming_the_declared_type_reach_a_subtype_it_read() {
+fn subtype_read_and_working_copy_identity_invariants() {
     let types = types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = cell();
-    decide(&mut cell, &catalog, "seed", &[], &[create(BIG, "B-1", 5.0)]).unwrap();
+
+    // 1. Existing subtype read in slice resolves supertype-named writes; unread object still refuses.
+    let mut cell_a = cell();
+    decide(
+        &mut cell_a,
+        &catalog,
+        "seed",
+        &[],
+        &[create(BIG, "B-1", 5.0)],
+    )
+    .unwrap();
     let concrete = key(BIG, "B-1");
-    let slice = load_slice(&cell, [concrete.clone()]).unwrap();
-    let output = output(json!({
+    let slice = load_slice(&cell_a, [concrete.clone()]).unwrap();
+    let aliased_out = output(json!({
         "facts": [set(ORDER, "B-1", "amount", &json!(6)), transition(ORDER, "B-1", "submit")],
-        "commands": [],
-        "timers": []
+        "commands": [], "timers": []
     }));
-    let prepared = prepare_decision::<Infallible>(&catalog, &slice, &turn("sub"), &output).unwrap();
+    let prepared =
+        prepare_decision::<Infallible>(&catalog, &slice, &turn("sub"), &aliased_out).unwrap();
     assert_eq!(prepared.writes.len(), 1);
-    assert_eq!(
-        prepared.writes[0].key, concrete,
-        "the write goes to the object read"
-    );
+    assert_eq!(prepared.writes[0].key, concrete);
     assert_eq!(prepared.writes[0].expected, FactVersion(1));
-    commit_decision(&mut cell, &catalog, &slice, &turn("sub"), &output).unwrap();
+    commit_decision(&mut cell_a, &catalog, &slice, &turn("sub"), &aliased_out).unwrap();
     assert_eq!(
-        status(&cell, &concrete),
+        status(&cell_a, &concrete),
         Some(JsonValue::String("submitted".into()))
     );
     assert_eq!(
-        cell.load(&concrete).unwrap().values.unwrap().get("amount"),
+        cell_a
+            .load(&concrete)
+            .unwrap()
+            .values
+            .unwrap()
+            .get("amount"),
         Some(&JsonValue::from(6))
     );
-
-    // A write naming the declared type of an object the decision did not
-    // read is still refused.
-    let unread = output_of_set(ORDER, "B-2");
+    let unread = output(json!({
+        "facts": [set(ORDER, "B-2", "amount", &json!(1))],
+        "commands": [], "timers": []
+    }));
     let refusal =
         prepare_decision::<Infallible>(&catalog, &slice, &turn("unread"), &unread).unwrap_err();
     assert_eq!(refusal.code(), "decision.not_in_slice", "{refusal}");
-}
 
-fn output_of_set(object_type: &str, id: &str) -> DecisionOutput {
-    output(json!({
-        "facts": [set(object_type, id, "amount", &json!(1))],
-        "commands": [],
-        "timers": []
-    }))
-}
-
-/// A newly created subtype in the working copy is not a read-slice alias
-/// target for a later write naming its supertype.
-#[test]
-fn a_new_subtype_does_not_authorize_a_base_typed_write() {
-    for (id, base_change) in [
-        ("CREATE-SET", set(ORDER, "CREATE-SET", "amount", &json!(6))),
+    // 2. Working-copy subtype creates never authorize base-typed alias writes (empty or absent read).
+    for (id, preload_absent, base_change) in [
+        (
+            "CREATE-SET",
+            false,
+            set(ORDER, "CREATE-SET", "amount", &json!(6)),
+        ),
         (
             "CREATE-TRANSITION",
+            false,
             transition(ORDER, "CREATE-TRANSITION", "submit"),
         ),
+        (
+            "ABSENT-THEN-CREATE",
+            true,
+            set(ORDER, "ABSENT-THEN-CREATE", "amount", &json!(6)),
+        ),
     ] {
-        let types = types();
-        let catalog = TypeCatalog::new(&types);
-        let mut cell = cell();
-        let slice = FactSlice::new();
-        let output = output(json!({
+        let mut cell_b = cell();
+        let slice = if preload_absent {
+            load_slice(&cell_b, [key(BIG, id)]).unwrap()
+        } else {
+            FactSlice::new()
+        };
+        let out = output(json!({
             "facts": [create(BIG, id, 5.0), base_change],
-            "commands": [],
-            "timers": []
+            "commands": [], "timers": []
         }));
-
         assert_refused(
-            &mut cell,
+            &mut cell_b,
             &catalog,
             &slice,
-            &turn("unread-subtype"),
-            &output,
+            &turn(id),
+            &out,
             "decision.not_in_slice",
         );
-        assert!(cell.load(&key(BIG, id)).unwrap().values.is_none());
-        assert!(cell.load(&key(ORDER, id)).unwrap().values.is_none());
+        assert!(cell_b.load(&key(BIG, id)).unwrap().values.is_none());
+        assert!(cell_b.load(&key(ORDER, id)).unwrap().values.is_none());
     }
-}
 
-/// An absent subtype read stays non-authoritative after a subtype is created
-/// during the same decision.
-#[test]
-fn an_absent_subtype_read_does_not_alias_a_later_create() {
-    let types = types();
-    let catalog = TypeCatalog::new(&types);
-    let mut cell = cell();
-    let slice = load_slice(&cell, [key(BIG, "ABSENT-THEN-CREATE")]).unwrap();
-    let output = output(json!({
-        "facts": [
-            create(BIG, "ABSENT-THEN-CREATE", 5.0),
-            set(ORDER, "ABSENT-THEN-CREATE", "amount", &json!(6))
-        ],
-        "commands": [],
-        "timers": []
-    }));
-
-    assert_refused(
-        &mut cell,
-        &catalog,
-        &slice,
-        &turn("absent-read"),
-        &output,
-        "decision.not_in_slice",
-    );
-    assert!(
-        cell.load(&key(BIG, "ABSENT-THEN-CREATE"))
-            .unwrap()
-            .values
-            .is_none()
-    );
-}
-
-/// Exact writes to a subtype created earlier in this decision keep using that
-/// identity through the working copy.
-#[test]
-fn a_subtype_created_in_working_accepts_exact_set_and_transition() {
-    let types = types();
-    let catalog = TypeCatalog::new(&types);
-    let mut cell = cell();
-    let slice = FactSlice::new();
-    let concrete = key(BIG, "EXACT-CREATE");
-    let output = output(json!({
+    // 3. Exact-typed writes on a working-copy subtype succeed cleanly.
+    let mut cell_c = cell();
+    let exact_key = key(BIG, "EXACT-CREATE");
+    let exact_out = output(json!({
         "facts": [
             create(BIG, "EXACT-CREATE", 5.0),
             set(BIG, "EXACT-CREATE", "amount", &json!(6)),
             transition(BIG, "EXACT-CREATE", "submit")
         ],
-        "commands": [],
-        "timers": []
+        "commands": [], "timers": []
     }));
-
     let prepared =
-        prepare_decision::<Infallible>(&catalog, &slice, &turn("exact"), &output).unwrap();
+        prepare_decision::<Infallible>(&catalog, &FactSlice::new(), &turn("exact"), &exact_out)
+            .unwrap();
     assert_eq!(prepared.writes.len(), 1);
-    assert_eq!(prepared.writes[0].key, concrete);
+    assert_eq!(prepared.writes[0].key, exact_key);
     assert_eq!(prepared.writes[0].expected, FactVersion::ABSENT);
-    commit_decision(&mut cell, &catalog, &slice, &turn("exact"), &output).unwrap();
+    commit_decision(
+        &mut cell_c,
+        &catalog,
+        &FactSlice::new(),
+        &turn("exact"),
+        &exact_out,
+    )
+    .unwrap();
     assert_eq!(
-        status(&cell, &concrete),
+        status(&cell_c, &exact_key),
         Some(JsonValue::String("submitted".into()))
     );
     assert_eq!(
-        cell.load(&concrete).unwrap().values.unwrap().get("amount"),
+        cell_c
+            .load(&exact_key)
+            .unwrap()
+            .values
+            .unwrap()
+            .get("amount"),
         Some(&JsonValue::from(6))
     );
-}
 
-/// #3079 review: a create naming the declared type is never redirected to an
-/// absent subtype the decision read; it creates exactly what it names.
-#[test]
-fn a_create_is_not_redirected_through_an_absent_subtype_read() {
-    let types = types();
-    let catalog = TypeCatalog::new(&types);
-    let cell = cell();
-    let slice = load_slice(&cell, [key(BIG, "X-1")]).unwrap();
-    let output = output(json!({
+    // 4. Base-typed create is never redirected through an absent subtype read.
+    let cell_d = cell();
+    let absent_slice = load_slice(&cell_d, [key(BIG, "X-1")]).unwrap();
+    let base_create = output(json!({
         "facts": [create(ORDER, "X-1", 5.0)],
-        "commands": [],
-        "timers": []
+        "commands": [], "timers": []
     }));
-    let prepared = prepare_decision::<Infallible>(&catalog, &slice, &turn("x"), &output).unwrap();
+    let prepared =
+        prepare_decision::<Infallible>(&catalog, &absent_slice, &turn("x"), &base_create).unwrap();
     assert!(
         prepared
             .writes
@@ -2714,7 +2701,7 @@ fn immutable_objects_use_pre_decision_existence_for_change_sequences() {
 }
 
 #[test]
-fn inherited_immutable_objects_refuse_raw_overwrite_and_delete_atomically() {
+fn inherited_immutable_objects_refuse_atomically_and_outrank_conflict_only_when_observed() {
     let mut definitions = types();
     definitions[0].immutable = true;
     let mut host = cell().with_types(definitions);
@@ -2733,76 +2720,32 @@ fn inherited_immutable_objects_refuse_raw_overwrite_and_delete_atomically() {
     })
     .unwrap();
     let before = visible(&host, std::slice::from_ref(&key));
-    for mutation in [FactMutation::Put { values }, FactMutation::Delete] {
-        let error = host
-            .commit(CellCommit {
-                writes: vec![FactWrite {
-                    key: key.clone(),
-                    expected: before.0[0].version,
-                    mutation,
-                }],
-                ..CellCommit::empty()
-            })
-            .unwrap_err();
-        assert_eq!(error.code(), "commit.immutable_object");
-        assert_eq!(visible(&host, std::slice::from_ref(&key)), before);
-    }
-}
-
-#[test]
-fn an_immutable_refusal_outranks_conflict_only_when_the_write_observed_the_object_present() {
-    let mut definitions = types();
-    definitions[0].immutable = true;
-    let mut host = cell().with_types(definitions);
-    let key = FactKey::new(BIG, "append-only");
-    let values =
-        record(json!({"order_no":"append-only", "amount":1, "status":"draft", "approver":""}));
-    host.commit(CellCommit {
-        writes: vec![FactWrite {
-            key: key.clone(),
-            expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put {
+    let observed = before.0[0].version;
+    // Observed-present writes permanently refuse with `commit.immutable_object` atomically;
+    // absent-expecting writes lost a race and report retryable `commit.conflict`.
+    for (expected, code) in [
+        (observed, "commit.immutable_object"),
+        (FactVersion::ABSENT, "commit.conflict"),
+    ] {
+        for mutation in [
+            FactMutation::Put {
                 values: values.clone(),
             },
-        }],
-        ..CellCommit::empty()
-    })
-    .unwrap();
-    let observed = host.load(&key).unwrap().version;
-    // A write that read the object present can never succeed, so the permanent
-    // refusal is reported, not a retryable conflict.
-    for mutation in [
-        FactMutation::Put {
-            values: values.clone(),
-        },
-        FactMutation::Delete,
-    ] {
-        let error = host
-            .commit(CellCommit {
-                writes: vec![FactWrite {
-                    key: key.clone(),
-                    expected: observed,
-                    mutation,
-                }],
-                ..CellCommit::empty()
-            })
-            .unwrap_err();
-        assert_eq!(error.code(), "commit.immutable_object");
-    }
-    // A create that expected the object absent lost a race with the commit above:
-    // a retryable `Conflict`, so action retry and replay can re-read the winner.
-    for mutation in [FactMutation::Put { values }, FactMutation::Delete] {
-        let error = host
-            .commit(CellCommit {
-                writes: vec![FactWrite {
-                    key: key.clone(),
-                    expected: FactVersion::ABSENT,
-                    mutation,
-                }],
-                ..CellCommit::empty()
-            })
-            .unwrap_err();
-        assert_eq!(error.code(), "commit.conflict");
+            FactMutation::Delete,
+        ] {
+            let error = host
+                .commit(CellCommit {
+                    writes: vec![FactWrite {
+                        key: key.clone(),
+                        expected,
+                        mutation,
+                    }],
+                    ..CellCommit::empty()
+                })
+                .unwrap_err();
+            assert_eq!(error.code(), code);
+            assert_eq!(visible(&host, std::slice::from_ref(&key)), before);
+        }
     }
 }
 
@@ -2837,44 +2780,33 @@ fn budget_types(count: usize) -> Vec<ObjectTypeDef> {
 }
 
 #[test]
-fn a_refused_catalog_errors_instead_of_passing_values_through() {
-    let objects = budget_types(4_097);
-    let catalog = TypeCatalog::new(&objects);
-    let refusal = catalog.effective_refusal().unwrap();
+fn catalog_type_budget_boundary_enforces_effective_view() {
+    let type_name = norn_ir::ObjectTypeName("budget.T0000".to_owned());
+
+    let within = budget_types(4_096);
+    let ok_catalog = TypeCatalog::new(&within);
+    assert!(ok_catalog.effective_refusal().is_none());
+    assert!(
+        ok_catalog
+            .effective_object_values(&type_name, &JsonObject::new())
+            .is_ok()
+    );
+
+    let exceeded = budget_types(4_097);
+    let refused_catalog = TypeCatalog::new(&exceeded);
+    let refusal = refused_catalog.effective_refusal().unwrap();
     assert_eq!(
         (refusal.dimension, refusal.limit),
         ("registered types", 4_096)
     );
-    let error = catalog
-        .effective_object_values(
-            &norn_ir::ObjectTypeName("budget.T0000".to_owned()),
-            &JsonObject::new(),
-        )
+    let error = refused_catalog
+        .effective_object_values(&type_name, &JsonObject::new())
         .unwrap_err();
     assert!(matches!(error, EffectiveValuesError::ViewRefused(_)));
     assert!(
-        catalog
-            .effective_link_values(
-                &norn_ir::ObjectTypeName("budget.T0000".to_owned()),
-                "any",
-                &JsonObject::new()
-            )
+        refused_catalog
+            .effective_link_values(&type_name, "any", &JsonObject::new())
             .is_err()
-    );
-}
-
-#[test]
-fn a_catalog_within_budget_has_an_effective_view() {
-    let objects = budget_types(4_096);
-    let catalog = TypeCatalog::new(&objects);
-    assert!(catalog.effective_refusal().is_none());
-    assert!(
-        catalog
-            .effective_object_values(
-                &norn_ir::ObjectTypeName("budget.T0000".to_owned()),
-                &JsonObject::new()
-            )
-            .is_ok()
     );
 }
 

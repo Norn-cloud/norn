@@ -25,6 +25,8 @@ use norn_kernel::{
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::json;
 
+use super::support::AllowAll as Allow;
+
 type Cell = MemoryCell<FactEvent, JsonObject, JsonObject>;
 
 fn object(value: serde_json::Value) -> JsonObject {
@@ -102,19 +104,6 @@ fn invocation(action: &ActionRoot) -> ActionCall<'_> {
             consumes: None,
         },
         trace: None,
-    }
-}
-
-struct Allow;
-impl ActionAuthorizer for Allow {
-    fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        Ok(())
-    }
-    fn authorize_read(&self, _: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        Ok(())
-    }
-    fn authorize_read_type(&self, _: &ActionReadTypeAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        Ok(())
     }
 }
 

@@ -8,18 +8,16 @@
 
 //! Generated keys use prepared input and declared reads for both commit and replay.
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::convert::Infallible;
 
+use super::support::HookCell;
 use norn_ir::{ActionRoot, ObjectTypeDef, RuntimeValue};
-use norn_kernel::cell_host::{BoundedFact, JsonObject};
+use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
-    ActionReadAuthzRequest, ActionReadTypeAuthzRequest, CellCommit, CellHost, Command, CommitError,
-    CommitReceipt, DecisionTurn, DueTimer, FactEvent, FactKey, FactMutation, FactState, FactWrite,
-    LinkKey, LinkReadTarget, LinkState, LogicalTime, NamingSeriesInspectionRequest, Observed,
-    Performed, TypeCatalog, World, commit_action,
+    ActionReadAuthzRequest, ActionReadTypeAuthzRequest, CellCommit, CellHost, Command,
+    DecisionTurn, FactEvent, FactKey, FactMutation, FactWrite, LogicalTime,
+    NamingSeriesInspectionRequest, TypeCatalog, World, commit_action,
 };
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::json;
@@ -155,74 +153,6 @@ fn set_company(cell: &mut Cell, active: bool) {
     cell.commit(commit).expect("company update");
 }
 
-/// Changes the authorized slice fact after evaluation and before the cell CAS.
-struct RacingCell {
-    cell: RefCell<Cell>,
-    race: bool,
-}
-
-impl CellHost for RacingCell {
-    type Event = FactEvent;
-    type Command = JsonObject;
-    type Input = JsonObject;
-    type Error = Infallible;
-
-    fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
-        self.cell.borrow().load(key)
-    }
-
-    fn load_bounded(
-        &self,
-        key: &FactKey,
-        max_bytes: u64,
-    ) -> Result<Option<BoundedFact>, Self::Error> {
-        self.cell.borrow().load_bounded(key, max_bytes)
-    }
-
-    fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error> {
-        self.cell.borrow().load_link(key)
-    }
-
-    fn read_link_targets(
-        &self,
-        source: &FactKey,
-        link: &str,
-        max_targets: usize,
-        max_key_bytes: u64,
-    ) -> Result<Option<Vec<LinkReadTarget>>, Self::Error> {
-        self.cell
-            .borrow()
-            .read_link_targets(source, link, max_targets, max_key_bytes)
-    }
-
-    fn commit(
-        &mut self,
-        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
-    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
-        if self.race {
-            self.race = false;
-            set_company(self.cell.get_mut(), false);
-        }
-        self.cell.get_mut().commit(commit)
-    }
-
-    fn perform(&mut self) -> Result<Option<Performed<Self::Input>>, Self::Error> {
-        self.cell.get_mut().perform()
-    }
-
-    fn observe(&mut self) -> Result<Option<Observed<Self::Input>>, Self::Error> {
-        self.cell.get_mut().observe()
-    }
-
-    fn clock(&mut self) -> Result<Option<DueTimer<Self::Input>>, Self::Error> {
-        self.cell.get_mut().clock()
-    }
-
-    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Self::Error> {
-        self.cell.get_mut().publish(receipt)
-    }
-}
-
 #[test]
 fn generated_create_uses_derived_scope_and_slice_and_rechecks_replay() {
     let definitions = types();
@@ -278,25 +208,21 @@ fn generated_create_refuses_stale_slice_without_allocating_a_number() {
     let invocation = call(&action);
     let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
     set_company(&mut cell, true);
-    let mut host = RacingCell {
-        cell: RefCell::new(cell),
-        race: true,
-    };
-    let before = host.cell.borrow().ledger().len();
+    let mut host = HookCell::on_commit_once(cell, |inner| set_company(inner, false));
+    let before = host.cell().ledger().len();
 
     let refusal = commit_action(&mut host, &catalog, &invocation, &AllowGenerated)
         .expect_err("slice fact changed before commit");
     assert_eq!(refusal.code(), "action.precondition_stale_read");
-    assert_eq!(host.cell.borrow().ledger().len(), before + 1);
+    assert_eq!(host.cell().ledger().len(), before + 1);
     assert!(
         !host
-            .cell
-            .borrow()
+            .cell()
             .load(&FactKey::new("test.NamedOrder", "SO-ACME-2025-00001"))
             .expect("numbered target")
             .exists()
     );
-    set_company(host.cell.get_mut(), true);
+    set_company(host.cell_mut(), true);
     let outcome = commit_action(&mut host, &catalog, &invocation, &AllowGenerated)
         .expect("next successful call takes the first number");
     assert!(matches!(outcome, ActionOutcome::Committed { record, .. }
