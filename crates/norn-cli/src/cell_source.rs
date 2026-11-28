@@ -216,9 +216,7 @@ fn parse_manifest_targets(
     parsed: &Value,
     manifest_display: &Path,
 ) -> Result<ManifestTargets, String> {
-    let default_target = if let Some(raw) = parsed.get("defaultTarget")
-        && !raw.is_null()
-    {
+    let default_target = if let Some(raw) = parsed.get("defaultTarget") {
         let Some(name) = raw.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
             return Err(format!(
                 "{}: `defaultTarget` must be a non-empty string",
@@ -243,9 +241,7 @@ fn parse_manifest_targets(
         .map(str::to_owned);
 
     let mut profiles = BTreeMap::new();
-    if let Some(raw_targets) = parsed.get("targets")
-        && !raw_targets.is_null()
-    {
+    if let Some(raw_targets) = parsed.get("targets") {
         let map = raw_targets.as_object().ok_or_else(|| {
             format!(
                 "{}: `targets` must be an object mapping target names to profiles",
