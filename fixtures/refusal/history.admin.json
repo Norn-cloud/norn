@@ -29,7 +29,7 @@
         "writer": {
           "kind": "mapping",
           "lineage": {
-            "bundleDigest": "191e2011a9c3a3366802884d1f49f9528e6d4529f21e2510f79e4832f9a8d0f5",
+            "bundleDigest": "ef621b9d59166c56435dbb35fb67d2a5bd13f84685d17487a6595f6c1be4a37d",
             "sourceRecordRef": {
               "system": "synthetic-scans",
               "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"

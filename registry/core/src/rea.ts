@@ -134,6 +134,25 @@ export const Commitment = Norn.interfaceType({
       ),
     },
   ],
+  lifecycles: [
+    {
+      property: "status",
+      initial: ["requested", "promised"],
+      terminal: ["fulfilled", "cancelled", "breached"],
+      immutable: ["fulfilled", "cancelled", "breached"],
+      endings: {
+        fulfilled: "completed",
+        cancelled: "cancelled",
+        breached: "breached_visible",
+      },
+      transitions: [
+        { id: "promise", from: ["requested"], to: "promised" },
+        { id: "fulfil", from: ["promised"], to: "fulfilled" },
+        { id: "cancel", from: ["requested", "promised"], to: "cancelled" },
+        { id: "breach", from: ["requested", "promised"], to: "breached" },
+      ],
+    },
+  ],
 })
 
 export const Hold = Norn.interfaceType({
@@ -171,6 +190,24 @@ export const Hold = Norn.interfaceType({
         QuantityAndMeasure,
         (self) => (self.unit !== null && self.currency === null) || (self.unit === null && self.currency !== null),
       ),
+    },
+  ],
+  lifecycles: [
+    {
+      property: "status",
+      initial: ["open"],
+      terminal: ["released", "consumed", "expired"],
+      immutable: ["released", "consumed", "expired"],
+      endings: {
+        consumed: "completed",
+        released: "compensated",
+        expired: "cancelled",
+      },
+      transitions: [
+        { id: "consume", from: ["open"], to: "consumed" },
+        { id: "release", from: ["open"], to: "released" },
+        { id: "expire", from: ["open"], to: "expired" },
+      ],
     },
   ],
 })
@@ -283,4 +320,280 @@ export const Conversion = Norn.interfaceType({
 export const Exchange = Norn.interfaceType({
   name: "core.Exchange", title: "Exchange", version: "0.1.0", role: "happening",
   extends: [Process], properties: Schema.Struct({}),
+})
+
+export const HoldableResource = Norn.interfaceType({
+  name: "core.HoldableResource",
+  role: "thing",
+  title: "Holdable resource",
+  version: "0.2.0",
+  description:
+    "A conserved resource that supports open holds/escrows/reservations through inverse link `holds` and enforces core.law.escrow_non_negative at commit.",
+  extends: [Resource],
+  dependencies: [
+    { artifactId: "core.Resource.interface", version: "0.2.0", kind: "entity" },
+    { artifactId: "core.Hold.interface", version: "0.2.0", kind: "entity" },
+  ],
+  properties: Schema.Struct({}),
+  links: [
+    {
+      id: "holds",
+      description: "Holds placed against this resource (inverse of core.Hold.resource).",
+      target: Hold,
+      cardinality: { to: "many", from: "one" },
+    },
+  ],
+})
+
+export const ValuedEvent = Norn.interfaceType({
+  name: "core.ValuedEvent",
+  role: "happening",
+  title: "Valued economic event",
+  version: "0.2.0",
+  description:
+    "A posted economic event whose accounting legs are linked through inverse role `effects` and must net to zero in `valuation_currency` (core.law.value_conservation).",
+  extends: [EconomicEvent],
+  dependencies: [
+    { artifactId: "core.EconomicEvent.interface", version: "0.2.0", kind: "entity" },
+    { artifactId: "core.LedgerEffect.interface", version: "0.2.0", kind: "entity" },
+    { artifactId: "core.value_types.entity", version: "0.2.0", kind: "entity" },
+  ],
+  properties: Schema.Struct({
+    valuation_currency: Norn.ref("core.code"),
+  }),
+  links: [
+    {
+      id: "effects",
+      description: "Signed ledger effects valuing this economic event (inverse of core.ValuedLedgerEffect.event).",
+      target: "core.ValuedLedgerEffect",
+      cardinality: { to: "many", from: "one" },
+    },
+  ],
+})
+
+export const ValuedLedgerEffect = Norn.interfaceType({
+  name: "core.ValuedLedgerEffect",
+  role: "happening",
+  title: "Valued ledger effect",
+  version: "0.2.0",
+  description:
+    "A signed ledger effect bound to a `core.ValuedEvent` whose currency must match the event's `valuation_currency` so `core.ValuedEvent.effects_balance` never nets unlike currencies.",
+  extends: [LedgerEffect],
+  dependencies: [
+    { artifactId: "core.LedgerEffect.interface", version: "0.2.0", kind: "entity" },
+    { artifactId: "core.ValuedEvent.interface", version: "0.2.0", kind: "entity" },
+  ],
+  properties: Schema.Struct({}),
+  links: [
+    {
+      id: "event",
+      description: "The valued economic event this ledger effect belongs to.",
+      target: ValuedEvent,
+      cardinality: { to: "one", from: "many", required: true },
+    },
+  ],
+})
+
+export const ReversibleEvent = Norn.interfaceType({
+  name: "core.ReversibleEvent",
+  role: "happening",
+  title: "Reversible economic event",
+  version: "0.2.0",
+  description:
+    "An economic event that tracks `is_reversal` explicitly and narrows `reverses` to `core.ReversibleEvent` so one-hop LAW-LINK-1 enforcement prevents reversing a reversal (core.law.correction_is_linked_reversal).",
+  extends: [EconomicEvent],
+  dependencies: [
+    { artifactId: "core.EconomicEvent.interface", version: "0.2.0", kind: "entity" },
+  ],
+  properties: Schema.Struct({
+    is_reversal: Schema.Boolean,
+  }),
+  links: [
+    {
+      id: "reverses",
+      description: "The posted reversible event this event exactly reverses.",
+      target: "core.ReversibleEvent",
+      cardinality: { to: "one", from: "one" },
+    },
+  ],
+})
+
+export const HoldMeasureMatchesResource = Norn.law({
+  id: "core.Hold.measure_matches_resource.law",
+  title: "A hold's unit and currency match its target resource",
+  version: "0.2.0",
+  dependencies: [
+    { artifactId: "core.Hold.interface", kind: "entity", version: "0.2.0", required: true },
+    { artifactId: "core.Resource.interface", kind: "entity", version: "0.2.0", required: true },
+  ],
+  law: {
+    lawVersion: "0.1",
+    id: "core.Hold.measure_matches_resource",
+    owner: "core",
+    severity: "error",
+    rationale: "A hold or reservation must carry the exact unit or currency of the resource balance it locks.",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/core/src/rea.ts" },
+    subject: "core.Hold",
+    scope: { root: { kind: "entity", id: "core.Hold" }, objectTypes: ["core.Hold"] },
+    modality: { kind: "always" },
+    response: {
+      kind: "predicate",
+      expression:
+        "((self.unit == null) == (self.resource.unit == null)) and ((self.unit ?? '') == (self.resource.unit ?? '')) and ((self.currency == null) == (self.resource.currency == null)) and ((self.currency ?? '') == (self.resource.currency ?? ''))",
+    },
+  },
+})
+
+export const EconomicEventReversalMatchesOriginal = Norn.law({
+  id: "core.EconomicEvent.reversal_matches_original.law",
+  title: "A reversing economic event matches its original's quantity, measure, and action",
+  version: "0.2.0",
+  dependencies: [
+    { artifactId: "core.EconomicEvent.interface", kind: "entity", version: "0.2.0", required: true },
+  ],
+  law: {
+    lawVersion: "0.1",
+    id: "core.EconomicEvent.reversal_matches_original",
+    owner: "core",
+    severity: "error",
+    rationale:
+      "1-hop LAW-LINK-1 reversal parity: a linked reversal matches the quantity, unit, currency, and action of the posted event it reverses (same-resource / per-account cancellation remains enforced by the kernel reversal primitive).",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/core/src/rea.ts" },
+    subject: "core.EconomicEvent",
+    scope: { root: { kind: "entity", id: "core.EconomicEvent" }, objectTypes: ["core.EconomicEvent"] },
+    condition: "self.reverses != null",
+    modality: { kind: "always" },
+    response: {
+      kind: "predicate",
+      expression:
+        "self.quantity == self.reverses.quantity and ((self.unit == null) == (self.reverses.unit == null)) and ((self.unit ?? '') == (self.reverses.unit ?? '')) and ((self.currency == null) == (self.reverses.currency == null)) and ((self.currency ?? '') == (self.reverses.currency ?? '')) and self.action == self.reverses.action",
+    },
+  },
+})
+
+export const ReversibleEventNoDoubleReversal = Norn.law({
+  id: "core.ReversibleEvent.no_reversal_of_reversal.law",
+  title: "A linked reversal marks itself as a reversal and never reverses another reversal",
+  version: "0.2.0",
+  dependencies: [
+    { artifactId: "core.ReversibleEvent.interface", kind: "entity", version: "0.2.0", required: true },
+  ],
+  law: {
+    lawVersion: "0.1",
+    id: "core.ReversibleEvent.no_reversal_of_reversal",
+    owner: "core",
+    severity: "error",
+    rationale: "A linked reversal must carry `is_reversal == true` and may only reverse an original event (`self.reverses.is_reversal == false`).",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/core/src/rea.ts" },
+    subject: "core.ReversibleEvent",
+    scope: { root: { kind: "entity", id: "core.ReversibleEvent" }, objectTypes: ["core.ReversibleEvent"] },
+    condition: "self.reverses != null",
+    modality: { kind: "always" },
+    response: {
+      kind: "predicate",
+      expression: "self.is_reversal == true and self.reverses.is_reversal == false",
+    },
+  },
+})
+
+export const ReversibleEventFlagRequiresLink = Norn.law({
+  id: "core.ReversibleEvent.reversal_flag_requires_link.law",
+  title: "An event marked as a reversal must link to its original",
+  version: "0.2.0",
+  dependencies: [
+    { artifactId: "core.ReversibleEvent.interface", kind: "entity", version: "0.2.0", required: true },
+  ],
+  law: {
+    lawVersion: "0.1",
+    id: "core.ReversibleEvent.reversal_flag_requires_link",
+    owner: "core",
+    severity: "error",
+    rationale: "Setting `is_reversal == true` requires an explicit `reverses` link to the posted original event.",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/core/src/rea.ts" },
+    subject: "core.ReversibleEvent",
+    scope: { root: { kind: "entity", id: "core.ReversibleEvent" }, objectTypes: ["core.ReversibleEvent"] },
+    condition: "self.is_reversal == true",
+    modality: { kind: "always" },
+    response: {
+      kind: "predicate",
+      expression: "self.reverses != null",
+    },
+  },
+})
+
+export const HoldableResourceOpenHoldsWithinQuantity = Norn.law({
+  id: "core.HoldableResource.open_holds_within_quantity.law",
+  title: "Open holds against a resource never exceed its available quantity",
+  version: "0.2.0",
+  dependencies: [
+    { artifactId: "core.HoldableResource.interface", kind: "entity", version: "0.2.0", required: true },
+    { artifactId: "core.Hold.interface", kind: "entity", version: "0.2.0", required: true },
+  ],
+  law: {
+    lawVersion: "0.1",
+    id: "core.HoldableResource.open_holds_within_quantity",
+    owner: "core",
+    severity: "error",
+    rationale: "The sum of open hold quantities against a holdable resource may never exceed the resource's quantity (core.law.escrow_non_negative).",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/core/src/rea.ts" },
+    subject: "core.HoldableResource",
+    scope: { root: { kind: "entity", id: "core.HoldableResource" }, objectTypes: ["core.HoldableResource"] },
+    condition: "len(self.holds) > 0",
+    modality: { kind: "always" },
+    response: {
+      kind: "predicate",
+      expression: "sum(map(self.holds, #.status == 'open' ? #.quantity : 0)) <= self.quantity",
+    },
+  },
+})
+
+export const ValuedEventEffectsBalance = Norn.law({
+  id: "core.ValuedEvent.effects_balance.law",
+  title: "Signed ledger effects valuing an economic event net to zero",
+  version: "0.2.0",
+  dependencies: [
+    { artifactId: "core.ValuedEvent.interface", kind: "entity", version: "0.2.0", required: true },
+    { artifactId: "core.ValuedLedgerEffect.interface", kind: "entity", version: "0.2.0", required: true },
+  ],
+  law: {
+    lawVersion: "0.1",
+    id: "core.ValuedEvent.effects_balance",
+    owner: "core",
+    severity: "error",
+    rationale: "Every valued economic event whose ledger effects are posted together must balance to zero (core.law.value_conservation); per-leg currency uniformity is enforced by core.ValuedLedgerEffect.currency_matches_event.",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/core/src/rea.ts" },
+    subject: "core.ValuedEvent",
+    scope: { root: { kind: "entity", id: "core.ValuedEvent" }, objectTypes: ["core.ValuedEvent"] },
+    condition: "len(self.effects) > 0",
+    modality: { kind: "always" },
+    response: {
+      kind: "predicate",
+      expression: "sum(map(self.effects, #.amount)) == 0",
+    },
+  },
+})
+
+export const ValuedLedgerEffectCurrencyMatchesEvent = Norn.law({
+  id: "core.ValuedLedgerEffect.currency_matches_event.law",
+  title: "A valued ledger effect carries the valuation currency of its economic event",
+  version: "0.2.0",
+  dependencies: [
+    { artifactId: "core.ValuedLedgerEffect.interface", kind: "entity", version: "0.2.0", required: true },
+    { artifactId: "core.ValuedEvent.interface", kind: "entity", version: "0.2.0", required: true },
+  ],
+  law: {
+    lawVersion: "0.1",
+    id: "core.ValuedLedgerEffect.currency_matches_event",
+    owner: "core",
+    severity: "error",
+    rationale: "Every ledger leg of a valued economic event must use the event's declared valuation_currency so mixed currencies are never netted (core.law.value_conservation).",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/core/src/rea.ts" },
+    subject: "core.ValuedLedgerEffect",
+    scope: { root: { kind: "entity", id: "core.ValuedLedgerEffect" }, objectTypes: ["core.ValuedLedgerEffect"] },
+    modality: { kind: "always" },
+    response: {
+      kind: "predicate",
+      expression: "self.currency == self.event.valuation_currency",
+    },
+  },
 })

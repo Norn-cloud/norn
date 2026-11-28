@@ -99,8 +99,9 @@ mod version_check;
 // Hosts and the dependency-bounded reference harness share the input codec
 // contract used to bind exact observation continuation payloads.
 pub use commit_check::{
-    InvariantEvaluationError, InvariantFailure, check_commit_identifiers, check_commit_observed,
-    check_commit_owned_rows, check_fact_key_identity, evaluate_invariants,
+    CommitAudit, CommitLawAudit, InvariantEvaluationError, InvariantFailure,
+    check_commit_identifiers, check_commit_observed, check_commit_owned_rows,
+    check_commit_with_audit, check_fact_key_identity, evaluate_invariants,
     invariant_evaluation_budget,
 };
 #[doc(hidden)]
