@@ -354,6 +354,17 @@ fn format_document_pass(file_name: &str, text: &str) -> Result<String, Authoring
     apply_text_changes(text, changes)
 }
 
+const MAX_FORMAT_PASSES: usize = 3;
+
+fn normalize_lf_and_trailing_newline(text: &str) -> String {
+    let lf = text.replace("\r\n", "\n");
+    let trimmed = lf.trim_end_matches('\n');
+    let mut out = String::with_capacity(trimmed.len().saturating_add(1));
+    out.push_str(trimmed);
+    out.push('\n');
+    out
+}
+
 /// Formats a Norn TypeScript source file in memory without executing code.
 ///
 /// Upholds `FMT-SEMANTIC-1`:
@@ -371,14 +382,25 @@ fn format_document_pass(file_name: &str, text: &str) -> Result<String, Authoring
 /// [`AuthoringError::InvalidEditRange`] if formatting fails.
 pub fn format_source(file_name: &str, text: &str) -> Result<String, AuthoringError> {
     let normalized_file = normalize_virtual_path(file_name)?;
-    let sorted = sort_imports_non_destructive(&normalized_file, text)?;
-    let formatted = format_document_pass(&normalized_file, &sorted)?;
-    let lf = formatted.replace("\r\n", "\n");
-    let trimmed = lf.trim_end_matches('\n');
-    let mut out = String::with_capacity(trimmed.len().saturating_add(1));
-    out.push_str(trimmed);
-    out.push('\n');
-    Ok(out)
+    // Normalize CRLF and collapse trailing blank lines before formatting:
+    // `tsrs_ls::format::span::FormatSpanWorker::execute` skips the EOF pair
+    // (preventing `NoOptionalSemicolon` from deleting a final semicolon) when
+    // trailing trivia extends past the first trailing newline.
+    let normalized_input = normalize_lf_and_trailing_newline(text);
+    let sorted = sort_imports_non_destructive(&normalized_file, &normalized_input)?;
+    let mut current = normalize_lf_and_trailing_newline(&sorted);
+
+    // Bounded fixed-point loop guarantees idempotence even when pass 1 trims
+    // whitespace-only trailing lines before pass 2 removes the final semicolon.
+    for _ in 0..MAX_FORMAT_PASSES {
+        let formatted = format_document_pass(&normalized_file, &current)?;
+        let next = normalize_lf_and_trailing_newline(&formatted);
+        if next == current {
+            return Ok(current);
+        }
+        current = next;
+    }
+    Ok(current)
 }
 
 #[cfg(test)]
@@ -388,40 +410,43 @@ mod tests {
 
     #[test]
     fn rejects_overlapping_edit_ranges() {
-        let err = apply_byte_edits(
+        let result = apply_byte_edits(
             "abcdef",
             vec![(1, 4, "X".to_owned()), (3, 5, "Y".to_owned())],
-        )
-        .expect_err("overlapping edits must fail closed");
+        );
         assert!(matches!(
-            err,
-            AuthoringError::OverlappingEdits {
+            result,
+            Err(AuthoringError::OverlappingEdits {
                 first_start: 1,
                 first_end: 4,
                 second_start: 3,
                 second_end: 5,
-            }
+            })
         ));
     }
 
     #[test]
     fn rejects_out_of_bounds_and_non_utf8_boundary_edits() {
-        let oob = apply_byte_edits("abc", vec![(0, 4, "X".to_owned())])
-            .expect_err("out-of-bounds edit must be rejected");
-        assert!(matches!(oob, AuthoringError::InvalidEditRange { .. }));
+        let oob = apply_byte_edits("abc", vec![(0, 4, "X".to_owned())]);
+        assert!(matches!(oob, Err(AuthoringError::InvalidEditRange { .. })));
 
-        let inverted = apply_byte_edits("abc", vec![(2, 1, "X".to_owned())])
-            .expect_err("inverted edit range must be rejected");
-        assert!(matches!(inverted, AuthoringError::InvalidEditRange { .. }));
+        let inverted = apply_byte_edits("abc", vec![(2, 1, "X".to_owned())]);
+        assert!(matches!(
+            inverted,
+            Err(AuthoringError::InvalidEditRange { .. })
+        ));
 
         // "é" is 2 UTF-8 bytes ([0..2)); byte offset 1 is inside the scalar.
-        let mid_char = apply_byte_edits("éa", vec![(0, 1, "e".to_owned())])
-            .expect_err("mid-UTF-8 edit must be rejected");
-        assert!(matches!(mid_char, AuthoringError::InvalidEditRange { .. }));
+        let mid_char = apply_byte_edits("éa", vec![(0, 1, "e".to_owned())]);
+        assert!(matches!(
+            mid_char,
+            Err(AuthoringError::InvalidEditRange { .. })
+        ));
     }
 
     #[test]
-    fn applies_non_overlapping_and_adjacent_edits_against_original_offsets() {
+    fn applies_non_overlapping_and_adjacent_edits_against_original_offsets()
+    -> Result<(), AuthoringError> {
         let result = apply_byte_edits(
             "abcdef",
             vec![
@@ -429,8 +454,8 @@ mod tests {
                 (0, 2, "AB".to_owned()),
                 (2, 2, "-".to_owned()),
             ],
-        )
-        .expect("adjacent and zero-width edits should succeed");
+        )?;
         assert_eq!(result, "AB-cdEF");
+        Ok(())
     }
 }
