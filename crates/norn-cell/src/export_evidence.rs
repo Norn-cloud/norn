@@ -123,6 +123,18 @@ pub(crate) fn members_valid<E: SqlEngine>(
                             Some(true),
                         )
                 }))
+    } else if observation_id.starts_with("mapping-conflict:") {
+        members.is_empty()
+            || (members.len() == 1
+                && members.first().is_some_and(|member| {
+                    Some(member.observation_id.as_str()) == conflict_accepted_bundle_id(observed)
+                        && valid_bundle_observation(
+                            reader,
+                            &member.observation_id,
+                            &member.observed,
+                            None,
+                        )
+                }))
     } else {
         members.is_empty()
     }

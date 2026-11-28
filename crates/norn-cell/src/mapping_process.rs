@@ -572,7 +572,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if self.active_definitions_version()? != Some(bundle.definitions_version) {
             return Err(CellError::MappingBundleMismatch);
         }
-        if self.mapping_conflict(bundle)?.is_some() || self.mapping_event_is_disputed(bundle)? {
+        if self.mapping_conflict(bundle)?.is_some()
+            || self.mapping_event_is_disputed(bundle)?
+            || self.bundle_superseded_by_dispute_resolution(bundle)?
+        {
             return Err(CellError::UnsupportedMappingProfile);
         }
         if !matches!(
@@ -599,7 +602,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 return Err(CellError::UnsupportedMappingProfile);
             }
             let key = FactKey::new(record.object_type.as_str(), &record.key);
-            let slice = self.mapping_observation_slice(&key)?;
+            let slice = crate::mapping_delete::upsert_slice(self, &key)?;
             let mut values = record
                 .invocations
                 .first()

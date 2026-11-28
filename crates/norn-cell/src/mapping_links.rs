@@ -153,15 +153,21 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         map.into_values().collect()
     }
 
-    /// Differential check (#1028): verify that `_norn_link_claim_frontier`'s
-    /// `active = 1` subset agrees exactly with a full-history fold over every
-    /// committed claim in the store.
+    /// Differential check (#1028): verify that `_norn_link_claim_frontier`
+    /// matches immutable `_norn_fact_values` 1-to-1 and that its `active = 1`
+    /// subset agrees with a full-history fold over every committed claim.
     ///
     /// # Errors
-    /// Returns [`CellError::Encoding`] if the active frontier diverges from
-    /// the full history fold.
+    /// Returns [`CellError::Encoding`] if the frontier diverges from immutable
+    /// `_norn_fact_values` or the full history fold.
     pub fn verify_frontier_equivalence(&self) -> Result<(), CellError> {
         self.check_live()?;
+        if crate::link_claim_frontier::frontier_has_drift(self.conn)? {
+            return Err(CellError::Encoding(
+                "link-claim frontier drifted from immutable _norn_fact_values or _norn_ledger"
+                    .to_owned(),
+            ));
+        }
         let all = self.all_frontier_claims()?;
         let mut all_superseded = BTreeSet::new();
         for row in &all {
@@ -741,7 +747,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .iter()
                 .zip(&ranked)
                 .filter(|(_, s)| **s == Standing::Current)
-                .map(|(e, _)| target(e))
+                .filter_map(|(e, _)| target(e))
                 .collect();
             if current.len() > 1
                 && model

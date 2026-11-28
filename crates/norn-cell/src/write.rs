@@ -771,6 +771,14 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                         params![commit_seq, observation_id],
                     )?;
                 }
+                if observation_id.starts_with("mapping-conflict:") {
+                    crate::link_claim_frontier::consume_superseded_conflict_bundle(
+                        self.conn,
+                        commit_seq,
+                        observation_id,
+                        &self.batch.events,
+                    )?;
+                }
                 if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
                     // OBS-PAGE-1: the page's still-pending members are consumed
                     // by the commit that consumes the page (the guard checked

@@ -197,10 +197,6 @@ pub(crate) struct MappingPlanCache {
     /// verification read, with what it proved (the set's canonical digest and
     /// the journal's install record).
     verified: Option<(Vec<u8>, String, crate::store::DefinitionInstallRecord)>,
-    /// Consumed claim bundles that rechecked under that verified install, by
-    /// inbox id, with the exact row text they were decoded from: a row whose
-    /// text is unchanged needs no second decode and recomputation.
-    pub(crate) claims: BTreeMap<String, (String, MappingBundle)>,
     /// INGEST-DERIVE-ONCE-1: bundles this store derived, by digest, with the
     /// exact plan they were derived under. A bundle equal to one derived under
     /// the very plan a recheck verifies is that recheck's derivation: the
@@ -250,9 +246,6 @@ impl Drop for PinnedPlans<'_> {
         }
     }
 }
-
-/// Most claim bundles [`MappingPlanCache`] keeps.
-pub(crate) const MAX_CACHED_CLAIM_BUNDLES: usize = 8_192;
 
 const MAX_MAPPING_PLANS: usize = 16;
 
@@ -402,8 +395,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             if let Some(cache) = self.mapping_plans {
                 let mut cache = cache.borrow_mut();
                 cache.verified = Some((fingerprint, proved.0.clone(), proved.1.clone()));
-                // Rechecks were made under the install verified before.
-                cache.claims.clear();
             }
             proved
         };
@@ -883,7 +874,7 @@ impl<E: SqlEngine> CellStore<E> {
     }
 }
 
-pub(crate) use crate::mapping_delete::{DIAGNOSTIC_TEXT_BYTES, bounded_text};
+pub(crate) use crate::mapping_delete::bounded_text;
 
 impl<E: SqlEngine> StoreReader<'_, E> {
     /// Authoritative [`norn_ir::VersionKind`] for `bundle`: combines the

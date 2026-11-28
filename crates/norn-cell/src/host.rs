@@ -1846,7 +1846,9 @@ where
         let guard = |reader: &StoreReader<'_, S>| {
             crate::mapping_conflict::verify_source_fence_in_tx(reader, source_fence)
                 .map_err(CommitError::Host)?;
-            let mapping_proof = crate::link_guard::verify_mapping_links(reader, &commit, mapped)?;
+            let authz = authorization.is_some();
+            let mapping_proof =
+                crate::link_guard::verify_mapping_links(reader, &commit, mapped, authz)?;
             if authorization.is_none() {
                 for key in commit
                     .reads

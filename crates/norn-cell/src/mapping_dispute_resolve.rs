@@ -223,6 +223,31 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .is_some())
     }
 
+    /// Whether `bundle` was the original capture of a `mapping-conflict:` row
+    /// that an operator subsequently resolved with `accept-second-as-correction`
+    /// or `reject` (so `bundle` must never land afterward).
+    pub(crate) fn bundle_superseded_by_dispute_resolution(
+        &self,
+        bundle: &MappingBundle,
+    ) -> Result<bool, CellError> {
+        let bundle_id = format!("mapping-bundle:{}", bundle.digest);
+        let row: Option<i64> = self.conn.query_optional(
+            &format!(
+                "SELECT 1 FROM \"{}\" i \
+                 JOIN \"{}\" r ON r.\"dispute_id\" = i.\"observation_id\" \
+                 WHERE substr(i.\"observation_id\", 1, 17) = 'mapping-conflict:' \
+                   AND json_extract(i.\"observed\", '$.input.acceptedBundleId') = ?1 \
+                   AND r.\"decision\" IN ('accept-second-as-correction', 'reject') \
+                 LIMIT 1",
+                crate::system::INBOX,
+                crate::link_claim_frontier::DISPUTE_RESOLUTION,
+            ),
+            crate::engine::params![bundle_id],
+            |row| row.get(0),
+        )?;
+        Ok(row.is_some())
+    }
+
     /// Load and cryptographically recheck a pending dispute row from `_norn_inbox`.
     pub(crate) fn load_verified_pending_dispute(
         &self,

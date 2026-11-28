@@ -3985,7 +3985,7 @@ norn_testkit::proptest::proptest! {
         let finding = |id: &str| {
             let (mut commit, authority) = prepare_observed_snapshot(&catalog, &slice, &turn(id), ObservedSnapshot {key:&key, values:&values, lifecycles:&[], provenance:&provenance}).expect("prepare").into_parts();
             authority.append_findings(&mut commit);
-            commit.events.into_iter().find_map(|event| match event { ObservationEvent::DataQualityFinding {fact} => Some(fact), ObservationEvent::ObservedFact { .. } | ObservationEvent::ObservedTransition { .. } | ObservationEvent::ObservedDeleted { .. } | ObservationEvent::ObservedRecreated { .. } => None }).expect("law finding")
+            commit.events.into_iter().find_map(|event| match event { ObservationEvent::DataQualityFinding {fact} => Some(fact), ObservationEvent::ObservedFact { .. } | ObservationEvent::ObservedTransition { .. } | ObservationEvent::ObservedDeleted { .. } | ObservationEvent::ObservedRecreated { .. } | ObservationEvent::DisputeResolved { .. } => None }).expect("law finding")
         };
         let first = finding("first-delivery");
         let again = finding(&delivery);

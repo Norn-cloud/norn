@@ -91,6 +91,18 @@ pub(crate) fn consumed_input<E: SqlEngine>(
                     .flatten()
                     .into_iter()
                     .collect()
+            } else if observation_id.starts_with("mapping-conflict:") {
+                pending
+                    .observed
+                    .get("input")
+                    .and_then(|input| input.get("acceptedBundleId"))
+                    .and_then(Value::as_str)
+                    .filter(|id| id.starts_with("mapping-bundle:"))
+                    .map(|id| reader.pending_observation(id))
+                    .transpose()?
+                    .flatten()
+                    .into_iter()
+                    .collect()
             } else {
                 Vec::new()
             };

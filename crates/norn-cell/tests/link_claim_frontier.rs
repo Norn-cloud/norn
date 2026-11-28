@@ -975,3 +975,232 @@ fn source_delete_page_delivery_equals_one_by_one() {
         .verify_frontier_equivalence()
         .expect("paged delete frontier equivalence");
 }
+
+/// #1028 / #1931: Recreation after delete lifts `norn.ObservedTombstone` and
+/// emits `ObservationEvent::ObservedRecreated`; multi-source `to: one` link
+/// withdrawal converges cleanly when another source still asserts the target.
+#[test]
+fn source_delete_recreation_lifts_tombstone_and_to_one_delete_converges() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut cell = setup(&dir.path().join("recreate_to_one.sqlite"));
+    let rows = seed_erpnext_snapshot(&mut cell);
+    let mut line = rows[6].clone();
+    line["record"]["provider_ref"] = json!("demo/party/custodian");
+
+    // Two partitions assert the same `to: one` `provider` edge.
+    capture_kind(&mut cell, "erpnext", &line, "e1", "1", "upsert", "snapshot");
+    capture_kind(&mut cell, "erpnext", &line, "e1", "1", "upsert", "p2");
+    assert_eq!(
+        provider_targets(&cell),
+        BTreeSet::from(["demo/party/custodian".to_owned()])
+    );
+
+    // Partition `snapshot` deletes -> tombstones OrderLine and withdraws its
+    // `to: one` claim while `p2` still supports `demo/party/custodian`.
+    capture_kind(&mut cell, "erpnext", &line, "e2", "2", "delete", "snapshot");
+    assert_eq!(
+        provider_targets(&cell),
+        BTreeSet::from(["demo/party/custodian".to_owned()]),
+        "to:one withdrawal does not refuse while another source supports the sole target"
+    );
+    let tombstone = norn_kernel::snapshot_observe::tombstone_key(&FactKey::new(
+        "canon.OrderLine",
+        "demo/order/1/line/1",
+    ));
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, tombstone.object_type.as_str(), &tombstone.key)
+            .expect("tombstone")
+            .is_some()
+    );
+
+    // A later upsert recreates the tombstoned object and lifts its tombstone!
+    capture_kind(&mut cell, "erpnext", &line, "e3", "3", "upsert", "snapshot");
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, tombstone.object_type.as_str(), &tombstone.key)
+            .expect("tombstone lifted")
+            .is_none(),
+        "recreation upsert lifts norn.ObservedTombstone"
+    );
+    assert!(
+        cell.store()
+            .read()
+            .ledger(0)
+            .expect("ledger")
+            .iter()
+            .any(|e| e.event.get("op").and_then(RuntimeValue::as_str) == Some("observed_recreated")),
+        "recreation emits ObservationEvent::ObservedRecreated"
+    );
+}
+
+/// #1549: If the first capture is still pending when a conflict is resolved
+/// with `accept-second-as-correction` or `reject`, the resolution atomically
+/// consumes that pending first capture so it cannot later land and undo it.
+#[test]
+fn dispute_resolve_consumes_pending_first_capture_and_prevents_undo() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut cell = setup_with(&dir.path().join("pending_first.sqlite"), referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &c, "ec", "1", "upsert", "p1");
+
+    let a_first = party_ref_row("P-A", "demo/party/a", "First Pending", Some("demo/party/b"));
+    let a_second = party_ref_row(
+        "P-A",
+        "demo/party/a",
+        "Second Authoritative",
+        Some("demo/party/c"),
+    );
+
+    // Capture first bundle WITHOUT processing it yet, then capture conflict.
+    let (raw1, input1) = raw_event(&cell, "erpnext", &a_first, "e1", "1", "upsert", "p1");
+    let (first_id, _) = cell
+        .inject_mapping_bundle(&raw1, &input1)
+        .expect("inject 1");
+    let (raw2, input2) = raw_event(&cell, "erpnext", &a_second, "e1", "1", "upsert", "p1");
+    let (conflict_id, inserted) = cell
+        .inject_mapping_bundle(&raw2, &input2)
+        .expect("inject 2");
+    assert!(inserted && conflict_id.starts_with("mapping-conflict:"));
+
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: conflict_id,
+        decision: DisputeDecision::AcceptSecondAsCorrection,
+        actor: "ops:erin".into(),
+        reason: "second supersedes unlanded first".into(),
+    })
+    .expect("resolve");
+
+    // Attempting to process the original pending bundle is a no-op (`Ok(false)`),
+    // leaving the correction intact!
+    assert!(!cell.process_mapping_bundle(&first_id).expect("no-op"));
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/c".to_owned()])
+    );
+    let party_a = cell
+        .store()
+        .read()
+        .object(MAIN_WORLD, "canon.Party", "demo/party/a")
+        .expect("read a")
+        .expect("exists");
+    assert_eq!(
+        party_a.values.get("label").and_then(RuntimeValue::as_str),
+        Some("Second Authoritative")
+    );
+
+    // Export replay reproduces the same consumed state cleanly.
+    let records = cell.store().export_records().expect("export");
+    let head = cell.store().export_head_hash().expect("head");
+    let rebuilt = CellStore::rebuild_export_history(
+        NativeEngine::open_in_memory().expect("mem"),
+        &records,
+        &head,
+    )
+    .expect("rebuild");
+    assert!(
+        rebuilt
+            .read()
+            .pending_observation(&first_id)
+            .expect("pending")
+            .is_none()
+    );
+}
+
+/// #1028 / OBS-PAGE-EQUIV: A page combining a target's arrival with a delete
+/// of a source waiting on that target splits runs so link CAS versions match
+/// one-by-one delivery (`0 -> 1 -> 2`), and tampering `_norn_link_claim_frontier`
+/// is detected and healed on reopen from immutable `_norn_fact_values`.
+#[test]
+fn obs_page_equiv_target_arrival_then_source_delete_and_frontier_heal_on_open() {
+    let dir = tempfile::tempdir().expect("dir");
+    let single_path = dir.path().join("single_td.sqlite");
+    let paged_path = dir.path().join("paged_td.sqlite");
+    let mut single = setup_with(&single_path, referring_parties);
+    let mut paged = setup_with(&paged_path, referring_parties);
+
+    // Source S arrives first with pending claim `S -refers-> T` (T absent).
+    let src = party_ref_row("P-S", "demo/party/s", "Source", Some("demo/party/t"));
+    let tgt = party_ref_row("P-T", "demo/party/t", "Target", None);
+    for cell in [&mut single, &mut paged] {
+        capture_kind(cell, "erpnext", &src, "e1", "1", "upsert", "p1");
+    }
+
+    // One-by-one: target arrives (adds link v1), then source deletes (removes link v2).
+    capture_kind(&mut single, "erpnext", &tgt, "et", "1", "upsert", "p1");
+    capture_kind(&mut single, "erpnext", &src, "e2", "2", "delete", "p1");
+
+    // Paged: both delivered in one `inject_mapping_page` call -> splits into 2 runs!
+    let (rt, input) = raw_event(&paged, "erpnext", &tgt, "et", "1", "upsert", "p1");
+    let (rd, _) = raw_event(&paged, "erpnext", &src, "e2", "2", "delete", "p1");
+    let captured = paged
+        .inject_mapping_page(&[rt, rd], &input)
+        .expect("inject page");
+    assert_eq!(
+        captured.pages.len(),
+        2,
+        "upsert and delete split into separate runs"
+    );
+    for (page_id, _) in &captured.pages {
+        paged.process_mapping_page(page_id).expect("process run");
+    }
+
+    let single_v = single
+        .store()
+        .read()
+        .link_version(
+            MAIN_WORLD,
+            "canon.Party",
+            "refers",
+            "demo/party/s",
+            "canon.Party",
+            "demo/party/t",
+        )
+        .expect("single link version");
+    let paged_v = paged
+        .store()
+        .read()
+        .link_version(
+            MAIN_WORLD,
+            "canon.Party",
+            "refers",
+            "demo/party/s",
+            "canon.Party",
+            "demo/party/t",
+        )
+        .expect("paged link version");
+    assert_eq!(single_v, 2);
+    assert_eq!(
+        paged_v, single_v,
+        "OBS-PAGE-EQUIV preserves exact link CAS versions"
+    );
+
+    // Simulate tampered/deleted frontier row on a current-version (v13) cell.
+    let model = paged.store().model().clone();
+    drop(paged);
+    {
+        let conn = rusqlite::Connection::open(&paged_path).expect("raw sqlite");
+        conn.execute("DELETE FROM \"_norn_link_claim_frontier\"", [])
+            .expect("wipe frontier");
+    }
+    let healed =
+        CellStore::open(&paged_path, model, StoreOptions::default()).expect("reopen heals");
+    healed
+        .read()
+        .verify_frontier_equivalence()
+        .expect("reopen detects drift and rebuilds frontier from immutable _norn_fact_values");
+    assert_eq!(
+        healed.read().observed_link_claims().expect("claims").len(),
+        single
+            .store()
+            .read()
+            .observed_link_claims()
+            .expect("claims")
+            .len(),
+    );
+}

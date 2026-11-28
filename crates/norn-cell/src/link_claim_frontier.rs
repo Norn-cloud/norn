@@ -306,10 +306,16 @@ fn insert_claim_row<E: SqlEngine>(
 
 /// Record any `ObservationEvent::DisputeResolved` ledger events from this
 /// commit into `_norn_dispute_resolution` in the same SQLite transaction.
+///
+/// Enforces fail-closed audit integrity: every `dispute_resolved` event must
+/// match the commit's consumed `Observation { observation_id }`, and uses
+/// plain `INSERT` (never `INSERT OR REPLACE`) so a recorded resolution can
+/// never be overwritten by a later commit.
 pub(crate) fn record_dispute_resolutions_in_tx<E: SqlEngine>(
     conn: &E,
     commit_seq: u64,
     receipt_hash: &str,
+    consumed: Option<&crate::store::Consumption>,
     events: &[Value],
 ) -> Result<(), CellError> {
     let commit_seq_i64 = to_i64(commit_seq, "dispute resolution commit_seq")?;
@@ -321,6 +327,17 @@ pub(crate) fn record_dispute_resolutions_in_tx<E: SqlEngine>(
             .get("disputeId")
             .and_then(Value::as_str)
             .ok_or_else(|| CellError::Encoding("dispute_resolved missing disputeId".to_owned()))?;
+        let consumed_id = match consumed {
+            Some(crate::store::Consumption::Observation { observation_id }) => {
+                Some(observation_id.as_str())
+            }
+            _ => None,
+        };
+        if consumed_id != Some(dispute_id) {
+            return Err(CellError::Encoding(format!(
+                "dispute_resolved event for {dispute_id} requires consuming that dispute"
+            )));
+        }
         let decision = event
             .get("decision")
             .and_then(Value::as_str)
@@ -335,11 +352,41 @@ pub(crate) fn record_dispute_resolutions_in_tx<E: SqlEngine>(
             .ok_or_else(|| CellError::Encoding("dispute_resolved missing reason".to_owned()))?;
         conn.execute(
             &format!(
-                "INSERT OR REPLACE INTO \"{DISPUTE_RESOLUTION}\" \
+                "INSERT INTO \"{DISPUTE_RESOLUTION}\" \
                  (\"dispute_id\", \"decision\", \"actor\", \"reason\", \"commit_seq\", \"receipt_hash\") \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
             ),
             params![dispute_id, decision, actor, reason, commit_seq_i64, receipt_hash],
+        )?;
+    }
+    Ok(())
+}
+
+/// When resolving a `mapping-conflict:` row with `accept-second-as-correction`
+/// or `reject`, atomically consume any still-pending first capture
+/// (`acceptedBundleId`) so it cannot later land and undo the resolution.
+pub(crate) fn consume_superseded_conflict_bundle<E: SqlEngine>(
+    conn: &E,
+    commit_seq: i64,
+    observation_id: &str,
+    events: &[Value],
+) -> Result<(), CellError> {
+    let supersedes_first = events.iter().any(|event| {
+        event.get("op").and_then(Value::as_str) == Some("dispute_resolved")
+            && event.get("disputeId").and_then(Value::as_str) == Some(observation_id)
+            && matches!(
+                event.get("decision").and_then(Value::as_str),
+                Some("accept-second-as-correction" | "reject")
+            )
+    });
+    if supersedes_first {
+        conn.execute(
+            &format!(
+                "UPDATE \"{INBOX}\" SET \"consumed_commit_seq\" = ?1 \
+                 WHERE \"consumed_commit_seq\" IS NULL \
+                   AND \"observation_id\" = (SELECT json_extract(\"observed\", '$.input.acceptedBundleId') FROM \"{INBOX}\" WHERE \"observation_id\" = ?2)"
+            ),
+            params![commit_seq, observation_id],
         )?;
     }
     Ok(())
@@ -365,10 +412,83 @@ pub(crate) fn migrate_v13_link_claim_frontier<E: SqlEngine>(engine: &E) -> Resul
     rebuild_inner(engine, None)
 }
 
-/// Idempotently rebuild `_norn_link_claim_frontier` and `_norn_dispute_resolution`
-/// with full `StoreReader` access (resolving `norn.feed/1` `version_kind` pins).
-pub(crate) fn rebuild_all<E: SqlEngine>(reader: &StoreReader<'_, E>) -> Result<(), CellError> {
-    rebuild_inner(reader.conn, Some(reader))
+/// Verify `_norn_link_claim_frontier` and `_norn_dispute_resolution` against
+/// immutable `_norn_fact_values` and `_norn_ledger` on store open, rebuilding
+/// deterministically if `force_rebuild` is set (upgrade from `< 13`) or any
+/// missing, extra, or drifted row is detected.
+pub(crate) fn verify_or_rebuild_on_open<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    force_rebuild: bool,
+) -> Result<(), CellError> {
+    if force_rebuild || frontier_has_drift(reader.conn)? {
+        rebuild_inner(reader.conn, Some(reader))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn frontier_has_drift<E: SqlEngine>(conn: &E) -> Result<bool, CellError> {
+    let missing_claim: Option<i64> = conn.query_optional(
+        &format!(
+            "SELECT 1 FROM \"{FACT_VALUES}\" fv \
+             LEFT JOIN \"{LINK_CLAIM_FRONTIER}\" f \
+               ON f.\"claim_id\" = fv.\"id\" AND f.\"commit_seq\" = fv.\"commit_seq\" \
+             WHERE fv.\"world\" = ?1 AND fv.\"object_type\" = ?2 AND fv.\"version\" = 1 \
+               AND f.\"claim_id\" IS NULL LIMIT 1"
+        ),
+        params![
+            crate::MAIN_WORLD,
+            norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
+        ],
+        |row| row.get(0),
+    )?;
+    if missing_claim.is_some() {
+        return Ok(true);
+    }
+    let extra_claim: Option<i64> = conn.query_optional(
+        &format!(
+            "SELECT 1 FROM \"{LINK_CLAIM_FRONTIER}\" f \
+             LEFT JOIN \"{FACT_VALUES}\" fv \
+               ON fv.\"world\" = ?1 AND fv.\"object_type\" = ?2 AND fv.\"version\" = 1 \
+               AND fv.\"id\" = f.\"claim_id\" AND fv.\"commit_seq\" = f.\"commit_seq\" \
+             WHERE fv.\"id\" IS NULL LIMIT 1"
+        ),
+        params![
+            crate::MAIN_WORLD,
+            norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
+        ],
+        |row| row.get(0),
+    )?;
+    if extra_claim.is_some() {
+        return Ok(true);
+    }
+    let missing_resolution: Option<i64> = conn.query_optional(
+        &format!(
+            "SELECT 1 FROM \"{LEDGER}\" l \
+             LEFT JOIN \"{DISPUTE_RESOLUTION}\" r \
+               ON r.\"dispute_id\" = json_extract(l.\"event\", '$.disputeId') \
+               AND r.\"commit_seq\" = l.\"commit_seq\" \
+             WHERE l.\"world\" = ?1 AND json_extract(l.\"event\", '$.op') = 'dispute_resolved' \
+               AND r.\"dispute_id\" IS NULL LIMIT 1"
+        ),
+        params![crate::MAIN_WORLD],
+        |row| row.get(0),
+    )?;
+    if missing_resolution.is_some() {
+        return Ok(true);
+    }
+    let extra_resolution: Option<i64> = conn.query_optional(
+        &format!(
+            "SELECT 1 FROM \"{DISPUTE_RESOLUTION}\" r \
+             LEFT JOIN \"{LEDGER}\" l \
+               ON l.\"world\" = ?1 AND l.\"commit_seq\" = r.\"commit_seq\" \
+               AND json_extract(l.\"event\", '$.op') = 'dispute_resolved' \
+               AND json_extract(l.\"event\", '$.disputeId') = r.\"dispute_id\" \
+             WHERE l.\"seq\" IS NULL LIMIT 1"
+        ),
+        params![crate::MAIN_WORLD],
+        |row| row.get(0),
+    )?;
+    Ok(extra_resolution.is_some())
 }
 
 fn rebuild_inner<E: SqlEngine>(
@@ -409,10 +529,12 @@ fn rebuild_inner<E: SqlEngine>(
         let snapshot_val = Value::from_json_text(&snapshot_text).map_err(|error| {
             CellError::Encoding(format!("invalid claim snapshot JSON for {id}: {error}"))
         })?;
-        let Value::Object(values) = snapshot_val else {
-            return Err(CellError::Encoding(format!(
-                "claim snapshot for {id} is not an object"
-            )));
+        let snapshot: crate::history::FactSnapshot = norn_ir::runtime::decode(&snapshot_val)
+            .map_err(|error| {
+                CellError::Encoding(format!("invalid claim FactSnapshot for {id}: {error}"))
+            })?;
+        let Some(values) = snapshot.values else {
+            continue;
         };
         let claim = parse_claim_from_values(&id, &values)?;
         superseded_ids.extend(claim.supersedes.iter().cloned());
@@ -442,7 +564,7 @@ fn rebuild_inner<E: SqlEngine>(
     if has_ledger {
         let res_rows = conn.query(
             &format!(
-                "SELECT l.\"commit_seq\", l.\"event\", r.\"receipt_hash\" \
+                "SELECT l.\"commit_seq\", l.\"event\", r.\"receipt_hash\", r.\"receipt\" \
                  FROM \"{LEDGER}\" l \
                  JOIN \"{RECEIPT}\" r ON r.\"commit_seq\" = l.\"commit_seq\" \
                  WHERE l.\"world\" = ?1 AND json_extract(l.\"event\", '$.op') = 'dispute_resolved' \
@@ -455,10 +577,18 @@ fn rebuild_inner<E: SqlEngine>(
             let commit_seq = to_u64(row.get(0)?, "dispute resolution commit_seq")?;
             let event_text: String = row.get(1)?;
             let receipt_hash: String = row.get(2)?;
+            let receipt_text: String = row.get(3)?;
             let event = Value::from_json_text(&event_text).map_err(|error| {
                 CellError::Encoding(format!("invalid dispute_resolved ledger event: {error}"))
             })?;
-            record_dispute_resolutions_in_tx(conn, commit_seq, &receipt_hash, &[event])?;
+            let body: crate::store::ReceiptBody = serde_json::from_str(&receipt_text)?;
+            record_dispute_resolutions_in_tx(
+                conn,
+                commit_seq,
+                &receipt_hash,
+                body.consumed.as_ref(),
+                &[event],
+            )?;
         }
     }
     Ok(())

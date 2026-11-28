@@ -109,6 +109,34 @@ fn delete_slice<E: SqlEngine>(
     Ok(slice)
 }
 
+/// Observation slice for a mapped upsert: includes `tombstone_key(key)` when
+/// a live tombstone exists so [`prepare_observed_snapshot`] can lift it and
+/// emit `ObservationEvent::ObservedRecreated` (#3013).
+pub(crate) fn upsert_slice<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    key: &FactKey,
+) -> Result<FactSlice, CellError> {
+    let mut slice = reader.mapping_observation_slice(key)?;
+    if reader
+        .model()
+        .has_type(norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE)
+    {
+        let buried = tombstone_key(key);
+        if let Some(record) =
+            reader.object(crate::MAIN_WORLD, buried.object_type.as_str(), &buried.key)?
+        {
+            slice.insert(
+                buried,
+                FactState {
+                    version: FactVersion(record.version),
+                    values: Some(record.values),
+                },
+            );
+        }
+    }
+    Ok(slice)
+}
+
 /// The most bytes of one retained diagnostic text: a refused row's own
 /// field can be as large as the request, and its full value is already in
 /// the retained raw evidence, so a diagnostic never repeats it unbounded.

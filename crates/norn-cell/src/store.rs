@@ -2580,9 +2580,10 @@ impl<E: SqlEngine> CellStore<E> {
             if let Some(active) = Self::read_active_definitions(&store.conn)? {
                 crate::definition_scope::verify_active(&store.conn, &store.model, &active)?;
             }
-            if upgrade_from.is_some_and(|from| from < 13) {
-                crate::link_claim_frontier::rebuild_all(&store.verifier())?;
-            }
+            crate::link_claim_frontier::verify_or_rebuild_on_open(
+                &store.verifier(),
+                upgrade_from.is_some_and(|from| from < 13),
+            )?;
             let fork = crate::fork::load_pin(&store.conn)?;
             refuse_pin_past(fork.as_ref(), verified.head.commits)?;
             // An upgrading open verified from genesis, so record its checkpoint inside this tx.
@@ -3212,9 +3213,10 @@ impl<E: SqlEngine> CellStore<E> {
                     let pass = RefCell::default();
                     let verified = self.verify_history(&pass)?;
                     crate::definition_scope::verify_active(&self.conn, &self.model, &active)?;
-                    if upgrade_from.is_some_and(|from| from < 13) {
-                        crate::link_claim_frontier::rebuild_all(&self.verifier())?;
-                    }
+                    crate::link_claim_frontier::verify_or_rebuild_on_open(
+                        &self.verifier(),
+                        upgrade_from.is_some_and(|from| from < 13),
+                    )?;
                     refuse_pin_past(self.fork.as_ref(), verified.head.commits)?;
                     self.finish_open_scrub(upgrading, &verified)?;
                     self.transparency.replace(verified.transparency);
@@ -3614,6 +3616,7 @@ impl<E: SqlEngine> CellStore<E> {
                     &self.conn,
                     commit_seq,
                     &receipt.hash,
+                    effective_batch.consumes.as_ref(),
                     &effective_batch.events,
                 )?;
             }
