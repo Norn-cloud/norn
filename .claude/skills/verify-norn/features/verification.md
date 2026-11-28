@@ -2,7 +2,7 @@
 
 # Verification Integrity & Formal Assurance
 
-> **Stop-gap notice:** Stop-gap auto-extracted feature ontology (`scripts/feature_map.py` + `registry/features/`). To be retired once TARGET Norn authoring (`concept({ ... })`, pinned packs) lands and can host this ontology natively in a Norn cell.
+> **Stop-gap notice:** Stop-gap auto-extracted feature ontology (`scripts/feature_map.py` + `registry/features/`, retirement tracked in #2005). To be retired once TARGET Norn authoring (`concept({ ... })`, pinned packs) lands and can host this ontology natively in a Norn cell.
 
 Promoted formal assurance certificate proofs (Lean, Kani, correspondence harnesses) and verification-integrity enforcement (exact source enrollment, coverage manifest, negative canaries, proof-hole audits, and executed test selectors).
 

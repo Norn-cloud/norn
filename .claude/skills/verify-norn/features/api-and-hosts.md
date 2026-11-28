@@ -2,7 +2,7 @@
 
 # HTTP API & Cell Host Surface
 
-> **Stop-gap notice:** Stop-gap auto-extracted feature ontology (`scripts/feature_map.py` + `registry/features/`). To be retired once TARGET Norn authoring (`concept({ ... })`, pinned packs) lands and can host this ontology natively in a Norn cell.
+> **Stop-gap notice:** Stop-gap auto-extracted feature ontology (`scripts/feature_map.py` + `registry/features/`, retirement tracked in #2005). To be retired once TARGET Norn authoring (`concept({ ... })`, pinned packs) lands and can host this ontology natively in a Norn cell.
 
 All OpenAPI v1 HTTP routes served by norn-api / norn-cell hosts: provisioning, governed definitions, objects, actions, runs, decisions, inbox, questions, transforms, datasets, privacy guard, and MCP.
 
@@ -96,13 +96,16 @@ Source registry: [`registry/features/api-and-hosts.json`](../../../../registry/f
 - `crates/norn-api/src/definition_routes.rs`
 - `crates/norn-api/src/routes.rs`
 - `crates/norn-cell/src/provision.rs`
+- `crates/norn-cell-do/src/dev/http.rs`
+- `crates/norn-cell-do/tests/hosted_install.rs`
 - `sdks/openapi/norn-api.openapi.json`
 
 ### Probe
 
-- **Drive:** Provision or target a disposable `norn dev` cell, call `POST /v1/cell/definitions:plan` with a compiled pack, apply via `POST /v1/cell/definitions:apply` with `expectedVersion`, then read back via `GET /v1/definitions`, `GET /v1/definitions:list`, and `GET /v1/definitions/{id}`.
-- **Observable end state:** Plan reports exact diff without mutating cell state; apply advances definition revision atomically; catalog endpoints return the newly active definitions with matching digest.
+- **Drive:** Target a provisioned hosted cell / Rivet instance (or run the hosted tenant integration suite `crates/norn-cell-do/tests/hosted_install.rs` in CI or a Boat sandbox) for `POST /v1/cell:provision`, `POST /v1/cell/definitions:plan`, `POST /v1/cell/definitions:apply` (with `expectedVersion`), `POST /v1/definitions:install`, and `POST /v1/definitions/{id}:retire`; read back via `GET /v1/definitions?orgId=<orgId>&environmentId=<environmentId>`, `GET /v1/definitions:list`, and `GET /v1/definitions/{id}` (read and `:admit` routes are also served on `norn dev`).
+- **Observable end state:** On a hosted cell, plan reports exact diff without mutating cell state, apply advances definition revision atomically via CAS on `expectedVersion`, and catalog endpoints return the newly active definitions with matching digest; on `norn dev`, definition-mutating routes fail closed with `409 defs.dev_sources_only`.
 - **Gotchas:**
+  - `norn dev` intentionally rejects `POST /v1/cell/definitions:plan`, `POST /v1/cell/definitions:apply`, `POST /v1/definitions:install`, and `POST /v1/definitions/{id}:retire` with `409 defs.dev_sources_only` (`DEV-ONE-AUTHORITY-1` in `crates/norn-cell-do/src/dev/http.rs`); never target `norn dev` to prove hosted plan/apply.
   - Applying against a stale `expectedVersion` or as a non-admin/non-owner principal must fail closed.
 
 ---

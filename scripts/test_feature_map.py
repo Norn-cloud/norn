@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -271,10 +273,10 @@ class FeatureMapTests(unittest.TestCase):
             self.assertEqual(fm.main(["write", "--root", str(self.tmp)]), 0)
         self.assertFalse(stray.exists())
 
-    def test_staleness_digest_detects_source_changes(self):
+    def test_staleness_digest_detects_source_and_probe_changes(self):
         feat = _base_feature()
         _write_domain(self.tmp, [feat])
-        digest_v1 = fm.compute_source_digest(self.tmp, feat["sourcePaths"])
+        digest_v1 = fm.compute_verification_digest(self.tmp, feat)
         self.assertTrue(digest_v1.startswith("sha256:"))
 
         # Record matching lastVerified -> fresh, omitted by `list --stale`.
@@ -286,10 +288,31 @@ class FeatureMapTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(buf.getvalue()), [])
 
-        # Mutate the source file -> digest changes -> `list --stale` flags it!
+        # Mutate ONLY the probe -> verification digest changes -> `list --stale` flags it!
+        feat_probe_changed = {
+            **feat,
+            "probe": {
+                **feat["probe"],
+                "drive": "Run `norn check` and `GET /v1/items?orgId=o&environmentId=e`.",
+            },
+        }
+        _write_domain(self.tmp, [feat_probe_changed])
+        digest_probe = fm.compute_verification_digest(self.tmp, feat_probe_changed)
+        self.assertNotEqual(digest_v1, digest_probe)
+        buf_probe = io.StringIO()
+        with redirect_stdout(buf_probe):
+            rc = fm.main(["list", "--stale", "--json", "--root", str(self.tmp)])
+        self.assertEqual(rc, 0)
+        rows_probe = json.loads(buf_probe.getvalue())
+        self.assertEqual(len(rows_probe), 1)
+        self.assertEqual(rows_probe[0]["reason"], "source-changed")
+        self.assertEqual(rows_probe[0]["liveSourceDigest"], digest_probe)
+
+        # Restore original probe and mutate the source file -> digest changes -> `list --stale` flags it!
+        _write_domain(self.tmp, [feat])
         src = self.tmp / "crates/norn-ir/src/lib.rs"
         src.write_text(src.read_text(encoding="utf-8") + "\n// edited\n", encoding="utf-8")
-        digest_v2 = fm.compute_source_digest(self.tmp, feat["sourcePaths"])
+        digest_v2 = fm.compute_verification_digest(self.tmp, feat)
         self.assertNotEqual(digest_v1, digest_v2)
 
         buf2 = io.StringIO()
@@ -301,6 +324,186 @@ class FeatureMapTests(unittest.TestCase):
         self.assertEqual(rows[0]["id"], "demo-feature")
         self.assertEqual(rows[0]["reason"], "source-changed")
         self.assertEqual(rows[0]["liveSourceDigest"], digest_v2)
+
+    def test_extractors_handle_trace_single_quotes_serde_cli_ts_and_duplicate_gates(self):
+        # 1. HTTP OpenAPI: TRACE method must be extracted alongside all standard HTTP methods.
+        openapi = self.tmp / "sdks/openapi/norn-api.openapi.json"
+        doc = json.loads(openapi.read_text(encoding="utf-8"))
+        doc["paths"]["/v1/items"]["trace"] = {"operationId": "trace_items"}
+        openapi.write_text(json.dumps(doc), encoding="utf-8")
+        self.assertIn("http:TRACE /v1/items", fm.extract_http_surfaces(self.tmp))
+
+        # 2. Studio pages.ts: single-quoted routes must be extracted; dynamic templates must be refused.
+        pages = self.tmp / "apps/studio/src/lib/pages.ts"
+        pages.write_text(
+            "export const PAGES = {\n  \"/\": \"/\",\n  '/single-quoted': '/single-quoted',\n} as const\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(fm.extract_studio_surfaces(self.tmp), {"studio:/", "studio:/single-quoted"})
+
+        pages.write_text(
+            "export const PAGES = {\n  [`/${dynamic}`]: '/bad',\n} as const\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(fm.FeatureMapError, r"dynamic template route key"):
+            fm.extract_studio_surfaces(self.tmp)
+
+        # 3. IR ArtifactKind: honor #[serde(rename_all = "...")] and per-variant #[serde(rename = "...")].
+        ir_lib = self.tmp / "crates/norn-ir/src/lib.rs"
+        ir_lib.write_text(
+            """
+#[derive(Debug)]
+#[serde(rename_all = "kebab-case")]
+pub enum ArtifactKind {
+    BusinessPack,
+    #[serde(rename = "custom_override")]
+    SourceSchema,
+}
+""",
+            encoding="utf-8",
+        )
+        self.assertEqual(fm.extract_ir_surfaces(self.tmp), {"ir:business-pack", "ir:custom_override"})
+
+        # 4. CLI: also extract authoring subcommands from tools/norn-ts/src/cli.ts.
+        ts_cli = self.tmp / "tools/norn-ts/src/cli.ts"
+        ts_cli.parent.mkdir(parents=True)
+        ts_cli.write_text(
+            """
+if (process.argv[2] === "dev") {}
+if (process.argv[2] === 'init') {}
+if (process.argv[2] === "seed") {}
+if (command !== "check" && command !== "compile") {}
+""",
+            encoding="utf-8",
+        )
+        cli_surfaces = fm.extract_cli_surfaces(self.tmp)
+        self.assertTrue({"cli:norn dev", "cli:norn init", "cli:norn seed"}.issubset(cli_surfaces))
+
+        # 5. Promoted gates: refuse duplicate gate IDs explicitly.
+        gates_file = self.tmp / "verification/coverage-v1/promoted-gates.json"
+        gates_file.write_text(
+            json.dumps(
+                {
+                    "gates": [
+                        {"id": "demo-gate", "classifications": []},
+                        {"id": "demo-gate", "classifications": []},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(fm.FeatureMapError, r"duplicate promoted gate id\(s\): demo-gate"):
+            fm.extract_gate_surfaces(self.tmp)
+
+    def test_invariant_symbol_validation(self):
+        # Present symbol (both `::` and `#` markdown heading) passes.
+        feat_ok = _base_feature(
+            invariants=[
+                "demo-gate",
+                "checker:crates/norn-ir/src/lib.rs::ArtifactKind",
+                "law:docs/spec/core/01-values-identity.md#spec",
+            ]
+        )
+        _write_domain(self.tmp, [feat_ok])
+        fm.load_registry(self.tmp)
+
+        # Missing `::` symbol fails Law 2.
+        feat_bad_rust = _base_feature(
+            invariants=["demo-gate", "theorem:crates/norn-ir/src/lib.rs::DoesNotExistSymbol"]
+        )
+        _write_domain(self.tmp, [feat_bad_rust])
+        with self.assertRaisesRegex(fm.FeatureMapError, r"cited symbol 'DoesNotExistSymbol' not found"):
+            fm.load_registry(self.tmp)
+
+        # Missing `#` symbol fails Law 2.
+        feat_bad_anchor = _base_feature(
+            invariants=["demo-gate", "law:docs/spec/core/01-values-identity.md#missing-anchor"]
+        )
+        _write_domain(self.tmp, [feat_bad_anchor])
+        with self.assertRaisesRegex(fm.FeatureMapError, r"cited symbol 'missing-anchor' not found"):
+            fm.load_registry(self.tmp)
+
+    def test_git_commit_verification_untracked_exclusion_and_symlink_rejection(self):
+        def git(*args: str) -> str:
+            res = subprocess.run(
+                ["git", "-C", str(self.tmp), *args],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return res.stdout.strip()
+
+        git("init", "-q")
+        git("config", "user.email", "test@norn.local")
+        git("config", "user.name", "Norn Test")
+
+        (self.tmp / "crates/norn-ir/src/sub").mkdir(parents=True)
+        (self.tmp / "crates/norn-ir/src/sub/tracked.rs").write_text("pub const X: u8 = 1;\n", encoding="utf-8")
+
+        feat = _base_feature(sourcePaths=["crates/norn-ir/src"])
+        _write_domain(self.tmp, [feat])
+        git("add", ".")
+        git("commit", "-q", "-m", "initial")
+        head_sha = git("rev-parse", "HEAD")
+
+        # Untracked scratch file under directory sourcePath must NOT change digest.
+        digest_clean = fm.compute_verification_digest(self.tmp, feat, use_git=True)
+        scratch = self.tmp / "crates/norn-ir/src/untracked_scratch.tmp"
+        scratch.write_text("do not poison digest\n", encoding="utf-8")
+        digest_with_scratch = fm.compute_verification_digest(self.tmp, feat, use_git=True)
+        self.assertEqual(digest_clean, digest_with_scratch)
+        scratch.unlink()
+
+        # Valid commitSha + matching digest passes load_registry and reports fresh.
+        feat["lastVerified"] = {"commitSha": head_sha, "sourceDigest": digest_clean}
+        _write_domain(self.tmp, [feat])
+        fm.load_registry(self.tmp)
+        info_ok = fm.staleness_info(self.tmp, feat, use_git=True)
+        self.assertFalse(info_ok["stale"])
+        self.assertEqual(info_ok["reason"], "fresh")
+
+        # Nonexistent commitSha is refused by load_registry AND marked stale by staleness_info.
+        feat_bad_sha = {**feat, "lastVerified": {"commitSha": "deadbeef1234", "sourceDigest": digest_clean}}
+        _write_domain(self.tmp, [feat_bad_sha])
+        with self.assertRaisesRegex(fm.FeatureMapError, r"lastVerified\.commitSha 'deadbeef1234' does not exist"):
+            fm.load_registry(self.tmp)
+        info_bad = fm.staleness_info(self.tmp, feat_bad_sha, use_git=True)
+        self.assertTrue(info_bad["stale"])
+        self.assertEqual(info_bad["reason"], "missing-commit")
+
+        # Symlink parent directory replacement must be refused in BOTH git and non-git hashing modes.
+        outside = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, outside)
+        (outside / "tracked.rs").write_text("pub const X: u8 = 99;\n", encoding="utf-8")
+        sub_dir = self.tmp / "crates/norn-ir/src/sub"
+        shutil.rmtree(sub_dir)
+        os.symlink(outside, sub_dir)
+
+        with self.assertRaisesRegex(fm.FeatureMapError, r"refusing symlink"):
+            fm.compute_source_digest(self.tmp, ["crates/norn-ir/src"], use_git=True)
+        with self.assertRaisesRegex(fm.FeatureMapError, r"refusing symlink"):
+            fm.compute_source_digest(self.tmp, ["crates/norn-ir/src"], use_git=False)
+        with self.assertRaisesRegex(fm.FeatureMapError, r"refusing symlink"):
+            fm.compute_source_digest(self.tmp, ["crates/norn-ir/src/sub/tracked.rs"], use_git=False)
+
+    def test_parent_root_flag_before_subcommand_is_honored(self):
+        _write_domain(self.tmp, [_base_feature()])
+        # Generated views do not exist yet in self.tmp, while ROOT passes check.
+        # Passing `--root <self.tmp>` BEFORE `check` must inspect self.tmp (and fail Law 3), not fall back to ROOT.
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rc = fm.main(["--root", str(self.tmp), "check"])
+        self.assertEqual(rc, 1)
+        self.assertIn("[Law 3]", err.getvalue())
+
+        # Writing via `--root <self.tmp> write` then checking via `--root <self.tmp> check` succeeds and cites #2005.
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(fm.main(["--root", str(self.tmp), "write"]), 0)
+            self.assertEqual(fm.main(["--root", str(self.tmp), "check"]), 0)
+        readme = (self.tmp / fm.GENERATED_DIR / "README.md").read_text(encoding="utf-8")
+        card = (self.tmp / fm.GENERATED_DIR / "core-engine.md").read_text(encoding="utf-8")
+        self.assertIn("#2005", readme)
+        self.assertIn("#2005", card)
 
     def test_show_command_renders_feature_details(self):
         _write_domain(self.tmp, [_base_feature()])

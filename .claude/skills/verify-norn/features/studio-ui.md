@@ -2,7 +2,7 @@
 
 # Norn Studio UI Surface
 
-> **Stop-gap notice:** Stop-gap auto-extracted feature ontology (`scripts/feature_map.py` + `registry/features/`). To be retired once TARGET Norn authoring (`concept({ ... })`, pinned packs) lands and can host this ontology natively in a Norn cell.
+> **Stop-gap notice:** Stop-gap auto-extracted feature ontology (`scripts/feature_map.py` + `registry/features/`, retirement tracked in #2005). To be retired once TARGET Norn authoring (`concept({ ... })`, pinned packs) lands and can host this ontology natively in a Norn cell.
 
 All Studio UI routes in `apps/studio/src/lib/pages.ts` & `routes.tsx`: home shell, sources & records explorer, transforms, decisions & runs, import triage, learning loop, metrics/questions, dashboards, views, workflows, semantic map, canvas, rules, markings, and connections.
 
@@ -58,9 +58,11 @@ Source registry: [`registry/features/studio-ui.json`](../../../../registry/featu
 
 ### Probe
 
-- **Drive:** Launch Studio over a local `norn dev` cell (`cd apps/studio && bun run build && bun run local --project <proj> --port <port>`), visit `/dashboards`, `/dashboards/new`, `/views`, and `/views/new`, create and reopen a dashboard/view, or run `cd apps/studio && bunx playwright test e2e/dashboards.e2e.ts e2e/views.e2e.ts`.
-- **Observable end state:** Dashboards and views render live data through `/api/host`, save/edit flows persist across reload, and missing IDs show honest unavailable states rather than blank screens.
+- **Drive:** Distinguish UI stand-in checks from live cell persistence: (1) for UI/workflow contracts only, run `cd apps/studio && bunx playwright test e2e/dashboards.e2e.ts e2e/views.e2e.ts` (mocked/stand-in routes only); (2) for live read/render checks, launch Studio over a disposable `norn dev` cell (`cd apps/studio && bun run build && bun run local --project <proj> --port <port>`) and visit `/dashboards`, `/views`, and missing IDs; (3) for live save/edit persistence across reload, drive `/dashboards/new`, `/dashboards/$id/edit`, `/views/new`, and `/views/$id/edit` against a hosted cell (not `norn dev` or stand-in Playwright).
+- **Observable end state:** Stand-in Playwright specs verify Studio UI flows, checker verdicts, layout/filter editing, and undo against mocked `/api/host` routes ONLY (never live persistence); live cell runs confirm `/api/host` reads and honest unavailable states for missing IDs, while hosted-cell runs confirm dashboard/view definition saves persist across reload.
 - **Gotchas:**
+  - `apps/studio/e2e/dashboards.e2e.ts` mocks `/api/host/v1/definitions` with an in-memory `Map`, and `apps/studio/e2e/views.e2e.ts` uses the deterministic `workspaceCell` stand-in (skipping whenever `E2E_BASE` is set); neither suite proves live cell persistence.
+  - `norn dev` refuses `/v1/definitions:install` and `/v1/definitions/{id}:retire` with `409 defs.dev_sources_only` (`DEV-ONE-AUTHORITY-1`), so live dashboard/view definition saves require a hosted cell.
   - Never open Studio directly against a shared production cell; always bind `bun run local` to a disposable loopback `norn dev` project.
 
 ---
@@ -93,9 +95,10 @@ Source registry: [`registry/features/studio-ui.json`](../../../../registry/featu
 
 ### Probe
 
-- **Drive:** Open `/decisions` as reviewer (`bun run local --project <proj> --as reviewer --port <port>`), inspect a pending approval in the floating DetailSheet, decide it, and open `/runs/$id` (or run `e2e/decisions.e2e.ts` and `e2e/approved-run.e2e.ts`).
-- **Observable end state:** Pending decisions list honestly, reviewer decision records receipt and transitions the run state on `/runs/$id`, and self-approval shows the cell's refusal banner.
+- **Drive:** For live cell verification, open `/decisions` as reviewer (`bun run local --project <proj> --as reviewer --port <port>`), inspect a pending approval in the floating DetailSheet, decide it, and open `/runs/$id`; separately, `cd apps/studio && bunx playwright test e2e/decisions.e2e.ts e2e/approved-run.e2e.ts` tests UI behavior against stand-in routes only.
+- **Observable end state:** Against a live cell, pending decisions list honestly, reviewer decision records a durable receipt and transitions the run state on `/runs/$id`, and self-approval shows the cell's refusal banner; stand-in Playwright specs verify UI flows only.
 - **Gotchas:**
+  - `e2e/decisions.e2e.ts` and `e2e/approved-run.e2e.ts` use stand-in `/api/host` route mocks (skipping when `E2E_BASE` is set) and do not prove live cell persistence.
   - The requester cannot approve their own pending decision; run a second `bun run local --as reviewer` instance on a separate loopback port.
 
 ---
@@ -132,9 +135,10 @@ Source registry: [`registry/features/studio-ui.json`](../../../../registry/featu
 
 ### Probe
 
-- **Drive:** Open `/`, `/markings`, and `/connections` against a local `norn dev` cell, toggle dock/sidebar navigation, verify `/api/me` session identity, or run `e2e/home.e2e.ts`, `e2e/nav.e2e.ts`, and `e2e/markings.e2e.ts`.
-- **Observable end state:** Home shell renders with domain-agnostic ShellCard + StatWell hierarchy, markings page reflects declared privacy policies, and connections page lists configured connectors and tool bindings.
+- **Drive:** For live cell verification, open `/`, `/markings`, and `/connections` against a disposable local `norn dev` cell, toggle dock/sidebar navigation, and verify `/api/me` session identity; separately, `cd apps/studio && bunx playwright test e2e/home.e2e.ts e2e/nav.e2e.ts e2e/markings.e2e.ts` tests UI rendering against mocked `/api/host` routes only.
+- **Observable end state:** Against a live cell, the home shell renders with domain-agnostic ShellCard + StatWell hierarchy, markings page reflects declared privacy policies, and connections page lists configured connectors and tool bindings; stand-in Playwright specs verify UI layout/interactions only.
 - **Gotchas:**
+  - `e2e/home.e2e.ts` and `e2e/markings.e2e.ts` intercept `/api/host/v1/**` with route mocks and do not prove live backend persistence.
   - Legacy URLs `/questions` and `/guarantees` redirect to `/metrics` and `/rules` (`MOVED` in `routes.tsx`).
 
 ---
@@ -165,9 +169,10 @@ Source registry: [`registry/features/studio-ui.json`](../../../../registry/featu
 
 ### Probe
 
-- **Drive:** Visit `/imports` on a cell seeded with import findings (`e2e/import-triage-cell.ts`), inspect quarantined rows and crosswalk mismatches, or run `cd apps/studio && bunx playwright test e2e/import-triage.e2e.ts`.
-- **Observable end state:** Quarantined records display exact `DataQualityFinding` diagnostics and provenance; unmapped rows never silently promote into authoritative ontology records.
+- **Drive:** For live cell verification, visit `/imports` on a disposable `norn dev` cell with real import findings and inspect quarantined rows and crosswalk mismatches; separately, `cd apps/studio && bunx playwright test e2e/import-triage.e2e.ts` exercises the UI against synthetic stand-in routes only.
+- **Observable end state:** Against a live cell, quarantined records display exact `DataQualityFinding` diagnostics and provenance and unmapped rows never silently promote into authoritative ontology records; the stand-in Playwright spec verifies UI triage interactions only.
 - **Gotchas:**
+  - `e2e/import-triage.e2e.ts` uses a synthetic `/api/host/v1/imports/triage` stand-in (skipping under `E2E_BASE`) and does not prove live cell persistence.
   - CSV upload preview must preserve exact string values for decimal quantities and dates.
 
 ---
@@ -208,9 +213,10 @@ Source registry: [`registry/features/studio-ui.json`](../../../../registry/featu
 
 ### Probe
 
-- **Drive:** Navigate `/learning/episodes`, `/episodes/$id`, `/learning/cases`, `/learning/misfit`, `/learning/proposals`, and `/learning/proposals/$id`, or run `cd apps/studio && bunx playwright test e2e/episodes.e2e.ts e2e/learning-cases.e2e.ts e2e/learning-misfit.e2e.ts e2e/learning-proposals.e2e.ts`.
-- **Observable end state:** Learning surfaces display recorded episodes, case clusters, misfit evidence, and proposed definition changes gated behind governed review.
+- **Drive:** For live cell verification, navigate `/learning/episodes`, `/episodes/$id`, `/learning/cases`, `/learning/misfit`, `/learning/proposals`, and `/learning/proposals/$id` over a cell with the learning pack installed; separately, `cd apps/studio && bunx playwright test e2e/episodes.e2e.ts e2e/learning-cases.e2e.ts e2e/learning-misfit.e2e.ts e2e/learning-proposals.e2e.ts` exercises UI flows against stand-in mocks only.
+- **Observable end state:** Against a live cell, learning surfaces display persisted episodes, case clusters, misfit evidence, and proposed definition changes gated behind governed review; stand-in Playwright specs verify UI flows only.
 - **Gotchas:**
+  - `e2e/episodes.e2e.ts`, `e2e/learning-cases.e2e.ts`, `e2e/learning-misfit.e2e.ts`, and `e2e/learning-proposals.e2e.ts` use in-memory stand-in mocks (skipping under `E2E_BASE`) and do not prove live backend persistence.
   - Proposals remain drafts until admitted and installed through the governed definition lifecycle; never auto-activate.
 
 ---
@@ -248,9 +254,10 @@ Source registry: [`registry/features/studio-ui.json`](../../../../registry/featu
 
 ### Probe
 
-- **Drive:** Open `/metrics`, `/metrics/new`, `/metrics/build`, and `/metrics/$name`, construct a question over a live object type, inspect its answer and numeric trace, or run `e2e/metrics-builder.e2e.ts` and `e2e/question-save.e2e.ts`.
-- **Observable end state:** Metrics list matches `GET /v1/questions:metrics`, builder saves admitted question definitions, and `/metrics/$name` renders exact totals with contribution traces.
+- **Drive:** For live cell verification, open `/metrics`, `/metrics/new`, `/metrics/build`, and `/metrics/$name` over a live/hosted cell and inspect answers and numeric traces; separately, `cd apps/studio && bunx playwright test e2e/metrics-builder.e2e.ts e2e/question-save.e2e.ts` exercises the UI against recorded/stand-in route fixtures only.
+- **Observable end state:** Against a live cell, metrics list matches `GET /v1/questions:metrics` and `/metrics/$name` renders exact totals with contribution traces (live question definition saves require a hosted cell); stand-in Playwright specs verify UI rendering and builder flows only.
 - **Gotchas:**
+  - `e2e/metrics-builder.e2e.ts` and `e2e/question-save.e2e.ts` use mocked/recorded stand-in routes and do not prove live backend persistence.
   - Verify `/questions` still redirects cleanly to `/metrics` for saved bookmarks.
 
 ---
@@ -288,9 +295,10 @@ Source registry: [`registry/features/studio-ui.json`](../../../../registry/featu
 
 ### Probe
 
-- **Drive:** Open `/sources`, click into `/sources/$concept` and `/sources/$concept/$` record detail (plus `/objects/$type` grid), execute an available action from the record page, or run `e2e/records-explorer.e2e.ts`, `e2e/records-grid.e2e.ts`, and `e2e/record-page.e2e.ts`.
-- **Observable end state:** Grid paginates/filters live objects, record detail renders properties/links/lineage/history and honest refusal panels, and mutations refresh live views over `/api/host/v1/subscribe`.
+- **Drive:** For live cell verification, open `/sources`, `/sources/$concept`, `/sources/$concept/$`, and `/objects/$type` against a disposable `norn dev` cell and execute an available action from the record page; separately, `cd apps/studio && bunx playwright test e2e/records-explorer.e2e.ts e2e/records-grid.e2e.ts e2e/record-page.e2e.ts` exercises UI flows against stand-in/recorded fixtures only.
+- **Observable end state:** Against a live cell, the grid paginates/filters live objects, record detail renders properties/links/lineage/history and honest refusal panels, and mutations persist and refresh over `/api/host/v1/subscribe`; stand-in Playwright specs verify UI behavior only.
 - **Gotchas:**
+  - `e2e/records-explorer.e2e.ts`, `e2e/records-grid.e2e.ts`, and `e2e/record-page.e2e.ts` use stand-in/recorded route mocks (skipping under `E2E_BASE`) and do not prove live backend persistence.
   - `/sources/$concept` is intentionally served by `/sources/$concept/$` with an empty splat (`SERVED_BY` in `apps/studio/src/lib/pages.ts`).
 
 ---
@@ -333,7 +341,8 @@ Source registry: [`registry/features/studio-ui.json`](../../../../registry/featu
 
 ### Probe
 
-- **Drive:** Open `/transforms`, `/transforms/$id`, `/workflows`, `/map`, `/canvas`, and `/rules` with WASM checker built (`apps/studio/src/checker`), or run `e2e/transforms.e2e.ts`, `e2e/workflows.e2e.ts`, `e2e/semantic-map.e2e.ts`, and `e2e/rules.e2e.ts`.
-- **Observable end state:** Transforms show plan/rows/lineage; canvas and rules run the real Rust WASM checker in-browser (flagging stuck states on deleted lifecycle steps) rather than faking admission in TypeScript.
+- **Drive:** For live cell verification, open `/transforms`, `/transforms/$id`, `/workflows`, `/map`, `/canvas`, and `/rules` over a disposable `norn dev` cell with the WASM checker built (`apps/studio/src/checker`); separately, `cd apps/studio && bunx playwright test e2e/transforms.e2e.ts e2e/workflows.e2e.ts e2e/semantic-map.e2e.ts e2e/rules.e2e.ts` tests UI behavior against stubbed/recorded cell fixtures only.
+- **Observable end state:** Against a live cell, transforms show real plan/rows/lineage and canvas/rules run the real Rust WASM checker in-browser (flagging stuck states on deleted lifecycle steps) rather than faking admission in TypeScript; stand-in Playwright specs verify UI flows only.
 - **Gotchas:**
+  - `e2e/transforms.e2e.ts`, `e2e/workflows.e2e.ts`, `e2e/semantic-map.e2e.ts`, and `e2e/rules.e2e.ts` replay stubbed/recorded `/api/host/v1/**` responses (skipping under `E2E_BASE`) and do not prove live cell execution.
   - Canvas and decision-admission tests require the built WASM checker (`NORN_CHECKER_WASM_REQUIRED=1`); a missing WASM bundle must fail loudly, never skip.

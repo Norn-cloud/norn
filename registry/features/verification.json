@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "stopGap": {
     "status": "stop-gap",
-    "retirementTrigger": "Retire once TARGET Norn authoring (concept({ ... }), pinned packs) hosts the feature ontology natively in a Norn cell."
+    "retirementTrigger": "Retire once TARGET Norn authoring (concept({ ... }), pinned packs) hosts the feature ontology natively in a Norn cell (#2005)."
   },
   "domain": "verification",
   "title": "Verification Integrity & Formal Assurance",

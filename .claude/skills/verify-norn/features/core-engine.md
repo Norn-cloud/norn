@@ -2,7 +2,7 @@
 
 # Core Engine & IR Semantics
 
-> **Stop-gap notice:** Stop-gap auto-extracted feature ontology (`scripts/feature_map.py` + `registry/features/`). To be retired once TARGET Norn authoring (`concept({ ... })`, pinned packs) lands and can host this ontology natively in a Norn cell.
+> **Stop-gap notice:** Stop-gap auto-extracted feature ontology (`scripts/feature_map.py` + `registry/features/`, retirement tracked in #2005). To be retired once TARGET Norn authoring (`concept({ ... })`, pinned packs) lands and can host this ontology natively in a Norn cell.
 
 Canonical IR artifact kinds, exact value/quantity physics, concept graph/ontology, authorization, rules/decisions, laws/deontics, transactions/timers, and governed artifact lifecycle.
 
@@ -12,14 +12,80 @@ Source registry: [`registry/features/core-engine.json`](../../../../registry/fea
 
 | Feature ID | Title | Status | Evidence tier | Surfaces | Invariants |
 | --- | --- | --- | --- | ---: | ---: |
+| [`core-approval-fencing-and-timers`](#core-approval-fencing-and-timers) | Approval fencing, hosted timers, and bounded commit-admission models | `implemented` | `bounded` | 16 | 16 |
 | [`core-artifact-governance`](#core-artifact-governance) | Governed artifact lifecycle, settings, packs, and labels | `implemented` | `checked-proof` | 13 | 9 |
+| [`core-atomic-commits-and-transitions`](#core-atomic-commits-and-transitions) | Atomic cell commits and lifecycle transition authority proofs | `implemented` | `checked-proof` | 9 | 8 |
 | [`core-authorization-and-policies`](#core-authorization-and-policies) | Fail-closed scope and action authorization | `implemented` | `checked-proof` | 10 | 9 |
 | [`core-derived-views-and-models`](#core-derived-views-and-models) | Derived views, predictive models, and checked UI widgets | `implemented` | `bounded` | 5 | 3 |
 | [`core-laws-and-deontics`](#core-laws-and-deontics) | Scoped temporal laws, deontic norms, and exception precedence | `implemented` | `checked-proof` | 4 | 3 |
 | [`core-ontology-and-mappings`](#core-ontology-and-mappings) | Concept graph, relations, connectors, source schemas, and mappings | `implemented` | `checked-proof` | 16 | 10 |
 | [`core-quantity-ledger`](#core-quantity-ledger) | Exact quantity ledger, reservations, batches, units, and Cala boundary | `implemented` | `checked-proof` | 26 | 26 |
 | [`core-rules-and-decisions`](#core-rules-and-decisions) | Deterministic RuleIR decision tables and ZEN expression evaluation | `implemented` | `checked-proof` | 2 | 2 |
-| [`core-transactions-and-timers`](#core-transactions-and-timers) | Atomic cell commits, lifecycle transitions, approval fencing, and hosted timers | `implemented` | `checked-proof` | 25 | 24 |
+
+---
+
+## core-approval-fencing-and-timers
+
+**Approval fencing, hosted timers, and bounded commit-admission models** — status: `implemented` | evidence tier: `bounded`
+
+### Spec contracts
+
+- `docs/spec/core/04-transactions-effects.md`
+- `docs/spec/core/07-world-boundary.md`
+
+### Linked invariants & gates
+
+- `approval-fencing-quint` (transition-authority/model)
+- `approval-fencing-quint-typecheck` (transition-authority/model)
+- `hosted-timers-conformance` (transition-authority/model)
+- `hosted-timers-progress-quint` (transition-authority/model)
+- `hosted-timers-progress-sim` (transition-authority/model)
+- `hosted-timers-quint` (transition-authority/model)
+- `hosted-timers-quint-typecheck` (transition-authority/model)
+- `hosted-timers-variants` (transition-authority/model)
+- `kernel-v2-commit-admission` (kernel-v2/model)
+- `kernel-v2-commit-admission-typecheck` (kernel-v2/model)
+- `kernel-v2-commit-conformance` (kernel-v2/runtime)
+- `kernel-version-kani` (transition-authority/proof)
+- `transition-closed-custom-effect-quint` (transition-authority/model)
+- `transition-closed-custom-effect-quint-typecheck` (transition-authority/model)
+- `transition-domain-authority-quint` (transition-authority/model)
+- `transition-domain-authority-quint-typecheck` (transition-authority/model)
+
+### Owned surfaces
+
+- `gate:approval-fencing-quint`
+- `gate:approval-fencing-quint-typecheck`
+- `gate:hosted-timers-conformance`
+- `gate:hosted-timers-progress-quint`
+- `gate:hosted-timers-progress-sim`
+- `gate:hosted-timers-quint`
+- `gate:hosted-timers-quint-typecheck`
+- `gate:hosted-timers-variants`
+- `gate:kernel-v2-commit-admission`
+- `gate:kernel-v2-commit-admission-typecheck`
+- `gate:kernel-v2-commit-conformance`
+- `gate:kernel-version-kani`
+- `gate:transition-closed-custom-effect-quint`
+- `gate:transition-closed-custom-effect-quint-typecheck`
+- `gate:transition-domain-authority-quint`
+- `gate:transition-domain-authority-quint-typecheck`
+
+### Source paths
+
+- `crates/norn-kernel/src/version_check.rs`
+- `crates/norn-kernel/src/timer_schedule.rs`
+- `crates/norn-cell/src/engine.rs`
+- `crates/norn-cell/src/outbox_ledger.rs`
+- `crates/norn-cell/src/decision_ledger.rs`
+
+### Probe
+
+- **Drive:** Inspect the bounded Quint/Apalache and Kani gate definitions in `verification/coverage-v1/promoted-gates.json` (run them in CI or a Boat sandbox, never local `cargo`/`rustc`), and drive an approval-gated action + self-approval refusal + reviewer approval and hosted timer dispatch against a local `norn dev` cell.
+- **Observable end state:** Requester self-approval and stale-revision decisions fail closed with state unchanged; distinct reviewer approval commits atomically and fires scheduled timer/outbox work without duplicate execution.
+- **Gotchas:**
+  - `hosted-timers-quint`, `hosted-timers-progress-quint`, and `approval-fencing-quint` are bounded Quint/Apalache model checks (5-step / 10-step bounds) and `kernel-version-kani` is a bounded Kani harness — evidence is `bounded`, never `checked-proof`.
+  - Approval decisions are fenced against requester self-approval and stale revision; test with a distinct `--as reviewer` principal.
 
 ---
 
@@ -77,6 +143,56 @@ Source registry: [`registry/features/core-engine.json`](../../../../registry/fea
 - **Gotchas:**
   - Numeric settings (`valueType: "number"`) require exact `DecimalLiteral` strings (`PARAM-EXACT-1`), never binary64 numbers.
   - Labels (`ir:labels`) never participate in definition identity digests.
+
+---
+
+## core-atomic-commits-and-transitions
+
+**Atomic cell commits and lifecycle transition authority proofs** — status: `implemented` | evidence tier: `checked-proof`
+
+### Spec contracts
+
+- `docs/spec/core/04-transactions-effects.md`
+- `docs/spec/core/07-world-boundary.md`
+
+### Linked invariants & gates
+
+- `kernel-binding-correspondence` (transition-authority/proof)
+- `kernel-commit-order-correspondence` (transition-authority/proof)
+- `kernel-inline-verus` (transition-authority/proof)
+- `kernel-l1-reference` (transition-authority/proof)
+- `kernel-l1-version-correspondence` (transition-authority/proof)
+- `transition-closed-custom-effect-lean` (transition-authority/proof)
+- `transition-domain-authority-lean` (transition-authority/proof)
+- `transition-lean` (transition-authority/proof)
+
+### Owned surfaces
+
+- `gate:kernel-binding-correspondence`
+- `gate:kernel-commit-order-correspondence`
+- `gate:kernel-inline-verus`
+- `gate:kernel-l1-reference`
+- `gate:kernel-l1-version-correspondence`
+- `gate:transition-closed-custom-effect-lean`
+- `gate:transition-domain-authority-lean`
+- `gate:transition-lean`
+- `ir:action`
+
+### Source paths
+
+- `crates/norn-ir/src/action.rs`
+- `crates/norn-kernel/src/commit_check.rs`
+- `crates/norn-kernel/src/commit_order.rs`
+- `crates/norn-kernel/src/commit_versions.rs`
+- `crates/norn-kernel/src/version_check.rs`
+- `crates/norn-cell/src/engine.rs`
+
+### Probe
+
+- **Drive:** Submit an action with an idempotency key to a local `norn dev` cell (`POST /v1/actions/{actionId}`), replay the same idempotency key with identical and conflicting payloads, and verify stale-version CAS refusal; inspect Lean/Verus/Aeneas proof gates in `verification/coverage-v1/promoted-gates.json` (run formal gates in CI or a Boat sandbox).
+- **Observable end state:** First call commits atomically and returns a receipt; identical replay returns the original receipt without duplicate effects; conflicting payload or stale revision refuses with state unchanged; all linked Lean/Verus/Aeneas gates hold without proof holes.
+- **Gotchas:**
+  - Bounded Quint/Kani checks for approval fencing, hosted timers, and v2 commit admission live under `core-approval-fencing-and-timers` (`bounded`), separate from these unbounded Lean/Verus proofs.
 
 ---
 
@@ -396,87 +512,3 @@ Source registry: [`registry/features/core-engine.json`](../../../../registry/fea
 - **Observable end state:** Deterministic JSON-lines output emits `{"ok":true,"closureDigest":...,"output":...}` for valid inputs and refuses multi-match `UNIQUE` or budget-exhausted inputs with `"ok":false`.
 - **Gotchas:**
   - Modulo `%` and host callbacks are rejected by `norn-zen/7`; default outputs apply only when zero rows match.
-
----
-
-## core-transactions-and-timers
-
-**Atomic cell commits, lifecycle transitions, approval fencing, and hosted timers** — status: `implemented` | evidence tier: `checked-proof`
-
-### Spec contracts
-
-- `docs/spec/core/04-transactions-effects.md`
-- `docs/spec/core/07-world-boundary.md`
-
-### Linked invariants & gates
-
-- `approval-fencing-quint` (transition-authority/model)
-- `approval-fencing-quint-typecheck` (transition-authority/model)
-- `hosted-timers-conformance` (transition-authority/model)
-- `hosted-timers-progress-quint` (transition-authority/model)
-- `hosted-timers-progress-sim` (transition-authority/model)
-- `hosted-timers-quint` (transition-authority/model)
-- `hosted-timers-quint-typecheck` (transition-authority/model)
-- `hosted-timers-variants` (transition-authority/model)
-- `kernel-binding-correspondence` (transition-authority/proof)
-- `kernel-commit-order-correspondence` (transition-authority/proof)
-- `kernel-inline-verus` (transition-authority/proof)
-- `kernel-l1-reference` (transition-authority/proof)
-- `kernel-l1-version-correspondence` (transition-authority/proof)
-- `kernel-v2-commit-admission` (kernel-v2/model)
-- `kernel-v2-commit-admission-typecheck` (kernel-v2/model)
-- `kernel-v2-commit-conformance` (kernel-v2/runtime)
-- `kernel-version-kani` (transition-authority/proof)
-- `transition-closed-custom-effect-lean` (transition-authority/proof)
-- `transition-closed-custom-effect-quint` (transition-authority/model)
-- `transition-closed-custom-effect-quint-typecheck` (transition-authority/model)
-- `transition-domain-authority-lean` (transition-authority/proof)
-- `transition-domain-authority-quint` (transition-authority/model)
-- `transition-domain-authority-quint-typecheck` (transition-authority/model)
-- `transition-lean` (transition-authority/proof)
-
-### Owned surfaces
-
-- `gate:approval-fencing-quint`
-- `gate:approval-fencing-quint-typecheck`
-- `gate:hosted-timers-conformance`
-- `gate:hosted-timers-progress-quint`
-- `gate:hosted-timers-progress-sim`
-- `gate:hosted-timers-quint`
-- `gate:hosted-timers-quint-typecheck`
-- `gate:hosted-timers-variants`
-- `gate:kernel-binding-correspondence`
-- `gate:kernel-commit-order-correspondence`
-- `gate:kernel-inline-verus`
-- `gate:kernel-l1-reference`
-- `gate:kernel-l1-version-correspondence`
-- `gate:kernel-v2-commit-admission`
-- `gate:kernel-v2-commit-admission-typecheck`
-- `gate:kernel-v2-commit-conformance`
-- `gate:kernel-version-kani`
-- `gate:transition-closed-custom-effect-lean`
-- `gate:transition-closed-custom-effect-quint`
-- `gate:transition-closed-custom-effect-quint-typecheck`
-- `gate:transition-domain-authority-lean`
-- `gate:transition-domain-authority-quint`
-- `gate:transition-domain-authority-quint-typecheck`
-- `gate:transition-lean`
-- `ir:action`
-
-### Source paths
-
-- `crates/norn-ir/src/action.rs`
-- `crates/norn-kernel/src/commit_check.rs`
-- `crates/norn-kernel/src/commit_order.rs`
-- `crates/norn-kernel/src/commit_versions.rs`
-- `crates/norn-kernel/src/version_check.rs`
-- `crates/norn-kernel/src/timer_schedule.rs`
-- `crates/norn-cell/src/engine.rs`
-- `crates/norn-cell/src/outbox_ledger.rs`
-
-### Probe
-
-- **Drive:** Submit an action with an idempotency key to a local `norn dev` cell (`POST /v1/actions/{actionId}`), replay the same idempotency key with identical and conflicting payloads, and verify stale-version CAS refusal.
-- **Observable end state:** First call commits atomically and returns a receipt; identical replay returns the original receipt without duplicate effects; conflicting payload or stale revision refuses with state unchanged.
-- **Gotchas:**
-  - Approval decisions are fenced against requester self-approval and stale revision; test with a distinct `--as reviewer` principal.

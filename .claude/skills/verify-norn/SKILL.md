@@ -5,7 +5,7 @@ description: Drive Norn's real surfaces (native `norn` CLI, hosted/dev cell HTTP
 
 # Verify Norn (1-by-1 Feature Verification)
 
-> **Stop-gap notice:** `scripts/feature_map.py` and `registry/features/` are a stop-gap ontology to be retired once TARGET Norn authoring (`concept({ ... })`, pinned packs) hosts the feature map natively in a Norn cell.
+> **Stop-gap notice (#2005):** `scripts/feature_map.py` and `registry/features/` are a stop-gap ontology to be retired once TARGET Norn authoring (`concept({ ... })`, pinned packs) hosts the feature map natively in a Norn cell.
 
 ## 1-by-1 verification loop
 
@@ -27,7 +27,7 @@ When asked to verify Norn features 1-by-1:
    ```
    Read the cited `specContracts` and linked `invariants` (promoted Lean/Quint/Kani gates or checker modules) FIRST so you know what is already formally checked versus what requires runtime/E2E probing.
 4. **Drive the feature's probe** using the real surface harness below, capture action + resulting state + second-view read, and report any unmet precondition or gap honestly. Never weaken a probe to make it pass.
-5. **Update `lastVerified` only after an actual run** on clean sources, recording the exact `commitSha` (`git rev-parse HEAD`) and `liveSourceDigest` printed by `show <feature-id>`, then run `python3 scripts/feature_map.py write` and `python3 scripts/record_new_files.py`.
+5. **Update `lastVerified` only after an actual run** on clean sources, recording the exact `commitSha` (`git rev-parse HEAD`) and `liveSourceDigest` (which hashes both `sourcePaths` and the feature contract: `probe`, `invariants`, `surfaces`) printed by `show <feature-id>`, then run `python3 scripts/feature_map.py write` and `python3 scripts/record_new_files.py`.
 
 ## Launch
 
@@ -52,7 +52,7 @@ Run this read-only check before driving a feature if anything looks off:
 ```bash
 python3 scripts/feature_map.py check
 test -f <tmp-project>/.norn/dev.json && python3 -c 'import json, sys; d=json.load(open(sys.argv[1])); print(d["format"], d["url"], d["scope"])' <tmp-project>/.norn/dev.json
-curl -fsS -H "Authorization: Bearer $(cat <tmp-project>/<tokenFile>)" "<loopback-url>/v1/definitions" | head -c 200
+curl -fsS -H "Authorization: Bearer $(cat <tmp-project>/<tokenFile>)" "<loopback-url>/v1/definitions?orgId=<orgId>&environmentId=<environmentId>" | head -c 200
 ```
 
 Ready means: feature map check exits `0`, `.norn/dev.json` reports `norn-dev/1` on `127.0.0.1` / `[::1]`, and `GET /v1/definitions` (or Studio's `/api/me`) answers with the expected `orgId` and `environmentId`.

@@ -2,9 +2,9 @@
 
 # Native Authoring & CLI Surface
 
-> **Stop-gap notice:** Stop-gap auto-extracted feature ontology (`scripts/feature_map.py` + `registry/features/`). To be retired once TARGET Norn authoring (`concept({ ... })`, pinned packs) lands and can host this ontology natively in a Norn cell.
+> **Stop-gap notice:** Stop-gap auto-extracted feature ontology (`scripts/feature_map.py` + `registry/features/`, retirement tracked in #2005). To be retired once TARGET Norn authoring (`concept({ ... })`, pinned packs) lands and can host this ontology natively in a Norn cell.
 
-All native Rust `norn` CLI subcommands (`crates/norn-cli/src/`): in-process TypeScript/Python authoring compilation, formatting, profiling, checker admission, explain, offline eval, OpenAPI/source-digest contracts, cell plan/apply, source pull, and MCP.
+All native Rust `norn` CLI subcommands (`crates/norn-cli/src/`) and TypeScript authoring CLI subcommands (`tools/norn-ts/src/cli.ts`): in-process TypeScript/Python authoring compilation, formatting, profiling, checker admission, explain, dev/init/seed/setup/codegen, offline eval, OpenAPI/source-digest contracts, hosted cell plan/apply, source pull, and MCP.
 
 Source registry: [`registry/features/authoring-and-cli.json`](../../../../registry/features/authoring-and-cli.json).
 
@@ -13,8 +13,9 @@ Source registry: [`registry/features/authoring-and-cli.json`](../../../../regist
 | Feature ID | Title | Status | Evidence tier | Surfaces | Invariants |
 | --- | --- | --- | --- | ---: | ---: |
 | [`cli-authoring-compile-and-format`](#cli-authoring-compile-and-format) | Native TypeScript/Python authoring compile, format, profile, question, and dashboard CLI | `implemented` | `runtime-enforced` | 5 | 1 |
-| [`cli-cell-and-source-ops`](#cli-cell-and-source-ops) | Governed hosted cell plan/apply and sealed source pull CLI | `implemented` | `runtime-enforced` | 3 | 2 |
+| [`cli-cell-and-source-ops`](#cli-cell-and-source-ops) | Governed hosted cell plan/apply and sealed source pull CLI | `implemented` | `runtime-enforced` | 5 | 2 |
 | [`cli-check-and-explain`](#cli-check-and-explain) | Shared checker admission (`norn check`) and explanation (`norn explain`) CLI | `implemented` | `runtime-enforced` | 2 | 2 |
+| [`cli-dev-and-project-lifecycle`](#cli-dev-and-project-lifecycle) | Authoring CLI project init, local dev host, seed, setup, and TypeScript codegen | `implemented` | `runtime-enforced` | 5 | 1 |
 | [`cli-mcp-and-remote`](#cli-mcp-and-remote) | Local stdio MCP server, capabilities paging, and remote MCP client CLI | `implemented` | `runtime-enforced` | 4 | 1 |
 | [`cli-offline-eval-and-contracts`](#cli-offline-eval-and-contracts) | Offline decision evaluation, OpenAPI contract emission, and HOST-TREE-1 source digest CLI | `implemented` | `runtime-enforced` | 3 | 1 |
 
@@ -76,20 +77,27 @@ Source registry: [`registry/features/authoring-and-cli.json`](../../../../regist
 
 ### Owned surfaces
 
+- `cli:norn apply`
 - `cli:norn cell apply`
 - `cli:norn cell plan`
+- `cli:norn plan`
 - `cli:norn source pull`
 
 ### Source paths
 
 - `crates/norn-cli/src/cell.rs`
 - `crates/norn-cli/src/source.rs`
+- `crates/norn-cell-do/src/dev/http.rs`
+- `crates/norn-cell-do/tests/hosted_install.rs`
+- `tools/norn-ts/src/cli.ts`
+- `tools/norn-ts/src/apply.ts`
 
 ### Probe
 
-- **Drive:** Run `norn cell plan --url <loopback> --org <org> --env <env> --token-env NORN_DEV_TOKEN <pack-dir>` followed by `norn cell apply`, and test `norn source pull --crosswalk-env <VAR> --connector <connector.json> --extracted-at-ms <ms>` against a loopback mock/ERPNext endpoint.
-- **Observable end state:** `cell plan` prints diff without mutating cell state; `cell apply` atomically installs the next revision; `source pull` issues GET-only reads (`SRC-READ-1`), binds identity solely via the reviewed crosswalk (`SRC-IDENT-1`), and fails closed on read errors (`SRC-LIVE-1`).
+- **Drive:** Target a provisioned hosted cell / Rivet endpoint (or run the hosted tenant suite `crates/norn-cell-do/tests/hosted_install.rs` in CI or a Boat sandbox) with `norn cell plan --url <hosted-url> --org <org> --env <env> --token-env NORN_HOST_TOKEN <pack-dir>` followed by `norn cell apply` (or TS authoring CLI `norn plan` / `norn apply`), and test `norn source pull --crosswalk-env <VAR> --connector <connector.json> --extracted-at-ms <ms>` against a loopback mock/ERPNext endpoint.
+- **Observable end state:** Against a hosted cell, `cell plan` / `plan` prints diff without mutating cell state and `cell apply` / `apply` atomically installs the next revision; against `norn dev`, plan/apply fails closed with `409 defs.dev_sources_only`; `source pull` issues GET-only reads (`SRC-READ-1`), binds identity solely via the reviewed crosswalk (`SRC-IDENT-1`), and fails closed on read errors (`SRC-LIVE-1`).
 - **Gotchas:**
+  - `norn dev` explicitly rejects `/v1/cell/definitions:plan` and `/v1/cell/definitions:apply` with `409 defs.dev_sources_only` (`DEV-ONE-AUTHORITY-1`, `crates/norn-cell-do/src/dev/http.rs`); never target `norn dev` to prove hosted plan/apply.
   - Never pass bearer tokens or passwords directly as CLI arguments; `cell` and `source` intentionally accept `--token-env` / `--crosswalk-env` only.
 
 ---
@@ -126,6 +134,47 @@ Source registry: [`registry/features/authoring-and-cli.json`](../../../../regist
 - **Observable end state:** `norn check` prints a canonical report with `admitted`, diagnostics, and `receiptSha256` without installing definitions; `norn explain` renders the shared JSON/text explanation with honest proof status.
 - **Gotchas:**
   - `--artifacts` and `--source` are mutually exclusive; `--org` and `--env` must be passed together or both omitted for `norn.json` projects.
+
+---
+
+## cli-dev-and-project-lifecycle
+
+**Authoring CLI project init, local dev host, seed, setup, and TypeScript codegen** — status: `implemented` | evidence tier: `runtime-enforced`
+
+### Spec contracts
+
+- `docs/authoring/README.md`
+- `docs/spec/core/06-composition-config.md`
+- `docs/spec/core/07-world-boundary.md`
+
+### Linked invariants & gates
+
+- `authorization-scope-exactness-lean` (authorization/proof)
+
+### Owned surfaces
+
+- `cli:norn codegen`
+- `cli:norn dev`
+- `cli:norn init`
+- `cli:norn seed`
+- `cli:norn setup`
+
+### Source paths
+
+- `tools/norn-ts/src/cli.ts`
+- `tools/norn-ts/src/codegen.ts`
+- `tools/norn-ts/src/dev.ts`
+- `tools/norn-ts/src/init.ts`
+- `tools/norn-ts/src/seed.ts`
+- `tools/norn-ts/src/setup.ts`
+- `crates/norn-cell-do/src/dev/http.rs`
+
+### Probe
+
+- **Drive:** In a disposable temp directory, run `bun run tools/norn-ts/src/cli.ts init <tmp-dir>`, start `norn dev --port <free-port>` (verifying `.norn/dev.json` with `format: "norn-dev/1"` and `GET /v1/definitions?orgId=<orgId>&environmentId=<environmentId>`), run `norn seed --json`, run `norn codegen --ts <pack-dir> --check`, and verify `norn setup` against a local/cached runtime release.
+- **Observable end state:** `init` scaffolds a zero-CI `norn.json` project (no `.github/workflows/`); `dev` serves admitted project sources on loopback with scoped bearer tokens and refuses `/v1/cell/definitions:plan|apply` with `409 defs.dev_sources_only`; `seed` commits fixture data idempotently; `codegen` emits deterministic `.d.ts` bindings.
+- **Gotchas:**
+  - `norn dev` installs definitions exclusively from project sources (`DEV-ONE-AUTHORITY-1`); never share a running user dev cell during verification.
 
 ---
 

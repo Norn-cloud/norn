@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://norn.cloud/schema/feature-map/1",
   "title": "Norn stop-gap auto-extracted feature map: one domain file",
-  "description": "STOP-GAP registry: each registry/features/<domain>.json maps auto-extracted live surfaces (HTTP routes, CLI subcommands, IR artifact kinds, Studio routes, promoted gates) to verifiable features with spec contracts, source paths, invariants, and 1-by-1 probes. To be retired once TARGET Norn authoring (concept({ ... }), pinned packs) hosts this ontology natively in a Norn cell.",
+  "description": "STOP-GAP registry (retirement tracked in #2005): each registry/features/<domain>.json maps auto-extracted live surfaces (HTTP routes, CLI subcommands, IR artifact kinds, Studio routes, promoted gates) to verifiable features with spec contracts, source paths, invariants, and 1-by-1 probes. To be retired once TARGET Norn authoring (concept({ ... }), pinned packs) hosts this ontology natively in a Norn cell.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "stopGap", "domain", "title", "summary", "features"],
@@ -43,7 +43,7 @@
     },
     "surfaceKey": {
       "type": "string",
-      "pattern": "^(http:(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /[^\\s]+|cli:norn [a-z0-9-]+( [a-z0-9-]+)*|ir:[a-z][a-z0-9_]*|studio:/[^\\s]*|gate:[a-z0-9][a-z0-9-]*)$"
+      "pattern": "^(http:(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE) /[^\\s]+|cli:norn [a-z0-9-]+( [a-z0-9-]+)*|ir:[A-Za-z][A-Za-z0-9_-]*|studio:/[^\\s]*|gate:[a-z0-9][a-z0-9-]*)$"
     },
     "invariantRef": {
       "type": "string",
