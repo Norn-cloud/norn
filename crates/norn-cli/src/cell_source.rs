@@ -48,7 +48,7 @@ struct ManifestTargets {
 pub(crate) fn resolve_target(target: &Target) -> Result<ResolvedTarget, String> {
     let manifest = load_enclosing_manifest_targets(target)?;
 
-    let profile = select_target_profile(target.target.as_deref(), manifest.as_ref())?;
+    let profile = select_target_profile(target.profile.as_deref(), manifest.as_ref())?;
 
     let url = pick_non_empty(
         target.url.as_deref(),
@@ -407,7 +407,7 @@ mod tests {
             url: None,
             org: None,
             env: None,
-            target: None,
+            profile: None,
             source: None,
             forbid_unsafe_zen: false,
             tool_root: None,
@@ -459,7 +459,7 @@ mod tests {
         assert_eq!(dev.token_env.as_deref(), Some("NORN_DEV_TOKEN"));
 
         // Explicit --target selects staging, and explicit --env overrides profile env.
-        req.target = Some("staging".to_owned());
+        req.profile = Some("staging".to_owned());
         req.env = Some("preview".to_owned());
         let staging = resolve_target(&req)?;
         assert_eq!(staging.url, "https://staging.norn.cloud");
@@ -468,7 +468,7 @@ mod tests {
         assert_eq!(staging.token_env, None);
 
         // Missing named target fails closed.
-        req.target = Some("prod".to_owned());
+        req.profile = Some("prod".to_owned());
         let err = resolve_target(&req)
             .err()
             .ok_or("missing target profile must fail closed")?;

@@ -33,8 +33,8 @@ pub(super) struct Target {
     #[arg(long)]
     pub(super) env: Option<String>,
     /// Named target profile in `norn.json` (`targets.<NAME>`); defaults to `defaultTarget` when omitted.
-    #[arg(long)]
-    pub(super) target: Option<String>,
+    #[arg(id = "target", long = "target", value_name = "TARGET")]
+    pub(super) profile: Option<String>,
     /// `TypeScript` (`.ts`) or Python (`.py`) authoring file or directory to compile in-process and push directly.
     #[arg(long, conflicts_with = "paths", required_unless_present = "paths")]
     pub(super) source: Option<PathBuf>,

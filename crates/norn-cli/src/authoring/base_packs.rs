@@ -152,18 +152,18 @@ fn load_pinned_base_pack(
             }
         }
         PinnedSourceTarget::Directory(root_dir) => {
-            load_base_directory(root_dir, scope, budget, out)
+            load_base_directory(&root_dir, scope, budget, out)
         }
     }
 }
 
 fn load_base_directory(
-    root_dir: TrustedDir,
+    root_dir: &TrustedDir,
     scope: &BasePackScope<'_>,
     budget: &mut InvocationBudget,
     out: &mut Vec<Box<RawValue>>,
 ) -> Result<(), AuthoringFailure> {
-    let manifest = read_norn_manifest_from_dir(&root_dir, budget).map_err(AuthoringFailure::Io)?;
+    let manifest = read_norn_manifest_from_dir(root_dir, budget).map_err(AuthoringFailure::Io)?;
     if let Some(app_manifest) = manifest {
         let (org, env) =
             require_base_compile_scope(root_dir.display_path(), Some(&app_manifest), scope)?;
@@ -174,7 +174,7 @@ fn load_base_directory(
             tool_root: scope.tool_root,
             allow_empty: false,
         };
-        let compiled = compile_directory_pinned(&root_dir, Some(&app_manifest), &opts, budget)?;
+        let compiled = compile_directory_pinned(root_dir, Some(&app_manifest), &opts, budget)?;
         return push_json_artifacts(root_dir.display_path(), &compiled, out)
             .map_err(AuthoringFailure::Io);
     }
@@ -203,7 +203,7 @@ fn load_base_directory(
             tool_root: scope.tool_root,
             allow_empty: false,
         };
-        let compiled = compile_directory_pinned(&root_dir, None, &opts, budget)?;
+        let compiled = compile_directory_pinned(root_dir, None, &opts, budget)?;
         return push_json_artifacts(root_dir.display_path(), &compiled, out)
             .map_err(AuthoringFailure::Io);
     }
