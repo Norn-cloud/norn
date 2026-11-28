@@ -1,0 +1,14 @@
+--- a/artifact_governance.rs
++++ b/artifact_governance.rs
+@@ -208,8 +208,9 @@
+         ArtifactKind::SourceSchema => false,
+     };
+     let grants_runtime_authority = match *lifecycle {
+-        ArtifactLifecycle::Approved | ArtifactLifecycle::Active => true,
+-        ArtifactLifecycle::Draft
++        ArtifactLifecycle::Approved => true,
++        ArtifactLifecycle::Active
++        | ArtifactLifecycle::Draft
+         | ArtifactLifecycle::Proposed
+         | ArtifactLifecycle::Deprecated
+         | ArtifactLifecycle::Superseded

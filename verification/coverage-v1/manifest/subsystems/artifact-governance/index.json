@@ -7,7 +7,7 @@
   },
   "runtime": {
     "status": "partial",
-    "bound": "The predicate table covers all 7 ArtifactLifecycle variants for 15 ArtifactKind variants and 3 lifecycles for SourceSchema (108 calls); surrounding promotion/runtime obligations remain tested rather than exhaustive.",
+    "bound": "The predicate table covers all 7 ArtifactLifecycle variants for 16 authority-bearing ArtifactKind variants and 3 lifecycles for SourceSchema (115 calls); surrounding promotion/runtime obligations remain tested rather than exhaustive.",
     "artifacts": {
       "$entries": "runtime.artifacts"
     },
@@ -39,7 +39,7 @@
   },
   "proof": {
     "status": "partial",
-    "scope": "exact extracted predicate plus independent reference",
+    "scope": "inline Verus production predicate plus independent reference",
     "correspondenceArtifact": "crates/norn-ir/README.md",
     "artifacts": {
       "$entries": "proof.artifacts"

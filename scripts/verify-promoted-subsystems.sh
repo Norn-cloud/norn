@@ -559,10 +559,6 @@ run_gate fast artifact-governance-checker-receipt-lean \
   "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ArtifactVerificationReceipt.lean" \
   command \
   lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/ArtifactVerificationReceipt.lean
-run_gate full artifact-governance-rust-extraction \
-  "scripts/verify-artifact-governance-extraction.sh" \
-  command \
-  scripts/verify-artifact-governance-extraction.sh
 
 run_gate fast authorization-lean \
   "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/AuthorizationBoundary.lean" \

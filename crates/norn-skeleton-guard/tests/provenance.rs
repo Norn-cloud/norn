@@ -536,13 +536,13 @@ fn policy_fixture() -> Fixture {
     fixture.add("crates/norn-skeleton-guard/baseline.json", b"{}", "code");
     fixture.add(
         "crates/norn-ir/src/lib.rs",
-        b"pub enum ArtifactKind { Entity, Law }",
+        b"mod artifact_governance;\n",
         "code",
     );
     fixture.add(
-        "verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst",
-        b"let authority_bearing kind =\n  match kind with\n  | ArtifactKind_Entity\n  | ArtifactKind_Law -> true\nlet next = ()\n",
-        "generic-proof",
+        "crates/norn-ir/src/artifact_governance.rs",
+        b"pub enum ArtifactKind { Entity, Law }\n#[cfg(verus_keep_ghost)]\nverus! {\n    pub open spec fn authority_bearing(kind: ArtifactKind) -> bool {\n        match kind {\n            ArtifactKind::Entity | ArtifactKind::Law => true,\n        }\n    }\n}\n",
+        "code",
     );
     fixture.add(
         "crates/norn-checker/tests/non_code_literals.baseline.json",
@@ -1124,7 +1124,7 @@ fn trusted_policy_rejects_artifact_promotion_drift() {
         norn_skeleton_guard::ci::run(fixture.root(), fixture.root()).len(),
         0
     );
-    let path = "verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst";
+    let path = "crates/norn-ir/src/artifact_governance.rs";
     let record = fixture
         .records
         .iter()
@@ -1132,7 +1132,7 @@ fn trusted_policy_rejects_artifact_promotion_drift() {
         .expect("proof record");
     fixture.write(
         path,
-        b"let authority_bearing kind =\n  match kind with\n  | ArtifactKind_Entity -> true\nlet next = ()\n",
+        b"pub enum ArtifactKind { Entity, Law }\n#[cfg(verus_keep_ghost)]\nverus! {\n    pub open spec fn authority_bearing(kind: ArtifactKind) -> bool {\n        match kind {\n            ArtifactKind::Entity => true,\n        }\n    }\n}\n",
     );
     fixture.records[record]["sha256"] = fixture.reference(path)["sha256"].clone();
     fixture.save();

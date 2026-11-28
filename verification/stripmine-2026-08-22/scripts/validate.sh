@@ -179,10 +179,6 @@ if rg -n --glob '*.lean' '(^|[;[:space:]])(axiom|sorry|admit)([;[:space:]]|$)' "
   exit 1
 fi
 
-if rg -n --glob '*.fst' '^[[:space:]]*(assume|admit|axiom)([[:space:]]|$)' "$pack_dir/proofs/fstar"; then
-  exit 1
-fi
-
 printf 'validated %s sources, %s obligations, %s fixtures, %s sequences\n' \
   "$(jq '.sources | length' "$sources_file")" \
   "$(jq '.obligations | length' "$obligations_file")" \

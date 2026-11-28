@@ -7,41 +7,42 @@
 Obligation `INV-ART-DIRECT-WRITE-PREDICATE` is deliberately narrower than the
 artifact-promotion protocol. It binds one pure production Rust function:
 
-- source: `norn_ir::direct_artifact_write_allowed` in
-  `crates/norn-ir/src/lib.rs`;
-- extracted definition:
-  `target/verification-results/artifact-governance-hax/Norn_ir.fst`;
-- checked theorem:
-  `ArtifactPromotionProof.direct_artifact_write_truth_table` in
-  `verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst`.
+- source & inline Verus specification: `norn_ir::direct_artifact_write_allowed`,
+  `ArtifactKind`, `ArtifactLifecycle`, and the `verus!` truth-table lemmas in
+  `crates/norn-ir/src/artifact_governance.rs`;
+- promoted gate: `bash scripts/verify-kernel-inline-verus.sh all` (runs in
+  `phase/guards` on every pull request and in `scripts/verify-promoted-subsystems.sh`),
+  backed by `scripts/kernel_inline_verus.py`, `scripts/kernel_verus_ir.py`, and
+  the seeded negative mutants in `verification/mutants/artifact_governance/`.
 
-The promoted extraction command selects only that Rust symbol with hax, rejects
-proof holes/admitted SMT queries, checks the generated F* module, and then
-checks the total theorem. The theorem quantifies over all current 16
-`ArtifactKind` variants and all seven `ArtifactLifecycle` variants (112
-combinations). It proves that direct writes reject `Approved` and `Active` for
-the 15 authority-bearing kinds, including `Mapping` and `Labels`, while the
-evidence-only `SourceSchema` kind remains directly writable at every lifecycle.
+The inline Verus gate checks the pinned statement digest of
+`crates/norn-ir/src/artifact_governance.rs`, verifies the executable predicate
+and all five ghost lemmas with `--no-cheating --no-external-by-default
+-Zcrate-attr=verus::untrusted`, compares Verus's VIR against Cargo's release
+`norn-ir` THIR (D107), and requires each seeded negative mutant
+(`allow_approved_law`, `reject_source_schema`, `allow_active_write`) to fail at
+the `direct_artifact_write_truth_table` postcondition.
 
-The promoted Rust integration tests check 108 of those 112 combinations: the 15
+The theorem quantifies over all current 17 `ArtifactKind` variants and all seven
+`ArtifactLifecycle` variants (119 combinations, with no preconditions). It
+proves that direct writes reject `Approved` and `Active` for the 16
+authority-bearing kinds, including `Mapping`, `Law`, `DefinedConcept`, `Labels`,
+and `Model`, while the evidence-only `SourceSchema` kind remains directly
+writable at every lifecycle.
+
+The promoted Rust integration tests check 115 of those 119 combinations: the 16
 authority-bearing kinds for `Draft`, `Proposed`, `Approved`, and `Active`, then
-all 16 kinds for `Deprecated`, `Superseded`, and `Rejected`. They do not assert
-`SourceSchema` with `Draft`, `Proposed`, `Approved`, or `Active`; only the
-kind-by-lifecycle theorem covers those four.
+all 17 kinds for `Deprecated`, `Superseded`, and `Rejected`. They do not assert
+`SourceSchema` with `Draft`, `Proposed`, `Approved`, or `Active`; the inline
+Verus truth-table theorem and `source_schema_always_directly_writable` lemma
+cover those four directly.
 
-Until #969 provides an isolated producer, this obligation is an "F\* re-checked
-theorem about the uploaded model, correspondence candidate-reported", recorded
-as `partial`. A fresh verifier re-typechecks the uploaded F\* module and the
-theorem with its own pinned F\*, but hax runs on a producer that compiles
-candidate code, so whether that module is the extraction of the Rust function is
-only candidate-reported. `implementation_proved` returns only via #969.
-
-The claim covers that predicate and those extracted representations only. It
-does not prove that every API or storage callsite uses
-the predicate, that a caller derived the kind/lifecycle faithfully, or that the
-BAC approval, verification-receipt, active-pointer, persistence, authentication,
+The claim covers that predicate and its verified Rust source only. It does not
+prove that every API or storage callsite uses the predicate, that a caller
+derived the kind/lifecycle faithfully, or that the BAC approval,
+verification-receipt, active-pointer, persistence, authentication,
 authorization, or concurrency protocols are correct. Those remain under
-`INV-ART-AUTHORITY-PROMOTION`, which stays `partial`. A future enum variant or
-predicate representation change must regenerate the hax artifact and re-check
-the total theorem and the runtime table before this obligation can
-return to `implementation_proved`.
+`INV-ART-AUTHORITY-PROMOTION`, which stays `partial`. Any future enum variant or
+predicate representation change must update the exhaustive matches, the pinned
+statement digest, and the runtime table so both rustc and Verus re-check the
+complete truth table.
