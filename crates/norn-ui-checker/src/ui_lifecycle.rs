@@ -653,7 +653,10 @@ impl Page<'_> {
                 }
             })
             .collect();
-        DiagnosticWitness { steps }
+        DiagnosticWitness {
+            steps,
+            counterexample: None,
+        }
     }
 
     /// A product run as the steps of each side.

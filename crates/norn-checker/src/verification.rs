@@ -255,12 +255,15 @@ pub fn check_law_set(
                 } else {
                     "an installed law is closed: another artifact cannot add or change its exceptions; narrow your own law instead"
                 };
-                out.push(finding(
-                    codes::WEAKENS_INHERITED,
-                    artifact,
-                    "/payload/id",
+                let mut diagnostic =
+                    finding(codes::WEAKENS_INHERITED, artifact, "/payload/id", message);
+                diagnostic.witness = Some(crate::DiagnosticWitness::core_law_weakening(
+                    artifact.artifact_id.clone(),
+                    law.id.clone(),
+                    inherited.id.clone(),
                     message,
                 ));
+                out.push(diagnostic);
             }
         }
         if closure_refused {
@@ -831,14 +834,16 @@ impl LawContext<'_> {
             out.extend(findings);
             return;
         }
-        if let Some(interface) = self
+        let interface = self
             .layer
             .interfaces
             .iter()
-            .find(|i| i.name.as_str() == law.subject)
-        {
+            .find(|i| i.name.as_str() == law.subject);
+        let is_interface_law = interface.is_some_and(|interface| {
+            let before = out.len();
             self.check_interface(law, artifact, interface, out);
-        }
+            out.len() == before
+        });
         for name in targets {
             let Some(Ok(subject)) = self.catalog.object_type_named(&name) else {
                 out.push(finding(
@@ -850,7 +855,7 @@ impl LawContext<'_> {
                 continue;
             };
             self.check_scope(law, artifact, subject, out);
-            self.check_predicates(law, artifact, subject, out);
+            self.check_predicates(law, artifact, subject, is_interface_law, out);
         }
     }
 
@@ -1009,52 +1014,42 @@ impl LawContext<'_> {
             ));
             return;
         };
-        if let Some(condition) = &law.condition {
-            predicate(
-                condition.as_str(),
-                &env,
-                artifact,
-                "/payload/condition",
-                out,
-            );
+        let check = PredicateCheck {
+            env: &env,
+            artifact,
+            inherited: false,
+        };
+        let cond = law.condition.as_ref().map(norn_ir::ZenExpression::as_str);
+        if let Some(condition) = cond {
+            check.pred(condition, "/payload/condition", out);
         }
         for (index, exception) in law.exceptions.iter().enumerate() {
-            guarded_predicate(
+            check.guarded(
                 exception.condition.as_str(),
-                law.condition.as_ref().map(norn_ir::ZenExpression::as_str),
-                &env,
-                artifact,
+                cond,
                 &format!("/payload/exceptions/{index}/condition"),
                 out,
             );
         }
         if let LawModality::Until { predicate: stop } = &law.modality {
-            predicate(
-                stop.as_str(),
-                &env,
-                artifact,
-                "/payload/modality/predicate",
-                out,
-            );
+            check.pred(stop.as_str(), "/payload/modality/predicate", out);
         }
-        self.check_interface_response(law, artifact, &owners, &env, out);
+        self.check_interface_response(law, &owners, &check, out);
         link_reads(law, artifact, interface.name.as_str(), &env, out);
     }
 
     fn check_interface_response(
         &self,
         law: &LawIR,
-        artifact: &ArtifactEnvelope,
         owners: &[&norn_ir::InterfaceDef],
-        env: &ZenTypeEnv,
+        check: &PredicateCheck<'_>,
         out: &mut Vec<Diagnostic>,
     ) {
+        let artifact = check.artifact;
         match &law.response {
-            LawResponse::Predicate { expression } => guarded_predicate(
+            LawResponse::Predicate { expression } => check.guarded(
                 expression.as_str(),
                 law.condition.as_ref().map(norn_ir::ZenExpression::as_str),
-                env,
-                artifact,
                 "/payload/response/expression",
                 out,
             ),
@@ -1074,13 +1069,7 @@ impl LawContext<'_> {
                         "invariant is not declared by the interface contract",
                     ));
                 } else if let Some(invariant) = invariant {
-                    predicate(
-                        invariant.expression.as_str(),
-                        env,
-                        artifact,
-                        "/payload/response",
-                        out,
-                    );
+                    check.pred(invariant.expression.as_str(), "/payload/response", out);
                 }
             }
             LawResponse::Action { artifact_id } => {
@@ -1117,35 +1106,34 @@ impl LawContext<'_> {
         law: &LawIR,
         artifact: &ArtifactEnvelope,
         subject: &crate::EffectiveObjectType,
+        inherited: bool,
         out: &mut Vec<Diagnostic>,
     ) {
         let bound_env = self
             .env
             .and_then(|env| env.clone().bind_self(&subject.name).ok());
         if let Some(env) = &bound_env {
-            if let Some(condition) = &law.condition {
-                predicate(condition.as_str(), env, artifact, "/payload/condition", out);
+            let check = PredicateCheck {
+                env,
+                artifact,
+                inherited,
+            };
+            let cond = law.condition.as_ref().map(norn_ir::ZenExpression::as_str);
+            if let Some(condition) = cond {
+                check.pred(condition, "/payload/condition", out);
             }
             for (index, exception) in law.exceptions.iter().enumerate() {
-                guarded_predicate(
+                check.guarded(
                     exception.condition.as_str(),
-                    law.condition.as_ref().map(norn_ir::ZenExpression::as_str),
-                    env,
-                    artifact,
+                    cond,
                     &format!("/payload/exceptions/{index}/condition"),
                     out,
                 );
             }
             if let LawModality::Until { predicate: stop } = &law.modality {
-                predicate(
-                    stop.as_str(),
-                    env,
-                    artifact,
-                    "/payload/modality/predicate",
-                    out,
-                );
+                check.pred(stop.as_str(), "/payload/modality/predicate", out);
             }
-            self.check_response(law, artifact, subject, env, out);
+            self.check_response(law, subject, &check, out);
             link_reads(law, artifact, subject.name.as_str(), env, out);
             if let Some(LawTiming::BeforeDeadline { property }) = &law.timing
                 && !env
@@ -1176,17 +1164,15 @@ impl LawContext<'_> {
     fn check_response(
         &self,
         law: &LawIR,
-        artifact: &ArtifactEnvelope,
         subject: &crate::EffectiveObjectType,
-        env: &ZenTypeEnv,
+        check: &PredicateCheck<'_>,
         out: &mut Vec<Diagnostic>,
     ) {
+        let artifact = check.artifact;
         match &law.response {
-            LawResponse::Predicate { expression } => guarded_predicate(
+            LawResponse::Predicate { expression } => check.guarded(
                 expression.as_str(),
                 law.condition.as_ref().map(norn_ir::ZenExpression::as_str),
-                env,
-                artifact,
                 "/payload/response/expression",
                 out,
             ),
@@ -1216,13 +1202,7 @@ impl LawContext<'_> {
                         "invariant identity is absent from the subject's effective contract",
                     ));
                 } else if let Some(invariant) = invariant {
-                    predicate(
-                        invariant.expression.as_str(),
-                        env,
-                        artifact,
-                        "/payload/response",
-                        out,
-                    );
+                    check.pred(invariant.expression.as_str(), "/payload/response", out);
                 }
             }
             LawResponse::Action { artifact_id } => {
@@ -1333,22 +1313,59 @@ fn pinned(owner: &ArtifactEnvelope, target: &ArtifactEnvelope) -> bool {
         })
 }
 
-fn predicate(
-    source: &str,
-    env: &ZenTypeEnv,
-    artifact: &ArtifactEnvelope,
-    pointer: &str,
-    out: &mut Vec<Diagnostic>,
-) {
-    let result = Expression::compile(source)
-        .map_err(|e| e.to_string())
-        .and_then(|expr| {
-            check_expression(&expr, env, &Type::Bool)
+struct PredicateCheck<'a> {
+    env: &'a ZenTypeEnv,
+    artifact: &'a ArtifactEnvelope,
+    /// True only when re-checking an already-validated interface law on one of
+    /// its concrete implementors, where properties may validly narrow `T? -> T`.
+    inherited: bool,
+}
+
+impl PredicateCheck<'_> {
+    fn pred(&self, source: &str, pointer: &str, out: &mut Vec<Diagnostic>) {
+        self.guarded(source, None, pointer, out);
+    }
+
+    /// A law's exception conditions and response are evaluated only when its
+    /// condition holds, so they are checked with every read path the condition
+    /// proves non-null as non-null (`when: self.link != null`, then `self.link.amount`).
+    fn guarded(
+        &self,
+        source: &str,
+        condition: Option<&str>,
+        pointer: &str,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let guard = condition.and_then(|cond| Expression::compile(cond).ok());
+        let result = Expression::compile(source)
+            .map_err(|e| e.to_string())
+            .and_then(|expr| {
+                match (self.inherited, guard.as_ref()) {
+                    (true, Some(cond)) => norn_expr::check_inherited_expression_under(
+                        &expr,
+                        cond,
+                        self.env,
+                        &Type::Bool,
+                    ),
+                    (true, None) => {
+                        norn_expr::check_inherited_expression(&expr, self.env, &Type::Bool)
+                    }
+                    (false, Some(cond)) => {
+                        norn_expr::check_expression_under(&expr, cond, self.env, &Type::Bool)
+                    }
+                    (false, None) => check_expression(&expr, self.env, &Type::Bool),
+                }
                 .map(|_| ())
                 .map_err(|e| format!("{e:?}"))
-        });
-    if let Err(error) = result {
-        out.push(finding(codes::PREDICATE_TYPE, artifact, pointer, error));
+            });
+        if let Err(error) = result {
+            out.push(finding(
+                codes::PREDICATE_TYPE,
+                self.artifact,
+                pointer,
+                error,
+            ));
+        }
     }
 }
 
@@ -1517,33 +1534,6 @@ fn element_read_refusal(
             "LAW-LINK-MANY-1: `self.{name}` elements' `{member}` is a second hop; a law reads an inverse role's sources' own properties only"
         )
     })
-}
-
-/// A law's exception conditions and response are evaluated only when its
-/// condition holds, so they are checked with every read path the condition
-/// proves non-null as non-null (`when: self.link != null`, then `self.link.amount`).
-fn guarded_predicate(
-    source: &str,
-    condition: Option<&str>,
-    env: &ZenTypeEnv,
-    artifact: &ArtifactEnvelope,
-    pointer: &str,
-    out: &mut Vec<Diagnostic>,
-) {
-    let Some(condition) = condition.and_then(|condition| Expression::compile(condition).ok())
-    else {
-        return predicate(source, env, artifact, pointer, out);
-    };
-    let result = Expression::compile(source)
-        .map_err(|e| e.to_string())
-        .and_then(|expr| {
-            norn_expr::check_expression_under(&expr, &condition, env, &Type::Bool)
-                .map(|_| ())
-                .map_err(|e| format!("{e:?}"))
-        });
-    if let Err(error) = result {
-        out.push(finding(codes::PREDICATE_TYPE, artifact, pointer, error));
-    }
 }
 
 pub use norn_ir::explain::LawWriter;

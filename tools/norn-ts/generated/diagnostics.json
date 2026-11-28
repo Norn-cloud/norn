@@ -1097,6 +1097,46 @@
       "no_fix": null
     },
     {
+      "code": "core.laws.constitutional_defeat",
+      "tier": "T3",
+      "severity": "error",
+      "message": "downstream declaration attempts to weaken, shadow, except, or defeat a core constitutional law",
+      "fix": "Keep the inherited core law intact without overriding, shadowing, excepting, or contradicting it; express any stricter downstream requirement as a separate conjunctive law.",
+      "no_fix": null
+    },
+    {
+      "code": "core.laws.enrollment_gap",
+      "tier": "T3",
+      "severity": "error",
+      "message": "specializing concept failed to enroll an applicable core constitutional law in its effective law closure",
+      "fix": "Ensure the specializing concept explicitly declares all required core interface members and links so every inherited core law binds and enrolls cleanly.",
+      "no_fix": null
+    },
+    {
+      "code": "core.laws.missing_required_link_binding",
+      "tier": "T3",
+      "severity": "error",
+      "message": "create action for a core-specializing concept omits a required core link binding",
+      "fix": "Bind every required core interface link in the action's createLinks list (with its authorized target slice) or emit the link from the action's synchronous rule.",
+      "no_fix": null
+    },
+    {
+      "code": "core.laws.preservation_unknown",
+      "tier": "T3",
+      "severity": "error",
+      "message": "finite core-law preservation check exhausted its bounded exploration budget",
+      "fix": "Reduce the finite state or input combination space referenced by governing core laws, or constrain the action inputs with tighter schemas or preconditions so bounded preservation completes.",
+      "no_fix": null
+    },
+    {
+      "code": "core.laws.preservation_violated",
+      "tier": "T3",
+      "severity": "error",
+      "message": "writer or lifecycle transition violates an inherited core constitutional law",
+      "fix": "Update the action derivations, transition setFields, synchronous rule writes, lifecycle transitions, or preconditions so the witnessed counterexample satisfies every inherited core law.",
+      "no_fix": null
+    },
+    {
       "code": "core.laws.stale_evidence",
       "tier": "T3",
       "severity": "error",

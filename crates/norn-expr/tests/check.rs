@@ -2885,3 +2885,136 @@ fn literal_table_lookup_admits_non_null_string_key_and_refuses_invalid_shapes()
         .map_err(|errors| format!("guarded optional-link comparison failed: {errors:?}"))?;
     Ok(())
 }
+
+#[test]
+fn inherited_expression_permits_narrowed_null_checks_without_weakening_strict_mode()
+-> Result<(), Box<dyn std::error::Error>> {
+    let env = ZenTypeEnv::input_only_with_records(
+        std::collections::BTreeMap::from([(
+            "test.Resource".to_owned(),
+            std::collections::BTreeMap::from([
+                ("unit".to_owned(), Type::text()),
+                ("currency".to_owned(), Type::text().optional()),
+            ]),
+        )]),
+        std::collections::BTreeMap::from([
+            ("unit".to_owned(), Type::text()),
+            ("maybe_unit".to_owned(), Type::text().optional()),
+            (
+                "resource".to_owned(),
+                Type::Record("test.Resource".to_owned()),
+            ),
+            (
+                "maybe_link".to_owned(),
+                Type::Record("test.Resource".to_owned()).optional(),
+            ),
+        ]),
+        EnvOptions::default(),
+    )?;
+
+    let check_inherited =
+        |source: &str, expected: &Type| -> Result<InferredType, Vec<&'static str>> {
+            let expr = Expression::compile(source).map_err(|_compile_error| vec![codes::SYNTAX])?;
+            norn_expr::check_inherited_expression(&expr, &env, expected)
+                .map_err(|diagnostics| diagnostics.iter().map(|d| d.code).collect())
+        };
+
+    // Strict checking keeps refusing non-null `== null`, `!= null`, and `??`.
+    assert_eq!(
+        check(&env, "input.unit == null", &Type::Bool),
+        Err(vec![codes::CONSTANT_COMPARISON])
+    );
+    assert_eq!(
+        check(&env, "input.unit != null", &Type::Bool),
+        Err(vec![codes::CONSTANT_COMPARISON])
+    );
+    assert_eq!(
+        check(&env, "null == input.unit", &Type::Bool),
+        Err(vec![codes::CONSTANT_COMPARISON])
+    );
+    assert_eq!(
+        check(&env, "input.unit ?? ''", &Type::text()),
+        Err(vec![codes::TYPE_ERROR])
+    );
+    assert_eq!(
+        check(&env, "input.resource.unit == null", &Type::Bool),
+        Err(vec![codes::CONSTANT_COMPARISON])
+    );
+    assert_eq!(
+        check(&env, "input.resource.unit ?? ''", &Type::text()),
+        Err(vec![codes::TYPE_ERROR])
+    );
+
+    // Inherited checking accepts validly narrowed `T? -> T` null comparisons and fallbacks.
+    assert_eq!(
+        check_inherited("input.unit == null", &Type::Bool),
+        Ok(InferredType::Bool)
+    );
+    assert_eq!(
+        check_inherited("input.unit != null", &Type::Bool),
+        Ok(InferredType::Bool)
+    );
+    assert_eq!(
+        check_inherited("null == input.unit", &Type::Bool),
+        Ok(InferredType::Bool)
+    );
+    assert_eq!(
+        check_inherited("input.unit ?? ''", &Type::text()),
+        Ok(InferredType::String)
+    );
+    assert_eq!(
+        check_inherited(
+            "((input.maybe_unit == null) == (input.resource.unit == null)) and ((input.maybe_unit ?? '') == (input.resource.unit ?? ''))",
+            &Type::Bool,
+        ),
+        Ok(InferredType::Bool)
+    );
+
+    // Guarded inherited checking works cleanly whether the condition's path is still optional
+    // or already narrowed to non-null on the specializing subtype.
+    let narrowed_cond = Expression::compile("input.resource != null")?;
+    let narrowed_body = Expression::compile(
+        "(input.resource.unit == null) or ((input.resource.unit ?? '') == '')",
+    )?;
+    norn_expr::check_inherited_expression_under(&narrowed_body, &narrowed_cond, &env, &Type::Bool)
+        .map_err(|errors| format!("narrowed guarded check failed: {errors:?}"))?;
+
+    let optional_cond = Expression::compile("input.maybe_link != null")?;
+    let optional_body = Expression::compile(
+        "((input.unit == null) == (input.maybe_link.unit == null)) and ((input.unit ?? '') == (input.maybe_link.unit ?? ''))",
+    )?;
+    norn_expr::check_inherited_expression_under(&optional_body, &optional_cond, &env, &Type::Bool)
+        .map_err(|errors| format!("optional guarded check failed: {errors:?}"))?;
+
+    // Inherited checking STILL refuses literal `null` checks, mismatched fallbacks, and
+    // unguarded nullable dereferences.
+    assert_eq!(
+        check_inherited("null == null", &Type::Bool),
+        Err(vec![codes::CONSTANT_COMPARISON])
+    );
+    assert_eq!(
+        check_inherited("null != null", &Type::Bool),
+        Err(vec![codes::CONSTANT_COMPARISON])
+    );
+    assert_eq!(
+        check_inherited("null ?? ''", &Type::text()),
+        Err(vec![codes::TYPE_ERROR])
+    );
+    assert_eq!(
+        check_inherited("input.unit ?? 42", &Type::text()),
+        Err(vec![codes::TYPE_ERROR])
+    );
+    assert_eq!(
+        check_inherited("input.unit ?? null", &Type::text()),
+        Err(vec![codes::NULLABLE])
+    );
+    assert_eq!(
+        check_inherited("input.maybe_link.unit == ''", &Type::Bool),
+        Err(vec![codes::NULLABLE])
+    );
+    assert_eq!(
+        check_inherited("input.maybe_unit == ''", &Type::Bool),
+        Err(vec![codes::NULLABLE])
+    );
+    Ok(())
+}
