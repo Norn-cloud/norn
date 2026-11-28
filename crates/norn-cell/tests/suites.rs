@@ -46,6 +46,8 @@ mod dataset_laws_datafusion;
 mod definition_scope;
 #[path = "dirty_data_wedge.rs"]
 mod dirty_data_wedge;
+#[path = "fork_merge.rs"]
+mod fork_merge;
 #[path = "fork_questions.rs"]
 mod fork_questions;
 #[path = "fork_scenarios.rs"]

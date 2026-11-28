@@ -142,11 +142,13 @@ pub(crate) struct VerifiedHistory {
 
 impl<E: SqlEngine> CellStore<E> {
     /// S12 (#1551 round 5): retry any pending fence persistence and fail closed
-    /// on either a local or durable fence (sibling handle).
+    /// on either a local or durable fence (sibling handle), or a closed fork
+    /// (FORK-LIFE-1).
     pub(crate) fn check_writable(&self) -> Result<(), CellError> {
         self.persist_pending_fence();
         self.scrub.borrow().refuse_fenced()?;
-        open_checkpoint::check_fence(&self.conn)
+        open_checkpoint::check_fence(&self.conn)?;
+        self.refuse_closed_fork()
     }
 
     /// Run `f` inside a transaction after checking local and durable fences.
@@ -157,6 +159,7 @@ impl<E: SqlEngine> CellStore<E> {
         self.check_writable()?;
         self.conn.transaction(|| {
             open_checkpoint::check_fence(&self.conn)?;
+            self.refuse_closed_fork()?;
             f()
         })
     }
@@ -193,11 +196,13 @@ impl<E: SqlEngine> CellStore<E> {
         self.scrub.borrow().gate()
     }
 
-    /// Served reader carrying the history gate and live fence tracking (S12).
+    /// Served reader carrying the history gate, live fence tracking (S12),
+    /// and live fork-state gate (FORK-LIFE-1).
     pub(crate) fn served_reader(&self) -> StoreReader<'_, E> {
         self.verifier()
             .with_history_gate(self.served_gate())
             .with_live_scrub(&self.scrub)
+            .with_live_fork(self.fork.as_ref(), &self.fork_state)
     }
 
     /// Complete open/provisioning-replay checkpoint recording and scrub setup.

@@ -271,6 +271,12 @@
       },
       {
         "id": "order",
+        "lifecycles": [
+          {
+            "property": "status",
+            "state": "'promised'"
+          }
+        ],
         "links": [
           {
             "key": "input.provider_ref",
@@ -300,10 +306,6 @@
           {
             "property": "currency",
             "value": "null"
-          },
-          {
-            "property": "status",
-            "value": "'promised'"
           },
           {
             "property": "due_at",

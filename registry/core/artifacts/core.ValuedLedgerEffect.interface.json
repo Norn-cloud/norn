@@ -1,0 +1,51 @@
+{
+  "artifactId": "core.ValuedLedgerEffect.interface",
+  "dependencies": [
+    {
+      "artifactId": "core.LedgerEffect.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "core.ValuedEvent.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Valued ledger effect",
+  "namespace": "core",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "A signed ledger effect bound to a `core.ValuedEvent` whose currency must match the event's `valuation_currency` so `core.ValuedEvent.effects_balance` never nets unlike currencies.",
+      "extends": [
+        "core.LedgerEffect"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "The valued economic event this ledger effect belongs to.",
+          "id": "event",
+          "target": "core.ValuedEvent"
+        }
+      ],
+      "name": "core.ValuedLedgerEffect",
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/core/artifacts/core.ValuedLedgerEffect.interface.json"
+  },
+  "scope": {},
+  "version": "0.2.0"
+}

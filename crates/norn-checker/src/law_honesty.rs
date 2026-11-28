@@ -1,10 +1,12 @@
 //! Honest per-law enforcement and proof classification (`LAW-HONESTY-1`).
 //!
-//! Mirrors `norn-kernel/src/governing_laws.rs` commit-path rules 1:1 so
+//! Delegates to [`crate::law_support::classify_law_support`] (shared 1:1 with
+//! `norn-kernel/src/governing_laws.rs` and `norn-cell/src/migration.rs`) so
 //! `norn check`, WASM consumers, and `CheckReceipt` projections never conflate
 //! "structurally admitted" with "enforced at commit" or "formally proved".
 
-use norn_ir::{ArtifactEnvelope, ArtifactKind, LawIR, LawModality, LawResponse, LawRoot};
+use crate::law_support::classify_law_support;
+use norn_ir::{ArtifactEnvelope, ArtifactKind, LawIR};
 use serde_json::{Map, Value, json};
 
 /// Whether `norn-kernel` enforces this law on every commit.
@@ -96,17 +98,18 @@ impl LawReceiptEntry {
     }
 }
 
-/// Classifies one decoded [`LawIR`] against the exact commit-path support rules
-/// of `norn-kernel/src/governing_laws.rs` (both `supported` and single-entity
-/// scope gating).
+/// Classifies one decoded [`LawIR`] against the shared
+/// [`crate::law_support::classify_law_support`] rules used by
+/// `norn-kernel/src/governing_laws.rs` and `norn-cell/src/migration.rs`.
 ///
 /// Leaves [`LawReceiptEntry::proof`] at [`LawProofStatus::Unknown`] because this
 /// helper inspects the decoded law shape without running full artifact-set
 /// admission; callers that have admitted the set may promote `proof`.
 #[must_use]
 pub fn classify_law(artifact_id: &str, law: &LawIR) -> LawReceiptEntry {
-    let unsupported_reason = declared_only_reason(law);
-    let enforcement = if unsupported_reason.is_none() {
+    let support = classify_law_support(law);
+    let unsupported_reason = support.runtime.reason();
+    let enforcement = if support.runtime.is_executable() {
         LawEnforcementStatus::Enforced
     } else {
         LawEnforcementStatus::DeclaredOnly
@@ -118,45 +121,6 @@ pub fn classify_law(artifact_id: &str, law: &LawIR) -> LawReceiptEntry {
         proof: LawProofStatus::Unknown,
         evidence_digest: None,
         reason: unsupported_reason.map(str::to_owned),
-    }
-}
-
-fn declared_only_reason(law: &LawIR) -> Option<&'static str> {
-    if !matches!(&law.scope.root, LawRoot::Entity(name) if *name == law.subject) {
-        return Some("only single-entity root laws are enforced on commit");
-    }
-    if law.scope.object_types != [law.subject.as_str()] {
-        return Some("multi-type or non-subject scope.objectTypes are not enforced on commit");
-    }
-    if !law.exceptions.is_empty() {
-        return Some("exception trees have no commit-path fold yet");
-    }
-    if law.timing.is_some() {
-        return Some("timed/deadline laws are not enforced on commit");
-    }
-    if !law.scope.lifecycle_states.is_empty() {
-        return Some("lifecycle-state scoped laws are not enforced on commit");
-    }
-    if !law.scope.commitments.is_empty() {
-        return Some("commitment-scoped laws are not enforced on commit");
-    }
-    if !matches!(law.modality, LawModality::Always {} | LawModality::Never {}) {
-        return Some("temporal modalities (eventually/until) are declared-only");
-    }
-    match &law.response {
-        LawResponse::Predicate { .. } => None,
-        LawResponse::Invariant { .. } => {
-            if matches!(law.modality, LawModality::Always {}) && law.condition.is_none() {
-                None
-            } else {
-                Some("conditional or non-always invariant responses are declared-only")
-            }
-        }
-        LawResponse::Action { .. }
-        | LawResponse::Transition { .. }
-        | LawResponse::TranslationPreserves { .. } => {
-            Some("action, transition, and translation law responses are declared-only")
-        }
     }
 }
 
