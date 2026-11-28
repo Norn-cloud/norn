@@ -402,10 +402,14 @@ if (command !== "check" && command !== "compile") {}
             fm.extract_gate_surfaces(self.tmp)
 
     def test_invariant_symbol_validation(self):
-        # Populate Rust file with a top-level constant outside ArtifactKind, struct, and impl methods.
+        # Populate Rust file with inner attr, static mut, spaced macro_rules!, top-level constant, struct, and impl methods.
         (self.tmp / "crates/norn-ir/src/lib.rs").write_text(
-            """
+            """#![allow(dead_code)]
 pub const SUPPORTED_IR_VERSION: &str = "0.1";
+static mut COUNTER: usize = 0;
+macro_rules !demo_macro {
+    () => {};
+}
 
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactKind {
@@ -437,9 +441,15 @@ Action requests carry `idempotencyKey` in the JSON body.
 
 <!-- # commented-inline-heading -->
 
+<!-- x --> ## Phantom Inline
+
 <!--
 ## commented-multiline-heading
--->
+--> ## Phantom Closing
+
+    <!-- literal html comment opener inside indented code block
+
+## Heading After Indented Comment
 
 \t## tab-indented-code-heading
 
@@ -452,17 +462,20 @@ Action requests carry `idempotencyKey` in the JSON body.
             encoding="utf-8",
         )
 
-        # Present symbols (top-level type, enum variant, impl method/const, struct field, real Markdown heading) pass.
+        # Present symbols (top-level type, static mut, spaced macro_rules!, enum variant, impl method/const, struct field, real Markdown headings) pass.
         feat_ok = _base_feature(
             invariants=[
                 "demo-gate",
                 "checker:crates/norn-ir/src/lib.rs::ArtifactKind",
+                "checker:crates/norn-ir/src/lib.rs::COUNTER",
+                "checker:crates/norn-ir/src/lib.rs::demo_macro",
                 "checker:crates/norn-ir/src/lib.rs::ArtifactKind::Entity",
                 "checker:crates/norn-ir/src/lib.rs::ArtifactKind::as_str",
                 "checker:crates/norn-ir/src/lib.rs::ArtifactKind::DEFAULT_KIND",
                 "checker:crates/norn-ir/src/lib.rs::Envelope::kind",
                 "law:docs/spec/core/01-values-identity.md#spec",
                 "law:docs/spec/core/01-values-identity.md#action-wire-contract",
+                "law:docs/spec/core/01-values-identity.md#heading-after-indented-comment",
             ]
         )
         _write_domain(self.tmp, [feat_ok])
@@ -510,10 +523,12 @@ Action requests carry `idempotencyKey` in the JSON body.
         with self.assertRaisesRegex(fm.FeatureMapError, r"cited symbol 'fake-code-heading' not found"):
             fm.load_registry(self.tmp)
 
-        # Headings inside HTML comments or indented code (tab or 4 spaces) MUST be refused.
+        # Headings inside HTML comments (including after `-->` on the same line) or indented code MUST be refused.
         for fake_slug in (
             "commented-inline-heading",
+            "phantom-inline",
             "commented-multiline-heading",
+            "phantom-closing",
             "tab-indented-code-heading",
             "space-indented-code-heading",
         ):
@@ -524,13 +539,14 @@ Action requests carry `idempotencyKey` in the JSON body.
             with self.assertRaisesRegex(fm.FeatureMapError, rf"cited symbol '{fake_slug}' not found"):
                 fm.load_registry(self.tmp)
 
-        # Calling `admit()` inside a function body MUST NOT satisfy `::admit` without an actual declaration.
-        feat_call_only = _base_feature(
-            invariants=["demo-gate", "checker:crates/norn-ir/src/lib.rs::admit"]
-        )
-        _write_domain(self.tmp, [feat_call_only])
-        with self.assertRaisesRegex(fm.FeatureMapError, r"cited symbol 'admit' not found"):
-            fm.load_registry(self.tmp)
+        # Calling `admit()` or `static mut`'s keyword `mut` MUST NOT satisfy `::admit` or `::mut`.
+        for fake_rust in ("admit", "mut"):
+            feat_bad = _base_feature(
+                invariants=["demo-gate", f"checker:crates/norn-ir/src/lib.rs::{fake_rust}"]
+            )
+            _write_domain(self.tmp, [feat_bad])
+            with self.assertRaisesRegex(fm.FeatureMapError, rf"cited symbol '{fake_rust}' not found"):
+                fm.load_registry(self.tmp)
 
     def test_digest_tracks_gate_quint_models_invariant_files_and_ts_cli_sources(self):
         # 1. Promoted gate Quint model file (resolved from promoted-gates.json command + coverage manifest)

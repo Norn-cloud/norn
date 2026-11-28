@@ -1235,7 +1235,7 @@ def staleness_info(
 
 
 def _markdown_heading_slugs(text: str) -> set[str]:
-    """Return GitHub heading anchor slugs from actual ATX Markdown headings outside fenced code and HTML comments."""
+    """Return GitHub heading anchor slugs from actual ATX Markdown headings outside fenced/indented code and HTML comments."""
     slugs: set[str] = set()
     counts: dict[str, int] = {}
     fence_char: str | None = None
@@ -1250,30 +1250,26 @@ def _markdown_heading_slugs(text: str) -> set[str]:
                     fence_char = None
                     fence_len = 0
             continue
-        line = raw_line
         if in_html_comment:
-            end_idx = line.find("-->")
-            if end_idx == -1:
-                continue
-            line = line[end_idx + 3 :]
-            in_html_comment = False
-        # Strip inline HTML comments and handle opening multi-line HTML comments.
-        while "<!--" in line:
-            start_idx = line.find("<!--")
-            end_idx = line.find("-->", start_idx + 4)
-            if end_idx == -1:
-                line = line[:start_idx]
-                in_html_comment = True
-                break
-            line = line[:start_idx] + line[end_idx + 3 :]
-        fence_match = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+            if "-->" in raw_line:
+                in_html_comment = False
+            continue
+        fence_match = re.match(r"^ {0,3}(`{3,}|~{3,})", raw_line)
         if fence_match:
             marker = fence_match.group(1)
             fence_char = marker[0]
             fence_len = len(marker)
             continue
-        # Only 0-3 ASCII spaces may precede an ATX heading; leading tabs or 4+ spaces are indented code.
-        heading_match = re.match(r"^ {0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+[ \t]*)?$", line)
+        # Indented code blocks (leading tab or 4+ spaces) are neither HTML comment blocks nor ATX headings.
+        if raw_line.startswith("\t") or raw_line.startswith("    "):
+            continue
+        # CommonMark type-2 HTML comment block starts at 0-3 spaces + `<!--`; the entire closing `-->` line ends the block.
+        comment_match = re.match(r"^ {0,3}<!--", raw_line)
+        if comment_match:
+            if "-->" not in raw_line[comment_match.end() :]:
+                in_html_comment = True
+            continue
+        heading_match = re.match(r"^ {0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+[ \t]*)?$", raw_line)
         if not heading_match:
             continue
         raw = heading_match.group(1)
@@ -1427,10 +1423,10 @@ def _rust_top_level_declared_items(body: str, *, kinds: tuple[str, ...]) -> set[
     paren = bracket = 0
     kind_set = set(kinds)
     decl_re = re.compile(
-        r"^(?:(?:pub(?:\([^)]*\))?|default|async|unsafe|extern(?:\s+\"[^\"]*\")?)\s+)*"
-        r"(const\s+(?:unsafe\s+)?fn|fn|const|type|static|struct|enum|trait|mod)\s+([A-Za-z_][A-Za-z0-9_]*)\b"
+        r"^(?:(?:pub(?:\([^)]*\))?|default|async|unsafe|const(?=\s+(?:unsafe\s+|async\s+|extern\b|fn\b))|extern(?:\s+\"[^\"]*\")?)\s+)*"
+        r"(fn|const|type|static(?:\s+mut)?|struct|enum|trait|mod)\s+([A-Za-z_][A-Za-z0-9_]*)\b"
     )
-    macro_re = re.compile(r"^macro_rules!\s+([A-Za-z_][A-Za-z0-9_]*)\b")
+    macro_re = re.compile(r"^macro_rules\s*!\s*([A-Za-z_][A-Za-z0-9_]*)\b")
 
     def record(raw_stmt: str) -> None:
         stmt = _strip_leading_rust_attrs(raw_stmt)
@@ -1445,7 +1441,7 @@ def _rust_top_level_declared_items(body: str, *, kinds: tuple[str, ...]) -> set[
         if not match:
             return
         raw_kind = match.group(1)
-        kind = "fn" if raw_kind.endswith("fn") else raw_kind
+        kind = "static" if raw_kind.startswith("static") else raw_kind
         if kind in kind_set:
             items.add(match.group(2))
 
