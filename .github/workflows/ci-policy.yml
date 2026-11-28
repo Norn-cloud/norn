@@ -412,12 +412,12 @@ jobs:
             .base_sha == $base and .head_sha == $head and
             (.shard | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
             (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
-            (.bundle | type == "array" and length >= 1 and length <= 8 and all(.[];
+            (.bundle | type == "array" and length >= 1 and length <= 10 and all(.[];
               type == "object" and (.id | type == "string" and length > 0) and
               (.tasks | type == "array" and length > 0 and all(.[]; type == "string"))) and
               (map(.id) | length) == (map(.id) | unique | length)) and
             ([.bundle[].tasks[]] | sort) == ([(.shard[] | "test/" + .), (.phase[] | "phase/" + .)] | sort) and
-            (.mode != "cache-warm" or ((.packages == null or .packages == "") and .shard == [] and .phase == ["cache-warm-test", "cache-warm-guard", "cache-warm-clippy", "cache-warm-doc", "cache-warm-wasm", "cache-warm-wasm-pkg", "cache-warm-duckdb", "cache-warm-rivet"] and .bundle == [{"id": "b0", "tasks": ["phase/cache-warm-test", "phase/cache-warm-guard", "phase/cache-warm-clippy", "phase/cache-warm-doc", "phase/cache-warm-wasm", "phase/cache-warm-wasm-pkg", "phase/cache-warm-duckdb", "phase/cache-warm-rivet"]}]))
+            (.mode != "cache-warm" or ((.packages == null or .packages == "") and .shard == [] and .phase == ["cache-warm-test", "cache-warm-guard", "cache-warm-clippy", "cache-warm-doc", "cache-warm-wasm", "cache-warm-wasm-pkg", "cache-warm-duckdb", "cache-warm-rivet", "cache-warm-features"] and .bundle == [{"id": "b0", "tasks": ["phase/cache-warm-test", "phase/cache-warm-guard", "phase/cache-warm-clippy", "phase/cache-warm-doc", "phase/cache-warm-wasm", "phase/cache-warm-wasm-pkg", "phase/cache-warm-duckdb", "phase/cache-warm-rivet", "phase/cache-warm-features"]}]))
           ' <<<"$PLAN" >/dev/null || { echo "Malformed or unbound gate plan"; exit 1; }
           [ "$CORE" = success ] || { echo "core $CORE"; exit 1; }
           mode=$(jq -er .mode <<<"$PLAN")

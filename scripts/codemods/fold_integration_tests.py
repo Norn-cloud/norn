@@ -46,12 +46,14 @@ ROOT = Path(__file__).resolve().parents[2]
 SUITE = "suites"
 # Every multi-binary workspace crate whose integration tests can fold cleanly.
 # Remaining multi-binary crates outside this list:
-# - `norn-checker-wasm`: `parity` binary is driven by name from Node (`parity.mjs`).
-# - `norn-builtins`: hashed by `BUILTIN-PIN-1` (`registry/builtins/norn-builtins.json`).
-# - `norn-skeleton-guard`: standalone `GATE_DIRECTORIES` workspace (requires `/approve-gates`).
+# - `norn-checker-wasm`: `parity` binary is pinned by name (`--test parity -- --test-threads=1`)
+#   in `GATE_FILES` (`scripts/ci/core.sh` and `verification/coverage-v1/validate.py`).
+# - `norn-skeleton-guard`: standalone `GATE_DIRECTORIES` workspace; `gate_source_errors` refuses
+#   `#[path = ...]` in gated sources and `baseline-shrink-only.sh` blocks moving `tests/*.rs`.
 CRATES = (
     "norn-api",
     "norn-authoring",
+    "norn-builtins",
     "norn-canonical",
     "norn-cell",
     "norn-cell-do",
@@ -356,6 +358,17 @@ def _tokenize_rust_code(text: str) -> list[tuple[str, int, int]]:
             elif ch == ":" and cursor + 1 < end and text[cursor + 1] == ":":
                 tokens.append(("::", cursor, cursor + 2))
                 cursor += 2
+            elif (
+                ch == "r"
+                and cursor + 2 < end
+                and text[cursor + 1] == "#"
+                and _is_rust_ident_char(text[cursor + 2])
+            ):
+                id_start = cursor
+                cursor += 3
+                while cursor < end and _is_rust_ident_char(text[cursor]):
+                    cursor += 1
+                tokens.append(("ident", id_start, cursor))
             elif _is_rust_ident_char(ch):
                 id_start = cursor
                 cursor += 1
@@ -404,6 +417,235 @@ def has_code_crate_path(text: str) -> bool:
         if kind == "ident" and text[start:end] == "crate":
             if idx + 1 < len(tokens) and tokens[idx + 1][0] == "::":
                 return True
+    return False
+
+
+def _ident_name(word: str) -> str:
+    """Strip Rust's `r#` raw-identifier prefix when comparing identifier names."""
+    return word[2:] if word.startswith("r#") else word
+
+
+def _scan_use_statement(
+    text: str,
+    tokens: list[tuple[str, int, int]],
+    use_idx: int,
+    name: str,
+    *,
+    allow_local_binding: bool,
+) -> tuple[bool, bool, int]:
+    """Scan a `use ...;` statement starting at `use_idx`.
+
+    Returns `(references_extern, binds_name_locally, end_idx)` where `end_idx`
+    is the index of the terminating `;` (or last token if malformed).
+    """
+    cur_at_root = True
+    expect_segment = True
+    root_stack: list[bool] = []
+    # Track path prefix into brace groups so `...::<name>::{self, ...}` binds locally.
+    last_ident_was_name = False
+    last_ident_at_root = False
+    prefix_is_name_stack: list[bool] = []
+    binds_locally = False
+
+    cursor = use_idx + 1
+    while cursor < len(tokens):
+        kind, start, end = tokens[cursor]
+        if kind == "punct":
+            ch = text[start:end]
+            if ch in (")", "]"):
+                return False, False, cursor - 1
+            if ch == ";":
+                if (
+                    allow_local_binding
+                    and not root_stack
+                    and last_ident_was_name
+                    and not last_ident_at_root
+                ):
+                    binds_locally = True
+                return False, binds_locally, cursor
+            if ch == "{":
+                root_stack.append(cur_at_root)
+                prefix_is_name_stack.append(
+                    last_ident_was_name and not last_ident_at_root and not cur_at_root
+                )
+                expect_segment = True
+                last_ident_was_name = False
+                last_ident_at_root = False
+            elif ch == "}":
+                if root_stack:
+                    cur_at_root = root_stack.pop()
+                if prefix_is_name_stack:
+                    prefix_is_name_stack.pop()
+                expect_segment = False
+                last_ident_was_name = False
+                last_ident_at_root = False
+            elif ch == ",":
+                if root_stack:
+                    cur_at_root = root_stack[-1]
+                expect_segment = True
+                last_ident_was_name = False
+                last_ident_at_root = False
+            cursor += 1
+            continue
+        if kind == "::":
+            expect_segment = True
+            cursor += 1
+            continue
+        if kind == "ident":
+            word = _ident_name(text[start:end])
+            if word == "as":
+                # `...::geo as other` or `self as other` does not bind `geo`;
+                # `...::other as geo` binds `geo` locally if unattributed at top level.
+                last_ident_was_name = False
+                last_ident_at_root = False
+                expect_segment = False
+                if (
+                    allow_local_binding
+                    and cursor + 1 < len(tokens)
+                    and tokens[cursor + 1][0] == "ident"
+                    and _ident_name(text[tokens[cursor + 1][1] : tokens[cursor + 1][2]]) == name
+                ):
+                    binds_locally = True
+                cursor += 2
+                continue
+            if expect_segment:
+                if cur_at_root:
+                    if word == name:
+                        return True, False, cursor
+                    last_ident_was_name = False
+                    last_ident_at_root = True
+                    cur_at_root = False
+                else:
+                    if (
+                        allow_local_binding
+                        and word == "self"
+                        and prefix_is_name_stack
+                        and prefix_is_name_stack[-1]
+                    ):
+                        nxt_is_as = (
+                            cursor + 1 < len(tokens)
+                            and tokens[cursor + 1][0] == "ident"
+                            and text[tokens[cursor + 1][1] : tokens[cursor + 1][2]] == "as"
+                        )
+                        if not nxt_is_as:
+                            binds_locally = True
+                    last_ident_was_name = word == name
+                    last_ident_at_root = False
+                expect_segment = False
+        cursor += 1
+    return False, binds_locally, len(tokens) - 1
+
+
+def uses_extern_crate(text: str, name: str) -> bool:
+    """Return True if `text` may resolve `name` to an external crate from the extern prelude.
+
+    Declaring `mod <name>;` in `tests/suites.rs` shadows an identically named dependency in
+    `use <name>...` paths across the crate. It is safe only when no test file imports `<name>`
+    from the root/extern prelude and every bare `<name>::` use is locally shadowed by an
+    unconditional (unattributed) `use <other>::...::<name>` import at file scope (with no
+    inline `mod` blocks).
+    """
+    tokens = _tokenize_rust_code(text)
+    locally_imported = False
+    has_inline_mod = False
+    has_bare_path = False
+    brace_depth = 0
+    paren_depth = 0
+    bracket_depth = 0
+    stmt_has_attr = False
+    idx = 0
+    while idx < len(tokens):
+        kind, start, end = tokens[idx]
+        if kind == "punct":
+            ch = text[start:end]
+            at_top = brace_depth == 0 and paren_depth == 0 and bracket_depth == 0
+            if at_top and ch == "#":
+                # Outer attribute `#[...]` on the upcoming top-level item/use statement.
+                # Keep scanning tokens inside `[...]` so attribute paths like `#[geo::some]`
+                # are still inspected for external-crate references.
+                if (
+                    idx + 1 < len(tokens)
+                    and tokens[idx + 1][0] == "punct"
+                    and text[tokens[idx + 1][1] : tokens[idx + 1][2]] == "["
+                ):
+                    stmt_has_attr = True
+            elif ch == "{":
+                brace_depth += 1
+            elif ch == "}":
+                brace_depth = max(0, brace_depth - 1)
+                if brace_depth == 0 and paren_depth == 0 and bracket_depth == 0:
+                    stmt_has_attr = False
+            elif ch == "(":
+                paren_depth += 1
+            elif ch == ")":
+                paren_depth = max(0, paren_depth - 1)
+            elif ch == "[":
+                bracket_depth += 1
+            elif ch == "]":
+                bracket_depth = max(0, bracket_depth - 1)
+            elif ch == ";" and at_top:
+                stmt_has_attr = False
+            idx += 1
+            continue
+        if kind != "ident":
+            idx += 1
+            continue
+        raw_word = text[start:end]
+        word = _ident_name(raw_word)
+        if raw_word == "extern":
+            if (
+                idx + 2 < len(tokens)
+                and tokens[idx + 1][0] == "ident"
+                and text[tokens[idx + 1][1] : tokens[idx + 1][2]] == "crate"
+                and tokens[idx + 2][0] == "ident"
+                and _ident_name(text[tokens[idx + 2][1] : tokens[idx + 2][2]]) == name
+            ):
+                return True
+            idx += 1
+            continue
+        if raw_word == "mod":
+            # Inline `mod foo { ... }` starts a new scope where bare `<name>::` reaches extern prelude.
+            cursor = idx + 1
+            if cursor < len(tokens) and tokens[cursor][0] == "ident":
+                if (
+                    cursor + 1 < len(tokens)
+                    and tokens[cursor + 1][0] == "punct"
+                    and text[tokens[cursor + 1][1] : tokens[cursor + 1][2]] == "{"
+                ):
+                    has_inline_mod = True
+            idx += 1
+            continue
+        if raw_word == "use":
+            at_top = brace_depth == 0 and paren_depth == 0 and bracket_depth == 0
+            refs_extern, binds_local, end_idx = _scan_use_statement(
+                text,
+                tokens,
+                idx,
+                name,
+                allow_local_binding=(at_top and not stmt_has_attr),
+            )
+            if refs_extern:
+                return True
+            if binds_local:
+                locally_imported = True
+            if at_top:
+                stmt_has_attr = False
+            idx = end_idx + 1
+            continue
+        if word != name:
+            idx += 1
+            continue
+        prev = tokens[idx - 1] if idx > 0 else None
+        nxt = tokens[idx + 1] if idx + 1 < len(tokens) else None
+        if prev is not None and prev[0] == "::":
+            if not (idx >= 2 and tokens[idx - 2][0] == "ident"):
+                # Leading `::<name>` explicitly targets the extern prelude.
+                return True
+        elif nxt is not None and nxt[0] == "::":
+            has_bare_path = True
+        idx += 1
+    if has_bare_path and (not locally_imported or has_inline_mod):
+        return True
     return False
 
 
@@ -788,13 +1030,23 @@ def main() -> int:
         if not targets:
             continue
         check_helpers(crate)
-        externs = crate.extern_names() | RESERVED
+        crate_ident = crate.name.replace("-", "_")
+        hard_reserved = RESERVED | {crate_ident}
+        externs = crate.extern_names()
+        test_sources = {
+            path: path.read_text()
+            for path in sorted(crate.tests.rglob("*.rs"))
+            if path.name != f"{SUITE}.rs"
+        }
         for target in targets:
-            if target["name"] in externs:
-                raise Refused(f"{crate.name}: module {target['name']} would shadow a crate name")
-            folded[(crate.name, target["name"])] = crate.name
-            source = check_file(crate, target["name"])
-            path = crate.tests / f"{target['name']}.rs"
+            name = target["name"]
+            if name in hard_reserved:
+                raise Refused(f"{crate.name}: module {name} would shadow a reserved or crate name")
+            if name in externs and any(uses_extern_crate(src, name) for src in test_sources.values()):
+                raise Refused(f"{crate.name}: module {name} would shadow a used extern crate")
+            folded[(crate.name, name)] = crate.name
+            source = check_file(crate, name)
+            path = crate.tests / f"{name}.rs"
             if source != path.read_text():
                 writes[path] = source
         manifest, comments = edit_manifest(crate, targets)
