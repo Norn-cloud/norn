@@ -1,6 +1,6 @@
 --- a/allen_core.rs
 +++ b/allen_core.rs
-@@ -439,3 +439,3 @@
+@@ -440,3 +440,3 @@
          AllenRelation::Before => AllenRelation::After,
 -        AllenRelation::Meets => AllenRelation::MetBy,
 +        AllenRelation::Meets => AllenRelation::Meets,

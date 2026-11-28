@@ -24,6 +24,7 @@ pub(crate) enum EndpointOrder {
 /// Each variant reads "the first interval *relation* the second". The
 /// endpoint conditions are those of [`AllenRelation::holds`].
 #[derive(Clone, Copy)]
+#[cfg_attr(not(verus_keep_ghost), derive(Debug, PartialEq, Eq, Hash))]
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 pub enum AllenRelation {
     /// The first ends before the second starts, with a gap between them.
@@ -476,12 +477,54 @@ pub(crate) const fn shares_instant(relation: AllenRelation) -> bool {
     }
 }
 
-/// Verified endpoint-condition predicate for one Allen relation.
+/// Whether an endpoint comparison outcome is strictly less.
 #[must_use]
 #[allow(
     clippy::match_like_matches_macro,
-    reason = "explicit exhaustive enum matches for Verus VIR/THIR agreement"
+    reason = "explicit exhaustive enum match satisfies wildcard_enum_match_arm and Verus VIR/THIR agreement"
 )]
+#[cfg_attr(verus_keep_ghost, verus_spec(r => ensures
+    r == (order == EndpointOrder::Less),
+))]
+pub(crate) const fn is_less(order: EndpointOrder) -> bool {
+    match order {
+        EndpointOrder::Less => true,
+        EndpointOrder::Equal | EndpointOrder::Greater => false,
+    }
+}
+
+#[must_use]
+#[allow(
+    clippy::match_like_matches_macro,
+    reason = "explicit exhaustive enum match satisfies wildcard_enum_match_arm and Verus VIR/THIR agreement"
+)]
+#[cfg_attr(verus_keep_ghost, verus_spec(r => ensures
+    r == (order == EndpointOrder::Equal),
+))]
+const fn is_equal(order: EndpointOrder) -> bool {
+    match order {
+        EndpointOrder::Equal => true,
+        EndpointOrder::Less | EndpointOrder::Greater => false,
+    }
+}
+
+#[must_use]
+#[allow(
+    clippy::match_like_matches_macro,
+    reason = "explicit exhaustive enum match satisfies wildcard_enum_match_arm and Verus VIR/THIR agreement"
+)]
+#[cfg_attr(verus_keep_ghost, verus_spec(r => ensures
+    r == (order == EndpointOrder::Greater),
+))]
+const fn is_greater(order: EndpointOrder) -> bool {
+    match order {
+        EndpointOrder::Greater => true,
+        EndpointOrder::Less | EndpointOrder::Equal => false,
+    }
+}
+
+/// Verified endpoint-condition predicate for one Allen relation.
+#[must_use]
 #[cfg_attr(verus_keep_ghost, verus_spec(r => ensures
     #![verifier::proof_note("holds")]
     r == spec_holds_orders(
@@ -505,118 +548,25 @@ pub(crate) const fn holds(
 ) -> bool {
     match (start_end, other_start_end) {
         (EndpointOrder::Less, EndpointOrder::Less) => match relation {
-            AllenRelation::Before => match end_other_start {
-                EndpointOrder::Less => true,
-                EndpointOrder::Equal | EndpointOrder::Greater => false,
-            },
-            AllenRelation::Meets => match end_other_start {
-                EndpointOrder::Equal => true,
-                EndpointOrder::Less | EndpointOrder::Greater => false,
-            },
-            AllenRelation::Overlaps => match (start_other_start, end_other_start, end_other_end) {
-                (EndpointOrder::Less, EndpointOrder::Greater, EndpointOrder::Less) => true,
-                (
-                    EndpointOrder::Less,
-                    EndpointOrder::Greater,
-                    EndpointOrder::Equal | EndpointOrder::Greater,
-                )
-                | (
-                    EndpointOrder::Less,
-                    EndpointOrder::Less | EndpointOrder::Equal,
-                    EndpointOrder::Less | EndpointOrder::Equal | EndpointOrder::Greater,
-                )
-                | (
-                    EndpointOrder::Equal | EndpointOrder::Greater,
-                    EndpointOrder::Less | EndpointOrder::Equal | EndpointOrder::Greater,
-                    EndpointOrder::Less | EndpointOrder::Equal | EndpointOrder::Greater,
-                ) => false,
-            },
-            AllenRelation::Starts => match (start_other_start, end_other_end) {
-                (EndpointOrder::Equal, EndpointOrder::Less) => true,
-                (EndpointOrder::Equal, EndpointOrder::Equal | EndpointOrder::Greater)
-                | (
-                    EndpointOrder::Less | EndpointOrder::Greater,
-                    EndpointOrder::Less | EndpointOrder::Equal | EndpointOrder::Greater,
-                ) => false,
-            },
-            AllenRelation::During => match (start_other_start, end_other_end) {
-                (EndpointOrder::Greater, EndpointOrder::Less) => true,
-                (EndpointOrder::Greater, EndpointOrder::Equal | EndpointOrder::Greater)
-                | (
-                    EndpointOrder::Less | EndpointOrder::Equal,
-                    EndpointOrder::Less | EndpointOrder::Equal | EndpointOrder::Greater,
-                ) => false,
-            },
-            AllenRelation::Finishes => match (start_other_start, end_other_end) {
-                (EndpointOrder::Greater, EndpointOrder::Equal) => true,
-                (EndpointOrder::Greater, EndpointOrder::Less | EndpointOrder::Greater)
-                | (
-                    EndpointOrder::Less | EndpointOrder::Equal,
-                    EndpointOrder::Less | EndpointOrder::Equal | EndpointOrder::Greater,
-                ) => false,
-            },
-            AllenRelation::Equals => match (start_other_start, end_other_end) {
-                (EndpointOrder::Equal, EndpointOrder::Equal) => true,
-                (EndpointOrder::Equal, EndpointOrder::Less | EndpointOrder::Greater)
-                | (
-                    EndpointOrder::Less | EndpointOrder::Greater,
-                    EndpointOrder::Less | EndpointOrder::Equal | EndpointOrder::Greater,
-                ) => false,
-            },
-            AllenRelation::FinishedBy => match (start_other_start, end_other_end) {
-                (EndpointOrder::Less, EndpointOrder::Equal) => true,
-                (EndpointOrder::Less, EndpointOrder::Less | EndpointOrder::Greater)
-                | (
-                    EndpointOrder::Equal | EndpointOrder::Greater,
-                    EndpointOrder::Less | EndpointOrder::Equal | EndpointOrder::Greater,
-                ) => false,
-            },
-            AllenRelation::Contains => match (start_other_start, end_other_end) {
-                (EndpointOrder::Less, EndpointOrder::Greater) => true,
-                (EndpointOrder::Less, EndpointOrder::Less | EndpointOrder::Equal)
-                | (
-                    EndpointOrder::Equal | EndpointOrder::Greater,
-                    EndpointOrder::Less | EndpointOrder::Equal | EndpointOrder::Greater,
-                ) => false,
-            },
-            AllenRelation::StartedBy => match (start_other_start, end_other_end) {
-                (EndpointOrder::Equal, EndpointOrder::Greater) => true,
-                (EndpointOrder::Equal, EndpointOrder::Less | EndpointOrder::Equal)
-                | (
-                    EndpointOrder::Less | EndpointOrder::Greater,
-                    EndpointOrder::Less | EndpointOrder::Equal | EndpointOrder::Greater,
-                ) => false,
-            },
-            AllenRelation::OverlappedBy => {
-                match (start_other_start, other_end_start, end_other_end) {
-                    (EndpointOrder::Greater, EndpointOrder::Greater, EndpointOrder::Greater) => {
-                        true
-                    }
-                    (
-                        EndpointOrder::Greater,
-                        EndpointOrder::Greater,
-                        EndpointOrder::Less | EndpointOrder::Equal,
-                    )
-                    | (
-                        EndpointOrder::Greater,
-                        EndpointOrder::Less | EndpointOrder::Equal,
-                        EndpointOrder::Less | EndpointOrder::Equal | EndpointOrder::Greater,
-                    )
-                    | (
-                        EndpointOrder::Less | EndpointOrder::Equal,
-                        EndpointOrder::Less | EndpointOrder::Equal | EndpointOrder::Greater,
-                        EndpointOrder::Less | EndpointOrder::Equal | EndpointOrder::Greater,
-                    ) => false,
-                }
+            AllenRelation::Before => is_less(end_other_start),
+            AllenRelation::Meets => is_equal(end_other_start),
+            AllenRelation::Overlaps => {
+                is_less(start_other_start) && is_greater(end_other_start) && is_less(end_other_end)
             }
-            AllenRelation::MetBy => match other_end_start {
-                EndpointOrder::Equal => true,
-                EndpointOrder::Less | EndpointOrder::Greater => false,
-            },
-            AllenRelation::After => match other_end_start {
-                EndpointOrder::Less => true,
-                EndpointOrder::Equal | EndpointOrder::Greater => false,
-            },
+            AllenRelation::Starts => is_equal(start_other_start) && is_less(end_other_end),
+            AllenRelation::During => is_greater(start_other_start) && is_less(end_other_end),
+            AllenRelation::Finishes => is_greater(start_other_start) && is_equal(end_other_end),
+            AllenRelation::Equals => is_equal(start_other_start) && is_equal(end_other_end),
+            AllenRelation::FinishedBy => is_less(start_other_start) && is_equal(end_other_end),
+            AllenRelation::Contains => is_less(start_other_start) && is_greater(end_other_end),
+            AllenRelation::StartedBy => is_equal(start_other_start) && is_greater(end_other_end),
+            AllenRelation::OverlappedBy => {
+                is_greater(start_other_start)
+                    && is_greater(other_end_start)
+                    && is_greater(end_other_end)
+            }
+            AllenRelation::MetBy => is_equal(other_end_start),
+            AllenRelation::After => is_less(other_end_start),
         },
         (EndpointOrder::Less, EndpointOrder::Equal | EndpointOrder::Greater)
         | (

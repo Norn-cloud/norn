@@ -598,6 +598,7 @@ PY
       ;;
     guards)
       python3 scripts/test_kernel_inline_verus.py
+      python3 scripts/test_owl_time_inline_verus.py
       scripts/bootstrap-verification-tools.sh --verus-only
       bash scripts/verify-kernel-inline-verus.sh all
       bash scripts/verify-kernel-overlay-verus.sh all

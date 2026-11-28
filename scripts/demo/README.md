@@ -29,7 +29,7 @@ cargo nextest run --profile drop-02
 
 | Profile | Evidence selected |
 | --- | --- |
-| `drop-01` | Exact values, codecs, units and three bounded Kani harnesses; installs the exact Kani 0.68.0 tool through Cargo/native setup |
+| `drop-01` | Exact values, codecs, units, and decimal canonicalization/scale-multiplier checks (`quantity_ledger::decimal::tests`) |
 | `drop-02` | Freshly authored law, admission/refusals, generated obligations and EN/AR rendering |
 | `drop-03` | Freshly authored catalog, bounded reads, kernel PDP and write refusals |
 | `drop-04` | Fresh allocation goldens and seven exact fold scenarios |

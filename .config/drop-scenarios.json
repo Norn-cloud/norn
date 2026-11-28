@@ -11,6 +11,7 @@
     "norn-checker": [
       "property_codec::tests::core_values_inexact_preserves_the_numeric_refusal",
       "property_codec::tests::decimal_grammar",
+      "property_codec::tests::runtime_error_code_classifies_every_variant",
       "property_codec::tests::val_exact_decimal_codec_is_idempotent",
       "quantity_ledger::decimal::tests::canonical_decimal_is_exact_and_idempotent",
       "quantity_ledger::decimal::tests::decimal_multiplier_refuses_exactly_on_overflow",
