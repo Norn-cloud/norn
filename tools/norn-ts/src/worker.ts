@@ -44,12 +44,12 @@ export interface CompiledEvent {
 
 const posix = (path: string) => path.split(sep).join("/")
 
-/** Whether `path`, with every symlink resolved, is the project root or inside it. */
-function insideProject(realRoot: string, path: string): boolean {
+/** Resolve `path` with every symlink followed, or return `undefined` if dangling or outside `realRoot`. */
+function resolveInsideProject(realRoot: string, path: string): string | undefined {
   let real: string
   try { real = realpathSync(path) }
-  catch { return false } // a dangling link resolves nowhere, so not inside the project
-  return real === realRoot || real.startsWith(realRoot + sep)
+  catch { return undefined } // a dangling link resolves nowhere, so not inside the project
+  return real === realRoot || real.startsWith(realRoot + sep) ? real : undefined
 }
 
 function outside(what: string): ProjectError {
@@ -57,28 +57,50 @@ function outside(what: string): ProjectError {
 }
 
 /** The manifest's source directories that exist; one that resolves outside the project refuses. */
-function sourceDirs(root: string, manifest: Project): string[] {
-  const realRoot = realpathSync(root)
+function sourceDirs(root: string, manifest: Project, realRoot: string = realpathSync(root)): string[] {
   return manifest.sources.map((source) => resolve(root, source)).filter((dir) => {
     if (!existsSync(dir)) return false
-    if (!insideProject(realRoot, dir)) throw outside(`source ${posix(relative(root, dir))}`)
-    return statSync(dir).isDirectory()
+    const real = resolveInsideProject(realRoot, dir)
+    if (real === undefined) throw outside(`source ${posix(relative(root, dir))}`)
+    return statSync(real).isDirectory()
   })
+}
+
+interface ResolvedProjectModule {
+  readonly logical: string
+  readonly logicalRel: string
+  readonly real: string
 }
 
 /**
  * The modules compiled as one set: each source directory's top-level `*.ts`.
- * A module that is a symlink is compiled only if it resolves inside the project.
+ * A module that is a symlink is compiled only if it resolves once inside the
+ * project, and every resolved target must be unique so two logical modules
+ * never alias the same file.
  */
-function projectModules(root: string, dirs: readonly string[], realRoot: string): string[] {
-  return dirs.flatMap((dir) => packModules(dir)).map((module) => {
-    if (!insideProject(realRoot, module)) throw outside(`module ${posix(relative(root, module))}`)
-    return module
+function projectModules(root: string, dirs: readonly string[], realRoot: string): ResolvedProjectModule[] {
+  const seen = new Map<string, string>()
+  return dirs.flatMap((dir) => packModules(dir)).map((logical) => {
+    const logicalRel = posix(relative(root, logical))
+    const real = resolveInsideProject(realRoot, logical)
+    if (real === undefined) throw outside(`module ${logicalRel}`)
+    const prior = seen.get(real)
+    if (prior !== undefined) {
+      throw new ProjectError(
+        "cli.project.invalid_manifest",
+        `modules ${prior} and ${logicalRel} resolve to the same file (${posix(relative(realRoot, real))}); remove the duplicate alias.`,
+      )
+    }
+    seen.set(real, logicalRel)
+    return { logical, logicalRel, real }
   })
 }
 
-function sourceFiles(root: string, dirs: readonly string[], realRoot: string): string[] {
-  const files = new Set<string>(projectModules(root, dirs, realRoot))
+function sourceFiles(root: string, dirs: readonly string[], realRoot: string): Map<string, string> {
+  const files = new Map<string, string>()
+  for (const module of projectModules(root, dirs, realRoot)) {
+    files.set(module.logicalRel, module.real)
+  }
   // Below the top level, symlinks are never followed (no cycle, nothing
   // outside the project), and each real directory is read once.
   const visited = new Set<string>()
@@ -90,11 +112,14 @@ function sourceFiles(root: string, dirs: readonly string[], realRoot: string): s
       const path = join(dir, entry)
       const kind = lstatSync(path)
       if (kind.isDirectory()) walk(path)
-      else if (kind.isFile() && (entry.endsWith(".ts") || entry.endsWith(".json"))) files.add(path)
+      else if (kind.isFile() && (entry.endsWith(".ts") || entry.endsWith(".json"))) {
+        const rel = posix(relative(root, path))
+        if (!files.has(rel)) files.set(rel, path)
+      }
     }
   }
   for (const dir of dirs) walk(dir)
-  return [...files]
+  return files
 }
 
 /**
@@ -104,11 +129,12 @@ function sourceFiles(root: string, dirs: readonly string[], realRoot: string): s
  */
 export function sourceDigest(root: string, manifest: Project): string {
   const realRoot = realpathSync(root)
-  const dirs = sourceDirs(root, manifest)
+  const dirs = sourceDirs(root, manifest, realRoot)
+  const files = sourceFiles(root, dirs, realRoot)
   const hash = createHash("sha256")
-  for (const file of sourceFiles(root, dirs, realRoot).map((path) => posix(relative(root, path))).sort()) {
-    const bytes = readFileSync(resolve(root, file))
-    hash.update(`${file}\0${bytes.length}\0`).update(bytes)
+  for (const rel of [...files.keys()].sort()) {
+    const bytes = readFileSync(files.get(rel)!)
+    hash.update(`${rel}\0${bytes.length}\0`).update(bytes)
   }
   return hash.digest("hex")
 }
@@ -169,10 +195,11 @@ function projectJsonSources(
     for (const entry of readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
       const file = join(dir, entry)
       const path = posix(relative(root, file))
-      if (!insideProject(realRoot, file)) throw outside(`artifact ${path}`)
-      if (!statSync(file).isFile()) continue
+      const realFile = resolveInsideProject(realRoot, file)
+      if (realFile === undefined) throw outside(`artifact ${path}`)
+      if (!statSync(realFile).isFile()) continue
       const inexact: string[] = []
-      const value: unknown = JSON.parse(readFileSync(file, "utf8"), exactNumbers(inexact))
+      const value: unknown = JSON.parse(readFileSync(realFile, "utf8"), exactNumbers(inexact))
       if (isArtifact(value)) artifacts.push(value)
       if (typeof value !== "object" || value === null || Array.isArray(value)) continue
       const doc = value as { readonly kind?: unknown; readonly id?: unknown; readonly payload?: unknown }
@@ -252,19 +279,17 @@ export function omittedLines(omitted: ReadonlyArray<OmittedDefinition>): string[
  */
 function projectPack(root: string, manifest: Project, options: { readonly forbidUnsafeZen?: boolean }): { readonly pack: PackResult; readonly reads: SourceDefinitionDoc[] } {
   const realRoot = realpathSync(root)
-  const dirs = sourceDirs(root, manifest)
-  const logicalModules = projectModules(root, dirs, realRoot)
-  // Every module is already verified to resolve inside `realRoot`; pass its
-  // canonical realpath to native `norn` (which refuses symlinks with O_NOFOLLOW)
-  // while preserving the logical project-relative path for provenance.
-  const moduleSourcePaths = new Map<string, string>()
-  const resolvedModules = logicalModules.map((module) => {
-    const realModule = realpathSync(module)
-    moduleSourcePaths.set(realModule, posix(relative(root, module)))
-    return realModule
-  })
+  const dirs = sourceDirs(root, manifest, realRoot)
+  const modules = projectModules(root, dirs, realRoot)
+  // Every module was resolved once and verified inside `realRoot` with unique
+  // canonical targets; pass those exact canonical paths to native `norn`
+  // (which refuses symlinks with O_NOFOLLOW) while preserving each logical
+  // project-relative path for provenance.
+  const moduleSourcePaths = new Map<string, string>(
+    modules.map(({ logicalRel, real }) => [real, logicalRel]),
+  )
   const pack = compilePack(realRoot, {
-    modules: resolvedModules,
+    modules: modules.map(({ real }) => real),
     moduleSourcePaths,
     scope: { orgId: manifest.scope.orgId, environmentId: manifest.scope.environmentId },
     root: realRoot,

@@ -314,6 +314,17 @@ test("the compile worker reads sources only inside the project, and its digest c
     expect(edited.event.ok).toBe(true)
     expect(edited.event.sourceDigest).not.toBe(linked.event.sourceDigest)
 
+    // Two logical modules that resolve to the same target file are refused with both paths named.
+    symlinkSync(join(dir, "shared/customer.ts"), join(dir, "src/customer-alias.ts"))
+    const aliased = compileOnce(dir)
+    expect(aliased).toMatchObject({ status: 0, event: { event: "compiled", gen: 1, ok: false, sourceDigest: "" } })
+    expect(aliased.event.diagnostics[0]).toMatchObject({
+      code: "cli.project.invalid_manifest",
+      message: expect.stringContaining("src/customer.ts"),
+    })
+    expect((aliased.event.diagnostics[0] as { message?: string }).message).toContain("src/customer-alias.ts")
+    rmSync(join(dir, "src/customer-alias.ts"))
+
     // A module that links out of the project is refused. The digest fails for
     // the same reason, and the worker survives it: one event, exit 0.
     mkdirSync(join(root, "elsewhere/sub"), { recursive: true })
