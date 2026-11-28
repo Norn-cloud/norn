@@ -501,7 +501,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     pub(crate) fn verify_dispute_resolution_record(
         &self,
         rec: &crate::link_claim_frontier::DisputeResolutionRecord,
-    ) -> Result<(), CellError> {
+    ) -> Result<crate::export::ExportRecord, CellError> {
         let corrupt = |msg: &str| CellError::LedgerCorrupt {
             seq: rec.commit_seq,
             reason: format!(
@@ -544,16 +544,127 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 |_row| Ok(()),
             )?
             .is_some();
-        if has_journal
-            && let Some(record) = crate::export_journal::read_record(self.conn, rec.commit_seq)?
-            && (record.storage_version.unwrap_or(1)
-                < crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
-                || record.receipt != receipt
-                || record.entries != entries)
+        if !has_journal {
+            return Err(corrupt("missing export journal table"));
+        }
+        let Some(record) = crate::export_journal::read_record(self.conn, rec.commit_seq)? else {
+            return Err(corrupt("missing export journal record"));
+        };
+        if record.storage_version.unwrap_or(1)
+            < crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
+            || record.receipt != receipt
+            || record.entries != entries
         {
             return Err(corrupt("export journal mismatch"));
         }
-        Ok(())
+        Ok(record)
+    }
+
+    /// Authenticate a `_norn_dispute_resolution` row and return the dispute's
+    /// hash-authenticated `MappingBundle` bound to `_norn_export_journal`
+    /// (`consumed_input`) and cryptographically rechecked against retained
+    /// definitions — never trusting unverified `_norn_inbox` bytes.
+    pub(crate) fn verified_dispute_resolution_bundle(
+        &self,
+        rec: &crate::link_claim_frontier::DisputeResolutionRecord,
+    ) -> Result<crate::mapping_bundle::MappingBundle, CellError> {
+        let corrupt = |msg: &str| CellError::LedgerCorrupt {
+            seq: rec.commit_seq,
+            reason: format!(
+                "unverified dispute resolution for {}: {msg}",
+                rec.dispute_id
+            ),
+        };
+        let export = self.verify_dispute_resolution_record(rec)?;
+        let observed_val = self.authenticated_dispute_observed(rec, &export, &corrupt)?;
+        let observed: norn_kernel::Observed<norn_ir::RuntimeValue> =
+            norn_ir::runtime::decode(&observed_val)
+                .map_err(|err| corrupt(&format!("invalid dispute Observed: {err}")))?;
+        if rec.dispute_id.starts_with("mapping-conflict:") {
+            let conflict: crate::mapping_conflict::MappingConflict =
+                norn_ir::runtime::decode(&observed.input)
+                    .map_err(|err| corrupt(&format!("invalid conflict evidence: {err}")))?;
+            self.recheck_mapping_bundle(&conflict.incoming)
+                .map_err(|_| corrupt("conflict bundle failed recheck"))?;
+            Ok(conflict.incoming)
+        } else if rec.dispute_id.starts_with("mapping-identity:") {
+            let guard: crate::mapping_identity::IdentityEvidence =
+                norn_ir::runtime::decode(&observed.input)
+                    .map_err(|err| corrupt(&format!("invalid identity evidence: {err}")))?;
+            self.recheck_identity_evidence(&guard, &rec.dispute_id)
+                .map_err(|_| corrupt("identity evidence failed recheck"))?;
+            Ok(guard.bundle)
+        } else {
+            Err(corrupt("unknown dispute observation prefix"))
+        }
+    }
+
+    fn authenticated_dispute_observed(
+        &self,
+        rec: &crate::link_claim_frontier::DisputeResolutionRecord,
+        export: &crate::export::ExportRecord,
+        corrupt: &dyn Fn(&str) -> CellError,
+    ) -> Result<norn_ir::RuntimeValue, CellError> {
+        if export.receipt.body.consumed.is_some() {
+            let Some(consumed_val) = export.consumed_input.as_ref() else {
+                return Err(corrupt("missing consumed_input in export journal"));
+            };
+            let crate::export_journal::ConsumedInput::Observation {
+                observation_id,
+                observed,
+                ..
+            } = crate::export_journal::decode_observation_input(consumed_val)
+                .map_err(|err| corrupt(&format!("invalid consumed input: {err}")))?
+            else {
+                return Err(corrupt("resolution consumed non-observation input"));
+            };
+            if observation_id != rec.dispute_id {
+                return Err(corrupt("consumed observation id mismatch"));
+            }
+            return Ok(observed);
+        }
+        // Legacy pre-v13 generically-consumed dispute resolved at v13 without
+        // re-consuming: bind to the prior consuming commit's export journal
+        // when present, falling back to `_norn_inbox` only for pre-export cells
+        // (still cryptographically rechecked by the caller).
+        let Some((encoded, consumed_seq)) = self.conn.query_optional(
+            &format!(
+                "SELECT \"observed\", \"consumed_commit_seq\" FROM \"{}\" WHERE \"observation_id\" = ?1",
+                crate::system::INBOX
+            ),
+            params![&rec.dispute_id],
+            |row| Ok((row.get::<String>(0)?, row.get::<Option<i64>>(1)?)),
+        )?
+        else {
+            return Err(corrupt("missing legacy dispute inbox row"));
+        };
+        let Some(prev_i64) = consumed_seq else {
+            return Err(corrupt(
+                "unconsumed dispute resolution lacks consumed_input",
+            ));
+        };
+        let prev_seq =
+            u64::try_from(prev_i64).map_err(|_| corrupt("negative prior consumed_commit_seq"))?;
+        if let Some(prior_export) = crate::export_journal::read_record(self.conn, prev_seq)? {
+            let Some(prior_consumed) = prior_export.consumed_input.as_ref() else {
+                return Err(corrupt("prior consuming journal missing consumed_input"));
+            };
+            let crate::export_journal::ConsumedInput::Observation {
+                observation_id,
+                observed,
+                ..
+            } = crate::export_journal::decode_observation_input(prior_consumed)
+                .map_err(|err| corrupt(&format!("invalid prior consumed input: {err}")))?
+            else {
+                return Err(corrupt("prior consuming journal is not an observation"));
+            };
+            if observation_id != rec.dispute_id {
+                return Err(corrupt("prior consumed observation id mismatch"));
+            }
+            return Ok(observed);
+        }
+        norn_ir::RuntimeValue::from_json_text(&encoded)
+            .map_err(|err| corrupt(&format!("invalid legacy dispute JSON: {err}")))
     }
 
     /// Read and authenticate every ledger entry in `receipt`'s exact event span

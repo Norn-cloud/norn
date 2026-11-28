@@ -181,73 +181,33 @@ fn has_newer_landed_correction<E: SqlEngine>(
     source_id: &str,
     incoming_version: &norn_ir::SourceVersion,
 ) -> Result<bool, CellError> {
-    let corrected_rows = reader.conn.query(
+    let resolution_rows = reader.conn.query(
         &format!(
-            "SELECT i.\"observation_id\", r.\"decision\", r.\"actor\", r.\"reason\", \
-                    r.\"commit_seq\", r.\"receipt_hash\", i.\"observed\" \
-             FROM \"{inbox}\" i \
-             JOIN \"{res}\" r ON r.\"dispute_id\" = i.\"observation_id\" \
-             WHERE r.\"decision\" = 'accept-second-as-correction' \
-               AND COALESCE( \
-                   json_extract(i.\"observed\", '$.input.incoming.input.mapping'), \
-                   json_extract(i.\"observed\", '$.input.bundle.input.mapping') \
-               ) = ?1 \
-               AND COALESCE( \
-                   json_extract(i.\"observed\", '$.input.incoming.input.dataset'), \
-                   json_extract(i.\"observed\", '$.input.bundle.input.dataset') \
-               ) = ?2 \
-               AND COALESCE( \
-                   json_extract(i.\"observed\", '$.input.incoming.input.connectorInstance'), \
-                   json_extract(i.\"observed\", '$.input.bundle.input.connectorInstance') \
-               ) = ?3 \
-               AND COALESCE( \
-                   json_extract(i.\"observed\", '$.input.incoming.input.partition'), \
-                   json_extract(i.\"observed\", '$.input.bundle.input.partition') \
-               ) = ?4 \
-               AND COALESCE( \
-                   json_extract(i.\"observed\", '$.input.incoming.raw.source'), \
-                   json_extract(i.\"observed\", '$.input.bundle.raw.source') \
-               ) = ?5 \
-               AND COALESCE( \
-                   json_extract(i.\"observed\", '$.input.incoming.raw.source_id'), \
-                   json_extract(i.\"observed\", '$.input.bundle.raw.source_id') \
-               ) = ?6",
-            inbox = crate::system::INBOX,
+            "SELECT \"dispute_id\", \"decision\", \"actor\", \"reason\", \
+                    \"commit_seq\", \"receipt_hash\" \
+             FROM \"{res}\" ORDER BY \"commit_seq\", \"dispute_id\"",
             res = crate::link_claim_frontier::DISPUTE_RESOLUTION,
         ),
-        crate::engine::params![
-            bundle.input.mapping.as_str(),
-            bundle.input.dataset.as_str(),
-            bundle.input.connector_instance.as_str(),
-            bundle.input.partition.as_str(),
-            source,
-            source_id,
-        ],
+        crate::engine::params![],
     )?;
-    for raw in corrected_rows {
+    for raw in resolution_rows {
         let row = crate::engine::SqlRow(raw);
         let rec = crate::mapping_conflict_scoped::decode_dispute_resolution_row(&row)?;
-        reader.verify_dispute_resolution_record(&rec)?;
-        let obs_id = rec.dispute_id;
-        let encoded: String = row.get(6)?;
-        let Ok(observed) = serde_json::from_str::<norn_kernel::Observed<RuntimeValue>>(&encoded)
-        else {
+        if rec.decision != "accept-second-as-correction" {
+            reader.verify_dispute_resolution_record(&rec)?;
             continue;
-        };
-        let landed = if obs_id.starts_with("mapping-conflict:") {
-            norn_ir::runtime::decode::<crate::mapping_conflict::MappingConflict>(&observed.input)
-                .ok()
-                .map(|c| c.incoming)
-        } else if obs_id.starts_with("mapping-identity:") {
-            norn_ir::runtime::decode::<crate::mapping_identity::IdentityEvidence>(&observed.input)
-                .ok()
-                .map(|i| i.bundle)
-        } else {
-            None
-        };
-        if let Some(landed) = landed
-            && landed_bundle_is_newer(reader, &landed, incoming_version)?
+        }
+        let landed = reader.verified_dispute_resolution_bundle(&rec)?;
+        if landed.input.mapping != bundle.input.mapping
+            || landed.input.dataset != bundle.input.dataset
+            || landed.input.connector_instance != bundle.input.connector_instance
+            || landed.input.partition != bundle.input.partition
+            || landed.raw.get("source").and_then(RuntimeValue::as_str) != Some(source)
+            || landed.raw.get("source_id").and_then(RuntimeValue::as_str) != Some(source_id)
         {
+            continue;
+        }
+        if landed_bundle_is_newer(reader, &landed, incoming_version)? {
             return Ok(true);
         }
     }

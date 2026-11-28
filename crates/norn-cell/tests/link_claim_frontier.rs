@@ -3160,9 +3160,23 @@ fn tampered_dispute_resolution_on_open_cell_fails_closed_and_keeps_quarantine() 
         ),
         "negative resolution commit_seq must fail closed with LedgerCorrupt"
     );
+}
 
-    // Forged resolution pointing at a real landed bundle's commit_seq must
-    // fail closed on source-delete ordering instead of excluding that bundle.
+/// #1549 / OBS-DISPUTE-LOOKUP-1: A forged `_norn_dispute_resolution` row
+/// pointing at a linkless landed bundle's `commit_seq` must fail closed directly
+/// inside `has_newer_or_incomparable_landed_source_version` (and end-to-end
+/// `process_mapping_bundle`) rather than excluding the landed bundle from the
+/// stale-delete guard.
+#[test]
+fn forged_dispute_resolution_cannot_bypass_stale_delete_guard() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("forged_res_stale_delete.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    // Land a linkless party at version "2" (no active claims, no inbox disputes).
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", None);
+    capture_kind(&mut cell, "erpnext", &a_v2, "e2", "2", "upsert", "p1");
+
     let landed_seq: i64 = {
         let raw_conn = rusqlite::Connection::open(&path).expect("raw sqlite");
         raw_conn
@@ -3180,20 +3194,46 @@ fn tampered_dispute_resolution_on_open_cell_fails_closed_and_keeps_quarantine() 
         let raw_conn = rusqlite::Connection::open(&path).expect("raw sqlite");
         raw_conn
             .execute(
-                "UPDATE \"_norn_dispute_resolution\" SET \"commit_seq\" = ?1 WHERE \"dispute_id\" = ?2",
-                rusqlite::params![landed_seq, &conflict_id],
+                "INSERT INTO \"_norn_dispute_resolution\" \
+                 (\"dispute_id\", \"decision\", \"actor\", \"reason\", \"commit_seq\", \"receipt_hash\") \
+                 VALUES ('mapping-conflict:forged', 'accept-first', 'attacker', 'forged', ?1, '0000')",
+                rusqlite::params![landed_seq],
             )
-            .expect("point forged resolution at landed bundle seq");
+            .expect("insert forged resolution at landed bundle seq");
     }
-    let del_old = party_ref_row("P-A", "demo/party/a", "A1", None);
-    let (dr, di) = raw_event(&cell, "erpnext", &del_old, "edel", "0", "delete", "p1");
+
+    let del_v1 = party_ref_row("P-A", "demo/party/a", "A v1", None);
+    let (dr, di) = raw_event(&cell, "erpnext", &del_v1, "edel", "1", "delete", "p1");
     let (del_id, _) = cell.inject_mapping_bundle(&dr, &di).expect("inject del");
+    let pending = cell
+        .store()
+        .read()
+        .pending_observation(&del_id)
+        .expect("pending")
+        .expect("present");
+    let observed: Observed<RuntimeValue> =
+        norn_ir::runtime::decode(&pending.observed).expect("decode observed");
+    let del_bundle: norn_cell::mapping_bundle::MappingBundle =
+        norn_ir::runtime::decode(&observed.input).expect("decode delete bundle");
+
+    // Exercise the landed-version guard directly so no earlier dispute check
+    // or active-claim check can short-circuit it.
+    assert!(
+        matches!(
+            crate::mapping_delete::has_newer_or_incomparable_landed_source_version(
+                &cell.store().read(),
+                &del_bundle,
+            ),
+            Err(CellError::LedgerCorrupt { .. })
+        ),
+        "has_newer_or_incomparable_landed_source_version must fail closed on forged resolution row"
+    );
     assert!(
         matches!(
             cell.process_mapping_bundle(&del_id),
             Err(CellError::LedgerCorrupt { .. })
         ),
-        "source-delete ordering must fail closed on forged _norn_dispute_resolution row"
+        "end-to-end delete processing must also fail closed on forged resolution row"
     );
 }
 
@@ -3213,20 +3253,25 @@ fn nfd_unicode_claim_provenance_survives_reopen_heal_and_resealing() {
     capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
     capture_kind(&mut cell, "erpnext", &c, "ec", "1", "upsert", "p1");
 
-    // Inject bundle, then restore decomposed NFD (`e` + U+0301) in `_norn_inbox`
-    // before processing (since `inject_observation` normalizes to NFC) so the
-    // committed `norn.ObservedLinkClaim` genuinely carries NFD while
-    // `_norn_fact_values` stores NFC.
-    let a_nfd = party_ref_row(
-        "P-Cafe\u{0301}",
+    // Capture an NFC bundle first (so `inject_mapping_bundle` admits a
+    // `mapping-bundle:` observation instead of quarantining `mapping-identity:`),
+    // then rewrite the retained bundle's `source_id` to decomposed NFD
+    // (`e` + U+0301) before processing so the committed `norn.ObservedLinkClaim`
+    // genuinely carries NFD while `_norn_fact_values` stores NFC.
+    let a_nfc = party_ref_row(
+        "P-Caf\u{00e9}",
         "demo/party/a",
         "A NFD",
         Some("demo/party/b"),
     );
-    let (raw_a, input_a) = raw_event(&cell, "erpnext", &a_nfd, "e1", "1", "upsert", "p1");
+    let (raw_a, input_a) = raw_event(&cell, "erpnext", &a_nfc, "e1", "1", "upsert", "p1");
     let (obs_a, _) = cell
         .inject_mapping_bundle(&raw_a, &input_a)
         .expect("inject a");
+    assert!(
+        obs_a.starts_with("mapping-bundle:"),
+        "NFC capture must produce a mapping-bundle observation, got {obs_a}"
+    );
     {
         let conn = rusqlite::Connection::open(&path).expect("sqlite");
         let nfc_json: String = conn

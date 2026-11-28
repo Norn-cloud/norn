@@ -262,11 +262,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .map(|k| norn_ir::canonical::nfc(&k));
         let rows = self.conn.query(
             &format!(
-                "SELECT i.\"observation_id\", r.\"decision\", r.\"actor\", r.\"reason\", \
-                        r.\"commit_seq\", r.\"receipt_hash\", i.\"observed\" FROM \"{}\" i \
-                 JOIN \"{}\" r ON r.\"dispute_id\" = i.\"observation_id\" \
-                 WHERE r.\"decision\" IN ('accept-second-as-correction', 'reject')",
-                crate::system::INBOX,
+                "SELECT \"dispute_id\", \"decision\", \"actor\", \"reason\", \
+                        \"commit_seq\", \"receipt_hash\" \
+                 FROM \"{}\" ORDER BY \"commit_seq\", \"dispute_id\"",
                 crate::link_claim_frontier::DISPUTE_RESOLUTION,
             ),
             crate::engine::params![],
@@ -274,14 +272,14 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         for values in rows {
             let row = crate::engine::SqlRow(values);
             let rec = crate::mapping_conflict_scoped::decode_dispute_resolution_row(&row)?;
-            self.verify_dispute_resolution_record(&rec)?;
-            let id = rec.dispute_id;
-            let encoded: String = row.get(6)?;
-            let Some((resolved_bundle, _)) =
-                crate::mapping_conflict::decode_evidence_with_identity(&id, &encoded)
-            else {
+            if !matches!(
+                rec.decision.as_str(),
+                "accept-second-as-correction" | "reject"
+            ) {
+                self.verify_dispute_resolution_record(&rec)?;
                 continue;
-            };
+            }
+            let resolved_bundle = self.verified_dispute_resolution_bundle(&rec)?;
             let resolved_keys =
                 crate::mapping_identity::keys(&resolved_bundle.raw, &resolved_bundle.input)?
                     .map(|k| norn_ir::canonical::nfc(&k));
