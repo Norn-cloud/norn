@@ -958,25 +958,16 @@ mod tests {
         let base = main.verified_head()?;
         let dir = tempfile::tempdir().map_err(|error| CellError::Engine(error.to_string()))?;
 
-        for (name, expected_state, close_fn) in [
-            (
-                "discarded-fork",
-                "discarded",
-                CellStore::discard_fork
-                    as fn(&mut CellStore<NativeEngine>) -> Result<(), CellError>,
-            ),
-            (
-                "expired-fork",
-                "expired",
-                CellStore::expire_fork as fn(&mut CellStore<NativeEngine>) -> Result<(), CellError>,
-            ),
-            (
-                "promoted-fork",
-                "promoted",
-                CellStore::mark_fork_promoted
-                    as fn(&mut CellStore<NativeEngine>) -> Result<(), CellError>,
-            ),
-        ] {
+        let closers: [(
+            &str,
+            &str,
+            fn(&mut CellStore<NativeEngine>) -> Result<(), CellError>,
+        ); 3] = [
+            ("discarded-fork", "discarded", CellStore::discard_fork),
+            ("expired-fork", "expired", CellStore::expire_fork),
+            ("promoted-fork", "promoted", CellStore::mark_fork_promoted),
+        ];
+        for (name, expected_state, close_fn) in closers {
             let fork = main.fork(name, &base)?;
             let path = dir.path().join(format!("{name}.sqlite"));
             fork.conn.backup_to_file(&path)?;

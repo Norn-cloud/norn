@@ -518,7 +518,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         commit_seq: u64,
         cache: &mut Option<(u64, Option<crate::fork::ForkPin>)>,
     ) -> Result<Option<crate::fork::ForkPin>, CellError> {
-        if !store_pin.is_some_and(|pin| commit_seq > pin.main_horizon) {
+        if store_pin.is_none_or(|pin| commit_seq <= pin.main_horizon) {
             return Ok(None);
         }
         if let Some((cached_seq, cached)) = cache.as_ref()

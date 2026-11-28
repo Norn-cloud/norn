@@ -3245,8 +3245,8 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     commit_seq,
                     self.world,
                     encoded,
-                    entry.prev_hash.clone(),
-                    entry.hash.clone()
+                    entry.prev_hash,
+                    entry.hash
                 ],
             )?;
             entries.push(entry);
