@@ -12,6 +12,10 @@ export RUSTUP_TOOLCHAIN="nightly-2025-11-08-x86_64-unknown-linux-gnu"
 export PATH="$tool_root/bin:$CARGO_HOME/bin:$PATH"
 # Match Hax's normal target location without its unlocked cargo-metadata lookup.
 export CARGO_TARGET_DIR="$repo_root/target/hax"
+# Isolate compiler wrappers at the hax extraction boundary (#1873): ambient
+# wrappers such as sccache probe the custom hax Rust driver with C-style flags
+# and fail extraction with exit 101.
+unset RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER
 
 mkdir -p "$output_dir"
 

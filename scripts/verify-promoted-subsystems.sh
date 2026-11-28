@@ -90,7 +90,11 @@ quint_apalache_runner="$repo_root/scripts/quint_apalache.py"
 # unless the budgets are updated together.
 quint_default_timeout_seconds=300
 declare -A quint_gate_timeout_seconds=(
-  # full profile only; 380-680 s nominal on a 4-vCPU runner (max-steps 13).
+  # Observed ~302 s (hosted-timers-quint, max-steps 6) and >300 s (hosted-timers-progress-quint,
+  # max-steps 5) on an 8-vCPU Boat VM; 450 s fits the fast-lane worst-case cap
+  # (450 x 2 + 900 = 1800 s <= 1800 s).
+  [hosted-timers-quint]=450
+  [hosted-timers-progress-quint]=450
 )
 
 if [[ ! -x "$apalache_launcher" ]]; then
@@ -481,6 +485,10 @@ run_gate fast data-lineage-lean \
   "lean -DwarningAsError=true verification/data-lineage-v1/DataLineage.lean" \
   command \
   lean -DwarningAsError=true verification/data-lineage-v1/DataLineage.lean
+run_gate fast feed-reducer-lean \
+  "lean -DwarningAsError=true verification/feed-reducer-v1/FeedReducer.lean" \
+  command \
+  lean -DwarningAsError=true verification/feed-reducer-v1/FeedReducer.lean
 run_gate fast transition-lean \
   "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean" \
   command \

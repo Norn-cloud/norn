@@ -1,0 +1,4 @@
+{
+  "order": 8,
+  "value": "lean -DwarningAsError=true verification/feed-reducer-v1/FeedReducer.lean"
+}

@@ -54,6 +54,9 @@ lean_root="$aeneas_root/backends/lean"
 test "$(tr -d '\r\n' < "$lean_root/lean-toolchain")" = leanprover/lean4:v4.31.0
 export RUSTUP_HOME="$tool_root/rustup" CARGO_HOME="$tool_root/cargo" CARGO_INCREMENTAL=0
 export CARGO_TARGET_DIR="$result/target"
+# Isolate ambient compiler wrappers (such as sccache) from Charon's custom
+# cargo/rustc extraction driver (#1873).
+unset RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER
 rm -rf "$result/baseline" "$result/common" "$result/mutants"
 mkdir -p "$result/common"
 
