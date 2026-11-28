@@ -255,12 +255,15 @@ pub fn check_law_set(
                 } else {
                     "an installed law is closed: another artifact cannot add or change its exceptions; narrow your own law instead"
                 };
-                out.push(finding(
-                    codes::WEAKENS_INHERITED,
-                    artifact,
-                    "/payload/id",
+                let mut diagnostic =
+                    finding(codes::WEAKENS_INHERITED, artifact, "/payload/id", message);
+                diagnostic.witness = Some(crate::DiagnosticWitness::core_law_weakening(
+                    artifact.artifact_id.clone(),
+                    law.id.clone(),
+                    inherited.id.clone(),
                     message,
                 ));
+                out.push(diagnostic);
             }
         }
         if closure_refused {

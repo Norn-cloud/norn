@@ -1,0 +1,7 @@
+{
+  "code": "core.laws.missing_required_link_binding",
+  "message": "create action for a core-specializing concept omits a required core link binding",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

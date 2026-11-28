@@ -1,0 +1,7 @@
+{
+  "code": "core.laws.preservation_violated",
+  "message": "writer or lifecycle transition violates an inherited core constitutional law",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

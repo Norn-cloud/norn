@@ -402,6 +402,9 @@ fn check_artifact_set_ring0_phases_using(
                         &base,
                         ctx.registry,
                     ))
+                    .chain(crate::core_preservation::check_core_preservation_set(
+                        &norm, &ctx,
+                    ))
                     .chain(crate::labels::check_label_set(&norm, &base))
                     .chain(crate::transform::check_transform_set(
                         &norm,

@@ -1,0 +1,7 @@
+{
+  "code": "core.laws.preservation_unknown",
+  "message": "finite core-law preservation check exhausted its bounded exploration budget",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

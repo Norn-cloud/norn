@@ -776,11 +776,29 @@ impl<'a> Checker<'a, '_> {
                     norn_ir::RoleConflict::Inherited => ("core.graph.role_conflict", &[]),
                     norn_ir::RoleConflict::Declared => ("core.graph.role_mismatch", &["role"]),
                 };
-                self.out.push(error(
+                let mut diagnostic = error(
                     code,
                     format!("concept {name} has incompatible declared or inherited roles"),
                     span_at(&pointer(root, &index.to_string()), field),
+                );
+                let (expected_role, actual_role) = match conflict {
+                    norn_ir::RoleConflict::Inherited => (
+                        "consistent single ontology role across inherited parents/interfaces",
+                        "conflicting inherited roles",
+                    ),
+                    norn_ir::RoleConflict::Declared => (
+                        "declared role matching inherited parent/interface role",
+                        "declared role contradicts inherited role",
+                    ),
+                };
+                diagnostic.witness = Some(crate::DiagnosticWitness::core_link(
+                    name,
+                    "inherited_role_contract",
+                    "role",
+                    expected_role,
+                    actual_role,
                 ));
+                self.out.push(diagnostic);
             }
         }
         for (index, def) in self.model.interfaces.iter().enumerate() {
