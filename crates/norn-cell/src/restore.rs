@@ -168,11 +168,12 @@ impl CellStore<NativeEngine> {
                 }
             };
             if let Some(install) = &record.definition_install {
-                crate::export_journal::restore_late_source_evidence(
+                crate::export_journal::restore_late_source_evidence_with_events(
                     &store.read(),
                     seq,
                     &record.pending_observations,
                     &record.source_evidence,
+                    &record.batch.events,
                 )
                 .map_err(map_input)?;
                 let installed = store.install_retained_definitions(record)?;
@@ -187,11 +188,12 @@ impl CellStore<NativeEngine> {
                     return Err(RestoreError::ModelDefinitionsMismatch);
                 }
                 restore_input(&mut store, record).map_err(map_input)?;
-                crate::export_journal::restore_late_source_evidence(
+                crate::export_journal::restore_late_source_evidence_with_events(
                     &store.read(),
                     seq,
                     &record.pending_observations,
                     &record.source_evidence,
+                    &record.batch.events,
                 )
                 .map_err(map_input)?;
                 let outcome = store.commit_retained_batch(record)?;

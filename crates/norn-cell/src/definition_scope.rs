@@ -246,6 +246,7 @@ pub fn is_reserved_kernel_name(name: &str) -> bool {
         norn_kernel::ACTION_CALL_TYPE,
         norn_kernel::OWNED_ROWS_TYPE,
         crate::function_receipt::FUNCTION_COMMAND_TYPE,
+        norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE,
     ]
     .iter()
     .any(|reserved| reserved.eq_ignore_ascii_case(name))
@@ -301,6 +302,19 @@ pub fn function_command_record_type() -> ObjectTypeDef {
         crate::function_receipt::FUNCTION_COMMAND_TYPE,
         &[],
         &["state"],
+    )
+}
+
+/// The kernel's exact observed-delete tombstone record type
+/// (`norn.ObservedTombstone`, #3013 / #1028), added beside
+/// [`kernel_record_types`] when a cell installs mappings that can apply
+/// observed source deletes.
+#[must_use]
+pub fn observed_tombstone_record_type() -> ObjectTypeDef {
+    kernel_record_type(
+        norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE,
+        &["objectType", "key", "at", "source", "mappingVersion"],
+        &["provenance"],
     )
 }
 
@@ -430,10 +444,14 @@ fn bind_model(model: &Model, artifacts: &[ArtifactEnvelope]) -> Result<(), CellE
     let kernel = kernel_record_types();
     let recording = kernel_record_types_recording_principal_inputs();
     let function_command = function_command_record_type();
+    let observed_tombstone = observed_tombstone_record_type();
     let modelled: BTreeMap<_, _> = model
         .object_types()
         .filter(|def| {
-            !kernel.contains(def) && !recording.contains(def) && *def != &function_command
+            !kernel.contains(def)
+                && !recording.contains(def)
+                && *def != &function_command
+                && *def != &observed_tombstone
         })
         .map(|def| (def.name.0.clone(), def.clone()))
         .collect();

@@ -472,7 +472,8 @@ fn mapped_core_order_catches_up_and_same_state_reimport_is_a_consuming_noop() {
             ObservationEvent::ObservedFact { .. }
             | ObservationEvent::DataQualityFinding { .. }
             | ObservationEvent::ObservedDeleted { .. }
-            | ObservationEvent::ObservedRecreated { .. } => None,
+            | ObservationEvent::ObservedRecreated { .. }
+            | ObservationEvent::DisputeResolved { .. } => None,
         })
         .collect();
     assert_eq!(
@@ -637,7 +638,8 @@ fn assert_cancel_observation_events(events: &[ObservationEvent], provenance: &In
             | ObservationEvent::ObservedTransition { .. }
             | ObservationEvent::DataQualityFinding { .. }
             | ObservationEvent::ObservedDeleted { .. }
-            | ObservationEvent::ObservedRecreated { .. } => None,
+            | ObservationEvent::ObservedRecreated { .. }
+            | ObservationEvent::DisputeResolved { .. } => None,
         })
         .collect();
     assert_eq!(modified.len(), 1);
@@ -1437,7 +1439,8 @@ norn_testkit::proptest::proptest! {
             ObservationEvent::ObservedFact { .. }
             | ObservationEvent::ObservedTransition { .. }
             | ObservationEvent::ObservedDeleted { .. }
-            | ObservationEvent::ObservedRecreated { .. } => None,
+            | ObservationEvent::ObservedRecreated { .. }
+            | ObservationEvent::DisputeResolved { .. } => None,
         }).unwrap();
         let changed: JsonObject = serde_json::from_value(json!({"amount": amount})).unwrap();
         norn_testkit::proptest::prop_assert!(

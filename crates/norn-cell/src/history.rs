@@ -2235,11 +2235,12 @@ impl<E: SqlEngine> CellStore<E> {
                 store.bind(key, value)?;
             }
             if let Some(install) = &record.definition_install {
-                crate::export_journal::restore_late_source_evidence(
+                crate::export_journal::restore_late_source_evidence_with_events(
                     &store.read(),
                     record.receipt.body.commit_seq,
                     &record.pending_observations,
                     &record.source_evidence,
+                    &record.batch.events,
                 )?;
                 let installed = store.install_retained_definitions(record)?;
                 if installed != install.installed {
@@ -2253,11 +2254,12 @@ impl<E: SqlEngine> CellStore<E> {
                     return Err(refused());
                 }
                 restore_input(&mut store, record)?;
-                crate::export_journal::restore_late_source_evidence(
+                crate::export_journal::restore_late_source_evidence_with_events(
                     &store.read(),
                     record.receipt.body.commit_seq,
                     &record.pending_observations,
                     &record.source_evidence,
+                    &record.batch.events,
                 )?;
                 let outcome = store.commit_retained_batch(record)?;
                 if !matches!(outcome, CommitOutcome::Committed(_))
@@ -2342,8 +2344,22 @@ pub(crate) fn restore_input<E: SqlEngine>(
     }
     // This compares the kind, consumption reference, full payload, order and
     // run history using the same preimage codec as the normal commit journal.
-    if crate::export_journal::consumed_input(&store.read(), record.batch.consumes.as_ref())?
-        .as_ref()
+    let include_conflict_members = record.storage_version.unwrap_or(1)
+        >= crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
+        && matches!(
+            record.batch.consumes.as_ref(),
+            Some(crate::store::Consumption::Observation { observation_id })
+                if crate::link_claim_frontier::dispute_supersedes_first(
+                    observation_id,
+                    &record.batch.events,
+                )
+        );
+    if crate::export_journal::consumed_input(
+        &store.read(),
+        record.batch.consumes.as_ref(),
+        include_conflict_members,
+    )?
+    .as_ref()
         != record.consumed_input.as_ref()
     {
         return Err(mismatch());

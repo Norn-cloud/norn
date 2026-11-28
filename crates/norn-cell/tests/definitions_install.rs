@@ -5887,7 +5887,10 @@ fn mapping_bundle_store(path: &Path) -> CellStore {
     let object =
         serde_json::to_value(&artifacts[0]).expect("object")["payload"]["objectType"].clone();
     let model = Model::from_definitions_with_interfaces(
-        &[serde_json::from_value(object).expect("object")],
+        &[
+            serde_json::from_value(object).expect("object"),
+            norn_cell::observed_tombstone_record_type(),
+        ],
         &[],
         &[serde_json::from_value(interface).expect("interface")],
     )
@@ -6084,19 +6087,31 @@ fn mapping_bundle_processing_refuses_delete_and_diagnostics_without_consumption(
         let before = store.read().dump().expect("before");
         let mut cell =
             norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("driver");
-        assert!(matches!(
-            cell.process_mapping_bundle(&id),
-            Err(CellError::UnsupportedMappingProfile)
-        ));
-        assert_eq!(cell.store().read().dump().expect("after"), before);
-        assert_eq!(
-            cell.store()
-                .read()
-                .pending_observations()
-                .expect("retained inbox")
-                .len(),
-            1
-        );
+        if delete {
+            // #1028: derivation 3 supports `kind == "delete"` bundles directly.
+            assert!(cell.process_mapping_bundle(&id).expect("delete bundle"));
+            assert!(
+                cell.store()
+                    .read()
+                    .pending_observations()
+                    .expect("consumed inbox")
+                    .is_empty()
+            );
+        } else {
+            assert!(matches!(
+                cell.process_mapping_bundle(&id),
+                Err(CellError::UnsupportedMappingProfile)
+            ));
+            assert_eq!(cell.store().read().dump().expect("after"), before);
+            assert_eq!(
+                cell.store()
+                    .read()
+                    .pending_observations()
+                    .expect("retained inbox")
+                    .len(),
+                1
+            );
+        }
     }
 }
 
@@ -7000,7 +7015,11 @@ norn_testkit::proptest::proptest! {
             norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&id), Err(CellError::UnsupportedMappingProfile)));
             if attempt.checked_add(1) == Some(deliveries) {
                 let delivery = norn_kernel::CellHost::observe(&mut cell).expect("queue").expect("conflict");
-                norn_kernel::CellHost::commit(&mut cell, norn_kernel::CellCommit::empty().consuming(delivery.consumed())).expect("ordinary acknowledgement receipt");
+                // #1549: generic commits cannot consume a mapping dispute row; only governed `mapping.dispute.resolve` can.
+                norn_testkit::proptest::prop_assert!(matches!(
+                    norn_kernel::CellHost::commit(&mut cell, norn_kernel::CellCommit::empty().consuming(delivery.consumed())),
+                    Err(norn_kernel::CommitError::Host(CellError::UnsupportedMappingProfile))
+                ));
                 norn_testkit::proptest::prop_assert!(matches!(cell.process_mapping_bundle(&bypass), Err(CellError::UnsupportedMappingProfile)));
             }
             norn_testkit::proptest::prop_assert!(cell.store().read().authoritative_object(MAIN_WORLD, "quality.Measurement", "MEAS-1").expect("projection").is_none());

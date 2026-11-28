@@ -13,10 +13,12 @@ use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::export::{EXPORT_FORMAT, ExportRecord, SourceEvidenceEntry};
 #[cfg(all(test, feature = "native"))]
-pub(crate) use crate::export_evidence::{members_valid, restore_source_evidence};
 pub(crate) use crate::export_evidence::{
-    read_late_source_evidence, read_source_evidence, reprocessed_target,
-    restore_late_source_evidence, restore_observation_input,
+    members_valid, read_late_source_evidence, restore_late_source_evidence, restore_source_evidence,
+};
+pub(crate) use crate::export_evidence::{
+    read_late_source_evidence_for_version, read_source_evidence, reprocessed_target,
+    restore_late_source_evidence_with_events, restore_observation_input,
 };
 use crate::model::Model;
 use crate::read::{LedgerEntry, StoreReader, to_i64, to_u64};
@@ -63,10 +65,30 @@ pub(crate) fn read_record(
     Ok(Some(record))
 }
 
+/// Capture the exact input being consumed for a commit batch, automatically
+/// including superseded conflict members for v13+ dispute resolutions.
+pub(crate) fn consumed_input_for_commit<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    batch: &CommitBatch,
+    legacy_dispute_resolution: bool,
+) -> Result<Option<Value>, CellError> {
+    let include_conflict_members = !legacy_dispute_resolution
+        && matches!(
+            batch.consumes.as_ref(),
+            Some(Consumption::Observation { observation_id })
+                if crate::link_claim_frontier::dispute_supersedes_first(
+                    observation_id,
+                    &batch.events,
+                )
+        );
+    consumed_input(reader, batch.consumes.as_ref(), include_conflict_members)
+}
+
 /// Capture the exact input being consumed before the commit marks it consumed.
 pub(crate) fn consumed_input<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     consumed: Option<&Consumption>,
+    include_conflict_members: bool,
 ) -> Result<Option<Value>, CellError> {
     let Some(consumed) = consumed else {
         return Ok(None);
@@ -86,6 +108,18 @@ pub(crate) fn consumed_input<E: SqlEngine>(
                 members
             } else if observation_id.starts_with("mapping-bundle:") {
                 reprocessed_target(&pending.observed, observation_id)
+                    .map(|id| reader.pending_observation(id))
+                    .transpose()?
+                    .flatten()
+                    .into_iter()
+                    .collect()
+            } else if include_conflict_members && observation_id.starts_with("mapping-conflict:") {
+                pending
+                    .observed
+                    .get("input")
+                    .and_then(|input| input.get("acceptedBundleId"))
+                    .and_then(Value::as_str)
+                    .filter(|id| id.starts_with("mapping-bundle:"))
                     .map(|id| reader.pending_observation(id))
                     .transpose()?
                     .flatten()
@@ -282,7 +316,13 @@ pub(crate) fn record<E: SqlEngine>(
     for entry in &entries {
         reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
     }
-    let (pending_observations, source_evidence) = read_late_source_evidence(engine, commit_seq)?;
+    let (pending_observations, source_evidence) = read_late_source_evidence_for_version(
+        engine,
+        commit_seq,
+        storage_version,
+        batch.consumes.as_ref(),
+        &batch.events,
+    )?;
     let bindings = bindings(engine)?;
     let export = ExportRecord {
         format: EXPORT_FORMAT.to_owned(),
@@ -433,4 +473,442 @@ impl<E: SqlEngine> CellStore<E> {
             })
             .transpose()
     }
+}
+
+fn table_exists<E: SqlEngine>(conn: &E, name: &str) -> Result<bool, CellError> {
+    Ok(conn
+        .query_optional(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            params![name],
+            |_row| Ok(()),
+        )?
+        .is_some())
+}
+
+/// Whether `obs_id` was already exported as a pending observation by an earlier
+/// commit (`<= prev_seq`). Consults the hash-verified export journal when
+/// present so pre-v13 commits that omitted an unattributed first capture never
+/// suppress a required v13 export.
+pub(crate) fn already_exported_pending<E: SqlEngine>(
+    conn: &E,
+    obs_id: &str,
+    prev_seq: i64,
+) -> Result<bool, CellError> {
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    let direct = conn.query_optional(
+        &format!(
+            "SELECT 1 FROM \"{table}\" \
+             WHERE \"observation_id\" = ?1 \
+               AND \"captured_commit_seq\" >= 0 AND \"captured_commit_seq\" < ?2 \
+             LIMIT 1"
+        ),
+        params![obs_id, prev_seq],
+        |_row| Ok(()),
+    )?;
+    if direct.is_some() {
+        return Ok(true);
+    }
+    if !obs_id.starts_with("mapping-bundle:") {
+        return Ok(false);
+    }
+    let candidates = conflict_export_candidates(conn, obs_id, prev_seq)?;
+    if candidates.is_empty() {
+        return Ok(false);
+    }
+    let mut by_seq = std::collections::BTreeMap::<u64, bool>::new();
+    for (seq, fallback_exported) in candidates {
+        *by_seq.entry(seq).or_insert(false) |= fallback_exported;
+    }
+    let has_journal = table_exists(conn, "_norn_export_journal")?;
+    let has_receipt = table_exists(conn, crate::system::RECEIPT)?;
+    for (seq, fallback_exported) in by_seq {
+        if has_journal && let Some(rec) = read_record(conn, seq)? {
+            if rec
+                .pending_observations
+                .iter()
+                .any(|p| p.observation_id == obs_id)
+            {
+                return Ok(true);
+            }
+            continue;
+        }
+        if !fallback_exported {
+            continue;
+        }
+        let committed = if has_receipt {
+            let seq_i64 = to_i64(seq, "export commit_seq")?;
+            conn.query_optional(
+                &format!(
+                    "SELECT 1 FROM \"{}\" WHERE \"commit_seq\" = ?1",
+                    crate::system::RECEIPT
+                ),
+                params![seq_i64],
+                |_row| Ok(()),
+            )?
+            .is_some()
+        } else {
+            false
+        };
+        if !committed {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn conflict_export_candidates<E: SqlEngine>(
+    conn: &E,
+    obs_id: &str,
+    prev_seq: i64,
+) -> Result<Vec<(u64, bool)>, CellError> {
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    let inbox = crate::system::INBOX;
+    let res_table = crate::link_claim_frontier::DISPUTE_RESOLUTION;
+    let has_journal = conn
+        .query_optional(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
+            params![],
+            |_row| Ok(()),
+        )?
+        .is_some();
+    let mut candidates = Vec::new();
+    // When `_norn_export_journal` exists, gather every conflict commit without
+    // filtering on mutable `_norn_inbox.observed` JSON so tampered inbox bytes
+    // cannot hide an earlier dependency-only export of `obs_id` (the caller
+    // checks each candidate's hash-verified `pending_observations`).
+    let dep_filter = if has_journal {
+        ""
+    } else {
+        " AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?2"
+    };
+    let ev_sql = format!(
+        "SELECT e.\"captured_commit_seq\", c.\"consumed_commit_seq\", \
+                CASE WHEN json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?2 \
+                     THEN 1 ELSE 0 END \
+         FROM \"{inbox}\" c \
+         JOIN \"{table}\" e ON e.\"observation_id\" = c.\"observation_id\" \
+         WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
+           AND e.\"captured_commit_seq\" >= 0 AND e.\"captured_commit_seq\" < ?1{dep_filter}"
+    );
+    let ev_rows = conn.query(&ev_sql, params![prev_seq, obs_id])?;
+    for raw in ev_rows {
+        let row = SqlRow(raw);
+        let export_seq = to_u64(row.get(0)?, "captured_commit_seq")?.saturating_add(1);
+        let consumed: Option<i64> = row.get(1)?;
+        let dep_matches = row.get::<i64>(2)? != 0;
+        let pending_at_export =
+            dep_matches && consumed.is_none_or(|c| u64::try_from(c).ok() > Some(export_seq));
+        candidates.push((export_seq, pending_at_export));
+    }
+    let cons_sql = format!(
+        "SELECT c.\"consumed_commit_seq\", \
+                EXISTS (SELECT 1 FROM \"{res_table}\" r \
+                        WHERE r.\"dispute_id\" = c.\"observation_id\" \
+                          AND r.\"commit_seq\" = c.\"consumed_commit_seq\"), \
+                CASE WHEN json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?2 \
+                     THEN 1 ELSE 0 END \
+         FROM \"{inbox}\" c \
+         WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
+           AND c.\"consumed_commit_seq\" IS NOT NULL \
+           AND c.\"consumed_commit_seq\" <= ?1{dep_filter}"
+    );
+    let cons_rows = conn.query(&cons_sql, params![prev_seq, obs_id])?;
+    for raw in cons_rows {
+        let row = SqlRow(raw);
+        let seq = to_u64(row.get(0)?, "consumed_commit_seq")?;
+        let resolved: i64 = row.get(1)?;
+        let dep_matches = row.get::<i64>(2)? != 0;
+        candidates.push((seq, dep_matches && resolved != 0));
+    }
+    let res_rows = if has_journal {
+        conn.query(
+            &format!(
+                "SELECT r.\"commit_seq\", \
+                        CASE WHEN json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?2 \
+                             THEN 1 ELSE 0 END \
+                 FROM \"{res_table}\" r \
+                 LEFT JOIN \"{inbox}\" c ON c.\"observation_id\" = r.\"dispute_id\" \
+                 WHERE substr(r.\"dispute_id\", 1, 17) = 'mapping-conflict:' \
+                   AND r.\"commit_seq\" <= ?1"
+            ),
+            params![prev_seq, obs_id],
+        )?
+    } else {
+        conn.query(
+            &format!(
+                "SELECT r.\"commit_seq\", 1 FROM \"{res_table}\" r \
+                 JOIN \"{inbox}\" c ON c.\"observation_id\" = r.\"dispute_id\" \
+                 WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
+                   AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?1 \
+                   AND r.\"commit_seq\" <= ?2"
+            ),
+            params![obs_id, prev_seq],
+        )?
+    };
+    for raw in res_rows {
+        let row = SqlRow(raw);
+        let seq = to_u64(row.get(0)?, "dispute resolution commit_seq")?;
+        let dep_matches = row.get::<i64>(1)? != 0;
+        candidates.push((seq, dep_matches));
+    }
+    Ok(candidates)
+}
+
+/// Load the authenticated `Observed` payload for a committed link claim's
+/// `observation_id` at `commit_seq` from `_norn_export_journal` (bound to
+/// `_norn_receipt` when `reader` is present), so frontier rebuild and drift
+/// verification never trust mutable `_norn_inbox.observed` for `source_version`
+/// or `event_keys`. Falls back to `_norn_inbox` only when `commit_seq` has not
+/// yet been journaled (live in-tx write before `export_journal::record`, or a
+/// pre-export cell).
+pub(crate) fn authenticated_claim_observed<E: SqlEngine>(
+    conn: &E,
+    reader: Option<&StoreReader<'_, E>>,
+    commit_seq: u64,
+    claim_id: Option<&str>,
+    observation_id: &str,
+    committed: bool,
+) -> Result<Option<Value>, CellError> {
+    let corrupt = |msg: &str| CellError::LedgerCorrupt {
+        seq: commit_seq,
+        reason: format!("unverified claim metadata for {observation_id}: {msg}"),
+    };
+    let has_journal = conn
+        .query_optional(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
+            params![],
+            |_row| Ok(()),
+        )?
+        .is_some();
+    if committed && !has_journal {
+        return Err(corrupt("missing export journal table"));
+    }
+    if has_journal {
+        if let Some(export) = read_record(conn, commit_seq)? {
+            if let Some(reader) = reader {
+                let Some(receipt) = reader.receipt_at(commit_seq)? else {
+                    return Err(corrupt("missing receipt"));
+                };
+                if export.receipt != receipt {
+                    return Err(corrupt("export journal receipt mismatch"));
+                }
+            }
+            if let Some(cid) = claim_id
+                && !export.receipt.body.written.iter().any(|w| {
+                    w.object_type == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE && w.key == cid
+                })
+            {
+                return Err(corrupt("receipt did not write this link claim"));
+            }
+            if let Some(consumed_val) = export.consumed_input.as_ref() {
+                let ConsumedInput::Observation {
+                    observation_id: ci_id,
+                    observed,
+                    members,
+                    ..
+                } = decode_observation_input(consumed_val)
+                    .map_err(|err| corrupt(&format!("invalid consumed_input: {err}")))?
+                else {
+                    return Ok(None);
+                };
+                if ci_id == observation_id {
+                    return Ok(Some(observed));
+                }
+                if let Some(member) = members
+                    .into_iter()
+                    .find(|m| m.observation_id == observation_id)
+                {
+                    return Ok(Some(member.observed));
+                }
+                return Err(corrupt(
+                    "claim observation_id missing from consuming commit consumed_input",
+                ));
+            }
+            // Legacy pre-v13 generically-consumed dispute resolved at v13
+            // `commit_seq` without re-consuming: authenticate from its prior
+            // consuming commit's journal record.
+            return authenticated_legacy_claim_observed(conn, reader, observation_id, &corrupt);
+        }
+        if committed {
+            return Err(corrupt("missing export journal record for committed claim"));
+        }
+    }
+    let Some((consumed_seq, encoded)) = conn.query_optional(
+        &format!(
+            "SELECT \"consumed_commit_seq\", \"observed\" FROM \"{}\" WHERE \"observation_id\" = ?1",
+            crate::system::INBOX
+        ),
+        params![observation_id],
+        |row| Ok((row.get::<Option<i64>>(0)?, row.get::<String>(1)?)),
+    )?
+    else {
+        return Ok(None);
+    };
+    if has_journal
+        && let Some(prev_i64) = consumed_seq
+        && let Ok(prev_seq) = u64::try_from(prev_i64)
+        && prev_seq < commit_seq
+        && let Some(reader) = reader
+    {
+        return reader
+            .authenticated_prior_consumed_observed(observation_id, prev_seq)
+            .map(Some);
+    }
+    Ok(Value::from_json_text(&encoded).ok())
+}
+
+fn authenticated_legacy_claim_observed<E: SqlEngine>(
+    conn: &E,
+    reader: Option<&StoreReader<'_, E>>,
+    observation_id: &str,
+    corrupt: &dyn Fn(&str) -> CellError,
+) -> Result<Option<Value>, CellError> {
+    if observation_id.starts_with("mapping-bundle:") {
+        return Err(corrupt("mapping-bundle claim missing consumed_input"));
+    }
+    let is_dispute = observation_id.starts_with("mapping-conflict:")
+        || observation_id.starts_with("mapping-identity:");
+    let Some(prev_i64) = conn
+        .query_optional(
+            &format!(
+                "SELECT \"consumed_commit_seq\" FROM \"{}\" WHERE \"observation_id\" = ?1",
+                crate::system::INBOX
+            ),
+            params![observation_id],
+            |row| row.get::<Option<i64>>(0),
+        )?
+        .flatten()
+    else {
+        if is_dispute {
+            return Err(corrupt(
+                "missing prior consumed_commit_seq for legacy dispute claim",
+            ));
+        }
+        return Ok(None);
+    };
+    let prev_seq = u64::try_from(prev_i64)
+        .map_err(|err| corrupt(&format!("negative prior consumed_commit_seq: {err}")))?;
+    if let Some(reader) = reader {
+        return reader
+            .authenticated_prior_consumed_observed(observation_id, prev_seq)
+            .map(Some);
+    }
+    let Some(prior_export) = read_record(conn, prev_seq)? else {
+        return Err(corrupt("missing prior consuming export journal record"));
+    };
+    let Some(prior_consumed) = prior_export.consumed_input.as_ref() else {
+        return Err(corrupt("prior consuming journal missing consumed_input"));
+    };
+    let ConsumedInput::Observation {
+        observation_id: ci_id,
+        observed,
+        ..
+    } = decode_observation_input(prior_consumed)
+        .map_err(|err| corrupt(&format!("invalid prior consumed_input: {err}")))?
+    else {
+        return Err(corrupt("prior consuming journal is not an observation"));
+    };
+    if ci_id != observation_id {
+        return Err(corrupt("prior consumed observation id mismatch"));
+    }
+    Ok(Some(observed))
+}
+
+/// Resolve a `mapping-conflict:` row's `acceptedBundleId` for commit
+/// `commit_seq`. For legacy generically-consumed disputes
+/// (`consumed_commit_seq < commit_seq`), reads `acceptedBundleId` exclusively
+/// from the prior consuming commit's hash-verified `_norn_export_journal`
+/// `consumed_input` (bound to its pre-v13 receipt consuming `dispute_id`)
+/// rather than mutable `_norn_inbox.observed`. Shared by both retirement and
+/// export dependency capture so they can never disagree.
+pub(crate) fn conflict_accepted_bundle_id_for_commit<E: SqlEngine>(
+    conn: &E,
+    commit_seq: i64,
+    dispute_id: &str,
+) -> Result<Option<String>, CellError> {
+    let Some((consumed_seq, inbox_obs)) = conn.query_optional(
+        &format!(
+            "SELECT \"consumed_commit_seq\", \"observed\" FROM \"{}\" WHERE \"observation_id\" = ?1",
+            crate::system::INBOX
+        ),
+        params![dispute_id],
+        |row| Ok((row.get::<Option<i64>>(0)?, row.get::<String>(1)?)),
+    )?
+    else {
+        return Ok(None);
+    };
+    let observed_val = if let Some(prev_i64) = consumed_seq
+        && prev_i64 < commit_seq
+    {
+        let prev_seq = u64::try_from(prev_i64).map_err(|err| CellError::LedgerCorrupt {
+            seq: 0,
+            reason: format!("negative prior consumed_commit_seq for {dispute_id}: {err}"),
+        })?;
+        let corrupt = |msg: &str| CellError::LedgerCorrupt {
+            seq: prev_seq,
+            reason: format!("unverified prior consumption for {dispute_id}: {msg}"),
+        };
+        let Some(prior_export) = read_record(conn, prev_seq)? else {
+            return Err(corrupt("missing prior consuming export journal record"));
+        };
+        let expected_consumed = Consumption::Observation {
+            observation_id: dispute_id.to_owned(),
+        };
+        if prior_export.receipt.body.world != crate::MAIN_WORLD
+            || prior_export.receipt.body.consumed.as_ref() != Some(&expected_consumed)
+            || prior_export.storage_version.unwrap_or(1)
+                >= crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
+        {
+            return Err(corrupt(
+                "prior consuming export journal disagrees with pre-v13 receipt",
+            ));
+        }
+        let Some(prior_consumed) = prior_export.consumed_input.as_ref() else {
+            return Err(corrupt("prior consuming journal missing consumed_input"));
+        };
+        let ConsumedInput::Observation {
+            observation_id,
+            observed,
+            ..
+        } = decode_observation_input(prior_consumed)
+            .map_err(|err| corrupt(&format!("invalid prior consumed input: {err}")))?
+        else {
+            return Err(corrupt("prior consuming journal is not an observation"));
+        };
+        if observation_id != dispute_id {
+            return Err(corrupt("prior consumed observation id mismatch"));
+        }
+        observed
+    } else {
+        Value::from_json_text(&inbox_obs).map_err(|err| {
+            CellError::Encoding(format!("invalid dispute JSON for {dispute_id}: {err}"))
+        })?
+    };
+    Ok(observed_val
+        .pointer("/input/acceptedBundleId")
+        .and_then(Value::as_str)
+        .map(str::to_owned))
+}
+
+/// Retire a superseded pending first capture (`acceptedBundleId`) when a
+/// `mapping-conflict:` row resolves via `accept-second-as-correction` or
+/// `reject`.
+pub(crate) fn retire_superseded_conflict_bundle<E: SqlEngine>(
+    conn: &E,
+    commit_seq: i64,
+    dispute_id: &str,
+) -> Result<(), CellError> {
+    let Some(accepted_id) = conflict_accepted_bundle_id_for_commit(conn, commit_seq, dispute_id)?
+    else {
+        return Ok(());
+    };
+    conn.execute(
+        &format!(
+            "UPDATE \"{}\" SET \"consumed_commit_seq\" = ?1 \
+             WHERE \"consumed_commit_seq\" IS NULL AND \"observation_id\" = ?2",
+            crate::system::INBOX
+        ),
+        params![commit_seq, accepted_id],
+    )?;
+    Ok(())
 }

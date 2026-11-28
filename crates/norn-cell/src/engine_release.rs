@@ -102,10 +102,14 @@ pub const CHANNEL: &[StorageVersion] = &[
         version: 12,
         change: "Core 08 Fork Unit 2b (#1947, FORK-EVIDENCE-1): newly minted fork commits bind their durable ForkPin into ReceiptBody.fork_pin, WrittenRow.fork_world, and LedgerEntry.fork_pin/hash, enabling auditable fork-local simulated Decision Card evidence while refusing fork-bound receipts as main evidence at every nesting depth",
     },
+    StorageVersion {
+        version: 13,
+        change: "Lane B5 (#1028, #1549, #1931): durable indexed link-claim frontier (_norn_link_claim_frontier) removing the 1,000-bundle planning ceiling, source delete mapping bundles (derivation 3), and governed dispute resolution index (_norn_dispute_resolution) for mapping.dispute.resolve; upgrading backfills both tables from immutable _norn_fact_values, _norn_ledger, and _norn_receipt",
+    },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 12;
+pub const STORAGE_VERSION: u32 = 13;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -387,6 +391,10 @@ fn migrate_to<E: SqlEngine>(engine: &E, to: u32) -> Result<(), CellError> {
         // Version 11 (D1): create and backfill `_norn_outbox_record` from the
         // cell's existing outbox, claims, runs, and restore fences.
         11 => crate::outbox_ledger_migrate::migrate_v11_outbox_ledger(engine),
+        // Version 13 (#1028, #1549, #1931): create and backfill
+        // `_norn_link_claim_frontier` and `_norn_dispute_resolution` from
+        // immutable `_norn_fact_values`, `_norn_ledger`, and `_norn_receipt`.
+        13 => crate::link_claim_frontier::migrate_v13_link_claim_frontier(engine),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
             engine: STORAGE_VERSION,

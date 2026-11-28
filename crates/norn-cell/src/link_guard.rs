@@ -23,17 +23,26 @@ use crate::read::{LinkRecord, StoreReader, decode_row, query_projected};
 use crate::store::LinkChange;
 use crate::system::{LINK_CREATION, LINK_VERSIONS};
 
-/// Unforgeable proof constructed ONLY by [`verify_mapping_links`] inside a
-/// commit transaction after verifying every mapping bundle, exact pending
-/// page/bundle consumption, and exact `mapping_link_plan` equality.
+/// Unforgeable proof constructed ONLY by [`verify_links`] inside a commit
+/// transaction after verifying every mapping bundle, exact pending page/bundle
+/// consumption, and exact `mapping_link_plan` equality (or a governed dispute
+/// resolution with `DisputeResolveProof`).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct VerifiedMappingProof(());
+pub(crate) struct VerifiedMappingProof {
+    dispute_resolved: bool,
+}
 
 impl VerifiedMappingProof {
     /// Consumes the in-transaction proof to confirm static mapping link exemption.
     pub(crate) const fn exempt_link_read_markings(self) -> bool {
-        let () = self.0;
+        let _ = self.dispute_resolved;
         true
+    }
+
+    /// Whether this proof authorizes persisting a governed `dispute_resolved`
+    /// event into `_norn_dispute_resolution`.
+    pub(crate) const fn allows_dispute_resolution(self) -> bool {
+        self.dispute_resolved
     }
 }
 
@@ -90,23 +99,42 @@ impl LinkGuardMode {
 }
 
 /// Verify mapping bundle evidence, exact pending page/bundle consumption, and
-/// `mapping_link_plan` equality inside the commit transaction. This is the
-/// ONLY constructor of [`VerifiedMappingProof`].
-pub(crate) fn verify_mapping_links<E, C, I, S: SqlEngine>(
+/// `mapping_link_plan` (both link writes and fresh claim writes) inside the
+/// commit transaction. This is the ONLY constructor of [`VerifiedMappingProof`].
+pub(crate) fn verify_links<E: 'static, C, I, S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     commit: &CellCommit<E, C, I>,
+    batch: &crate::store::CommitBatch,
     mapped: &[crate::mapping_bundle::MappingBundle],
+    dispute_resolve: Option<crate::mapping_dispute_resolve::DisputeResolveProof<'_>>,
 ) -> Result<Option<VerifiedMappingProof>, CommitError<CellError>> {
+    // Reject any `dispute_resolved` event (including attached/bookkeeping events
+    // in `batch.events`) outside `resolve_mapping_dispute`.
+    let dispute_events: Vec<&norn_ir::RuntimeValue> = batch
+        .events
+        .iter()
+        .filter(|e| e.get("op").and_then(norn_ir::RuntimeValue::as_str) == Some("dispute_resolved"))
+        .collect();
+    if !dispute_events.is_empty() && dispute_resolve.is_none() {
+        return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
+    }
     // OBS-EVIDENCE-1: preparation cannot authorize a bundle disputed before BEGIN.
     for bundle in mapped {
         reader
             .check_mapping_bundle(bundle)
             .map_err(CommitError::Host)?;
+        crate::mapping_delete::verify_delete_and_tombstone_eligibility(reader, bundle, commit)?;
     }
     if let Some(norn_kernel::Consumed::Observation {
         id: norn_kernel::ObservationId(observation_id),
     }) = &commit.consumes
     {
+        if (observation_id.starts_with("mapping-conflict:")
+            || observation_id.starts_with("mapping-identity:"))
+            && dispute_resolve.is_none()
+        {
+            return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
+        }
         // OBS-PAGE-1: a page commit applies exactly its still-pending
         // members, in page order; a bundle commit exactly its bundle.
         let applied: Vec<String> = mapped
@@ -126,21 +154,110 @@ pub(crate) fn verify_mapping_links<E, C, I, S: SqlEngine>(
         if applied != expected {
             return Err(CommitError::Host(CellError::SourceEvidenceChanged));
         }
-    } else if !mapped.is_empty() {
+    } else if !mapped.is_empty()
+        || (commit.consumes.is_some() && (!dispute_events.is_empty() || dispute_resolve.is_some()))
+    {
         return Err(CommitError::Host(CellError::MappingBundleMismatch));
     }
     if mapped.is_empty() {
+        if let Some(proof) = dispute_resolve {
+            return verify_dispute_resolution_links(reader, commit, &dispute_events, proof);
+        }
         return Ok(None);
     }
-    if reader
+    if dispute_resolve.is_some() {
+        return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
+    }
+    let plan = reader
         .mapping_link_plan(mapped, commit)
-        .map_err(CommitError::Host)?
-        .links
-        != commit.links
-    {
+        .map_err(CommitError::Host)?;
+    if plan.links != commit.links || !fresh_claim_writes_match(reader, &plan.fresh, commit)? {
         return Err(CommitError::Host(CellError::SourceEvidenceChanged));
     }
-    Ok(Some(VerifiedMappingProof(())))
+    Ok(Some(VerifiedMappingProof {
+        dispute_resolved: false,
+    }))
+}
+
+fn fresh_claim_writes_match<E, C, I, S: SqlEngine>(
+    reader: &StoreReader<'_, S>,
+    expected_fresh: &[norn_ir::mapping::ObservedLinkClaim],
+    commit: &CellCommit<E, C, I>,
+) -> Result<bool, CommitError<CellError>> {
+    let catalog = reader.model().type_catalog();
+    let claim_type = ObjectTypeName(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE.to_owned());
+    let mut expected = BTreeMap::new();
+    for claim in expected_fresh {
+        let id = claim
+            .id()
+            .map_err(|e| CommitError::Host(CellError::Encoding(e.to_string())))?;
+        let raw_values = claim
+            .values()
+            .map_err(|e| CommitError::Host(CellError::Encoding(e.to_string())))?;
+        let values = catalog
+            .effective_object_values(&claim_type, &raw_values)
+            .map_err(|e| CommitError::Host(CellError::Encoding(e.to_string())))?;
+        expected.insert(id, values);
+    }
+    let mut actual = BTreeMap::new();
+    for write in &commit.writes {
+        if write.key.object_type.as_str() != norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE {
+            continue;
+        }
+        let norn_kernel::FactMutation::Put { values } = &write.mutation else {
+            return Ok(false);
+        };
+        actual.insert(write.key.key.clone(), values.clone());
+    }
+    Ok(actual == expected)
+}
+
+fn verify_dispute_resolution_links<E: 'static, C, I, S: SqlEngine>(
+    reader: &StoreReader<'_, S>,
+    commit: &CellCommit<E, C, I>,
+    dispute_events: &[&norn_ir::RuntimeValue],
+    proof: crate::mapping_dispute_resolve::DisputeResolveProof<'_>,
+) -> Result<Option<VerifiedMappingProof>, CommitError<CellError>> {
+    let dispute_id = proof.dispute_id();
+    let (_, dispute, is_pending) = reader
+        .load_verified_unresolved_dispute(dispute_id)
+        .map_err(CommitError::Host)?;
+    let consumes_ok = match &commit.consumes {
+        Some(norn_kernel::Consumed::Observation { id }) => is_pending && id.0 == dispute_id,
+        None => !is_pending,
+        _ => false,
+    };
+    if !consumes_ok {
+        return Err(CommitError::Host(CellError::MappingBundleMismatch));
+    }
+    let [event] = dispute_events else {
+        return Err(CommitError::Host(CellError::MappingBundleMismatch));
+    };
+    let field = |k| event.get(k).and_then(norn_ir::RuntimeValue::as_str);
+    if field("disputeId") != Some(dispute_id)
+        || field("decision") != Some(proof.decision().as_str())
+        || field("actor") != Some(proof.actor())
+        || field("reason") != Some(proof.reason())
+    {
+        return Err(CommitError::Host(CellError::MappingBundleMismatch));
+    }
+    if proof.decision() == crate::mapping_dispute_resolve::DisputeDecision::AcceptSecondAsCorrection
+    {
+        crate::mapping_delete::verify_delete_and_tombstone_eligibility(
+            reader,
+            dispute.incoming_bundle(),
+            commit,
+        )?;
+    }
+    let plan = reader
+        .dispute_resolution_link_plan(dispute_id, &dispute, proof.decision(), commit)
+        .map_err(CommitError::Host)?;
+    if plan.links != commit.links || !fresh_claim_writes_match(reader, &plan.fresh, commit)? {
+        return Err(CommitError::Host(CellError::SourceEvidenceChanged));
+    }
+    Ok(Some(VerifiedMappingProof {
+        dispute_resolved: true,
+    }))
 }
 
 /// The committed state of link `key` as the kernel sees it (O(1) point lookup).

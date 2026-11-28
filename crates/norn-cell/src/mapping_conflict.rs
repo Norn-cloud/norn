@@ -5,10 +5,7 @@ use crate::{
     mapping_bundle::MappingBundle,
     system::INBOX,
 };
-use norn_ir::{
-    DataQualityFinding, DataQualityFindingStatus, DataQualityLineage, DataQualityOutcome,
-    DataQualityRuleRef, DataQualitySeverity, DataQualitySubject, RuntimeValue,
-};
+use norn_ir::{DataQualityFinding, RuntimeValue};
 use norn_kernel::{ObservationId, Observed};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,7 +22,7 @@ pub struct MappingConflict {
     pub finding: DataQualityFinding,
 }
 
-fn field<'a>(bundle: &'a MappingBundle, name: &str) -> Result<&'a str, CellError> {
+pub(crate) fn field<'a>(bundle: &'a MappingBundle, name: &str) -> Result<&'a str, CellError> {
     bundle
         .raw
         .get(name)
@@ -34,7 +31,7 @@ fn field<'a>(bundle: &'a MappingBundle, name: &str) -> Result<&'a str, CellError
         .ok_or(CellError::MappingBundleMismatch)
 }
 
-fn content(bundle: &MappingBundle) -> Result<String, CellError> {
+pub(crate) fn content(bundle: &MappingBundle) -> Result<String, CellError> {
     let kind = field(bundle, "kind")?;
     let source_version = field(bundle, "source_version")?;
     let payload_digest = field(bundle, "payload_digest")?;
@@ -114,71 +111,26 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         incoming: &MappingBundle,
     ) -> Result<SourceEventCapture, CellError> {
-        let new = content(incoming)?;
+        let _ = content(incoming)?;
         let existing = self.source_event_bundles(incoming)?;
         let Some(accepted) = existing.first() else {
             return Ok(SourceEventCapture::Fresh);
         };
         let accepted_id = format!("mapping-bundle:{}", accepted.digest);
-        let old = content(accepted)?;
-        if old == new {
-            if incoming.reprocesses.is_none()
-                && let Some(matched) = existing.iter().find(|b| same_capture_pin(b, incoming))
-            {
-                return Ok(SourceEventCapture::Replay(format!(
-                    "mapping-bundle:{}",
-                    matched.digest
-                )));
-            }
-            return Ok(SourceEventCapture::Fresh);
+        if let Some(conflict) =
+            crate::mapping_dispute_resolve::build_mapping_conflict(accepted_id, accepted, incoming)?
+        {
+            return Ok(SourceEventCapture::Conflict(Box::new(conflict)));
         }
-        let evidence = norn_ir::canonical::domain_hash_hex(
-            b"norn.source.conflict.v1\0",
-            &(
-                &incoming.input.connector_instance,
-                &incoming.input.partition,
-                field(incoming, "source")?,
-                field(incoming, "source_id")?,
-                field(incoming, "event_id")?,
-                old,
-                new,
-            ),
-        )?;
-        let subjects = accepted
-            .records
-            .iter()
-            .chain(&incoming.records)
-            .map(|r| DataQualitySubject::new(r.object_type.clone(), &r.key))
-            .collect();
-        let observation_ids = vec![
-            accepted_id.clone(),
-            format!("mapping-bundle:{}", incoming.digest),
-        ];
-        let finding = DataQualityFinding::v2(
-            DataQualityRuleRef::Builtin {
-                id: "core.boundary.import_finding".into(),
-                version: "1".into(),
-            },
-            subjects,
-            DataQualitySeverity::Error,
-            "conflicting immutable source event content",
-            DataQualityOutcome::NotSatisfied,
-            accepted
-                .records
-                .iter()
-                .chain(&incoming.records)
-                .map(|r| DataQualityLineage::new(r.provenance.clone(), observation_ids.clone()))
-                .collect(),
-            incoming.input.recorded_at.clone(),
-            incoming.input.recorded_at.clone(),
-            DataQualityFindingStatus::Open,
-        )?
-        .with_evidence_digest(evidence)?;
-        Ok(SourceEventCapture::Conflict(Box::new(MappingConflict {
-            accepted_bundle_id: accepted_id,
-            incoming: incoming.clone(),
-            finding,
-        })))
+        if incoming.reprocesses.is_none()
+            && let Some(matched) = existing.iter().find(|b| same_capture_pin(b, incoming))
+        {
+            return Ok(SourceEventCapture::Replay(format!(
+                "mapping-bundle:{}",
+                matched.digest
+            )));
+        }
+        Ok(SourceEventCapture::Fresh)
     }
 
     /// Find a conflict against the first captured source event, including consumed captures.
@@ -201,29 +153,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.indexed_source_findings(object_type, key, false)
     }
 
-    /// Every captured conflict with its inbox position, in capture order.
+    /// Every unresolved (pending) conflict with its inbox position, in capture order.
     pub(crate) fn verified_source_conflicts(
         &self,
     ) -> Result<Vec<(u64, MappingConflict)>, CellError> {
-        let rows = self.conn.query(&format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-conflict:%' ORDER BY position"), params![])?;
-        let mut conflicts = Vec::new();
-        for values in rows {
-            let row = crate::engine::SqlRow(values);
-            let position = crate::read::to_u64(row.get(0)?, "inbox position")?;
-            let stored_id: String = row.get(1)?;
-            let encoded: String = row.get(2)?;
-            let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
-            let conflict: MappingConflict =
-                norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
-            self.recheck_mapping_conflict(&conflict)?;
-            if observed.id.0 != stored_id
-                || stored_id != format!("mapping-conflict:{}", conflict.finding.id)
-            {
-                return Err(CellError::MappingBundleMismatch);
-            }
-            conflicts.push((position, conflict));
-        }
-        Ok(conflicts)
+        self.load_source_conflicts(true)
+            .map(|rows| rows.into_iter().map(|(pos, c, _)| (pos, c)).collect())
     }
 
     /// Recompute boundary conflict evidence before disclosure under the caller's source policy.
@@ -374,6 +309,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     record.key.clone(),
                 ));
             }
+            for delete in &bundle.deletes {
+                subjects.insert((
+                    self.retained_mapping_root(
+                        bundle.definitions_version,
+                        delete.object_type.as_str(),
+                    )?,
+                    delete.key.clone(),
+                ));
+            }
         }
         for subject in subjects {
             index
@@ -505,16 +449,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.with_source_dispute_index(|index| index.events.contains_key(&keys))
     }
 
-    /// The dispute rows covering `bundle`'s source event, if any.
-    pub(crate) fn mapping_event_dispute(
-        &self,
-        bundle: &MappingBundle,
-    ) -> Result<Option<EventDispute>, CellError> {
-        let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
-            .map(|key| norn_ir::canonical::nfc(&key));
-        self.with_source_dispute_index(|index| index.events.get(&keys).cloned())
-    }
-
     /// Datasets of `mapping_id` (optionally scoped to `connection_id`) that
     /// still hold unresolved quarantined inbox rows (`mapping-bundle:` without
     /// a strictly newer landed correction under the declared
@@ -607,8 +541,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         };
         let disputes_sql = format!(
             "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
-             WHERE {unconsumed_pred} \
-               AND (\"observation_id\" LIKE 'mapping-conflict:%' OR \"observation_id\" LIKE 'mapping-identity:%')"
+             WHERE \"observation_id\" LIKE 'mapping-conflict:%' \
+                OR \"observation_id\" LIKE 'mapping-identity:%'"
         );
         for values in self.conn.query(&disputes_sql, params![])? {
             let row = crate::engine::SqlRow(values);
@@ -619,6 +553,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 continue;
             };
             if bundle.input.mapping != mapping_id {
+                continue;
+            }
+            if self
+                .verified_dispute_resolution_seq(&id, frontier_i64)?
+                .is_some()
+            {
                 continue;
             }
             if evidence_matches_scope(self.conn, &id, pos, &bundle, connection_id, scope_at)? {
@@ -1138,9 +1078,10 @@ mod tests {
             partition: "snapshot".into(),
             recorded_at: UtcTimestamp(recorded_at.into()),
         };
+        let dv = crate::mapping_bundle::derivation_number(derivation);
         let bundle = store
             .read()
-            .derived_mapping_bundle(&raw, &input, 1, derivation, reprocesses)
+            .derived_mapping_bundle_version(&raw, &input, 1, derivation, dv, reprocesses)
             .expect("derive bundle");
         Observed {
             id: ObservationId(format!("mapping-bundle:{}", bundle.digest)),
@@ -1317,7 +1258,7 @@ mod tests {
         let consumed = crate::Consumption::Observation {
             observation_id: c_obs.id.0.clone(),
         };
-        let pre = crate::export_journal::consumed_input(&store.read(), Some(&consumed))
+        let pre = crate::export_journal::consumed_input(&store.read(), Some(&consumed), true)
             .expect("consumed_input")
             .expect("preimage");
         store
@@ -1389,16 +1330,17 @@ mod tests {
         let consumed = crate::Consumption::Observation {
             observation_id: r_obs.id.0.clone(),
         };
-        let pre = crate::export_journal::consumed_input(&store.read(), Some(&consumed))
+        let pre = crate::export_journal::consumed_input(&store.read(), Some(&consumed), true)
             .expect("consumed_input")
             .expect("preimage");
         let replayed = open_installed_store(&artifacts);
         crate::export_journal::restore_late_source_evidence(&replayed.read(), 2, &p2, &ev2)
             .expect("restore c2 quarantine");
         assert_eq!(replay_observation_preimage(&replayed, 4, &pre), (1, 2));
-        let round_trip = crate::export_journal::consumed_input(&replayed.read(), Some(&consumed))
-            .expect("replayed consumed_input")
-            .expect("replayed preimage");
+        let round_trip =
+            crate::export_journal::consumed_input(&replayed.read(), Some(&consumed), true)
+                .expect("replayed consumed_input")
+                .expect("replayed preimage");
         assert_eq!(round_trip, pre);
         for conn in [&store.conn, &replayed.conn] {
             conn.execute(
@@ -1460,7 +1402,7 @@ mod tests {
         let c_consumed = crate::Consumption::Observation {
             observation_id: c_obs.id.0.clone(),
         };
-        let c_pre = crate::export_journal::consumed_input(&store.read(), Some(&c_consumed))
+        let c_pre = crate::export_journal::consumed_input(&store.read(), Some(&c_consumed), true)
             .expect("c pre")
             .expect("pre");
         store

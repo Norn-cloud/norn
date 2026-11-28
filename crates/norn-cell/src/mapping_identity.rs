@@ -185,15 +185,28 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(())
     }
 
-    /// Every captured identity dispute with its inbox position, in capture order.
+    /// Every unresolved (pending) identity dispute with its inbox position, in capture order.
     pub(crate) fn identity_evidence(&self) -> Result<Vec<(u64, IdentityEvidence)>, CellError> {
-        let rows = self.conn.query(&format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-identity:%' ORDER BY position"), params![])?;
+        let rows = self.conn.query(
+            &format!(
+                "SELECT position, observation_id, observed FROM \"{INBOX}\" \
+                 WHERE observation_id LIKE 'mapping-identity:%' \
+                 ORDER BY position"
+            ),
+            params![],
+        )?;
         let mut evidence = Vec::new();
         for values in rows {
             let row = crate::engine::SqlRow(values);
             let position = crate::read::to_u64(row.get(0)?, "inbox position")?;
             let stored_id: String = row.get(1)?;
             let encoded: String = row.get(2)?;
+            if self
+                .verified_dispute_resolution_seq(&stored_id, None)?
+                .is_some()
+            {
+                continue;
+            }
             let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
             let guard: IdentityEvidence =
                 norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
@@ -213,5 +226,289 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
     ) -> Result<Vec<DataQualityFinding>, CellError> {
         self.indexed_source_findings(object_type, key, true)
+    }
+
+    /// Active frontier claims associated with `event_keys`, including active
+    /// `DisputeDecision::Reject` carry-forward claims whose surviving
+    /// predecessor set currently restores a claim from `event_keys` (along with
+    /// those carried predecessor rows so a subsequent `Reject` excludes them).
+    pub(crate) fn disputed_event_claims(
+        &self,
+        event_keys: &[String; 5],
+    ) -> Result<Vec<crate::link_claim_frontier::FrontierRow>, CellError> {
+        let keys_json = serde_json::to_string(event_keys)?;
+        let all_event_claims =
+            self.query_frontier("WHERE \"event_keys_json\" = ?1", params![keys_json])?;
+        let mut out = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut inactive_contribs = std::collections::BTreeSet::new();
+        for row in all_event_claims {
+            if row.active {
+                if seen.insert(row.claim_id.clone()) {
+                    out.push(row);
+                }
+            } else if !self.is_reject_carry_claim(&row)? {
+                inactive_contribs.insert(row.contribution_id);
+            }
+        }
+        for contribution_id in inactive_contribs {
+            let active = self.active_claims_for_contribution(&contribution_id)?;
+            let mut has_carry = false;
+            for r in &active {
+                if self.is_reject_carry_claim(r)? {
+                    has_carry = true;
+                    break;
+                }
+            }
+            if !has_carry {
+                continue;
+            }
+            let surviving = self.surviving_predecessors_after_reject(
+                &contribution_id,
+                active.clone(),
+                &std::collections::BTreeSet::new(),
+            )?;
+            let carried: Vec<_> = surviving
+                .into_iter()
+                .filter(|r| &r.event_keys == event_keys)
+                .collect();
+            if carried.is_empty() {
+                continue;
+            }
+            for r in active {
+                if self.is_reject_carry_claim(&r)? && seen.insert(r.claim_id.clone()) {
+                    out.push(r);
+                }
+            }
+            for r in carried {
+                if seen.insert(r.claim_id.clone()) {
+                    out.push(r);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Whether `row` (or, for a synthetic reject-carry claim, any surviving real
+    /// predecessor it carries) currently has an open dispute other than
+    /// `excluding_dispute`.
+    pub(crate) fn row_is_disputed(
+        &self,
+        row: &crate::link_claim_frontier::FrontierRow,
+        excluding_dispute: Option<&str>,
+    ) -> Result<bool, CellError> {
+        if self.is_reject_carry_claim(row)? {
+            let active = self.active_claims_for_contribution(&row.contribution_id)?;
+            for pred in self.surviving_predecessors_after_reject(
+                &row.contribution_id,
+                active,
+                &std::collections::BTreeSet::new(),
+            )? {
+                if self.event_keys_disputed(&pred.event_keys, excluding_dispute)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+        self.event_keys_disputed(&row.event_keys, excluding_dispute)
+    }
+
+    /// Indexed counterpart of [`Self::row_is_disputed`] for
+    /// `SourceDisputeIndex`-accelerated held-link scans.
+    pub(crate) fn row_is_disputed_in_index(
+        &self,
+        row: &crate::link_claim_frontier::FrontierRow,
+        idx: &crate::mapping_conflict::SourceDisputeIndex,
+    ) -> Result<bool, CellError> {
+        if self.is_reject_carry_claim(row)? {
+            let active = self.active_claims_for_contribution(&row.contribution_id)?;
+            for pred in self.surviving_predecessors_after_reject(
+                &row.contribution_id,
+                active,
+                &std::collections::BTreeSet::new(),
+            )? {
+                if idx.events.contains_key(&pred.event_keys) {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+        Ok(idx.events.contains_key(&row.event_keys))
+    }
+
+    /// Return ALL open disputes holding an active entry. For a synthetic
+    /// reject-carry claim, returns every open dispute across ALL surviving real
+    /// predecessors so multi-predecessor `core.boundary.link_held` findings
+    /// retain complete lineage and evidence digest.
+    pub(crate) fn entry_open_disputes(
+        &self,
+        contribution_id: &str,
+        observation_id: &str,
+        event_keys: &[String; 5],
+        index: Option<&crate::mapping_conflict::SourceDisputeIndex>,
+    ) -> Result<Vec<crate::mapping_conflict::EventDispute>, CellError> {
+        let is_carry = (observation_id.starts_with("mapping-conflict:")
+            || observation_id.starts_with("mapping-identity:"))
+            && self
+                .dispute_resolution(observation_id)?
+                .is_some_and(|rec| rec.decision == "reject");
+        if is_carry {
+            let active = self.active_claims_for_contribution(contribution_id)?;
+            let mut seen_keys = std::collections::BTreeSet::new();
+            let mut out = Vec::new();
+            for pred in self.surviving_predecessors_after_reject(
+                contribution_id,
+                active,
+                &std::collections::BTreeSet::new(),
+            )? {
+                if !seen_keys.insert(pred.event_keys.clone()) {
+                    continue;
+                }
+                let dispute = match index {
+                    Some(idx) => idx.events.get(&pred.event_keys).cloned(),
+                    None => self.event_dispute_for_keys(&pred.event_keys, None)?,
+                };
+                if let Some(d) = dispute {
+                    out.push(d);
+                }
+            }
+            return Ok(out);
+        }
+        let dispute = match index {
+            Some(idx) => idx.events.get(event_keys).cloned(),
+            None => self.event_dispute_for_keys(event_keys, None)?,
+        };
+        Ok(dispute.into_iter().collect())
+    }
+
+    /// Whether every surviving real predecessor of a carry-forward claim in
+    /// `contribution` has a verified source version strictly older than `version`.
+    pub(crate) fn carry_all_predecessors_older_than(
+        &self,
+        contribution: &str,
+        active: &[crate::link_claim_frontier::FrontierRow],
+        version: &norn_ir::SourceVersion,
+    ) -> Result<bool, CellError> {
+        for pred in self.surviving_predecessors_after_reject(
+            contribution,
+            active.to_vec(),
+            &std::collections::BTreeSet::new(),
+        )? {
+            let Some(earlier) =
+                crate::mapping_delete::parse_verified_frontier_version(self, &pred)?
+            else {
+                continue;
+            };
+            match earlier.try_cmp(version) {
+                Ok(std::cmp::Ordering::Less) => {}
+                Ok(_) => return Ok(false),
+                Err(_) => return Err(CellError::MappingBundleMismatch),
+            }
+        }
+        Ok(true)
+    }
+
+    /// Whether `row` (or, for a `DisputeDecision::Reject` carry-forward claim,
+    /// any surviving predecessor it carries) has a verified source version
+    /// strictly greater than `incoming`.
+    pub(crate) fn claim_is_newer_than(
+        &self,
+        row: &crate::link_claim_frontier::FrontierRow,
+        incoming: &norn_ir::SourceVersion,
+    ) -> Result<bool, CellError> {
+        if self.is_reject_carry_claim(row)? {
+            let active = self.active_claims_for_contribution(&row.contribution_id)?;
+            for pred in self.surviving_predecessors_after_reject(
+                &row.contribution_id,
+                active,
+                &std::collections::BTreeSet::new(),
+            )? {
+                if crate::mapping_delete::parse_verified_frontier_version(self, &pred)?
+                    .and_then(|v| v.try_cmp(incoming).ok())
+                    == Some(std::cmp::Ordering::Greater)
+                {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+        Ok(
+            crate::mapping_delete::parse_verified_frontier_version(self, row)?
+                .and_then(|v| v.try_cmp(incoming).ok())
+                == Some(std::cmp::Ordering::Greater),
+        )
+    }
+
+    /// Recompute the surviving non-rejected real link claims of `contribution_id`
+    /// after excluding `newly_rejected`, all claims superseded by prior
+    /// `DisputeDecision::Reject` carry-forward claims, and any claim whose
+    /// `event_keys` already carries a verified `DisputeDecision::Reject` at or
+    /// after that claim's commit.
+    pub(crate) fn surviving_predecessors_after_reject(
+        &self,
+        contribution_id: &str,
+        mut all_claims: Vec<crate::link_claim_frontier::FrontierRow>,
+        newly_rejected: &std::collections::BTreeSet<String>,
+    ) -> Result<Vec<crate::link_claim_frontier::FrontierRow>, CellError> {
+        all_claims.extend(self.inactive_claims_for_contribution(contribution_id)?);
+        let mut rejected_ids = newly_rejected.clone();
+        let mut supersedes_by_id: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        let mut real_claims = Vec::new();
+        for r in all_claims {
+            supersedes_by_id.insert(
+                r.claim_id.clone(),
+                r.claim.supersedes.iter().cloned().collect(),
+            );
+            if self.is_reject_carry_claim(&r)? {
+                rejected_ids.extend(r.claim.supersedes.iter().cloned());
+            } else {
+                real_claims.push(r);
+            }
+        }
+        let mut rejected_event_commits: std::collections::BTreeMap<[String; 5], u64> =
+            std::collections::BTreeMap::new();
+        for rec in self.dispute_resolutions()? {
+            if rec.decision != "reject" {
+                continue;
+            }
+            let meta = crate::link_claim_frontier::claim_source_meta(
+                self.conn,
+                Some(self),
+                rec.commit_seq,
+                None,
+                &rec.dispute_id,
+                true,
+            )?;
+            rejected_event_commits
+                .entry(meta.event_keys)
+                .and_modify(|seq| *seq = (*seq).max(rec.commit_seq))
+                .or_insert(rec.commit_seq);
+        }
+        let remaining: Vec<_> = real_claims
+            .into_iter()
+            .filter(|r| {
+                !rejected_ids.contains(&r.claim_id)
+                    && rejected_event_commits
+                        .get(&r.event_keys)
+                        .is_none_or(|&rej_seq| rej_seq < r.commit_seq)
+            })
+            .collect();
+        let mut superseded_by_survivor = std::collections::BTreeSet::new();
+        let mut stack: Vec<String> = remaining
+            .iter()
+            .flat_map(|r| r.claim.supersedes.iter().cloned())
+            .collect();
+        while let Some(id) = stack.pop() {
+            if superseded_by_survivor.insert(id.clone())
+                && let Some(parents) = supersedes_by_id.get(&id)
+            {
+                stack.extend(parents.iter().cloned());
+            }
+        }
+        Ok(remaining
+            .into_iter()
+            .filter(|r| !superseded_by_survivor.contains(&r.claim_id))
+            .collect())
     }
 }

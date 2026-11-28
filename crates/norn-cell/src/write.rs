@@ -225,6 +225,8 @@ pub(crate) struct Writer<'a, E: SqlEngine> {
     link_read_markings: BTreeSet<String>,
     /// True only when replaying an already-committed pre-v11 export record.
     legacy_outbox: bool,
+    /// True only when replaying an already-committed pre-v13 export record.
+    legacy_dispute_resolution: bool,
 }
 
 impl<'a, E: SqlEngine> Writer<'a, E> {
@@ -245,11 +247,17 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             catalog: std::cell::OnceCell::new(),
             link_read_markings: BTreeSet::new(),
             legacy_outbox: false,
+            legacy_dispute_resolution: false,
         }
     }
 
     pub(crate) const fn with_legacy_outbox(mut self, legacy_outbox: bool) -> Self {
         self.legacy_outbox = legacy_outbox;
+        self
+    }
+
+    pub(crate) const fn with_legacy_dispute_resolution(mut self, legacy: bool) -> Self {
+        self.legacy_dispute_resolution = legacy;
         self
     }
 
@@ -299,6 +307,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         let mut written = Vec::with_capacity(self.batch.writes.len());
         let mut records = Vec::new();
         let mut changed_properties = BTreeMap::new();
+        let mut claim_ordinal: u64 = 0;
         for write in &self.batch.writes {
             let write_inherited = self.destination_value_lineage(
                 &inherited,
@@ -381,6 +390,23 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 records.push(record);
             }
             row.snapshot_sha256 = Some(self.capture_value_commitment(&row)?);
+            if self.world == crate::MAIN_WORLD
+                && let FactWriteRow::Put {
+                    object_type,
+                    key,
+                    values,
+                } = write
+                && object_type == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
+            {
+                crate::link_claim_frontier::record_claim_in_tx(
+                    &self.reader(),
+                    self.commit_seq,
+                    claim_ordinal,
+                    key,
+                    values,
+                )?;
+                claim_ordinal = claim_ordinal.saturating_add(1);
+            }
             written.push(row);
         }
         for fact in &self.batch.facts {
@@ -757,6 +783,16 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                             "i.\"observation_id\" = (SELECT json_extract(\"observed\", '$.input.reprocesses') FROM \"{INBOX}\" WHERE \"observation_id\" = ?1)"
                         )),
                         params![observation_id],
+                    )?;
+                }
+                if observation_id.starts_with("mapping-conflict:")
+                    && !self.legacy_dispute_resolution
+                {
+                    crate::link_claim_frontier::consume_superseded_conflict_bundle(
+                        self.conn,
+                        commit_seq,
+                        observation_id,
+                        &self.batch.events,
                     )?;
                 }
                 if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {

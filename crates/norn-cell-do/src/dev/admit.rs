@@ -238,11 +238,21 @@ pub(crate) fn installed_model(active: &norn_cell::InstalledDefinitionSet) -> Res
         return Ok(model);
     }
     let kept = serving(&definitions, &artifacts, true)?;
-    Ok(if kept.model_hash() == active.model_hash {
-        kept
-    } else {
-        model
-    })
+    if kept.model_hash() == active.model_hash {
+        return Ok(kept);
+    }
+    for principal_inputs in [false, true] {
+        let legacy = norn_api::action_admission::prepare_action_model_without_tombstone(
+            &definitions,
+            &artifacts,
+            principal_inputs,
+        )
+        .map_err(|refusal| refusal.message)?;
+        if legacy.model_hash() == active.model_hash {
+            return Ok(legacy);
+        }
+    }
+    Ok(model)
 }
 
 /// `definitions` with the kernel's action receipt and owned-row types, and

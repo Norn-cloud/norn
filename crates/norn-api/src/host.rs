@@ -1,4 +1,5 @@
 //! One already-opened tenant cell shared by authorized transport adapters.
+mod dispute_resolve;
 mod source_capture;
 use crate::{
     action_admission::Serving,

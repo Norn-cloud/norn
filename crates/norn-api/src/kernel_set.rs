@@ -366,11 +366,31 @@ pub fn serving_model_installed(
         return Ok(model);
     }
     let kept = serving_model_keeping(artifacts, true)?;
-    Ok(if kept.model_hash() == model_hash {
-        kept
-    } else {
-        model
-    })
+    if kept.model_hash() == model_hash {
+        return Ok(kept);
+    }
+    // Pre-B5 cells with mappings installed before `norn.ObservedTombstone`
+    // was added to the serving model still reopen under their recorded hash.
+    let definitions = kernel_model(artifacts).map_err(|refusal| match refusal {
+        KernelRefusal::Refused(findings) => findings
+            .iter()
+            .map(|f| format!("{}: {}", f.code, f.message))
+            .collect::<Vec<_>>()
+            .join("; "),
+        KernelRefusal::Invalid(detail) => detail,
+    })?;
+    for principal_inputs in [false, true] {
+        let legacy = crate::action_admission::prepare_action_model_without_tombstone(
+            &definitions,
+            artifacts,
+            principal_inputs,
+        )
+        .map_err(|refusal| refusal.message)?;
+        if legacy.model_hash() == model_hash {
+            return Ok(legacy);
+        }
+    }
+    Ok(model)
 }
 
 /// Admit `added` over an installed set, as installing it would: the retained

@@ -2629,10 +2629,8 @@ impl<E: SqlEngine> CellStore<E> {
         // One proof cache for this read-only pass (#1423): receipts and the
         // retained writer models are proven once per pass, not once per event.
         let pass = RefCell::default();
-        let upgrading = matches!(
-            crate::engine_release::admission(&store.conn)?,
-            crate::engine_release::Admission::Upgrade { .. }
-        );
+        let admission = crate::engine_release::admission(&store.conn)?;
+        let upgrading = matches!(admission, crate::engine_release::Admission::Upgrade { .. });
         let (verified, fork) = store.conn.transaction(|| {
             Self::init_schema(&store.conn, &store.model, source)?;
             if let Some(expected) = expected {
@@ -2642,6 +2640,7 @@ impl<E: SqlEngine> CellStore<E> {
             if let Some(active) = Self::read_active_definitions(&store.conn)? {
                 crate::definition_scope::verify_active(&store.conn, &store.model, &active)?;
             }
+            crate::link_claim_frontier::verify_or_rebuild_on_open(&store.verifier(), matches!(admission, crate::engine_release::Admission::Upgrade { from } if from < 13))?;
             let fork = crate::fork::load_pin(&store.conn)?;
             refuse_pin_past(fork.as_ref(), verified.head.commits)?;
             // An upgrading open verified from genesis, so record its checkpoint inside this tx.
@@ -3244,10 +3243,8 @@ impl<E: SqlEngine> CellStore<E> {
                     // and bring it to this engine's storage version before
                     // any statement below touches it.
                     validate_store_format(&self.conn)?;
-                    let upgrading = matches!(
-                        crate::engine_release::admission(&self.conn)?,
-                        crate::engine_release::Admission::Upgrade { .. }
-                    );
+                    let admission = crate::engine_release::admission(&self.conn)?;
+                    let upgrading = matches!(admission, crate::engine_release::Admission::Upgrade { .. });
                     crate::engine_release::upgrade(&self.conn)?;
                     // A file provisioned before a system table existed gains it here,
                     // so the next run start or write finds it (idempotent DDL).
@@ -3269,6 +3266,7 @@ impl<E: SqlEngine> CellStore<E> {
                     let pass = RefCell::default();
                     let verified = self.verify_history(&pass)?;
                     crate::definition_scope::verify_active(&self.conn, &self.model, &active)?;
+                    crate::link_claim_frontier::verify_or_rebuild_on_open(&self.verifier(), matches!(admission, crate::engine_release::Admission::Upgrade { from } if from < 13))?;
                     refuse_pin_past(self.fork.as_ref(), verified.head.commits)?;
                     self.finish_open_scrub(upgrading, &verified)?;
                     self.transparency.replace(verified.transparency);
@@ -3441,7 +3439,9 @@ impl<E: SqlEngine> CellStore<E> {
             }
             let transaction_disputes = RefCell::default();
             let reader = StoreReader::new(&self.conn, &self.model)
-                .with_mapping_plans(&self.mapping_plans).with_transaction_source_disputes(&transaction_disputes);
+                .with_mapping_plans(&self.mapping_plans)
+                .with_transaction_source_disputes(&transaction_disputes)
+                .with_live_scrub(&self.scrub);
             if effective_batch.logical_time < reader.clock_floor()? {
                 return Err(CellError::Quantity(norn_kernel::quantity::QuantityError::ClockRegression).into());
             }
@@ -3457,7 +3457,8 @@ impl<E: SqlEngine> CellStore<E> {
                 let _pinned = crate::mapping_bundle::PinnedPlans::open(&self.mapping_plans);
                 guard(&reader).map_err(GuardedError::Guard)?
             };
-            let consumed_input = export_journal::consumed_input(&reader, effective_batch.consumes.as_ref())?;
+            let legacy_dispute_resolution = matches!(origin, CommitOrigin::Retained(r) if r.storage_version.unwrap_or(1) < crate::link_claim_frontier::FRONTIER_STORAGE_VERSION);
+            let consumed_input = export_journal::consumed_input_for_commit(&reader, effective_batch, legacy_dispute_resolution)?;
             let commit_seq = reader.next_commit_seq()?;
             let commit_model = installation
                 .as_ref()
@@ -3476,7 +3477,8 @@ impl<E: SqlEngine> CellStore<E> {
                 CommitOrigin::Retained(record) if record.storage_version.unwrap_or(1) < 11
             );
             let mut writer = Writer::new(&self.conn, commit_model, effective_batch, commit_seq)
-                .with_legacy_outbox(legacy_outbox);
+                .with_legacy_outbox(legacy_outbox)
+                .with_legacy_dispute_resolution(legacy_dispute_resolution);
 
             let install_record = if let (Some(install), Some(mut record)) =
                 (installation.as_ref(), install_record)
@@ -3663,6 +3665,12 @@ impl<E: SqlEngine> CellStore<E> {
                 }
             }
             let receipt = writer.write_receipt(body)?;
+            let record_storage_version = match origin {
+                CommitOrigin::Retained(record) => record.storage_version,
+                CommitOrigin::Host(_) | CommitOrigin::Current | CommitOrigin::Provisioning(..) => Some(crate::engine_release::STORAGE_VERSION),
+            };
+            let allow_dispute = matches!(origin, CommitOrigin::Retained(_)) || mapping_proof.is_some_and(crate::link_guard::VerifiedMappingProof::allows_dispute_resolution);
+            crate::mapping_conflict_scoped::record_commit_dispute_resolutions(&self.conn, effective_batch, commit_seq, &receipt.hash, record_storage_version, allow_dispute, &entries)?;
             self.conn.execute(r#"UPDATE "_norn_clock" SET logical_time=?1,commit_seq=?2,receipt_hash=?3 WHERE id=1"#,
                 params![to_i64(receipt.body.logical_time, "cell clock")?, to_i64(receipt.body.commit_seq, "clock commit")?, receipt.hash])?;
             export_journal::record(
@@ -3673,13 +3681,7 @@ impl<E: SqlEngine> CellStore<E> {
                 &receipt,
                 consumed_input,
                 install_record,
-                // A replayed record keeps the version that first wrote it.
-                match origin {
-                    CommitOrigin::Retained(record) => record.storage_version,
-                    CommitOrigin::Host(_) | CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
-                        Some(crate::engine_release::STORAGE_VERSION)
-                    }
-                },
+                record_storage_version,
                 automation,
                 entries,
             )?;

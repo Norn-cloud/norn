@@ -22,6 +22,7 @@ enum ObservationEventOp {
     DataQualityFinding,
     ObservedDeleted,
     ObservedRecreated,
+    DisputeResolved,
 }
 
 impl ObservationEventOp {
@@ -31,6 +32,7 @@ impl ObservationEventOp {
         "data_quality_finding",
         "observed_deleted",
         "observed_recreated",
+        "dispute_resolved",
     ];
 
     fn parse<E: serde::de::Error>(op: &str) -> Result<Self, E> {
@@ -40,6 +42,7 @@ impl ObservationEventOp {
             "data_quality_finding" => Ok(Self::DataQualityFinding),
             "observed_deleted" => Ok(Self::ObservedDeleted),
             "observed_recreated" => Ok(Self::ObservedRecreated),
+            "dispute_resolved" => Ok(Self::DisputeResolved),
             other => Err(E::unknown_variant(other, Self::VARIANTS)),
         }
     }
@@ -59,6 +62,7 @@ impl ObservationEventOp {
             Self::DataQualityFinding => &["fact"],
             Self::ObservedDeleted => &["key", "tombstoned", "provenance"],
             Self::ObservedRecreated => &["key", "provenance"],
+            Self::DisputeResolved => &["disputeId", "decision", "actor", "reason"],
         }
     }
 }
@@ -87,6 +91,14 @@ struct ObservationEventWire {
     fact: Option<DataQualityFinding>,
     #[serde(default, deserialize_with = "present_field")]
     tombstoned: Option<bool>,
+    #[serde(default, deserialize_with = "present_field")]
+    dispute_id: Option<String>,
+    #[serde(default, deserialize_with = "present_field")]
+    decision: Option<String>,
+    #[serde(default, deserialize_with = "present_field")]
+    actor: Option<String>,
+    #[serde(default, deserialize_with = "present_field")]
+    reason: Option<String>,
 }
 
 fn present_field<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
@@ -116,6 +128,10 @@ impl ObservationEventWire {
             ("synthesized", self.synthesized.is_some()),
             ("fact", self.fact.is_some()),
             ("tombstoned", self.tombstoned.is_some()),
+            ("disputeId", self.dispute_id.is_some()),
+            ("decision", self.decision.is_some()),
+            ("actor", self.actor.is_some()),
+            ("reason", self.reason.is_some()),
         ];
         if let Some((name, _)) = present
             .into_iter()
@@ -169,6 +185,12 @@ impl<'de> Deserialize<'de> for ObservationEvent {
             ObservationEventOp::ObservedRecreated => Self::ObservedRecreated {
                 key: required_field::<_, D::Error>(wire.key, "key")?,
                 provenance: required_field::<_, D::Error>(wire.provenance, "provenance")?,
+            },
+            ObservationEventOp::DisputeResolved => Self::DisputeResolved {
+                dispute_id: required_field::<_, D::Error>(wire.dispute_id, "disputeId")?,
+                decision: required_field::<_, D::Error>(wire.decision, "decision")?,
+                actor: required_field::<_, D::Error>(wire.actor, "actor")?,
+                reason: required_field::<_, D::Error>(wire.reason, "reason")?,
             },
         })
     }

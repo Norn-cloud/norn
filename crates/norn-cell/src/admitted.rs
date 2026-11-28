@@ -107,6 +107,12 @@ impl AdmittedDefinitions {
         if needs_function_receipts {
             types.push(crate::function_command_record_type());
         }
+        let has_mappings = artifacts
+            .iter()
+            .any(|artifact| matches!(artifact.payload, ArtifactPayload::Mapping(_)));
+        if has_mappings {
+            types.push(crate::observed_tombstone_record_type());
+        }
         let model = Model::from_definitions_with_interfaces(&types, &property_types, &interfaces)?
             .with_governing_laws(artifacts)?;
         let guards = norn_kernel::transition_guards(actions.iter().map(|action| &action.root));

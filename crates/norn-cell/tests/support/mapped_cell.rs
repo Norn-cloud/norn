@@ -98,6 +98,12 @@ pub(crate) fn store(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) 
             );
         }
     }
+    if !types
+        .iter()
+        .any(|t| t.name.as_str() == norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE)
+    {
+        types.push(norn_cell::observed_tombstone_record_type());
+    }
     let model = Model::from_definitions_with_interfaces(&types, &properties, &interfaces)
         .expect("model")
         .with_governing_laws(&artifacts)

@@ -186,6 +186,8 @@ pub(crate) struct Scrub {
     fence_persisted: bool,
     /// Last `PRAGMA data_version` at which no sibling durable fence existed (S12).
     fence_checked_dv: Option<u64>,
+    /// Last `PRAGMA data_version` at which `_norn_link_claim_frontier` verified clean.
+    frontier_checked_dv: Option<u64>,
     /// `PRAGMA data_version` at open or last verified checkpoint (S10 catch-up baseline).
     baseline_dv: Option<u64>,
     transient: u32,
@@ -385,6 +387,7 @@ impl Scrub {
     ) -> Self {
         let mut scrub = Self {
             fence_checked_dv: data_version,
+            frontier_checked_dv: data_version,
             baseline_dv: data_version,
             ..Self::default()
         };
@@ -457,6 +460,14 @@ impl Scrub {
 
     pub(crate) const fn set_fence_checked_dv(&mut self, dv: u64) {
         self.fence_checked_dv = Some(dv);
+    }
+
+    pub(crate) const fn frontier_checked_dv(&self) -> Option<u64> {
+        self.frontier_checked_dv
+    }
+
+    pub(crate) const fn set_frontier_checked_dv(&mut self, dv: u64) {
+        self.frontier_checked_dv = Some(dv);
     }
 
     pub(crate) fn record_durable_fence(&mut self, finding: String) {

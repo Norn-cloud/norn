@@ -172,6 +172,7 @@ impl<E: SqlEngine> CellStore<E> {
             BTreeSet<FactKey>,
             BTreeSet<[String; 4]>,
             usize,
+            bool,
             &Observed<RuntimeValue>,
         )> = Vec::new();
         let mut records = Vec::with_capacity(raws.len());
@@ -216,15 +217,23 @@ impl<E: SqlEngine> CellStore<E> {
                 split = true;
                 continue;
             }
-            let keys: BTreeSet<FactKey> = bundle
+            let mut keys: BTreeSet<FactKey> = bundle
                 .records
                 .iter()
                 .map(|r| canonical.canonical(&FactKey::new(r.object_type.as_str(), &r.key)))
                 .collect();
+            for delete in &bundle.deletes {
+                let key = FactKey::new(delete.object_type.as_str(), &delete.key);
+                keys.insert(canonical.canonical(&key));
+                keys.insert(norn_kernel::snapshot_observe::tombstone_key(&key));
+            }
+            let is_delete = !bundle.deletes.is_empty();
             member = true;
             match runs.last_mut() {
-                Some((ids, written, seen_ids, run_bytes, _))
+                Some((ids, written, seen_ids, run_bytes, run_is_delete, _))
                     if !split
+                        && !is_delete
+                        && !*run_is_delete
                         && ids.len() < run_cap
                         && run_bytes.saturating_add(row_bytes) <= MAX_PAGE_BYTES
                         && written.is_disjoint(&keys)
@@ -235,12 +244,19 @@ impl<E: SqlEngine> CellStore<E> {
                     seen_ids.insert(identity);
                     *run_bytes = run_bytes.saturating_add(row_bytes);
                 }
-                _ => runs.push((vec![id], keys, BTreeSet::from([identity]), row_bytes, raw)),
+                _ => runs.push((
+                    vec![id],
+                    keys,
+                    BTreeSet::from([identity]),
+                    row_bytes,
+                    is_delete,
+                    raw,
+                )),
             }
             split = false;
         }
         let mut pages = Vec::with_capacity(runs.len());
-        for (ids, _, _, _, first) in runs {
+        for (ids, _, _, _, _, first) in runs {
             pages.push(self.inject_mapping_page_run(ids, first)?);
         }
         Ok(CapturedPage { pages, records })

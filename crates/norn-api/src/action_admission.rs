@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// # Errors
 /// Tenant declarations using SQLite-equivalent reserved names or invalid models refuse.
 pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model, Refusal> {
-    prepare(model, false)
+    prepare(model, false, false)
 }
 
 /// What a cell's stored model serves, which the model of every later
@@ -76,6 +76,16 @@ pub fn prepare_action_model_for(
     prepare_action_model_keeping(model, artifacts, false)
 }
 
+fn declares_principal_inputs(artifacts: &[ArtifactEnvelope]) -> bool {
+    artifacts.iter().any(|artifact| {
+        artifact.kind() == ArtifactKind::Rule
+            && matches!(
+                artifact.payload.to_json_value().as_object().and_then(|payload| payload.get("principalInputs")),
+                Some(norn_ir::JsonValue::Array(inputs)) if !inputs.is_empty()
+            )
+    })
+}
+
 /// [`prepare_action_model_for`], keeping the call record's `principalInputs`
 /// when `keep` says the cell already records it.
 /// # Errors
@@ -85,17 +95,34 @@ pub fn prepare_action_model_keeping(
     artifacts: &[ArtifactEnvelope],
     keep: bool,
 ) -> Result<norn_cell::Model, Refusal> {
-    let declared = artifacts.iter().any(|artifact| {
-        artifact.kind() == ArtifactKind::Rule
-            && matches!(
-                artifact.payload.to_json_value().as_object().and_then(|payload| payload.get("principalInputs")),
-                Some(norn_ir::JsonValue::Array(inputs)) if !inputs.is_empty()
-            )
-    });
-    prepare(model, declared || keep)
+    let has_mappings = artifacts
+        .iter()
+        .any(|artifact| artifact.kind() == ArtifactKind::Mapping);
+    prepare(
+        model,
+        declares_principal_inputs(artifacts) || keep,
+        has_mappings,
+    )
 }
 
-fn prepare(model: &norn_cell::Model, principal_inputs: bool) -> Result<norn_cell::Model, Refusal> {
+/// Legacy pre-B5 variant of [`prepare_action_model_keeping`] that omits
+/// `norn.ObservedTombstone` so already-installed mapping cells reopen under
+/// their recorded `model_hash` (HOST-REOPEN-1).
+/// # Errors
+/// As [`prepare_action_model`].
+pub fn prepare_action_model_without_tombstone(
+    model: &norn_cell::Model,
+    artifacts: &[ArtifactEnvelope],
+    keep: bool,
+) -> Result<norn_cell::Model, Refusal> {
+    prepare(model, declares_principal_inputs(artifacts) || keep, false)
+}
+
+fn prepare(
+    model: &norn_cell::Model,
+    principal_inputs: bool,
+    observed_tombstone: bool,
+) -> Result<norn_cell::Model, Refusal> {
     let mut snapshot = model.definitions_snapshot();
     let declared = snapshot.object_types.iter().map(|ty| ty.name.as_str());
     if declared
@@ -111,6 +138,11 @@ fn prepare(model: &norn_cell::Model, principal_inputs: bool) -> Result<norn_cell
     } else {
         norn_cell::kernel_record_types()
     });
+    if observed_tombstone {
+        snapshot
+            .object_types
+            .push(norn_cell::observed_tombstone_record_type());
+    }
     norn_cell::Model::from_snapshot(&snapshot).map_err(Refusal::host)
 }
 
@@ -668,5 +700,39 @@ mod serving_tests {
             prepare_action_model_keeping(&model, &undeclared, false).expect("served model");
         assert_eq!(dropped.model_hash(), plain.model_hash());
         assert_ne!(kept.model_hash(), plain.model_hash());
+    }
+
+    #[test]
+    fn mapping_sets_admit_observed_tombstone_and_non_mapping_sets_stay_unchanged() {
+        let model = norn_cell::Model::from_definitions(&[], &[]).expect("model");
+        let plain = prepare_action_model(&model).expect("plain");
+        assert!(
+            !plain.has_type(norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE),
+            "non-mapping set stays unchanged"
+        );
+        let mapping: ArtifactEnvelope = serde_json::from_value(json!({
+            "irVersion": "0.1",
+            "artifactId": "demo.items.mapping",
+            "kind": "mapping",
+            "namespace": "demo",
+            "name": "Items mapping",
+            "version": "1.0.0",
+            "lifecycle": "active",
+            "scope": {},
+            "dependencies": [],
+            "provenance": {"source": "authoring_sdk", "sourcePath": "test.ts"},
+            "payload": {
+                "mappingVersion": "1.0",
+                "source": {"schemaId": "demo.source", "version": "1.0.0", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+                "maps": []
+            }
+        }))
+        .expect("mapping artifact");
+        let with_mapping =
+            prepare_action_model_for(&model, std::slice::from_ref(&mapping)).expect("mapped");
+        assert!(with_mapping.has_type(norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE));
+        let legacy =
+            prepare_action_model_without_tombstone(&model, &[mapping], false).expect("legacy");
+        assert_eq!(legacy.model_hash(), plain.model_hash());
     }
 }
