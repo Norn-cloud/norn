@@ -213,25 +213,8 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .as_ref()
                 .map(|t| fact(&t.object_type, &t.key))
         };
-        fn group_by_sr<'a>(
-            list: &'a [Entry],
-            model: CommitModel<'_, '_>,
-        ) -> BTreeMap<(FactKey, norn_ir::LinkId), Vec<&'a Entry>> {
-            let mut groups = BTreeMap::<_, Vec<&'a Entry>>::new();
-            for entry in list {
-                let source = model.canonical(&FactKey::new(
-                    entry.claim.source_type.as_str(),
-                    &entry.claim.source_key,
-                ));
-                groups
-                    .entry((source, entry.claim.role.clone()))
-                    .or_default()
-                    .push(entry);
-            }
-            groups
-        }
-        let full_groups = group_by_sr(&all_entries, model);
-        let active_groups = group_by_sr(&active_entries, model);
+        let full_groups = group_entries_by_source_role(&all_entries, model);
+        let active_groups = group_entries_by_source_role(&active_entries, model);
         for (group_key, full_group) in &full_groups {
             let full_non_sup: BTreeMap<String, Standing> = full_group
                 .iter()
@@ -693,39 +676,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         model: CommitModel<'_, '_>,
         excluding_dispute: Option<&str>,
     ) -> Result<LinkPlan, CellError> {
-        let mut closed_sources = scope.sources.clone();
-        for (claim, _) in &fresh_claims {
-            if touches(claim, scope) {
-                closed_sources.insert(claim.source_key.clone());
-            }
-        }
-        let active_rows = self.active_frontier_for_scope(&closed_sources, &scope.targets)?;
-        let mut entries = self.frontier_rows_to_entries(active_rows, excluding_dispute)?;
-        let mut existing_ids: BTreeSet<String> = entries.iter().map(|e| e.id.clone()).collect();
-        for (claim, event_keys) in fresh_claims {
-            let id = claim.id()?;
-            if !existing_ids.insert(id.clone()) {
-                continue;
-            }
-            let contribution = claim.contribution_id()?;
-            let disputed = self.event_keys_disputed(&event_keys, excluding_dispute)?;
-            entries.push(Entry {
-                claim,
-                id,
-                contribution,
-                event_keys,
-                fresh: true,
-                disputed,
-            });
-        }
-        let touched_groups: BTreeSet<_> = entries
-            .iter()
-            .filter(|e| touches(&e.claim, scope))
-            .map(|e| (e.claim.source_key.clone(), e.claim.role.clone()))
-            .collect();
-        entries.retain(|e| {
-            touched_groups.contains(&(e.claim.source_key.clone(), e.claim.role.clone()))
-        });
+        let entries = self.collect_frontier_entries(scope, fresh_claims, excluding_dispute)?;
 
         let fact = |object_type: &norn_ir::ObjectTypeName, key: &str| {
             model.canonical(&FactKey::new(object_type.as_str(), key))
@@ -736,14 +687,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .as_ref()
                 .map(|t| fact(&t.object_type, &t.key))
         };
-        let mut groups = BTreeMap::<_, Vec<&Entry>>::new();
-        for entry in &entries {
-            let source = fact(&entry.claim.source_type, &entry.claim.source_key);
-            groups
-                .entry((source, entry.claim.role.clone()))
-                .or_default()
-                .push(entry);
-        }
+        let groups = group_entries_by_source_role(&entries, model);
         let present = |key: &FactKey| self.present_after(model, commit, key);
         let mut live: BTreeMap<FactKey, BTreeSet<LinkKey>> = BTreeMap::new();
         let mut links = BTreeMap::new();
@@ -969,4 +913,64 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         .and_then(|prepared| prepared.append_to(commit, authority))
         .map_err(|e| CellError::ObservationPreparation(Box::new(e)))
     }
+
+    fn collect_frontier_entries(
+        &self,
+        scope: &ClaimScope,
+        fresh_claims: Vec<(ObservedLinkClaim, [String; 5])>,
+        excluding_dispute: Option<&str>,
+    ) -> Result<Vec<Entry>, CellError> {
+        let mut closed_sources = scope.sources.clone();
+        for (claim, _) in &fresh_claims {
+            if touches(claim, scope) {
+                closed_sources.insert(claim.source_key.clone());
+            }
+        }
+        let active_rows = self.active_frontier_for_scope(&closed_sources, &scope.targets)?;
+        let mut entries = self.frontier_rows_to_entries(active_rows, excluding_dispute)?;
+        let mut existing_ids: BTreeSet<String> = entries.iter().map(|e| e.id.clone()).collect();
+        for (claim, event_keys) in fresh_claims {
+            let id = claim.id()?;
+            if !existing_ids.insert(id.clone()) {
+                continue;
+            }
+            let contribution = claim.contribution_id()?;
+            let disputed = self.event_keys_disputed(&event_keys, excluding_dispute)?;
+            entries.push(Entry {
+                claim,
+                id,
+                contribution,
+                event_keys,
+                fresh: true,
+                disputed,
+            });
+        }
+        let touched_groups: BTreeSet<_> = entries
+            .iter()
+            .filter(|e| touches(&e.claim, scope))
+            .map(|e| (e.claim.source_key.clone(), e.claim.role.clone()))
+            .collect();
+        entries.retain(|e| {
+            touched_groups.contains(&(e.claim.source_key.clone(), e.claim.role.clone()))
+        });
+        Ok(entries)
+    }
+}
+
+fn group_entries_by_source_role<'a>(
+    list: &'a [Entry],
+    model: CommitModel<'_, '_>,
+) -> BTreeMap<(FactKey, norn_ir::LinkId), Vec<&'a Entry>> {
+    let mut groups = BTreeMap::<_, Vec<&'a Entry>>::new();
+    for entry in list {
+        let source = model.canonical(&FactKey::new(
+            entry.claim.source_type.as_str(),
+            &entry.claim.source_key,
+        ));
+        groups
+            .entry((source, entry.claim.role.clone()))
+            .or_default()
+            .push(entry);
+    }
+    groups
 }

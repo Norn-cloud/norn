@@ -170,6 +170,16 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
             return Ok(true);
         }
     }
+    has_newer_landed_correction(reader, bundle, source, source_id, &incoming_version)
+}
+
+fn has_newer_landed_correction<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    bundle: &crate::mapping_bundle::MappingBundle,
+    source: &str,
+    source_id: &str,
+    incoming_version: &norn_ir::SourceVersion,
+) -> Result<bool, CellError> {
     let corrected_rows = reader.conn.query(
         &format!(
             "SELECT i.\"observation_id\", i.\"observed\" \
@@ -232,7 +242,7 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
             None
         };
         if let Some(landed) = landed
-            && landed_bundle_is_newer(reader, &landed, &incoming_version)?
+            && landed_bundle_is_newer(reader, &landed, incoming_version)?
         {
             return Ok(true);
         }

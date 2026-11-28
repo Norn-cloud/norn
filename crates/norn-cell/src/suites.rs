@@ -66,6 +66,8 @@ mod kernel_quint;
 mod ledger_export;
 #[path = "../tests/lifecycle_correspondence.rs"]
 mod lifecycle_correspondence;
+#[path = "../tests/link_claim_frontier.rs"]
+mod link_claim_frontier;
 #[path = "../tests/link_read_page.rs"]
 mod link_read_page;
 #[path = "../tests/linked_time_question.rs"]

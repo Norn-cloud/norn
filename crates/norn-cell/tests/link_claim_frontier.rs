@@ -5,6 +5,7 @@
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::panic,
+    clippy::too_many_lines,
     missing_docs,
     reason = "integration suite for link-claim frontier, source deletes, and dispute resolution"
 )]
@@ -16,6 +17,7 @@ use std::path::Path;
 use norn_cell::engine::NativeEngine;
 use norn_cell::engine_release::{EngineStamp, STAMP_FORMAT, STAMP_KEY, STORAGE_VERSION};
 use norn_cell::mapping_bundle::MappingInput;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{
     CellError, CellStore, DisputeDecision, DisputeResolutionInput, MAIN_WORLD, MappingOutcome,
     SqliteCell, StoreOptions,
@@ -2237,7 +2239,7 @@ fn attached_and_direct_store_cannot_forge_dispute_resolution() {
         .receipt_at(cell.store().export_commit_count().expect("seq"))
         .expect("receipt")
         .map_or(1, |r| r.body.logical_time.saturating_add(1));
-    let err_direct = cell.store().commit(&norn_cell::CommitBatch {
+    let err_direct = cell.store_mut().commit(&norn_cell::CommitBatch {
         world: MAIN_WORLD.into(),
         scope: "org_demo/dev".into(),
         logical_time: next_time,
@@ -2336,7 +2338,7 @@ fn pre_v13_generic_conflict_consumption_replays_and_v13_accept_first_exports_onc
 
     // Commit generic consumption of `c1`, then re-stamp that record as a pre-v13
     // (`storage_version = Some(12)`) export without `first_id` in `pending_observations`.
-    let store =
+    let mut store =
         CellStore::open(&source_path, model.clone(), StoreOptions::default()).expect("open");
     let next_time = store
         .read()
@@ -2512,7 +2514,7 @@ fn pre_v13_direct_legacy_accept_first_exports_first_capture_and_replays() {
         .expect("first inbox row")
     };
 
-    let store =
+    let mut store =
         CellStore::open(&source_path, model.clone(), StoreOptions::default()).expect("open");
     let next_time = store
         .read()
@@ -2649,7 +2651,7 @@ fn pre_v13_attributed_same_window_conflict_does_not_suppress_v13_accept_first() 
             .collect()
     };
 
-    let store =
+    let mut store =
         CellStore::open(&source_path, model.clone(), StoreOptions::default()).expect("open");
     let next_time = store
         .read()
@@ -2785,7 +2787,7 @@ fn pre_v13_legacy_reject_and_correction_preserve_first_capture_for_later_conflic
             .expect("first inbox row")
         };
 
-        let store =
+        let mut store =
             CellStore::open(&source_path, model.clone(), StoreOptions::default()).expect("open");
         let next_time = store
             .read()
@@ -2949,7 +2951,7 @@ fn pre_v13_legacy_retirement_with_prior_pending_conflict_and_same_window_attribu
         .expect("first inbox row")
     };
 
-    let store =
+    let mut store =
         CellStore::open(&source_path, model.clone(), StoreOptions::default()).expect("open");
     let next_time = store
         .read()

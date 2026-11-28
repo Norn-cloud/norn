@@ -158,18 +158,12 @@ struct ConflictDepContext<'a> {
     batch_events: &'a [Value],
 }
 
-fn append_conflict_dependencies<E: SqlEngine>(
+fn collect_conflict_dep_flags<E: SqlEngine>(
     conn: &E,
     ctx: &ConflictDepContext<'_>,
-    pending: &mut Vec<crate::PendingObservation>,
-    seen_pending: &mut BTreeSet<String>,
-    out: &mut Vec<SourceEvidenceEntry>,
-) -> Result<(), CellError> {
+    pending: &[crate::PendingObservation],
+) -> Result<BTreeMap<String, bool>, CellError> {
     let inbox = crate::system::INBOX;
-    let table = crate::source_cursor::SOURCE_EVIDENCE;
-    // Merge per-bundle `allow_retired_at_current` flags with OR so a pending
-    // conflict referencing `dep_id` never masks a same-commit legacy resolution
-    // that just retired `dep_id` at `current_seq`.
     let mut deps: BTreeMap<String, bool> = BTreeMap::new();
     for row in pending
         .iter()
@@ -179,9 +173,6 @@ fn append_conflict_dependencies<E: SqlEngine>(
             deps.entry(id.to_owned()).or_insert(false);
         }
     }
-    // Drive conflict dependency lookup strictly from the current commit's
-    // consumed observation and `dispute_resolved` events (O(1) PK lookups;
-    // zero scan of retained conflict history on unrelated commits).
     if ctx.include_consumed_conflict_deps {
         let mut conflict_ids: Vec<(&str, bool)> = Vec::new();
         if let Some(crate::store::Consumption::Observation { observation_id }) = ctx.consumed
@@ -215,7 +206,19 @@ fn append_conflict_dependencies<E: SqlEngine>(
             }
         }
     }
-    for (dep_id, allow_retired_at_current) in deps {
+    Ok(deps)
+}
+
+fn append_conflict_dependencies<E: SqlEngine>(
+    conn: &E,
+    ctx: &ConflictDepContext<'_>,
+    pending: &mut Vec<crate::PendingObservation>,
+    seen_pending: &mut BTreeSet<String>,
+    out: &mut Vec<SourceEvidenceEntry>,
+) -> Result<(), CellError> {
+    let inbox = crate::system::INBOX;
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    for (dep_id, allow_retired_at_current) in collect_conflict_dep_flags(conn, ctx, pending)? {
         if allow_retired_at_current {
             // Preserve any same-window `_norn_source_evidence` attribution on a
             // first capture retired at `current_seq` by a no-consumption legacy

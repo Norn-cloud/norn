@@ -475,166 +475,174 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             }
         }
 
-        let mut fresh_claims: Vec<(ObservedLinkClaim, [String; 5])> = Vec::new();
-        match decision {
-            DisputeDecision::AcceptFirst => {}
-            DisputeDecision::AcceptSecondAsCorrection => {
-                // OBS-LINK-CONTRIBUTION-1: incoming correction claims supersede
-                // strictly older claims per source-version ordering plus any
-                // active claim from THIS disputed event (never erasing a newer
-                // active claim such as v3 when resolving a late disputed v2).
-                let incoming_version = crate::mapping_links::parse_source_version(
-                    incoming,
-                    self.bundle_version_kind(incoming)?,
-                )?;
-                let correction_supersedes =
-                    |contribution: &str| -> Result<BTreeSet<String>, CellError> {
-                        let mut supersedes =
-                            self.compute_claim_supersedes(contribution, &incoming_version, None)?;
-                        // Only supersede a same-event active claim when its
-                        // source version is <= `incoming_version` (never let a
-                        // lower-version conflict reusing a newer event's id
-                        // supersede that newer claim).
-                        for row in &active_event_claims {
-                            if row.contribution_id != contribution {
-                                continue;
-                            }
-                            let is_newer = crate::mapping_links::parse_frontier_version(row)
-                                .and_then(|v| v.try_cmp(&incoming_version).ok())
-                                == Some(std::cmp::Ordering::Greater);
-                            if !is_newer {
-                                supersedes.insert(row.claim_id.clone());
-                            }
-                        }
-                        Ok(supersedes)
-                    };
-                let mut covered_contributions = BTreeSet::new();
-                for mut claim in incoming.link_claims()? {
-                    claim.observation_id = dispute_id.to_owned();
-                    let contribution = claim.contribution_id()?;
-                    covered_contributions.insert(contribution.clone());
-                    claim.supersedes = correction_supersedes(&contribution)?;
-                    scope.sources.insert(claim.source_key.clone());
-                    let exclusive = model
-                        .link(&claim.source_type, claim.role.as_str())
-                        .is_none_or(|link| link.cardinality.from == norn_ir::Multiplicity::One);
-                    if let Some(target) = claim.target.as_ref().filter(|_| exclusive) {
-                        scope.targets.insert(target.key.clone());
-                    }
-                    fresh_claims.push((claim, event_keys.clone()));
-                }
-                // For `kind == "delete"` corrections, withdraw active
-                // contributions owned by `incoming`'s source scope on deleted
-                // subjects respecting source-version ordering (including
-                // earlier v1 claims when a conflicting v2 upsert was pending,
-                // without erasing newer v3 claims).
-                for mut withdrawal in self.delete_withdrawal_claims_for_obs(
-                    incoming,
-                    dispute_id,
-                    &std::collections::BTreeMap::new(),
-                )? {
-                    let contribution = withdrawal.contribution_id()?;
-                    if !covered_contributions.insert(contribution.clone()) {
-                        continue;
-                    }
-                    withdrawal.supersedes = correction_supersedes(&contribution)?;
-                    scope.sources.insert(withdrawal.source_key.clone());
-                    fresh_claims.push((withdrawal, event_keys.clone()));
-                }
-                // Withdraw any active claims of the disputed event whose
-                // contribution was NOT re-asserted by the incoming correction
-                // (e.g. a correction that removes a link or deletes the record).
-                let mut withdrawn = BTreeSet::new();
-                for row in &active_event_claims {
-                    if covered_contributions.contains(&row.contribution_id)
-                        || !withdrawn.insert(row.contribution_id.clone())
-                    {
-                        continue;
-                    }
-                    let supersedes = correction_supersedes(&row.contribution_id)?;
-                    let withdrawal = ObservedLinkClaim {
-                        observation_id: dispute_id.to_owned(),
-                        source_scope: row.claim.source_scope.clone(),
-                        source_type: row.claim.source_type.clone(),
-                        source_key: row.claim.source_key.clone(),
-                        role: row.claim.role.clone(),
-                        target: None,
-                        provenance: row.claim.provenance.clone(),
-                        supersedes,
-                    };
-                    scope.sources.insert(withdrawal.source_key.clone());
-                    fresh_claims.push((withdrawal, event_keys.clone()));
-                }
-            }
+        let fresh_claims = match decision {
+            DisputeDecision::AcceptFirst => Vec::new(),
+            DisputeDecision::AcceptSecondAsCorrection => self.correction_fresh_claims(
+                dispute_id,
+                incoming,
+                &event_keys,
+                &active_event_claims,
+                model,
+                &mut scope,
+            )?,
             DisputeDecision::Reject => {
-                // Supersede ONLY the active claims belonging to the disputed
-                // source event (never an undisputed newer active claim in the
-                // same contribution, e.g. current v3 alongside a late contested
-                // disputed v2).
-                let mut by_contrib: std::collections::BTreeMap<
-                    String,
-                    Vec<&crate::link_claim_frontier::FrontierRow>,
-                > = std::collections::BTreeMap::new();
-                for row in &active_event_claims {
-                    by_contrib
-                        .entry(row.contribution_id.clone())
-                        .or_default()
-                        .push(row);
+                self.reject_fresh_claims(dispute_id, &event_keys, &active_event_claims, &mut scope)?
+            }
+        };
+        self.plan_observed_links(&scope, fresh_claims, commit, model, Some(dispute_id))
+    }
+
+    fn correction_fresh_claims(
+        &self,
+        dispute_id: &str,
+        incoming: &MappingBundle,
+        event_keys: &[String; 5],
+        active_event_claims: &[crate::link_claim_frontier::FrontierRow],
+        model: CommitModel<'_, '_>,
+        scope: &mut ClaimScope,
+    ) -> Result<Vec<(ObservedLinkClaim, [String; 5])>, CellError> {
+        let mut fresh_claims = Vec::new();
+        // OBS-LINK-CONTRIBUTION-1: incoming correction claims supersede
+        // strictly older claims per source-version ordering plus any active
+        // claim from THIS disputed event (never erasing a newer active claim).
+        let incoming_version = crate::mapping_links::parse_source_version(
+            incoming,
+            self.bundle_version_kind(incoming)?,
+        )?;
+        let correction_supersedes = |contribution: &str| -> Result<BTreeSet<String>, CellError> {
+            let mut supersedes =
+                self.compute_claim_supersedes(contribution, &incoming_version, None)?;
+            for row in active_event_claims {
+                if row.contribution_id != contribution {
+                    continue;
                 }
-                for (contribution_id, disputed_rows) in by_contrib {
-                    let Some(first) = disputed_rows.first() else {
-                        continue;
-                    };
-                    let mut supersedes: BTreeSet<String> =
-                        disputed_rows.iter().map(|r| r.claim_id.clone()).collect();
-                    let all_active = self.active_claims_for_contribution(&contribution_id)?;
-                    let mut real_surviving = Vec::new();
-                    let mut reject_carry_ids = Vec::new();
-                    for r in all_active {
-                        if supersedes.contains(&r.claim_id) {
-                            continue;
-                        }
-                        if self.is_reject_carry_claim(&r)? {
-                            reject_carry_ids.push(r.claim_id);
-                        } else {
-                            real_surviving.push(r);
-                        }
-                    }
-                    // Always supersede prior synthetic `reject` carry-forward
-                    // rows so an earlier synthetic `None` (from a 3-way
-                    // contested state) never leaves a later unique survivor
-                    // permanently contested.
-                    supersedes.extend(reject_carry_ids);
-                    let surviving_targets: BTreeSet<_> = real_surviving
-                        .iter()
-                        .map(|r| {
-                            r.claim
-                                .target
-                                .as_ref()
-                                .map(|t| (t.object_type.clone(), t.key.clone()))
-                        })
-                        .collect();
-                    let replacement_target = if surviving_targets.len() == 1 {
-                        real_surviving.first().and_then(|r| r.claim.target.clone())
-                    } else {
-                        None
-                    };
-                    let withdrawal = ObservedLinkClaim {
-                        observation_id: dispute_id.to_owned(),
-                        source_scope: first.claim.source_scope.clone(),
-                        source_type: first.claim.source_type.clone(),
-                        source_key: first.claim.source_key.clone(),
-                        role: first.claim.role.clone(),
-                        target: replacement_target,
-                        provenance: first.claim.provenance.clone(),
-                        supersedes,
-                    };
-                    scope.sources.insert(withdrawal.source_key.clone());
-                    fresh_claims.push((withdrawal, event_keys.clone()));
+                let is_newer = crate::mapping_links::parse_frontier_version(row)
+                    .and_then(|v| v.try_cmp(&incoming_version).ok())
+                    == Some(std::cmp::Ordering::Greater);
+                if !is_newer {
+                    supersedes.insert(row.claim_id.clone());
                 }
             }
+            Ok(supersedes)
+        };
+        let mut covered_contributions = BTreeSet::new();
+        for mut claim in incoming.link_claims()? {
+            claim.observation_id = dispute_id.to_owned();
+            let contribution = claim.contribution_id()?;
+            covered_contributions.insert(contribution.clone());
+            claim.supersedes = correction_supersedes(&contribution)?;
+            scope.sources.insert(claim.source_key.clone());
+            let exclusive = model
+                .link(&claim.source_type, claim.role.as_str())
+                .is_none_or(|link| link.cardinality.from == norn_ir::Multiplicity::One);
+            if let Some(target) = claim.target.as_ref().filter(|_| exclusive) {
+                scope.targets.insert(target.key.clone());
+            }
+            fresh_claims.push((claim, event_keys.clone()));
         }
-        self.plan_observed_links(&scope, fresh_claims, commit, model, Some(dispute_id))
+        for mut withdrawal in self.delete_withdrawal_claims_for_obs(
+            incoming,
+            dispute_id,
+            &std::collections::BTreeMap::new(),
+        )? {
+            let contribution = withdrawal.contribution_id()?;
+            if !covered_contributions.insert(contribution.clone()) {
+                continue;
+            }
+            withdrawal.supersedes = correction_supersedes(&contribution)?;
+            scope.sources.insert(withdrawal.source_key.clone());
+            fresh_claims.push((withdrawal, event_keys.clone()));
+        }
+        let mut withdrawn = BTreeSet::new();
+        for row in active_event_claims {
+            if covered_contributions.contains(&row.contribution_id)
+                || !withdrawn.insert(row.contribution_id.clone())
+            {
+                continue;
+            }
+            let supersedes = correction_supersedes(&row.contribution_id)?;
+            let withdrawal = ObservedLinkClaim {
+                observation_id: dispute_id.to_owned(),
+                source_scope: row.claim.source_scope.clone(),
+                source_type: row.claim.source_type.clone(),
+                source_key: row.claim.source_key.clone(),
+                role: row.claim.role.clone(),
+                target: None,
+                provenance: row.claim.provenance.clone(),
+                supersedes,
+            };
+            scope.sources.insert(withdrawal.source_key.clone());
+            fresh_claims.push((withdrawal, event_keys.clone()));
+        }
+        Ok(fresh_claims)
+    }
+
+    fn reject_fresh_claims(
+        &self,
+        dispute_id: &str,
+        event_keys: &[String; 5],
+        active_event_claims: &[crate::link_claim_frontier::FrontierRow],
+        scope: &mut ClaimScope,
+    ) -> Result<Vec<(ObservedLinkClaim, [String; 5])>, CellError> {
+        let mut fresh_claims = Vec::new();
+        let mut by_contrib: std::collections::BTreeMap<
+            String,
+            Vec<&crate::link_claim_frontier::FrontierRow>,
+        > = std::collections::BTreeMap::new();
+        for row in active_event_claims {
+            by_contrib
+                .entry(row.contribution_id.clone())
+                .or_default()
+                .push(row);
+        }
+        for (contribution_id, disputed_rows) in by_contrib {
+            let Some(first) = disputed_rows.first() else {
+                continue;
+            };
+            let mut supersedes: BTreeSet<String> =
+                disputed_rows.iter().map(|r| r.claim_id.clone()).collect();
+            let all_active = self.active_claims_for_contribution(&contribution_id)?;
+            let mut real_surviving = Vec::new();
+            let mut reject_carry_ids = Vec::new();
+            for r in all_active {
+                if supersedes.contains(&r.claim_id) {
+                    continue;
+                }
+                if self.is_reject_carry_claim(&r)? {
+                    reject_carry_ids.push(r.claim_id);
+                } else {
+                    real_surviving.push(r);
+                }
+            }
+            supersedes.extend(reject_carry_ids);
+            let surviving_targets: BTreeSet<_> = real_surviving
+                .iter()
+                .map(|r| {
+                    r.claim
+                        .target
+                        .as_ref()
+                        .map(|t| (t.object_type.clone(), t.key.clone()))
+                })
+                .collect();
+            let replacement_target = if surviving_targets.len() == 1 {
+                real_surviving.first().and_then(|r| r.claim.target.clone())
+            } else {
+                None
+            };
+            let withdrawal = ObservedLinkClaim {
+                observation_id: dispute_id.to_owned(),
+                source_scope: first.claim.source_scope.clone(),
+                source_type: first.claim.source_type.clone(),
+                source_key: first.claim.source_key.clone(),
+                role: first.claim.role.clone(),
+                target: replacement_target,
+                provenance: first.claim.provenance.clone(),
+                supersedes,
+            };
+            scope.sources.insert(withdrawal.source_key.clone());
+            fresh_claims.push((withdrawal, event_keys.clone()));
+        }
+        Ok(fresh_claims)
     }
 }
 
@@ -749,60 +757,10 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             }
         }
 
-        let model = self.store().model().clone();
-        let catalog = TypeCatalog::new(model.object_types())
-            .with_interfaces(model.interfaces())
-            .with_property_types(model.property_types())
-            .with_governing_laws(model.law_artifacts());
-        let consumed = is_pending.then(|| observed.consumed());
-        let turn = DecisionTurn {
-            id: input.dispute_id.clone(),
-            now: self.now(),
-            world: self.store().world(),
-            consumes: consumed.clone(),
-        };
-        let mut commit = match consumed {
-            Some(c) => CellCommit::empty().consuming(c),
-            None => CellCommit::empty(),
-        };
-        let mut authorization = ObservationAuthorization::empty();
-        let reader = self.store().read();
-        if input.decision == DisputeDecision::AcceptSecondAsCorrection {
-            reader.prepare_mapping_records(
-                incoming,
-                &catalog,
-                &turn,
-                &mut commit,
-                &mut authorization,
-            )?;
-        }
-        let plan = reader.dispute_resolution_link_plan(
-            &input.dispute_id,
-            &dispute,
-            input.decision,
-            &commit,
-        )?;
-        reader.apply_link_plan(plan, &catalog, &turn, &mut commit, &mut authorization)?;
-        commit.events.push(ObservationEvent::DisputeResolved {
-            dispute_id: input.dispute_id.clone(),
-            decision: input.decision.as_str().to_owned(),
-            actor: input.actor.clone(),
-            reason: input.reason.clone(),
-        });
-        authorization
-            .refresh_link_findings(&catalog, &mut commit, &GuardView(&reader))
-            .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-        if is_pending {
-            authorization
-                .seal_snapshot_event_chunks(&commit)
-                .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
-        }
-        if !authorization.validates(&commit) {
-            return Err(CellError::ObservationCommit(Box::new(
-                norn_kernel::CommitError::ObservationAuthorization,
-            )));
-        }
+        let (commit, authorization) =
+            self.prepare_dispute_resolution_commit(&input, &observed, &dispute, is_pending)?;
         let references = authorization.reference_reads(&commit).to_vec();
+        let mut commit = commit;
         authorization.append_findings(&mut commit);
         let proof = DisputeResolveProof {
             dispute_id: &input.dispute_id,
@@ -832,5 +790,76 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             commit_seq: commit_receipt.seq.0,
             receipt_hash: stored_receipt.hash,
         })
+    }
+
+    #[allow(clippy::type_complexity, reason = "internal commit preparation pair")]
+    fn prepare_dispute_resolution_commit(
+        &self,
+        input: &DisputeResolutionInput,
+        observed: &Observed<Value>,
+        dispute: &VerifiedDispute,
+        is_pending: bool,
+    ) -> Result<
+        (
+            CellCommit<ObservationEvent, RuntimeObject, RuntimeObject>,
+            ObservationAuthorization,
+        ),
+        CellError,
+    > {
+        let incoming = dispute.incoming_bundle();
+        let model = self.store().model().clone();
+        let catalog = TypeCatalog::new(model.object_types())
+            .with_interfaces(model.interfaces())
+            .with_property_types(model.property_types())
+            .with_governing_laws(model.law_artifacts());
+        let consumed = is_pending.then(|| observed.consumed());
+        let turn = DecisionTurn {
+            id: input.dispute_id.clone(),
+            now: self.now(),
+            world: self.store().world(),
+            consumes: consumed.clone(),
+        };
+        let mut commit = match consumed {
+            Some(c) => CellCommit::empty().consuming(c),
+            None => CellCommit::empty(),
+        };
+        let mut authorization = ObservationAuthorization::empty();
+        let reader = self.store().read();
+        if input.decision == DisputeDecision::AcceptSecondAsCorrection {
+            reader.prepare_mapping_records(
+                incoming,
+                &catalog,
+                &turn,
+                &mut commit,
+                &mut authorization,
+            )?;
+        }
+        let plan = reader.dispute_resolution_link_plan(
+            &input.dispute_id,
+            dispute,
+            input.decision,
+            &commit,
+        )?;
+        reader.apply_link_plan(plan, &catalog, &turn, &mut commit, &mut authorization)?;
+        commit.events.push(ObservationEvent::DisputeResolved {
+            dispute_id: input.dispute_id.clone(),
+            decision: input.decision.as_str().to_owned(),
+            actor: input.actor.clone(),
+            reason: input.reason.clone(),
+        });
+        authorization
+            .refresh_link_findings(&catalog, &mut commit, &GuardView(&reader))
+            .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
+        if is_pending {
+            authorization
+                .seal_snapshot_event_chunks(&commit)
+                .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
+        }
+        if !authorization.validates(&commit) {
+            return Err(CellError::ObservationCommit(Box::new(
+                norn_kernel::CommitError::ObservationAuthorization,
+            )));
+        }
+        Ok((commit, authorization))
     }
 }

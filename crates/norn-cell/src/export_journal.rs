@@ -466,7 +466,6 @@ pub(crate) fn already_exported_pending<E: SqlEngine>(
     prev_seq: i64,
 ) -> Result<bool, CellError> {
     let table = crate::source_cursor::SOURCE_EVIDENCE;
-    let inbox = crate::system::INBOX;
     let direct = conn.query_optional(
         &format!(
             "SELECT 1 FROM \"{table}\" \
@@ -483,8 +482,49 @@ pub(crate) fn already_exported_pending<E: SqlEngine>(
     if !obs_id.starts_with("mapping-bundle:") {
         return Ok(false);
     }
+    let candidates = conflict_export_candidates(conn, obs_id, prev_seq)?;
+    if !candidates.is_empty() {
+        let has_journal = conn
+            .query_optional(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
+                params![],
+                |_row| Ok(()),
+            )?
+            .is_some();
+        let mut checked = std::collections::BTreeSet::new();
+        for (seq, fallback_exported) in candidates {
+            if has_journal {
+                if !checked.insert(seq) {
+                    continue;
+                }
+                if let Some(rec) = read_record(conn, seq)? {
+                    if rec
+                        .pending_observations
+                        .iter()
+                        .any(|p| p.observation_id == obs_id)
+                    {
+                        return Ok(true);
+                    }
+                    continue;
+                }
+            }
+            if fallback_exported {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn conflict_export_candidates<E: SqlEngine>(
+    conn: &E,
+    obs_id: &str,
+    prev_seq: i64,
+) -> Result<Vec<(u64, bool)>, CellError> {
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    let inbox = crate::system::INBOX;
     let res_table = crate::link_claim_frontier::DISPUTE_RESOLUTION;
-    let mut candidates: Vec<(u64, bool)> = Vec::new();
+    let mut candidates = Vec::new();
     for raw in conn.query(
         &format!(
             "SELECT e.\"captured_commit_seq\", c.\"consumed_commit_seq\" \
@@ -534,35 +574,5 @@ pub(crate) fn already_exported_pending<E: SqlEngine>(
         let seq = to_u64(SqlRow(raw).get(0)?, "dispute resolution commit_seq")?;
         candidates.push((seq, true));
     }
-    if !candidates.is_empty() {
-        let has_journal = conn
-            .query_optional(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
-                params![],
-                |_row| Ok(()),
-            )?
-            .is_some();
-        let mut checked = std::collections::BTreeSet::new();
-        for (seq, fallback_exported) in candidates {
-            if has_journal {
-                if !checked.insert(seq) {
-                    continue;
-                }
-                if let Some(rec) = read_record(conn, seq)? {
-                    if rec
-                        .pending_observations
-                        .iter()
-                        .any(|p| p.observation_id == obs_id)
-                    {
-                        return Ok(true);
-                    }
-                    continue;
-                }
-            }
-            if fallback_exported {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
+    Ok(candidates)
 }
