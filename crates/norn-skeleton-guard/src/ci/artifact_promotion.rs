@@ -146,15 +146,28 @@ fn extract_verus_authority_bearing_body(syntax: &syn::File) -> Result<TokenStrea
 
 fn parse_authority_bearing_decl(tokens: &[TT], fn_idx: usize) -> Result<TokenStream, String> {
     let pub_idx = fn_idx.checked_sub(3).ok_or(SIG_ERR)?;
-    let [p, o, s, _, _, params, d, g, r, body, ..] = tokens.get(pub_idx..).ok_or(SIG_ERR)? else {
+    let [
+        pub_kw,
+        open_kw,
+        spec_kw,
+        _,
+        _,
+        params,
+        dash,
+        gt,
+        ret_ty,
+        body,
+        ..,
+    ] = tokens.get(pub_idx..).ok_or(SIG_ERR)?
+    else {
         return Err(SIG_ERR.to_owned());
     };
     let (TT::Group(params), TT::Group(body)) = (params, body) else {
         return Err(SIG_ERR.to_owned());
     };
     let mut start = pub_idx;
-    while let Some(h) = start.checked_sub(2)
-        && let Some([hash, TT::Group(br)]) = tokens.get(h..start)
+    while let Some(hash_idx) = start.checked_sub(2)
+        && let Some([hash, TT::Group(br)]) = tokens.get(hash_idx..start)
         && is_punct(hash, '#', None)
         && br.delimiter() == Delimiter::Bracket
     {
@@ -162,14 +175,14 @@ fn parse_authority_bearing_decl(tokens: &[TT], fn_idx: usize) -> Result<TokenStr
         if path_last_in(meta.path(), &["cfg", "cfg_attr"]) {
             return Err("authority_bearing must not carry cfg or cfg_attr".to_owned());
         }
-        start = h;
+        start = hash_idx;
     }
     let bad_prev = start
         .checked_sub(1)
-        .and_then(|i| tokens.get(i))
-        .is_some_and(|t| {
-            !matches!(t, TT::Group(gr) if gr.delimiter() == Delimiter::Brace)
-                && !is_punct(t, ';', None)
+        .and_then(|idx| tokens.get(idx))
+        .is_some_and(|tok| {
+            !matches!(tok, TT::Group(gr) if gr.delimiter() == Delimiter::Brace)
+                && !is_punct(tok, ';', None)
         });
     let pvec: Vec<TT> = params.stream().into_iter().collect();
     let ps = match pvec.split_last() {
@@ -177,14 +190,20 @@ fn parse_authority_bearing_decl(tokens: &[TT], fn_idx: usize) -> Result<TokenStr
         Some(_) | None => pvec.as_slice(),
     };
     let ok = !bad_prev
-        && is_ident(p, "pub")
-        && is_ident(o, "open")
-        && is_ident(s, "spec")
+        && is_ident(pub_kw, "pub")
+        && is_ident(open_kw, "open")
+        && is_ident(spec_kw, "spec")
         && params.delimiter() == Delimiter::Parenthesis
-        && matches!(ps, [k, c, t] if is_ident(k, "kind") && is_punct(c, ':', None) && is_ident(t, "ArtifactKind"))
-        && is_punct(d, '-', Some(Spacing::Joint))
-        && is_punct(g, '>', None)
-        && is_ident(r, "bool")
+        && matches!(
+            ps,
+            [param_name, colon, param_ty]
+                if is_ident(param_name, "kind")
+                    && is_punct(colon, ':', None)
+                    && is_ident(param_ty, "ArtifactKind")
+        )
+        && is_punct(dash, '-', Some(Spacing::Joint))
+        && is_punct(gt, '>', None)
+        && is_ident(ret_ty, "bool")
         && body.delimiter() == Delimiter::Brace;
     ok.then(|| body.stream()).ok_or_else(|| SIG_ERR.to_owned())
 }
