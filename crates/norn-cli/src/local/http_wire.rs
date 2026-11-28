@@ -168,6 +168,9 @@ pub(super) fn read_http_request(
         ));
     }
     let body = read_exact_body(reader, content_length, deadline)?;
+    if Instant::now() >= deadline {
+        return Err(request_timeout_response());
+    }
     let (path, query) = target.split_once('?').unwrap_or((target.as_str(), ""));
     Ok(HttpRequest {
         method,
@@ -192,8 +195,11 @@ fn parse_content_length(headers: &BTreeMap<String, Vec<String>>) -> Result<usize
             "invalid content-length header: must be ASCII digits",
         )));
     }
-    raw.parse::<usize>()
-        .map_err(|_err| refusal_response(&Refusal::invalid("invalid content-length header")))
+    raw.parse::<usize>().map_err(|err| {
+        refusal_response(&Refusal::invalid(format!(
+            "invalid content-length header: {err}"
+        )))
+    })
 }
 
 fn read_head(

@@ -246,6 +246,21 @@ fn policy_enforces_resource_type_and_scope_dimensions_fail_closed() -> TestResul
     };
     let kernel = with_actor(Some(&actor), || tenant_policy.action(&kernel_req));
     assert!(matches!(kernel, Err(ActionDenial::Forbidden { .. })));
+    let mut spoofed_scope_map = scope_map.clone();
+    spoofed_scope_map.insert("tenantId".to_owned(), "t-spoofed".to_owned());
+    let spoofed_kernel_req = ActionAuthzRequest {
+        action: &tenant_action,
+        scope: &spoofed_scope_map,
+        actor: "u1",
+        input: &input,
+        target: &target,
+        target_values: None,
+    };
+    let spoofed_kernel = with_actor(Some(&actor), || tenant_policy.action(&spoofed_kernel_req));
+    assert!(matches!(
+        spoofed_kernel,
+        Err(ActionDenial::Forbidden { .. })
+    ));
     Ok(())
 }
 

@@ -767,7 +767,7 @@ fn load_packs_preserves_layers_refuses_duplicate_base_and_shares_budget() -> Tes
         "org_demo",
         "dev",
     )
-    .map_err(|_err| "load_packs failed")?;
+    .map_err(|err| format!("load_packs failed (exit {}): {}", err.exit_code, err.stderr))?;
     assert_eq!(loaded.base_artifacts.len(), 1);
     assert_eq!(loaded.app_artifacts.len(), 1);
 

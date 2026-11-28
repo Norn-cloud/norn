@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use norn_api::local_cell::LocalActor;
 use norn_api::refusal::Refusal;
+use subtle::ConstantTimeEq as _;
 
 use super::http_wire::{HttpResponse, refusal_response, synthetic_refusal};
 
@@ -131,11 +132,7 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    let diff = left
-        .iter()
-        .zip(right.iter())
-        .fold(0_u8, |acc, (&a, &b)| acc | (a ^ b));
-    diff == 0 && left.len() == right.len()
+    bool::from(left.ct_eq(right))
 }
 
 pub(super) fn single_header<'a>(
@@ -148,19 +145,23 @@ pub(super) fn single_header<'a>(
         .map(String::as_str)
 }
 
-fn check_alias_pair(
+fn check_alias_group(
     headers: &BTreeMap<String, Vec<String>>,
-    primary: &str,
-    alias: &str,
+    group: &[&str],
 ) -> Result<(), HttpResponse> {
-    if let (Some(a), Some(b)) = (
-        single_header(headers, primary),
-        single_header(headers, alias),
-    ) && a != b
-    {
-        return Err(refusal_response(&Refusal::invalid(format!(
-            "conflicting `{primary}` and `{alias}` headers"
-        ))));
+    let mut first: Option<(&str, &str)> = None;
+    for &name in group {
+        if let Some(val) = single_header(headers, name) {
+            match first {
+                None => first = Some((name, val)),
+                Some((prev_name, prev_val)) if prev_val != val => {
+                    return Err(refusal_response(&Refusal::invalid(format!(
+                        "conflicting `{prev_name}` and `{name}` headers"
+                    ))));
+                }
+                Some(_) => {}
+            }
+        }
     }
     Ok(())
 }
@@ -176,14 +177,19 @@ pub(super) fn validate_request_headers(
             ))));
         }
     }
-    check_alias_pair(headers, "x-norn-org-id", "x-norn-org")?;
-    check_alias_pair(headers, "x-norn-environment-id", "x-norn-env")?;
-    check_alias_pair(headers, "x-norn-tenant-id", "x-norn-tenant")?;
-    check_alias_pair(headers, "x-norn-actor", "x-norn-actor-id")?;
-    check_alias_pair(headers, "x-norn-actor", "x-norn-user")?;
-    check_alias_pair(headers, "x-norn-actor", "x-norn-user-id")?;
-    check_alias_pair(headers, "x-norn-user", "x-norn-user-id")?;
-    check_alias_pair(headers, "x-norn-roles", "x-norn-role")?;
+    check_alias_group(headers, &["x-norn-org-id", "x-norn-org"])?;
+    check_alias_group(headers, &["x-norn-environment-id", "x-norn-env"])?;
+    check_alias_group(headers, &["x-norn-tenant-id", "x-norn-tenant"])?;
+    check_alias_group(
+        headers,
+        &[
+            "x-norn-actor",
+            "x-norn-actor-id",
+            "x-norn-user",
+            "x-norn-user-id",
+        ],
+    )?;
+    check_alias_group(headers, &["x-norn-roles", "x-norn-role"])?;
 
     let has_auth = headers.contains_key("authorization");
     if has_auth && headers.contains_key("x-norn-dev-token") {

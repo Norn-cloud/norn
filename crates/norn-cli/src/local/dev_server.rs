@@ -16,7 +16,6 @@ use std::time::{Duration, Instant};
 
 use clap::Args;
 use norn_api::actions::{ActionAnswer, ActionQuery};
-use norn_api::authz::read_denied;
 use norn_api::cell_definitions::{APPLY_PATH, PLAN_PATH};
 use norn_api::local_cell::LocalCell;
 use norn_api::object_query::ObjectQueryParams;
@@ -440,12 +439,16 @@ fn extract_scope_and_query(
     if let (Some(q), Some(h)) = (&query_org, &header_org)
         && q != h
     {
-        return Err(refusal_response(&read_denied()));
+        return Err(refusal_response(&Refusal::invalid(
+            "conflicting orgId query parameter and header",
+        )));
     }
     if let (Some(q), Some(h)) = (&query_env, &header_env)
         && q != h
     {
-        return Err(refusal_response(&read_denied()));
+        return Err(refusal_response(&Refusal::invalid(
+            "conflicting environmentId query parameter and header",
+        )));
     }
     Ok((
         ScopeQuery {

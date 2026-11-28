@@ -143,14 +143,22 @@ impl PolicySnapshot {
     }
 }
 
-const fn scope_dimension_key(dim: ScopeDimension) -> &'static str {
-    match dim {
-        ScopeDimension::Org => "orgId",
-        ScopeDimension::Tenant => "tenantId",
-        ScopeDimension::Workspace => "workspaceId",
-        ScopeDimension::Environment => "environmentId",
-        ScopeDimension::BusinessUnit => "businessUnitId",
+fn require_local_cell_dimensions(dimensions: &[ScopeDimension]) -> Result<(), &'static str> {
+    for &dim in dimensions {
+        match dim {
+            ScopeDimension::Org | ScopeDimension::Environment => {}
+            ScopeDimension::Tenant => {
+                return Err("scope dimension `tenant` is not present in local cell scope");
+            }
+            ScopeDimension::Workspace => {
+                return Err("scope dimension `workspace` is not present in local cell scope");
+            }
+            ScopeDimension::BusinessUnit => {
+                return Err("scope dimension `businessUnit` is not present in local cell scope");
+            }
+        }
     }
+    Ok(())
 }
 
 pub(super) fn kernel_scope_matches_cell(
@@ -191,25 +199,7 @@ fn scope_satisfies(
             if scope.org_id.trim().is_empty() || scope.environment_id.trim().is_empty() {
                 return Err("request scope is incomplete");
             }
-            for &dim in dimensions {
-                match dim {
-                    ScopeDimension::Org | ScopeDimension::Environment => {}
-                    ScopeDimension::Tenant => {
-                        return Err("scope dimension `tenant` is not present in local cell scope");
-                    }
-                    ScopeDimension::Workspace => {
-                        return Err(
-                            "scope dimension `workspace` is not present in local cell scope",
-                        );
-                    }
-                    ScopeDimension::BusinessUnit => {
-                        return Err(
-                            "scope dimension `businessUnit` is not present in local cell scope",
-                        );
-                    }
-                }
-            }
-            Ok(())
+            require_local_cell_dimensions(dimensions)
         }
         EvalStage::Kernel {
             cell_scope,
@@ -217,26 +207,7 @@ fn scope_satisfies(
             ..
         } => {
             kernel_scope_matches_cell(cell_scope, request_scope)?;
-            for &dim in dimensions {
-                let key = scope_dimension_key(dim);
-                if request_scope
-                    .get(key)
-                    .is_none_or(|val| val.trim().is_empty())
-                {
-                    return Err(match dim {
-                        ScopeDimension::Org => "required scope dimension `org` missing",
-                        ScopeDimension::Tenant => "required scope dimension `tenant` missing",
-                        ScopeDimension::Workspace => "required scope dimension `workspace` missing",
-                        ScopeDimension::Environment => {
-                            "required scope dimension `environment` missing"
-                        }
-                        ScopeDimension::BusinessUnit => {
-                            "required scope dimension `businessUnit` missing"
-                        }
-                    });
-                }
-            }
-            Ok(())
+            require_local_cell_dimensions(dimensions)
         }
     }
 }
