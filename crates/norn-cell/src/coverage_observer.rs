@@ -955,10 +955,13 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
         proof: norn_kernel::CreatorStampProof,
+        references: Option<norn_kernel::action_commit::ActionReferenceReads>,
         quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let targets = Self::capture_commit_targets(&commit);
-        let result = self.inner.commit_stamped(commit, proof, quantity);
+        let result = self
+            .inner
+            .commit_stamped(commit, proof, references, quantity);
         self.record_commit_outcome(&targets, false, &result);
         result
     }

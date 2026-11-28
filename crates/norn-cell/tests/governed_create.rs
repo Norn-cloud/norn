@@ -1166,12 +1166,14 @@ impl CellHost for Tamper<'_> {
         &mut self,
         mut commit: CellCommit<FactEvent, JsonObject, JsonObject>,
         proof: norn_kernel::CreatorStampProof,
+        references: Option<norn_kernel::action_commit::ActionReferenceReads>,
         quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<norn_kernel::CommitReceipt, norn_kernel::CommitError<Self::Error>> {
         if self.drop_links {
             commit.links.clear();
         }
-        self.inner.commit_stamped(commit, proof, quantity)
+        self.inner
+            .commit_stamped(commit, proof, references, quantity)
     }
     fn perform(&mut self) -> Result<Option<norn_kernel::Performed<Self::Input>>, Self::Error> {
         Ok(None)

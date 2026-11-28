@@ -48,7 +48,7 @@ fn reference_action(
         || !action.commands.is_empty()
         // CREATE-WRITER-1: a writer reads complete slice values.
         || action.synchronous_rule.is_some()
-        || !action.aggregates.is_empty()
+        || (patch && !action.aggregates.is_empty())
         || norn_expr::schema::first_slice_derivation_index(action).is_some()
         || action.slice.is_empty()
         // A patch reads the full target to preserve its other values. Only
@@ -64,10 +64,21 @@ fn reference_action(
             && super::receipt::create_slice_property_reads(catalog, action, target).is_none())
         || action.slice.iter().any(|entry| {
             entry.optional
-                || !matches!(&entry.key, SliceKey::Property { from, property } if from == "input"
-                    && (!patch
-                        || (entry.object_type.as_str() == object_kind.as_str()
-                            && property.as_str() == object_id_field.as_str())))
+                || match &entry.key {
+                    SliceKey::Property { from, property } => {
+                        from != "input"
+                            || (patch
+                                && (entry.object_type.as_str() != object_kind.as_str()
+                                    || property.as_str() != object_id_field.as_str()))
+                    }
+                    SliceKey::Predicate { .. } => patch,
+                    SliceKey::Link { .. }
+                    | SliceKey::Parameter { .. }
+                    | SliceKey::TriggerObject
+                    | SliceKey::TriggerBefore
+                    | SliceKey::TriggerAfter
+                    | SliceKey::TriggerChanges => true,
+                }
         })
     {
         return false;
@@ -138,7 +149,6 @@ pub(super) fn reference_read_proof<E, C, I>(
         || !commit.effects.is_empty()
         || commit.consumes.is_some()
         || !commit.link_reads.is_empty()
-        || !commit.predicate_reads.is_empty()
         || commit
             .writes
             .iter()
@@ -146,14 +156,53 @@ pub(super) fn reference_read_proof<E, C, I>(
     {
         return None;
     }
+    let patch = matches!(
+        action.effect_program,
+        Some(ActionEffectProgram::UpsertInputObject {
+            write_mode: UpsertWriteMode::Upsert,
+            ..
+        })
+    );
+    if patch && !commit.predicate_reads.is_empty() {
+        return None;
+    }
     // The decider folds a written slice target's read into its write CAS.
-    // Retain that exact reference as well as ordinary non-written reads.
-    let mut references = commit.reads.clone();
+    // Retain that exact reference as well as ordinary non-written reads,
+    // excluding any fact also touched by a predicate read so it retains full
+    // whole-object lineage.
+    let model = crate::CommitModel::new(catalog);
+    let predicate_members: BTreeSet<FactKey> = commit
+        .predicate_reads
+        .iter()
+        .flat_map(|read| &read.members)
+        .map(|member| model.canonical(&member.key))
+        .collect();
+    let mut references: Vec<FactExpectation> = commit
+        .reads
+        .iter()
+        .filter(|read| {
+            !predicate_members.contains(&model.canonical(&read.key))
+                && !super::receipt::overlaps_predicate_or_aggregate_type(
+                    catalog,
+                    action,
+                    &read.key.object_type,
+                )
+        })
+        .cloned()
+        .collect();
     references.extend(
         commit
             .writes
             .iter()
-            .filter(|write| write.expected.0 != 0)
+            .filter(|write| {
+                write.expected.0 != 0
+                    && !predicate_members.contains(&model.canonical(&write.key))
+                    && !super::receipt::overlaps_predicate_or_aggregate_type(
+                        catalog,
+                        action,
+                        &write.key.object_type,
+                    )
+            })
             .map(|write| FactExpectation {
                 key: write.key.clone(),
                 expected: write.expected,
@@ -162,13 +211,7 @@ pub(super) fn reference_read_proof<E, C, I>(
     if references.is_empty() {
         return None;
     }
-    let property_reads = if matches!(
-        action.effect_program,
-        Some(ActionEffectProgram::UpsertInputObject {
-            write_mode: UpsertWriteMode::Upsert,
-            ..
-        })
-    ) {
+    let property_reads = if patch {
         let reference = references.iter().find(|read| read.key == *target)?.clone();
         vec![(reference, patch_read_properties(catalog, action, target)?)]
     } else {
@@ -178,6 +221,7 @@ pub(super) fn reference_read_proof<E, C, I>(
             target,
             effective_input,
             &references,
+            &predicate_members,
         )?
     };
     let laws_digest =
@@ -189,6 +233,7 @@ pub(super) fn reference_read_proof<E, C, I>(
         writes: commit.writes.clone(),
         links: commit.links.clone(),
         link_reads: commit.link_reads.clone(),
+        predicate_reads: commit.predicate_reads.clone(),
         event_count: commit.events.len(),
         laws_digest,
     })

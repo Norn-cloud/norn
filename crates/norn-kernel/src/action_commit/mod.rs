@@ -640,7 +640,7 @@ where
         let quantity = quantity
             .as_ref()
             .map(|(request, key)| (request, key.as_str()));
-        host.commit_stamped(commit, proof, quantity)
+        host.commit_stamped(commit, proof, reference_reads, quantity)
     } else if let Some((request, key)) = quantity {
         if let Some(proof) = reference_reads {
             host.commit_action_references(commit, proof, Some((&request, &key)))
