@@ -566,8 +566,10 @@ impl FlowLowering<'_> {
         let mut ordered_names: Vec<&str> = Vec::with_capacity(path.scope.len());
         let mut seen: BTreeSet<&str> = BTreeSet::new();
         for name in &self.binding_order {
-            if path.scope.contains_key(name) && seen.insert(name.as_str()) {
-                ordered_names.push(name.as_str());
+            if let Some((key, _)) = path.scope.get_key_value(name)
+                && seen.insert(key.as_str())
+            {
+                ordered_names.push(key.as_str());
             }
         }
         for name in path.scope.keys() {
