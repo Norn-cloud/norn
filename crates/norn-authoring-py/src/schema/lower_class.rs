@@ -27,6 +27,10 @@ enum ClassKind {
     Protocol,
 }
 
+fn schema_err(msg: impl Into<String>, span: &SourceSpan) -> PyAuthoringError {
+    PyAuthoringError::spanned(CODE_SCHEMA, msg, span.clone())
+}
+
 /// Evaluates and registers a top-level `class` statement (`Concept`, `StrEnum`, `Enum`, or `Protocol`).
 pub(crate) fn collect_class_def<'a>(
     class_def: &'a StmtClassDef,
@@ -69,9 +73,10 @@ fn classify_class_bases<'a>(
     let mut kind: Option<ClassKind> = None;
     let mut base_concepts = Vec::new();
     for base_expr in bases {
-        let unwrapped = match base_expr {
-            Expr::Subscript(sub) => sub.value.as_ref(),
-            other => other,
+        let unwrapped = if let Expr::Subscript(sub) = base_expr {
+            sub.value.as_ref()
+        } else {
+            base_expr
         };
         let resolved = eval_expr(unwrapped, env, lines)?;
         let base_kind = classify_single_base(resolved, py_name, &mut base_concepts, env, span)?;
@@ -90,39 +95,39 @@ fn classify_single_base(
     env: &ModuleEnv<'_>,
     span: &SourceSpan,
 ) -> Result<ClassKind, PyAuthoringError> {
-    if matches!(resolved, EvalValue::BuiltinSymbol("Expr")) {
-        return Err(PyAuthoringError::spanned(
-            CODE_RAW_EXPR,
-            "Expr cannot be subclassed",
-            span.clone(),
-        ));
-    }
-    if matches!(resolved, EvalValue::BuiltinSymbol("PropertyTypeSpec")) {
-        return Err(PyAuthoringError::spanned(
-            CODE_RAW_IR,
-            "PropertyTypeSpec cannot be subclassed",
-            span.clone(),
-        ));
-    }
-    if matches!(resolved, EvalValue::BuiltinSymbol("MaskSpec")) {
-        return Err(PyAuthoringError::spanned(
-            CODE_RAW_IR,
-            "MaskSpec cannot be subclassed",
-            span.clone(),
-        ));
-    }
-    if matches!(resolved, EvalValue::BuiltinSymbol("Concept")) {
-        return Ok(ClassKind::Concept);
+    if let EvalValue::BuiltinSymbol(sym) = resolved {
+        return match sym {
+            "Expr" => Err(PyAuthoringError::spanned(
+                CODE_RAW_EXPR,
+                "Expr cannot be subclassed",
+                span.clone(),
+            )),
+            "PropertyTypeSpec" => Err(PyAuthoringError::spanned(
+                CODE_RAW_IR,
+                "PropertyTypeSpec cannot be subclassed",
+                span.clone(),
+            )),
+            "MaskSpec" => Err(PyAuthoringError::spanned(
+                CODE_RAW_IR,
+                "MaskSpec cannot be subclassed",
+                span.clone(),
+            )),
+            "Concept" => Ok(ClassKind::Concept),
+            "StrEnum" => Ok(ClassKind::StrEnum),
+            "Enum" => Ok(ClassKind::PlainEnum),
+            "Protocol" => Ok(ClassKind::Protocol),
+            _ => Err(PyAuthoringError::spanned(
+                CODE_FORBIDDEN_SYNTAX,
+                format!(
+                    "authored class '{py_name}' may only inherit from Concept, StrEnum, or Protocol"
+                ),
+                span.clone(),
+            )),
+        };
     }
     if let EvalValue::ConceptClass(parent_py) = resolved {
         base_concepts.push(parent_py);
         return Ok(ClassKind::Concept);
-    }
-    if matches!(resolved, EvalValue::BuiltinSymbol("StrEnum")) {
-        return Ok(ClassKind::StrEnum);
-    }
-    if matches!(resolved, EvalValue::BuiltinSymbol("Enum")) {
-        return Ok(ClassKind::PlainEnum);
     }
     if let EvalValue::EnumClass(parent_enum) = resolved {
         return Ok(
@@ -133,10 +138,7 @@ fn classify_single_base(
             },
         );
     }
-    if matches!(
-        resolved,
-        EvalValue::BuiltinSymbol("Protocol") | EvalValue::ProtocolClass
-    ) {
+    if matches!(resolved, EvalValue::ProtocolClass) {
         return Ok(ClassKind::Protocol);
     }
     Err(PyAuthoringError::spanned(
@@ -144,6 +146,47 @@ fn classify_single_base(
         format!("authored class '{py_name}' may only inherit from Concept, StrEnum, or Protocol"),
         span.clone(),
     ))
+}
+
+enum ClassBodyStmt<'a> {
+    Ignore,
+    AnnAssign(&'a ruff_python_ast::StmtAnnAssign),
+    Assign(&'a ruff_python_ast::StmtAssign),
+    FunctionDef(&'a StmtFunctionDef),
+    Unsupported,
+}
+
+fn classify_class_body_stmt(stmt: &Stmt) -> ClassBodyStmt<'_> {
+    match stmt {
+        Stmt::Pass(_) => ClassBodyStmt::Ignore,
+        Stmt::Expr(expr_stmt) if matches!(expr_stmt.value.as_ref(), Expr::StringLiteral(_)) => {
+            ClassBodyStmt::Ignore
+        }
+        Stmt::AnnAssign(ann) => ClassBodyStmt::AnnAssign(ann),
+        Stmt::Assign(assign) => ClassBodyStmt::Assign(assign),
+        Stmt::FunctionDef(func_def) => ClassBodyStmt::FunctionDef(func_def),
+        Stmt::Return(_)
+        | Stmt::Delete(_)
+        | Stmt::TypeAlias(_)
+        | Stmt::AugAssign(_)
+        | Stmt::For(_)
+        | Stmt::While(_)
+        | Stmt::If(_)
+        | Stmt::With(_)
+        | Stmt::Match(_)
+        | Stmt::Raise(_)
+        | Stmt::Try(_)
+        | Stmt::Assert(_)
+        | Stmt::Import(_)
+        | Stmt::ImportFrom(_)
+        | Stmt::Global(_)
+        | Stmt::Nonlocal(_)
+        | Stmt::Expr(_)
+        | Stmt::ClassDef(_)
+        | Stmt::Break(_)
+        | Stmt::Continue(_)
+        | Stmt::IpyEscapeCommand(_) => ClassBodyStmt::Unsupported,
+    }
 }
 
 fn collect_enum_class<'a>(
@@ -159,11 +202,9 @@ fn collect_enum_class<'a>(
 
     for item in &class_def.body {
         let item_span = lines.span_at(item.range().start());
-        match item {
-            Stmt::Pass(_) => {}
-            Stmt::Expr(expr_stmt) if matches!(expr_stmt.value.as_ref(), Expr::StringLiteral(_)) => {
-            }
-            Stmt::Assign(assign) => {
+        match classify_class_body_stmt(item) {
+            ClassBodyStmt::Ignore => {}
+            ClassBodyStmt::Assign(assign) => {
                 collect_enum_assign(
                     assign,
                     py_name,
@@ -174,35 +215,14 @@ fn collect_enum_class<'a>(
                     lines,
                 )?;
             }
-            Stmt::FunctionDef(_) => {
+            ClassBodyStmt::FunctionDef(_) => {
                 return Err(PyAuthoringError::spanned(
                     CODE_FORBIDDEN_SYNTAX,
                     format!("methods are forbidden on enum class '{py_name}'"),
                     item_span,
                 ));
             }
-            Stmt::Return(_)
-            | Stmt::Delete(_)
-            | Stmt::TypeAlias(_)
-            | Stmt::AugAssign(_)
-            | Stmt::AnnAssign(_)
-            | Stmt::For(_)
-            | Stmt::While(_)
-            | Stmt::If(_)
-            | Stmt::With(_)
-            | Stmt::Match(_)
-            | Stmt::Raise(_)
-            | Stmt::Try(_)
-            | Stmt::Assert(_)
-            | Stmt::Import(_)
-            | Stmt::ImportFrom(_)
-            | Stmt::Global(_)
-            | Stmt::Nonlocal(_)
-            | Stmt::Expr(_)
-            | Stmt::ClassDef(_)
-            | Stmt::Break(_)
-            | Stmt::Continue(_)
-            | Stmt::IpyEscapeCommand(_) => {
+            ClassBodyStmt::AnnAssign(_) | ClassBodyStmt::Unsupported => {
                 return Err(PyAuthoringError::spanned(
                     CODE_SCHEMA,
                     format!("unsupported statement in enum class '{py_name}'"),
@@ -299,10 +319,9 @@ fn resolve_concept_ref(
             .map_or("", |c| c.norn_name.as_str());
         return Ok(norn.to_owned());
     }
-    Err(PyAuthoringError::spanned(
-        CODE_SCHEMA,
+    Err(schema_err(
         format!("{label} must be a Concept subclass or string"),
-        span.clone(),
+        span,
     ))
 }
 
@@ -370,10 +389,9 @@ fn parse_concept_header<'a>(
 
     for kw in class_def.keywords() {
         let Some(arg_id) = &kw.arg else {
-            return Err(PyAuthoringError::spanned(
-                CODE_SCHEMA,
+            return Err(schema_err(
                 "`**kwargs` unpacking is forbidden in Concept class headers",
-                span.clone(),
+                span,
             ));
         };
         let val = eval_expr(&kw.value, env, lines)?;
@@ -391,6 +409,30 @@ fn parse_concept_header<'a>(
     Ok(decl)
 }
 
+fn expect_optional_str(
+    val: EvalValue<'_>,
+    label: &str,
+    span: &SourceSpan,
+) -> Result<Option<String>, PyAuthoringError> {
+    if matches!(val, EvalValue::None) {
+        Ok(None)
+    } else {
+        Ok(Some(expect_str(val, label, span)?))
+    }
+}
+
+fn resolve_concept_seq(
+    val: EvalValue<'_>,
+    env: &ModuleEnv<'_>,
+    label: &str,
+    span: &SourceSpan,
+) -> Result<Vec<String>, PyAuthoringError> {
+    expect_seq(val, label, span)?
+        .into_iter()
+        .map(|item| resolve_concept_ref(item, env, label, span))
+        .collect()
+}
+
 fn apply_concept_kwarg<'a>(
     key: &str,
     val: EvalValue<'a>,
@@ -404,22 +446,11 @@ fn apply_concept_kwarg<'a>(
         "version" => decl.version = expect_str(val, "Concept.version", span)?,
         "interface" => decl.is_interface = expect_bool(val, "Concept.interface", span)?,
         "role" => {
-            decl.role = if matches!(val, EvalValue::None) {
-                None
-            } else {
-                Some(RoleKind::parse(
-                    &expect_str(val, "Concept.role", span)?,
-                    Some(span),
-                )?)
-            };
+            decl.role = expect_optional_str(val, "Concept.role", span)?
+                .map(|raw| RoleKind::parse(&raw, Some(span)))
+                .transpose()?;
         }
-        "description" => {
-            decl.description = if matches!(val, EvalValue::None) {
-                None
-            } else {
-                Some(expect_str(val, "Concept.description", span)?)
-            };
-        }
+        "description" => decl.description = expect_optional_str(val, "Concept.description", span)?,
         "extends" => {
             decl.extends = if matches!(val, EvalValue::None) {
                 None
@@ -428,56 +459,42 @@ fn apply_concept_kwarg<'a>(
             };
         }
         "implements" => {
-            for item in expect_seq(val, "Concept.implements", span)? {
-                decl.implements
-                    .push(resolve_concept_ref(item, env, "Concept.implements", span)?);
-            }
+            decl.implements = resolve_concept_seq(val, env, "Concept.implements", span)?;
         }
         "interface_extends" => {
-            for item in expect_seq(val, "Concept.interface_extends", span)? {
-                decl.interface_extends.push(resolve_concept_ref(
-                    item,
-                    env,
-                    "Concept.interface_extends",
-                    span,
-                )?);
-            }
+            decl.interface_extends =
+                resolve_concept_seq(val, env, "Concept.interface_extends", span)?;
         }
         "markings" => decl.markings = expect_str_seq(val, "Concept.markings", span)?,
         "identity" => {
             for item in expect_seq(val, "Concept.identity", span)? {
-                if let EvalValue::KeySpec(k) = item {
-                    decl.identity.push(*k);
-                } else {
-                    return Err(PyAuthoringError::spanned(
-                        CODE_SCHEMA,
+                let EvalValue::KeySpec(k) = item else {
+                    return Err(schema_err(
                         "Concept.identity entries must be KeySpec instances",
-                        span.clone(),
+                        span,
                     ));
-                }
+                };
+                decl.identity.push(*k);
             }
         }
         "dependencies" => {
             for item in expect_seq(val, "Concept.dependencies", span)? {
-                if let EvalValue::DependencyPin(p) = item {
-                    decl.dependencies.push(*p);
-                } else {
-                    return Err(PyAuthoringError::spanned(
-                        CODE_SCHEMA,
+                let EvalValue::DependencyPin(p) = item else {
+                    return Err(schema_err(
                         "Concept.dependencies entries must be DependencyPin instances",
-                        span.clone(),
+                        span,
                     ));
-                }
+                };
+                decl.dependencies.push(*p);
             }
         }
         other => {
-            return Err(PyAuthoringError::spanned(
-                CODE_SCHEMA,
+            return Err(schema_err(
                 format!(
                     "unexpected class keyword '{other}' on Concept '{}'",
                     decl.py_name
                 ),
-                span.clone(),
+                span,
             ));
         }
     }
@@ -487,7 +504,22 @@ fn apply_concept_kwarg<'a>(
 enum ClassMember<'a> {
     Lifecycle(LifecycleAst<'a>),
     Invariant(InvariantAst<'a>),
+    Value(EvalValue<'a>, SourceSpan),
     Other,
+}
+
+struct FieldAnnotationAst<'a> {
+    name: String,
+    annotation: &'a Expr,
+    span: SourceSpan,
+}
+
+fn eval_value_to_class_member<'a>(val: EvalValue<'a>, span: SourceSpan) -> ClassMember<'a> {
+    if let EvalValue::LifecycleSpec(lc) = val {
+        ClassMember::Lifecycle(*lc)
+    } else {
+        ClassMember::Value(val, span)
+    }
 }
 
 fn upsert_class_member<'a>(
@@ -502,11 +534,14 @@ fn upsert_class_member<'a>(
     }
 }
 
-fn upsert_concept_field<'a>(fields: &mut Vec<ConceptFieldAst<'a>>, field: ConceptFieldAst<'a>) {
-    if let Some(existing) = fields.iter_mut().find(|f| f.name == field.name) {
-        *existing = field;
+fn upsert_field_annotation<'a>(
+    annotations: &mut Vec<FieldAnnotationAst<'a>>,
+    entry: FieldAnnotationAst<'a>,
+) {
+    if let Some(existing) = annotations.iter_mut().find(|a| a.name == entry.name) {
+        *existing = entry;
     } else {
-        fields.push(field);
+        annotations.push(entry);
     }
 }
 
@@ -521,30 +556,28 @@ fn collect_concept_assign<'a>(
     let mut target_names = Vec::with_capacity(assign.targets.len());
     for target in &assign.targets {
         let Expr::Name(name) = target else {
-            return Err(PyAuthoringError::spanned(
-                CODE_SCHEMA,
+            return Err(schema_err(
                 "Concept class assignment target must be a plain identifier",
-                span.clone(),
+                span,
             ));
         };
         target_names.push(name.id.as_str().to_owned());
     }
-    if let EvalValue::LifecycleSpec(lc) = evaluated {
-        let last_idx = target_names.len().saturating_sub(1);
-        let mut lc_opt = Some(*lc);
-        for (idx, name) in target_names.into_iter().enumerate() {
-            let member_lc = if idx == last_idx {
-                lc_opt.take()
-            } else {
-                lc_opt.as_ref().cloned()
-            };
-            if let Some(spec) = member_lc {
-                upsert_class_member(members, name, ClassMember::Lifecycle(spec));
-            }
-        }
-    } else {
-        for name in target_names {
-            upsert_class_member(members, name, ClassMember::Other);
+    let last_idx = target_names.len().saturating_sub(1);
+    let mut val_opt = Some(evaluated);
+    for (idx, name) in target_names.into_iter().enumerate() {
+        let bound = if idx == last_idx {
+            val_opt.take()
+        } else if let Some(val_ref) = val_opt.as_ref() {
+            let cost = val_ref.bounded_node_count(env.remaining_eval_nodes());
+            env.charge_eval_nodes(cost, span)?;
+            Some(val_ref.clone())
+        } else {
+            None
+        };
+        if let Some(val) = bound {
+            let member = eval_value_to_class_member(val, span.clone());
+            upsert_class_member(members, name, member);
         }
     }
     Ok(())
@@ -552,40 +585,76 @@ fn collect_concept_assign<'a>(
 
 fn collect_concept_ann_assign<'a>(
     ann: &'a ruff_python_ast::StmtAnnAssign,
-    decl: &mut ConceptDecl<'a>,
+    annotations: &mut Vec<FieldAnnotationAst<'a>>,
     members: &mut Vec<(String, ClassMember<'a>)>,
     env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
     item_span: SourceSpan,
 ) -> Result<(), PyAuthoringError> {
     let Expr::Name(name) = ann.target.as_ref() else {
-        return Err(PyAuthoringError::spanned(
-            CODE_SCHEMA,
+        return Err(schema_err(
             "Concept field target must be a plain identifier",
-            item_span,
+            &item_span,
         ));
     };
     let field_name = name.id.as_str();
-    if field_name.starts_with('_') {
-        return Ok(());
+    if let Some(val_expr) = ann.value.as_deref() {
+        let evaluated = eval_expr(val_expr, env, lines)?;
+        let member = eval_value_to_class_member(evaluated, item_span.clone());
+        upsert_class_member(members, field_name.to_owned(), member);
     }
-    let default = match ann.value.as_deref() {
-        None => None,
-        Some(val_expr) => {
-            let evaluated = eval_expr(val_expr, env, lines)?;
-            upsert_class_member(members, field_name.to_owned(), ClassMember::Other);
-            Some(eval_value_to_field_default(evaluated, &item_span)?)
-        }
-    };
-    upsert_concept_field(
-        &mut decl.fields,
-        ConceptFieldAst {
-            name: field_name.to_owned(),
-            annotation: &ann.annotation,
+    if !field_name.starts_with('_') {
+        upsert_field_annotation(
+            annotations,
+            FieldAnnotationAst {
+                name: field_name.to_owned(),
+                annotation: &ann.annotation,
+                span: item_span,
+            },
+        );
+    }
+    Ok(())
+}
+
+fn finalize_concept_members<'a>(
+    decl: &mut ConceptDecl<'a>,
+    annotations: Vec<FieldAnnotationAst<'a>>,
+    mut members: Vec<(String, ClassMember<'a>)>,
+) -> Result<(), PyAuthoringError> {
+    for ann in annotations {
+        let bound = members
+            .iter()
+            .position(|(k, _)| k == &ann.name)
+            .map(|pos| members.remove(pos).1);
+        let default = match bound {
+            None => None,
+            Some(ClassMember::Value(val, val_span)) => {
+                Some(eval_value_to_field_default(val, &val_span)?)
+            }
+            Some(ClassMember::Lifecycle(_) | ClassMember::Invariant(_) | ClassMember::Other) => {
+                return Err(schema_err(
+                    format!(
+                        "unsupported default binding on '{}.{}'",
+                        decl.norn_name, ann.name
+                    ),
+                    &ann.span,
+                ));
+            }
+        };
+        decl.fields.push(ConceptFieldAst {
+            name: ann.name,
+            annotation: ann.annotation,
             default,
-            span: item_span,
-        },
-    );
+            span: ann.span,
+        });
+    }
+    for (_, member) in members {
+        match member {
+            ClassMember::Lifecycle(lc) => decl.lifecycles.push(lc),
+            ClassMember::Invariant(inv) => decl.invariants.push(inv),
+            ClassMember::Value(_, _) | ClassMember::Other => {}
+        }
+    }
     Ok(())
 }
 
@@ -595,20 +664,26 @@ fn collect_concept_body<'a>(
     env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
 ) -> Result<(), PyAuthoringError> {
+    let mut annotations: Vec<FieldAnnotationAst<'a>> = Vec::new();
     let mut members: Vec<(String, ClassMember<'a>)> = Vec::new();
     for stmt in &class_def.body {
         let item_span = lines.span_at(stmt.range().start());
-        match stmt {
-            Stmt::Pass(_) => {}
-            Stmt::Expr(expr_stmt) if matches!(expr_stmt.value.as_ref(), Expr::StringLiteral(_)) => {
+        match classify_class_body_stmt(stmt) {
+            ClassBodyStmt::Ignore => {}
+            ClassBodyStmt::AnnAssign(ann) => {
+                collect_concept_ann_assign(
+                    ann,
+                    &mut annotations,
+                    &mut members,
+                    env,
+                    lines,
+                    item_span,
+                )?;
             }
-            Stmt::AnnAssign(ann) => {
-                collect_concept_ann_assign(ann, decl, &mut members, env, lines, item_span)?;
-            }
-            Stmt::Assign(assign) => {
+            ClassBodyStmt::Assign(assign) => {
                 collect_concept_assign(assign, &mut members, env, lines, &item_span)?;
             }
-            Stmt::FunctionDef(func_def) => {
+            ClassBodyStmt::FunctionDef(func_def) => {
                 let fn_name = func_def.name.id.as_str().to_owned();
                 if let Some(inv) = parse_invariant_decorator(func_def, env, lines, &item_span)? {
                     upsert_class_member(&mut members, fn_name, ClassMember::Invariant(inv));
@@ -616,27 +691,7 @@ fn collect_concept_body<'a>(
                     upsert_class_member(&mut members, fn_name, ClassMember::Other);
                 }
             }
-            Stmt::Return(_)
-            | Stmt::Delete(_)
-            | Stmt::TypeAlias(_)
-            | Stmt::AugAssign(_)
-            | Stmt::For(_)
-            | Stmt::While(_)
-            | Stmt::If(_)
-            | Stmt::With(_)
-            | Stmt::Match(_)
-            | Stmt::Raise(_)
-            | Stmt::Try(_)
-            | Stmt::Assert(_)
-            | Stmt::Import(_)
-            | Stmt::ImportFrom(_)
-            | Stmt::Global(_)
-            | Stmt::Nonlocal(_)
-            | Stmt::Expr(_)
-            | Stmt::ClassDef(_)
-            | Stmt::Break(_)
-            | Stmt::Continue(_)
-            | Stmt::IpyEscapeCommand(_) => {
+            ClassBodyStmt::Unsupported => {
                 return Err(PyAuthoringError::spanned(
                     CODE_FORBIDDEN_SYNTAX,
                     format!("unsupported statement in Concept '{}'", decl.py_name),
@@ -645,14 +700,7 @@ fn collect_concept_body<'a>(
             }
         }
     }
-    for (_, member) in members {
-        match member {
-            ClassMember::Lifecycle(lc) => decl.lifecycles.push(lc),
-            ClassMember::Invariant(inv) => decl.invariants.push(inv),
-            ClassMember::Other => {}
-        }
-    }
-    Ok(())
+    finalize_concept_members(decl, annotations, members)
 }
 
 fn parse_invariant_decorator<'a>(
@@ -666,25 +714,24 @@ fn parse_invariant_decorator<'a>(
     }
     let decs: &[Decorator] = &func_def.decorator_list;
     let [only_dec] = decs else {
-        return Err(PyAuthoringError::spanned(
-            CODE_SCHEMA,
+        return Err(schema_err(
             "Concept method supports at most one `@invariant(...)` decorator",
-            span.clone(),
+            span,
         ));
     };
     let Expr::Call(call) = &only_dec.expression else {
-        return Err(PyAuthoringError::spanned(
-            CODE_SCHEMA,
+        return Err(schema_err(
             "unsupported decorator on Concept method (expected `@invariant(...)`)",
-            span.clone(),
+            span,
         ));
     };
-    let callee = eval_expr(&call.func, env, lines)?;
-    if !matches!(callee, EvalValue::BuiltinSymbol("invariant")) {
-        return Err(PyAuthoringError::spanned(
-            CODE_SCHEMA,
+    if !matches!(
+        eval_expr(&call.func, env, lines)?,
+        EvalValue::BuiltinSymbol("invariant")
+    ) {
+        return Err(schema_err(
             "unsupported decorator on Concept method (expected `@invariant(...)`)",
-            span.clone(),
+            span,
         ));
     }
     Ok(Some(extract_invariant_args(
@@ -709,32 +756,24 @@ fn extract_invariant_args<'a>(
         if idx == 0 {
             id = Some(expect_str(val, "invariant.id", span)?);
         } else {
-            return Err(PyAuthoringError::spanned(
-                CODE_SCHEMA,
+            return Err(schema_err(
                 "@invariant() takes at most 1 positional argument (id)",
-                span.clone(),
+                span,
             ));
         }
     }
     for kw in &call.arguments.keywords {
         let Some(arg_id) = &kw.arg else {
-            return Err(PyAuthoringError::spanned(
-                CODE_SCHEMA,
+            return Err(schema_err(
                 "`**kwargs` unpacking is forbidden in @invariant(...)",
-                span.clone(),
+                span,
             ));
         };
         let val = eval_expr(&kw.value, env, lines)?;
         match arg_id.id.as_str() {
             "id" => id = Some(expect_str(val, "invariant.id", span)?),
             "message" => message = Some(expect_str(val, "invariant.message", span)?),
-            "description" => {
-                description = if matches!(val, EvalValue::None) {
-                    None
-                } else {
-                    Some(expect_str(val, "invariant.description", span)?)
-                };
-            }
+            "description" => description = expect_optional_str(val, "invariant.description", span)?,
             "classification" => {
                 classification = InvariantClassification::parse(
                     &expect_str(val, "invariant.classification", span)?,
@@ -742,22 +781,17 @@ fn extract_invariant_args<'a>(
                 )?;
             }
             other => {
-                return Err(PyAuthoringError::spanned(
-                    CODE_SCHEMA,
+                return Err(schema_err(
                     format!("unexpected keyword '{other}' in @invariant(...)"),
-                    span.clone(),
+                    span,
                 ));
             }
         }
     }
 
     Ok(InvariantAst {
-        id: id.ok_or_else(|| {
-            PyAuthoringError::spanned(CODE_SCHEMA, "@invariant() missing 'id'", span.clone())
-        })?,
-        message: message.ok_or_else(|| {
-            PyAuthoringError::spanned(CODE_SCHEMA, "@invariant() missing 'message'", span.clone())
-        })?,
+        id: id.ok_or_else(|| schema_err("@invariant() missing 'id'", span))?,
+        message: message.ok_or_else(|| schema_err("@invariant() missing 'message'", span))?,
         func: func_def,
         description,
         classification,

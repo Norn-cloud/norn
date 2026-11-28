@@ -239,7 +239,19 @@ impl EvalValue<'_> {
                     );
                 }
                 Self::LifecycleSpec(lc) => {
-                    total = total.saturating_add(lc.transitions.len());
+                    total = total
+                        .saturating_add(lc.initial.len())
+                        .saturating_add(lc.terminal.len())
+                        .saturating_add(lc.immutable.len());
+                    for tr in &lc.transitions {
+                        total = total
+                            .saturating_add(1)
+                            .saturating_add(tr.from_states.len())
+                            .saturating_add(tr.guards.len());
+                        if total > cap {
+                            return total;
+                        }
+                    }
                 }
                 Self::None
                 | Self::Bool(_)

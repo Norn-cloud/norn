@@ -604,6 +604,38 @@ class Loop(Loop, name="test.CyclicLoop", title="Loop", version="0.1.0"):
 }
 
 #[test]
+fn class_chained_lifecycle_assignment_respects_eval_budget() -> TestResult {
+    let mut src = String::from(
+        "from __future__ import annotations\n\
+         from enum import StrEnum\n\
+         from norn_py import Concept, Field, lifecycle, transition\n\n\
+         class St(StrEnum):\n\
+             A = \"a\"\n\
+             B = \"b\"\n\n\
+         class Huge(Concept, name=\"test.HugeChain\", title=\"Huge\", version=\"0.1.0\"):\n\
+             status: Field[St]\n    ",
+    );
+    for idx in 0_usize..200 {
+        let _ = write!(src, "lc{idx} = ");
+    }
+    src.push_str("lifecycle(\"status\", St, initial=(St.A,), transitions=(");
+    for idx in 0_usize..150 {
+        if idx > 0 {
+            src.push_str(", ");
+        }
+        let _ = write!(src, "transition(\"t{idx}\", from_=(St.A,), to=St.B)");
+    }
+    src.push_str("))\n");
+
+    let err = expect_err(
+        elaborate_source(&src, &demo_opts()),
+        "chained lifecycle assignment budget",
+    )?;
+    assert_eq!(err.code(), CODE_UNBOUNDED);
+    Ok(())
+}
+
+#[test]
 fn standalone_annotation_and_elaboration_enforce_early_budgets() -> TestResult {
     let oversized_ann = "a".repeat(MAX_SOURCE_BYTES.saturating_add(1));
     let err_bytes = expect_err(

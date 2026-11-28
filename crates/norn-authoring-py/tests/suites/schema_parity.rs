@@ -544,3 +544,46 @@ class ReassignItem(Concept, name="test.ReassignItem", title="Item", version="0.1
     }
     Ok(())
 }
+
+#[test]
+fn class_namespace_field_defaults_match_python_parity() -> TestResult {
+    let src = r#"from __future__ import annotations
+from norn_py import Concept, Field, field_default
+
+class DefaultsItem(Concept, name="test.DefaultsItem", title="Defaults", version="0.1.0"):
+    x: Field[int] = field_default(1)
+    x = field_default(2)
+    y: Field[int] = field_default(1)
+    y: Field[int]
+    z = field_default("hi")
+    z: Field[str]
+"#;
+    let res = elaborate_source(src, &demo_options("defaults.py"))?;
+    assert_eq!(
+        res.norn1_sha256,
+        "936f0bdd62e115ee5373f403ec3efef15a191342db441e58931d61734ddcef7e"
+    );
+    let art = res.artifacts.first().ok_or("missing DefaultsItem")?;
+    assert_eq!(
+        canonical_norn1_sha256(art)?,
+        "bc34ee73ad075f82ecf689fbe43b3b4c7706f421416b7b6b05766f19a05f6dcd"
+    );
+    let obj = obj_field(obj_field(art, "payload")?, "objectType")?;
+    let JsonValue::Array(props) = obj_field(obj, "properties")? else {
+        return Err("expected properties array".into());
+    };
+    assert_eq!(props.len(), 3);
+    assert_eq!(
+        as_str(obj_field(props.first().ok_or("x")?, "default")?, "x")?,
+        "2"
+    );
+    assert_eq!(
+        as_str(obj_field(props.get(1).ok_or("y")?, "default")?, "y")?,
+        "1"
+    );
+    assert_eq!(
+        as_str(obj_field(props.get(2).ok_or("z")?, "default")?, "z")?,
+        "hi"
+    );
+    Ok(())
+}
