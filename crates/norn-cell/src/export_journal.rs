@@ -297,8 +297,13 @@ pub(crate) fn record<E: SqlEngine>(
     for entry in &entries {
         reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
     }
-    let (pending_observations, source_evidence) =
-        read_late_source_evidence_for_version(engine, commit_seq, storage_version)?;
+    let (pending_observations, source_evidence) = read_late_source_evidence_for_version(
+        engine,
+        commit_seq,
+        storage_version,
+        batch.consumes.as_ref(),
+        &batch.events,
+    )?;
     let bindings = bindings(engine)?;
     let export = ExportRecord {
         format: EXPORT_FORMAT.to_owned(),
@@ -449,4 +454,115 @@ impl<E: SqlEngine> CellStore<E> {
             })
             .transpose()
     }
+}
+
+/// Whether `obs_id` was already exported as a pending observation by an earlier
+/// commit (`<= prev_seq`). Consults the hash-verified export journal when
+/// present so pre-v13 commits that omitted an unattributed first capture never
+/// suppress a required v13 export.
+pub(crate) fn already_exported_pending<E: SqlEngine>(
+    conn: &E,
+    obs_id: &str,
+    prev_seq: i64,
+) -> Result<bool, CellError> {
+    let table = crate::source_cursor::SOURCE_EVIDENCE;
+    let inbox = crate::system::INBOX;
+    let direct = conn.query_optional(
+        &format!(
+            "SELECT 1 FROM \"{table}\" \
+             WHERE \"observation_id\" = ?1 \
+               AND \"captured_commit_seq\" >= 0 AND \"captured_commit_seq\" < ?2 \
+             LIMIT 1"
+        ),
+        params![obs_id, prev_seq],
+        |_row| Ok(()),
+    )?;
+    if direct.is_some() {
+        return Ok(true);
+    }
+    if !obs_id.starts_with("mapping-bundle:") {
+        return Ok(false);
+    }
+    let res_table = crate::link_claim_frontier::DISPUTE_RESOLUTION;
+    let mut candidates: Vec<(u64, bool)> = Vec::new();
+    for raw in conn.query(
+        &format!(
+            "SELECT e.\"captured_commit_seq\", c.\"consumed_commit_seq\" \
+             FROM \"{inbox}\" c \
+             JOIN \"{table}\" e ON e.\"observation_id\" = c.\"observation_id\" \
+             WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
+               AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?1 \
+               AND e.\"captured_commit_seq\" >= 0 AND e.\"captured_commit_seq\" < ?2"
+        ),
+        params![obs_id, prev_seq],
+    )? {
+        let row = SqlRow(raw);
+        let export_seq = to_u64(row.get(0)?, "captured_commit_seq")?.saturating_add(1);
+        let consumed: Option<i64> = row.get(1)?;
+        let pending_at_export = consumed.is_none_or(|c| u64::try_from(c).ok() > Some(export_seq));
+        candidates.push((export_seq, pending_at_export));
+    }
+    for raw in conn.query(
+        &format!(
+            "SELECT c.\"consumed_commit_seq\", \
+                    EXISTS (SELECT 1 FROM \"{res_table}\" r \
+                            WHERE r.\"dispute_id\" = c.\"observation_id\" \
+                              AND r.\"commit_seq\" = c.\"consumed_commit_seq\") \
+             FROM \"{inbox}\" c \
+             WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
+               AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?1 \
+               AND c.\"consumed_commit_seq\" IS NOT NULL \
+               AND c.\"consumed_commit_seq\" <= ?2"
+        ),
+        params![obs_id, prev_seq],
+    )? {
+        let row = SqlRow(raw);
+        let seq = to_u64(row.get(0)?, "consumed_commit_seq")?;
+        let resolved: i64 = row.get(1)?;
+        candidates.push((seq, resolved != 0));
+    }
+    for raw in conn.query(
+        &format!(
+            "SELECT r.\"commit_seq\" FROM \"{res_table}\" r \
+             JOIN \"{inbox}\" c ON c.\"observation_id\" = r.\"dispute_id\" \
+             WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
+               AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?1 \
+               AND r.\"commit_seq\" <= ?2"
+        ),
+        params![obs_id, prev_seq],
+    )? {
+        let seq = to_u64(SqlRow(raw).get(0)?, "dispute resolution commit_seq")?;
+        candidates.push((seq, true));
+    }
+    if !candidates.is_empty() {
+        let has_journal = conn
+            .query_optional(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
+                params![],
+                |_row| Ok(()),
+            )?
+            .is_some();
+        let mut checked = std::collections::BTreeSet::new();
+        for (seq, fallback_exported) in candidates {
+            if has_journal {
+                if !checked.insert(seq) {
+                    continue;
+                }
+                if let Some(rec) = read_record(conn, seq)? {
+                    if rec
+                        .pending_observations
+                        .iter()
+                        .any(|p| p.observation_id == obs_id)
+                    {
+                        return Ok(true);
+                    }
+                    continue;
+                }
+            }
+            if fallback_exported {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }

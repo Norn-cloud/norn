@@ -148,173 +148,92 @@ fn conflict_accepted_bundle_id(observed: &Value) -> Option<&str> {
         .filter(|id| id.starts_with("mapping-bundle:"))
 }
 
-fn already_exported_pending<E: SqlEngine>(
-    conn: &E,
-    obs_id: &str,
-    prev_seq: i64,
-) -> Result<bool, CellError> {
-    let table = crate::source_cursor::SOURCE_EVIDENCE;
-    let inbox = crate::system::INBOX;
-    // Only non-negative capture seqs represent an earlier export;
-    // legacy sentinel `-1` is synthesized on first named promotion.
-    let direct = conn.query_optional(
-        &format!(
-            "SELECT 1 FROM \"{table}\" \
-             WHERE \"observation_id\" = ?1 \
-               AND \"captured_commit_seq\" >= 0 AND \"captured_commit_seq\" < ?2 \
-             LIMIT 1"
-        ),
-        params![obs_id, prev_seq],
-        |_row| Ok(()),
-    )?;
-    if direct.is_some() {
-        return Ok(true);
-    }
-    if !obs_id.starts_with("mapping-bundle:") {
-        return Ok(false);
-    }
-    // Check every earlier commit (`<= prev_seq`) where a conflict referencing
-    // `obs_id` could have exported it: capture attribution (`captured + 1`),
-    // conflict consumption, or governed dispute resolution. Consult the
-    // hash-verified export journal when present so pre-v13 commits that did
-    // NOT export `obs_id` never suppress a required v13 export.
-    let res_table = crate::link_claim_frontier::DISPUTE_RESOLUTION;
-    let mut candidates: Vec<(u64, bool)> = Vec::new();
-    for raw in conn.query(
-        &format!(
-            "SELECT e.\"captured_commit_seq\", c.\"consumed_commit_seq\" \
-             FROM \"{inbox}\" c \
-             JOIN \"{table}\" e ON e.\"observation_id\" = c.\"observation_id\" \
-             WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
-               AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?1 \
-               AND e.\"captured_commit_seq\" >= 0 AND e.\"captured_commit_seq\" < ?2"
-        ),
-        params![obs_id, prev_seq],
-    )? {
-        let row = SqlRow(raw);
-        let export_seq = to_u64(row.get(0)?, "captured_commit_seq")?.saturating_add(1);
-        let consumed: Option<i64> = row.get(1)?;
-        let pending_at_export = consumed.is_none_or(|c| u64::try_from(c).ok() > Some(export_seq));
-        candidates.push((export_seq, pending_at_export));
-    }
-    for raw in conn.query(
-        &format!(
-            "SELECT c.\"consumed_commit_seq\", \
-                    EXISTS (SELECT 1 FROM \"{res_table}\" r \
-                            WHERE r.\"dispute_id\" = c.\"observation_id\" \
-                              AND r.\"commit_seq\" = c.\"consumed_commit_seq\") \
-             FROM \"{inbox}\" c \
-             WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
-               AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?1 \
-               AND c.\"consumed_commit_seq\" IS NOT NULL \
-               AND c.\"consumed_commit_seq\" <= ?2"
-        ),
-        params![obs_id, prev_seq],
-    )? {
-        let row = SqlRow(raw);
-        let seq = to_u64(row.get(0)?, "consumed_commit_seq")?;
-        let resolved: i64 = row.get(1)?;
-        candidates.push((seq, resolved != 0));
-    }
-    for raw in conn.query(
-        &format!(
-            "SELECT r.\"commit_seq\" FROM \"{res_table}\" r \
-             JOIN \"{inbox}\" c ON c.\"observation_id\" = r.\"dispute_id\" \
-             WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
-               AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?1 \
-               AND r.\"commit_seq\" <= ?2"
-        ),
-        params![obs_id, prev_seq],
-    )? {
-        let seq = to_u64(SqlRow(raw).get(0)?, "dispute resolution commit_seq")?;
-        candidates.push((seq, true));
-    }
-    if !candidates.is_empty() {
-        let has_journal = conn
-            .query_optional(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
-                params![],
-                |_row| Ok(()),
-            )?
-            .is_some();
-        let mut checked = BTreeSet::new();
-        for (seq, fallback_exported) in candidates {
-            if has_journal {
-                if !checked.insert(seq) {
-                    continue;
-                }
-                if let Some(rec) = crate::export_journal::read_record(conn, seq)? {
-                    if rec
-                        .pending_observations
-                        .iter()
-                        .any(|p| p.observation_id == obs_id)
-                    {
-                        return Ok(true);
-                    }
-                    continue;
-                }
-            }
-            if fallback_exported {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
-}
+use crate::export_journal::already_exported_pending;
 
 fn append_conflict_dependencies<E: SqlEngine>(
     conn: &E,
     prev_seq: i64,
     current_seq: i64,
     include_consumed_conflict_deps: bool,
+    consumed: Option<&crate::store::Consumption>,
+    batch_events: &[Value],
     pending: &mut Vec<crate::PendingObservation>,
     seen_pending: &mut BTreeSet<String>,
 ) -> Result<(), CellError> {
     let inbox = crate::system::INBOX;
-    let res_table = crate::link_claim_frontier::DISPUTE_RESOLUTION;
-    let mut dep_ids: Vec<String> = pending
+    let mut dep_ids: Vec<(String, bool)> = pending
         .iter()
         .filter(|row| row.observation_id.starts_with("mapping-conflict:"))
-        .filter_map(|row| conflict_accepted_bundle_id(&row.observed).map(str::to_owned))
+        .filter_map(|row| {
+            conflict_accepted_bundle_id(&row.observed).map(|id| (id.to_owned(), false))
+        })
         .collect();
-    // Immediate v13+ `accept-first` (either consuming a pending conflict or
-    // resolving a legacy already-consumed conflict) leaves a legacy pending
-    // first capture unconsumed; carry it if it has not already been exported.
+    // Drive conflict dependency lookup strictly from the current commit's
+    // consumed observation and `dispute_resolved` events (O(1) PK lookups;
+    // zero scan of retained conflict history on unrelated commits).
     if include_consumed_conflict_deps {
-        let consumed_conflicts = conn.query(
-            &format!(
-                "SELECT json_extract(c.\"observed\", '$.input.acceptedBundleId') \
-                 FROM \"{inbox}\" c \
-                 WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
-                   AND (c.\"consumed_commit_seq\" = ?1 \
-                        OR EXISTS (SELECT 1 FROM \"{res_table}\" r \
-                                   WHERE r.\"dispute_id\" = c.\"observation_id\" \
-                                     AND r.\"commit_seq\" = ?1))"
-            ),
-            params![current_seq],
-        )?;
-        for raw in consumed_conflicts {
-            if let Some(id) = SqlRow(raw).get::<Option<String>>(0)?
+        let mut conflict_ids: Vec<(&str, bool)> = Vec::new();
+        if let Some(crate::store::Consumption::Observation { observation_id }) = consumed
+            && observation_id.starts_with("mapping-conflict:")
+        {
+            conflict_ids.push((observation_id.as_str(), false));
+        }
+        if consumed.is_none() {
+            for event in batch_events {
+                if event.get("op").and_then(Value::as_str) == Some("dispute_resolved")
+                    && let Some(id) = event.get("disputeId").and_then(Value::as_str)
+                    && id.starts_with("mapping-conflict:")
+                {
+                    // Legacy no-consumption resolution (`accept-first`,
+                    // `accept-second-as-correction`, or `reject`) has no
+                    // `consumed_input.members`; carry the first capture even
+                    // if this same commit just retired it at `current_seq`.
+                    conflict_ids.push((id, true));
+                }
+            }
+        }
+        for (conflict_id, allow_retired_at_current) in conflict_ids {
+            let dep: Option<Option<String>> = conn.query_optional(
+                &format!(
+                    "SELECT json_extract(\"observed\", '$.input.acceptedBundleId') \
+                     FROM \"{inbox}\" WHERE \"observation_id\" = ?1"
+                ),
+                params![conflict_id],
+                |row| row.get(0),
+            )?;
+            if let Some(Some(id)) = dep
                 && id.starts_with("mapping-bundle:")
             {
-                dep_ids.push(id);
+                dep_ids.push((id, allow_retired_at_current));
             }
         }
     }
-    for dep_id in dep_ids {
+    for (dep_id, allow_retired_at_current) in dep_ids {
         if !seen_pending.insert(dep_id.clone())
             || already_exported_pending(conn, &dep_id, prev_seq)?
         {
             continue;
         }
-        let dep_row: Option<(i64, String)> = conn.query_optional(
-            &format!(
-                "SELECT \"position\", \"observed\" FROM \"{inbox}\" \
-                 WHERE \"observation_id\" = ?1 AND \"consumed_commit_seq\" IS NULL"
-            ),
-            params![dep_id.as_str()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
+        let dep_row: Option<(i64, String)> = if allow_retired_at_current {
+            conn.query_optional(
+                &format!(
+                    "SELECT \"position\", \"observed\" FROM \"{inbox}\" \
+                     WHERE \"observation_id\" = ?1 \
+                       AND (\"consumed_commit_seq\" IS NULL OR \"consumed_commit_seq\" = ?2)"
+                ),
+                params![dep_id.as_str(), current_seq],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?
+        } else {
+            conn.query_optional(
+                &format!(
+                    "SELECT \"position\", \"observed\" FROM \"{inbox}\" \
+                     WHERE \"observation_id\" = ?1 AND \"consumed_commit_seq\" IS NULL"
+                ),
+                params![dep_id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?
+        };
         if let Some((pos, observed_json)) = dep_row {
             pending.push(crate::PendingObservation {
                 position: to_u64(pos, "position")?,
@@ -338,6 +257,8 @@ pub(crate) fn read_late_source_evidence<E: SqlEngine>(
         conn,
         commit_seq,
         Some(crate::engine_release::STORAGE_VERSION),
+        None,
+        &[],
     )
 }
 
@@ -347,6 +268,8 @@ pub(crate) fn read_late_source_evidence_for_version<E: SqlEngine>(
     conn: &E,
     commit_seq: u64,
     storage_version: Option<u32>,
+    consumed: Option<&crate::store::Consumption>,
+    batch_events: &[Value],
 ) -> Result<(Vec<crate::PendingObservation>, Vec<SourceEvidenceEntry>), CellError> {
     if commit_seq == 0 {
         return Ok((Vec::new(), Vec::new()));
@@ -402,6 +325,8 @@ pub(crate) fn read_late_source_evidence_for_version<E: SqlEngine>(
         prev_seq,
         current_seq,
         include_consumed_conflict_deps,
+        consumed,
+        batch_events,
         &mut pending,
         &mut seen_pending,
     )?;

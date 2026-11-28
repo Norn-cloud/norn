@@ -2735,3 +2735,171 @@ fn pre_v13_attributed_same_window_conflict_does_not_suppress_v13_accept_first() 
             .is_some()
     );
 }
+
+/// #1549: Resolving a pre-v13 generically-consumed conflict via `reject` or
+/// `accept-second-as-correction` must carry its unattributed pending first
+/// capture in the resolution record before retiring it, so restore retains
+/// the retired first capture and a subsequent distinct conflict on the same
+/// source event replays cleanly.
+#[test]
+fn pre_v13_legacy_reject_and_correction_preserve_first_capture_for_later_conflict_replay() {
+    for decision in [
+        DisputeDecision::Reject,
+        DisputeDecision::AcceptSecondAsCorrection,
+    ] {
+        let dir = tempfile::tempdir().expect("dir");
+        let source_path = dir.path().join("legacy_retire_src.sqlite");
+        let upgraded_path = dir.path().join("legacy_retire_up.sqlite");
+        let mut cell = setup_with(&source_path, referring_parties);
+
+        let b = party_ref_row("P-B", "demo/party/b", "B", None);
+        let c = party_ref_row("P-C", "demo/party/c", "C", None);
+        capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+        capture_kind(&mut cell, "erpnext", &c, "ec", "1", "upsert", "p1");
+
+        let a1 = party_ref_row("P-A", "demo/party/a", "First Pending", Some("demo/party/b"));
+        let a2 = party_ref_row("P-A", "demo/party/a", "Second Legacy", Some("demo/party/c"));
+        let a3 = party_ref_row("P-A", "demo/party/a", "Third Later Conflict", None);
+        let (r1, i1) = raw_event(&cell, "erpnext", &a1, "e1", "1", "upsert", "p1");
+        let (first_id, _) = cell.inject_mapping_bundle(&r1, &i1).expect("inject first");
+        let (r2, i2) = raw_event(&cell, "erpnext", &a2, "e1", "1", "upsert", "p1");
+        let (c1, _) = cell.inject_mapping_bundle(&r2, &i2).expect("inject c1");
+
+        let model = cell.store().model().clone();
+        drop(cell);
+        let first_row: (i64, String, String) = {
+            let conn = rusqlite::Connection::open(&source_path).expect("sqlite");
+            for id in [&first_id, &c1] {
+                conn.execute(
+                    "DELETE FROM \"_norn_source_evidence\" WHERE \"observation_id\" = ?1",
+                    rusqlite::params![id],
+                )
+                .expect("strip evidence");
+            }
+            conn.query_row(
+                "SELECT \"position\", \"observation_id\", \"observed\" \
+                 FROM \"_norn_inbox\" WHERE \"observation_id\" = ?1",
+                rusqlite::params![&first_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("first inbox row")
+        };
+
+        let store =
+            CellStore::open(&source_path, model.clone(), StoreOptions::default()).expect("open");
+        let next_time = store
+            .read()
+            .receipt_at(store.export_commit_count().expect("seq"))
+            .expect("receipt")
+            .map_or(1, |r| r.body.logical_time.saturating_add(1));
+        store
+            .commit(&norn_cell::CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: "org_demo/dev".into(),
+                logical_time: next_time,
+                consumes: Some(norn_cell::Consumption::Observation {
+                    observation_id: c1.clone(),
+                }),
+                ..norn_cell::CommitBatch::default()
+            })
+            .expect("generic consume c1");
+        let cell = SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+        let (mut pre_records, _) = export_records_and_head(&cell);
+        drop(cell);
+        let last_pre = pre_records.last_mut().expect("last pre");
+        last_pre.storage_version = Some(12);
+        last_pre.pending_observations.clear();
+        let pre_head = last_pre.hash().expect("pre head");
+
+        let rebuilt_pre = CellStore::rebuild_export_history(
+            NativeEngine::open(&upgraded_path, StoreOptions::default()).expect("open upgraded"),
+            &pre_records,
+            &pre_head,
+        )
+        .expect("pre-v13 replay");
+        drop(rebuilt_pre);
+        {
+            let conn = rusqlite::Connection::open(&upgraded_path).expect("sqlite upgraded");
+            conn.execute(
+                "INSERT INTO \"_norn_inbox\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") \
+                 VALUES (?1, ?2, ?3, NULL)",
+                rusqlite::params![first_row.0, &first_row.1, &first_row.2],
+            )
+            .expect("insert pending first");
+        }
+
+        let upgraded_store =
+            CellStore::open(&upgraded_path, model, StoreOptions::default()).expect("reopen");
+        let mut upgraded =
+            SqliteCell::new(upgraded_store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+
+        let res1 = upgraded
+            .resolve_mapping_dispute(DisputeResolutionInput {
+                dispute_id: c1.clone(),
+                decision,
+                actor: "ops:vera".into(),
+                reason: "resolve legacy conflict and retire first capture".into(),
+            })
+            .expect("resolve legacy c1");
+        assert!(
+            upgraded
+                .store()
+                .read()
+                .pending_observation(&first_id)
+                .expect("pending")
+                .is_none(),
+            "first capture must be retired after legacy {decision:?}"
+        );
+
+        // Now a later distinct conflict for the same source event arrives and is
+        // resolved; replay MUST still have the retired `first_id` to recheck it!
+        let (r3, i3) = raw_event(&upgraded, "erpnext", &a3, "e1", "1", "upsert", "p1");
+        let (c2, ins2) = upgraded
+            .inject_mapping_bundle(&r3, &i3)
+            .expect("inject later c2");
+        assert!(ins2 && c2.starts_with("mapping-conflict:"));
+        upgraded
+            .resolve_mapping_dispute(DisputeResolutionInput {
+                dispute_id: c2.clone(),
+                decision: DisputeDecision::Reject,
+                actor: "ops:vera".into(),
+                reason: "reject later distinct conflict".into(),
+            })
+            .expect("resolve later c2");
+
+        let (records, head) = export_records_and_head(&upgraded);
+        let rec1 = records
+            .iter()
+            .find(|r| r.receipt.body.commit_seq == res1.commit_seq)
+            .expect("res1 record");
+        assert_eq!(
+            rec1.pending_observations
+                .iter()
+                .filter(|p| p.observation_id == first_id)
+                .count(),
+            1,
+            "legacy {decision:?} must carry unattributed first capture before retiring it"
+        );
+        let rebuilt = CellStore::rebuild_export_history(
+            NativeEngine::open_in_memory().expect("mem"),
+            &records,
+            &head,
+        )
+        .expect("rebuild legacy reject/correction followed by later distinct conflict");
+        assert!(
+            rebuilt
+                .read()
+                .pending_observation(&first_id)
+                .expect("rebuilt pending")
+                .is_none(),
+            "first capture remains retired in rebuilt store after {decision:?}"
+        );
+        assert!(
+            rebuilt
+                .read()
+                .dispute_resolution(&c2)
+                .expect("rebuilt c2")
+                .is_some()
+        );
+    }
+}

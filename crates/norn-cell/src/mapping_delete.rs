@@ -408,7 +408,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     /// contribution owned by `bundle`'s source scope on deleted subjects.
     pub(crate) fn delete_withdrawal_claims_for_obs(
         &self,
-        bundle: &MappingBundle,
+        bundle: &crate::mapping_bundle::MappingBundle,
         obs_id: &str,
         batch_history: &std::collections::BTreeMap<
             String,
