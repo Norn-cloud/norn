@@ -187,6 +187,53 @@ fn standalone_callbacks_enforce_ast_node_and_depth_budgets_before_recursion() ->
     )?;
     assert_eq!(err_low_nodes.code(), CODE_UNBOUNDED);
 
+    // Validate and lower must enforce identical AST node and depth boundaries for standalone lambdas.
+    let boundary_src = "lambda s: s.hours > 0";
+    for max_nodes in 1..=20 {
+        let limits = SandboxLimits {
+            max_ast_nodes: max_nodes,
+            ..SandboxLimits::default()
+        };
+        let val = validate_callback_source_with_limits(boundary_src, "boundary.py", limits);
+        let low = lower_callback_source_with_limits(
+            boundary_src,
+            "boundary.py",
+            &LowerContext::default(),
+            limits,
+        );
+        assert_eq!(
+            val.is_ok(),
+            low.is_ok(),
+            "validate vs lower diverged at max_ast_nodes={max_nodes}"
+        );
+        if let (Err(ve), Err(le)) = (val, low) {
+            assert_eq!(ve.code(), CODE_UNBOUNDED);
+            assert_eq!(le.code(), CODE_UNBOUNDED);
+        }
+    }
+    for max_depth in 1..=12 {
+        let limits = SandboxLimits {
+            max_ast_depth: max_depth,
+            ..SandboxLimits::default()
+        };
+        let val = validate_callback_source_with_limits(boundary_src, "boundary.py", limits);
+        let low = lower_callback_source_with_limits(
+            boundary_src,
+            "boundary.py",
+            &LowerContext::default(),
+            limits,
+        );
+        assert_eq!(
+            val.is_ok(),
+            low.is_ok(),
+            "validate vs lower diverged at max_ast_depth={max_depth}"
+        );
+        if let (Err(ve), Err(le)) = (val, low) {
+            assert_eq!(ve.code(), CODE_UNBOUNDED);
+            assert_eq!(le.code(), CODE_UNBOUNDED);
+        }
+    }
+
     // Default depth budget (128) must also reject deeply nested standalone callbacks cleanly.
     let mut deeply_nested = String::from("lambda s: ");
     for _ in 0..70 {

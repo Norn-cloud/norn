@@ -1,4 +1,4 @@
-//! Shared AST node-count and nesting-depth budget enforcement matching CPython's `ast.walk`.
+//! Shared AST node-count and nesting-depth budget enforcement matching `CPython`'s `ast.walk`.
 
 use ruff_python_ast::visitor::{self, Visitor};
 use ruff_python_ast::{
@@ -13,7 +13,7 @@ use crate::error::{CODE_UNBOUNDED, PyAuthoringError, SourceSpan};
 use crate::line_table::LineTable;
 use crate::sandbox::SandboxLimits;
 
-/// Summary returned by [`check_body_budget`] and [`check_expr_budget`].
+/// Summary returned by [`check_body_budget`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BudgetStats {
     pub(crate) ast_node_count: usize,
@@ -28,17 +28,6 @@ pub(crate) fn check_body_budget(
 ) -> Result<BudgetStats, PyAuthoringError> {
     let mut visitor = AstBudgetVisitor::new(lines, limits);
     visitor.visit_body(body);
-    visitor.finish()
-}
-
-/// Checks AST node-count and nesting-depth budgets over a single expression before recursion.
-pub(crate) fn check_expr_budget(
-    expr: &Expr,
-    lines: &LineTable<'_>,
-    limits: SandboxLimits,
-) -> Result<BudgetStats, PyAuthoringError> {
-    let mut visitor = AstBudgetVisitor::new(lines, limits);
-    visitor.visit_expr(expr);
     visitor.finish()
 }
 

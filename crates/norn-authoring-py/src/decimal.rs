@@ -7,7 +7,7 @@ pub const MAX_DECIMAL_EXPONENT: i64 = 1_000;
 /// Maximum permitted significant digit count for exact `Decimal` literals.
 pub const MAX_DECIMAL_DIGITS: usize = 1_000;
 
-/// Sorted code-point bases (`0` digit) for every non-ASCII Unicode `Nd` (Decimal_Number) block.
+/// Sorted code-point bases (`0` digit) for every non-ASCII Unicode `Nd` (`Decimal_Number`) block.
 const UNICODE_ND_ZERO_BASES: &[u32] = &[
     0x0660, 0x06F0, 0x07C0, 0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66, 0x0BE6, 0x0C66, 0x0CE6, 0x0D66,
     0x0DE6, 0x0E50, 0x0ED0, 0x0F20, 0x1040, 0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0, 0x1A80, 0x1A90,

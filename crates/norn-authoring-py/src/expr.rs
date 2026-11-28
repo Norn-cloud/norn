@@ -206,7 +206,7 @@ impl ZenExpr {
         None
     }
 
-    pub(crate) fn as_date(self) -> Self {
+    pub(crate) fn into_date(self) -> Self {
         if self.temporal_kind() == Some(TemporalKind::Date) {
             self
         } else {
@@ -217,7 +217,7 @@ impl ZenExpr {
         }
     }
 
-    pub(crate) fn as_timestamp(self) -> Self {
+    pub(crate) fn into_timestamp(self) -> Self {
         if self.temporal_kind() == Some(TemporalKind::Timestamp) {
             self
         } else {

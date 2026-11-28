@@ -6,10 +6,10 @@ use ruff_python_ast::{
     CmpOp, Expr, ExprCall, ExprCompare, ExprLambda, Number, Operator, Stmt, StmtFunctionDef,
     UnaryOp,
 };
-use ruff_python_parser::{parse_expression, parse_module};
+use ruff_python_parser::parse_module;
 use ruff_text_size::Ranged;
 
-use crate::budget::{check_body_budget, check_expr_budget};
+use crate::budget::check_body_budget;
 use crate::decimal::format_exact_decimal;
 use crate::error::{
     CODE_EXPRESSION, CODE_FLOAT_LITERAL, CODE_FORBIDDEN_CALL, CODE_FORBIDDEN_CONTROL_FLOW,
@@ -91,14 +91,6 @@ pub fn lower_callback_source_with_limits(
         ));
     }
     let lines = LineTable::new(filename, source);
-    if let Ok(parsed_expr) = parse_expression(source)
-        && parsed_expr.unsupported_syntax_errors().is_empty()
-        && let Expr::Lambda(lambda) = parsed_expr.expr()
-    {
-        let _stats = check_expr_budget(parsed_expr.expr(), &lines, limits)?;
-        return lower_lambda(lambda, &lines, ctx);
-    }
-
     let parsed_mod = parse_module(source).map_err(|err| {
         PyAuthoringError::spanned(
             CODE_SYNTAX,
@@ -725,8 +717,8 @@ fn lower_temporal_func_call(
             Ok(ZenExpr::Call {
                 fn_name: zen_fn.to_owned(),
                 args: vec![
-                    left.require_expr(&ctx_l, span)?.as_timestamp(),
-                    right.require_expr(&ctx_r, span)?.as_timestamp(),
+                    left.require_expr(&ctx_l, span)?.into_timestamp(),
+                    right.require_expr(&ctx_r, span)?.into_timestamp(),
                 ],
             })
         }
@@ -735,8 +727,10 @@ fn lower_temporal_func_call(
             Ok(ZenExpr::Call {
                 fn_name: "days_between".to_owned(),
                 args: vec![
-                    start.require_expr("days_between() start", span)?.as_date(),
-                    end.require_expr("days_between() end", span)?.as_date(),
+                    start
+                        .require_expr("days_between() start", span)?
+                        .into_date(),
+                    end.require_expr("days_between() end", span)?.into_date(),
                 ],
             })
         }
@@ -760,9 +754,9 @@ fn lower_temporal_add(
     let [start, delta] = take_fixed_args::<2>(args, fn_name, span)?;
     let start_expr = start.require_expr(&format!("{fn_name}() start"), span)?;
     let wrapped = if fn_name == "add_days" {
-        start_expr.as_date()
+        start_expr.into_date()
     } else {
-        start_expr.as_timestamp()
+        start_expr.into_timestamp()
     };
     Ok(ZenExpr::Call {
         fn_name: fn_name.to_owned(),
@@ -780,10 +774,10 @@ fn lower_interval_call(
     Ok(ZenExpr::Call {
         fn_name: fn_name.to_owned(),
         args: vec![
-            a_start.require_expr(&ctx_label, span)?.as_timestamp(),
-            a_end.require_expr(&ctx_label, span)?.as_timestamp(),
-            b_start.require_expr(&ctx_label, span)?.as_timestamp(),
-            b_end.require_expr(&ctx_label, span)?.as_timestamp(),
+            a_start.require_expr(&ctx_label, span)?.into_timestamp(),
+            a_end.require_expr(&ctx_label, span)?.into_timestamp(),
+            b_start.require_expr(&ctx_label, span)?.into_timestamp(),
+            b_end.require_expr(&ctx_label, span)?.into_timestamp(),
         ],
     })
 }
