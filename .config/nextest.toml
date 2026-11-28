@@ -9,14 +9,26 @@ slow-timeout = { period = "120s" }
 [profile.ci.junit]
 path = "junit.xml"
 
-# Start the known-slow tail tests first in CI so they run alongside the rest
-# of their shard instead of straggling solo at the end (#1951).
+# Start the known-slow tail tests (>= 50s in Boat CI) first so they run alongside
+# the rest of their shard instead of straggling solo at the end (#1951).
 [[profile.ci.overrides]]
 filter = '''
   test(=provision::a_fault_anywhere_in_provisioning_leaves_nothing_half_made) |
+  test(=pull_cursor_atomicity_quint::tests::sqlite_state_machine_preserves_all_pull_cursor_atomicity_invariants) |
+  test(=mapping_links::obs_page_equiv_pages_equal_one_by_one) |
+  test(=suites::definitions_install::data_quarantine_redelivery_persists_one_finding_and_correction_recovers) |
+  test(=suites::definitions_install::obs_recovery_upgrade_uses_each_findings_retained_model) |
+  test(=pull_rest::mapping_edits_racing_loads_never_commit_a_mixed_snapshot) |
+  test(=suites::definitions_install::mapping_bundle_processing_replay_has_one_bundle_and_finding) |
+  test(=suites::definitions_install::feed_conflict_replay_preserves_first_capture_and_one_finding) |
+  test(=suites::scrap_yield_incremental::generated_changes_match_recompute_through_reorder_duplicate_and_restart) |
   test(=tenant_isolation::another_tenants_principal_at_b_learns_nothing) |
-  test(=dataset_laws::the_fuel_bound_pays_the_typed_property_charge) |
-  test(=suites::definitions_install::data_quarantine_redelivery_persists_one_finding_and_correction_recovers)
+  test(=retail_truth_slice::s1_read_only_combined_management_view_across_two_cells) |
+  test(=suites::definitions_install::obs_evidence_redelivery_persists_one_law_finding_after_restart) |
+  test(=source_freshness::tests::empty_polls_over_4096_after_rebind_preserve_pinned_trace_and_reject_stale) |
+  test(=suites::restatement_activation::activated_deltas_equal_full_recompute_through_redelivery_and_restart) |
+  test(=mapping_links::obs_link_narrowed_plans_equal_wide_plans) |
+  test(=dataset_laws::the_fuel_bound_pays_the_typed_property_charge)
 '''
 priority = 100
 
