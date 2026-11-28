@@ -459,3 +459,51 @@ fn a_model_change_replaces_every_kept_grant() {
     assert!(!reads("canon.Added"));
     assert!(reads("canon.Item"));
 }
+
+/// RECEIPT-CONSUME-1: production `ReadPolicy` (used by both `norn-cell-do` and
+/// `norn-cell-rivet`) fails closed on Function command-authority rechecks even
+/// when an admin caller is verified, and `Tenant::seeded` exposes the cell's
+/// `set_result_authorizer` hook cleanly.
+#[test]
+fn production_read_policy_and_tenant_wire_fail_closed_result_authorizer() {
+    use norn_api::authz::Authorizer;
+    use norn_cell_do::tenant::Tenant;
+    use norn_ir::function::{Authority, AuthorityKind, Digest};
+    use norn_kernel::LogicalTime;
+    use norn_kernel::result_reconciliation::{ResultAuthzRequest, ResultDenial};
+
+    let scope = seed::demo_scope();
+    let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+    policy.caller().record(caller("admin@demo"));
+
+    let authority = Authority {
+        kind: AuthorityKind::Service,
+        id: "svc.demo-worker".to_owned(),
+    };
+    let manifest = Digest(format!("sha256:{}", "a".repeat(64)));
+    let tenant_key = scope.key();
+    let request = ResultAuthzRequest {
+        tenant: &tenant_key,
+        authority: &authority,
+        command: "cmd-1",
+        manifest: &manifest,
+        destination: None,
+        now: LogicalTime::from_millis(1_000),
+    };
+    assert_eq!(
+        policy.result(&request),
+        Err(ResultDenial {
+            reason: norn_api::refusal::codes::AUTHZ_DENIED.into(),
+        })
+    );
+
+    let tenant = Tenant::seeded(scope, &DEMO_GRANTS, store, None).unwrap();
+    let serving = tenant.serving_host().expect("seeded tenant serves");
+    let result_authz: norn_cell::ResultAuthority =
+        Box::new(norn_api::authz::HostResultAuthorizer::new(
+            tenant_key,
+            std::sync::Arc::new(norn_api::authz::DenyAll),
+        ));
+    assert!(serving.set_result_authorizer(result_authz).is_ok());
+}
