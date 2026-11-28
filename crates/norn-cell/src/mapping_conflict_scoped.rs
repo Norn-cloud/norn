@@ -557,6 +557,32 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         {
             return Err(corrupt("export journal mismatch"));
         }
+        if receipt.body.consumed.is_none() {
+            let Some(prev_i64) = self
+                .conn
+                .query_optional(
+                    &format!(
+                        "SELECT \"consumed_commit_seq\" FROM \"{}\" WHERE \"observation_id\" = ?1",
+                        crate::system::INBOX
+                    ),
+                    params![&rec.dispute_id],
+                    |row| row.get::<Option<i64>>(0),
+                )?
+                .flatten()
+            else {
+                return Err(corrupt(
+                    "missing prior consumed_commit_seq for legacy resolution",
+                ));
+            };
+            let prev_seq = u64::try_from(prev_i64)
+                .map_err(|err| corrupt(&format!("negative prior consumed_commit_seq: {err}")))?;
+            if prev_seq >= rec.commit_seq {
+                return Err(corrupt(
+                    "prior consumed_commit_seq not earlier than resolution",
+                ));
+            }
+            self.authenticated_prior_consumed_observed(&rec.dispute_id, prev_seq)?;
+        }
         Ok(record)
     }
 
@@ -652,75 +678,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let prev_seq = u64::try_from(prev_i64)
             .map_err(|err| corrupt(&format!("negative prior consumed_commit_seq: {err}")))?;
         self.authenticated_prior_consumed_observed(&rec.dispute_id, prev_seq)
-    }
-
-    /// Authenticate the prior pre-v13 consuming commit `prev_seq` for a legacy
-    /// generically-consumed `dispute_id` against BOTH its durable receipt
-    /// (`receipt.body.consumed == Some(Observation { dispute_id })`) and its
-    /// hash-verified `_norn_export_journal` record (`storage_version < 13`,
-    /// `record.receipt == receipt`, `consumed_input`), returning the
-    /// authenticated `Observed` JSON payload. Shared by both live read
-    /// verification and `mapping.dispute.resolve` write admission.
-    pub(crate) fn authenticated_prior_consumed_observed(
-        &self,
-        dispute_id: &str,
-        prev_seq: u64,
-    ) -> Result<norn_ir::RuntimeValue, CellError> {
-        let corrupt = |msg: &str| CellError::LedgerCorrupt {
-            seq: prev_seq,
-            reason: format!("unverified prior consumption for {dispute_id}: {msg}"),
-        };
-        let Some(prior_receipt) = self.receipt_at(prev_seq)? else {
-            return Err(corrupt("missing prior consuming receipt"));
-        };
-        let expected_consumed = crate::Consumption::Observation {
-            observation_id: dispute_id.to_owned(),
-        };
-        if prior_receipt.body.world != crate::MAIN_WORLD
-            || prior_receipt.body.consumed.as_ref() != Some(&expected_consumed)
-        {
-            return Err(corrupt(
-                "prior consuming receipt does not consume this dispute",
-            ));
-        }
-        let has_journal = self
-            .conn
-            .query_optional(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
-                params![],
-                |_row| Ok(()),
-            )?
-            .is_some();
-        if !has_journal {
-            return Err(corrupt("missing export journal table"));
-        }
-        let Some(prior_export) = crate::export_journal::read_record(self.conn, prev_seq)? else {
-            return Err(corrupt("missing prior consuming export journal record"));
-        };
-        if prior_export.receipt != prior_receipt
-            || prior_export.storage_version.unwrap_or(1)
-                >= crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
-        {
-            return Err(corrupt(
-                "prior consuming export journal disagrees with pre-v13 receipt",
-            ));
-        }
-        let Some(prior_consumed) = prior_export.consumed_input.as_ref() else {
-            return Err(corrupt("prior consuming journal missing consumed_input"));
-        };
-        let crate::export_journal::ConsumedInput::Observation {
-            observation_id,
-            observed,
-            ..
-        } = crate::export_journal::decode_observation_input(prior_consumed)
-            .map_err(|err| corrupt(&format!("invalid prior consumed input: {err}")))?
-        else {
-            return Err(corrupt("prior consuming journal is not an observation"));
-        };
-        if observation_id != dispute_id {
-            return Err(corrupt("prior consumed observation id mismatch"));
-        }
-        Ok(observed)
     }
 
     /// Read and authenticate every ledger entry in `receipt`'s exact event span

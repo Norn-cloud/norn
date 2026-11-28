@@ -1959,21 +1959,81 @@ fn legacy_generically_consumed_conflict_resolves_and_retires_pending_first_captu
         .expect("inject conflict e");
     assert!(inserted_e && conflict_e.starts_with("mapping-conflict:"));
 
-    // Simulate pre-v13 generic consumption of all three conflict rows at an
-    // earlier commit seq without creating `_norn_dispute_resolution` rows.
+    // Commit genuine pre-v13 (`storage_version = Some(12)`) generic
+    // consumption commits for all three conflict rows, preserving the still-
+    // pending first captures (`first_a`, `first_d`) across export rebuild.
     let model = cell.store().model().clone();
-    drop(cell);
-    {
+    let pending_first_rows: Vec<(i64, String, String)> = {
         let conn = rusqlite::Connection::open(&path).expect("raw sqlite");
-        for id in [&conflict_a, &conflict_d, &conflict_e] {
+        let mut out = Vec::new();
+        for id in [&first_a, &first_d] {
+            let (pos, obs): (i64, String) = conn
+                .query_row(
+                    "SELECT \"position\", \"observed\" FROM \"_norn_inbox\" WHERE \"observation_id\" = ?1",
+                    rusqlite::params![id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("read pending first capture");
+            out.push((pos, id.clone(), obs));
+        }
+        out
+    };
+    let mut next_time = cell
+        .store()
+        .read()
+        .receipt_at(cell.store().export_commit_count().expect("seq"))
+        .expect("receipt")
+        .map_or(1, |r| r.body.logical_time.saturating_add(1));
+    let mut pre_seqs = BTreeSet::new();
+    for id in [&conflict_a, &conflict_d, &conflict_e] {
+        let receipt = cell
+            .store_mut()
+            .commit(&norn_cell::CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: "org_demo/dev".into(),
+                logical_time: next_time,
+                consumes: Some(norn_cell::Consumption::Observation {
+                    observation_id: id.clone(),
+                }),
+                ..norn_cell::CommitBatch::default()
+            })
+            .expect("generic consume conflict");
+        pre_seqs.insert(receipt.body.commit_seq);
+        next_time = next_time.saturating_add(1);
+    }
+    let (mut records, _) = export_records_and_head(&cell);
+    drop(cell);
+    let mut prev_hash = String::new();
+    for rec in &mut records {
+        if !prev_hash.is_empty() {
+            rec.previous.clone_from(&prev_hash);
+        }
+        if pre_seqs.contains(&rec.receipt.body.commit_seq) {
+            rec.storage_version = Some(12);
+            rec.pending_observations.clear();
+        }
+        prev_hash = rec.hash().expect("export hash");
+    }
+    let rebuilt_path = dir.path().join("legacy_rebuilt.sqlite");
+    let rebuilt = CellStore::rebuild_export_history(
+        NativeEngine::open(&rebuilt_path, StoreOptions::default()).expect("open rebuilt"),
+        &records,
+        &prev_hash,
+    )
+    .expect("rebuild pre-v13 generic consumptions");
+    drop(rebuilt);
+    {
+        let conn = rusqlite::Connection::open(&rebuilt_path).expect("raw sqlite");
+        for (pos, id, obs) in &pending_first_rows {
             conn.execute(
-                "UPDATE \"_norn_inbox\" SET \"consumed_commit_seq\" = 1 WHERE \"observation_id\" = ?1",
-                rusqlite::params![id],
+                "INSERT OR IGNORE INTO \"_norn_inbox\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") \
+                 VALUES (?1, ?2, ?3, NULL)",
+                rusqlite::params![pos, id, obs],
             )
-            .expect("simulate pre-v13 generic consumption");
+            .expect("restore pending first capture");
         }
     }
-    let store = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
+    let store = CellStore::open(&rebuilt_path, model, StoreOptions::default()).expect("reopen");
     let mut cell = SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
 
     assert!(
@@ -3288,10 +3348,13 @@ fn forged_dispute_resolution_cannot_bypass_stale_delete_guard() {
         "end-to-end delete processing must also fail closed on forged resolution row"
     );
 
-    // Clear the forged resolution row, then corrupt the landed v2 bundle's
-    // inbox `source_version` to "0": the landed-version guard must authenticate
-    // against `_norn_export_journal` and fail closed with LedgerCorrupt rather
-    // than trusting tampered inbox bytes or skipping decode failures.
+    // Clear the forged resolution row, then tamper the landed v2 bundle's
+    // inbox `source_version` to "0":
+    // - A stale delete (v1) is still blocked (`Ok(true)`) via `_norn_fact_values`
+    //   + `_norn_export_journal`.
+    // - A newer delete (v3) reaches `authenticated_landed_bundle` and fails
+    //   closed with `LedgerCorrupt` because `_norn_inbox` disagrees with
+    //   `_norn_export_journal`.
     {
         let raw_conn = rusqlite::Connection::open(&path).expect("raw sqlite");
         raw_conn
@@ -3318,14 +3381,67 @@ fn forged_dispute_resolution_cannot_bypass_stale_delete_guard() {
             .expect("tamper landed bundle version in inbox");
     }
     assert!(
+        norn_cell::mapping_delete::has_newer_or_incomparable_landed_source_version(
+            &cell.store().read(),
+            &del_bundle,
+        )
+        .expect("stale v1 delete blocked via _norn_fact_values + journal"),
+        "tampering landed version to 0 in inbox must still block stale v1 delete"
+    );
+    let del_v3 = party_ref_row("P-A", "demo/party/a", "A v3", None);
+    let (dr3, di3) = raw_event(&cell, "erpnext", &del_v3, "edel3", "3", "delete", "p1");
+    let (del3_id, _) = cell.inject_mapping_bundle(&dr3, &di3).expect("inject del3");
+    let pending3 = cell
+        .store()
+        .read()
+        .pending_observation(&del3_id)
+        .expect("pending3")
+        .expect("present3");
+    let obs3: Observed<RuntimeValue> =
+        norn_ir::runtime::decode(&pending3.observed).expect("decode observed3");
+    let del3_bundle: norn_cell::mapping_bundle::MappingBundle =
+        norn_ir::runtime::decode(&obs3.input).expect("decode del3 bundle");
+    assert!(
         matches!(
             norn_cell::mapping_delete::has_newer_or_incomparable_landed_source_version(
                 &cell.store().read(),
-                &del_bundle,
+                &del3_bundle,
             ),
             Err(CellError::LedgerCorrupt { .. })
         ),
         "tampered landed bundle in inbox must fail closed with LedgerCorrupt"
+    );
+
+    // Even if `_norn_inbox.observed` has its `source_id` rewritten so the
+    // `_norn_inbox/source_event` index query no longer selects the landed v2
+    // bundle at all, `_norn_fact_values` + `_norn_export_journal` still detects
+    // the newer landed v2 bundle on this linkless subject and blocks the stale delete.
+    {
+        let raw_conn = rusqlite::Connection::open(&path).expect("raw sqlite");
+        let (landed_id, landed_obs): (String, String) = raw_conn
+            .query_row(
+                "SELECT \"observation_id\", \"observed\" FROM \"_norn_inbox\" \
+                 WHERE \"consumed_commit_seq\" = ?1",
+                rusqlite::params![landed_seq],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read landed bundle inbox row");
+        let hidden = landed_obs.replace("\"source_id\":\"P-A\"", "\"source_id\":\"P-OTHER\"");
+        assert_ne!(hidden, landed_obs);
+        raw_conn
+            .execute(
+                "UPDATE \"_norn_inbox\" SET \"observed\" = ?1 WHERE \"observation_id\" = ?2",
+                rusqlite::params![&hidden, &landed_id],
+            )
+            .expect("hide landed bundle source_id in inbox");
+    }
+    assert!(
+        norn_cell::mapping_delete::has_newer_or_incomparable_landed_source_version(
+            &cell.store().read(),
+            &del_bundle,
+        )
+        .expect("subject history check via _norn_fact_values"),
+        "hiding a linkless landed bundle in _norn_inbox must never bypass stale-delete protection"
     );
 }
 

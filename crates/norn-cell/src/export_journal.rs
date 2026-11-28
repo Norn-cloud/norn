@@ -595,3 +595,90 @@ fn conflict_export_candidates<E: SqlEngine>(
     }
     Ok(candidates)
 }
+
+/// Retire a superseded pending first capture (`acceptedBundleId`) when a
+/// `mapping-conflict:` row resolves via `accept-second-as-correction` or
+/// `reject`. For legacy generically-consumed disputes (`consumed_commit_seq <
+/// commit_seq`), reads `acceptedBundleId` exclusively from the prior consuming
+/// commit's hash-verified `_norn_export_journal` `consumed_input` (bound to its
+/// pre-v13 receipt consuming `dispute_id`) rather than mutable
+/// `_norn_inbox.observed`.
+pub(crate) fn retire_superseded_conflict_bundle<E: SqlEngine>(
+    conn: &E,
+    commit_seq: i64,
+    dispute_id: &str,
+) -> Result<(), CellError> {
+    let Some((consumed_seq, inbox_obs)) = conn.query_optional(
+        &format!(
+            "SELECT \"consumed_commit_seq\", \"observed\" FROM \"{}\" WHERE \"observation_id\" = ?1",
+            crate::system::INBOX
+        ),
+        params![dispute_id],
+        |row| Ok((row.get::<Option<i64>>(0)?, row.get::<String>(1)?)),
+    )?
+    else {
+        return Ok(());
+    };
+    let observed_val = if let Some(prev_i64) = consumed_seq
+        && prev_i64 < commit_seq
+    {
+        let prev_seq = u64::try_from(prev_i64).map_err(|err| CellError::LedgerCorrupt {
+            seq: 0,
+            reason: format!("negative prior consumed_commit_seq for {dispute_id}: {err}"),
+        })?;
+        let corrupt = |msg: &str| CellError::LedgerCorrupt {
+            seq: prev_seq,
+            reason: format!("unverified prior consumption for {dispute_id}: {msg}"),
+        };
+        let Some(prior_export) = read_record(conn, prev_seq)? else {
+            return Err(corrupt("missing prior consuming export journal record"));
+        };
+        let expected_consumed = Consumption::Observation {
+            observation_id: dispute_id.to_owned(),
+        };
+        if prior_export.receipt.body.world != crate::MAIN_WORLD
+            || prior_export.receipt.body.consumed.as_ref() != Some(&expected_consumed)
+            || prior_export.storage_version.unwrap_or(1)
+                >= crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
+        {
+            return Err(corrupt(
+                "prior consuming export journal disagrees with pre-v13 receipt",
+            ));
+        }
+        let Some(prior_consumed) = prior_export.consumed_input.as_ref() else {
+            return Err(corrupt("prior consuming journal missing consumed_input"));
+        };
+        let ConsumedInput::Observation {
+            observation_id,
+            observed,
+            ..
+        } = decode_observation_input(prior_consumed)
+            .map_err(|err| corrupt(&format!("invalid prior consumed input: {err}")))?
+        else {
+            return Err(corrupt("prior consuming journal is not an observation"));
+        };
+        if observation_id != dispute_id {
+            return Err(corrupt("prior consumed observation id mismatch"));
+        }
+        observed
+    } else {
+        Value::from_json_text(&inbox_obs).map_err(|err| {
+            CellError::Encoding(format!("invalid dispute JSON for {dispute_id}: {err}"))
+        })?
+    };
+    let Some(accepted_id) = observed_val
+        .pointer("/input/acceptedBundleId")
+        .and_then(Value::as_str)
+    else {
+        return Ok(());
+    };
+    conn.execute(
+        &format!(
+            "UPDATE \"{}\" SET \"consumed_commit_seq\" = ?1 \
+             WHERE \"consumed_commit_seq\" IS NULL AND \"observation_id\" = ?2",
+            crate::system::INBOX
+        ),
+        params![commit_seq, accepted_id],
+    )?;
+    Ok(())
+}
