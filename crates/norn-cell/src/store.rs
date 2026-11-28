@@ -2492,6 +2492,50 @@ impl<E: SqlEngine> CellStore<E> {
         store
     }
 
+    fn backfill_verified_claim_endpoints(conn: &E, model: &Model) -> Result<(), CellError> {
+        let table = crate::system::CLAIM_ENDPOINT;
+        let missing = conn.query(
+            &format!(
+                "SELECT i.\"observation_id\", i.\"observed\" FROM \"{INBOX}\" i \
+                 WHERE i.\"observation_id\" >= 'mapping-bundle:' \
+                 AND i.\"observation_id\" < 'mapping-bundle;' \
+                 AND i.\"consumed_commit_seq\" IS NOT NULL \
+                 AND NOT EXISTS ( \
+                     SELECT 1 FROM \"{table}\" e \
+                     WHERE e.\"observation_id\" = i.\"observation_id\" \
+                       AND e.\"side\" >= 'event:' AND e.\"side\" < 'event;' \
+                       AND e.\"key\" = '' \
+                 )"
+            ),
+            params![],
+        )?;
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let reader = StoreReader::new(conn, model);
+        for values in missing {
+            let row = crate::engine::SqlRow(values);
+            let observation_id: String = row.get(0)?;
+            let encoded: String = row.get(1)?;
+            let observed: norn_kernel::Observed<norn_ir::RuntimeValue> =
+                serde_json::from_str(&encoded).map_err(|_| CellError::MappingBundleMismatch)?;
+            let bundle: crate::mapping_bundle::MappingBundle =
+                norn_ir::runtime::decode(&observed.input)
+                    .map_err(|_| CellError::MappingBundleMismatch)?;
+            if observed.id.0 != observation_id
+                || observation_id != format!("mapping-bundle:{}", bundle.digest)
+            {
+                return Err(CellError::MappingBundleMismatch);
+            }
+            reader.recheck_mapping_bundle(&bundle)?;
+            conn.execute(
+                &crate::system::claim_endpoints_of("i.\"observation_id\" = ?1"),
+                params![&observation_id],
+            )?;
+        }
+        Ok(())
+    }
+
     fn init_schema(
         conn: &E,
         model: &Model,
@@ -2502,40 +2546,15 @@ impl<E: SqlEngine> CellStore<E> {
         // this engine's schema statements, inside the open transaction.
         crate::engine_release::upgrade(conn)?;
         crate::system::init_core_tables(conn)?;
-        // Claim endpoints of bundles consumed before the table existed; a
-        // no-op for every bundle already indexed. Refuse if any consumed
-        // mapping bundle is too corrupted to produce durable event/subject bindings.
-        let incomplete_backfill: Option<i64> = conn.query_optional(
-            &format!(
-                "SELECT 1 FROM \"{INBOX}\" i \
-                 WHERE i.\"observation_id\" >= 'mapping-bundle:' \
-                 AND i.\"observation_id\" < 'mapping-bundle;' \
-                 AND i.\"consumed_commit_seq\" IS NOT NULL \
-                 AND (json_valid(i.\"observed\") IS NOT 1 \
-                      OR json_type(i.\"observed\", '$.input.input.connectorInstance') IS NOT 'text' \
-                      OR json_type(i.\"observed\", '$.input.input.partition') IS NOT 'text' \
-                      OR json_type(i.\"observed\", '$.input.raw.source') IS NOT 'text' \
-                      OR json_type(i.\"observed\", '$.input.raw.source_id') IS NOT 'text' \
-                      OR json_type(i.\"observed\", '$.input.raw.event_id') IS NOT 'text' \
-                      OR json_type(i.\"observed\", '$.input.records') IS NOT 'array' \
-                      OR EXISTS (SELECT 1 FROM json_each(i.\"observed\", '$.input.records') AS r \
-                                 WHERE r.type IS NOT 'object' \
-                                    OR json_type(r.value, '$.objectType') IS NOT 'text' \
-                                    OR json_type(r.value, '$.key') IS NOT 'text')) \
-                 LIMIT 1"
-            ),
-            params![],
-            |row| row.get(0),
-        )?;
-        if incomplete_backfill.is_some() {
-            return Err(CellError::MappingBundleMismatch);
-        }
-        conn.execute(&crate::system::claim_endpoints_of("1"), params![])?;
         crate::system::intern_marking_subjects(conn)?;
         export_journal::init(conn)?;
         crate::retained::init(conn)?;
         crate::compute::materialize::init(conn)?;
         crate::payload_storage::init(conn)?;
+        // Claim endpoints and durable event/subject bindings of bundles consumed
+        // before the bindings existed; a no-op once indexed. Recheck retained bundle
+        // identity and derivation before creating any legacy binding.
+        Self::backfill_verified_claim_endpoints(conn, model)?;
         // Before the model's indexes name `p:` columns of an older file.
         crate::migration::upgrade_raw_property_columns(conn, model)?;
         for statement in model.schema().statements() {

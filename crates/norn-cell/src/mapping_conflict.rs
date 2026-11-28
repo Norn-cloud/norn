@@ -683,6 +683,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let row = crate::engine::SqlRow(values);
             let subject_json: String = row.get(0)?;
             let observation_id: String = row.get(1)?;
+            if subject_json.is_empty() {
+                continue;
+            }
             let [object_type, subject_key]: [String; 2] = serde_json::from_str(&subject_json)
                 .map_err(|_| CellError::MappingBundleMismatch)?;
             if !self.subject_matches_readable_active(&object_type, &subject_key, readable_map) {
