@@ -653,23 +653,8 @@ fn manifest_source_dir_refuses_hidden_symlink_and_hidden_unsupported_file() -> T
 fn ts_directory_compile_charges_single_read_budget_and_resolves_imports() -> TestResult {
     let ts_root = tools_norn_ts_root();
     let scratch = SecWorkspace::new("ts-single-read")?;
-    let billing_src = r#"import { Norn } from "@norn/authoring"
-
-export const loadInvoice = Norn.fn<{
-  readonly invoiceId: string
-}, {
-  readonly id: string
-}>({ id: "billing.load_invoice", version: "1.0.0" })
-"#;
-    let charge_src = r#"import { Norn } from "@norn/authoring"
-
-export const chargeCard = Norn.fn<{
-  readonly invoiceId: string
-}, { readonly receiptId: string }>({
-  id: "billing.charge_card",
-  version: "1.0.0",
-})
-"#;
+    let billing_src = "import { Norn } from \"@norn/authoring\"\nexport const loadInvoice = Norn.fn<{ readonly invoiceId: string }, { readonly id: string }>({ id: \"billing.load_invoice\", version: \"1.0.0\" })\n";
+    let charge_src = "import { Norn } from \"@norn/authoring\"\nexport const chargeCard = Norn.fn<{ readonly invoiceId: string }, { readonly receiptId: string }>({ id: \"billing.charge_card\", version: \"1.0.0\" })\n";
     let sequence_src = r#"import { Effect } from "effect"
 import { Norn } from "@norn/authoring"
 import { loadInvoice } from "./billing"
@@ -714,7 +699,16 @@ export default Norn.flow(
     assert_eq!(budget.bytes_read(), expected_bytes);
     let parsed: Value = serde_json::from_str(&compiled)?;
     let items = parsed.as_array().ok_or("expected JSON artifact array")?;
-    assert_eq!(items.len(), 1);
+    assert_eq!(items.len(), 2);
+    let mut artifact_ids: Vec<&str> = items
+        .iter()
+        .filter_map(|item| item.get("artifactId").and_then(Value::as_str))
+        .collect();
+    artifact_ids.sort_unstable();
+    assert_eq!(
+        artifact_ids,
+        vec!["billing.SequenceRun.entity", "billing.sequence.flow.rule"]
+    );
     Ok(())
 }
 

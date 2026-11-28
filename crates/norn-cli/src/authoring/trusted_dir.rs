@@ -25,32 +25,22 @@ pub(crate) struct TrustedDir {
 
 /// A regular file read from a trusted directory together with its retained parent handle.
 pub(crate) struct PinnedLoadedFile {
-    /// Retained parent directory handle from which this file was opened.
     pub(crate) parent: Arc<TrustedDir>,
-    /// Final UTF-8 file name inside [`Self::parent`].
     pub(crate) file_name: String,
-    /// Logical display path (used for diagnostics and stdout reporting).
     pub(crate) display_path: PathBuf,
-    /// UTF-8 contents read directly from the opened descriptor.
     pub(crate) content: String,
 }
 
-/// Result of a single non-recursive scan of a trusted root directory:
-/// pre-loaded top-level regular files and retained child [`TrustedDir`] handles
-/// for non-skipped subdirectories opened during the same scan.
+/// Result of a single non-recursive root scan: top-level files and pinned child subdirectories.
 #[derive(Debug)]
 pub(crate) struct TopLevelScan {
-    /// Top-level regular files loaded in sorted entry-name order.
     pub(crate) files: Vec<LoadedFile>,
-    /// Pinned non-skipped child subdirectories `(rel_path, dir)` ready for recursive traversal.
     pub(crate) subdirs: Vec<(PathBuf, Arc<TrustedDir>)>,
 }
 
 /// Single-open FD-pinned CLI source target (either a directory or a pinned regular file).
 pub(crate) enum PinnedSourceTarget {
-    /// Verified directory descriptor.
     Directory(TrustedDir),
-    /// Verified regular file opened directly from its pinned parent directory descriptor.
     File {
         parent_dir: TrustedDir,
         file_name: String,
@@ -142,7 +132,9 @@ impl TrustedDir {
                     ancestor_dir_flags()
                 };
                 walked.push(seg);
-                let parent_ref = current_opt.as_ref().map_or(self.fd.as_fd(), AsFd::as_fd);
+                let parent_ref = current_opt
+                    .as_ref()
+                    .map_or_else(|| self.fd.as_fd(), AsFd::as_fd);
                 let opened = openat(parent_ref, *seg, flags, Mode::empty())
                     .map_err(|err| format_dir_open_error(parent_ref, seg, &walked, err))?;
                 current_opt = Some(opened);
@@ -224,7 +216,9 @@ impl TrustedDir {
         let mut dir_owned: Option<std::os::fd::OwnedFd> = None;
         for seg in parent_segs {
             walked.push(seg);
-            let parent_ref = dir_owned.as_ref().map_or(self.fd.as_fd(), AsFd::as_fd);
+            let parent_ref = dir_owned
+                .as_ref()
+                .map_or_else(|| self.fd.as_fd(), AsFd::as_fd);
             match openat(parent_ref, *seg, ancestor_dir_flags(), Mode::empty()) {
                 Ok(opened) => dir_owned = Some(opened),
                 Err(err) if err == Errno::NOENT => return Ok(None),
@@ -243,7 +237,9 @@ impl TrustedDir {
             }
         }
         walked.push(final_seg);
-        let parent_ref = dir_owned.as_ref().map_or(self.fd.as_fd(), AsFd::as_fd);
+        let parent_ref = dir_owned
+            .as_ref()
+            .map_or_else(|| self.fd.as_fd(), AsFd::as_fd);
         let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
         let opened = match openat(parent_ref, final_seg, flags, Mode::empty()) {
             Ok(fd) => std::fs::File::from(fd),
@@ -476,13 +472,15 @@ pub(crate) fn read_files_in_pinned_subdirs(
     Ok(files)
 }
 
+type OnWalkFile = dyn FnMut(&Arc<TrustedDir>, &str, PathBuf, PathBuf, String);
+
 fn walk_dir_shared(
     root: &Arc<TrustedDir>,
     rel_prefix: &Path,
     depth: usize,
     accept: fn(&str, &Path) -> bool,
     budget: &mut InvocationBudget,
-    on_file: &mut dyn FnMut(&Arc<TrustedDir>, &str, PathBuf, PathBuf, String),
+    on_file: &mut OnWalkFile,
 ) -> Result<(), String> {
     #[cfg(unix)]
     {
@@ -565,7 +563,7 @@ fn walk_unix_dir(
     depth: usize,
     accept: fn(&str, &Path) -> bool,
     budget: &mut InvocationBudget,
-    on_file: &mut dyn FnMut(&Arc<TrustedDir>, &str, PathBuf, PathBuf, String),
+    on_file: &mut OnWalkFile,
 ) -> Result<(), String> {
     let dir_display = dir.display_path();
     if depth > MAX_WALK_DEPTH {
@@ -637,7 +635,7 @@ fn walk_non_unix_dir(
     depth: usize,
     accept: fn(&str, &Path) -> bool,
     budget: &mut InvocationBudget,
-    on_file: &mut dyn FnMut(&Arc<TrustedDir>, &str, PathBuf, PathBuf, String),
+    on_file: &mut OnWalkFile,
 ) -> Result<(), String> {
     let dir_path = dir.display_path();
     if depth > MAX_WALK_DEPTH {

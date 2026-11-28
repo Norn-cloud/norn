@@ -61,7 +61,7 @@ impl CommandOutput {
         }
     }
 
-    pub(crate) fn usage_or_io_error(message: String) -> Self {
+    pub(crate) fn usage_or_io_error(message: &str) -> Self {
         Self {
             stdout: String::new(),
             stderr: format!("norn: {message}"),
@@ -80,7 +80,7 @@ impl AuthoringFailure {
     fn into_output(self) -> CommandOutput {
         match self {
             Self::Diagnostics(doc) => CommandOutput::refused(doc),
-            Self::Io(message) => CommandOutput::usage_or_io_error(message),
+            Self::Io(message) => CommandOutput::usage_or_io_error(&message),
         }
     }
 }
@@ -567,7 +567,7 @@ pub(crate) fn execute_compile(args: &CompileArgs) -> CommandOutput {
             if let Some(out_path) = &args.out {
                 match write_file_atomic(out_path, &canonical) {
                     Ok(()) => CommandOutput::ok(String::new()),
-                    Err(err) => CommandOutput::usage_or_io_error(err),
+                    Err(err) => CommandOutput::usage_or_io_error(&err),
                 }
             } else {
                 CommandOutput::ok(canonical)
@@ -690,7 +690,7 @@ fn compile_check_source_pinned(
 pub(crate) fn execute_check_source(req: &CheckSourceRequest<'_>) -> CommandOutput {
     let target = match open_source_target_pinned(req.source) {
         Ok(pinned) => pinned,
-        Err(err) => return CommandOutput::usage_or_io_error(err),
+        Err(err) => return CommandOutput::usage_or_io_error(&err),
     };
     let start_dir = match &target {
         PinnedSourceTarget::Directory(dir) => dir,
@@ -698,13 +698,13 @@ pub(crate) fn execute_check_source(req: &CheckSourceRequest<'_>) -> CommandOutpu
     };
     let app_root = match find_norn_app_root_from_dir(start_dir) {
         Ok(matched) => matched,
-        Err(err) => return CommandOutput::usage_or_io_error(err),
+        Err(err) => return CommandOutput::usage_or_io_error(&err),
     };
     if let Some(matched) = app_root.as_ref() {
         match check_zero_ci_app_root(matched.as_dir(start_dir)) {
             ZeroCiOutcome::Clean => {}
             ZeroCiOutcome::Refused(report) => return CommandOutput::refused(report),
-            ZeroCiOutcome::IoError(err) => return CommandOutput::usage_or_io_error(err),
+            ZeroCiOutcome::IoError(err) => return CommandOutput::usage_or_io_error(&err),
         }
     }
 
@@ -722,18 +722,18 @@ pub(crate) fn execute_check_source(req: &CheckSourceRequest<'_>) -> CommandOutpu
             "16 MiB check input limit",
         ) {
             Ok(text) => text,
-            Err(err) => return CommandOutput::usage_or_io_error(err),
+            Err(err) => return CommandOutput::usage_or_io_error(&err),
         },
         None => "{}".to_owned(),
     };
 
     let report = match norn_checker_wasm::check_artifact_set_json(&artifacts_json, &context_json) {
         Ok(text) => text,
-        Err(err) => return CommandOutput::usage_or_io_error(err.to_string()),
+        Err(err) => return CommandOutput::usage_or_io_error(&err.to_string()),
     };
     let parsed: Value = match serde_json::from_str(&report) {
         Ok(val) => val,
-        Err(err) => return CommandOutput::usage_or_io_error(err.to_string()),
+        Err(err) => return CommandOutput::usage_or_io_error(&err.to_string()),
     };
     if parsed.get("admitted").and_then(Value::as_bool) == Some(true) {
         CommandOutput::ok(report)

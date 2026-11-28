@@ -237,13 +237,12 @@ pub(crate) fn run_check_args(args: &CheckArgs) -> authoring::CommandOutput {
     if let Some(source_path) = &args.source {
         if args.artifacts.is_some() {
             return authoring::CommandOutput::usage_or_io_error(
-                "--artifacts and --source cannot be combined".to_owned(),
+                "--artifacts and --source cannot be combined",
             );
         }
         if args.org.is_some() != args.env.is_some() {
             return authoring::CommandOutput::usage_or_io_error(
-                "--org and --env must be supplied together with --source (or omit both when checking a norn.json project)"
-                    .to_owned(),
+                "--org and --env must be supplied together with --source (or omit both when checking a norn.json project)",
             );
         }
         return authoring::execute_check_source(&authoring::CheckSourceRequest {
@@ -257,8 +256,7 @@ pub(crate) fn run_check_args(args: &CheckArgs) -> authoring::CommandOutput {
     }
     let Some(artifacts_path) = &args.artifacts else {
         return authoring::CommandOutput::usage_or_io_error(
-            "specify either --artifacts <FILE> --context <FILE> or --source <PATH> [--org <ID> --env <ID>]"
-                .to_owned(),
+            "specify either --artifacts <FILE> --context <FILE> or --source <PATH> [--org <ID> --env <ID>]",
         );
     };
     if args.org.is_some()
@@ -267,12 +265,12 @@ pub(crate) fn run_check_args(args: &CheckArgs) -> authoring::CommandOutput {
         || args.tool_root.is_some()
     {
         return authoring::CommandOutput::usage_or_io_error(
-            "--org, --env, --forbid-unsafe-zen, and --tool-root require --source".to_owned(),
+            "--org, --env, --forbid-unsafe-zen, and --tool-root require --source",
         );
     }
     let Some(context_path) = &args.context else {
         return authoring::CommandOutput::usage_or_io_error(
-            "--context is required with --artifacts".to_owned(),
+            "--context is required with --artifacts",
         );
     };
     legacy_to_output(run_check(artifacts_path, context_path))

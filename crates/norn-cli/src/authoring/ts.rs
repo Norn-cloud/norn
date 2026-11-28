@@ -105,14 +105,13 @@ fn normalize_lexical_relative(path: &Path) -> PathBuf {
     let mut normals: Vec<&std::ffi::OsStr> = Vec::new();
     for component in path.components() {
         match component {
-            Component::CurDir => {}
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
             Component::ParentDir => {
                 if normals.pop().is_none() {
                     up_count = up_count.saturating_add(1);
                 }
             }
             Component::Normal(part) => normals.push(part),
-            Component::RootDir | Component::Prefix(_) => {}
         }
     }
     let mut normalized = PathBuf::new();

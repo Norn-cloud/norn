@@ -120,14 +120,16 @@ impl Backend for Human {
                     is_error: false,
                 });
             }
-            Command::Check(args) => match (args.artifacts, args.context, args.source) {
-                (Some(artifacts), Some(context), None) => (artifacts, context),
-                _ => {
-                    return Err(Refusal::invalid(
-                        "MCP norn.check requires --artifacts and --context without --source",
-                    ));
+            Command::Check(check_args) => {
+                match (check_args.artifacts, check_args.context, check_args.source) {
+                    (Some(artifacts), Some(context), None) => (artifacts, context),
+                    _ => {
+                        return Err(Refusal::invalid(
+                            "MCP norn.check requires --artifacts and --context without --source",
+                        ));
+                    }
                 }
-            },
+            }
             Command::Mcp
             | Command::Remote(_)
             | Command::Cell(_)

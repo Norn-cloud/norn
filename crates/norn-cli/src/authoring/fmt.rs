@@ -78,17 +78,17 @@ fn execute_fmt_single_file(
     budget: &mut InvocationBudget,
 ) -> CommandOutput {
     let Some(lang) = classify_source_file(display_path) else {
-        return CommandOutput::usage_or_io_error(format!(
+        return CommandOutput::usage_or_io_error(&format!(
             "{}: expected a .ts, .tsx, or .py authoring file",
             display_path.display()
         ));
     };
     if let Err(err) = budget.charge_accepted_file(display_path) {
-        return CommandOutput::usage_or_io_error(err);
+        return CommandOutput::usage_or_io_error(&err);
     }
     let before = match read_opened_file_budgeted(opened, display_path, budget) {
         Ok(content) => content,
-        Err(err) => return CommandOutput::usage_or_io_error(err),
+        Err(err) => return CommandOutput::usage_or_io_error(&err),
     };
     let after = match format_one(display_path, lang, &before) {
         Ok(formatted) => formatted,
@@ -99,14 +99,14 @@ fn execute_fmt_single_file(
     }
     let shown = display_posix_path(display_path);
     if let Err(err) = budget.charge_output_bytes(&shown, after.len()) {
-        return CommandOutput::usage_or_io_error(err);
+        return CommandOutput::usage_or_io_error(&err);
     }
     if args.check {
         return CommandOutput::refused(shown);
     }
     if let Err(err) = write_file_atomic_in_trusted_dir(parent_dir, file_name, display_path, &after)
     {
-        return CommandOutput::usage_or_io_error(err);
+        return CommandOutput::usage_or_io_error(&err);
     }
     CommandOutput::ok(shown)
 }
@@ -119,7 +119,7 @@ fn execute_fmt_directory(
     let root_shared = Arc::new(root_dir);
     let files = match root_shared.walk_files_pinned(is_formattable_file, budget) {
         Ok(list) => list,
-        Err(err) => return CommandOutput::usage_or_io_error(err),
+        Err(err) => return CommandOutput::usage_or_io_error(&err),
     };
 
     let mut pending: Vec<PendingFmtWrite> = Vec::new();
@@ -137,7 +137,7 @@ fn execute_fmt_directory(
         }
         let shown = display_posix_path(&loaded.display_path);
         if let Err(err) = budget.charge_output_bytes(&shown, after.len()) {
-            return CommandOutput::usage_or_io_error(err);
+            return CommandOutput::usage_or_io_error(&err);
         }
         changed.push(shown);
         pending.push(PendingFmtWrite {
@@ -156,7 +156,7 @@ fn execute_fmt_directory(
                 &item.display_path,
                 &item.formatted,
             ) {
-                return CommandOutput::usage_or_io_error(err);
+                return CommandOutput::usage_or_io_error(&err);
             }
         }
     }
@@ -189,6 +189,6 @@ pub(crate) fn execute_fmt(args: &FmtArgs) -> CommandOutput {
         Ok(PinnedSourceTarget::Directory(root_dir)) => {
             execute_fmt_directory(args, root_dir, &mut budget)
         }
-        Err(err) => CommandOutput::usage_or_io_error(err),
+        Err(err) => CommandOutput::usage_or_io_error(&err),
     }
 }
