@@ -9,7 +9,7 @@ use norn_kernel::Observed;
 
 use crate::engine::{SqlEngine, params};
 use crate::mapping_bundle::MappingBundle;
-use crate::mapping_conflict::{EventDispute, MappingConflict, SourceDisputeIndex};
+use crate::mapping_conflict::{MappingConflict, SourceDisputeIndex};
 use crate::system::INBOX;
 use crate::{CellError, StoreReader};
 
@@ -21,15 +21,6 @@ impl SourceDisputeIndex {
                 .any(|root| self.subjects.contains_key(&(root.clone(), key.to_owned()))),
             None => self.roots_by_key.contains_key(key),
         }
-    }
-
-    pub(crate) fn event_dispute(
-        &self,
-        bundle: &MappingBundle,
-    ) -> Result<Option<EventDispute>, CellError> {
-        let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
-            .map(|key| norn_ir::canonical::nfc(&key));
-        Ok(self.events.get(&keys).cloned())
     }
 
     fn open_findings_for(&self, roots: Option<&[String]>, key: &str, identity: bool) -> usize {
