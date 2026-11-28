@@ -10,7 +10,9 @@ Design guarantees:
 - `PropertyTypeSpec` and `MaskSpec` are closed (cannot be constructed from raw IR dicts).
 - `Annotated[base_type, meta...]` consistency is validated at elaboration time.
 - Object `invariants` are emitted into `objectType.invariants`; interface `lifecycles`
-  are explicitly rejected (no constraint is ever silently dropped).
+  (`INTERFACE-LIFECYCLE-1`) and `disjointWith` (`INTERFACE-DISJOINT-1`) are emitted into
+  `interface` payloads (and `disjoint_with` on concrete object types is rejected so no
+  constraint is ever silently dropped).
 - Every guard, invariant, and law callback is AST-validated BEFORE tracing and must
   return a closed `norn_py.Expr` node.
 """
@@ -81,6 +83,10 @@ TimezonePolicy = Literal["utc", "offset"]
 Multiplicity = Literal["one", "many"]
 RoleKind = Literal["thing", "happening"]
 MarkingSeverity = Literal["low", "moderate", "high", "critical"]
+LifecycleOutcome = Literal["completed", "compensated", "cancelled", "breached_visible", "resting"]
+_VALID_LIFECYCLE_OUTCOMES: frozenset[str] = frozenset(
+    {"completed", "compensated", "cancelled", "breached_visible", "resting"}
+)
 
 _SPEC_TOKEN = object()
 _MASK_TOKEN = object()
@@ -432,6 +438,30 @@ class TransitionSpec[S: StrEnum]:
 
 
 @dataclass(frozen=True, slots=True)
+class LifecycleEndingSpec[S: StrEnum]:
+    state: S
+    outcome: LifecycleOutcome
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state, StrEnum):
+            raise NornTracingError(
+                "NORN-PY-SCHEMA",
+                f"ending state must be a StrEnum member, got {self.state!r}",
+                capture_caller_span(),
+            )
+        if self.outcome not in _VALID_LIFECYCLE_OUTCOMES:
+            raise NornTracingError(
+                "NORN-PY-SCHEMA",
+                f"ending outcome must be one of {sorted(_VALID_LIFECYCLE_OUTCOMES)}, got {self.outcome!r}",
+                capture_caller_span(),
+            )
+
+
+def ending[S: StrEnum](state: S, outcome: LifecycleOutcome) -> LifecycleEndingSpec[S]:
+    return LifecycleEndingSpec(state=state, outcome=outcome)
+
+
+@dataclass(frozen=True, slots=True)
 class LifecycleSpec[S: StrEnum]:
     property: str
     enum_cls: type[S]
@@ -439,7 +469,30 @@ class LifecycleSpec[S: StrEnum]:
     transitions: tuple[TransitionSpec[S], ...]
     terminal: tuple[S, ...] = ()
     immutable: tuple[S, ...] = ()
+    endings: tuple[LifecycleEndingSpec[S], ...] = ()
     description: str | None = None
+
+    def __post_init__(self) -> None:
+        for item in self.endings:
+            if not isinstance(item, LifecycleEndingSpec):
+                raise NornTracingError(
+                    "NORN-PY-SCHEMA",
+                    f"lifecycle {self.property!r} ending must be a LifecycleEndingSpec, got {item!r}",
+                    capture_caller_span(),
+                )
+            if not isinstance(item.state, self.enum_cls):
+                raise NornTracingError(
+                    "NORN-PY-SCHEMA",
+                    f"lifecycle {self.property!r} ending state {item.state!r} "
+                    f"must be a member of {self.enum_cls.__name__}",
+                    capture_caller_span(),
+                )
+            if item.outcome not in _VALID_LIFECYCLE_OUTCOMES:
+                raise NornTracingError(
+                    "NORN-PY-SCHEMA",
+                    f"lifecycle {self.property!r} ending outcome {item.outcome!r} is invalid",
+                    capture_caller_span(),
+                )
 
 
 def transition[S: StrEnum](
@@ -469,6 +522,7 @@ def lifecycle[S: StrEnum](
     transitions: Sequence[TransitionSpec[S]],
     terminal: Sequence[S] = (),
     immutable: Sequence[S] = (),
+    endings: Sequence[LifecycleEndingSpec[S]] = (),
     description: str | None = None,
 ) -> LifecycleSpec[S]:
     return LifecycleSpec(
@@ -478,6 +532,7 @@ def lifecycle[S: StrEnum](
         transitions=tuple(transitions),
         terminal=tuple(terminal),
         immutable=tuple(immutable),
+        endings=tuple(endings),
         description=description,
     )
 
@@ -1386,6 +1441,7 @@ class Concept:
     __norn_extends__: str | None = None
     __norn_implements__: tuple[str, ...] = ()
     __norn_interface_extends__: tuple[str, ...] = ()
+    __norn_disjoint_with__: tuple[str, ...] = ()
     __norn_markings__: tuple[str, ...] = ()
     __norn_identity__: tuple[KeySpec, ...] = ()
     __norn_dependencies__: tuple[DependencyPin, ...] = ()
@@ -1404,6 +1460,7 @@ class Concept:
         extends: type[Concept] | str | None = None,
         implements: Sequence[type[Concept] | str] = (),
         interface_extends: Sequence[type[Concept] | str] = (),
+        disjoint_with: Sequence[type[Concept] | str] = (),
         markings: Sequence[str] = (),
         identity: Sequence[KeySpec] = (),
         dependencies: Sequence[DependencyPin] = (),
@@ -1413,10 +1470,11 @@ class Concept:
             # Reset inherited Norn metadata so anonymous helper subclasses are never
             # re-emitted under a parent Concept's artifact id.
             cls.__norn_name__ = ""
+            cls.__norn_disjoint_with__ = ()
             cls.__norn_field_defaults__ = {}
             return
         span = capture_caller_span(skip=2)
-        if not OBJECT_TYPE_NAME_RE.match(name):
+        if not OBJECT_TYPE_NAME_RE.fullmatch(name):
             raise NornTracingError(
                 "NORN-FLOW-LITERAL",
                 f"type name {name!r} must be a dotted lower-case namespace and a PascalCase name (e.g. hr.Employee)",
@@ -1437,6 +1495,30 @@ class Concept:
         cls.__norn_interface_extends__ = tuple(
             p if isinstance(p, str) else p.__norn_name__ for p in interface_extends
         )
+        disjoint_names: list[str] = []
+        for target in disjoint_with:
+            if isinstance(target, str):
+                if not OBJECT_TYPE_NAME_RE.fullmatch(target):
+                    raise NornTracingError(
+                        "NORN-PY-SCHEMA",
+                        f"disjoint_with target {target!r} must be a qualified interface name (e.g. core.Commitment)",
+                        span,
+                    )
+                disjoint_names.append(target)
+            elif (
+                isinstance(target, type)
+                and issubclass(target, Concept)
+                and target.__norn_name__
+                and target.__norn_is_interface__
+            ):
+                disjoint_names.append(target.__norn_name__)
+            else:
+                raise NornTracingError(
+                    "NORN-PY-SCHEMA",
+                    f"disjoint_with target {target!r} must be a named interface Concept or qualified name str",
+                    span,
+                )
+        cls.__norn_disjoint_with__ = tuple(disjoint_names)
         cls.__norn_markings__ = tuple(markings)
         cls.__norn_identity__ = tuple(identity)
         cls.__norn_dependencies__ = tuple(dependencies)
@@ -1536,6 +1618,13 @@ class Concept:
                     f"object type {cls.__norn_name__!r} cannot declare `interface_extends`; use `implements`",
                     span,
                 )
+            if cls.__norn_disjoint_with__:
+                raise NornTracingError(
+                    "NORN-PY-SCHEMA",
+                    f"object type {cls.__norn_name__!r} cannot declare `disjoint_with`; "
+                    "`disjoint_with` is only valid on interfaces",
+                    span,
+                )
 
         properties_ir: list[dict[str, object]] = []
         links_ir: list[dict[str, object]] = []
@@ -1625,13 +1714,6 @@ class Concept:
 
         for member in cls.__dict__.values():
             if isinstance(member, LifecycleSpec):
-                if cls.__norn_is_interface__:
-                    raise NornTracingError(
-                        "NORN-PY-INTERFACE-LIFECYCLE",
-                        f"interface {cls.__norn_name__!r} cannot declare lifecycles "
-                        "(EntityIR v2 InterfaceDef has no lifecycles slot; declare lifecycles on implementing object types)",
-                        span,
-                    )
                 transitions_ir: list[dict[str, object]] = []
                 for tr in member.transitions:
                     guard_zens = [
@@ -1658,6 +1740,9 @@ class Concept:
                 lifecycles_ir.append(
                     {
                         "description": member.description if member.description is not None else OMIT,
+                        "endings": omit_empty(
+                            [{"outcome": e.outcome, "state": e.state.value} for e in member.endings]
+                        ),
                         "immutable": omit_empty([s.value for s in member.immutable]),
                         "initial": [s.value for s in member.initial],
                         "property": member.property,
@@ -1688,8 +1773,10 @@ class Concept:
                 "entityVersion": "2.0",
                 "interface": {
                     "description": cls.__norn_description__ if cls.__norn_description__ is not None else OMIT,
+                    "disjointWith": omit_empty(cls.__norn_disjoint_with__),
                     "extends": omit_empty(cls.__norn_interface_extends__),
                     "invariants": omit_empty(invariants_ir),
+                    "lifecycles": omit_empty(lifecycles_ir),
                     "links": omit_empty(links_ir),
                     "markings": omit_empty(cls.__norn_markings__),
                     "name": cls.__norn_name__,

@@ -357,6 +357,7 @@ run_phase() {
       python3 scripts/ci/check_test_wiring.py
       python3 scripts/ci/test_check_test_wiring.py
       python3 scripts/ci/test_infisical_oidc.py
+      python3 tools/norn-py/run_tests.py
       lint_workflows
       cargo xtask ci policy
       cargo xtask ci provenance
@@ -612,6 +613,8 @@ PY
         fi
       done <<< "$runnable_docs_raw"
       run_authoring_tests
+      # Re-run tools/norn-py with NORN_CHECKER_WASM_PKG built so real Rust WASM checker admission runs.
+      python3 tools/norn-py/run_tests.py
       ;;
     integration-wasm)
       export CI=true
