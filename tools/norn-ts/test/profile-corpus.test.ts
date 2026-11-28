@@ -297,7 +297,7 @@ describe("pins", () => {
             "",
             {
               dependencies: { shared: "1.0.0" },
-              optionalDependencies: { "darwin-a": "1.0.0", "darwin-b": "1.0.0" },
+              optionalDependencies: { "darwin-a": "1.0.0" },
             },
             "sha512-x",
           ],
