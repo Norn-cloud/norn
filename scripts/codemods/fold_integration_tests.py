@@ -191,92 +191,91 @@ class Crate:
 SHARED_SUPPORT_HEADER = "// Shared test support, compiled once for every suite in this binary."
 
 
-def _strip_leading_outer_attrs(line: str) -> str:
-    """Strip any same-line outer `#[...]` attributes before an item declaration."""
-    rest = line.lstrip()
-    while rest.startswith("#["):
-        depth = 0
-        idx = 1
-        while idx < len(rest):
-            ch = rest[idx]
-            if ch == "[":
-                depth += 1
-            elif ch == "]":
-                depth -= 1
-                if depth == 0:
-                    rest = rest[idx + 1 :].lstrip()
-                    break
+def _consume_header(lines: list[str]) -> int:
+    """Consume crate doc comments (`//!`), blank lines, and optional `#![allow(...)]` block."""
+    idx = 0
+    n = len(lines)
+    while idx < n:
+        stripped = lines[idx].strip()
+        if not stripped or stripped.startswith("//!"):
             idx += 1
-        else:
-            return rest
-    return rest
+            continue
+        if re.fullmatch(r"#!\[allow\([^\]\n]*\)\]", stripped):
+            idx += 1
+            continue
+        if stripped == "#![allow(":
+            idx += 1
+            while idx < n:
+                inner = lines[idx].strip()
+                if inner == ")]":
+                    idx += 1
+                    break
+                if ")]" in inner:
+                    raise Refused(
+                        f"tests/{SUITE}.rs: trailing code after `#![allow(...)]` ({inner!r})"
+                    )
+                idx += 1
+            else:
+                raise Refused(f"tests/{SUITE}.rs: unclosed `#![allow(...)]` block")
+            continue
+        break
+    return idx
+
+
+def _validate_suite_entries(rest: list[str]) -> None:
+    """Require every non-blank line after the shared-support block to be an exact suite entry.
+
+    Grammar of each suite entry (matching `suites_source` exactly):
+        ( `// ...` )*
+        ( `#[cfg(...)]` )?
+        `#[path = "<name>.rs"]`
+        `mod <name>;`
+    """
+    idx = 0
+    n = len(rest)
+    while idx < n:
+        stripped = rest[idx].strip()
+        if not stripped:
+            idx += 1
+            continue
+        while idx < n and rest[idx].startswith("//") and not rest[idx].startswith("//!"):
+            idx += 1
+        if idx < n and re.fullmatch(r"#\[cfg\([^\n]+\)\]", rest[idx]):
+            idx += 1
+        if idx >= n:
+            raise Refused(f"tests/{SUITE}.rs: trailing comments/attributes without a suite module")
+        path_match = re.fullmatch(r'#\[path = "([a-z0-9_]+)\.rs"\]', rest[idx])
+        if not path_match:
+            raise Refused(
+                f"tests/{SUITE}.rs: unexpected line outside shared support block ({rest[idx]!r})"
+            )
+        suite_name = path_match[1]
+        idx += 1
+        if idx >= n or rest[idx] != f"mod {suite_name};":
+            found = rest[idx] if idx < n else "<eof>"
+            raise Refused(
+                f"tests/{SUITE}.rs: expected `mod {suite_name};` after `#[path = \"{suite_name}.rs\"]`, got {found!r}"
+            )
+        idx += 1
 
 
 def split_suites_sections(text: str) -> tuple[list[str], list[str]]:
     """Split an existing `tests/suites.rs` into `(shared_support_lines, suite_mod_lines)`."""
     lines = text.splitlines()
-    try:
-        start = lines.index(SHARED_SUPPORT_HEADER)
-    except ValueError:
-        for line in lines:
-            item = _strip_leading_outer_attrs(line)
-            if re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use\b", item):
-                raise Refused(
-                    f"tests/{SUITE}.rs: `use` statement without `{SHARED_SUPPORT_HEADER}` header ({item!r})"
-                )
-        return [], lines
-    # Before SHARED_SUPPORT_HEADER, only crate doc comments, blank lines, and `#![allow(...)]` are preserved.
-    in_inner_allow = False
-    for line in lines[:start]:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("//!"):
-            continue
-        if in_inner_allow:
-            if stripped.endswith(")]"):
-                in_inner_allow = False
-            continue
-        if stripped.startswith("#![allow("):
-            if not stripped.endswith(")]"):
-                in_inner_allow = True
-            continue
-        raise Refused(
-            f"tests/{SUITE}.rs: unexpected declaration before `{SHARED_SUPPORT_HEADER}` ({stripped!r})"
-        )
-    end = start
-    while end < len(lines) and lines[end].strip():
-        if lines[end].lstrip().startswith("#!["):
-            raise Refused(f"tests/{SUITE}.rs: inner attribute not allowed in shared support block")
-        end += 1
-    rest = lines[end:]
-    # After the contiguous shared-support block, only suite module blocks (`#[path = "<name>.rs"]` + `mod <name>;`)
-    # and their comments/`#[cfg(...)]` attributes are allowed; any other declaration would be dropped on regen.
-    idx = 0
-    while idx < len(rest):
-        stripped = rest[idx].strip()
-        if not stripped or stripped.startswith("//"):
-            idx += 1
-            continue
-        item = _strip_leading_outer_attrs(stripped)
-        if re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use\b", item):
-            raise Refused(
-                f"tests/{SUITE}.rs: `use` statement outside contiguous shared support block ({stripped!r})"
-            )
-        mod_match = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?mod ([A-Za-z0-9_]+);$", item)
-        if mod_match:
-            # Must be preceded directly by `#[path = "<name>.rs"]` (a folded suite, not a dropped helper).
-            prev = rest[idx - 1].strip() if idx > 0 else ""
-            if prev != f'#[path = "{mod_match[1]}.rs"]':
-                raise Refused(
-                    f"tests/{SUITE}.rs: helper `mod {mod_match[1]};` outside contiguous shared support block"
-                )
-            idx += 1
-            continue
-        if not stripped.startswith("#["):
-            raise Refused(
-                f"tests/{SUITE}.rs: unexpected line outside shared support block ({stripped!r})"
-            )
-        idx += 1
-    return lines[start:end], rest
+    body_start = _consume_header(lines)
+    if body_start < len(lines) and lines[body_start] == SHARED_SUPPORT_HEADER:
+        end = body_start
+        while end < len(lines) and lines[end].strip():
+            if lines[end].lstrip().startswith("#!["):
+                raise Refused(f"tests/{SUITE}.rs: inner attribute not allowed in shared support block")
+            end += 1
+        shared = lines[body_start:end]
+        rest = lines[end:]
+    else:
+        shared = []
+        rest = lines[body_start:]
+    _validate_suite_entries(rest)
+    return shared, rest
 
 
 def parse_shared_support(text: str) -> list[str]:

@@ -287,6 +287,14 @@ class CommandAndFilterRewriteTests(unittest.TestCase):
             fold.shared_support_names([fold.SHARED_SUPPORT_HEADER, "#[cfg(test)] mod helper;"]),
             {"helper"},
         )
+        for bad in (
+            '#[cfg(\n    test\n)] use std::sync::Once;\n#[path = "a.rs"]\nmod a;\n',
+            f'#![allow(unused_imports)] use std::sync::Once;\n{fold.SHARED_SUPPORT_HEADER}\nmod h;\n',
+            f'{fold.SHARED_SUPPORT_HEADER}\nmod h;\n\n#[cfg(test)] #[test] fn smoke() {{}}\n#[path = "a.rs"]\nmod a;\n',
+            f'{fold.SHARED_SUPPORT_HEADER}\nmod h;\n\n#[path = "a.rs"]\n#[cfg(feature = "extra")] mod a;\n',
+        ):
+            with self.assertRaises(fold.Refused):
+                fold.split_suites_sections(bad)
 
     def test_pinned_target_requires_explicit_manifest_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
