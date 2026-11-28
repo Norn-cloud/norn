@@ -51,7 +51,7 @@ use norn_cell::compute::lineage::{
 use norn_cell::compute::transform::{RowAccess, TransformResult};
 use norn_cell::compute::{Freshness, Frontier, QueryContext, QueryResult, Watermark};
 use norn_cell::engine::NativeEngine;
-use norn_cell::mapping_bundle::MappingInput;
+use norn_cell::mapping_bundle::{MappingBundle, MappingInput};
 use norn_cell::mapping_conflict::MappingConflict;
 use norn_cell::source_cursor::CursorAdvanceSpec;
 use norn_cell::{
@@ -5269,7 +5269,77 @@ fn verify_scoped_pending_observations_privacy(sole: &EntityBook) -> Result<(), S
     let snap = report.cells.get(1).ok_or("missing partner snap")?;
     assert_eq!(snap.pending_observations, 0);
     assert!(snap.complete, "{:?}", snap.failed_coverage_gates);
+    verify_forged_pending_bundle_ignored(&sole_dummy, &mut clean)?;
     verify_nonempty_pending_bundle_row_privacy(&mut sole_dummy)?;
+    Ok(())
+}
+
+fn verify_forged_pending_bundle_ignored(
+    sole_dummy: &EntityBook,
+    clean: &mut EntityBook,
+) -> Result<(), String> {
+    // Forged inbox payload injected via `CellStore::inject` with a syntactically valid
+    // `mapping-bundle:` envelope for a monitored mapping MUST fail retained-evidence
+    // verification and never inflate `pending_observations` or withhold a complete cut.
+    let forged_id = "mapping-bundle:forged-empty-001";
+    let forged_bundle = MappingBundle {
+        digest: "forged-empty-001".to_owned(),
+        raw: norn_ir::runtime_object! {},
+        input: map_input("supply.pos_sales.mapping", "pos_sale_line"),
+        definitions_version: 1,
+        definitions_digest: "forged".to_owned(),
+        artifact_pins: Vec::new(),
+        records: Vec::new(),
+        diagnostics: Vec::new(),
+        derivation: 2,
+        reprocesses: None,
+    };
+    let forged_obs = Observed {
+        id: ObservationId(forged_id.to_owned()),
+        provenance: Provenance {
+            source: "synthetic-pos".to_owned(),
+            source_id: "FORGED-1".to_owned(),
+            mapping_version: "retail-pipeline/1".to_owned(),
+            observed_at: LogicalTime::from_millis(CLOCK_MS),
+        },
+        input: norn_ir::runtime::encode(&forged_bundle)
+            .map_err(|e| format!("encode forged bundle: {e}"))?,
+    };
+    let encoded =
+        norn_ir::runtime::encode(&forged_obs).map_err(|e| format!("encode forged obs: {e}"))?;
+    let inserted = clean
+        .cell_mut()?
+        .store_mut()
+        .inject(forged_id, &encoded)
+        .map_err(|e| format!("inject forged bundle: {e}"))?;
+    assert!(inserted, "forged inbox row must be inserted");
+    assert_eq!(
+        clean
+            .cell()?
+            .store()
+            .read()
+            .pending_observations()
+            .map_err(|e| format!("pending_observations: {e}"))?
+            .len(),
+        2
+    );
+    let report = evaluate_two_cell_report(
+        sole_dummy,
+        "LE-SOLE",
+        clean,
+        "LE-PARTNER",
+        |idx, _, plan, ctx| {
+            let store = if idx == 0 {
+                sole_dummy.cell().map_err(CellError::Engine)?.store()
+            } else {
+                clean.cell().map_err(CellError::Engine)?.store()
+            };
+            store.evaluate_question(plan, ctx, |_| Ok(true))
+        },
+    )?;
+    let snap = report.cells.get(1).ok_or("missing partner snap")?;
+    assert_eq!(snap.pending_observations, 0);
+    assert!(snap.complete, "{:?}", snap.failed_coverage_gates);
     Ok(())
 }
 
@@ -5639,7 +5709,52 @@ fn verify_library_cut_durable_cursor_mismatch(
         forged,
         Err(CellError::ComputeRefused("core.compute.stale_input"))
     ));
+    verify_library_cut_foreign_scope_refusal(sole, anchor_key, sole_auth)?;
     verify_library_cut_missing_durable_cursor(rev_plan, &forged_ctx)
+}
+
+fn verify_library_cut_foreign_scope_refusal(
+    sole: &EntityBook,
+    anchor_key: &FactKey,
+    sole_auth: &CommitBinding,
+) -> Result<(), String> {
+    // Foreign `context.scope` must refuse at the pinned anchor even with empty
+    // `questions` and empty `evidence_types` before any evaluation or disclosure.
+    let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
+    let mut foreign_ctx = sole.query_context();
+    foreign_ctx.scope = "org_foreign_intruder/prod".to_owned();
+    let live_frontier = || Ok((sole.source_cursors.clone(), sole.watermarks.clone()));
+    let foreign_input = CellViewInput {
+        store: sole.cell()?.store(),
+        anchor_key,
+        authority: sole_auth,
+        context: foreign_ctx,
+        handle_key: &TEST_HANDLE_KEY,
+        whole_world_values: false,
+        member_access: &allow_all,
+        min_disclosed_bucket: 2,
+        required_feeds: &REQUIRED_FEEDS,
+        read_frontier: &live_frontier,
+        min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
+        evidence_types: &[],
+        feed_mappings: &FEED_MAPPINGS,
+        evidence_access: &allow_all,
+        coverage_transforms: &[],
+        reconciliation_gates: &[],
+        expected_grain_gates: &[],
+        questions: &[],
+    };
+    let foreign = evaluate_cell_cut(&foreign_input, &mut |_, _, _| {
+        Err(CellError::Engine("evaluator must not run".to_owned()))
+    });
+    assert!(
+        matches!(
+            foreign,
+            Err(CellError::ComputeRefused("core.compute.stale_input"))
+        ),
+        "foreign context.scope must refuse at pinned anchor: {foreign:?}"
+    );
+    Ok(())
 }
 
 fn verify_library_cut_missing_durable_cursor(

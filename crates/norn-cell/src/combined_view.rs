@@ -35,7 +35,7 @@ use crate::error::CellError;
 use crate::mapping_bundle::MappingBundle;
 use crate::mapping_conflict::MappingConflict;
 use crate::mapping_identity::IdentityEvidence;
-use crate::read::{LedgerHead, ObjectRecord, PendingObservation};
+use crate::read::{LedgerHead, ObjectRecord, PendingObservation, StoreReader};
 use crate::snapshot::Main;
 use crate::source_cursor::{PendingSourceCapture, SourceCursorRecord};
 use crate::store::CellStore;
@@ -383,25 +383,60 @@ fn authorized_evidence_types<E: SqlEngine>(
     Ok(allowed)
 }
 
-fn retained_mapping_bundle(obs: &PendingObservation) -> Option<MappingBundle> {
-    let observed: Observed<RuntimeValue> = norn_ir::runtime::decode(&obs.observed).ok()?;
+fn verify_or_ignore(result: Result<(), CellError>) -> Result<bool, CellError> {
+    if let Err(err) = result {
+        if crate::mapping_page::is_store_failure(&err) {
+            return Err(err);
+        }
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn retained_mapping_bundle<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    obs: &PendingObservation,
+) -> Result<Option<MappingBundle>, CellError> {
+    let Ok(observed) = norn_ir::runtime::decode::<Observed<RuntimeValue>>(&obs.observed) else {
+        return Ok(None);
+    };
     if observed.id.0 != obs.observation_id {
-        return None;
+        return Ok(None);
     }
     if obs.observation_id.starts_with("mapping-bundle:") {
-        let bundle: MappingBundle = norn_ir::runtime::decode(&observed.input).ok()?;
-        (obs.observation_id == format!("mapping-bundle:{}", bundle.digest)).then_some(bundle)
-    } else if obs.observation_id.starts_with("mapping-conflict:") {
-        let conflict: MappingConflict = norn_ir::runtime::decode(&observed.input).ok()?;
-        (obs.observation_id == format!("mapping-conflict:{}", conflict.finding.id))
-            .then_some(conflict.incoming)
-    } else if obs.observation_id.starts_with("mapping-identity:") {
-        let evidence: IdentityEvidence = norn_ir::runtime::decode(&observed.input).ok()?;
-        (obs.observation_id == format!("mapping-identity:{}", evidence.finding.id))
-            .then_some(evidence.bundle)
-    } else {
-        None
+        let Ok(bundle) = norn_ir::runtime::decode::<MappingBundle>(&observed.input) else {
+            return Ok(None);
+        };
+        if obs.observation_id != format!("mapping-bundle:{}", bundle.digest) {
+            return Ok(None);
+        }
+        return Ok(verify_or_ignore(reader.recheck_mapping_bundle(&bundle))?.then_some(bundle));
     }
+    if obs.observation_id.starts_with("mapping-conflict:") {
+        let Ok(conflict) = norn_ir::runtime::decode::<MappingConflict>(&observed.input) else {
+            return Ok(None);
+        };
+        if obs.observation_id != format!("mapping-conflict:{}", conflict.finding.id) {
+            return Ok(None);
+        }
+        return Ok(
+            verify_or_ignore(reader.recheck_mapping_conflict(&conflict))?
+                .then_some(conflict.incoming),
+        );
+    }
+    if obs.observation_id.starts_with("mapping-identity:") {
+        let Ok(evidence) = norn_ir::runtime::decode::<IdentityEvidence>(&observed.input) else {
+            return Ok(None);
+        };
+        if obs.observation_id != format!("mapping-identity:{}", evidence.finding.id) {
+            return Ok(None);
+        }
+        return Ok(
+            verify_or_ignore(reader.recheck_identity_evidence(&evidence))?
+                .then_some(evidence.bundle),
+        );
+    }
+    Ok(None)
 }
 
 fn pending_record_readable<E: SqlEngine>(
@@ -428,7 +463,7 @@ fn pending_record_readable<E: SqlEngine>(
 /// Count unconsumed retained mapping bundles in the inbox scoped strictly to
 /// `input.feed_mappings` and each mapping's authorized evidence type
 /// (`HOST-READ-2`), applying per-row `RowAccess::Read` visibility on nonempty
-/// bundles and ignoring ordinary non-mapping or malformed observations.
+/// bundles and ignoring ordinary non-mapping or unverified observations.
 fn count_scoped_pending_observations<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
 ) -> Result<usize, CellError> {
@@ -437,9 +472,10 @@ fn count_scoped_pending_observations<E: SqlEngine>(
         return Ok(0);
     }
     let mappings: BTreeMap<&str, &str> = input.feed_mappings.iter().copied().collect();
+    let reader = input.store.read();
     let mut count = 0_usize;
-    for obs in input.store.read().pending_observations()? {
-        let Some(bundle) = retained_mapping_bundle(&obs) else {
+    for obs in reader.pending_observations()? {
+        let Some(bundle) = retained_mapping_bundle(&reader, &obs)? else {
             continue;
         };
         let Some(expected_evidence) = mappings.get(bundle.input.mapping.as_str()).copied() else {
@@ -607,15 +643,22 @@ fn capture_cut_anchor<E: SqlEngine>(
             "read authority resource does not match the question".to_owned(),
         ));
     }
+    if let Some(cell_scope) = crate::definition_scope::bound_scope(&input.store.conn)?
+        && cell_scope != input.context.scope
+    {
+        return Err(CellError::ComputeRefused("core.compute.stale_input"));
+    }
     input.store.snapshot::<Main, _>(|snapshot| {
         let pin = snapshot.pin().clone();
         if pin.world.encode() != input.context.world {
             return Err(CellError::ComputeRefused("core.compute.stale_input"));
         }
-        if snapshot
-            .object(input.anchor_key.object_type.as_str(), &input.anchor_key.key)?
-            .is_none()
-        {
+        let Some(anchor) =
+            snapshot.object(input.anchor_key.object_type.as_str(), &input.anchor_key.key)?
+        else {
+            return Err(CellError::ComputeRefused("core.compute.stale_input"));
+        };
+        if anchor.scope != input.context.scope {
             return Err(CellError::ComputeRefused("core.compute.stale_input"));
         }
         Ok((pin, snapshot.head().clone()))

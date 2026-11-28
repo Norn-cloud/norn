@@ -158,6 +158,31 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(disputed)
     }
 
+    /// Recompute retained identity-guard evidence before disclosure or counting.
+    pub(crate) fn recheck_identity_evidence(
+        &self,
+        guard: &IdentityEvidence,
+    ) -> Result<(), CellError> {
+        self.recheck_mapping_bundle(&guard.bundle)?;
+        let text: Vec<_> = guard
+            .identity
+            .iter()
+            .map(|b| {
+                std::str::from_utf8(b)
+                    .map(str::to_owned)
+                    .map_err(|_invalid_utf8| CellError::MappingBundleMismatch)
+            })
+            .collect::<Result<_, _>>()?;
+        let normalized: Vec<_> = text.iter().map(|s| norn_ir::canonical::nfc(s)).collect();
+        if text == normalized
+            || normalized.as_slice() != keys(&guard.bundle.raw, &guard.bundle.input)?
+            || guard.finding != finding(&guard.bundle, &guard.identity)?
+        {
+            return Err(CellError::MappingBundleMismatch);
+        }
+        Ok(())
+    }
+
     /// Every captured identity dispute with its inbox position, in capture order.
     pub(crate) fn identity_evidence(&self) -> Result<Vec<(u64, IdentityEvidence)>, CellError> {
         let rows = self.conn.query(&format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-identity:%' ORDER BY position"), params![])?;
@@ -170,21 +195,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
             let guard: IdentityEvidence =
                 norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
-            self.recheck_mapping_bundle(&guard.bundle)?;
-            let text: Vec<_> = guard
-                .identity
-                .iter()
-                .map(|b| {
-                    std::str::from_utf8(b)
-                        .map(str::to_owned)
-                        .map_err(|_invalid_utf8| CellError::MappingBundleMismatch)
-                })
-                .collect::<Result<_, _>>()?;
-            let normalized: Vec<_> = text.iter().map(|s| norn_ir::canonical::nfc(s)).collect();
-            if text == normalized
-                || normalized.as_slice() != keys(&guard.bundle.raw, &guard.bundle.input)?
-                || guard.finding != finding(&guard.bundle, &guard.identity)?
-                || observed.id.0 != stored_id
+            self.recheck_identity_evidence(&guard)?;
+            if observed.id.0 != stored_id
                 || stored_id != format!("mapping-identity:{}", guard.finding.id)
             {
                 return Err(CellError::MappingBundleMismatch);
