@@ -242,21 +242,24 @@ mod tests {
             ])
             .to_string(),
         )?;
-        let out = super::super::pack_json::execute_compile_pack_json(&super::super::CompileArgs {
-            path: dir.clone(),
-            org: None,
-            env: None,
-            forbid_unsafe_zen: false,
-            out: None,
-            tool_root: None,
-            pack_json: true,
-            registry: None,
-            root: None,
-            source_path: None,
-            modules: Some(manifest),
-            allow_empty: true,
-            max_expansion_work: None,
-        });
+        let out = super::super::pack_json::execute_compile_pack_json(
+            &super::super::CompileArgs {
+                path: dir.clone(),
+                org: None,
+                env: None,
+                forbid_unsafe_zen: false,
+                out: None,
+                tool_root: None,
+                pack_json: true,
+                registry: None,
+                root: None,
+                source_path: None,
+                modules: Some(manifest),
+                allow_empty: true,
+                max_expansion_work: None,
+            },
+            None,
+        );
         if let Err(_cleanup) = std::fs::remove_dir_all(&dir) {}
         assert_eq!(out.exit_code, 2);
         assert!(

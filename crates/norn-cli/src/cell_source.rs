@@ -195,7 +195,7 @@ fn find_manifest_from_path(path: &Path) -> Result<Option<ManifestTargets>, Strin
             return Ok(None);
         }
     };
-    let Some(app_root) = find_norn_app_root_from_dir(&start_dir)? else {
+    let Some(app_root) = find_norn_app_root_from_dir(&start_dir, None)? else {
         return Ok(None);
     };
     read_manifest_targets(app_root.as_dir(&start_dir))

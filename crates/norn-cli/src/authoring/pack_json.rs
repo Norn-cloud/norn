@@ -169,6 +169,7 @@ fn mount_explicit_modules(
     args: &CompileArgs,
     modules_path: &Path,
     base_scope: &BTreeMap<String, String>,
+    boundary_root: Option<&Path>,
     budget: &mut InvocationBudget,
 ) -> Result<(MountedTsContext, BTreeMap<String, ModuleEnvelope>), AuthoringFailure> {
     let (_, _, raw) =
@@ -236,7 +237,13 @@ fn mount_explicit_modules(
         subdir_files: Vec::new(),
         package_hint_path: base_dir.display_path(),
     };
-    let mounted = mount_ts_closure(&base_dir, inputs, args.tool_root.as_deref(), budget)?;
+    let mounted = mount_ts_closure(
+        &base_dir,
+        inputs,
+        args.tool_root.as_deref(),
+        boundary_root,
+        budget,
+    )?;
     let envelopes = bind_envelopes_by_vpath(&mounted, envelopes_by_rel)?;
     Ok((mounted, envelopes))
 }
@@ -245,6 +252,7 @@ fn mount_directory_target(
     root_dir: &TrustedDir,
     args: &CompileArgs,
     base_scope: &BTreeMap<String, String>,
+    boundary_root: Option<&Path>,
     budget: &mut InvocationBudget,
 ) -> Result<(MountedTsContext, BTreeMap<String, ModuleEnvelope>), AuthoringFailure> {
     let top_scan = root_dir
@@ -295,7 +303,13 @@ fn mount_directory_target(
         subdir_files,
         package_hint_path: root_dir.display_path(),
     };
-    let mounted = mount_ts_closure(root_dir, inputs, args.tool_root.as_deref(), budget)?;
+    let mounted = mount_ts_closure(
+        root_dir,
+        inputs,
+        args.tool_root.as_deref(),
+        boundary_root,
+        budget,
+    )?;
     let envelopes = bind_envelopes_by_vpath(&mounted, envelopes_by_rel)?;
     Ok((mounted, envelopes))
 }
@@ -303,10 +317,11 @@ fn mount_directory_target(
 fn mount_target_context(
     args: &CompileArgs,
     base_scope: &BTreeMap<String, String>,
+    boundary_root: Option<&Path>,
     budget: &mut InvocationBudget,
 ) -> Result<(MountedTsContext, BTreeMap<String, ModuleEnvelope>), AuthoringFailure> {
     if let Some(modules_path) = &args.modules {
-        return mount_explicit_modules(args, modules_path, base_scope, budget);
+        return mount_explicit_modules(args, modules_path, base_scope, boundary_root, budget);
     }
     match open_source_target_pinned(&args.path).map_err(AuthoringFailure::Io)? {
         PinnedSourceTarget::File {
@@ -334,6 +349,7 @@ fn mount_target_context(
                 &display_path,
                 content,
                 args.tool_root.as_deref(),
+                boundary_root,
                 budget,
             )?;
             let norm_rel = normalize_lexical_relative(Path::new(&file_name));
@@ -350,7 +366,7 @@ fn mount_target_context(
             Ok((mounted, envelopes))
         }
         PinnedSourceTarget::Directory(root_dir) => {
-            mount_directory_target(&root_dir, args, base_scope, budget)
+            mount_directory_target(&root_dir, args, base_scope, boundary_root, budget)
         }
     }
 }
@@ -620,11 +636,14 @@ fn render_pack_collector(profile_name: &str, collector: &PackCollector) -> (Stri
     (format!("{payload}\n"), true)
 }
 
-fn compile_pack_json_inner(args: &CompileArgs) -> Result<(String, bool), AuthoringFailure> {
+fn compile_pack_json_inner(
+    args: &CompileArgs,
+    boundary_root: Option<&Path>,
+) -> Result<(String, bool), AuthoringFailure> {
     let mut budget = InvocationBudget::new();
     let base_scope = default_scope(args)?;
     let limits = build_limits(args);
-    let (mounted, envelopes) = mount_target_context(args, &base_scope, &mut budget)?;
+    let (mounted, envelopes) = mount_target_context(args, &base_scope, boundary_root, &mut budget)?;
     let profile_name = mounted.profile.profile.clone();
 
     if mounted.root_vpaths.is_empty() {
@@ -698,9 +717,12 @@ fn compile_pack_json_inner(args: &CompileArgs) -> Result<(String, bool), Authori
     Ok(render_pack_collector(&profile_name, &collector))
 }
 
-/// Executes `norn compile --pack-json`.
-pub(crate) fn execute_compile_pack_json(args: &CompileArgs) -> CommandOutput {
-    match compile_pack_json_inner(args) {
+/// Executes `norn compile --pack-json` with an optional workspace confinement boundary.
+pub(crate) fn execute_compile_pack_json(
+    args: &CompileArgs,
+    boundary_root: Option<&Path>,
+) -> CommandOutput {
+    match compile_pack_json_inner(args, boundary_root) {
         Ok((rendered, true)) => {
             if let Some(out_path) = &args.out {
                 match write_file_atomic(out_path, &rendered) {

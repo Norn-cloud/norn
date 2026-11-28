@@ -20,12 +20,12 @@ use crate::{
 
 const MAX_MOUNT_DEPTH: usize = 64;
 
-struct StagedMount {
-    prefix_with_slash: String,
-    files: BTreeMap<String, String>,
-    total_count: usize,
-    next_total_bytes: usize,
-    include_intrinsics: bool,
+pub(crate) struct StagedMount {
+    pub(crate) prefix_with_slash: String,
+    pub(crate) files: BTreeMap<String, String>,
+    pub(crate) total_count: usize,
+    pub(crate) next_total_bytes: usize,
+    pub(crate) include_intrinsics: bool,
 }
 
 impl BoundedVfs {
@@ -158,7 +158,7 @@ impl BoundedVfs {
         Ok(staged)
     }
 
-    fn validate_mount_root(
+    pub(crate) fn validate_mount_root(
         &self,
         root_virtual: &str,
         prefix_with_slash: &str,
@@ -199,7 +199,7 @@ impl BoundedVfs {
         Ok(())
     }
 
-    fn commit_staged_mount(&mut self, staged: StagedMount) {
+    pub(crate) fn commit_staged_mount(&mut self, staged: StagedMount) {
         self.pinned_files
             .retain(|path, _| !path_under_prefix(path, &staged.prefix_with_slash));
         self.reserved_prefixes.insert(staged.prefix_with_slash);
@@ -211,7 +211,7 @@ impl BoundedVfs {
     }
 }
 
-fn stage_file_content(
+pub(crate) fn stage_file_content(
     next_virtual: &str,
     content: String,
     staged: &mut StagedMount,

@@ -1,27 +1,32 @@
 //! Native presentation of the shared checker explanation ABI.
 use clap::Args;
 use norn_ir::explain::{ExplainOptions, ExplainReport};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Args)]
 pub(crate) struct ExplainArgs {
-    #[arg(value_parser = ["action", "law", "concept"])]
-    kind: String,
-    id: String,
+    /// Subject kind (`action`, `law`, `concept`, `diagnostic`) or a dotted diagnostic code.
+    pub(crate) kind: String,
+    /// Subject identifier or diagnostic code (optional when `kind` is a dotted diagnostic code).
+    pub(crate) id: Option<String>,
     /// A JSON artifact array or directory of artifact envelopes.
     #[arg(long)]
-    defs: PathBuf,
+    pub(crate) defs: Option<PathBuf>,
+    /// Installed base layer artifact JSON file or directory (repeatable).
+    #[arg(long)]
+    pub(crate) base: Vec<PathBuf>,
     /// Installed base, registry and tenant checker context.
     #[arg(long)]
-    context: Option<PathBuf>,
+    pub(crate) context: Option<PathBuf>,
     #[arg(long, value_parser = ["text", "json"], default_value = "text")]
-    format: String,
+    pub(crate) format: String,
     /// BCP 47 tag resolved by the supplied reviewed wording map.
     #[arg(long, requires = "wording")]
-    locale: Option<String>,
+    pub(crate) locale: Option<String>,
     /// JSON array of typed, reviewed `StructuredRequirement` values.
     #[arg(long, requires = "locale")]
-    wording: Option<PathBuf>,
+    pub(crate) wording: Option<PathBuf>,
 }
 
 const EXPLAIN_LIMIT: u64 = 8_388_608;
@@ -36,13 +41,38 @@ fn definitions(path: &Path) -> Result<String, String> {
 
 /// The JSON and text forms share one report; unknown proof status is explicit.
 pub(crate) fn execute(args: &ExplainArgs) -> Result<(String, bool), String> {
-    let artifacts = definitions(&args.defs)?;
-    let context = args
-        .context
+    if args.kind == "diagnostic" {
+        let code = args.id.as_deref().ok_or_else(|| {
+            "missing diagnostic code: usage `norn explain diagnostic <CODE>`".to_owned()
+        })?;
+        return crate::explain_support::execute_diagnostic(code, &args.format);
+    }
+    if args.id.is_none() && crate::explain_support::looks_like_diagnostic_code(&args.kind) {
+        return crate::explain_support::execute_diagnostic(&args.kind, &args.format);
+    }
+    if !matches!(args.kind.as_str(), "action" | "law" | "concept") {
+        return Err(format!(
+            "invalid explain kind `{}`: expected action, law, concept, diagnostic, or a dotted diagnostic code",
+            args.kind
+        ));
+    }
+    let id = args.id.as_deref().ok_or_else(|| {
+        format!(
+            "missing target id: usage `norn explain {} <ID> --defs <PATH>`",
+            args.kind
+        )
+    })?;
+    let defs_path = args
+        .defs
         .as_deref()
-        .map(read)
-        .transpose()?
-        .unwrap_or_else(|| "{}".into());
+        .ok_or_else(|| format!("--defs <PATH> is required for `norn explain {}`", args.kind))?;
+    let artifacts = definitions(defs_path)?;
+    let context = crate::explain_support::build_context_json(
+        args.context.as_deref(),
+        &args.base,
+        read,
+        definitions,
+    )?;
     let options = ExplainOptions {
         locale: args.locale.clone(),
         requirements: args
@@ -57,7 +87,7 @@ pub(crate) fn execute(args: &ExplainArgs) -> Result<(String, bool), String> {
     };
     let options = serde_json::to_string(&options).map_err(|error| error.to_string())?;
     let output = norn_checker_wasm::explain_artifact_set_json(
-        &artifacts, &context, &args.kind, &args.id, &options,
+        &artifacts, &context, &args.kind, id, &options,
     )
     .map_err(|error| error.to_string())?;
     let value: serde_json::Value =
@@ -69,14 +99,11 @@ pub(crate) fn execute(args: &ExplainArgs) -> Result<(String, bool), String> {
     if !admitted {
         return Ok((diagnostic_text(&value), false));
     }
-    let report: ExplainReport = serde_json::from_value(
-        value
-            .get("report")
-            .cloned()
-            .ok_or("missing explain report")?,
-    )
-    .map_err(|error| error.to_string())?;
-    Ok((render(&report), true))
+    let report: ExplainReport =
+        serde_json::from_value(value.get("report").ok_or("missing explain report")?.clone())
+            .map_err(|error| error.to_string())?;
+    let law_honesty = crate::explain_support::load_law_honesty(&artifacts, &context)?;
+    Ok((render(&report, &law_honesty), true))
 }
 
 fn diagnostic_text(value: &serde_json::Value) -> String {
@@ -122,7 +149,10 @@ fn diagnostic_text(value: &serde_json::Value) -> String {
         .join("\n")
 }
 
-fn render(report: &ExplainReport) -> String {
+fn render(
+    report: &ExplainReport,
+    law_honesty: &BTreeMap<(String, String), crate::explain_support::LawHonestyEntry>,
+) -> String {
     let mut lines = vec![
         format!(
             "{}@{} {}",
@@ -182,59 +212,11 @@ fn render(report: &ExplainReport) -> String {
         }
     }
     for law in &report.laws {
-        render_law(&mut lines, law);
+        let key = (law.declaration.artifact_id.clone(), law.law.id.clone());
+        let honesty = law_honesty.get(&key);
+        crate::explain_support::render_law_entry(&mut lines, law, honesty);
     }
     lines.join("\n")
-}
-
-fn render_law(lines: &mut Vec<String>, law: &norn_ir::explain::ExplainedLaw) {
-    lines.push(format!(
-        "Law {}: proof unknown; enforcement {}",
-        law.law.id,
-        if law.enforcement.is_some() {
-            "declared invariant at commit"
-        } else {
-            "not established"
-        }
-    ));
-    if let Some(source) = &law.source_path {
-        lines.push(format!("  authored source: {source}"));
-    }
-    for path in &law.inheritance_paths {
-        lines.push(format!(
-            "  inheritance: {}",
-            path.iter()
-                .map(|at| at.member.id())
-                .collect::<Vec<_>>()
-                .join(" -> ")
-        ));
-    }
-    for path in &law.containment_paths {
-        lines.push(format!(
-            "  containment: {}",
-            path.iter()
-                .map(|at| format!("{}@{}", at.artifact_id, at.version))
-                .collect::<Vec<_>>()
-                .join(" -> ")
-        ));
-    }
-    if let Some(wording) = &law.wording {
-        for slot in &wording.slots {
-            lines.push(format!("  {}: {}", slot.label, slot.text));
-        }
-    }
-    for unknown in &law.why_unknown {
-        lines.push(format!(
-            "  unknown {} {}: {} Fix: {}",
-            unknown
-                .writer
-                .as_ref()
-                .map_or_else(String::new, |writer| writer.to_json().to_string()),
-            unknown.footprint,
-            unknown.reason,
-            unknown.fix
-        ));
-    }
 }
 
 #[cfg(test)]
@@ -408,6 +390,241 @@ mod tests {
                 .iter()
                 .any(|d| d["code"] == "widget.validation.invalid_payload"),
             "{invalid_out}"
+        );
+    }
+
+    #[test]
+    fn explain_diagnostic_explicit_and_auto_detected_dotted_codes() {
+        for argv in [
+            vec![
+                "norn",
+                "explain",
+                "diagnostic",
+                "core.laws.preservation_violated",
+                "--format",
+                "text",
+            ],
+            vec![
+                "norn",
+                "explain",
+                "core.laws.preservation_violated",
+                "--format",
+                "text",
+            ],
+        ] {
+            let cli = crate::Cli::try_parse_from(argv).unwrap();
+            let crate::Command::Explain(args) = cli.command else {
+                panic!("wrong command");
+            };
+            let (text, found) = execute(&args).unwrap();
+            assert!(found, "{text}");
+            assert!(text.contains("Diagnostic core.laws.preservation_violated"));
+            assert!(text.contains("severity: error"));
+            assert!(text.contains("tier:"));
+            assert!(text.contains("message:"));
+            assert!(text.contains("fix:") || text.contains("no_fix:"));
+        }
+
+        let cli_json = crate::Cli::try_parse_from([
+            "norn",
+            "explain",
+            "core.laws.preservation_violated",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        let crate::Command::Explain(args_json) = cli_json.command else {
+            panic!("wrong command");
+        };
+        let (json_out, found_json) = execute(&args_json).unwrap();
+        assert!(found_json);
+        let parsed: serde_json::Value = serde_json::from_str(&json_out).unwrap();
+        assert_eq!(parsed["found"], true);
+        assert_eq!(parsed["code"], "core.laws.preservation_violated");
+        assert_eq!(parsed["severity"], "error");
+
+        let cli_missing = crate::Cli::try_parse_from([
+            "norn",
+            "explain",
+            "diagnostic",
+            "core.laws.definitely_not_registered",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        let crate::Command::Explain(args_missing) = cli_missing.command else {
+            panic!("wrong command");
+        };
+        let (missing_out, found_missing) = execute(&args_missing).unwrap();
+        assert!(!found_missing);
+        let missing_json: serde_json::Value = serde_json::from_str(&missing_out).unwrap();
+        assert_eq!(missing_json["found"], false);
+    }
+
+    #[test]
+    fn explain_repeatable_base_merges_base_artifacts_without_context_file() {
+        let base_path =
+            std::env::temp_dir().join(format!("norn-explain-base-{}.json", std::process::id()));
+        let defs_path =
+            std::env::temp_dir().join(format!("norn-explain-defs-{}.json", std::process::id()));
+        std::fs::write(
+            &base_path,
+            include_str!("../../../fixtures/law-ir/entities.json"),
+        )
+        .unwrap();
+        std::fs::write(
+            &defs_path,
+            include_str!("../../../fixtures/law-ir/laws.json"),
+        )
+        .unwrap();
+
+        let cli = crate::Cli::try_parse_from([
+            "norn",
+            "explain",
+            "law",
+            "erpnext.no_unpaid_ship",
+            "--defs",
+            defs_path.to_str().unwrap(),
+            "--base",
+            base_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        let crate::Command::Explain(args) = cli.command else {
+            panic!("wrong command");
+        };
+        let (out, admitted) = execute(&args).unwrap();
+        let _rm_base = std::fs::remove_file(&base_path);
+        let _rm_defs = std::fs::remove_file(&defs_path);
+        assert!(admitted, "expected --base merge to admit: {out}");
+        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(parsed["admitted"], true);
+        assert_eq!(
+            parsed["report"]["laws"][0]["law"]["id"],
+            "erpnext.no_unpaid_ship"
+        );
+    }
+
+    #[test]
+    fn explain_base_refuses_explicit_null_context_and_null_base() {
+        let pid = std::process::id();
+        let base_path = std::env::temp_dir().join(format!("norn-explain-null-base-{pid}.json"));
+        let defs_path = std::env::temp_dir().join(format!("norn-explain-null-defs-{pid}.json"));
+        let ctx_path = std::env::temp_dir().join(format!("norn-explain-null-ctx-{pid}.json"));
+        std::fs::write(
+            &base_path,
+            include_str!("../../../fixtures/law-ir/entities.json"),
+        )
+        .unwrap();
+        std::fs::write(
+            &defs_path,
+            include_str!("../../../fixtures/law-ir/laws.json"),
+        )
+        .unwrap();
+
+        for (raw_ctx, expected_fragment) in [
+            ("null", "JSON object"),
+            ("", "JSON object"),
+            (r#"{"base": null}"#, "JSON array"),
+        ] {
+            std::fs::write(&ctx_path, raw_ctx).unwrap();
+            let cli = crate::Cli::try_parse_from([
+                "norn",
+                "explain",
+                "law",
+                "erpnext.no_unpaid_ship",
+                "--defs",
+                defs_path.to_str().unwrap(),
+                "--base",
+                base_path.to_str().unwrap(),
+                "--context",
+                ctx_path.to_str().unwrap(),
+            ])
+            .unwrap();
+            let crate::Command::Explain(args) = cli.command else {
+                panic!("wrong command");
+            };
+            let err = execute(&args).unwrap_err();
+            assert!(
+                err.contains(expected_fragment),
+                "expected `{expected_fragment}` refusal for context `{raw_ctx}`, got: {err}"
+            );
+        }
+
+        let _rm_base = std::fs::remove_file(&base_path);
+        let _rm_defs = std::fs::remove_file(&defs_path);
+        let _rm_ctx = std::fs::remove_file(&ctx_path);
+    }
+
+    fn run_explain_law_text(tag: &str, pool: &[serde_json::Value]) -> (String, bool) {
+        let path = std::env::temp_dir().join(format!(
+            "norn-explain-honesty-{tag}-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, serde_json::to_string(pool).unwrap()).unwrap();
+        let cli = crate::Cli::try_parse_from([
+            "norn",
+            "explain",
+            "law",
+            "erpnext.no_unpaid_ship",
+            "--defs",
+            path.to_str().unwrap(),
+            "--format",
+            "text",
+        ])
+        .unwrap();
+        let crate::Command::Explain(args) = cli.command else {
+            panic!("wrong command");
+        };
+        let result = execute(&args).unwrap();
+        let _rm = std::fs::remove_file(&path);
+        result
+    }
+
+    #[test]
+    fn explain_text_renders_live_law_honesty_for_enforced_and_declared_only_laws() {
+        let mut pool: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json")).unwrap();
+        pool.extend(
+            serde_json::from_str::<Vec<serde_json::Value>>(include_str!(
+                "../../../fixtures/law-ir/laws.json"
+            ))
+            .unwrap(),
+        );
+
+        let (declared_text, declared_admitted) = run_explain_law_text("declared", &pool);
+        assert!(declared_admitted, "{declared_text}");
+        assert!(
+            declared_text.contains(
+                "Law erpnext.no_unpaid_ship: proof unknown; enforcement declared-only; binding not established"
+            ),
+            "expected honest declared-only live status, got:\n{declared_text}"
+        );
+        assert!(
+            declared_text.contains("only single-entity root laws are enforced on commit"),
+            "expected live declared-only reason, got:\n{declared_text}"
+        );
+
+        for artifact in &mut pool {
+            if artifact["artifactId"] == "erpnext.no_unpaid_ship.law" {
+                artifact["payload"]["scope"]["root"] = serde_json::json!({
+                    "kind": "entity",
+                    "id": "erpnext.SalesOrder"
+                });
+            }
+        }
+        let (enforced_text, enforced_admitted) = run_explain_law_text("enforced", &pool);
+        assert!(enforced_admitted, "{enforced_text}");
+        assert!(
+            enforced_text.contains(
+                "Law erpnext.no_unpaid_ship: proof unknown; enforcement enforced; binding not established"
+            ),
+            "expected honest enforced live status, got:\n{enforced_text}"
+        );
+        assert!(
+            !enforced_text.contains("declared-only"),
+            "enforced single-entity law must not render as declared-only:\n{enforced_text}"
         );
     }
 }

@@ -195,6 +195,7 @@ pub(crate) struct CheckSourceRequest<'a> {
     pub(crate) env: Option<&'a str>,
     pub(crate) forbid_unsafe_zen: bool,
     pub(crate) tool_root: Option<&'a Path>,
+    pub(crate) boundary_root: Option<&'a Path>,
 }
 
 pub(super) struct NornAppManifest {
@@ -213,6 +214,7 @@ pub(super) struct CompileDirOptions<'a> {
     pub(super) env: &'a str,
     pub(super) forbid_unsafe_zen: bool,
     pub(super) tool_root: Option<&'a Path>,
+    pub(super) boundary_root: Option<&'a Path>,
     pub(super) allow_empty: bool,
 }
 
@@ -385,6 +387,7 @@ fn compile_source_dir_entries(
             env: opts.env,
             forbid_unsafe_zen: opts.forbid_unsafe_zen,
             tool_root: opts.tool_root,
+            boundary_root: opts.boundary_root,
         };
         ts::compile_ts_targets_into(
             TsCompileTarget::Directory {
@@ -446,6 +449,7 @@ fn compile_manifest_project(
         env: opts.env,
         forbid_unsafe_zen: opts.forbid_unsafe_zen,
         tool_root: opts.tool_root,
+        boundary_root: opts.boundary_root,
         allow_empty: true,
     };
     let mut out = BoundedJsonArray::new();
@@ -506,6 +510,7 @@ pub(super) fn compile_single_file_pinned(
                 env: opts.env,
                 forbid_unsafe_zen: opts.forbid_unsafe_zen,
                 tool_root: opts.tool_root,
+                boundary_root: opts.boundary_root,
             };
             ts::compile_ts_targets(
                 TsCompileTarget::SingleFile {
@@ -554,6 +559,7 @@ fn compile_path_to_json(
     env: &str,
     forbid_unsafe_zen: bool,
     tool_root: Option<&Path>,
+    boundary_root: Option<&Path>,
     budget: &mut InvocationBudget,
 ) -> Result<String, AuthoringFailure> {
     validate_non_empty_scope("--org", org)?;
@@ -563,6 +569,7 @@ fn compile_path_to_json(
         env,
         forbid_unsafe_zen,
         tool_root,
+        boundary_root,
         allow_empty: false,
     };
     match open_source_target_pinned(path).map_err(AuthoringFailure::Io)? {
@@ -596,13 +603,33 @@ pub(crate) fn compile_source_to_json(
     tool_root: Option<&Path>,
 ) -> Result<String, AuthoringFailure> {
     let mut budget = InvocationBudget::new();
-    compile_path_to_json(path, org, env, forbid_unsafe_zen, tool_root, &mut budget)
+    compile_path_to_json(
+        path,
+        org,
+        env,
+        forbid_unsafe_zen,
+        tool_root,
+        None,
+        &mut budget,
+    )
 }
 
 /// Executes `norn compile`.
 pub(crate) fn execute_compile(args: &CompileArgs) -> CommandOutput {
+    execute_compile_with_boundary(args, None)
+}
+
+/// Executes `norn compile` confined strictly within `boundary_root`.
+pub(crate) fn execute_compile_confined(args: &CompileArgs, boundary_root: &Path) -> CommandOutput {
+    execute_compile_with_boundary(args, Some(boundary_root))
+}
+
+fn execute_compile_with_boundary(
+    args: &CompileArgs,
+    boundary_root: Option<&Path>,
+) -> CommandOutput {
     if args.pack_json {
-        return pack_json::execute_compile_pack_json(args);
+        return pack_json::execute_compile_pack_json(args, boundary_root);
     }
     let (Some(org), Some(env)) = (args.org.as_deref(), args.env.as_deref()) else {
         return CommandOutput::usage_or_io_error("--org and --env are required");
@@ -614,6 +641,7 @@ pub(crate) fn execute_compile(args: &CompileArgs) -> CommandOutput {
         env,
         args.forbid_unsafe_zen,
         args.tool_root.as_deref(),
+        boundary_root,
         &mut budget,
     ) {
         Ok(canonical) => {
@@ -660,9 +688,34 @@ pub(crate) fn execute_dashboard(args: &DashboardArgs) -> CommandOutput {
     }
 }
 
+fn read_norn_scope_from_dir(
+    app_root: &TrustedDir,
+    budget: &mut InvocationBudget,
+) -> Result<Option<(String, String)>, String> {
+    let Some(raw) = app_root.try_read_regular_file_rel(Path::new("norn.json"), budget)? else {
+        return Ok(None);
+    };
+    let manifest_display = app_root.display_path().join("norn.json");
+    let parsed: Value = serde_json::from_str(&raw)
+        .map_err(|err| format!("{}: invalid JSON: {err}", manifest_display.display()))?;
+    let org_id = parsed
+        .pointer("/scope/orgId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let environment_id = parsed
+        .pointer("/scope/environmentId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    Ok(org_id.zip(environment_id))
+}
+
 fn resolve_check_scope(
     req: &CheckSourceRequest<'_>,
-    manifest: Option<&NornAppManifest>,
+    default_scope: Option<(&str, &str)>,
 ) -> Result<(String, String), String> {
     match (req.org, req.env) {
         (Some(org), Some(env)) => Ok((org.to_owned(), env.to_owned())),
@@ -671,10 +724,8 @@ fn resolve_check_scope(
                 .to_owned(),
         ),
         (None, None) => {
-            if let Some(app) = manifest
-                && let (Some(org_id), Some(env_id)) = (&app.org_id, &app.environment_id)
-            {
-                return Ok((org_id.clone(), env_id.clone()));
+            if let Some((org_id, env_id)) = default_scope {
+                return Ok((org_id.to_owned(), env_id.to_owned()));
             }
             Err(
                 "--org and --env are required with --source (or omit both when checking a norn.json project with scope)"
@@ -691,6 +742,67 @@ struct CompiledCheckSource {
     app_root: Option<TrustedDir>,
 }
 
+fn resolve_app_root_dir(
+    app_root: Option<AppRootMatch>,
+    start_dir: TrustedDir,
+) -> Option<TrustedDir> {
+    match app_root {
+        Some(AppRootMatch::SameAsStart) => Some(start_dir),
+        Some(AppRootMatch::Ancestor(dir)) => Some(dir),
+        None => None,
+    }
+}
+
+fn compile_check_dir_target(
+    root_dir: TrustedDir,
+    app_root: Option<AppRootMatch>,
+    req: &CheckSourceRequest<'_>,
+    budget: &mut InvocationBudget,
+) -> Result<CompiledCheckSource, AuthoringFailure> {
+    let manifest = if matches!(app_root, Some(AppRootMatch::SameAsStart)) {
+        read_norn_manifest_from_dir(&root_dir, budget).map_err(AuthoringFailure::Io)?
+    } else {
+        None
+    };
+    let ancestor_scope = if req.org.is_none() && req.env.is_none() {
+        match app_root.as_ref() {
+            Some(AppRootMatch::Ancestor(dir)) => {
+                read_norn_scope_from_dir(dir, budget).map_err(AuthoringFailure::Io)?
+            }
+            Some(AppRootMatch::SameAsStart) | None => None,
+        }
+    } else {
+        None
+    };
+    let default_scope = manifest
+        .as_ref()
+        .and_then(|app| app.org_id.as_deref().zip(app.environment_id.as_deref()))
+        .or_else(|| {
+            ancestor_scope
+                .as_ref()
+                .map(|(org, env)| (org.as_str(), env.as_str()))
+        });
+    let (resolved_org, resolved_env) =
+        resolve_check_scope(req, default_scope).map_err(AuthoringFailure::Io)?;
+    validate_non_empty_scope("--org", &resolved_org)?;
+    validate_non_empty_scope("--env", &resolved_env)?;
+    let opts = CompileDirOptions {
+        org: &resolved_org,
+        env: &resolved_env,
+        forbid_unsafe_zen: req.forbid_unsafe_zen,
+        tool_root: req.tool_root,
+        boundary_root: req.boundary_root,
+        allow_empty: false,
+    };
+    let artifacts_json = compile_directory_pinned(&root_dir, manifest.as_ref(), &opts, budget)?;
+    Ok(CompiledCheckSource {
+        artifacts_json,
+        org: resolved_org,
+        env: resolved_env,
+        app_root: resolve_app_root_dir(app_root, root_dir),
+    })
+}
+
 fn compile_check_source_pinned(
     target: PinnedSourceTarget,
     app_root: Option<AppRootMatch>,
@@ -699,35 +811,7 @@ fn compile_check_source_pinned(
 ) -> Result<CompiledCheckSource, AuthoringFailure> {
     match target {
         PinnedSourceTarget::Directory(root_dir) => {
-            let manifest = if matches!(app_root, Some(AppRootMatch::SameAsStart)) {
-                read_norn_manifest_from_dir(&root_dir, budget).map_err(AuthoringFailure::Io)?
-            } else {
-                None
-            };
-            let (resolved_org, resolved_env) =
-                resolve_check_scope(req, manifest.as_ref()).map_err(AuthoringFailure::Io)?;
-            validate_non_empty_scope("--org", &resolved_org)?;
-            validate_non_empty_scope("--env", &resolved_env)?;
-            let opts = CompileDirOptions {
-                org: &resolved_org,
-                env: &resolved_env,
-                forbid_unsafe_zen: req.forbid_unsafe_zen,
-                tool_root: req.tool_root,
-                allow_empty: false,
-            };
-            let artifacts_json =
-                compile_directory_pinned(&root_dir, manifest.as_ref(), &opts, budget)?;
-            let app_root_dir = match app_root {
-                Some(AppRootMatch::SameAsStart) => Some(root_dir),
-                Some(AppRootMatch::Ancestor(dir)) => Some(dir),
-                None => None,
-            };
-            Ok(CompiledCheckSource {
-                artifacts_json,
-                org: resolved_org,
-                env: resolved_env,
-                app_root: app_root_dir,
-            })
+            compile_check_dir_target(root_dir, app_root, req, budget)
         }
         PinnedSourceTarget::File {
             parent_dir,
@@ -735,8 +819,22 @@ fn compile_check_source_pinned(
             display_path,
             opened,
         } => {
-            let (resolved_org, resolved_env) =
-                resolve_check_scope(req, None).map_err(AuthoringFailure::Io)?;
+            let inherited_scope = if req.org.is_none() && req.env.is_none() {
+                match app_root.as_ref() {
+                    Some(matched) => read_norn_scope_from_dir(matched.as_dir(&parent_dir), budget)
+                        .map_err(AuthoringFailure::Io)?,
+                    None => None,
+                }
+            } else {
+                None
+            };
+            let (resolved_org, resolved_env) = resolve_check_scope(
+                req,
+                inherited_scope
+                    .as_ref()
+                    .map(|(org, env)| (org.as_str(), env.as_str())),
+            )
+            .map_err(AuthoringFailure::Io)?;
             validate_non_empty_scope("--org", &resolved_org)?;
             validate_non_empty_scope("--env", &resolved_env)?;
             let opts = CompileDirOptions {
@@ -744,6 +842,7 @@ fn compile_check_source_pinned(
                 env: &resolved_env,
                 forbid_unsafe_zen: req.forbid_unsafe_zen,
                 tool_root: req.tool_root,
+                boundary_root: req.boundary_root,
                 allow_empty: false,
             };
             let artifacts_json = compile_single_file_pinned(
@@ -754,16 +853,11 @@ fn compile_check_source_pinned(
                 &opts,
                 budget,
             )?;
-            let app_root_dir = match app_root {
-                Some(AppRootMatch::SameAsStart) => Some(parent_dir),
-                Some(AppRootMatch::Ancestor(dir)) => Some(dir),
-                None => None,
-            };
             Ok(CompiledCheckSource {
                 artifacts_json,
                 org: resolved_org,
                 env: resolved_env,
-                app_root: app_root_dir,
+                app_root: resolve_app_root_dir(app_root, parent_dir),
             })
         }
     }
@@ -779,7 +873,7 @@ pub(crate) fn execute_check_source(req: &CheckSourceRequest<'_>) -> CommandOutpu
         PinnedSourceTarget::Directory(dir) => dir,
         PinnedSourceTarget::File { parent_dir, .. } => parent_dir,
     };
-    let app_root = match find_norn_app_root_from_dir(start_dir) {
+    let app_root = match find_norn_app_root_from_dir(start_dir, req.boundary_root) {
         Ok(matched) => matched,
         Err(err) => return CommandOutput::usage_or_io_error(&err),
     };
@@ -824,6 +918,7 @@ pub(crate) fn execute_check_source(req: &CheckSourceRequest<'_>) -> CommandOutpu
         env: Some(&compiled.env),
         forbid_unsafe_zen: req.forbid_unsafe_zen,
         tool_root: req.tool_root,
+        boundary_root: req.boundary_root,
     };
     let context_json = match base_packs::merge_base_packs_into_context(
         &raw_context,

@@ -554,3 +554,137 @@ fn pinned_mount_traverses_search_only_ancestor_directory() -> Result<(), Box<dyn
     assert!(vfs.is_pinned_file("/__norn_pinned__/exec_only_test/dist/Index.d.ts"));
     Ok(())
 }
+
+#[test]
+fn embedded_effect_stub_resolves_all_profile_probes_offline()
+-> Result<(), Box<dyn std::error::Error>> {
+    let profile = Profile::load()?;
+    let checker = ProfileChecker::new(profile.clone());
+
+    let mut probes: Vec<(&str, &str)> = Vec::new();
+    for entry in &profile.admitted {
+        probes.push((entry.probe.as_str(), entry.symbol.as_str()));
+    }
+    for entry in &profile.rejected {
+        probes.push((entry.probe.as_str(), entry.symbol.as_str()));
+    }
+
+    let mut lines = vec![
+        "import * as effect from \"effect\"".to_owned(),
+        "import * as ai from \"effect/unstable/ai\"".to_owned(),
+        "import * as norn from \"@norn/authoring\"".to_owned(),
+    ];
+    for (idx, &(probe, _)) in probes.iter().enumerate() {
+        lines.push(format!("export const p{idx} = {probe}"));
+    }
+    let expected: Vec<Option<String>> = probes
+        .iter()
+        .map(|&(_, symbol)| Some(symbol.to_owned()))
+        .collect();
+    lines.push(String::new());
+
+    let mut vfs = BoundedVfs::default();
+    let mounted = vfs.mount_embedded_effect_stub(&profile)?;
+    assert!(mounted >= 10, "expected embedded effect declarations");
+    vfs.add_file("/probe.ts", lines.join("\n"))?;
+
+    let program = AuthoringProgram::new(vfs, &["/probe.ts"], profile)?
+        .with_effect_dist_prefix(norn_authoring::PINNED_EFFECT_DIST_PREFIX);
+    let resolved = checker.resolve_initializers(&program, "/probe.ts")?;
+    let actual: Vec<Option<String>> = resolved.into_iter().map(|(_, id)| id).collect();
+    assert_eq!(actual, expected);
+    Ok(())
+}
+
+const OFFLINE_STUB_SMOKE_SOURCE: &str = r#"import { Data, Effect, Schedule, Schema, pipe } from "effect"
+import { Norn } from "@norn/authoring"
+
+export class RateLimited extends Data.TaggedError("RateLimited")<{ readonly retryAfter: number }> {}
+
+const TicketId = pipe(Schema.String, Schema.brand("TicketId"))
+
+export class TicketProps extends Schema.Class<TicketProps>("TicketProps")({
+  ticket_id: TicketId,
+  status: Schema.Literals(["open", "closed"]),
+  note: Schema.NullOr(Schema.String),
+}) {}
+
+export const Ticket = Norn.type({
+  name: "ops.Ticket",
+  title: "Ticket",
+  version: "0.1.0",
+  properties: TicketProps,
+  identity: [{ name: "primary", properties: ["ticket_id"] }],
+  defaults: { status: "open" },
+})
+
+const classifyFn = Norn.fn<{ readonly text: string }, { readonly label: string }, RateLimited>({
+  id: "ops.classify",
+  version: "1",
+})
+
+export default Norn.flow(
+  { id: "ops.triage", version: "1.0.0" },
+  Effect.gen(function* () {
+    const out = yield* Norn.perform("classify", classifyFn, { text: "hello" }).pipe(
+      Effect.retry(Schedule.max([Schedule.spaced("2 seconds"), Schedule.recurs(1)])),
+    )
+    return { label: out.label }
+  }).pipe(
+    Effect.catchTag("RateLimited", (err) =>
+      Effect.gen(function* () {
+        return { label: "deferred", retryAfter: err.retryAfter }
+      }),
+    ),
+  ),
+)
+"#;
+
+#[test]
+fn embedded_effect_stub_compiles_definitions_and_flow_offline()
+-> Result<(), Box<dyn std::error::Error>> {
+    let profile = Profile::load()?;
+    let checker = ProfileChecker::new(profile.clone());
+    let mut vfs = BoundedVfs::default();
+    let _mounted = vfs.mount_embedded_effect_stub(&profile)?;
+
+    let vpath = vfs.add_file("/workspace/ops.ts", OFFLINE_STUB_SMOKE_SOURCE)?;
+    let program = AuthoringProgram::new(vfs, &[vpath.as_str()], profile)?
+        .with_effect_dist_prefix(norn_authoring::PINNED_EFFECT_DIST_PREFIX);
+
+    let reports = checker.check_program(&program, &[vpath.as_str()])?;
+    let report = reports.first().ok_or("expected one report")?;
+    assert_eq!(
+        report.diagnostics,
+        Vec::new(),
+        "expected zero offline diagnostics, got: {:#?}",
+        report.diagnostics
+    );
+
+    let mut scope = std::collections::BTreeMap::new();
+    scope.insert("orgId".to_owned(), "org_ops".to_owned());
+    scope.insert("environmentId".to_owned(), "dev".to_owned());
+    let defs =
+        norn_authoring::compile_definitions_program(&checker, &program, &[vpath.as_str()], |_| {
+            norn_authoring::DefinitionsCompileOptions {
+                envelope: norn_authoring::EnvelopeOptions {
+                    scope: scope.clone(),
+                    source_path: "ops.ts".to_owned(),
+                    registry_package_path: None,
+                },
+                allow_empty: true,
+                forbid_unsafe_zen: Some(true),
+                tool_root: "/".to_owned(),
+                limits: norn_authoring::CompilerLimits::default(),
+            }
+        })?;
+    let Some(norn_authoring::DefinitionsCompileOutcome::Ok(def_out)) = defs.into_iter().next()
+    else {
+        return Err("expected offline definitions compilation to succeed".into());
+    };
+    assert_eq!(def_out.flows, 1);
+    assert!(def_out.artifacts.iter().any(|item| {
+        item.get("artifactId").and_then(serde_json::Value::as_str) == Some("ops.Ticket.entity")
+    }));
+    Ok(())
+}
