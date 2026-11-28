@@ -728,8 +728,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 }
 
-pub(crate) type SupersededVersionCache =
-    BTreeMap<(String, String, String, String, String), Vec<norn_ir::SourceVersion>>;
+/// Cached landed version candidates `(observation_id, parsed_version, cached_connection_match)`
+/// per `(dataset, connector_instance, partition, source, source_id)`.
+/// Connection attribution is checked lazily only when a candidate actually supersedes `q_ver`,
+/// preserving exact error-surfacing semantics for equal, older, or incomparable landed rows.
+pub(crate) type SupersededVersionCache = BTreeMap<
+    (String, String, String, String, String),
+    Vec<(String, norn_ir::SourceVersion, Option<bool>)>,
+>;
 
 fn landed_matches_connection<E: SqlEngine>(
     conn: &E,
@@ -788,7 +794,7 @@ pub(crate) fn bundle_superseded_by_newer<E: SqlEngine>(
         source_id.to_owned(),
     );
     let versions = match cache.entry(key) {
-        std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut().as_slice(),
+        std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
         std::collections::btree_map::Entry::Vacant(entry) => {
             let consumed_pred = match frontier {
                 Some(f) => {
@@ -831,18 +837,30 @@ pub(crate) fn bundle_superseded_by_newer<E: SqlEngine>(
                     continue;
                 };
                 let kind_wire = row.get::<Option<String>>(2).ok().flatten();
-                if let Some(lv) = parse_version_parts(&ver, kind_wire.as_deref())
-                    && landed_matches_connection(conn, &obs_id, connection_id, frontier)?
-                {
-                    parsed.push(lv);
+                if let Some(lv) = parse_version_parts(&ver, kind_wire.as_deref()) {
+                    parsed.push((obs_id, lv, None));
                 }
             }
-            entry.insert(parsed).as_slice()
+            entry.insert(parsed)
         }
     };
-    Ok(versions
-        .iter()
-        .any(|lv| lv.try_cmp(&q_ver) == Ok(std::cmp::Ordering::Greater)))
+    for (obs_id, lv, cached_match) in versions.iter_mut() {
+        if lv.try_cmp(&q_ver) != Ok(std::cmp::Ordering::Greater) {
+            continue;
+        }
+        let matched = match *cached_match {
+            Some(matched) => matched,
+            None => {
+                let matched = landed_matches_connection(conn, obs_id, connection_id, frontier)?;
+                *cached_match = Some(matched);
+                matched
+            }
+        };
+        if matched {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn parse_version_parts(version: &str, kind_wire: Option<&str>) -> Option<norn_ir::SourceVersion> {

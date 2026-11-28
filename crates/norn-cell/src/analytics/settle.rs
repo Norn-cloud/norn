@@ -75,13 +75,13 @@ pub(super) fn settle_rows(
             {
                 let mut appender = db(conn.appender(":settle_stage"))?;
                 for (ord, (finding_row, check)) in validated.iter().enumerate() {
-                    db(appender.append_row((
-                        u64::try_from(ord).unwrap_or(u64::MAX),
-                        *finding_row,
-                        check.label.as_str(),
-                        check.rule.as_str(),
-                        check.holds,
-                    )))?;
+                    db(appender.append_row(duckdb::appender_params_from_iter([
+                        Sql::UBigInt(u64::try_from(ord).unwrap_or(u64::MAX)),
+                        Sql::UBigInt(*finding_row),
+                        Sql::Text(check.label.clone()),
+                        Sql::Text(check.rule.clone()),
+                        Sql::Boolean(check.holds),
+                    ])))?;
                 }
                 db(appender.flush())?;
             }

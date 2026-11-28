@@ -106,6 +106,10 @@ fn source_event_key(incoming: &MappingBundle) -> Result<[String; 5], CellError> 
     ])
 }
 
+/// Maximum distinct source events retained in [`DisputeVerifyCache::event_bundles`]
+/// at once, bounding peak heap usage during cold dispute rebuilds.
+const MAX_CACHED_EVENT_BUNDLES: usize = 32;
+
 /// Per-snapshot memoization of verified source-event bundles, retained subject
 /// roots, and verified committed inbox bundles during dispute index collection.
 #[derive(Default)]
@@ -216,13 +220,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         cache: &'a mut BTreeMap<[String; 5], Vec<MappingBundle>>,
     ) -> Result<&'a [MappingBundle], CellError> {
         let key = source_event_key(incoming)?;
-        match cache.entry(key) {
-            std::collections::btree_map::Entry::Occupied(entry) => Ok(entry.into_mut().as_slice()),
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                let bundles = self.source_event_bundles(incoming)?;
-                Ok(entry.insert(bundles).as_slice())
+        if !cache.contains_key(&key) {
+            if cache.len() >= MAX_CACHED_EVENT_BUNDLES {
+                cache.clear();
             }
+            let bundles = self.source_event_bundles(incoming)?;
+            cache.insert(key.clone(), bundles);
         }
+        cache
+            .get(&key)
+            .map(Vec::as_slice)
+            .ok_or(CellError::MappingBundleMismatch)
     }
 
     pub(crate) fn cached_retained_root<'a>(
@@ -270,22 +278,25 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.indexed_source_findings(object_type, key, false)
     }
 
-    /// Every captured conflict with its inbox position, in capture order, reusing
-    /// verified source-event bundles across conflicts sharing an event.
-    fn verified_source_conflicts_with(
+    /// Verify every captured conflict in capture order and invoke `visit` with
+    /// `(position, conflict, related_event_bundles)` while the event's bundles
+    /// are live, avoiding unbounded bundle retention across distinct events.
+    fn for_each_verified_source_conflict(
         &self,
         event_bundles: &mut BTreeMap<[String; 5], Vec<MappingBundle>>,
-    ) -> Result<Vec<(u64, MappingConflict)>, CellError> {
-        // Range bounds (`:` = 0x3A, `;` = 0x3B) use the `UNIQUE(observation_id)` index.
+        mut visit: impl FnMut(u64, &MappingConflict, &[MappingBundle]) -> Result<(), CellError>,
+    ) -> Result<(), CellError> {
+        // Case-insensitive range bounds (`:` = 0x3A, `;` = 0x3B) match `LIKE 'mapping-conflict:%'`
+        // via `_norn_inbox/id_nocase` while still surfacing malformed mixed-case IDs for refusal.
         let rows = self.conn.query(
             &format!(
                 "SELECT position, observation_id, observed FROM {INBOX} \
-                 WHERE observation_id >= 'mapping-conflict:' AND observation_id < 'mapping-conflict;' \
+                 WHERE observation_id COLLATE NOCASE >= 'mapping-conflict:' \
+                   AND observation_id COLLATE NOCASE < 'mapping-conflict;' \
                  ORDER BY position"
             ),
             params![],
         )?;
-        let mut conflicts = Vec::with_capacity(rows.len());
         for values in rows {
             let row = crate::engine::SqlRow(values);
             let position = crate::read::to_u64(row.get(0)?, "inbox position")?;
@@ -308,9 +319,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             {
                 return Err(CellError::MappingBundleMismatch);
             }
-            conflicts.push((position, conflict));
+            visit(position, &conflict, existing)?;
         }
-        Ok(conflicts)
+        Ok(())
     }
 
     /// Recompute boundary conflict evidence before disclosure under the caller's source policy.
@@ -423,25 +434,29 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     fn collect_source_dispute_index(&self) -> Result<SourceDisputeIndex, CellError> {
         let mut index = SourceDisputeIndex::default();
         let mut cache = DisputeVerifyCache::default();
-        for (position, conflict) in self.verified_source_conflicts_with(&mut cache.event_bundles)? {
-            index.dispute(
-                crate::mapping_identity::keys(&conflict.incoming.raw, &conflict.incoming.input)?
+        self.for_each_verified_source_conflict(
+            &mut cache.event_bundles,
+            |position, conflict, related| {
+                index.dispute(
+                    crate::mapping_identity::keys(
+                        &conflict.incoming.raw,
+                        &conflict.incoming.input,
+                    )?
                     .map(|key| norn_ir::canonical::nfc(&key)),
-                position,
-                format!("mapping-conflict:{}", conflict.finding.id),
-                &conflict.finding,
-            );
-            let related =
-                self.cached_source_event_bundles(&conflict.incoming, &mut cache.event_bundles)?;
-            self.index_source_finding_with(
-                &mut index,
-                related,
-                &conflict.incoming,
-                false,
-                &conflict.finding,
-                &mut cache.retained_roots,
-            )?;
-        }
+                    position,
+                    format!("mapping-conflict:{}", conflict.finding.id),
+                    &conflict.finding,
+                );
+                self.index_source_finding_with(
+                    &mut index,
+                    related,
+                    &conflict.incoming,
+                    false,
+                    &conflict.finding,
+                    &mut cache.retained_roots,
+                )
+            },
+        )?;
         for (position, guard) in self.identity_evidence()? {
             index.dispute(
                 crate::mapping_identity::keys(&guard.bundle.raw, &guard.bundle.input)?,
@@ -591,12 +606,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             None => "\"consumed_commit_seq\" IS NULL".to_owned(),
         };
-        // Range bounds (`:` = 0x3A, `;` = 0x3B) use `MULTI-INDEX OR` on `_norn_inbox/id`.
+        // Case-insensitive range bounds (`:` = 0x3A, `;` = 0x3B) use `MULTI-INDEX OR`
+        // on `_norn_inbox/id_nocase`, matching `LIKE` exactly across ASCII case.
         let disputes_sql = format!(
             "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
              WHERE {unconsumed_pred} \
-               AND ((\"observation_id\" >= 'mapping-conflict:' AND \"observation_id\" < 'mapping-conflict;') \
-                 OR (\"observation_id\" >= 'mapping-identity:' AND \"observation_id\" < 'mapping-identity;'))"
+               AND ((\"observation_id\" COLLATE NOCASE >= 'mapping-conflict:' \
+                     AND \"observation_id\" COLLATE NOCASE < 'mapping-conflict;') \
+                 OR (\"observation_id\" COLLATE NOCASE >= 'mapping-identity:' \
+                     AND \"observation_id\" COLLATE NOCASE < 'mapping-identity;'))"
         );
         for values in self.conn.query(&disputes_sql, params![])? {
             let row = crate::engine::SqlRow(values);
@@ -606,7 +624,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let Some(bundle) = decode_evidence_bundle(&id, &encoded) else {
                 continue;
             };
-            if bundle.input.mapping != mapping_id || datasets.contains(&bundle.input.dataset) {
+            if bundle.input.mapping != mapping_id {
                 continue;
             }
             if evidence_matches_scope(self.conn, &id, pos, &bundle, connection_id, scope_at)? {
@@ -649,9 +667,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let Some(bundle) = decode_evidence_bundle(&id, &encoded) else {
                 continue;
             };
-            if datasets.contains(&bundle.input.dataset)
-                || !evidence_matches_scope(self.conn, &id, pos, &bundle, connection_id, scope_at)?
-            {
+            if !evidence_matches_scope(self.conn, &id, pos, &bundle, connection_id, scope_at)? {
                 continue;
             }
             if !crate::mapping_conflict_scoped::bundle_superseded_by_newer(
@@ -1648,7 +1664,8 @@ mod tests {
         let conflicts_plan = explain(
             &format!(
                 "SELECT position, observation_id, observed FROM {INBOX} \
-                 WHERE observation_id >= 'mapping-conflict:' AND observation_id < 'mapping-conflict;' \
+                 WHERE observation_id COLLATE NOCASE >= 'mapping-conflict:' \
+                   AND observation_id COLLATE NOCASE < 'mapping-conflict;' \
                  ORDER BY position"
             ),
             params![],
@@ -1656,13 +1673,14 @@ mod tests {
         assert!(
             conflicts_plan
                 .iter()
-                .any(|line| line.contains("USING INDEX _norn_inbox/id")),
-            "expected _norn_inbox/id index for conflicts, got {conflicts_plan:?}"
+                .any(|line| line.contains("USING INDEX _norn_inbox/id_nocase")),
+            "expected _norn_inbox/id_nocase index for conflicts, got {conflicts_plan:?}"
         );
         let identity_plan = explain(
             &format!(
                 "SELECT position, observation_id, observed FROM {INBOX} \
-                 WHERE observation_id >= 'mapping-identity:' AND observation_id < 'mapping-identity;' \
+                 WHERE observation_id COLLATE NOCASE >= 'mapping-identity:' \
+                   AND observation_id COLLATE NOCASE < 'mapping-identity;' \
                  ORDER BY position"
             ),
             params![],
@@ -1670,23 +1688,25 @@ mod tests {
         assert!(
             identity_plan
                 .iter()
-                .any(|line| line.contains("USING INDEX _norn_inbox/id")),
-            "expected _norn_inbox/id index for identity evidence, got {identity_plan:?}"
+                .any(|line| line.contains("USING INDEX _norn_inbox/id_nocase")),
+            "expected _norn_inbox/id_nocase index for identity evidence, got {identity_plan:?}"
         );
         let disputes_plan = explain(
             &format!(
                 "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
                  WHERE \"consumed_commit_seq\" IS NULL \
-                   AND ((\"observation_id\" >= 'mapping-conflict:' AND \"observation_id\" < 'mapping-conflict;') \
-                     OR (\"observation_id\" >= 'mapping-identity:' AND \"observation_id\" < 'mapping-identity;'))"
+                   AND ((\"observation_id\" COLLATE NOCASE >= 'mapping-conflict:' \
+                         AND \"observation_id\" COLLATE NOCASE < 'mapping-conflict;') \
+                     OR (\"observation_id\" COLLATE NOCASE >= 'mapping-identity:' \
+                         AND \"observation_id\" COLLATE NOCASE < 'mapping-identity;'))"
             ),
             params![],
         );
         assert!(
             disputes_plan
                 .iter()
-                .any(|line| line.contains("USING INDEX _norn_inbox/id")),
-            "expected _norn_inbox/id index for disputes, got {disputes_plan:?}"
+                .any(|line| line.contains("USING INDEX _norn_inbox/id_nocase")),
+            "expected _norn_inbox/id_nocase index for disputes, got {disputes_plan:?}"
         );
         let pending_live_plan = explain(
             &format!(
@@ -1885,6 +1905,26 @@ mod tests {
                 .unresolved_quarantined_datasets(MAPPING_ID, Some("conn.a"))
                 .expect("live")
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn mixed_case_dispute_ids_are_not_silently_skipped_by_indexed_range_queries() {
+        let artifacts = pack_artifacts();
+        let store = open_installed_store(&artifacts);
+        insert_inbox_row(&store.conn, 1, "Mapping-Conflict:forged", "{}", None);
+        let conflict_err = store.read().source_conflict_findings("test.Holding", "k1");
+        assert!(
+            conflict_err.is_err(),
+            "mixed-case Mapping-Conflict:* row must be selected and refused, not silently skipped"
+        );
+
+        let store_id = open_installed_store(&artifacts);
+        insert_inbox_row(&store_id.conn, 1, "Mapping-Identity:forged", "{}", None);
+        let identity_err = store_id.read().identity_findings("test.Holding", "k1");
+        assert!(
+            identity_err.is_err(),
+            "mixed-case Mapping-Identity:* row must be selected and refused, not silently skipped"
         );
     }
 }

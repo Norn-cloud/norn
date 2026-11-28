@@ -187,11 +187,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 
     /// Every captured identity dispute with its inbox position, in capture order.
     pub(crate) fn identity_evidence(&self) -> Result<Vec<(u64, IdentityEvidence)>, CellError> {
-        // Range bounds (`:` = 0x3A, `;` = 0x3B) use the `UNIQUE(observation_id)` index.
+        // Case-insensitive range bounds (`:` = 0x3A, `;` = 0x3B) match `LIKE 'mapping-identity:%'`
+        // via `_norn_inbox/id_nocase` while still surfacing malformed mixed-case IDs for refusal.
         let rows = self.conn.query(
             &format!(
                 "SELECT position, observation_id, observed FROM {INBOX} \
-                 WHERE observation_id >= 'mapping-identity:' AND observation_id < 'mapping-identity;' \
+                 WHERE observation_id COLLATE NOCASE >= 'mapping-identity:' \
+                   AND observation_id COLLATE NOCASE < 'mapping-identity;' \
                  ORDER BY position"
             ),
             params![],

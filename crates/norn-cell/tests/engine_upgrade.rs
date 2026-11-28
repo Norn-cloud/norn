@@ -612,6 +612,11 @@ fn add_source_cursor_indexes(schema: &mut Vec<Value>) {
             "CREATE INDEX \"_norn_inbox/bundle_mapping_consumed\" ON \"_norn_inbox\" (json_extract(\"observed\", '$.input.input.mapping'), \"consumed_commit_seq\") WHERE \"observation_id\" LIKE 'mapping-bundle:%'",
         ),
         (
+            "_norn_inbox",
+            "_norn_inbox/id_nocase",
+            "CREATE INDEX \"_norn_inbox/id_nocase\" ON \"_norn_inbox\" (\"observation_id\" COLLATE NOCASE)",
+        ),
+        (
             "_norn_fact_values",
             "_norn_fact_values/root_first_version",
             "CREATE INDEX \"_norn_fact_values/root_first_version\" ON \"_norn_fact_values\" (\"world\", \"root_type\", \"commit_seq\", \"id\") WHERE \"version\" = 1",
