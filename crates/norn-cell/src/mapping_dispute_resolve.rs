@@ -589,7 +589,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 if row.contribution_id != contribution {
                     continue;
                 }
-                let is_newer = crate::mapping_links::parse_frontier_version(row)
+                let is_newer = crate::mapping_links::parse_verified_frontier_version(self, row)?
                     .and_then(|v| v.try_cmp(&incoming_version).ok())
                     == Some(std::cmp::Ordering::Greater);
                 if !is_newer {

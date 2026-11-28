@@ -516,18 +516,15 @@ pub(crate) fn already_exported_pending<E: SqlEngine>(
                 if !checked.insert(seq) {
                     continue;
                 }
-                if let Some(rec) = read_record(conn, seq)? {
-                    if rec
+                if let Some(rec) = read_record(conn, seq)?
+                    && rec
                         .pending_observations
                         .iter()
                         .any(|p| p.observation_id == obs_id)
-                    {
-                        return Ok(true);
-                    }
-                    continue;
+                {
+                    return Ok(true);
                 }
-            }
-            if fallback_exported {
+            } else if fallback_exported {
                 return Ok(true);
             }
         }
@@ -640,7 +637,12 @@ pub(crate) fn authenticated_claim_observed<E: SqlEngine>(
     reader: Option<&StoreReader<'_, E>>,
     commit_seq: u64,
     observation_id: &str,
+    committed: bool,
 ) -> Result<Option<Value>, CellError> {
+    let corrupt = |msg: &str| CellError::LedgerCorrupt {
+        seq: commit_seq,
+        reason: format!("unverified claim metadata for {observation_id}: {msg}"),
+    };
     let has_journal = conn
         .query_optional(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
@@ -648,47 +650,51 @@ pub(crate) fn authenticated_claim_observed<E: SqlEngine>(
             |_row| Ok(()),
         )?
         .is_some();
-    if has_journal && let Some(export) = read_record(conn, commit_seq)? {
-        let corrupt = |msg: &str| CellError::LedgerCorrupt {
-            seq: commit_seq,
-            reason: format!("unverified claim metadata for {observation_id}: {msg}"),
-        };
-        if let Some(reader) = reader {
-            let Some(receipt) = reader.receipt_at(commit_seq)? else {
-                return Err(corrupt("missing receipt"));
-            };
-            if export.receipt != receipt {
-                return Err(corrupt("export journal receipt mismatch"));
+    if committed && !has_journal {
+        return Err(corrupt("missing export journal table"));
+    }
+    if has_journal {
+        if let Some(export) = read_record(conn, commit_seq)? {
+            if let Some(reader) = reader {
+                let Some(receipt) = reader.receipt_at(commit_seq)? else {
+                    return Err(corrupt("missing receipt"));
+                };
+                if export.receipt != receipt {
+                    return Err(corrupt("export journal receipt mismatch"));
+                }
             }
+            if let Some(consumed_val) = export.consumed_input.as_ref() {
+                let ConsumedInput::Observation {
+                    observation_id: ci_id,
+                    observed,
+                    members,
+                    ..
+                } = decode_observation_input(consumed_val)
+                    .map_err(|err| corrupt(&format!("invalid consumed_input: {err}")))?
+                else {
+                    return Ok(None);
+                };
+                if ci_id == observation_id {
+                    return Ok(Some(observed));
+                }
+                if let Some(member) = members
+                    .into_iter()
+                    .find(|m| m.observation_id == observation_id)
+                {
+                    return Ok(Some(member.observed));
+                }
+                return Err(corrupt(
+                    "claim observation_id missing from consuming commit consumed_input",
+                ));
+            }
+            // Legacy pre-v13 generically-consumed dispute resolved at v13
+            // `commit_seq` without re-consuming: authenticate from its prior
+            // consuming commit's journal record.
+            return authenticated_legacy_claim_observed(conn, reader, observation_id, &corrupt);
         }
-        if let Some(consumed_val) = export.consumed_input.as_ref() {
-            let ConsumedInput::Observation {
-                observation_id: ci_id,
-                observed,
-                members,
-                ..
-            } = decode_observation_input(consumed_val)
-                .map_err(|err| corrupt(&format!("invalid consumed_input: {err}")))?
-            else {
-                return Ok(None);
-            };
-            if ci_id == observation_id {
-                return Ok(Some(observed));
-            }
-            if let Some(member) = members
-                .into_iter()
-                .find(|m| m.observation_id == observation_id)
-            {
-                return Ok(Some(member.observed));
-            }
-            return Err(corrupt(
-                "claim observation_id missing from consuming commit consumed_input",
-            ));
+        if committed {
+            return Err(corrupt("missing export journal record for committed claim"));
         }
-        // Legacy pre-v13 generically-consumed dispute resolved at v13
-        // `commit_seq` without re-consuming: authenticate from its prior
-        // consuming commit's journal record.
-        return authenticated_legacy_claim_observed(conn, reader, observation_id, &corrupt);
     }
     let Some((consumed_seq, encoded)) = conn.query_optional(
         &format!(

@@ -1,24 +1,9 @@
 //! Durable indexed frontier of observed link claims (#1028) and governed
 //! mapping dispute resolutions (#1549), introduced in storage version 13.
 //!
-//! `_norn_link_claim_frontier` materializes every committed
-//! `norn.ObservedLinkClaim` object in `main`, tracking whether each claim is
-//! currently active (`active = 1`, not yet superseded by any committed claim's
-//! `supersedes` set) or already superseded (`active = 0`). Partial covering
-//! indexes over `active = 1` serve O(active frontier) link planning, held-link
-//! lookup, and source-delete withdrawal without re-reading or re-deriving
-//! historical inbox bundles, removing the 1,000-bundle ceiling.
-//!
-//! Because every claim used to authorize an edge is still CAS-sealed through
-//! `prepare_observed_link_claim_snapshot` -> `seal_observed_link_claim` against
-//! the immutable, ledger-chained `norn.ObservedLinkClaim` fact table, this
-//! table is strictly a rebuildable index and confers zero write authority on
-//! its own.
-//!
-//! `_norn_dispute_resolution` indexes committed
-//! `ObservationEvent::DisputeResolved` ledger events with their commit sequence
-//! and receipt hash, rebuilt deterministically from `_norn_ledger` and
-//! `_norn_receipt`.
+//! Both tables are strictly rebuildable indexes over immutable
+//! `_norn_fact_values`, `_norn_ledger`, `_norn_receipt`, and
+//! `_norn_export_journal` and confer zero independent write authority.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -76,7 +61,7 @@ pub(crate) const DDL: &[&str] = &[
   "receipt_hash" TEXT NOT NULL
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/dispute_resolved" ON "_norn_ledger" ("world", json_extract("event", '$.disputeId'), "commit_seq") WHERE json_extract("event", '$.op') = 'dispute_resolved'"#,
-    r#"CREATE INDEX IF NOT EXISTS "_norn_receipt/noop_observation" ON "_norn_receipt" ("world", "commit_seq") WHERE json_extract("receipt", '$.consumed.kind') = 'observation' AND (json_extract("receipt", '$.eventCount') = 0 OR json_extract("receipt", '$.consumed.observationId') LIKE 'mapping-page:%')"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_receipt/noop_observation" ON "_norn_receipt" ("world", "commit_seq") WHERE json_extract("receipt", '$.consumed.kind') = 'observation' AND (json_array_length(json_extract("receipt", '$.written')) = 0 OR json_extract("receipt", '$.consumed.observationId') LIKE 'mapping-page:%')"#,
 ];
 
 /// One row decoded from `_norn_link_claim_frontier`.
@@ -84,6 +69,7 @@ pub(crate) const DDL: &[&str] = &[
 pub(crate) struct FrontierRow {
     pub(crate) claim_id: String,
     pub(crate) contribution_id: String,
+    pub(crate) commit_seq: u64,
     pub(crate) source_version: String,
     pub(crate) version_kind: VersionKind,
     pub(crate) event_keys: [String; 5],
@@ -110,10 +96,10 @@ pub struct DisputeResolutionRecord {
 }
 
 /// Source-event metadata extracted for a committed claim's `observation_id`.
-struct ClaimSourceMeta {
-    source_version: String,
-    version_kind: VersionKind,
-    event_keys: [String; 5],
+pub(crate) struct ClaimSourceMeta {
+    pub(crate) source_version: String,
+    pub(crate) version_kind: VersionKind,
+    pub(crate) event_keys: [String; 5],
 }
 
 impl Default for ClaimSourceMeta {
@@ -198,17 +184,19 @@ fn raw_version_kind(raw: &Value) -> VersionKind {
         .unwrap_or(VersionKind::Lexicographical)
 }
 
-fn claim_source_meta<E: SqlEngine>(
+pub(crate) fn claim_source_meta<E: SqlEngine>(
     conn: &E,
     reader: Option<&StoreReader<'_, E>>,
     commit_seq: u64,
     observation_id: &str,
+    committed: bool,
 ) -> Result<ClaimSourceMeta, CellError> {
     let Some(observed_val) = crate::export_journal::authenticated_claim_observed(
         conn,
         reader,
         commit_seq,
         observation_id,
+        committed,
     )?
     else {
         return Ok(ClaimSourceMeta::default());
@@ -232,8 +220,7 @@ fn claim_source_meta<E: SqlEngine>(
     Ok(ClaimSourceMeta::default())
 }
 
-/// Insert one committed `norn.ObservedLinkClaim` into `_norn_link_claim_frontier`
-/// and mark every claim it lists in `supersedes` as inactive (`active = 0`).
+/// Insert one committed `norn.ObservedLinkClaim` into `_norn_link_claim_frontier`.
 pub(crate) fn record_claim_in_tx<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     commit_seq: u64,
@@ -242,7 +229,13 @@ pub(crate) fn record_claim_in_tx<E: SqlEngine>(
     values: &BTreeMap<String, Value>,
 ) -> Result<(), CellError> {
     let claim = parse_claim_from_values(key, values)?;
-    let meta = claim_source_meta(reader.conn, Some(reader), commit_seq, &claim.observation_id)?;
+    let meta = claim_source_meta(
+        reader.conn,
+        Some(reader),
+        commit_seq,
+        &claim.observation_id,
+        false,
+    )?;
     insert_claim_row(
         reader.conn,
         commit_seq,
@@ -519,6 +512,7 @@ pub(crate) fn frontier_has_drift<E: SqlEngine>(
                 Some(reader),
                 *exp_seq,
                 &exp_claim.observation_id,
+                true,
             )?;
             meta_cache.insert(meta_key.clone(), meta);
         }
@@ -739,7 +733,7 @@ fn rebuild_inner<E: SqlEngine>(
     for (id, commit_seq, ord, claim) in &decoded {
         let meta_key = (*commit_seq, claim.observation_id.clone());
         if !meta_cache.contains_key(&meta_key) {
-            let meta = claim_source_meta(conn, reader, *commit_seq, &claim.observation_id)?;
+            let meta = claim_source_meta(conn, reader, *commit_seq, &claim.observation_id, true)?;
             meta_cache.insert(meta_key.clone(), meta);
         }
         let meta = meta_cache
@@ -772,14 +766,18 @@ fn decode_frontier_row(raw: Vec<crate::engine::SqlValue>) -> Result<FrontierRow,
     let row = SqlRow(raw);
     let claim_id: String = row.get(0)?;
     let contribution_id: String = row.get(1)?;
-    let source_version: String = row.get(2)?;
-    let version_kind_text: String = row.get(3)?;
+    let commit_seq = u64::try_from(row.get::<i64>(2)?).map_err(|err| CellError::LedgerCorrupt {
+        seq: 0,
+        reason: format!("negative frontier commit_seq for {claim_id}: {err}"),
+    })?;
+    let source_version: String = row.get(3)?;
+    let version_kind_text: String = row.get(4)?;
     let version_kind =
         VersionKind::parse_wire(&version_kind_text).unwrap_or(VersionKind::Lexicographical);
-    let event_keys_json: String = row.get(4)?;
+    let event_keys_json: String = row.get(5)?;
     let event_keys: [String; 5] = serde_json::from_str(&event_keys_json)?;
-    let active = row.get::<i64>(5)? != 0;
-    let claim_json: String = row.get(6)?;
+    let active = row.get::<i64>(6)? != 0;
+    let claim_json: String = row.get(7)?;
     let claim_val = Value::from_json_text(&claim_json).map_err(|error| {
         CellError::Encoding(format!("frontier claim JSON for {claim_id}: {error}"))
     })?;
@@ -789,6 +787,7 @@ fn decode_frontier_row(raw: Vec<crate::engine::SqlValue>) -> Result<FrontierRow,
     Ok(FrontierRow {
         claim_id,
         contribution_id,
+        commit_seq,
         source_version,
         version_kind,
         event_keys,
@@ -797,7 +796,7 @@ fn decode_frontier_row(raw: Vec<crate::engine::SqlValue>) -> Result<FrontierRow,
     })
 }
 
-const SELECT_FRONTIER_COLS: &str = "\"claim_id\", \"contribution_id\", \
+const SELECT_FRONTIER_COLS: &str = "\"claim_id\", \"contribution_id\", \"commit_seq\", \
      \"source_version\", \"version_kind\", \"event_keys_json\", \"active\", \"claim_json\"";
 
 impl<E: SqlEngine> StoreReader<'_, E> {

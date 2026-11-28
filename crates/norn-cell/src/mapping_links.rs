@@ -98,11 +98,30 @@ pub(crate) fn parse_source_version(
         .map_err(|_err| CellError::MappingBundleMismatch)
 }
 
-pub(crate) fn parse_frontier_version(row: &FrontierRow) -> Option<norn_ir::SourceVersion> {
-    if row.source_version.trim().is_empty() {
-        return None;
+/// Verify `row`'s frontier metadata against `_norn_export_journal` + `_norn_receipt`.
+pub(crate) fn parse_verified_frontier_version<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    row: &FrontierRow,
+) -> Result<Option<norn_ir::SourceVersion>, CellError> {
+    let meta = crate::link_claim_frontier::claim_source_meta(
+        reader.conn,
+        Some(reader),
+        row.commit_seq,
+        &row.claim.observation_id,
+        true,
+    )?;
+    if meta.source_version != row.source_version
+        || meta.version_kind != row.version_kind
+        || meta.event_keys != row.event_keys
+    {
+        return Err(CellError::LedgerCorrupt {
+            seq: row.commit_seq,
+            reason: format!("frontier metadata mismatch for {}", row.claim_id),
+        });
     }
-    norn_ir::SourceVersion::parse(row.version_kind, &row.source_version).ok()
+    Ok((!row.source_version.trim().is_empty())
+        .then(|| norn_ir::SourceVersion::parse(row.version_kind, &row.source_version).ok())
+        .flatten())
 }
 
 /// OBS-LINK-CONTRIBUTION-1, mirroring the kernel's final-set rule: only a
@@ -313,7 +332,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 supersedes.insert(row.claim_id.clone());
                 continue;
             }
-            let Some(earlier) = parse_frontier_version(row) else {
+            let Some(earlier) = parse_verified_frontier_version(self, row)? else {
                 continue;
             };
             match earlier.try_cmp(version) {
@@ -349,7 +368,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 if self.is_reject_carry_claim(&row)? {
                     continue;
                 }
-                let Some(earlier) = parse_frontier_version(&row) else {
+                let Some(earlier) = parse_verified_frontier_version(self, &row)? else {
                     continue;
                 };
                 if earlier

@@ -3566,6 +3566,54 @@ fn hidden_noop_observation_and_tombstone_still_block_stale_delete_and_resurrecti
     );
 }
 
+/// #1028: Tampering `_norn_link_claim_frontier.source_version` on an already-open
+/// cell must fail closed with `LedgerCorrupt` during live link planning rather
+/// than allowing an older claim to supersede a newer one.
+#[test]
+fn tampered_frontier_version_on_open_cell_fails_closed_during_planning() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("tampered_frontier_version.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &c, "ec", "1", "upsert", "p1");
+
+    let a_v5 = party_ref_row("P-A", "demo/party/a", "A v5", Some("demo/party/b"));
+    capture_kind(&mut cell, "erpnext", &a_v5, "ea5", "5", "upsert", "p1");
+
+    // Downgrade the active claim's indexed `source_version` from "5" to "1" in SQLite.
+    {
+        let conn = rusqlite::Connection::open(&path).expect("sqlite");
+        let updated = conn
+            .execute(
+                "UPDATE \"_norn_link_claim_frontier\" SET \"source_version\" = '1' \
+                 WHERE \"source_key\" = 'demo/party/a' AND \"role\" = 'refers'",
+                [],
+            )
+            .expect("downgrade frontier version");
+        assert_eq!(updated, 1);
+    }
+
+    // Attempt to land an older v2 claim pointing to C: live planning must verify
+    // the frontier row against `_norn_export_journal` and fail closed with LedgerCorrupt.
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", Some("demo/party/c"));
+    let (r2, i2) = raw_event(&cell, "erpnext", &a_v2, "ea2", "2", "upsert", "p1");
+    let (id2, _) = cell.inject_mapping_bundle(&r2, &i2).expect("inject v2");
+    assert!(
+        matches!(
+            cell.process_mapping_bundle(&id2),
+            Err(CellError::LedgerCorrupt { .. })
+        ),
+        "tampered frontier source_version must fail closed with LedgerCorrupt"
+    );
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+}
+
 /// #1028: A link claim whose live `norn.ObservedLinkClaim` row carries
 /// decomposed NFD Unicode text (while `_norn_fact_values` NFC-normalizes it)
 /// must preserve exact spelling across reopen and frontier drift healing so

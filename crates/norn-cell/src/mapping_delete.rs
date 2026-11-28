@@ -116,7 +116,9 @@ pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
             if reader.is_reject_carry_claim(&row)? {
                 continue;
             }
-            if let Some(frontier_ver) = crate::mapping_links::parse_frontier_version(&row) {
+            if let Some(frontier_ver) =
+                crate::mapping_links::parse_verified_frontier_version(reader, &row)?
+            {
                 match frontier_ver.try_cmp(&incoming_version) {
                     Ok(std::cmp::Ordering::Greater) | Err(_) => return Ok(true),
                     Ok(std::cmp::Ordering::Less | std::cmp::Ordering::Equal) => {}
@@ -236,7 +238,7 @@ fn has_newer_subject_history_bundle<E: SqlEngine>(
             "SELECT \"commit_seq\" FROM \"{}\" \
              WHERE \"world\" = ?1 \
                AND json_extract(\"receipt\", '$.consumed.kind') = 'observation' \
-               AND (json_extract(\"receipt\", '$.eventCount') = 0 \
+               AND (json_array_length(json_extract(\"receipt\", '$.written')) = 0 \
                     OR json_extract(\"receipt\", '$.consumed.observationId') LIKE 'mapping-page:%')",
             crate::system::RECEIPT,
         ),
