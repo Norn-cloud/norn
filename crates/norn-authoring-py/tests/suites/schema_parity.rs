@@ -481,7 +481,7 @@ fn pack_composition_deployment_spec_and_mask_spec_parity() -> TestResult {
         obj_field(wire_settings, "avoid_split_shifts")?,
         &JsonValue::Bool(true)
     );
-    assert!(!canonical_json(&wire)?.is_empty());
+    assert_ne!(canonical_json(&wire)?, "");
 
     assert_eq!(
         canonical_norn1_bytes(&MaskSpec::LastN(4).to_ir())?,
