@@ -191,8 +191,43 @@ test("OTEL-TLS-1, OTEL-BOUNDED-1 and OTEL-NO-TENANT-2 hold on otlp.mjs", async (
   expect(metrics.find((m: any) => m.name === "norn_otel_dropped_total").sum.dataPoints[0].asDouble).toBe(200)
   expect(spans.length).toBe(1000)
 
-  // Resource allowlist
-  const cfg = exportConfig({ ...ON, OTEL_SERVICE_NAME: "acme-corp", OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=prod,tenant=acme-corp,host.name=acme.cells.example" }, "norn-studio")!
+  // Resource allowlist, service name fallback, invalid environment value, and serialized OTLP tenant exclusion (OTEL-NO-TENANT-2)
+  const cfg = exportConfig(
+    {
+      ...ON,
+      OTEL_SERVICE_NAME: "acme-corp",
+      OTEL_RESOURCE_ATTRIBUTES:
+        "deployment.environment=prod,tenant=acme-corp,host.name=acme.cells.example,deployment.environment.name=acme-corp,service.namespace=globex",
+    },
+    "norn-studio",
+  )!
   expect(cfg.service).toBe("norn-studio")
   expect(cfg.resource).toEqual([["deployment.environment", "prod"]])
+  // A service name outside the fixed set falls back to the host's; a listed one is kept.
+  expect(exportConfig({ ...ON, OTEL_SERVICE_NAME: "norn-cell" }, "norn-studio")!.service).toBe("norn-cell")
+  expect(exportConfig(ON, "acme-service")!.service).toBe("norn")
+  // An environment value outside the allowed stages is dropped, not exported.
+  expect(exportConfig({ ...ON, OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=acme-pilot" }, "norn-studio")!.resource).toEqual([])
+  const resourceTelemetry = new Telemetry(cfg)
+  resourceTelemetry.count("x_total", {})
+  resourceTelemetry.span("s", {}, 0, 1)
+  const resourceSent: Array<{ url: string; body: any }> = []
+  await resourceTelemetry.flush((async (url: string, init: RequestInit) => {
+    resourceSent.push({ url, body: JSON.parse(String(init.body)) })
+    return new Response(null, { status: 200 })
+  }) as unknown as typeof fetch)
+  expect(resourceSent.map((s) => new URL(s.url).pathname).sort()).toEqual(["/api/norn/v1/metrics", "/api/norn/v1/traces"])
+  const text = JSON.stringify(resourceSent.map((s) => s.body))
+  for (const leaked of ["acme", "globex", "cells.example", "tenant", "host.name"]) expect(text).not.toContain(leaked)
+  const metricResourceKeys = resourceSent
+    .find((s) => s.url.endsWith("/v1/metrics"))!
+    .body.resourceMetrics[0].resource.attributes.map((a: any) => a.key)
+    .sort()
+  const traceResourceKeys = resourceSent
+    .find((s) => s.url.endsWith("/v1/traces"))!
+    .body.resourceSpans[0].resource.attributes.map((a: any) => a.key)
+    .sort()
+  const expectedResourceKeys = ["deployment.environment", "service.instance.id", "service.name", "telemetry.sdk.language", "telemetry.sdk.name"]
+  expect(metricResourceKeys).toEqual(expectedResourceKeys)
+  expect(traceResourceKeys).toEqual(expectedResourceKeys)
 })

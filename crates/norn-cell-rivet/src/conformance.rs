@@ -779,9 +779,9 @@ async fn engine_upgrade(ctx: &Ctx<ProbeActor>, params: &HashMap<String, String>)
     }
 }
 
-/// `crates/norn-cell/examples/workers_sql.rs`'s adapter laws over the Rivet
-/// engine: commit, a typed refusal rolled back, nesting and SQL transaction
-/// control refused, exact values, blobs, duplicate columns.
+/// `SqlEngine` adapter laws over the Rivet engine: commit, a typed refusal
+/// rolled back, nesting and SQL transaction control refused, exact values,
+/// blobs, duplicate columns.
 fn exercise(engine: &RivetEngine) -> Result<String, CellError> {
     engine.execute_batch(
         "CREATE TABLE IF NOT EXISTS probe (id INTEGER PRIMARY KEY, exact TEXT, bytes BLOB)",

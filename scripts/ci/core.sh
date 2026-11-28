@@ -638,6 +638,8 @@ PY
       export NORN_CHECKER_WASM_PKG="${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/pkg"
       "$NORN_BIN" compile tools/norn-ts/fixtures/core --org org_demo --env dev --out "$upstream/core-artifacts.json"
       bun -e 'const artifacts = await Bun.file(process.argv[1]).json(); for (const [id, path] of [["toy.contacts.source", "fixtures/ir/synthetic-contact.source_schema.json"], ["toy.rows", "fixtures/ir/synthetic-rows.mapping.json"]]) { const artifact = artifacts.find((value) => value.artifactId === id); if (!artifact) throw new Error(`missing ${id}`); const expected = JSON.stringify(artifact, null, 2) + "\n"; const actual = await Bun.file(path).text(); if (actual !== expected) throw new Error(`${path} drifted from native norn compile`); }' "$upstream/core-artifacts.json"
+      "$NORN_BIN" compile apps/norn-cell-rivet/probe/probe.ts --org probe-org --env probe --out "$upstream/probe.ir.json"
+      bun -e 'const live = await Bun.file(process.argv[1]).json(); const committed = await Bun.file("apps/norn-cell-rivet/probe/probe.ir.json").json(); if (JSON.stringify(live) !== JSON.stringify(committed)) throw new Error("apps/norn-cell-rivet/probe/probe.ir.json drifted from native norn compile");' "$upstream/probe.ir.json"
       "$NORN_BIN" compile tools/norn-ts/fixtures/quickstart --org example --env local --out "$upstream/task.json"
       printf "{}\n" > "$upstream/context.json"
       "$NORN_BIN" check --artifacts "$upstream/task.json" --context "$upstream/context.json" > "$upstream/check.json"
