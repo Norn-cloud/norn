@@ -7,22 +7,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use norn_expr::Value;
 use norn_ir::{
     ActionEffectProgram, ActionRoot, ArtifactEnvelope, ArtifactKind, InterfaceDef, InterfaceName,
-    JsonValue, LawIR, PropertyId, UpsertWriteMode,
+    JsonValue, LawIR, UpsertWriteMode,
 };
 
 use super::eval::{
-    EvalStop, MAX_COMBINATIONS, WORK_BUDGET, apply_derivations, budget_unknown_finding,
-    check_rule_literal_writes, derive_input_dependencies, evaluate_core_rule, expand_assignments,
-    expr_value_to_string, extract_finite_schema_domain, extract_fixed_schema_value,
-    preconditions_admit, rule_single_hop_fields, serde_value_to_expr,
+    EvalStop, MAX_COMBINATIONS, PreconditionVerdict, WORK_BUDGET, apply_derivations,
+    budget_unknown_finding, check_rule_literal_writes, derive_input_dependencies,
+    evaluate_core_rule, expand_assignments, expr_value_to_string, extract_finite_schema_domain,
+    extract_fixed_schema_value, preconditions_admit, rule_single_hop_fields, serde_value_to_expr,
     slice_constrained_input_fields,
 };
+use super::transitions::check_fire_transition_action;
 use super::{GoverningCoreRule, codes, decode_action, finding, governing_core_rules};
 use crate::entity_scopes::ScopedViews;
-use crate::{
-    Diagnostic, DiagnosticWitness, EffectiveCatalog, EffectiveObjectType, WitnessMove, WitnessSide,
-    WitnessStep,
-};
+use crate::{Diagnostic, DiagnosticWitness, EffectiveCatalog, EffectiveObjectType};
 
 pub(super) fn check_core_writer_preservation(
     artifacts: &[ArtifactEnvelope],
@@ -112,6 +110,7 @@ fn check_action_effect(
 ) {
     match &root.effect_program {
         Some(ActionEffectProgram::UpsertInputObject {
+            object_id_field,
             object_kind,
             write_mode,
             ..
@@ -121,7 +120,15 @@ fn check_action_effect(
                     governing_core_rules(effective, catalog, interfaces, base_laws, candidate_laws);
                 if !rules.is_empty() {
                     check_upsert_action(
-                        artifact, root, effective, write_mode, catalog, pool, &rules, findings,
+                        artifact,
+                        root,
+                        effective,
+                        object_id_field,
+                        write_mode,
+                        catalog,
+                        pool,
+                        &rules,
+                        findings,
                     );
                 }
             }
@@ -166,6 +173,7 @@ struct UpsertBase {
 fn build_upsert_base(
     root: &ActionRoot,
     effective: &EffectiveObjectType,
+    object_id_field: &str,
     write_mode: &UpsertWriteMode,
     catalog: &EffectiveCatalog,
     pool: &[ArtifactEnvelope],
@@ -205,7 +213,7 @@ fn build_upsert_base(
         state.insert(lifecycle.as_str().to_owned(), Value::String(draft.clone()));
     }
     if matches!(write_mode, UpsertWriteMode::CreateOnly) {
-        bind_unbound_create_links_null(root, effective, catalog, pool, &mut state);
+        bind_unbound_create_links_null(root, effective, object_id_field, catalog, pool, &mut state);
     }
 
     let slice_constrained = slice_constrained_input_fields(root);
@@ -238,30 +246,20 @@ fn build_upsert_base(
 fn bind_unbound_create_links_null(
     root: &ActionRoot,
     effective: &EffectiveObjectType,
+    object_id_field: &str,
     catalog: &EffectiveCatalog,
     pool: &[ArtifactEnvelope],
     state: &mut BTreeMap<String, Value>,
 ) {
-    let rule_emits_links = root.synchronous_rule.as_ref().is_some_and(|rule_ref| {
-        super::synchronous_rule_declares_links(pool, &rule_ref.artifact_id, &rule_ref.version)
-    });
-    if rule_emits_links {
-        return;
-    }
     let Some(links) = catalog.links_for_object_type(effective.name.as_str()) else {
         return;
     };
-    let bound: BTreeSet<&str> = root
-        .create_links
-        .iter()
-        .filter(|binding| {
-            binding
-                .source
-                .as_ref()
-                .is_none_or(|src| src.object_type == effective.name.as_str())
-        })
-        .map(|binding| binding.link.as_str())
-        .collect();
+    let bound = super::link_bindings::bound_create_links(
+        root,
+        pool,
+        effective.name.as_str(),
+        object_id_field,
+    );
     for link in links {
         if !bound.contains(link.id.as_str()) {
             state.insert(link.id.as_str().to_owned(), Value::Null);
@@ -306,13 +304,14 @@ fn check_upsert_action(
     artifact: &ArtifactEnvelope,
     root: &ActionRoot,
     effective: &EffectiveObjectType,
+    object_id_field: &str,
     write_mode: &UpsertWriteMode,
     catalog: &EffectiveCatalog,
     pool: &[ArtifactEnvelope],
     rules: &[GoverningCoreRule],
     findings: &mut Vec<Diagnostic>,
 ) {
-    let base = build_upsert_base(root, effective, write_mode, catalog, pool);
+    let base = build_upsert_base(root, effective, object_id_field, write_mode, catalog, pool);
     let prop_refs: BTreeSet<&str> = base.prop_names.iter().map(String::as_str).collect();
     let mut work = WORK_BUDGET;
 
@@ -367,6 +366,7 @@ fn evaluate_upsert_assignments(
     work: &mut u64,
     findings: &mut Vec<Diagnostic>,
 ) {
+    let mut unknown_detail: Option<String> = None;
     for assignment in assignments {
         let mut input_map = base.input.clone();
         let mut state_map = base.state.clone();
@@ -380,325 +380,150 @@ fn evaluate_upsert_assignments(
             Ok(()) => {}
             Err(EvalStop::Budget) => {
                 findings.push(budget_unknown_finding(artifact, &root.action_id, &rule.id));
-                break;
+                return;
             }
-            Err(EvalStop::Other) => continue,
+            Err(EvalStop::Other) => {
+                unknown_detail.get_or_insert_with(|| {
+                    "action derivation could not be statically evaluated over a candidate input"
+                        .to_owned()
+                });
+                continue;
+            }
         }
         if !needed.iter().all(|f| state_map.contains_key(f)) {
             continue;
         }
-        match preconditions_admit(root, &input_map, work) {
-            Ok(true) => {}
-            Ok(false) | Err(EvalStop::Other) => continue,
+        let pre_verdict = match preconditions_admit(root, &input_map, work) {
+            Ok(PreconditionVerdict::Refused) => continue,
+            Ok(verdict) => verdict,
             Err(EvalStop::Budget) => {
                 findings.push(budget_unknown_finding(artifact, &root.action_id, &rule.id));
-                break;
+                return;
             }
-        }
+            Err(EvalStop::Other) => PreconditionVerdict::Unknown(
+                "action preconditions could not be evaluated statically".to_owned(),
+            ),
+        };
         match evaluate_core_rule(rule, &state_map, work) {
-            Ok(true) | Err(EvalStop::Other) => {}
-            Ok(false) => {
-                let writer_id = needed
-                    .iter()
-                    .find(|f| base.derived_fields.contains(*f))
-                    .map_or_else(
-                        || "upsert_input_object".to_owned(),
-                        |f| format!("derive:{f}"),
-                    );
-                let state_assignment = state_map
-                    .iter()
-                    .filter(|(k, _)| needed.contains(*k))
-                    .map(|(k, v)| (k.clone(), expr_value_to_string(v)))
-                    .collect();
-                let input_assignment = input_map
-                    .iter()
-                    .filter(|(k, _)| needed.contains(*k) || assignment.contains_key(*k))
-                    .map(|(k, v)| (k.clone(), expr_value_to_string(v)))
-                    .collect();
-                let detail = format!(
-                    "action {:?} ({writer_id}) produces a post-state on {:?} violating core law {:?}",
-                    root.action_id,
-                    effective.name.as_str(),
-                    rule.id
-                );
-                let trace = vec![format!(
-                    "action {} -> {} on {}",
-                    root.action_id,
-                    writer_id,
-                    effective.name.as_str()
-                )];
-                findings.push(finding(
-                    codes::PRESERVATION_VIOLATED,
-                    artifact,
-                    "/payload/effectProgram",
-                    detail.as_str(),
-                    Some(DiagnosticWitness::core_law_violation(
-                        Vec::new(),
-                        root.action_id.as_str(),
-                        writer_id,
-                        effective.name.as_str(),
-                        rule.id.as_str(),
-                        state_assignment,
-                        input_assignment,
-                        trace,
-                        detail,
-                    )),
-                ));
-                break;
+            Ok(true) => {}
+            Ok(false) => match pre_verdict {
+                PreconditionVerdict::Admitted => {
+                    findings.push(upsert_violation_finding(
+                        artifact, root, effective, rule, needed, base, assignment, &state_map,
+                        &input_map,
+                    ));
+                    return;
+                }
+                PreconditionVerdict::Unknown(reason) => {
+                    unknown_detail.get_or_insert_with(|| {
+                        format!(
+                            "candidate post-state violates core law {:?}, but {reason} so reachability cannot be confirmed",
+                            rule.id
+                        )
+                    });
+                }
+                PreconditionVerdict::Refused => {}
+            },
+            Err(EvalStop::Other) => {
+                unknown_detail.get_or_insert_with(|| {
+                    format!(
+                        "core law {:?} predicate could not be statically evaluated over the candidate post-state",
+                        rule.id
+                    )
+                });
             }
             Err(EvalStop::Budget) => {
                 findings.push(budget_unknown_finding(artifact, &root.action_id, &rule.id));
-                break;
+                return;
             }
         }
     }
-}
-
-fn determinable_transition_fields(
-    needed: &BTreeSet<String>,
-    lifecycle_prop: &str,
-    set_fields: &BTreeMap<PropertyId, String>,
-    base_input: &BTreeMap<String, Value>,
-    finite_domains: &BTreeMap<String, Vec<Value>>,
-    derived_fields: &BTreeSet<String>,
-    derived_deps: &BTreeMap<String, Option<BTreeSet<String>>>,
-) -> Option<Vec<String>> {
-    let mut enum_fields: BTreeSet<String> = BTreeSet::new();
-    for field in needed {
-        if field == lifecycle_prop {
-            continue;
-        }
-        let input_field = set_fields
-            .iter()
-            .find(|(prop, _)| prop.as_str() == field)
-            .map(|(_, input_field)| input_field)?;
-        if derived_fields.contains(input_field) {
-            let deps = match derived_deps.get(input_field) {
-                Some(Some(deps)) => deps,
-                Some(None) | None => return None,
-            };
-            for dep in deps {
-                if base_input.contains_key(dep) {
-                    continue;
-                }
-                if finite_domains.contains_key(dep) {
-                    enum_fields.insert(dep.clone());
-                } else {
-                    return None;
-                }
-            }
-        } else if base_input.contains_key(input_field) {
-            continue;
-        } else if finite_domains.contains_key(input_field) {
-            enum_fields.insert(input_field.clone());
-        } else {
-            return None;
-        }
-    }
-    Some(enum_fields.into_iter().collect())
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "transition preservation needs action, effective type, transition metadata, setFields, and rules"
-)]
-fn check_fire_transition_action(
-    artifact: &ArtifactEnvelope,
-    root: &ActionRoot,
-    effective: &EffectiveObjectType,
-    lifecycle_prop: &str,
-    transition_id: &str,
-    set_fields: &BTreeMap<PropertyId, String>,
-    rules: &[GoverningCoreRule],
-    findings: &mut Vec<Diagnostic>,
-) {
-    let Some(lc) = effective.lifecycle(lifecycle_prop) else {
-        return;
-    };
-    let Some(tr) = lc
-        .lifecycle
-        .transitions
-        .iter()
-        .find(|t| t.id.as_str() == transition_id)
-    else {
-        return;
-    };
-
-    let mut base_state: BTreeMap<String, Value> = BTreeMap::new();
-    base_state.insert(lifecycle_prop.to_owned(), Value::String(tr.to.clone()));
-    let mut base_input: BTreeMap<String, Value> = BTreeMap::new();
-    let slice_constrained = slice_constrained_input_fields(root);
-    let mut finite_domains: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-    if let Some(props) = root
-        .input_schema
-        .get("properties")
-        .and_then(JsonValue::as_object)
-    {
-        for (field, schema) in props {
-            if let Some(fixed) = extract_fixed_schema_value(schema) {
-                base_input.insert(field.clone(), fixed);
-            } else if !slice_constrained.contains(field)
-                && let Some(domain) = extract_finite_schema_domain(schema)
-            {
-                finite_domains.insert(field.clone(), domain);
-            }
-        }
-    }
-
-    let derived_deps = derive_input_dependencies(root);
-    let derived_fields: BTreeSet<String> = root.derive.iter().map(|s| s.field.clone()).collect();
-    let mut work = WORK_BUDGET;
-
-    for rule in rules {
-        let Some(needed) = rule_single_hop_fields(rule) else {
-            continue;
-        };
-        let Some(ordered_fields) = determinable_transition_fields(
-            &needed,
-            lifecycle_prop,
-            set_fields,
-            &base_input,
-            &finite_domains,
-            &derived_fields,
-            &derived_deps,
-        ) else {
-            continue;
-        };
-        let Some(assignments) = expand_assignments(&ordered_fields, &finite_domains) else {
-            findings.push(budget_unknown_finding(artifact, &root.action_id, &rule.id));
-            continue;
-        };
-        evaluate_transition_assignments(
+    if let Some(detail) = unknown_detail {
+        findings.push(preservation_unknown_finding(
             artifact,
-            root,
-            effective,
-            tr,
-            set_fields,
-            rule,
-            &needed,
-            &base_state,
-            &base_input,
-            &assignments,
-            &mut work,
-            findings,
-        );
+            &root.action_id,
+            &rule.id,
+            &detail,
+        ));
     }
 }
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "evaluates expanded finite valuations for one fire_transition action and one core rule"
+    reason = "formats a concrete upsert preservation violation witness"
 )]
-fn evaluate_transition_assignments(
+fn upsert_violation_finding(
     artifact: &ArtifactEnvelope,
     root: &ActionRoot,
     effective: &EffectiveObjectType,
-    tr: &norn_ir::Transition,
-    set_fields: &BTreeMap<PropertyId, String>,
     rule: &GoverningCoreRule,
     needed: &BTreeSet<String>,
-    base_state: &BTreeMap<String, Value>,
-    base_input: &BTreeMap<String, Value>,
-    assignments: &[BTreeMap<String, Value>],
-    work: &mut u64,
-    findings: &mut Vec<Diagnostic>,
-) {
-    let transition_id = tr.id.as_str();
-    let empty_props = BTreeSet::new();
-    for assignment in assignments {
-        let mut input_map = base_input.clone();
-        for (k, v) in assignment {
-            input_map.insert(k.clone(), v.clone());
-        }
-        let mut dummy_state = BTreeMap::new();
-        match apply_derivations(root, &mut input_map, &mut dummy_state, &empty_props, work) {
-            Ok(()) => {}
-            Err(EvalStop::Budget) => {
-                findings.push(budget_unknown_finding(artifact, &root.action_id, &rule.id));
-                break;
-            }
-            Err(EvalStop::Other) => continue,
-        }
-        match preconditions_admit(root, &input_map, work) {
-            Ok(true) => {}
-            Ok(false) | Err(EvalStop::Other) => continue,
-            Err(EvalStop::Budget) => {
-                findings.push(budget_unknown_finding(artifact, &root.action_id, &rule.id));
-                break;
-            }
-        }
-        let mut state_map = base_state.clone();
-        for (prop_id, input_field) in set_fields {
-            if let Some(val) = input_map.get(input_field) {
-                state_map.insert(prop_id.as_str().to_owned(), val.clone());
-            }
-        }
-        if !needed.iter().all(|f| state_map.contains_key(f)) {
-            continue;
-        }
-        match evaluate_core_rule(rule, &state_map, work) {
-            Ok(true) | Err(EvalStop::Other) => {}
-            Ok(false) => {
-                let writer_id = if set_fields.is_empty() {
-                    format!("transition:{transition_id}")
-                } else {
-                    format!("transition:{transition_id}+setFields")
-                };
-                let state_assignment = state_map
-                    .iter()
-                    .filter(|(k, _)| needed.contains(*k))
-                    .map(|(k, v)| (k.clone(), expr_value_to_string(v)))
-                    .collect();
-                let input_assignment = input_map
-                    .iter()
-                    .filter(|(k, _)| {
-                        assignment.contains_key(*k) || set_fields.values().any(|f| f == *k)
-                    })
-                    .map(|(k, v)| (k.clone(), expr_value_to_string(v)))
-                    .collect();
-                let trace = vec![format!(
-                    "{} --({transition_id})--> {}",
-                    tr.from.join("|"),
-                    tr.to
-                )];
-                let detail = format!(
-                    "action {:?} firing transition {:?} -> {:?} on {:?} violates core law {:?}",
-                    root.action_id,
-                    transition_id,
-                    tr.to,
-                    effective.name.as_str(),
-                    rule.id
-                );
-                let steps = vec![WitnessStep {
-                    edge: 0,
-                    moves: vec![WitnessMove {
-                        side: WitnessSide::Backend,
-                        label: transition_id.to_owned(),
-                    }],
-                }];
-                findings.push(finding(
-                    codes::PRESERVATION_VIOLATED,
-                    artifact,
-                    "/payload/effectProgram",
-                    detail.as_str(),
-                    Some(DiagnosticWitness::core_law_violation(
-                        steps,
-                        root.action_id.as_str(),
-                        writer_id,
-                        effective.name.as_str(),
-                        rule.id.as_str(),
-                        state_assignment,
-                        input_assignment,
-                        trace,
-                        detail,
-                    )),
-                ));
-                break;
-            }
-            Err(EvalStop::Budget) => {
-                findings.push(budget_unknown_finding(artifact, &root.action_id, &rule.id));
-                break;
-            }
-        }
-    }
+    base: &UpsertBase,
+    assignment: &BTreeMap<String, Value>,
+    state_map: &BTreeMap<String, Value>,
+    input_map: &BTreeMap<String, Value>,
+) -> Diagnostic {
+    let writer_id = needed
+        .iter()
+        .find(|f| base.derived_fields.contains(*f))
+        .map_or_else(
+            || "upsert_input_object".to_owned(),
+            |f| format!("derive:{f}"),
+        );
+    let state_assignment = state_map
+        .iter()
+        .filter(|(k, _)| needed.contains(*k))
+        .map(|(k, v)| (k.clone(), expr_value_to_string(v)))
+        .collect();
+    let input_assignment = input_map
+        .iter()
+        .filter(|(k, _)| needed.contains(*k) || assignment.contains_key(*k))
+        .map(|(k, v)| (k.clone(), expr_value_to_string(v)))
+        .collect();
+    let detail = format!(
+        "action {:?} ({writer_id}) produces a post-state on {:?} violating core law {:?}",
+        root.action_id,
+        effective.name.as_str(),
+        rule.id
+    );
+    let trace = vec![format!(
+        "action {} -> {} on {}",
+        root.action_id,
+        writer_id,
+        effective.name.as_str()
+    )];
+    finding(
+        codes::PRESERVATION_VIOLATED,
+        artifact,
+        "/payload/effectProgram",
+        detail.as_str(),
+        Some(DiagnosticWitness::core_law_violation(
+            Vec::new(),
+            root.action_id.as_str(),
+            writer_id,
+            effective.name.as_str(),
+            rule.id.as_str(),
+            state_assignment,
+            input_assignment,
+            trace,
+            detail,
+        )),
+    )
+}
+
+pub(super) fn preservation_unknown_finding(
+    artifact: &ArtifactEnvelope,
+    action_id: &str,
+    core_law_id: &str,
+    detail: &str,
+) -> Diagnostic {
+    finding(
+        codes::PRESERVATION_UNKNOWN,
+        artifact,
+        "/payload/effectProgram",
+        format!(
+            "bounded core-law preservation check for action {action_id:?} against core law {core_law_id:?} is unknown: {detail}"
+        ),
+        None,
+    )
 }

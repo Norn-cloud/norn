@@ -24,6 +24,13 @@ pub(super) enum EvalStop {
     Other,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum PreconditionVerdict {
+    Admitted,
+    Refused,
+    Unknown(String),
+}
+
 pub(super) fn expr_value_to_string(value: &Value) -> String {
     match value {
         Value::Null => "null".to_owned(),
@@ -300,8 +307,9 @@ pub(super) fn preconditions_admit(
     root: &ActionRoot,
     input_map: &BTreeMap<String, Value>,
     work: &mut u64,
-) -> Result<bool, EvalStop> {
-    for pre in &root.preconditions {
+) -> Result<PreconditionVerdict, EvalStop> {
+    let mut unknown_reason: Option<String> = None;
+    for (index, pre) in root.preconditions.iter().enumerate() {
         let src = pre.as_str();
         let reads_external = ["slice", "aggregates", "actor", "clock", "event", "self"]
             .iter()
@@ -310,9 +318,15 @@ pub(super) fn preconditions_admit(
                     .map_or(true, |paths| !paths.is_empty())
             });
         if reads_external {
+            unknown_reason.get_or_insert_with(|| {
+                format!("precondition #{index} ({src:?}) reads external state outside action input")
+            });
             continue;
         }
         let Ok(inputs) = norn_expr::expression_read_paths(src, "input") else {
+            unknown_reason.get_or_insert_with(|| {
+                format!("precondition #{index} ({src:?}) input reads could not be analyzed")
+            });
             continue;
         };
         if !inputs.iter().all(|path| {
@@ -321,17 +335,35 @@ pub(super) fn preconditions_admit(
                     .first()
                     .is_some_and(|head| input_map.contains_key(head))
         }) {
+            unknown_reason.get_or_insert_with(|| {
+                format!(
+                    "precondition #{index} ({src:?}) references unassigned or nested input fields"
+                )
+            });
             continue;
         }
         let Ok(expr) = Expression::compile(src) else {
+            unknown_reason.get_or_insert_with(|| {
+                format!("precondition #{index} ({src:?}) failed to compile")
+            });
             continue;
         };
         let context = Value::object([("input", Value::Object(input_map.clone()))]);
-        if !eval_bool(&expr, &context, work)? {
-            return Ok(false);
+        match eval_bool(&expr, &context, work) {
+            Ok(true) => {}
+            Ok(false) => return Ok(PreconditionVerdict::Refused),
+            Err(EvalStop::Budget) => return Err(EvalStop::Budget),
+            Err(EvalStop::Other) => {
+                unknown_reason.get_or_insert_with(|| {
+                    format!("precondition #{index} ({src:?}) could not be evaluated statically")
+                });
+            }
         }
     }
-    Ok(true)
+    Ok(match unknown_reason {
+        Some(reason) => PreconditionVerdict::Unknown(reason),
+        None => PreconditionVerdict::Admitted,
+    })
 }
 
 pub(super) fn expand_assignments(
@@ -407,7 +439,7 @@ pub(super) fn check_rule_literal_writes(
                 continue;
             }
             match evaluate_core_rule(rule, &state_map, &mut work) {
-                Ok(true) | Err(EvalStop::Other) => {}
+                Ok(true) => {}
                 Ok(false) => {
                     let state_assignment = state_map
                         .iter()
@@ -438,6 +470,18 @@ pub(super) fn check_rule_literal_writes(
                             trace,
                             detail,
                         )),
+                    ));
+                }
+                Err(EvalStop::Other) => {
+                    findings.push(finding(
+                        codes::PRESERVATION_UNKNOWN,
+                        owner_artifact,
+                        &write.pointer,
+                        format!(
+                            "synchronous rule {:?} literal {op_label} on {:?} could not be statically evaluated against core law {:?}",
+                            rule_artifact.artifact_id, object_type, rule.id
+                        ),
+                        None,
                     ));
                 }
                 Err(EvalStop::Budget) => {

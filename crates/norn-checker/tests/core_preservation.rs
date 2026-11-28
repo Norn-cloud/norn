@@ -11,19 +11,26 @@
 //! - Gap A: explicit core-link and specialization completeness with structured
 //!   [`CounterexampleWitness::CoreLink`] witnesses (direct, transitive parent
 //!   interface, incompatible target, widened cardinality, dangling `core.*`
-//!   target, and missing required `createLinks` bindings).
-//! - Gap B: constitutional core-law non-defeasibility, effective core-law
-//!   enrollment, and bounded core-law preservation with concrete
-//!   [`CounterexampleWitness::CoreLawViolation`] counterexamples across
-//!   `upsert_input_object` / `derive`, `fire_transition` + `setFields`,
-//!   `synchronousRule` literal fact writers, and finite lifecycle soundness.
+//!   target, and missing required `createLinks` / `synchronousRule` bindings).
+//! - Gap B: constitutional core-law non-defeasibility (including normative
+//!   `defeatedBy` precedence direction), effective core-law enrollment, and
+//!   bounded core-law preservation with concrete
+//!   [`CounterexampleWitness::CoreLawViolation`] counterexamples and honest
+//!   `core.laws.preservation_unknown` diagnostics when predicates or external
+//!   preconditions cannot be statically decided.
 //! - Zero-regression checks over real `registry/core`, `registry/packs/canon`,
 //!   and `registry/packs/compute-units` artifacts.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::path::{Path, PathBuf};
+#[path = "support/core_preservation_fixtures.rs"]
+mod fixtures;
 
+use std::collections::{BTreeMap, BTreeSet};
+
+use fixtures::{
+    boolean_entity_envelope, check_over_core, core_predicate_law, custom_widened_hold_interface,
+    decode_envelopes, deontic_rule_json, errors_of, find_mut, load_pack_values,
+    pack_with_place_sync_rule, read_json, repo_root, zero_hold_literal_rule,
+};
 use norn_checker::core_preservation::codes as core_codes;
 use norn_checker::interfaces::codes as interface_codes;
 use norn_checker::object_types::codes as object_codes;
@@ -31,131 +38,8 @@ use norn_checker::{
     CounterexampleWitness, Diagnostic, DiagnosticCode, DiagnosticSeverity, DiagnosticWitness,
     EntityArtifactSetContext, WitnessMove, WitnessSide, WitnessStep, check_artifact_set,
 };
-use norn_ir::{ArtifactEnvelope, PropertyTypeName};
-use serde_json::{Value, json};
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn read_json(path: &Path) -> Value {
-    let text = fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.display()));
-    serde_json::from_str(&text)
-        .unwrap_or_else(|error| panic!("{} should be valid JSON: {error}", path.display()))
-}
-
-fn decode_envelopes(values: Vec<Value>) -> Vec<ArtifactEnvelope> {
-    values
-        .into_iter()
-        .map(|value| serde_json::from_value(value).expect("artifact envelope decodes"))
-        .collect()
-}
-
-fn load_pack_values(pack: &str) -> Vec<Value> {
-    let dir = repo_root()
-        .join("registry/packs")
-        .join(pack)
-        .join("artifacts");
-    let mut paths: Vec<PathBuf> = fs::read_dir(&dir)
-        .unwrap_or_else(|error| panic!("{} should exist: {error}", dir.display()))
-        .map(|entry| entry.expect("artifact entry").path())
-        .collect();
-    paths.sort();
-    paths.iter().map(|path| read_json(path)).collect()
-}
-
-fn core_base_values() -> Vec<Value> {
-    let core = repo_root().join("registry/core/artifacts");
-    let mut values: Vec<Value> = [
-        "core.Agent.interface.json",
-        "core.AgentRole.interface.json",
-        "core.Resource.interface.json",
-        "core.Commitment.interface.json",
-        "core.Hold.interface.json",
-        "core.EconomicEvent.interface.json",
-        "core.LedgerEffect.interface.json",
-        "core.Claim.interface.json",
-        "core.HoldableResource.interface.json",
-        "core.ValuedEvent.interface.json",
-        "core.ValuedLedgerEffect.interface.json",
-        "core.ReversibleEvent.interface.json",
-        "core.TimeInterval.interface.json",
-        "core.Order.interface.json",
-        "core.EconomicEvent.reversal_matches_original.law.json",
-        "core.Hold.measure_matches_resource.law.json",
-        "core.HoldableResource.open_holds_within_quantity.law.json",
-        "core.ReversibleEvent.no_reversal_of_reversal.law.json",
-        "core.ReversibleEvent.reversal_flag_requires_link.law.json",
-        "core.ValuedEvent.effects_balance.law.json",
-        "core.ValuedLedgerEffect.currency_matches_event.law.json",
-        "core.value_types.entity.json",
-        "std.value_types.entity.json",
-        "core.units.json",
-        "core.time.json",
-    ]
-    .iter()
-    .map(|name| read_json(&core.join(name)))
-    .collect();
-    values.push(read_json(
-        &repo_root().join("registry/privacy/artifacts/privacy.markings.entity.json"),
-    ));
-    values.push(json!({
-        "irVersion": "0.1",
-        "artifactId": "core.extra_markings.entity",
-        "kind": "entity",
-        "namespace": "core",
-        "name": "Core extra markings",
-        "version": "0.1.0",
-        "lifecycle": "active",
-        "scope": {},
-        "dependencies": [],
-        "provenance": { "source": "system" },
-        "payload": {
-            "entityVersion": "2.0",
-            "markings": [
-                {
-                    "id": "pii.financial",
-                    "label": "Financial PII",
-                    "severity": "high",
-                    "description": "Financial amount or billing metadata"
-                },
-                {
-                    "id": "pii.personal",
-                    "label": "Personal PII",
-                    "severity": "high",
-                    "description": "Personal contact or identity metadata"
-                }
-            ]
-        }
-    }));
-    values
-}
-
-fn check_over_core(artifacts: Vec<Value>) -> Vec<Diagnostic> {
-    let base = decode_envelopes(core_base_values());
-    let candidates = decode_envelopes(artifacts);
-    let registry = BTreeSet::<PropertyTypeName>::new();
-    check_artifact_set(
-        &candidates,
-        &EntityArtifactSetContext {
-            registry: &registry,
-            base: &base,
-            tenant: None,
-        },
-    )
-}
-
-fn errors_of(findings: &[Diagnostic]) -> Vec<&Diagnostic> {
-    findings.iter().filter(|d| d.is_error()).collect()
-}
-
-fn find_mut<'a>(values: &'a mut [Value], artifact_id: &str) -> &'a mut Value {
-    values
-        .iter_mut()
-        .find(|value| value["artifactId"] == artifact_id)
-        .unwrap_or_else(|| panic!("fixture {artifact_id} not found"))
-}
+use norn_ir::PropertyTypeName;
+use serde_json::json;
 
 #[test]
 fn real_canon_and_compute_units_packs_pass_cleanly_over_core_laws() {
@@ -269,7 +153,9 @@ fn missing_widened_incompatible_and_dangling_core_links_emit_core_link_witness()
             parent_interface,
             link_id,
             ..
-        }) if child_concept == "compute.QuotaHold" && parent_interface == "core.Hold" && link_id == "resource"
+        }) if child_concept == "compute.QuotaHold"
+            && parent_interface == "core.Hold"
+            && link_id == "resource"
     ));
 
     // 4. Dangling `core.*` link target.
@@ -305,24 +191,7 @@ fn missing_widened_incompatible_and_dangling_core_links_emit_core_link_witness()
 
 #[test]
 fn transitive_interface_link_widening_emits_core_link_witness() {
-    let mut custom_iface =
-        read_json(&repo_root().join("registry/core/artifacts/core.Hold.interface.json"));
-    custom_iface["artifactId"] = json!("acme.CustomHold.interface");
-    custom_iface["namespace"] = json!("acme");
-    custom_iface["name"] = json!("CustomHold");
-    custom_iface["payload"]["interface"]["name"] = json!("acme.CustomHold");
-    custom_iface["payload"]["interface"]["extends"] = json!(["core.Hold"]);
-    custom_iface["payload"]["interface"]["properties"] = json!([]);
-    custom_iface["payload"]["interface"]["invariants"] = json!([]);
-    custom_iface["payload"]["interface"]["lifecycles"] = json!([]);
-    custom_iface["payload"]["interface"]["links"] = json!([
-        {
-            "id": "resource",
-            "target": "core.Resource",
-            "cardinality": { "to": "many", "from": "many", "required": false }
-        }
-    ]);
-    let findings = check_over_core(vec![custom_iface]);
+    let findings = check_over_core(vec![custom_widened_hold_interface()]);
     let diag = findings
         .iter()
         .find(|d| d.code == interface_codes::INVALID_INHERITANCE)
@@ -422,37 +291,113 @@ fn constitutional_core_law_defeat_and_shadowing_are_refused_with_witness() {
             .any(|d| d.code == core_codes::CONSTITUTIONAL_DEFEAT),
         "expected constitutional_defeat for contradicting core law: {findings:#?}"
     );
-
-    // 4. Normative extension slot (`norn.normative/1.0.0`) attempting to defeat a `core.*` law.
-    let mut pack = load_pack_values("compute-units");
-    let action = find_mut(&mut pack, "compute.token_pool.create.action");
-    action["payload"]["extensions"] = json!({
-        "norn.normative/1.0.0": [
-            {
-                "id": "acme.defeat_core_hold",
-                "modality": "obligation",
-                "defeatedBy": ["core.Hold.measure_matches_resource"]
-            }
-        ]
-    });
-    let findings = check_over_core(pack);
-    assert!(
-        findings
-            .iter()
-            .any(|d| d.code == core_codes::CONSTITUTIONAL_DEFEAT),
-        "expected constitutional_defeat for normative defeatedBy core law: {findings:#?}"
-    );
 }
 
 #[test]
-fn create_only_action_missing_required_core_link_binding_emits_witness() {
-    let mut pack = load_pack_values("compute-units");
-    let place = find_mut(&mut pack, "compute.quota_hold.place.action");
+fn normative_defeated_by_precedence_admits_yielding_to_core_and_refuses_defeating_core() {
+    let registry = BTreeSet::<PropertyTypeName>::new();
+    let entity_id = "core.SalesOrder.entity";
+    let subject = "core.SalesOrder";
+
+    // Direction 1 (LAWFUL): downstream rule yields (`defeatedBy`) to a `core.*` rule -> ADMITTED.
+    let yielding_rules = json!([
+        deontic_rule_json(
+            "acme.sales_custom",
+            subject,
+            entity_id,
+            0,
+            "obligation",
+            "always",
+            &["core.sales_guard"],
+        ),
+        deontic_rule_json(
+            "core.sales_guard",
+            subject,
+            entity_id,
+            1,
+            "prohibition",
+            "never",
+            &[],
+        ),
+    ]);
+    let lawful_entity = decode_envelopes(vec![boolean_entity_envelope(
+        entity_id,
+        subject,
+        yielding_rules,
+    )]);
+    let lawful_findings = check_artifact_set(
+        &lawful_entity,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+    );
+    assert!(
+        errors_of(&lawful_findings).is_empty(),
+        "downstream rule lawfully yielding to core.* via defeatedBy must be admitted: {lawful_findings:#?}"
+    );
+
+    // Direction 2 (ATTACK): `core.*` rule lists downstream rule in `defeatedBy` -> REFUSED.
+    let defeating_rules = json!([
+        deontic_rule_json(
+            "acme.sales_override",
+            subject,
+            entity_id,
+            0,
+            "obligation",
+            "always",
+            &[],
+        ),
+        deontic_rule_json(
+            "core.sales_guard",
+            subject,
+            entity_id,
+            1,
+            "prohibition",
+            "never",
+            &["acme.sales_override"],
+        ),
+    ]);
+    let attack_entity = decode_envelopes(vec![boolean_entity_envelope(
+        entity_id,
+        subject,
+        defeating_rules,
+    )]);
+    let attack_findings = check_artifact_set(
+        &attack_entity,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+    );
+    let diag = attack_findings
+        .iter()
+        .find(|d| d.code == core_codes::CONSTITUTIONAL_DEFEAT)
+        .unwrap_or_else(|| panic!("expected constitutional_defeat, got {attack_findings:#?}"));
+    assert!(matches!(
+        diag.witness
+            .as_ref()
+            .and_then(|w| w.counterexample.as_deref()),
+        Some(CounterexampleWitness::CoreLawWeakening {
+            offending_law_id,
+            core_law_id,
+            ..
+        }) if offending_law_id == "acme.sales_override" && core_law_id == "core.sales_guard"
+    ));
+}
+
+#[test]
+fn required_core_link_binding_rejects_generic_rule_and_mismatched_source_id_field() {
+    // 1. Missing required link in `createLinks` -> REFUSED with CoreLink witness.
+    let mut missing = load_pack_values("compute-units");
+    let place = find_mut(&mut missing, "compute.quota_hold.place.action");
     place["payload"]["createLinks"]
         .as_array_mut()
         .expect("createLinks array")
         .retain(|binding| binding["link"] != "resource");
-    let findings = check_over_core(pack);
+    let findings = check_over_core(missing);
     let diag = findings
         .iter()
         .find(|d| d.code == core_codes::MISSING_REQUIRED_LINK_BINDING)
@@ -470,10 +415,73 @@ fn create_only_action_missing_required_core_link_binding_emits_witness() {
             && parent_interface == "core.Hold"
             && link_id == "resource"
     ));
+
+    // 2. `synchronousRule` with generic `outputSchema.properties.links` (empty array, does not
+    //    bind required `resource` link) -> REFUSED.
+    let generic_rule_pack = pack_with_place_sync_rule(
+        "compute.generic_links.rule",
+        "compute.rule.generic_links",
+        "[]",
+        false,
+    );
+    let findings = check_over_core(generic_rule_pack);
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.code == core_codes::MISSING_REQUIRED_LINK_BINDING),
+        "generic synchronousRule declaring outputSchema.properties.links without binding resource must be refused: {findings:#?}"
+    );
+
+    // 3. `createLinks` with explicit `source` pointing to a DIFFERENT `idField` -> REFUSED.
+    let mut wrong_source_pack = load_pack_values("compute-units");
+    let place = find_mut(&mut wrong_source_pack, "compute.quota_hold.place.action");
+    place["payload"]["inputSchema"]["properties"]["other_hold_id"] = json!({ "type": "string" });
+    for binding in place["payload"]["createLinks"]
+        .as_array_mut()
+        .expect("createLinks array")
+    {
+        if binding["link"] == "resource" {
+            binding["source"] = json!({
+                "objectType": "compute.QuotaHold",
+                "idField": "other_hold_id"
+            });
+        }
+    }
+    let findings = check_over_core(wrong_source_pack);
+    assert!(
+        findings
+            .iter()
+            .any(|d| d.code == core_codes::MISSING_REQUIRED_LINK_BINDING),
+        "createLinks explicit source pointing to a different idField must be refused: {findings:#?}"
+    );
+
+    // 4. `createLinks` binding the created object (`source` omitted) and exact `link_id` -> ADMITTED.
+    let admitted_findings = check_over_core(load_pack_values("compute-units"));
+    assert!(
+        errors_of(&admitted_findings).is_empty(),
+        "createLinks binding created object and exact required link_ids must be admitted: {admitted_findings:#?}"
+    );
+
+    // 5. `synchronousRule` unconditionally emitting `{ op: 'add', sourceType: 'compute.QuotaHold',
+    //    sourceKey: event.input.id, link: 'resource', ... }` satisfies `resource` link binding.
+    let guaranteed_rule_pack = pack_with_place_sync_rule(
+        "compute.bind_resource.rule",
+        "compute.rule.bind_resource",
+        "[{ op: 'add', sourceType: 'compute.QuotaHold', sourceKey: event.input.id, link: 'resource', targetType: 'compute.TokenPool', targetKey: event.input.resource_id }]",
+        true,
+    );
+    let findings = check_over_core(guaranteed_rule_pack);
+    assert!(
+        !findings
+            .iter()
+            .any(|d| d.code == core_codes::MISSING_REQUIRED_LINK_BINDING),
+        "guaranteed synchronousRule emitting add for created object must satisfy required link binding: {findings:#?}"
+    );
 }
 
 #[test]
-fn action_derive_violating_inherited_core_invariant_emits_counterexample_witness() {
+fn action_derive_and_fire_transition_violations_emit_counterexample_witnesses() {
+    // 1. `upsert_input_object` + `derive` violating inherited core invariant.
     let mut pack = load_pack_values("compute-units");
     let create = find_mut(&mut pack, "compute.capacity_commitment.create.action");
     create["payload"]["derive"] = json!([
@@ -512,10 +520,8 @@ fn action_derive_violating_inherited_core_invariant_emits_counterexample_witness
         }
         other => panic!("expected CoreLawViolation witness, got {other:#?}"),
     }
-}
 
-#[test]
-fn fire_transition_set_fields_violating_core_invariant_emits_step_and_counterexample() {
+    // 2. `fire_transition` + `setFields` violating core invariant.
     let mut pack = load_pack_values("compute-units");
     let release = find_mut(&mut pack, "compute.quota_hold.release.action");
     release["payload"]["inputSchema"]["properties"]["bad_quantity"] = json!({ "type": "number" });
@@ -526,9 +532,7 @@ fn fire_transition_set_fields_violating_core_invariant_emits_step_and_counterexa
             "inputRequired": false
         }
     ]);
-    release["payload"]["effectProgram"]["setFields"] = json!({
-        "quantity": "bad_quantity"
-    });
+    release["payload"]["effectProgram"]["setFields"] = json!({ "quantity": "bad_quantity" });
     let findings = check_over_core(pack);
     let diag = findings
         .iter()
@@ -538,91 +542,25 @@ fn fire_transition_set_fields_violating_core_invariant_emits_step_and_counterexa
     assert_eq!(witness.steps.len(), 1);
     assert_eq!(witness.steps[0].moves[0].side, WitnessSide::Backend);
     assert_eq!(witness.steps[0].moves[0].label, "release");
-    match witness.counterexample.as_deref() {
+    assert!(matches!(
+        witness.counterexample.as_deref(),
         Some(CounterexampleWitness::CoreLawViolation {
             action_id,
             subject_type,
             core_law_id,
             state_assignment,
             ..
-        }) => {
-            assert_eq!(action_id, "compute.quota_hold.release");
-            assert_eq!(subject_type, "compute.QuotaHold");
-            assert_eq!(core_law_id, "core.Hold.positive_quantity");
-            assert_eq!(
-                state_assignment.get("quantity").map(String::as_str),
-                Some("0")
-            );
-        }
-        other => panic!("expected CoreLawViolation witness, got {other:#?}"),
-    }
+        }) if action_id == "compute.quota_hold.release"
+            && subject_type == "compute.QuotaHold"
+            && core_law_id == "core.Hold.positive_quantity"
+            && state_assignment.get("quantity").map(String::as_str) == Some("0")
+    ));
 }
 
 #[test]
 fn synchronous_rule_literal_write_violating_core_invariant_emits_counterexample() {
     let mut pack = load_pack_values("compute-units");
-    let mut rule =
-        read_json(&repo_root().join("fixtures/rule-ir-v2/valid/purchase-order-approval.rule.json"));
-    rule["artifactId"] = json!("compute.zero_hold.rule");
-    rule["namespace"] = json!("compute");
-    rule["scope"] = json!({});
-    rule["dependencies"] = json!([
-        {
-            "artifactId": "compute.QuotaHold.entity",
-            "kind": "entity",
-            "version": "0.1.0",
-            "required": true
-        }
-    ]);
-    rule["payload"]["ruleId"] = json!("compute.rule.zero_hold");
-    rule["payload"]["outputSchema"] = json!({
-        "type": "object",
-        "properties": {
-            "facts": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "op": { "type": "string", "enum": ["set"] },
-                        "objectType": { "type": "string", "enum": ["compute.QuotaHold"] },
-                        "key": { "type": "string" },
-                        "property": { "type": "string", "enum": ["quantity"] },
-                        "value": { "type": "number" }
-                    },
-                    "required": ["op", "objectType", "key", "property", "value"],
-                    "additionalProperties": false
-                }
-            }
-        },
-        "required": ["facts"],
-        "additionalProperties": false
-    });
-    rule["payload"]["graph"] = json!({
-        "nodes": [
-            { "id": "in", "name": "Input", "type": "inputNode", "position": { "x": 0, "y": 0 } },
-            {
-                "id": "expr",
-                "name": "Emit zero quantity",
-                "type": "expressionNode",
-                "position": { "x": 100, "y": 0 },
-                "content": {
-                    "expressions": [
-                        {
-                            "id": "e1",
-                            "key": "facts",
-                            "value": "[{ op: 'set', objectType: 'compute.QuotaHold', key: 'h1', property: 'quantity', value: 0 }]"
-                        }
-                    ]
-                }
-            },
-            { "id": "out", "name": "Output", "type": "outputNode", "position": { "x": 200, "y": 0 } }
-        ],
-        "edges": [
-            { "id": "e_in", "sourceId": "in", "targetId": "expr" },
-            { "id": "e_out", "sourceId": "expr", "targetId": "out" }
-        ]
-    });
-    pack.push(rule);
+    pack.push(zero_hold_literal_rule());
     let findings = check_over_core(pack);
     let diag = findings
         .iter()
@@ -648,47 +586,17 @@ fn synchronous_rule_literal_write_violating_core_invariant_emits_counterexample(
 }
 
 #[test]
-fn lifecycle_core_law_blocked_exit_emits_shortest_run_counterexample() {
-    let mut pack = load_pack_values("compute-units");
-    let blocking_law = json!({
-        "irVersion": "0.1",
-        "artifactId": "core.Hold.stay_open.law",
-        "kind": "law",
-        "namespace": "core",
-        "name": "Hold stay open test law",
-        "version": "0.1.0",
-        "lifecycle": "active",
-        "scope": {},
-        "dependencies": [
-            {
-                "artifactId": "core.Hold.interface",
-                "kind": "entity",
-                "version": "0.1.0",
-                "required": true
-            }
-        ],
-        "provenance": { "source": "system" },
-        "payload": {
-            "lawVersion": "0.1",
-            "id": "core.Hold.stay_open",
-            "owner": "core",
-            "severity": "error",
-            "rationale": "Test constitutional law blocking every exit from open",
-            "provenance": { "source": "system" },
-            "scope": {
-                "root": { "kind": "pack", "id": "core" },
-                "objectTypes": ["core.Hold"]
-            },
-            "subject": "core.Hold",
-            "modality": { "kind": "always" },
-            "response": {
-                "kind": "predicate",
-                "expression": "self.status == 'open'"
-            }
-        }
-    });
-    pack.push(blocking_law);
-    let findings = check_over_core(pack);
+fn lifecycle_core_law_blocked_exit_and_unevaluated_exit_emit_honest_verdicts() {
+    // 1. Concrete blocked exit emits PRESERVATION_VIOLATED with shortest-run witness.
+    let mut blocked_pack = load_pack_values("compute-units");
+    blocked_pack.push(core_predicate_law(
+        "core.Hold.stay_open.law",
+        "core.Hold.stay_open",
+        "core.Hold",
+        "core.Hold.interface",
+        "self.status == 'open'",
+    ));
+    let findings = check_over_core(blocked_pack);
     let diag = findings
         .iter()
         .find(|d| {
@@ -700,11 +608,10 @@ fn lifecycle_core_law_blocked_exit_emits_shortest_run_counterexample() {
                 "expected lifecycle preservation_violated on compute.QuotaHold, got {findings:#?}"
             )
         });
-    match diag
-        .witness
-        .as_ref()
-        .and_then(|w| w.counterexample.as_deref())
-    {
+    assert!(matches!(
+        diag.witness
+            .as_ref()
+            .and_then(|w| w.counterexample.as_deref()),
         Some(CounterexampleWitness::CoreLawViolation {
             action_id,
             subject_type,
@@ -712,21 +619,125 @@ fn lifecycle_core_law_blocked_exit_emits_shortest_run_counterexample() {
             state_assignment,
             trace,
             ..
-        }) => {
-            assert_eq!(action_id, "<lifecycle>");
-            assert_eq!(subject_type, "compute.QuotaHold");
-            assert_eq!(core_law_id, "core.Hold.stay_open");
-            assert_eq!(
-                state_assignment.get("status").map(String::as_str),
-                Some("\"open\"")
-            );
-            assert!(
-                trace.iter().any(|step| step.starts_with("blocked:")),
-                "expected blocked transition in trace: {trace:?}"
-            );
+        }) if action_id == "<lifecycle>"
+            && subject_type == "compute.QuotaHold"
+            && core_law_id == "core.Hold.stay_open"
+            && state_assignment.get("status").map(String::as_str) == Some("\"open\"")
+            && trace.iter().any(|step| step.starts_with("blocked:"))
+    ));
+
+    // 2. Unevaluated destination (`EvalStop::Other` via invalid timestamp on non-open states)
+    //    must NEVER silently pass and must emit PRESERVATION_UNKNOWN (not false VIOLATED).
+    let mut unknown_pack = load_pack_values("compute-units");
+    unknown_pack.push(core_predicate_law(
+        "core.Hold.unevaluated_exit.law",
+        "core.Hold.unevaluated_exit",
+        "core.Hold",
+        "core.Hold.interface",
+        "self.status == 'open' ? true : (timestamp(self.status) > timestamp('2026-01-01T00:00:00Z'))",
+    ));
+    let findings = check_over_core(unknown_pack);
+    assert!(
+        findings.iter().any(|d| {
+            d.code == core_codes::PRESERVATION_UNKNOWN
+                && d.artifact_id.as_deref() == Some("compute.QuotaHold.entity")
+        }),
+        "unevaluated lifecycle exit must emit preservation_unknown, got {findings:#?}"
+    );
+    assert!(
+        !findings.iter().any(|d| {
+            d.code == core_codes::PRESERVATION_VIOLATED
+                && d.artifact_id.as_deref() == Some("compute.QuotaHold.entity")
+        }),
+        "unevaluated lifecycle exit must not emit false concrete preservation_violated: {findings:#?}"
+    );
+}
+
+#[test]
+fn unevaluated_writer_law_and_unchecked_external_precondition_emit_preservation_unknown() {
+    // 1. Writer encountering `EvalStop::Other` emits PRESERVATION_UNKNOWN (never silent pass).
+    let mut eval_unknown_pack = load_pack_values("compute-units");
+    let create = find_mut(
+        &mut eval_unknown_pack,
+        "compute.capacity_commitment.create.action",
+    );
+    create["payload"]["derive"] = json!([
+        {
+            "field": "unit",
+            "expression": "'not-a-timestamp'",
+            "inputRequired": false
         }
-        other => panic!("expected CoreLawViolation lifecycle witness, got {other:#?}"),
-    }
+    ]);
+    eval_unknown_pack.push(core_predicate_law(
+        "core.Commitment.eval_unknown.law",
+        "core.Commitment.eval_unknown",
+        "core.Commitment",
+        "core.Commitment.interface",
+        "timestamp(self.unit ?? 'not-a-timestamp') > timestamp('2026-01-01T00:00:00Z')",
+    ));
+    let findings = check_over_core(eval_unknown_pack);
+    assert!(
+        findings.iter().any(|d| {
+            d.code == core_codes::PRESERVATION_UNKNOWN
+                && d.artifact_id.as_deref() == Some("compute.capacity_commitment.create.action")
+        }),
+        "unevaluated core law predicate on writer must emit preservation_unknown: {findings:#?}"
+    );
+
+    // 2. Unchecked external (`slice.*`) precondition with a violating post-state emits
+    //    PRESERVATION_UNKNOWN instead of a false concrete PRESERVATION_VIOLATED witness.
+    let mut pre_unknown_pack = load_pack_values("compute-units");
+    let create = find_mut(
+        &mut pre_unknown_pack,
+        "compute.capacity_commitment.create.action",
+    );
+    create["payload"]["derive"] = json!([
+        {
+            "field": "quantity",
+            "expression": "0",
+            "inputRequired": false
+        }
+    ]);
+    create["payload"]["preconditions"] = json!(["slice.provider.id != ''"]);
+    let findings = check_over_core(pre_unknown_pack);
+    assert!(
+        findings.iter().any(|d| {
+            d.code == core_codes::PRESERVATION_UNKNOWN
+                && d.artifact_id.as_deref() == Some("compute.capacity_commitment.create.action")
+        }),
+        "unchecked external precondition must downgrade candidate violation to preservation_unknown: {findings:#?}"
+    );
+    assert!(
+        !findings.iter().any(|d| {
+            d.code == core_codes::PRESERVATION_VIOLATED
+                && d.artifact_id.as_deref() == Some("compute.capacity_commitment.create.action")
+        }),
+        "unchecked external precondition must NOT emit false concrete preservation_violated: {findings:#?}"
+    );
+
+    // 3. Statically-evaluable refusing precondition skips the rejected input cleanly.
+    let mut pre_refused_pack = load_pack_values("compute-units");
+    let create = find_mut(
+        &mut pre_refused_pack,
+        "compute.capacity_commitment.create.action",
+    );
+    create["payload"]["derive"] = json!([
+        {
+            "field": "quantity",
+            "expression": "0",
+            "inputRequired": false
+        }
+    ]);
+    create["payload"]["preconditions"] = json!(["input.quantity > 0"]);
+    let findings = check_over_core(pre_refused_pack);
+    assert!(
+        !findings.iter().any(|d| {
+            (d.code == core_codes::PRESERVATION_VIOLATED
+                || d.code == core_codes::PRESERVATION_UNKNOWN)
+                && d.artifact_id.as_deref() == Some("compute.capacity_commitment.create.action")
+        }),
+        "refusing precondition must reject the violating input cleanly: {findings:#?}"
+    );
 }
 
 #[test]

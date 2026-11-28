@@ -69,6 +69,7 @@ use crate::{Diagnostic, interfaces};
 
 mod interface_checks;
 mod lifecycles;
+mod link_witness;
 mod links;
 
 use links::{LinkDecl, LinkTable};

@@ -14,17 +14,20 @@
 
 mod eval;
 mod lifecycle;
+mod link_bindings;
+mod transitions;
 mod writers;
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_expr::{Expression, Type};
+use norn_ir::deontic::{DeonticModality, DeonticRule};
 use norn_ir::{
-    ActionEffectProgram, ActionRoot, ArtifactEnvelope, ArtifactKind, ArtifactPayload, EntityRoot,
-    InterfaceDef, InterfaceName, Invariant, JsonValue, LawIR, LawModality, LawResponse,
-    UpsertWriteMode,
+    ActionRoot, ArtifactEnvelope, ArtifactPayload, EntityRoot, InterfaceDef, InterfaceName,
+    Invariant, JsonValue, LawIR, LawModality, LawResponse,
 };
 
+use crate::deontic::{NORMATIVE_SLOT, decode_slot};
 use crate::entity_artifacts::{Decoded, EntityArtifactSetContext, decode_v2};
 use crate::entity_scopes::ScopedViews;
 use crate::{
@@ -139,7 +142,12 @@ pub fn check_core_preservation_set(
         &mut views,
         &mut findings,
     );
-    check_required_core_link_bindings(artifacts, &interfaces, &mut views, &mut findings);
+    link_bindings::check_required_core_link_bindings(
+        artifacts,
+        &interfaces,
+        &mut views,
+        &mut findings,
+    );
     writers::check_core_writer_preservation(
         artifacts,
         &interfaces,
@@ -303,9 +311,7 @@ fn check_constitutional_non_defeasibility(
     }
 
     for artifact in artifacts {
-        if !is_core_name(&artifact.artifact_id) {
-            check_normative_extension_defeat(artifact, findings);
-        }
+        check_normative_extension_defeat(artifact, &core_laws_by_id, findings);
     }
 }
 
@@ -451,16 +457,97 @@ fn contradicts_core_modality(core_law: &LawIR, candidate: &LawIR) -> bool {
     core_e.as_str().trim() == cand_e.as_str().trim()
 }
 
-fn check_normative_extension_defeat(artifact: &ArtifactEnvelope, findings: &mut Vec<Diagnostic>) {
+fn check_normative_extension_defeat(
+    artifact: &ArtifactEnvelope,
+    core_laws_by_id: &BTreeMap<&str, &LawIR>,
+    findings: &mut Vec<Diagnostic>,
+) {
     let payload_json = artifact.payload.to_json_value();
     let Some(normative) = payload_json
         .as_object()
         .and_then(|object| object.get("extensions"))
         .and_then(JsonValue::as_object)
-        .and_then(|extensions| extensions.get("norn.normative/1.0.0"))
+        .and_then(|extensions| extensions.get(NORMATIVE_SLOT))
     else {
         return;
     };
+    if let Ok(slot_value) = serde_json::to_value(normative)
+        && let Ok(rules) = decode_slot(&slot_value)
+    {
+        check_typed_normative_rules(artifact, &rules, core_laws_by_id, findings);
+        return;
+    }
+    check_untyped_normative_rules(artifact, normative, core_laws_by_id, findings);
+}
+
+fn check_typed_normative_rules(
+    artifact: &ArtifactEnvelope,
+    rules: &[DeonticRule],
+    core_laws_by_id: &BTreeMap<&str, &LawIR>,
+    findings: &mut Vec<Diagnostic>,
+) {
+    let is_core_artifact = is_core_name(&artifact.artifact_id);
+    for (index, rule) in rules.iter().enumerate() {
+        let rule_id = rule.law.id.as_str();
+        let pointer = format!("/payload/extensions/norn.normative~11.0.0/{index}");
+        let mut reported_non_core_defeat = false;
+
+        // Precedence semantics (`crate::deontic::lower_declared_order`): each ID in
+        // `rule.defeated_by` is the WINNER over the enclosing `rule`.
+        // Downstream yielding to `core.*` (`downstream.defeated_by = [core.*]`) is
+        // lawful; a `core.*` rule losing to a non-`core.*` rule is constitutional defeat.
+        if is_core_name(rule_id) {
+            for winner in &rule.defeated_by {
+                if !is_core_name(winner) {
+                    reported_non_core_defeat = true;
+                    let reason = format!(
+                        "constitutional core rule {rule_id:?} cannot be defeated by non-core rule {winner:?}"
+                    );
+                    findings.push(defeat_finding(artifact, &pointer, winner, rule_id, reason));
+                }
+            }
+        }
+
+        for exception in rule.exceptions.iter().chain(rule.law.exceptions.iter()) {
+            if is_core_name(&exception.overrides)
+                && (!is_core_artifact || core_laws_by_id.contains_key(exception.overrides.as_str()))
+            {
+                let reason = format!(
+                    "normative rule {rule_id:?} declares exception {:?} overriding constitutional core law {:?}",
+                    exception.id, exception.overrides
+                );
+                findings.push(defeat_finding(
+                    artifact,
+                    &pointer,
+                    rule_id,
+                    &exception.overrides,
+                    reason,
+                ));
+            }
+        }
+
+        if rule.modality == DeonticModality::Permission && is_core_name(rule_id) {
+            let reason = format!(
+                "normative permission {rule_id:?} cannot defeat or relax constitutional core law {rule_id:?}"
+            );
+            findings.push(defeat_finding(artifact, &pointer, rule_id, rule_id, reason));
+        } else if !is_core_artifact && is_core_name(rule_id) && !reported_non_core_defeat {
+            let reason = format!(
+                "non-core artifact {:?} cannot declare or shadow constitutional core rule {rule_id:?}",
+                artifact.artifact_id
+            );
+            findings.push(defeat_finding(artifact, &pointer, rule_id, rule_id, reason));
+        }
+    }
+}
+
+fn check_untyped_normative_rules(
+    artifact: &ArtifactEnvelope,
+    normative: &JsonValue,
+    core_laws_by_id: &BTreeMap<&str, &LawIR>,
+    findings: &mut Vec<Diagnostic>,
+) {
+    let is_core_artifact = is_core_name(&artifact.artifact_id);
     let rules: Vec<&JsonValue> = match normative {
         JsonValue::Array(items) => items.iter().collect(),
         JsonValue::Object(obj) => match obj.get("rules") {
@@ -483,53 +570,71 @@ fn check_normative_extension_defeat(artifact: &ArtifactEnvelope, findings: &mut 
             continue;
         };
         let rule_id = obj
-            .get("id")
+            .get("law")
+            .and_then(JsonValue::as_object)
+            .and_then(|law| law.get("id"))
             .and_then(JsonValue::as_string)
+            .or_else(|| obj.get("id").and_then(JsonValue::as_string))
             .unwrap_or(artifact.artifact_id.as_str());
         let pointer = format!("/payload/extensions/norn.normative~11.0.0/{index}");
-        if let Some(JsonValue::Array(defeated)) = obj.get("defeatedBy") {
-            for target in defeated.iter().filter_map(JsonValue::as_string) {
-                if is_core_name(target) {
+        let mut reported_non_core_defeat = false;
+
+        if is_core_name(rule_id)
+            && let Some(JsonValue::Array(winners)) = obj.get("defeatedBy")
+        {
+            for winner in winners.iter().filter_map(JsonValue::as_string) {
+                if !is_core_name(winner) {
+                    reported_non_core_defeat = true;
                     let reason = format!(
-                        "normative rule {rule_id:?} lists constitutional core law {target:?} in defeatedBy"
+                        "constitutional core rule {rule_id:?} cannot be defeated by non-core rule {winner:?}"
                     );
-                    findings.push(defeat_finding(artifact, &pointer, rule_id, target, reason));
+                    findings.push(defeat_finding(artifact, &pointer, winner, rule_id, reason));
                 }
             }
         }
-        if let Some(JsonValue::Array(exceptions)) = obj.get("exceptions") {
-            for exception in exceptions {
-                if let Some(overrides) = exception
-                    .as_object()
-                    .and_then(|ex| ex.get("overrides"))
-                    .and_then(JsonValue::as_string)
-                    && is_core_name(overrides)
-                {
-                    let reason = format!(
-                        "normative rule {rule_id:?} declares an exception overriding constitutional core law {overrides:?}"
-                    );
-                    findings.push(defeat_finding(
-                        artifact, &pointer, rule_id, overrides, reason,
-                    ));
-                }
+
+        let rule_exceptions = obj.get("exceptions").and_then(JsonValue::as_array);
+        let law_exceptions = obj
+            .get("law")
+            .and_then(JsonValue::as_object)
+            .and_then(|law| law.get("exceptions"))
+            .and_then(JsonValue::as_array);
+        for exception in rule_exceptions
+            .into_iter()
+            .flatten()
+            .chain(law_exceptions.into_iter().flatten())
+        {
+            if let Some(overrides) = exception
+                .as_object()
+                .and_then(|ex| ex.get("overrides"))
+                .and_then(JsonValue::as_string)
+                && is_core_name(overrides)
+                && (!is_core_artifact || core_laws_by_id.contains_key(overrides))
+            {
+                let reason = format!(
+                    "normative rule {rule_id:?} declares an exception overriding constitutional core law {overrides:?}"
+                );
+                findings.push(defeat_finding(
+                    artifact, &pointer, rule_id, overrides, reason,
+                ));
             }
         }
+
         let is_permission = obj
             .get("modality")
             .and_then(JsonValue::as_string)
             .is_some_and(|m| m.eq_ignore_ascii_case("permission"));
-        if is_permission
-            && let Some(law_id) = obj
-                .get("law")
-                .and_then(JsonValue::as_object)
-                .and_then(|l| l.get("id"))
-                .and_then(JsonValue::as_string)
-            && is_core_name(law_id)
-        {
+        if is_permission && is_core_name(rule_id) {
             let reason = format!(
-                "normative permission {rule_id:?} cannot defeat or relax constitutional core law {law_id:?}"
+                "normative permission {rule_id:?} cannot defeat or relax constitutional core law {rule_id:?}"
             );
-            findings.push(defeat_finding(artifact, &pointer, rule_id, law_id, reason));
+            findings.push(defeat_finding(artifact, &pointer, rule_id, rule_id, reason));
+        } else if !is_core_artifact && is_core_name(rule_id) && !reported_non_core_defeat {
+            let reason = format!(
+                "non-core artifact {:?} cannot declare or shadow constitutional core rule {rule_id:?}",
+                artifact.artifact_id
+            );
+            findings.push(defeat_finding(artifact, &pointer, rule_id, rule_id, reason));
         }
     }
 }
@@ -657,130 +762,4 @@ fn check_law_binding_on_subtype(
             break;
         }
     }
-}
-
-/// Verify that every candidate `create_only` action targeting a concept
-/// specializing a `core.*` interface explicitly binds every `required: true`
-/// link declared on those `core.*` interfaces (via `createLinks` or a
-/// synchronous rule emitting links).
-fn check_required_core_link_bindings(
-    artifacts: &[ArtifactEnvelope],
-    interfaces: &BTreeMap<InterfaceName, InterfaceDef>,
-    views: &mut ScopedViews<'_>,
-    findings: &mut Vec<Diagnostic>,
-) {
-    for artifact in artifacts {
-        let Some(root) = decode_action(artifact) else {
-            continue;
-        };
-        let Some(ActionEffectProgram::UpsertInputObject {
-            object_kind,
-            write_mode: UpsertWriteMode::CreateOnly,
-            ..
-        }) = &root.effect_program
-        else {
-            continue;
-        };
-        let view = views.of(artifact);
-        let Some(Ok(effective)) = view.catalog().object_type_named(object_kind) else {
-            continue;
-        };
-        let required_core_links = required_core_interface_links(effective, interfaces);
-        if required_core_links.is_empty() {
-            continue;
-        }
-        let rule_emits_links = root.synchronous_rule.as_ref().is_some_and(|rule_ref| {
-            synchronous_rule_declares_links(view.pool(), &rule_ref.artifact_id, &rule_ref.version)
-        });
-        if rule_emits_links {
-            continue;
-        }
-        let bound_links: BTreeSet<&str> = root
-            .create_links
-            .iter()
-            .filter(|binding| {
-                binding
-                    .source
-                    .as_ref()
-                    .is_none_or(|src| src.object_type == *object_kind)
-            })
-            .map(|binding| binding.link.as_str())
-            .collect();
-        for (link_id, (iface_name, target_name)) in required_core_links {
-            if bound_links.contains(link_id.as_str()) {
-                continue;
-            }
-            let expected =
-                format!("createLinks binding for required link {link_id} -> {target_name}");
-            let actual = format!("unbound in create_only action {}", root.action_id);
-            findings.push(finding(
-                codes::MISSING_REQUIRED_LINK_BINDING,
-                artifact,
-                "/payload/createLinks",
-                format!(
-                    "create_only action {:?} creates {:?} (implementing {:?}) without binding required core link {:?} -> {:?}",
-                    root.action_id, object_kind, iface_name, link_id, target_name
-                ),
-                Some(DiagnosticWitness::core_link(
-                    object_kind.as_str(),
-                    iface_name,
-                    link_id,
-                    expected,
-                    actual,
-                )),
-            ));
-        }
-    }
-}
-
-fn required_core_interface_links(
-    effective: &EffectiveObjectType,
-    interfaces: &BTreeMap<InterfaceName, InterfaceDef>,
-) -> BTreeMap<String, (String, String)> {
-    let mut required = BTreeMap::new();
-    for iface_name in &effective.interfaces {
-        if !is_core_name(iface_name.as_str()) {
-            continue;
-        }
-        for def in interface_lineage(iface_name, interfaces) {
-            if !is_core_name(def.name.as_str()) {
-                continue;
-            }
-            for link in &def.links {
-                if link.cardinality.required {
-                    required
-                        .entry(link.id.as_str().to_owned())
-                        .or_insert_with(|| {
-                            (
-                                def.name.as_str().to_owned(),
-                                link.target.as_str().to_owned(),
-                            )
-                        });
-                }
-            }
-        }
-    }
-    required
-}
-
-pub(crate) fn synchronous_rule_declares_links(
-    pool: &[ArtifactEnvelope],
-    artifact_id: &str,
-    version: &str,
-) -> bool {
-    let Some(rule) = pool.iter().find(|artifact| {
-        artifact.kind() == ArtifactKind::Rule
-            && artifact.artifact_id == artifact_id
-            && artifact.version == version
-    }) else {
-        return false;
-    };
-    rule.payload
-        .to_json_value()
-        .as_object()
-        .and_then(|payload| payload.get("outputSchema"))
-        .and_then(JsonValue::as_object)
-        .and_then(|schema| schema.get("properties"))
-        .and_then(JsonValue::as_object)
-        .is_some_and(|props| props.contains_key("links"))
 }

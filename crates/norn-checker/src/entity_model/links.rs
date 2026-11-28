@@ -40,7 +40,7 @@ use norn_ir::{
 };
 
 use super::Checker;
-use crate::Diagnostic;
+use super::link_witness;
 use crate::entity_instance::{EffectiveLink, EffectiveProperty};
 use crate::object_types::{
     MEMBER_ID_GRAMMAR, Origin, Resolved, check_property_default, check_property_shape,
@@ -53,9 +53,9 @@ use crate::property_types::{error, matches_grammar, span_at};
 /// declared, and its position in that declaration's `links`.
 #[derive(Clone, Copy)]
 pub(super) struct LinkDecl<'a> {
-    link: &'a Link,
+    pub(super) link: &'a Link,
     source: &'a ObjectTypeName,
-    origin: Origin<'a>,
+    pub(super) origin: Origin<'a>,
     position: usize,
 }
 
@@ -142,11 +142,11 @@ pub(super) type LinkTable<'a> = BTreeMap<&'a str, Member<'a>>;
 
 /// One required link of an interface a type is held to, with the position of
 /// the `implements` entry that lists the interface directly.
-type LinkRequirement<'a> = (Option<usize>, &'a InterfaceDef, &'a InterfaceLink);
+pub(super) type LinkRequirement<'a> = (Option<usize>, &'a InterfaceDef, &'a InterfaceLink);
 
 /// `sub` narrows `sup`: no end widens from `one` to `many`, and a required
 /// link stays required.
-const fn cardinality_narrows(sub: LinkCardinality, sup: LinkCardinality) -> bool {
+pub(super) const fn cardinality_narrows(sub: LinkCardinality, sup: LinkCardinality) -> bool {
     end_narrows(sub.to, sup.to)
         && end_narrows(sub.from, sup.from)
         && (sub.required || !sup.required)
@@ -267,7 +267,11 @@ impl<'a> Checker<'a, '_> {
     /// Whether every object `sub` admits, `sup` admits: the same definition,
     /// a subtype of an object type, or an object type held to an interface.
     /// `None` when either is unknown.
-    fn target_narrows(&self, sub: &ObjectTypeName, sup: &ObjectTypeName) -> Option<bool> {
+    pub(super) fn target_narrows(
+        &self,
+        sub: &ObjectTypeName,
+        sup: &ObjectTypeName,
+    ) -> Option<bool> {
         if !self.definition_known(sub) || !self.definition_known(sup) {
             return None;
         }
@@ -684,22 +688,11 @@ impl<'a> Checker<'a, '_> {
                         .map_or("<extension>", |ext| ext.target.as_str())
                 }
             };
-            self.out.push(with_witness(
-                error(
-                    codes::UNKNOWN_LINK_TARGET,
-                    format!(
-                        "link target {:?} names no object type or interface",
-                        link.target.as_str()
-                    ),
-                    span_at(at, &["target"]),
-                ),
-                crate::DiagnosticWitness::core_link(
-                    owner_name,
-                    link.target.as_str(),
-                    id,
-                    "admitted object type or interface in effective catalog",
-                    format!("unresolved target {}", link.target.as_str()),
-                ),
+            self.out.push(link_witness::unknown_link_target(
+                owner_name,
+                id,
+                &link.target,
+                span_at(at, &["target"]),
             ));
         }
         if let Some(inverse) = &link.inverse {
@@ -838,82 +831,6 @@ impl<'a> Checker<'a, '_> {
             }
         }
         None
-    }
-
-    /// A link override only narrows the link it overrides, and inherits its
-    /// inverse role and link properties.
-    fn check_link_override(
-        &mut self,
-        at: &[&str],
-        child_name: &str,
-        link: &'a Link,
-        overridden: &LinkDecl<'a>,
-    ) {
-        let id = link.id.as_str();
-        let (owner, parent_name) = match overridden.origin {
-            Origin::Type(owner) => (format!("supertype {:?}", owner.as_str()), owner.as_str()),
-            Origin::Extension { .. } => (
-                "an extension of a supertype".to_owned(),
-                "supertype_extension",
-            ),
-        };
-        for (member, present) in [
-            ("inverse", link.inverse.is_some()),
-            ("properties", !link.properties.is_empty()),
-        ] {
-            if present {
-                self.out.push(error(
-                    codes::LINK_OVERRIDE_REDECLARES,
-                    format!(
-                        "link {id:?} overrides the one {owner} declares and redeclares its {member}, which the override inherits; omit it"
-                    ),
-                    span_at(at, &[member]),
-                ));
-            }
-        }
-        let inherited = overridden.link;
-        let expected = format_link_contract(&inherited.target, inherited.cardinality);
-        let actual = format_link_contract(&link.target, link.cardinality);
-        if self.target_narrows(&link.target, &inherited.target) == Some(false) {
-            self.out.push(with_witness(
-                error(
-                    codes::LINK_OVERRIDE_TARGET_MISMATCH,
-                    format!(
-                        "link {id:?} overrides the one {owner} declares with a target that is not {:?} or a narrowing of it; an override may only narrow",
-                        inherited.target.as_str()
-                    ),
-                    span_at(at, &["target"]),
-                ),
-                crate::DiagnosticWitness::core_link(
-                    child_name,
-                    parent_name,
-                    id,
-                    expected.clone(),
-                    actual.clone(),
-                ),
-            ));
-        }
-        if inherited.acyclic != link.acyclic {
-            self.out.push(error(
-                codes::LINK_OVERRIDE_CHANGES_ACYCLIC,
-                format!(
-                    "link {id:?} overrides the one {owner} declares and changes its acyclic constraint; an override must preserve the inherited value (subtype-only acyclicity is unsound)"
-                ),
-                span_at(at, &["acyclic"]),
-            ));
-        }
-        if !cardinality_narrows(link.cardinality, inherited.cardinality) {
-            self.out.push(with_witness(
-                error(
-                    codes::LINK_OVERRIDE_WIDENS_CARDINALITY,
-                    format!(
-                        "link {id:?} overrides the one {owner} declares with a wider cardinality; an override may only narrow (many to one, optional to required)"
-                    ),
-                    span_at(at, &["cardinality"]),
-                ),
-                crate::DiagnosticWitness::core_link(child_name, parent_name, id, expected, actual),
-            ));
-        }
     }
 
     // ----- interface link requirements -------------------------------------
@@ -1071,7 +988,8 @@ impl<'a> Checker<'a, '_> {
             None => return,
         };
         let name = interface.name.as_str();
-        let expected = format_link_contract(&requirement.target, requirement.cardinality);
+        let expected =
+            link_witness::format_link_contract(&requirement.target, requirement.cardinality);
         // LAW-LINK-MANY-1: an interface is a read contract, so an inverse role
         // meets a link requirement: the role's sources must narrow the
         // required target, and its view (`to` = the link's `from`, never
@@ -1082,52 +1000,33 @@ impl<'a> Checker<'a, '_> {
                 from: decl.link.cardinality.to,
                 required: false,
             };
-            let actual = format!("inverse({})", format_link_contract(decl.source, view));
+            let actual = format!(
+                "inverse({})",
+                link_witness::format_link_contract(decl.source, view)
+            );
             // A law reads a to-one requirement as one target, which an inverse
             // role does not bind: only a to-many requirement takes one.
             if requirement.cardinality.to != Multiplicity::Many {
-                self.out.push(with_witness(
-                    error(
-                        codes::MISSING_INTERFACE_LINK,
-                        format!(
-                            "interface {name:?} requires link {id:?} to one target, but the type's member of that id is an inverse role; declare a forward link"
-                        ),
-                        at,
-                    ),
-                    crate::DiagnosticWitness::core_link(child_name, name, id, expected, actual),
+                self.out.push(link_witness::inverse_requires_forward_link(
+                    child_name, name, id, expected, actual, at,
                 ));
                 return;
             }
             if self.target_narrows(decl.source, &requirement.target) == Some(false) {
-                self.out.push(with_witness(
-                    error(
-                        codes::INTERFACE_LINK_TARGET_MISMATCH,
-                        format!(
-                            "inverse role {id:?} reads {:?}, which does not narrow {:?}, the target interface {name:?} requires",
-                            decl.source.as_str(),
-                            requirement.target.as_str()
-                        ),
-                        at.clone(),
-                    ),
-                    crate::DiagnosticWitness::core_link(
-                        child_name,
-                        name,
-                        id,
-                        expected.clone(),
-                        actual.clone(),
-                    ),
+                self.out.push(link_witness::inverse_target_mismatch(
+                    child_name,
+                    name,
+                    id,
+                    decl.source,
+                    &requirement.target,
+                    expected.clone(),
+                    actual.clone(),
+                    at.clone(),
                 ));
             }
             if !cardinality_narrows(view, requirement.cardinality) {
-                self.out.push(with_witness(
-                    error(
-                        codes::INTERFACE_LINK_WIDENS_CARDINALITY,
-                        format!(
-                            "inverse role {id:?} has a wider cardinality than interface {name:?} requires"
-                        ),
-                        at,
-                    ),
-                    crate::DiagnosticWitness::core_link(child_name, name, id, expected, actual),
+                self.out.push(link_witness::inverse_widens_cardinality(
+                    child_name, name, id, expected, actual, at,
                 ));
             }
             return;
@@ -1145,52 +1044,35 @@ impl<'a> Checker<'a, '_> {
                     (format!("the type's member of that id is the {desc}"), desc)
                 },
             );
-            self.out.push(with_witness(
-                error(
-                    codes::MISSING_INTERFACE_LINK,
-                    format!("interface {name:?} requires link {id:?}, but {found}"),
-                    at,
-                ),
-                crate::DiagnosticWitness::core_link(child_name, name, id, expected, actual),
+            self.out.push(link_witness::missing_interface_link(
+                child_name, name, id, &found, expected, actual, at,
             ));
             return;
         };
-        let actual = format_link_contract(&decl.link.target, decl.link.cardinality);
+        let actual = link_witness::format_link_contract(&decl.link.target, decl.link.cardinality);
         if self.target_narrows(&decl.link.target, &requirement.target) == Some(false) {
-            self.out.push(with_witness(
-                error(
-                    codes::INTERFACE_LINK_TARGET_MISMATCH,
-                    format!(
-                        "link {id:?} does not target {:?}, which interface {name:?} requires, or a narrowing of it",
-                        requirement.target.as_str()
-                    ),
-                    at.clone(),
-                ),
-                crate::DiagnosticWitness::core_link(
-                    child_name,
-                    name,
-                    id,
-                    expected.clone(),
-                    actual.clone(),
-                ),
+            self.out.push(link_witness::interface_link_target_mismatch(
+                child_name,
+                name,
+                id,
+                &requirement.target,
+                expected.clone(),
+                actual.clone(),
+                at.clone(),
             ));
         }
         if !cardinality_narrows(decl.link.cardinality, requirement.cardinality) {
-            self.out.push(with_witness(
-                error(
-                    codes::INTERFACE_LINK_WIDENS_CARDINALITY,
-                    format!("link {id:?} has a wider cardinality than interface {name:?} requires"),
-                    at,
-                ),
-                crate::DiagnosticWitness::core_link(child_name, name, id, expected, actual),
-            ));
+            self.out
+                .push(link_witness::interface_link_widens_cardinality(
+                    child_name, name, id, expected, actual, at,
+                ));
         }
     }
 
     /// Why the requirements for one link id cannot be met by one link: a
     /// property requirement shares the id, or two targets are object types
     /// unrelated by inheritance. Cardinalities always meet (the narrowest).
-    fn link_requirement_conflict(
+    pub(super) fn link_requirement_conflict(
         &self,
         group: &[LinkRequirement<'a>],
         properties: &[(Option<usize>, &'a InterfaceDef)],
@@ -1219,88 +1101,6 @@ impl<'a> Checker<'a, '_> {
     }
 
     // ----- invariants --------------------------------------------------------
-
-    pub(super) fn check_interface_parent_links(&mut self, base: &[&str], def: &'a InterfaceDef) {
-        let lineage = self.interface_lineage(def);
-        let mut groups: BTreeMap<&str, Vec<LinkRequirement<'a>>> = BTreeMap::new();
-        for owner in &lineage {
-            for link in &owner.links {
-                groups
-                    .entry(link.id.as_str())
-                    .or_default()
-                    .push((Some(0), owner, link));
-            }
-        }
-        for (id, group) in groups {
-            let properties: Vec<_> = lineage
-                .iter()
-                .filter(|owner| {
-                    owner
-                        .properties
-                        .iter()
-                        .any(|property| property.id.as_str() == id)
-                })
-                .map(|owner| (Some(0), *owner))
-                .collect();
-            let conflict = self.link_requirement_conflict(&group, &properties);
-            let widened = group.iter().find_map(|(_, child, link)| {
-                if child.name != def.name {
-                    return None;
-                }
-                group.iter().find_map(|(_, parent, requirement)| {
-                    (parent.name != def.name
-                        && (self.target_narrows(&link.target, &requirement.target) == Some(false)
-                            || !cardinality_narrows(link.cardinality, requirement.cardinality)))
-                    .then(|| {
-                        (
-                            parent.name.as_str(),
-                            format_link_contract(&requirement.target, requirement.cardinality),
-                            format_link_contract(&link.target, link.cardinality),
-                        )
-                    })
-                })
-            });
-            if let Some(reason) = conflict {
-                let parent_name = group
-                    .iter()
-                    .find(|(_, owner, _)| owner.name != def.name)
-                    .map_or(def.name.as_str(), |(_, owner, _)| owner.name.as_str());
-                self.out.push(with_witness(
-                    error(
-                        crate::interfaces::codes::INVALID_INHERITANCE,
-                        reason.clone(),
-                        span_at(base, &["extends"]),
-                    ),
-                    crate::DiagnosticWitness::core_link(
-                        def.name.as_str(),
-                        parent_name,
-                        id,
-                        "jointly satisfiable inherited link requirements",
-                        reason,
-                    ),
-                ));
-            } else if let Some((parent_name, expected, actual)) = widened {
-                self.out.push(with_witness(
-                    error(
-                        crate::interfaces::codes::INVALID_INHERITANCE,
-                        format!(
-                            "interface {:?} redeclares link {id:?} with a wider contract than parent {:?} (expected {expected}, got {actual})",
-                            def.name.as_str(),
-                            parent_name
-                        ),
-                        span_at(base, &["extends"]),
-                    ),
-                    crate::DiagnosticWitness::core_link(
-                        def.name.as_str(),
-                        parent_name,
-                        id,
-                        expected,
-                        actual,
-                    ),
-                ));
-            }
-        }
-    }
 
     /// Invariant ids (unique across the type's effective contract, including
     /// supertype and interface invariants), namespaces, and non-blank
@@ -1747,25 +1547,4 @@ fn property_type_has_unresolved_ref(
 enum InvariantSubject<'a> {
     Object(&'a ObjectTypeName),
     Interface(&'a InterfaceName),
-}
-
-fn format_link_contract(target: &ObjectTypeName, cardinality: LinkCardinality) -> String {
-    let to = match cardinality.to {
-        Multiplicity::One => "one",
-        Multiplicity::Many => "many",
-    };
-    let from = match cardinality.from {
-        Multiplicity::One => "one",
-        Multiplicity::Many => "many",
-    };
-    format!(
-        "target={}, to={to}, from={from}, required={}",
-        target.as_str(),
-        cardinality.required
-    )
-}
-
-fn with_witness(mut diagnostic: Diagnostic, witness: crate::DiagnosticWitness) -> Diagnostic {
-    diagnostic.witness = Some(witness);
-    diagnostic
 }

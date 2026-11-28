@@ -19,10 +19,16 @@ use super::{GoverningCoreRule, codes, finding, governing_core_rules, is_core_nam
 use crate::entity_artifacts::{Decoded, decode_v2};
 use crate::entity_instance::{EffectiveKind, EffectiveLifecycle, EffectiveObjectType};
 use crate::entity_scopes::ScopedViews;
-use crate::soundness::{self, Ending, Net, NetEdge};
+use crate::soundness::{self, Completion, Ending, Net, NetEdge};
 use crate::{Diagnostic, DiagnosticWitness, WitnessMove, WitnessSide, WitnessStep};
 
 const MAX_ROWS: usize = 256;
+
+#[derive(Default)]
+struct RowEvaluation {
+    failed: Vec<String>,
+    unknown: Vec<String>,
+}
 
 struct LawfulEdge {
     from: usize,
@@ -33,6 +39,13 @@ struct LawfulEdge {
 }
 
 struct BlockedExit {
+    from: usize,
+    transition: String,
+    laws: Vec<String>,
+    fact: bool,
+}
+
+struct UnknownExit {
     from: usize,
     transition: String,
     laws: Vec<String>,
@@ -158,13 +171,14 @@ fn check_one_lifecycle(
     }
 
     let mut work = WORK_BUDGET;
-    let mut failing_by_row: Vec<Vec<String>> = Vec::with_capacity(rows.len());
+    let mut eval_by_row: Vec<RowEvaluation> = Vec::with_capacity(rows.len());
     for row in &rows {
-        let mut failed = Vec::new();
+        let mut eval = RowEvaluation::default();
         for rule in &relevant_rules {
             match evaluate_core_rule(rule, row, &mut work) {
-                Ok(true) | Err(EvalStop::Other) => {}
-                Ok(false) => failed.push(rule.id.clone()),
+                Ok(true) => {}
+                Ok(false) => eval.failed.push(rule.id.clone()),
+                Err(EvalStop::Other) => eval.unknown.push(rule.id.clone()),
                 Err(EvalStop::Budget) => {
                     findings.push(lifecycle_budget_finding(
                         artifact,
@@ -175,7 +189,7 @@ fn check_one_lifecycle(
                 }
             }
         }
-        failing_by_row.push(failed);
+        eval_by_row.push(eval);
     }
 
     if let Some(init_diag) = check_illegal_initial_states(
@@ -184,7 +198,7 @@ fn check_one_lifecycle(
         property,
         &chart.initial,
         &rows,
-        &failing_by_row,
+        &eval_by_row,
     ) {
         findings.push(init_diag);
         return;
@@ -196,7 +210,7 @@ fn check_one_lifecycle(
         .filter_map(|(idx, row)| match row.get(property) {
             Some(Value::String(state))
                 if chart.initial.contains(state)
-                    && failing_by_row.get(idx).is_some_and(Vec::is_empty) =>
+                    && eval_by_row.get(idx).is_some_and(|e| e.failed.is_empty()) =>
             {
                 Some(idx)
             }
@@ -215,12 +229,13 @@ fn check_one_lifecycle(
     let known_fields: BTreeSet<&str> = domains.keys().map(String::as_str).collect();
     let mut lawful_edges: Vec<LawfulEdge> = Vec::new();
     let mut blocked_exits: Vec<BlockedExit> = Vec::new();
+    let mut unknown_exits: Vec<UnknownExit> = Vec::new();
 
     for (from, row) in rows.iter().enumerate() {
         let Some(Value::String(state)) = row.get(property) else {
             continue;
         };
-        if !failing_by_row.get(from).is_some_and(Vec::is_empty) {
+        if !eval_by_row.get(from).is_some_and(|e| e.failed.is_empty()) {
             continue;
         }
         for transition in &chart.transitions {
@@ -248,7 +263,8 @@ fn check_one_lifecycle(
             let Some(&to) = row_index.get(&row_key(&after)) else {
                 continue;
             };
-            let post_failed = failing_by_row.get(to).cloned().unwrap_or_default();
+            let post_eval = eval_by_row.get(to);
+            let post_failed = post_eval.map_or_else(Vec::new, |e| e.failed.clone());
             if !post_failed.is_empty() {
                 if guard_status == GuardStatus::Enabled {
                     blocked_exits.push(BlockedExit {
@@ -260,7 +276,24 @@ fn check_one_lifecycle(
                 }
                 continue;
             }
+            let post_unknown = post_eval.map_or_else(Vec::new, |e| e.unknown.clone());
             let is_timer = matches!(transition.trigger, Some(TransitionTrigger::Timer { .. }));
+            if !post_unknown.is_empty() {
+                unknown_exits.push(UnknownExit {
+                    from,
+                    transition: transition.id.as_str().to_owned(),
+                    laws: post_unknown,
+                    fact: transition.is_fact(),
+                });
+                lawful_edges.push(LawfulEdge {
+                    from,
+                    to,
+                    transition: transition.id.as_str().to_owned(),
+                    input: !is_timer,
+                    guarded_unknown: true,
+                });
+                continue;
+            }
             lawful_edges.push(LawfulEdge {
                 from,
                 to,
@@ -271,11 +304,11 @@ fn check_one_lifecycle(
         }
     }
 
-    if blocked_exits.is_empty() {
+    if blocked_exits.is_empty() && unknown_exits.is_empty() {
         return;
     }
 
-    report_blocked_exits(
+    report_lifecycle_exits(
         artifact,
         effective.name.as_str(),
         property,
@@ -284,6 +317,7 @@ fn check_one_lifecycle(
         initial,
         &lawful_edges,
         &blocked_exits,
+        &unknown_exits,
         findings,
     );
 }
@@ -294,22 +328,44 @@ fn check_illegal_initial_states(
     property: &str,
     initial_states: &[String],
     rows: &[BTreeMap<String, Value>],
-    failing_by_row: &[Vec<String>],
+    eval_by_row: &[RowEvaluation],
 ) -> Option<Diagnostic> {
     for init_state in initial_states {
-        let any_legal = rows.iter().enumerate().any(|(idx, row)| {
+        let any_proved_legal = rows.iter().enumerate().any(|(idx, row)| {
             row.get(property) == Some(&Value::String(init_state.clone()))
-                && failing_by_row.get(idx).is_some_and(Vec::is_empty)
+                && eval_by_row
+                    .get(idx)
+                    .is_some_and(|e| e.failed.is_empty() && e.unknown.is_empty())
         });
-        if !any_legal
-            && let Some((idx, row)) = rows
-                .iter()
-                .enumerate()
-                .find(|(_, row)| row.get(property) == Some(&Value::String(init_state.clone())))
-            && let Some(laws) = failing_by_row.get(idx)
-            && !laws.is_empty()
+        if any_proved_legal {
+            continue;
+        }
+        if let Some((idx, _)) = rows.iter().enumerate().find(|(idx, row)| {
+            row.get(property) == Some(&Value::String(init_state.clone()))
+                && eval_by_row
+                    .get(*idx)
+                    .is_some_and(|e| e.failed.is_empty() && !e.unknown.is_empty())
+        }) && let Some(eval) = eval_by_row.get(idx)
         {
-            let core_law_id = laws.join(", ");
+            let core_law_id = eval.unknown.join(", ");
+            return Some(finding(
+                codes::PRESERVATION_UNKNOWN,
+                artifact,
+                "/payload/objectType/lifecycles",
+                format!(
+                    "initial lifecycle state {init_state:?} on {object_type:?}.{property} could not be statically evaluated against governing core law(s) {core_law_id:?}"
+                ),
+                None,
+            ));
+        }
+        if let Some((idx, row)) = rows
+            .iter()
+            .enumerate()
+            .find(|(_, row)| row.get(property) == Some(&Value::String(init_state.clone())))
+            && let Some(eval) = eval_by_row.get(idx)
+            && !eval.failed.is_empty()
+        {
+            let core_law_id = eval.failed.join(", ");
             let detail = format!(
                 "initial lifecycle state {init_state:?} on {object_type:?}.{property} violates governing core law(s) {core_law_id:?}"
             );
@@ -337,9 +393,10 @@ fn check_illegal_initial_states(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "maps soundness verdict and shortest witnesses to preservation diagnostics"
+    clippy::too_many_lines,
+    reason = "maps soundness verdict and shortest witnesses to concrete or unknown preservation diagnostics"
 )]
-fn report_blocked_exits(
+fn report_lifecycle_exits(
     artifact: &ArtifactEnvelope,
     object_type: &str,
     property: &str,
@@ -348,6 +405,7 @@ fn report_blocked_exits(
     initial: Vec<usize>,
     lawful_edges: &[LawfulEdge],
     blocked_exits: &[BlockedExit],
+    unknown_exits: &[UnknownExit],
     findings: &mut Vec<Diagnostic>,
 ) {
     let ending = |state: &str| match chart
@@ -411,6 +469,25 @@ fn report_blocked_exits(
         }
         let law_blocked_stuck = outcome.stuck();
         if !law_blocked_stuck && !blocked.fact {
+            if outcome.completion == Completion::Unknown
+                && reported_rows.insert((blocked.from, blocked.transition.as_str()))
+            {
+                let state_label = rows
+                    .get(blocked.from)
+                    .and_then(|r| r.get(property))
+                    .map_or_else(String::new, expr_value_to_string);
+                let core_law_id = blocked.laws.join(", ");
+                findings.push(finding(
+                    codes::PRESERVATION_UNKNOWN,
+                    artifact,
+                    "/payload/objectType/lifecycles",
+                    format!(
+                        "reachable state {property}={state_label} on {object_type:?} has transition {:?} blocked by core law(s) {core_law_id:?} and no proved lawful exit (remaining exits are unevaluated or conditionally guarded)",
+                        blocked.transition
+                    ),
+                    None,
+                ));
+            }
             continue;
         }
         if !reported_rows.insert((blocked.from, blocked.transition.as_str())) {
@@ -469,6 +546,33 @@ fn report_blocked_exits(
                 trace,
                 detail,
             )),
+        ));
+    }
+
+    for unknown in unknown_exits {
+        let Some(outcome) = verdict.states.get(unknown.from) else {
+            continue;
+        };
+        if !outcome.reachable || (outcome.completion == Completion::Must && !unknown.fact) {
+            continue;
+        }
+        if !reported_rows.insert((unknown.from, unknown.transition.as_str())) {
+            continue;
+        }
+        let state_label = rows
+            .get(unknown.from)
+            .and_then(|r| r.get(property))
+            .map_or_else(String::new, expr_value_to_string);
+        let core_law_id = unknown.laws.join(", ");
+        findings.push(finding(
+            codes::PRESERVATION_UNKNOWN,
+            artifact,
+            "/payload/objectType/lifecycles",
+            format!(
+                "reachable state {property}={state_label} on {object_type:?} has no proved lawful exit: destination of transition {:?} could not be statically evaluated against governing core law(s) {core_law_id:?}",
+                unknown.transition
+            ),
+            None,
         ));
     }
 }
