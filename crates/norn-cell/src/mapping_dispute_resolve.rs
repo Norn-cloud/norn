@@ -492,9 +492,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     }
 
     /// Whether `row` is a synthetic carry-forward claim written by a prior
-    /// `DisputeDecision::Reject` or `DisputeDecision::AcceptFirst` carry release.
-    /// Synthetic carry claims hold no source version authority of their own;
-    /// version and dispute checks delegate to their surviving real predecessors.
+    /// `DisputeDecision::Reject`. Synthetic carry claims hold no source version
+    /// authority of their own; version and dispute checks delegate to their
+    /// surviving real predecessors.
     pub(crate) fn is_reject_carry_claim(
         &self,
         row: &crate::link_claim_frontier::FrontierRow,
@@ -503,7 +503,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             || row.claim.observation_id.starts_with("mapping-identity:"))
             && self
                 .dispute_resolution(&row.claim.observation_id)?
-                .is_some_and(|rec| rec.decision == "reject" || rec.decision == "accept-first"))
+                .is_some_and(|rec| rec.decision == "reject"))
     }
 
     /// Compute the exact [`LinkPlan`] for resolving `dispute` with `decision`
@@ -526,6 +526,12 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let active_event_claims = self.disputed_event_claims(&event_keys)?;
         for row in &active_event_claims {
             scope.sources.insert(row.claim.source_key.clone());
+            let exclusive = model
+                .link(&row.claim.source_type, row.claim.role.as_str())
+                .is_none_or(|link| link.cardinality.from == norn_ir::Multiplicity::One);
+            if let Some(target) = row.claim.target.as_ref().filter(|_| exclusive) {
+                scope.targets.insert(target.key.clone());
+            }
         }
         for record in &incoming.records {
             scope.sources.insert(record.key.clone());
@@ -549,13 +555,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         }
 
         let fresh_claims = match decision {
-            DisputeDecision::AcceptFirst => self.accept_first_carry_release_claims(
-                dispute_id,
-                &event_keys,
-                &active_event_claims,
-                model,
-                &mut scope,
-            )?,
+            DisputeDecision::AcceptFirst => Vec::new(),
             DisputeDecision::AcceptSecondAsCorrection => self.correction_fresh_claims(
                 dispute_id,
                 incoming,
@@ -705,13 +705,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 all_active,
                 &supersedes,
             )?;
-            let mut any_disputed = false;
+            let mut disputed_predecessor_keys = None;
             for r in &surviving {
-                if self
-                    .event_dispute_for_keys(&r.event_keys, Some(dispute_id))?
-                    .is_some()
-                {
-                    any_disputed = true;
+                if self.event_keys_disputed(&r.event_keys, Some(dispute_id))? {
+                    disputed_predecessor_keys = Some(r.event_keys.clone());
                     break;
                 }
             }
@@ -724,7 +721,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                         .map(|t| (t.object_type.clone(), t.key.clone()))
                 })
                 .collect();
-            let replacement_target = if !any_disputed && surviving_targets.len() == 1 {
+            let replacement_target = if surviving_targets.len() == 1 {
                 surviving.first().and_then(|r| r.claim.target.clone())
             } else {
                 None
@@ -747,7 +744,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     provenance: first.claim.provenance.clone(),
                     supersedes,
                 },
-                event_keys.clone(),
+                disputed_predecessor_keys.unwrap_or_else(|| event_keys.clone()),
             ));
         }
         Ok(fresh_claims)

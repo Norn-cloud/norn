@@ -3644,7 +3644,7 @@ fn accept_first_carry_release_does_not_inherit_rejected_candidate_version() {
     land_party(&mut cell, &a_v2, "e2", "2", "p1");
     let conflict_v2 = inject_conflict(&mut cell, &a_v2_bad, "e2", "2", "p1");
 
-    // Rejecting v2 while v1 is disputed holds A -> B.
+    // Rejecting v2 while v1 is disputed holds A -> B and emits core.boundary.link_held.
     resolve_dispute(
         &mut cell,
         &conflict_v2,
@@ -3653,6 +3653,14 @@ fn accept_first_carry_release_does_not_inherit_rejected_candidate_version() {
         "reject v2",
     );
     assert!(refers_targets(&cell, "demo/party/a").is_empty());
+    let held_after_reject = held_link_findings(&cell, "canon.Party", "demo/party/a");
+    assert_eq!(held_after_reject.len(), 1);
+    assert!(
+        held_after_reject[0]
+            .provenance
+            .iter()
+            .any(|p| p.observation_ids.contains(&conflict_v1))
+    );
 
     // Accepting v1 releases A -> B without inheriting the rejected v9 version.
     resolve_dispute(
@@ -3666,6 +3674,7 @@ fn accept_first_carry_release_does_not_inherit_rejected_candidate_version() {
         refers_targets(&cell, "demo/party/a"),
         BTreeSet::from(["demo/party/b".to_owned()])
     );
+    assert!(held_link_findings(&cell, "canon.Party", "demo/party/a").is_empty());
 
     // A valid v3 must supersede the restored v1 link cleanly.
     land_party(&mut cell, &a_v3, "e3", "3", "p1");
@@ -3676,7 +3685,8 @@ fn accept_first_carry_release_does_not_inherit_rejected_candidate_version() {
 }
 
 /// #1549 (OBS-LINK-DISPUTE-1): A pending link restored by rejecting v2 must
-/// stay held when its target B arrives if predecessor v1 has since been disputed.
+/// stay held and emit `core.boundary.link_held` when its target B arrives if
+/// predecessor v1 has since been disputed.
 #[test]
 fn restored_pending_claim_holds_edge_on_target_arrival_when_predecessor_disputed() {
     let dir = tempfile::tempdir().expect("dir");
@@ -3701,7 +3711,7 @@ fn restored_pending_claim_holds_edge_on_target_arrival_when_predecessor_disputed
         "reject v2",
     );
 
-    // Dispute v1 before B arrives, then land B: A -> B must stay held.
+    // Dispute v1 before B arrives, then land B: A -> B must stay held with a finding.
     let conflict_v1 = inject_conflict(&mut cell, &a_v1_bad, "e1", "1", "p1");
     let b = party_ref_row("P-B", "demo/party/b", "B", None);
     land_party(&mut cell, &b, "eb", "1", "p1");
@@ -3709,8 +3719,16 @@ fn restored_pending_claim_holds_edge_on_target_arrival_when_predecessor_disputed
         refers_targets(&cell, "demo/party/a").is_empty(),
         "target arrival must hold A -> B while restored predecessor v1 is disputed"
     );
+    let held_after_b = held_link_findings(&cell, "canon.Party", "demo/party/a");
+    assert_eq!(held_after_b.len(), 1);
+    assert!(
+        held_after_b[0]
+            .provenance
+            .iter()
+            .any(|p| p.observation_ids.contains(&conflict_v1))
+    );
 
-    // Accepting v1 releases the held A -> B edge.
+    // Accepting v1 releases the held A -> B edge and clears the finding.
     resolve_dispute(
         &mut cell,
         &conflict_v1,
@@ -3722,4 +3740,60 @@ fn restored_pending_claim_holds_edge_on_target_arrival_when_predecessor_disputed
         refers_targets(&cell, "demo/party/a"),
         BTreeSet::from(["demo/party/b".to_owned()])
     );
+    assert!(held_link_findings(&cell, "canon.Party", "demo/party/a").is_empty());
+}
+
+/// #1549 (OBS-LINK-DISPUTE-1): When a reject-carry restores two surviving
+/// predecessors that both target B and are both disputed, BOTH unindexed and
+/// indexed `core.boundary.link_held` findings include both disputes in lineage
+/// and agree on evidence_digest.
+#[test]
+fn held_link_finding_retains_all_disputed_surviving_predecessors() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("multi_disputed_predecessors.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    land_party(&mut cell, &b, "eb", "1", "p1");
+    land_party(&mut cell, &c, "ec", "1", "p1");
+
+    let a_v1a = party_ref_row("P-A", "demo/party/a", "A v1a", Some("demo/party/b"));
+    let a_v1b = party_ref_row("P-A", "demo/party/a", "A v1b", Some("demo/party/b"));
+    let a_v1a_bad = party_ref_row("P-A", "demo/party/a", "A v1a BAD", Some("demo/party/c"));
+    let a_v1b_bad = party_ref_row("P-A", "demo/party/a", "A v1b BAD", Some("demo/party/c"));
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", Some("demo/party/c"));
+    let a_v2_bad = party_ref_row("P-A", "demo/party/a", "A v2 BAD", Some("demo/party/c"));
+    land_party(&mut cell, &a_v1a, "e1a", "1", "p1");
+    land_party(&mut cell, &a_v1b, "e1b", "1", "p1");
+    let conflict_1a = inject_conflict(&mut cell, &a_v1a_bad, "e1a", "1", "p1");
+    let conflict_1b = inject_conflict(&mut cell, &a_v1b_bad, "e1b", "1", "p1");
+    land_party(&mut cell, &a_v2, "e2", "2", "p1");
+    let conflict_v2 = inject_conflict(&mut cell, &a_v2_bad, "e2", "2", "p1");
+    resolve_dispute(
+        &mut cell,
+        &conflict_v2,
+        DisputeDecision::Reject,
+        "ops:a",
+        "reject v2",
+    );
+
+    assert!(refers_targets(&cell, "demo/party/a").is_empty());
+    let unindexed = held_link_findings(&cell, "canon.Party", "demo/party/a");
+    let reader = cell.store().read();
+    let indexed = reader
+        .with_source_dispute_index(|idx| {
+            reader.held_link_findings_in_index("canon.Party", "demo/party/a", idx)
+        })
+        .expect("index")
+        .expect("indexed findings");
+    assert_eq!(unindexed.len(), 1);
+    assert_eq!(unindexed, indexed);
+    let obs_ids: BTreeSet<&str> = unindexed[0]
+        .provenance
+        .iter()
+        .flat_map(|p| p.observation_ids.iter().map(String::as_str))
+        .collect();
+    assert!(obs_ids.contains(conflict_1a.as_str()));
+    assert!(obs_ids.contains(conflict_1b.as_str()));
 }

@@ -418,14 +418,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             Some(idx) => active_rows
                 .into_iter()
                 .map(|row| {
-                    let dk = self.row_disputed_event_keys_in_index(&row, idx)?;
-                    let disputed = dk.is_some();
+                    let disputed = self.row_is_disputed_in_index(&row, idx)?;
                     Ok(Entry {
                         disputed,
                         claim: row.claim,
                         id: row.claim_id,
                         contribution: row.contribution_id,
-                        event_keys: dk.unwrap_or(row.event_keys),
+                        event_keys: row.event_keys,
                         fresh: false,
                     })
                 })
@@ -470,15 +469,21 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 {
                     continue;
                 }
-                let dispute = match index {
-                    Some(idx) => idx.events.get(&entry.event_keys).cloned(),
-                    None => self.event_dispute_for_keys(&entry.event_keys, None)?,
-                };
-                let Some(dispute) = dispute else { continue };
-                held.entry(model.canonical_link(&link))
-                    .or_insert_with(|| (link, Vec::new()))
-                    .1
-                    .push((entry, dispute));
+                let disputes = self.entry_open_disputes(
+                    &entry.contribution,
+                    &entry.claim.observation_id,
+                    &entry.event_keys,
+                    index,
+                )?;
+                if disputes.is_empty() {
+                    continue;
+                }
+                let slot = held
+                    .entry(model.canonical_link(&link))
+                    .or_insert_with(|| (link, Vec::new()));
+                for dispute in disputes {
+                    slot.1.push((entry, dispute));
+                }
             }
         }
         let mut findings = Vec::with_capacity(held.len());
@@ -662,13 +667,12 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let mut entries = Vec::with_capacity(rows.len());
         for row in rows {
             verify_frontier_row_meta(self, &row)?;
-            let dk = self.row_disputed_event_keys(&row, excluding_dispute)?;
-            let disputed = dk.is_some();
+            let disputed = self.row_is_disputed(&row, excluding_dispute)?;
             entries.push(Entry {
                 claim: row.claim,
                 id: row.claim_id,
                 contribution: row.contribution_id,
-                event_keys: dk.unwrap_or(row.event_keys),
+                event_keys: row.event_keys,
                 fresh: false,
                 disputed,
             });
