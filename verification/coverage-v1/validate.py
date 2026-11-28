@@ -804,12 +804,12 @@ jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
   .base_sha == $base and .head_sha == $head and
   (.shard | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
   (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
-  (.bundle | type == "array" and length >= 1 and length <= 8 and all(.[];
+  (.bundle | type == "array" and length >= 1 and length <= 10 and all(.[];
     type == "object" and (.id | type == "string" and length > 0) and
     (.tasks | type == "array" and length > 0 and all(.[]; type == "string"))) and
     (map(.id) | length) == (map(.id) | unique | length)) and
   ([.bundle[].tasks[]] | sort) == ([(.shard[] | "test/" + .), (.phase[] | "phase/" + .)] | sort) and
-  (.mode != "cache-warm" or ((.packages == null or .packages == "") and .shard == [] and .phase == ["cache-warm-test", "cache-warm-guard", "cache-warm-clippy", "cache-warm-doc", "cache-warm-wasm", "cache-warm-wasm-pkg", "cache-warm-duckdb", "cache-warm-rivet"] and .bundle == [{"id": "b0", "tasks": ["phase/cache-warm-test", "phase/cache-warm-guard", "phase/cache-warm-clippy", "phase/cache-warm-doc", "phase/cache-warm-wasm", "phase/cache-warm-wasm-pkg", "phase/cache-warm-duckdb", "phase/cache-warm-rivet"]}]))
+  (.mode != "cache-warm" or ((.packages == null or .packages == "") and .shard == [] and .phase == ["cache-warm-test", "cache-warm-guard", "cache-warm-clippy", "cache-warm-doc", "cache-warm-wasm", "cache-warm-wasm-pkg", "cache-warm-duckdb", "cache-warm-rivet", "cache-warm-features"] and .bundle == [{"id": "b0", "tasks": ["phase/cache-warm-test", "phase/cache-warm-guard", "phase/cache-warm-clippy", "phase/cache-warm-doc", "phase/cache-warm-wasm", "phase/cache-warm-wasm-pkg", "phase/cache-warm-duckdb", "phase/cache-warm-rivet", "phase/cache-warm-features"]}]))
 ' <<<"$PLAN" >/dev/null || { echo "Malformed or unbound gate plan"; exit 1; }
 [ "$CORE" = success ] || { echo "core $CORE"; exit 1; }
 mode=$(jq -er .mode <<<"$PLAN")
@@ -900,8 +900,72 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
             "authoring inventory: only test/engine-alpha.test.ts may be skip-allowed")
     # Studio browser rows (#1113): never a silent pass. Tests without a config fail, and so
     # does a config whose match lists no tests.
-    browser = '    browser)\n      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n      # checker WASM package built into apps/studio/src/checker. Without a config there is\n      # nothing to run; browser tests without a config are a broken setup, never a skip.\n      if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n        if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n          printf \'browser: apps/studio/e2e has browser tests but no playwright.config\\n\' >&2\n          exit 1\n        fi\n        printf \'::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\'\n        return 0\n      fi\n      # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n      # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n      local wasm_lib\n      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n        printf \'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n        exit 1\n      fi\n      ensure_checker_wasm_pkg "$PWD/apps/studio/src/checker"\n      ensure_checker_wasm_engine "$PWD/apps/studio/src/engine"\n      # The live workspace rows (e2e/pack-workspace.ts) run a registry pack on the real native\n      # dev host; they fail without it here, never skip.\n      cargo build --locked -p norn-cli --bin norn -p norn-cell-do --bin norn-dev-host\n      export NORN_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn"\n      export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn-dev-host"\n      (cd tools/norn-ts && bun install --frozen-lockfile --ignore-scripts --backend copyfile)\n      (\n        cd apps/studio\n        bun install --frozen-lockfile --ignore-scripts --backend copyfile\n        # The checker-admission cases need the WASM package built above, so they run here,\n        # not in the cheap phase, and are required: a missing package fails them, never skips.\n        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf \'%s\\n\' "$decision"; exit 1; }\n        printf \'%s\\n\' "$decision"\n        # The step proves nothing unless that named case ran and passed: skipped, renamed or deleted fails.\n        grep -qxE \'\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]\' <<< "$decision" || { printf \'browser: the checker-admission case did not run and pass\\n\' >&2; exit 1; }\n        canvas=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/canvas.test.ts 2>&1) || { printf \'%s\\n\' "$canvas"; exit 1; }\n        printf \'%s\\n\' "$canvas"\n        grep -qxE \'\\(pass\\) the checker finds the stuck state a deleted step leaves \\[[0-9.]+m?s\\]\' <<< "$canvas" || { printf \'browser: the checker-backed canvas case did not run and pass\\n\' >&2; exit 1; }\n        bun run build\n        # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n        listed=$(bunx playwright test --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n        [[ ${listed:-0} -gt 0 ]] || { printf \'browser: Playwright lists no tests\\n\' >&2; exit 1; }\n        # A suite of only skipped rows must fail too: require at least one executed test.\n        report="$upstream/playwright.json"\n        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --forbid-only --reporter=list,json\n        ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n        [[ $ran -gt 0 ]] || { printf \'browser: Playwright ran no tests (every row skipped)\\n\' >&2; exit 1; }\n      )\n      ;;\n'
-    require(runner.count(browser) == 1 and re.search(r"^phases=\(.* browser .*\)$", runner, re.MULTILINE) is not None,
+    browser_helper = (
+        'run_browser_shard() {\n'
+        '  local shard_index=$1 shard_total=$2\n'
+        '  # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n'
+        '  # checker WASM package built into apps/studio/src/checker. Without a config there is\n'
+        '  # nothing to run; browser tests without a config are a broken setup, never a skip.\n'
+        '  if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n'
+        '    if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n'
+        '      printf \'browser-%s: apps/studio/e2e has browser tests but no playwright.config\\n\' "$shard_index" >&2\n'
+        '      exit 1\n'
+        '    fi\n'
+        '    printf \'::notice::browser-%s: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\' "$shard_index"\n'
+        '    return 0\n'
+        '  fi\n'
+        '  # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n'
+        '  # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n'
+        '  local wasm_lib\n'
+        '  wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n'
+        '  if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n'
+        '    printf \'browser-%s: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$shard_index" "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n'
+        '    exit 1\n'
+        '  fi\n'
+        '  ensure_checker_wasm_pkg "$PWD/apps/studio/src/checker"\n'
+        '  ensure_checker_wasm_engine "$PWD/apps/studio/src/engine"\n'
+        '  # The live workspace rows (e2e/pack-workspace.ts) run a registry pack on the real native\n'
+        '  # dev host; they fail without it here, never skip.\n'
+        '  cargo build --locked -p norn-cli --bin norn -p norn-cell-do --bin norn-dev-host\n'
+        '  export NORN_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn"\n'
+        '  export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn-dev-host"\n'
+        '  (cd tools/norn-ts && bun install --frozen-lockfile --ignore-scripts --backend copyfile)\n'
+        '  (\n'
+        '    cd apps/studio\n'
+        '    bun install --frozen-lockfile --ignore-scripts --backend copyfile\n'
+        '    if [[ $shard_index -eq 1 ]]; then\n'
+        '      # The checker-admission cases need the WASM package built above, so they run here,\n'
+        '      # not in the cheap phase, and are required: a missing package fails them, never skips.\n'
+        '      decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf \'%s\\n\' "$decision"; exit 1; }\n'
+        '      printf \'%s\\n\' "$decision"\n'
+        '      # The step proves nothing unless that named case ran and passed: skipped, renamed or deleted fails.\n'
+        '      grep -qxE \'\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]\' <<< "$decision" || { printf \'browser-1: the checker-admission case did not run and pass\\n\' >&2; exit 1; }\n'
+        '      canvas=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/canvas.test.ts 2>&1) || { printf \'%s\\n\' "$canvas"; exit 1; }\n'
+        '      printf \'%s\\n\' "$canvas"\n'
+        '      grep -qxE \'\\(pass\\) the checker finds the stuck state a deleted step leaves \\[[0-9.]+m?s\\]\' <<< "$canvas" || { printf \'browser-1: the checker-backed canvas case did not run and pass\\n\' >&2; exit 1; }\n'
+        '    fi\n'
+        '    bun run build\n'
+        '    # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n'
+        '    listed=$(bunx playwright test --shard="$shard_index/$shard_total" --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n'
+        '    [[ ${listed:-0} -gt 0 ]] || { printf \'browser-%s: Playwright lists no tests\\n\' "$shard_index" >&2; exit 1; }\n'
+        '    # A suite of only skipped rows must fail too: require at least one executed test.\n'
+        '    report="$upstream/playwright-$shard_index.json"\n'
+        '    PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --shard="$shard_index/$shard_total" --forbid-only --reporter=list,json\n'
+        '    ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n'
+        '    [[ $ran -gt 0 ]] || { printf \'browser-%s: Playwright ran no tests (every row skipped)\\n\' "$shard_index" >&2; exit 1; }\n'
+        '  )\n'
+        '}\n'
+    )
+    browser_phases = (
+        '    browser-1)\n'
+        '      run_browser_shard 1 2\n'
+        '      ;;\n'
+        '    browser-2)\n'
+        '      run_browser_shard 2 2\n'
+        '      ;;\n'
+    )
+    require(runner.count(browser_helper) == 1 and runner.count(browser_phases) == 1
+            and re.search(r"^phases=\(.* browser-1 browser-2 .*\)$", runner, re.MULTILINE) is not None,
             "browser phase must run the Studio Playwright rows and the checker-admission test, and refuse missing or empty tests")
     # The Rust parity tests (crates/norn-skeleton-guard/src/ci/mod.rs) must have run and passed in
     # the cheap phase, which every plan runs: nextest's JUnit report, not their source text.

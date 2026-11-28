@@ -2,7 +2,7 @@
 """bundle_durations: the duration table from synthetic bundle logs, no `gh` needed.
 
 - a bundle's checker WASM package is built (and charged) once, by its first WASM-package task:
-  a later `phase/browser` or `phase/integration-wasm` reuses it and logs no size report, and a
+  a later `phase/browser-1`, `phase/browser-2` or `phase/integration-wasm` reuses it and logs no size report, and a
   later `phase/integration-authoring` keeps its whole time;
 - log stamps (`...Z`) are read as UTC whatever the reader's local zone.
 """
@@ -72,9 +72,9 @@ def table(*bundles):
 
 class WasmPackageReuse(unittest.TestCase):
     def test_a_second_package_task_reuses_the_build(self):
-        result = table(bundle(("phase/browser", 350, {WASM_BUILT: 300}), ("phase/integration-wasm", 50, {})))
+        result = table(bundle(("phase/browser-1", 350, {WASM_BUILT: 300}), ("phase/integration-wasm", 50, {})))
         self.assertEqual(result["wasm_pkg_seconds"], 300)
-        self.assertEqual(result["task_seconds"]["phase/browser"], 50)
+        self.assertEqual(result["task_seconds"]["phase/browser-1"], 50)
         self.assertEqual(result["task_seconds"]["phase/integration-wasm"], 50)
         self.assertEqual(result["test_build_seconds"], 100)
         self.assertEqual(result["task_seconds"]["test/heavy-1"], 30)
@@ -86,15 +86,15 @@ class WasmPackageReuse(unittest.TestCase):
         self.assertEqual(result["task_seconds"]["phase/integration-authoring"], 500)
 
     def test_authoring_first_is_charged_the_median_build_and_the_next_task_reuses_it(self):
-        result = table(bundle(("phase/integration-authoring", 600, {}), ("phase/browser", 60, {})),
+        result = table(bundle(("phase/integration-authoring", 600, {}), ("phase/browser-2", 60, {})),
                        bundle(("phase/integration-wasm", 380, {WASM_BUILT: 300})))
         self.assertEqual(result["task_seconds"]["phase/integration-authoring"], 300)
-        self.assertEqual(result["task_seconds"]["phase/browser"], 60)
+        self.assertEqual(result["task_seconds"]["phase/browser-2"], 60)
         self.assertEqual(result["task_seconds"]["phase/integration-wasm"], 80)
 
     def test_the_first_package_task_must_log_its_build(self):
         with self.assertRaises(SystemExit):
-            table(bundle(("phase/browser", 350, {}), ("phase/integration-wasm", 50, {WASM_BUILT: 30})))
+            table(bundle(("phase/browser-1", 350, {}), ("phase/integration-wasm", 50, {WASM_BUILT: 30})))
 
     def test_guards_cold_is_netted_by_median_test_build(self):
         result = table(bundle(("phase/integration-wasm", 380, {WASM_BUILT: 300}), ("phase/guards", 340, {})))
