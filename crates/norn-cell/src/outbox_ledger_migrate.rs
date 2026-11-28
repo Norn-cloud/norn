@@ -216,8 +216,7 @@ fn backfill_v11_outbox_row<E: SqlEngine>(
         });
     }
     if consumed_seq.is_none()
-        && let Some(fenced_at) = crate::outbox_ledger::read_meta_fence(engine, &command_id)?
-        && generation <= fenced_at
+        && crate::outbox_generations::RestoreFence::load(engine, &command_id)?.blocks(generation)
     {
         records.push(OutboxRecord {
             operation: op,

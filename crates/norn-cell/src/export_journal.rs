@@ -405,9 +405,9 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// # Errors
     ///
-    /// A SQLite read failure.
+    /// A SQLite read or corrupt fence value failure.
     pub fn perform_is_fenced(&self, command_id: &str) -> Result<bool, CellError> {
-        Ok(self.perform_fence_generation(command_id)?.is_some())
+        Ok(self.restore_fence(command_id)?.is_fenced())
     }
 
     /// The generation fenced by the most recent restore, when present.
@@ -416,21 +416,15 @@ impl<E: SqlEngine> CellStore<E> {
     /// # Errors
     /// A store read or corrupt fence value.
     pub fn perform_fence_generation(&self, command_id: &str) -> Result<Option<u64>, CellError> {
+        Ok(self.restore_fence(command_id)?.generation())
+    }
+
+    /// Closed durable restore-fence state for `command_id` (`D3`).
+    pub(crate) fn restore_fence(
+        &self,
+        command_id: &str,
+    ) -> Result<crate::outbox_generations::RestoreFence, CellError> {
         self.read().check_live()?;
-        let fenced: Option<String> = self.conn.query_optional(
-            &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
-            params![format!("restore:perform_fence:{command_id}")],
-            |row| row.get(0),
-        )?;
-        fenced
-            .map(|value| {
-                value
-                    .parse::<u64>()
-                    .map_err(|error| CellError::LedgerCorrupt {
-                        seq: 0,
-                        reason: format!("invalid restore fence generation: {error}"),
-                    })
-            })
-            .transpose()
+        crate::outbox_generations::RestoreFence::load(&self.conn, command_id)
     }
 }
