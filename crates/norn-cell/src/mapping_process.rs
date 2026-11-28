@@ -628,7 +628,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
         crate::mapping_delete::prepare_mapping_deletes(
             self,
-            &bundle.deletes,
+            bundle,
             catalog,
             turn,
             commit,

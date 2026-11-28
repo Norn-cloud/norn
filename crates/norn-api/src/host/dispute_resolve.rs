@@ -38,6 +38,7 @@ impl<E: SqlEngine> DevHost<E> {
                 StatusCode::FORBIDDEN,
                 codes::AUTHZ_DENIED,
                 "dispute resolution requires an authenticated actor",
+                "mapping.dispute.resolve requires a non-empty authenticated caller identity",
             ));
         };
         if input.actor != actor_id {
@@ -45,6 +46,7 @@ impl<E: SqlEngine> DevHost<E> {
                 StatusCode::FORBIDDEN,
                 codes::AUTHZ_DENIED,
                 "dispute resolution actor must match authenticated caller",
+                "input.actor must equal the authenticated caller identity",
             ));
         }
         self.observing(|cell| cell.resolve_mapping_dispute(input))

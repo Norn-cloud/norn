@@ -225,6 +225,8 @@ pub(crate) struct Writer<'a, E: SqlEngine> {
     link_read_markings: BTreeSet<String>,
     /// True only when replaying an already-committed pre-v11 export record.
     legacy_outbox: bool,
+    /// True only when replaying an already-committed pre-v13 export record.
+    legacy_dispute_resolution: bool,
 }
 
 impl<'a, E: SqlEngine> Writer<'a, E> {
@@ -245,11 +247,17 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             catalog: std::cell::OnceCell::new(),
             link_read_markings: BTreeSet::new(),
             legacy_outbox: false,
+            legacy_dispute_resolution: false,
         }
     }
 
     pub(crate) const fn with_legacy_outbox(mut self, legacy_outbox: bool) -> Self {
         self.legacy_outbox = legacy_outbox;
+        self
+    }
+
+    pub(crate) const fn with_legacy_dispute_resolution(mut self, legacy: bool) -> Self {
+        self.legacy_dispute_resolution = legacy;
         self
     }
 
@@ -771,7 +779,9 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                         params![commit_seq, observation_id],
                     )?;
                 }
-                if observation_id.starts_with("mapping-conflict:") {
+                if observation_id.starts_with("mapping-conflict:")
+                    && !self.legacy_dispute_resolution
+                {
                     crate::link_claim_frontier::consume_superseded_conflict_bundle(
                         self.conn,
                         commit_seq,

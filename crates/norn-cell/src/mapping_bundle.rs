@@ -518,20 +518,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.derived_mapping_bundle_version(raw, input, version, Derivation::CURRENT, dv, None)
     }
 
-    /// The bundle `raw` derives under an exact `derivation` (MAP-DERIVATION-1).
-    pub(crate) fn derived_mapping_bundle(
-        &self,
-        raw: &RuntimeValue,
-        input: &MappingInput,
-        version: u64,
-        derivation: Derivation,
-        reprocesses: Option<String>,
-    ) -> Result<MappingBundle, CellError> {
-        let dv = derivation_number(derivation);
-        self.derived_mapping_bundle_version(raw, input, version, derivation, dv, reprocesses)
-    }
-
-    /// [`Self::derived_mapping_bundle`] with an explicit runtime derivation number.
+    /// Derive a bundle under an exact `derivation` and runtime derivation number (MAP-DERIVATION-1).
     pub(crate) fn derived_mapping_bundle_version(
         &self,
         raw: &RuntimeValue,

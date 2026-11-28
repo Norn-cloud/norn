@@ -57,18 +57,23 @@ pub(crate) fn derive_delete_bundle(
     }
 }
 
-/// Prepare every `MappedDelete` in `deletes` via kernel
+/// Prepare every `MappedDelete` in `bundle` via kernel
 /// [`prepare_observed_delete`] and append the resulting writes/events to
-/// `commit` and `authorization`.
+/// `commit` and `authorization`, skipping tombstones when a strictly newer
+/// source version for the same source record has already landed
+/// (`OBS-LINK-CONTRIBUTION-1` source-version ordering).
 pub(crate) fn prepare_mapping_deletes<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
-    deletes: &[MappedDelete],
+    bundle: &crate::mapping_bundle::MappingBundle,
     catalog: &TypeCatalog<'_>,
     turn: &DecisionTurn,
     commit: &mut CellCommit<ObservationEvent, RuntimeObject, RuntimeObject>,
     authorization: &mut ObservationAuthorization,
 ) -> Result<(), CellError> {
-    for delete in deletes {
+    if bundle.deletes.is_empty() || has_newer_landed_source_version(reader, bundle)? {
+        return Ok(());
+    }
+    for delete in &bundle.deletes {
         let key = FactKey::new(delete.object_type.as_str(), &delete.key);
         let slice = delete_slice(reader, &key)?;
         let prepared = prepare_observed_delete(
@@ -87,6 +92,133 @@ pub(crate) fn prepare_mapping_deletes<E: SqlEngine>(
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
     }
     Ok(())
+}
+
+/// True when any already-landed bundle or accepted correction for `bundle`'s
+/// source record (same mapping, dataset, connector instance, partition, source,
+/// and `source_id`) or active non-reject frontier claim on its deleted subjects
+/// has a strictly newer `source_version` than `bundle`.
+fn has_newer_landed_source_version<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    bundle: &crate::mapping_bundle::MappingBundle,
+) -> Result<bool, CellError> {
+    let kind = reader.bundle_version_kind(bundle)?;
+    let incoming_version = crate::mapping_links::parse_source_version(bundle, kind)?;
+    let scope = bundle.source_scope()?;
+    for delete in &bundle.deletes {
+        for row in reader.active_claims_for_source_delete(
+            &scope,
+            delete.object_type.as_str(),
+            &delete.key,
+        )? {
+            if reader.is_reject_carry_claim(&row)? {
+                continue;
+            }
+            if crate::mapping_links::parse_frontier_version(&row)
+                .and_then(|v| v.try_cmp(&incoming_version).ok())
+                == Some(std::cmp::Ordering::Greater)
+            {
+                return Ok(true);
+            }
+        }
+    }
+    let Some(source) = bundle.raw.get("source").and_then(RuntimeValue::as_str) else {
+        return Ok(false);
+    };
+    let Some(source_id) = bundle.raw.get("source_id").and_then(RuntimeValue::as_str) else {
+        return Ok(false);
+    };
+    let rows = reader.conn.query(
+        &format!(
+            "SELECT json_extract(i.\"observed\", '$.input.raw.source_version') \
+             FROM \"{inbox}\" i \
+             WHERE i.\"consumed_commit_seq\" IS NOT NULL \
+               AND substr(i.\"observation_id\", 1, 15) = 'mapping-bundle:' \
+               AND json_extract(i.\"observed\", '$.input.input.mapping') = ?1 \
+               AND json_extract(i.\"observed\", '$.input.input.dataset') = ?2 \
+               AND json_extract(i.\"observed\", '$.input.input.connectorInstance') = ?3 \
+               AND json_extract(i.\"observed\", '$.input.input.partition') = ?4 \
+               AND json_extract(i.\"observed\", '$.input.raw.source') = ?5 \
+               AND json_extract(i.\"observed\", '$.input.raw.source_id') = ?6 \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM \"{res}\" r WHERE r.\"commit_seq\" = i.\"consumed_commit_seq\" \
+               )",
+            inbox = crate::system::INBOX,
+            res = crate::link_claim_frontier::DISPUTE_RESOLUTION,
+        ),
+        crate::engine::params![
+            bundle.input.mapping.as_str(),
+            bundle.input.dataset.as_str(),
+            bundle.input.connector_instance.as_str(),
+            bundle.input.partition.as_str(),
+            source,
+            source_id,
+        ],
+    )?;
+    for raw in rows {
+        let ver: Option<String> = crate::engine::SqlRow(raw).get(0)?;
+        if let Some(ver) = ver
+            && let Ok(parsed) = norn_ir::SourceVersion::parse(kind, &ver)
+            && parsed.try_cmp(&incoming_version).ok() == Some(std::cmp::Ordering::Greater)
+        {
+            return Ok(true);
+        }
+    }
+    let corrected_rows = reader.conn.query(
+        &format!(
+            "SELECT COALESCE( \
+                 json_extract(i.\"observed\", '$.input.incoming.raw.source_version'), \
+                 json_extract(i.\"observed\", '$.input.bundle.raw.source_version') \
+             ) \
+             FROM \"{inbox}\" i \
+             JOIN \"{res}\" r ON r.\"dispute_id\" = i.\"observation_id\" \
+             WHERE r.\"decision\" = 'accept-second-as-correction' \
+               AND COALESCE( \
+                   json_extract(i.\"observed\", '$.input.incoming.input.mapping'), \
+                   json_extract(i.\"observed\", '$.input.bundle.input.mapping') \
+               ) = ?1 \
+               AND COALESCE( \
+                   json_extract(i.\"observed\", '$.input.incoming.input.dataset'), \
+                   json_extract(i.\"observed\", '$.input.bundle.input.dataset') \
+               ) = ?2 \
+               AND COALESCE( \
+                   json_extract(i.\"observed\", '$.input.incoming.input.connectorInstance'), \
+                   json_extract(i.\"observed\", '$.input.bundle.input.connectorInstance') \
+               ) = ?3 \
+               AND COALESCE( \
+                   json_extract(i.\"observed\", '$.input.incoming.input.partition'), \
+                   json_extract(i.\"observed\", '$.input.bundle.input.partition') \
+               ) = ?4 \
+               AND COALESCE( \
+                   json_extract(i.\"observed\", '$.input.incoming.raw.source'), \
+                   json_extract(i.\"observed\", '$.input.bundle.raw.source') \
+               ) = ?5 \
+               AND COALESCE( \
+                   json_extract(i.\"observed\", '$.input.incoming.raw.source_id'), \
+                   json_extract(i.\"observed\", '$.input.bundle.raw.source_id') \
+               ) = ?6",
+            inbox = crate::system::INBOX,
+            res = crate::link_claim_frontier::DISPUTE_RESOLUTION,
+        ),
+        crate::engine::params![
+            bundle.input.mapping.as_str(),
+            bundle.input.dataset.as_str(),
+            bundle.input.connector_instance.as_str(),
+            bundle.input.partition.as_str(),
+            source,
+            source_id,
+        ],
+    )?;
+    for raw in corrected_rows {
+        let ver: Option<String> = crate::engine::SqlRow(raw).get(0)?;
+        if let Some(ver) = ver
+            && let Ok(parsed) = norn_ir::SourceVersion::parse(kind, &ver)
+            && parsed.try_cmp(&incoming_version).ok() == Some(std::cmp::Ordering::Greater)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn delete_slice<E: SqlEngine>(

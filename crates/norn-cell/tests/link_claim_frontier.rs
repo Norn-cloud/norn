@@ -147,64 +147,58 @@ fn edit_artifact(artifacts: &mut [ArtifactEnvelope], id: &str, edit: impl FnOnce
         .iter_mut()
         .find(|a| a.artifact_id == id)
         .expect("artifact");
-    let mut payload = artifact.payload.to_json_value();
-    edit(&mut payload);
-    artifact.payload = RuntimeValue::from_json(payload).expect("payload");
+    let mut wire = serde_json::to_value(&*artifact).expect("wire");
+    edit(&mut wire);
+    *artifact = serde_json::from_value(wire).expect("edited fixture declaration");
 }
 
-fn referring_parties(artifacts: &mut [ArtifactEnvelope]) {
-    edit_artifact(artifacts, "canon.Party", |payload| {
-        payload["links"] = json!([{
+fn referring_parties(artifacts: &mut Vec<ArtifactEnvelope>) {
+    edit_artifact(artifacts, "canon.Party.entity", |a| {
+        a["payload"]["objectType"]["links"] = json!([{
             "id": "refers",
             "target": "canon.Party",
             "cardinality": { "from": "many", "to": "many" }
         }]);
     });
-    edit_artifact(artifacts, "erpnext.three.source", |payload| {
-        payload["datasets"]
+    edit_artifact(artifacts, "erpnext.three.mapping", |a| {
+        let map = a["payload"]["maps"]
             .as_array_mut()
-            .expect("datasets")
-            .push(json!({
-                "id": "PartyRef",
-                "record": {
-                    "type": "record",
-                    "fields": {
-                        "name": { "type": "string", "required": true },
-                        "custom_norn_ref": { "type": "string", "required": true },
-                        "label": { "type": "string", "required": true },
-                        "refers_ref": { "type": "string", "required": false }
-                    }
-                }
-            }));
-    });
-    edit_artifact(artifacts, "erpnext.three.mapping", |payload| {
-        payload["maps"].as_array_mut().expect("maps").push(json!({
-            "id": "party_ref",
-            "dataset": "PartyRef",
-            "target": "canon.Party",
-            "sourceRecord": "input.name",
-            "subject": "input.custom_norn_ref",
-            "properties": { "label": "input.label" },
-            "links": {
-                "refers": {
-                    "targetType": "canon.Party",
-                    "targetKey": "input.refers_ref"
-                }
-            }
-        }));
+            .expect("maps")
+            .iter_mut()
+            .find(|m| m["id"] == "party")
+            .expect("party");
+        map["links"] = json!([{
+            "key": "input.refers_ref",
+            "link": "refers",
+            "targetMap": "party"
+        }]);
     });
 }
 
 fn party_ref_row(name: &str, key: &str, label: &str, refers: Option<&str>) -> Value {
     json!({
-        "dataset": "PartyRef",
+        "dataset": "Party",
         "record": {
             "name": name,
             "custom_norn_ref": key,
             "label": label,
+            "role": "customer",
             "refers_ref": refers,
         }
     })
+}
+
+fn export_records_and_head(cell: &Cell) -> (Vec<norn_cell::ExportRecord>, String) {
+    let records: Vec<_> = (1..=cell.store().export_commit_count().expect("head"))
+        .map(|seq| {
+            cell.store()
+                .export_record(seq)
+                .expect("record")
+                .expect("present")
+        })
+        .collect();
+    let head = records.last().expect("last").hash().expect("hash");
+    (records, head)
 }
 
 fn refers_targets(cell: &Cell, source_key: &str) -> BTreeSet<String> {
@@ -224,7 +218,7 @@ fn held_findings_for(
 ) -> Vec<norn_ir::DataQualityFinding> {
     cell.store()
         .read()
-        .subject_findings(MAIN_WORLD, object_type, key)
+        .observation_findings(MAIN_WORLD, object_type, key)
         .expect("findings")
         .into_iter()
         .filter(|f| {
@@ -322,8 +316,7 @@ fn link_claim_frontier_upgrades_from_v12_and_rebuilds_from_export() {
         &mut cell, "erpnext", &updated, "0001", "0001", "upsert", "snapshot",
     );
     let claims_before = cell.store().read().observed_link_claims().expect("claims");
-    let export_records = cell.store().export_records().expect("export");
-    let export_head = cell.store().export_head_hash().expect("head");
+    let (export_records, export_head) = export_records_and_head(&cell);
     let model = cell.store().model().clone();
     drop(cell);
 
@@ -631,8 +624,7 @@ fn dispute_resolve_accept_first_releases_held_edge_and_replays() {
     );
 
     // Export/restore carries the first resolution cleanly.
-    let records = cell.store().export_records().expect("export");
-    let head = cell.store().export_head_hash().expect("head");
+    let (records, head) = export_records_and_head(&cell);
     let rebuilt = CellStore::rebuild_export_history(
         NativeEngine::open_in_memory().expect("mem"),
         &records,
@@ -706,7 +698,10 @@ fn dispute_resolve_accept_second_and_reject_update_facts_and_edges() {
         .expect("read a")
         .expect("exists");
     assert_eq!(
-        party_a.values.get("label").and_then(RuntimeValue::as_str),
+        party_a
+            .values
+            .get("display_name")
+            .and_then(RuntimeValue::as_str),
         Some("Label Corrected")
     );
 
@@ -1090,13 +1085,15 @@ fn dispute_resolve_consumes_pending_first_capture_and_prevents_undo() {
         .expect("read a")
         .expect("exists");
     assert_eq!(
-        party_a.values.get("label").and_then(RuntimeValue::as_str),
+        party_a
+            .values
+            .get("display_name")
+            .and_then(RuntimeValue::as_str),
         Some("Second Authoritative")
     );
 
     // Export replay reproduces the same consumed state cleanly.
-    let records = cell.store().export_records().expect("export");
-    let head = cell.store().export_head_hash().expect("head");
+    let (records, head) = export_records_and_head(&cell);
     let rebuilt = CellStore::rebuild_export_history(
         NativeEngine::open_in_memory().expect("mem"),
         &records,
@@ -1274,16 +1271,17 @@ fn in_place_frontier_and_audit_tamper_heals_on_open_and_commit_observed_cannot_f
         .expect("conflict");
 
     // Public `CellHost::commit_observed` must fail closed on a forged dispute consumption.
-    let forged = norn_kernel::CellCommit::<ObservationEvent, RuntimeObject, RuntimeObject>::empty()
-        .consuming(norn_kernel::Consumed::Observation {
-            id: ObservationId(conflict_id.clone()),
-        })
-        .with_events(vec![ObservationEvent::DisputeResolved {
-            dispute_id: conflict_id.clone(),
-            decision: "accept-first".into(),
-            actor: "forger".into(),
-            reason: "forged".into(),
-        }]);
+    let mut forged =
+        norn_kernel::CellCommit::<ObservationEvent, RuntimeObject, RuntimeObject>::empty()
+            .consuming(norn_kernel::Consumed::Observation {
+                id: ObservationId(conflict_id.clone()),
+            });
+    forged.events.push(ObservationEvent::DisputeResolved {
+        dispute_id: conflict_id.clone(),
+        decision: "accept-first".into(),
+        actor: "forger".into(),
+        reason: "forged".into(),
+    });
     assert!(
         norn_kernel::CellHost::commit_observed(
             &mut cell,
@@ -1677,6 +1675,25 @@ fn dispute_resolve_late_v2_delete_correction_preserves_newer_v3_edge() {
         refers_targets(&cell, "demo/party/a"),
         BTreeSet::from(["demo/party/b".to_owned()]),
         "OBS-LINK-CONTRIBUTION-1: late v2 delete correction must not erase newer v3 edge"
+    );
+    let tombstone =
+        norn_kernel::snapshot_observe::tombstone_key(&FactKey::new("canon.Party", "demo/party/a"));
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, tombstone.object_type.as_str(), &tombstone.key)
+            .expect("tombstone read")
+            .is_none(),
+        "late v2 delete correction must not tombstone newer v3 subject"
+    );
+    let page = cell
+        .store()
+        .read()
+        .authoritative_page(MAIN_WORLD, "canon.Party", None, 100)
+        .expect("authoritative page");
+    assert!(
+        page.records.iter().any(|r| r.id == "demo/party/a"),
+        "v3 subject must remain visible in untombstoned reads"
     );
     cell.store()
         .read()

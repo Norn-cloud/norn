@@ -3423,8 +3423,15 @@ impl<E: SqlEngine> CellStore<E> {
                 origin,
                 CommitOrigin::Retained(record) if record.storage_version.unwrap_or(1) < 11
             );
+            let legacy_dispute_resolution = matches!(
+                origin,
+                CommitOrigin::Retained(record)
+                    if record.storage_version.unwrap_or(1)
+                        < crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
+            );
             let mut writer = Writer::new(&self.conn, commit_model, effective_batch, commit_seq)
-                .with_legacy_outbox(legacy_outbox);
+                .with_legacy_outbox(legacy_outbox)
+                .with_legacy_dispute_resolution(legacy_dispute_resolution);
 
             let install_record = if let (Some(install), Some(mut record)) =
                 (installation.as_ref(), install_record)

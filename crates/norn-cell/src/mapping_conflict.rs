@@ -513,16 +513,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.with_source_dispute_index(|index| index.events.contains_key(&keys))
     }
 
-    /// The dispute rows covering `bundle`'s source event, if any.
-    pub(crate) fn mapping_event_dispute(
-        &self,
-        bundle: &MappingBundle,
-    ) -> Result<Option<EventDispute>, CellError> {
-        let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
-            .map(|key| norn_ir::canonical::nfc(&key));
-        self.event_dispute_for_keys(&keys, None)
-    }
-
     /// Datasets of `mapping_id` (optionally scoped to `connection_id`) that
     /// still hold unresolved quarantined inbox rows (`mapping-bundle:` without
     /// a strictly newer landed correction under the declared
