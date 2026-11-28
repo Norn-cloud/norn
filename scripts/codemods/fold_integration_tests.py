@@ -212,7 +212,7 @@ def _consume_header(lines: list[str]) -> int:
                     break
                 if not (
                     re.fullmatch(r"[A-Za-z_][A-Za-z0-9_:]*,", inner)
-                    or re.fullmatch(r'reason = "[^"\n]*"(?:,)?', inner)
+                    or re.fullmatch(r'reason = "[^"\\\n]*"(?:,)?', inner)
                 ):
                     raise Refused(
                         f"tests/{SUITE}.rs: unexpected line inside `#![allow(...)]` ({inner!r})"
@@ -270,6 +270,13 @@ def _validate_suite_entries(rest: list[str]) -> None:
 
 def split_suites_sections(text: str) -> tuple[list[str], list[str]]:
     """Split an existing `tests/suites.rs` into `(shared_support_lines, suite_mod_lines)`."""
+    # Reject lexical forms that can span lines and desynchronize line-oriented parsing.
+    for kind, start, end in _iter_rust_spans(text):
+        span = text[start:end]
+        if kind == "comment" and span.startswith("/*"):
+            raise Refused(f"tests/{SUITE}.rs: block comments are not allowed")
+        if kind == "literal" and ("\n" in span or "\\" in span):
+            raise Refused(f"tests/{SUITE}.rs: multiline or escaped string literals are not allowed")
     lines = text.splitlines()
     body_start = _consume_header(lines)
     if body_start < len(lines) and lines[body_start] == SHARED_SUPPORT_HEADER:

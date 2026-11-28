@@ -305,6 +305,14 @@ class CommandAndFilterRewriteTests(unittest.TestCase):
                 '#![allow(\n dead_code\n) ]\n#[test]\nfn smoke() {}\n/*\n)]\n//! */\n#[path = "a.rs"]\nmod a;\n'
             )
         with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(
+                '#![allow(\n    reason = "x\\"\n)]\n//! ")] #[test] fn smoke() {}\n#[path = "a.rs"]\nmod a;\n'
+            )
+        with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(
+                '#[cfg(test /* )]\n#[path = "a.rs"]\nmod a;\n// */ )] #[test] fn smoke() {}\n'
+            )
+        with self.assertRaises(fold.Refused):
             fold.shared_support_names(
                 [fold.SHARED_SUPPORT_HEADER, "use helpers::first; use helpers::second;"]
             )
