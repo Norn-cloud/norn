@@ -2,6 +2,7 @@
 //! `tools/norn-py/norn_py/schema.py` (`PackManifest`, `compose_packs`, `SecretRef`, `DeploymentSpec`).
 
 use std::collections::BTreeMap;
+use std::net::Ipv6Addr;
 
 use crate::canonical::JsonValue;
 use crate::decimal::format_exact_decimal;
@@ -193,15 +194,7 @@ impl PackManifest {
         if let Some(desc) = &self.description {
             obj.insert("description".to_owned(), JsonValue::String(desc.clone()));
         }
-        obj.insert(
-            "entities".to_owned(),
-            JsonValue::Array(
-                self.entities
-                    .iter()
-                    .map(|e| JsonValue::String(e.clone()))
-                    .collect(),
-            ),
-        );
+        obj.insert("entities".to_owned(), str_slice_to_json(&self.entities));
         obj.insert(
             "functions".to_owned(),
             JsonValue::Array(
@@ -212,33 +205,9 @@ impl PackManifest {
             ),
         );
         obj.insert("id".to_owned(), JsonValue::String(self.id.clone()));
-        obj.insert(
-            "laws".to_owned(),
-            JsonValue::Array(
-                self.laws
-                    .iter()
-                    .map(|l| JsonValue::String(l.clone()))
-                    .collect(),
-            ),
-        );
-        obj.insert(
-            "markings".to_owned(),
-            JsonValue::Array(
-                self.markings
-                    .iter()
-                    .map(|m| JsonValue::String(m.clone()))
-                    .collect(),
-            ),
-        );
-        obj.insert(
-            "requires".to_owned(),
-            JsonValue::Array(
-                self.requires
-                    .iter()
-                    .map(|r| JsonValue::String(r.clone()))
-                    .collect(),
-            ),
-        );
+        obj.insert("laws".to_owned(), str_slice_to_json(&self.laws));
+        obj.insert("markings".to_owned(), str_slice_to_json(&self.markings));
+        obj.insert("requires".to_owned(), str_slice_to_json(&self.requires));
         obj.insert("title".to_owned(), JsonValue::String(self.title.clone()));
         obj.insert(
             "version".to_owned(),
@@ -246,6 +215,10 @@ impl PackManifest {
         );
         JsonValue::Object(obj)
     }
+}
+
+fn str_slice_to_json(items: &[String]) -> JsonValue {
+    JsonValue::Array(items.iter().cloned().map(JsonValue::String).collect())
 }
 
 /// Composes packs conjunctively, failing closed on duplicates, missing dependencies,
@@ -546,18 +519,18 @@ impl DeploymentSpec {
                     span.cloned(),
                 ));
             }
-            if !is_valid_worker_endpoint_url(url) {
+            if let Err(reason) = validate_worker_endpoint_url(url) {
                 return Err(PyAuthoringError::with_optional_span(
                     CODE_DEPLOYMENT_ENDPOINT,
                     format!(
-                        "worker endpoint '{endpoint_key}' must use https:// (or loopback http:// for local dev), got '{url}'"
+                        "worker endpoint '{endpoint_key}' must use https:// (or loopback http:// for local dev): {reason}"
                     ),
                     span.cloned(),
                 ));
             }
         }
 
-        for key in self.initial_settings.keys() {
+        for (key, val) in &self.initial_settings {
             let lowered = key.to_ascii_lowercase();
             if FORBIDDEN_SETTING_SECRET_TOKENS
                 .iter()
@@ -571,6 +544,7 @@ impl DeploymentSpec {
                     span.cloned(),
                 ));
             }
+            validate_setting_value(key, val, span)?;
         }
 
         Ok(composed)
@@ -586,7 +560,13 @@ impl DeploymentSpec {
 
         let mut settings_map = BTreeMap::new();
         for (k, v) in &self.initial_settings {
-            settings_map.insert(k.clone(), v.to_ir());
+            let wire_val = match v {
+                SettingValue::Decimal(raw) => {
+                    JsonValue::String(format_exact_decimal(raw, span.cloned())?)
+                }
+                SettingValue::Str(_) | SettingValue::Int(_) | SettingValue::Bool(_) => v.to_ir(),
+            };
+            settings_map.insert(k.clone(), wire_val);
         }
 
         let mut scope_map = BTreeMap::new();
@@ -659,74 +639,137 @@ pub fn is_valid_endpoint_key(key: &str) -> bool {
 /// Validates worker endpoint `URL`s matching `_is_valid_worker_endpoint_url` in `schema.py`.
 #[must_use]
 pub fn is_valid_worker_endpoint_url(url: &str) -> bool {
-    if url.is_empty()
-        || url.chars().any(|ch| {
-            let code = u32::from(ch);
-            code <= 0x20 || (0x7f..=0x9f).contains(&code) || matches!(ch, '\\' | '?' | '#')
-        })
-    {
-        return false;
-    }
+    validate_worker_endpoint_url(url).is_ok()
+}
 
-    let (is_https, rest) = if let Some(after) = url.strip_prefix("https://") {
-        (true, after)
-    } else if let Some(after) = url.strip_prefix("http://") {
-        (false, after)
-    } else {
-        return false;
-    };
-
-    let authority = rest.split_once('/').map_or(rest, |(auth, _)| auth);
-    if authority.is_empty() || authority.contains('@') {
-        return false;
-    }
-
-    let Some((host, port_str)) = split_authority_host_port(authority) else {
-        return false;
-    };
-
-    if let Some(p_str) = port_str {
-        if p_str.is_empty() || !p_str.bytes().all(|b| b.is_ascii_digit()) {
-            return false;
+fn validate_setting_value(
+    key: &str,
+    val: &SettingValue,
+    span: Option<&SourceSpan>,
+) -> Result<(), PyAuthoringError> {
+    match val {
+        SettingValue::Str(_) | SettingValue::Bool(_) => Ok(()),
+        SettingValue::Int(raw) => {
+            if !is_valid_strict_int(raw) {
+                return Err(PyAuthoringError::with_optional_span(
+                    CODE_SCHEMA,
+                    format!("setting '{key}' has invalid integer value '{raw}'"),
+                    span.cloned(),
+                ));
+            }
+            Ok(())
         }
-        let Ok(port) = p_str.parse::<u16>() else {
-            return false;
-        };
-        if port == 0 {
-            return false;
+        SettingValue::Decimal(raw) => {
+            let _formatted = format_exact_decimal(raw, span.cloned())?;
+            Ok(())
         }
-    }
-
-    if is_https {
-        !host.is_empty()
-    } else {
-        matches!(host, "127.0.0.1" | "localhost" | "::1")
     }
 }
 
-fn split_authority_host_port(authority: &str) -> Option<(&str, Option<&str>)> {
+fn is_valid_strict_int(raw: &str) -> bool {
+    let digits = raw.strip_prefix('-').unwrap_or(raw);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    !(digits.len() > 1 && digits.starts_with('0'))
+}
+
+fn validate_worker_endpoint_url(url: &str) -> Result<(), &'static str> {
+    if url.is_empty() {
+        return Err("URL must not be empty");
+    }
+    if url.chars().any(|ch| {
+        let code = u32::from(ch);
+        code <= 0x20 || (0x7f..=0x9f).contains(&code) || matches!(ch, '\\' | '?' | '#')
+    }) {
+        return Err(
+            "URL contains forbidden control, whitespace, backslash, query, or fragment characters",
+        );
+    }
+
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return Err("URL must specify https:// or loopback http:// scheme");
+    };
+    let is_https = if scheme.eq_ignore_ascii_case("https") {
+        true
+    } else if scheme.eq_ignore_ascii_case("http") {
+        false
+    } else {
+        return Err("URL scheme must be https or loopback http");
+    };
+
+    let authority = rest.split_once('/').map_or(rest, |(auth, _)| auth);
+    if authority.is_empty() {
+        return Err("URL authority host must not be empty");
+    }
+    if authority.contains('@') {
+        return Err("userinfo credentials are forbidden in worker endpoint URL");
+    }
+
+    let (host, port_str) = split_authority_host_port(authority)?;
+
+    if let Some(p_str) = port_str {
+        if p_str.is_empty() || !p_str.bytes().all(|b| b.is_ascii_digit()) {
+            return Err("URL port must be a valid decimal port number");
+        }
+        let Ok(port) = p_str.parse::<u16>() else {
+            return Err("URL port is out of range (1..=65535)");
+        };
+        if port == 0 {
+            return Err("URL port 0 is forbidden");
+        }
+    }
+
+    let host_lower = host.to_ascii_lowercase();
+    if is_https {
+        if host_lower.is_empty() {
+            return Err("URL host must not be empty");
+        }
+        Ok(())
+    } else if matches!(host_lower.as_str(), "127.0.0.1" | "localhost" | "::1") {
+        Ok(())
+    } else {
+        Err("plain http:// endpoints are restricted to loopback hosts (localhost, 127.0.0.1, ::1)")
+    }
+}
+
+fn split_authority_host_port(authority: &str) -> Result<(&str, Option<&str>), &'static str> {
     if let Some(after_open) = authority.strip_prefix('[') {
-        let (ipv6_host, tail) = after_open.split_once(']')?;
-        if ipv6_host.is_empty() {
-            return None;
+        let Some((ipv6_host, tail)) = after_open.split_once(']') else {
+            return Err("unclosed IPv6 bracket in URL authority");
+        };
+        if ipv6_host.parse::<Ipv6Addr>().is_err() {
+            return Err("malformed bracketed IPv6 literal in URL authority");
         }
         if tail.is_empty() {
-            return Some((ipv6_host, None));
+            return Ok((ipv6_host, None));
         }
-        let port = tail.strip_prefix(':')?;
-        return Some((ipv6_host, Some(port)));
+        let Some(port) = tail.strip_prefix(':') else {
+            return Err("unexpected characters after bracketed IPv6 literal");
+        };
+        return Ok((ipv6_host, Some(port)));
     }
 
     if authority.contains('[') || authority.contains(']') {
-        return None;
+        return Err("unexpected bracket character in URL authority");
     }
 
-    if let Some((host, port)) = authority.split_once(':') {
-        if port.contains(':') {
-            return None;
+    let (host, port) = if let Some((h, p)) = authority.split_once(':') {
+        if p.contains(':') {
+            return Err("multiple colons in non-bracketed URL authority");
         }
-        Some((host, Some(port)))
+        (h, Some(p))
     } else {
-        Some((authority, None))
+        (authority, None)
+    };
+
+    if host.is_empty()
+        || !host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    {
+        return Err("URL host contains invalid authority characters");
     }
+
+    Ok((host, port))
 }

@@ -9,12 +9,12 @@ use ruff_text_size::Ranged;
 use crate::decimal::format_exact_decimal;
 use crate::error::{
     CODE_ELABORATION, CODE_FLOAT_LITERAL, CODE_FORBIDDEN_CALL, CODE_RAW_EXPR, CODE_RAW_IR,
-    CODE_SCHEMA, PyAuthoringError, SourceSpan,
+    CODE_SCHEMA, CODE_UNBOUNDED, PyAuthoringError, SourceSpan,
 };
 use crate::expr::{ZenExpr, ZenLiteral, render_zen_string};
 use crate::line_table::LineTable;
 use crate::sandbox::allowed_import_symbols;
-use crate::schema::env::{CallbackRef, EvalValue, ModuleEnv};
+use crate::schema::env::{CallbackRef, EvalValue, MAX_EVAL_DEPTH, ModuleEnv};
 use crate::schema::eval_ctors::{
     eval_dependency_pin, eval_field_ctor, eval_field_default_fn, eval_field_meta, eval_key_spec,
     eval_link, eval_marking, eval_property_type_ctor, eval_unit_ref,
@@ -26,13 +26,33 @@ use crate::schema::eval_packs::{
     eval_compose_packs, eval_deployment_spec, eval_fn_ref, eval_pack_manifest, eval_secret_ref,
 };
 
-/// Evaluates a declarative Python AST expression into a closed [`EvalValue`].
+/// Evaluates a declarative Python AST expression into a closed [`EvalValue`],
+/// enforcing [`MAX_EVAL_DEPTH`] and [`crate::schema::env::MAX_EVAL_VALUE_NODES`].
 pub(crate) fn eval_expr<'a>(
     expr: &'a Expr,
-    env: &ModuleEnv<'a>,
+    env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
 ) -> Result<EvalValue<'a>, PyAuthoringError> {
+    eval_expr_depth(expr, env, lines, 0)
+}
+
+fn eval_expr_depth<'a>(
+    expr: &'a Expr,
+    env: &mut ModuleEnv<'a>,
+    lines: &LineTable<'_>,
+    depth: usize,
+) -> Result<EvalValue<'a>, PyAuthoringError> {
     let span = lines.span_at(expr.range().start());
+    if depth > MAX_EVAL_DEPTH {
+        return Err(PyAuthoringError::spanned(
+            CODE_UNBOUNDED,
+            format!("static evaluation exceeded maximum nesting depth ({MAX_EVAL_DEPTH})"),
+            span,
+        ));
+    }
+    env.charge_eval_nodes(1, &span)?;
+    let next_depth = depth.saturating_add(1);
+
     match expr {
         Expr::NoneLiteral(_) => Ok(EvalValue::None),
         Expr::BooleanLiteral(b) => Ok(EvalValue::Bool(b.value)),
@@ -50,35 +70,26 @@ pub(crate) fn eval_expr<'a>(
                 span,
             )),
         },
-        Expr::UnaryOp(unary) => eval_unary(unary, env, lines, &span),
+        Expr::UnaryOp(unary) => eval_unary(unary, env, lines, &span, next_depth),
         Expr::Tuple(tuple) => {
             let mut items = Vec::with_capacity(tuple.elts.len());
             for elt in &tuple.elts {
-                items.push(eval_expr(elt, env, lines)?);
+                items.push(eval_expr_depth(elt, env, lines, next_depth)?);
             }
             Ok(EvalValue::Tuple(items))
         }
         Expr::List(list) => {
             let mut items = Vec::with_capacity(list.elts.len());
             for elt in &list.elts {
-                items.push(eval_expr(elt, env, lines)?);
+                items.push(eval_expr_depth(elt, env, lines, next_depth)?);
             }
             Ok(EvalValue::List(items))
         }
-        Expr::Dict(dict) => eval_dict(dict, env, lines, &span),
-        Expr::Name(name) => {
-            let id = name.id.as_str();
-            env.bindings.get(id).cloned().ok_or_else(|| {
-                PyAuthoringError::spanned(
-                    CODE_ELABORATION,
-                    format!("NameError: name '{id}' is not defined"),
-                    span,
-                )
-            })
-        }
-        Expr::Attribute(attr) => eval_attr(attr, env, lines, &span),
+        Expr::Dict(dict) => eval_dict(dict, env, lines, &span, next_depth),
+        Expr::Name(name) => eval_name(name.id.as_str(), env, &span),
+        Expr::Attribute(attr) => eval_attr(attr, env, lines, &span, next_depth),
         Expr::Lambda(lambda) => Ok(EvalValue::Callback(CallbackRef::Lambda(lambda))),
-        Expr::Call(call) => eval_call(call, env, lines, &span),
+        Expr::Call(call) => eval_call(call, env, lines, &span, next_depth),
         Expr::BoolOp(_)
         | Expr::Named(_)
         | Expr::BinOp(_)
@@ -107,13 +118,41 @@ pub(crate) fn eval_expr<'a>(
     }
 }
 
-fn eval_unary<'a>(
-    unary: &'a ruff_python_ast::ExprUnaryOp,
-    env: &ModuleEnv<'a>,
-    lines: &LineTable<'_>,
+fn eval_name<'a>(
+    id: &str,
+    env: &mut ModuleEnv<'a>,
     span: &SourceSpan,
 ) -> Result<EvalValue<'a>, PyAuthoringError> {
-    let operand = eval_expr(&unary.operand, env, lines)?;
+    let remaining = env.remaining_eval_nodes();
+    let Some(cost) = env
+        .bindings
+        .get(id)
+        .map(|val| val.bounded_node_count(remaining))
+    else {
+        return Err(PyAuthoringError::spanned(
+            CODE_ELABORATION,
+            format!("NameError: name '{id}' is not defined"),
+            span.clone(),
+        ));
+    };
+    env.charge_eval_nodes(cost, span)?;
+    env.bindings.get(id).cloned().ok_or_else(|| {
+        PyAuthoringError::spanned(
+            CODE_ELABORATION,
+            format!("NameError: name '{id}' is not defined"),
+            span.clone(),
+        )
+    })
+}
+
+fn eval_unary<'a>(
+    unary: &'a ruff_python_ast::ExprUnaryOp,
+    env: &mut ModuleEnv<'a>,
+    lines: &LineTable<'_>,
+    span: &SourceSpan,
+    depth: usize,
+) -> Result<EvalValue<'a>, PyAuthoringError> {
+    let operand = eval_expr_depth(&unary.operand, env, lines, depth)?;
     if let EvalValue::Int(digits) = operand {
         match unary.op {
             UnaryOp::UAdd => return Ok(EvalValue::Int(digits)),
@@ -135,9 +174,10 @@ fn eval_unary<'a>(
 
 fn eval_dict<'a>(
     dict: &'a ruff_python_ast::ExprDict,
-    env: &ModuleEnv<'a>,
+    env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
     span: &SourceSpan,
+    depth: usize,
 ) -> Result<EvalValue<'a>, PyAuthoringError> {
     let mut map = BTreeMap::new();
     for item in &dict.items {
@@ -148,7 +188,7 @@ fn eval_dict<'a>(
                 span.clone(),
             ));
         };
-        let key_val = eval_expr(key_expr, env, lines)?;
+        let key_val = eval_expr_depth(key_expr, env, lines, depth)?;
         let EvalValue::Str(key) = key_val else {
             return Err(PyAuthoringError::spanned(
                 CODE_SCHEMA,
@@ -156,7 +196,7 @@ fn eval_dict<'a>(
                 span.clone(),
             ));
         };
-        let val = eval_expr(&item.value, env, lines)?;
+        let val = eval_expr_depth(&item.value, env, lines, depth)?;
         map.insert(key, val);
     }
     Ok(EvalValue::Dict(map))
@@ -164,12 +204,13 @@ fn eval_dict<'a>(
 
 fn eval_attr<'a>(
     attr: &'a ruff_python_ast::ExprAttribute,
-    env: &ModuleEnv<'a>,
+    env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
     span: &SourceSpan,
+    depth: usize,
 ) -> Result<EvalValue<'a>, PyAuthoringError> {
     let attr_name = attr.attr.id.as_str();
-    let owner = eval_expr(&attr.value, env, lines)?;
+    let owner = eval_expr_depth(&attr.value, env, lines, depth)?;
     match owner {
         EvalValue::ModuleNamespace(mod_name) => {
             if let Some(allowed) = allowed_import_symbols(mod_name)
@@ -237,9 +278,10 @@ fn eval_attr<'a>(
 
 fn eval_call<'a>(
     call: &'a ExprCall,
-    env: &ModuleEnv<'a>,
+    env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
     span: &SourceSpan,
+    depth: usize,
 ) -> Result<EvalValue<'a>, PyAuthoringError> {
     for arg in &call.arguments.args {
         if matches!(arg, Expr::Starred(_)) {
@@ -260,7 +302,7 @@ fn eval_call<'a>(
         }
     }
 
-    let callee = eval_expr(&call.func, env, lines)?;
+    let callee = eval_expr_depth(&call.func, env, lines, depth)?;
     let EvalValue::BuiltinSymbol(sym) = callee else {
         return Err(PyAuthoringError::spanned(
             CODE_FORBIDDEN_CALL,
@@ -271,7 +313,7 @@ fn eval_call<'a>(
 
     let mut pos = Vec::with_capacity(call.arguments.args.len());
     for arg in &call.arguments.args {
-        pos.push(eval_expr(arg, env, lines)?);
+        pos.push(eval_expr_depth(arg, env, lines, depth)?);
     }
     let mut kwargs: Vec<(String, EvalValue<'a>)> =
         Vec::with_capacity(call.arguments.keywords.len());
@@ -279,7 +321,7 @@ fn eval_call<'a>(
         if let Some(arg_id) = &kw.arg {
             kwargs.push((
                 arg_id.id.as_str().to_owned(),
-                eval_expr(&kw.value, env, lines)?,
+                eval_expr_depth(&kw.value, env, lines, depth)?,
             ));
         }
     }

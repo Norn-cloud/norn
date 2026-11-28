@@ -238,13 +238,10 @@ fn validate_json_value(
     match value {
         JsonValue::Null | JsonValue::Bool(_) | JsonValue::String(_) => Ok(()),
         JsonValue::Number(raw) => {
-            if matches!(
-                raw.as_str(),
-                "NaN" | "+NaN" | "-NaN" | "Infinity" | "+Infinity" | "-Infinity"
-            ) {
+            if !is_valid_rfc8259_number(raw) {
                 return Err(PyAuthoringError::unspanned(
                     CODE_CANONICAL,
-                    format!("{path}: non-finite number {raw}"),
+                    format!("{path}: invalid JSON number token '{raw}'"),
                 ));
             }
             Ok(())
@@ -270,6 +267,53 @@ fn validate_json_value(
             Ok(())
         }
     }
+}
+
+fn is_valid_rfc8259_number(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    let mut idx: usize = 0;
+
+    if bytes.get(idx) == Some(&b'-') {
+        idx = idx.saturating_add(1);
+    }
+
+    match bytes.get(idx) {
+        Some(b'0') => {
+            idx = idx.saturating_add(1);
+        }
+        Some(b'1'..=b'9') => {
+            idx = idx.saturating_add(1);
+            while bytes.get(idx).is_some_and(u8::is_ascii_digit) {
+                idx = idx.saturating_add(1);
+            }
+        }
+        Some(_) | None => return false,
+    }
+
+    if bytes.get(idx) == Some(&b'.') {
+        idx = idx.saturating_add(1);
+        if !bytes.get(idx).is_some_and(u8::is_ascii_digit) {
+            return false;
+        }
+        while bytes.get(idx).is_some_and(u8::is_ascii_digit) {
+            idx = idx.saturating_add(1);
+        }
+    }
+
+    if matches!(bytes.get(idx), Some(b'e' | b'E')) {
+        idx = idx.saturating_add(1);
+        if matches!(bytes.get(idx), Some(b'+' | b'-')) {
+            idx = idx.saturating_add(1);
+        }
+        if !bytes.get(idx).is_some_and(u8::is_ascii_digit) {
+            return false;
+        }
+        while bytes.get(idx).is_some_and(u8::is_ascii_digit) {
+            idx = idx.saturating_add(1);
+        }
+    }
+
+    idx == bytes.len()
 }
 
 fn write_pretty_value(value: &JsonValue, indent_level: usize, out: &mut String) {

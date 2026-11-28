@@ -10,7 +10,7 @@ use crate::error::{
 use crate::line_table::LineTable;
 use crate::schema::env::{
     ArtifactEntry, ConceptDecl, ConceptFieldAst, EnumDecl, EnumMemberVal, EvalValue, InvariantAst,
-    ModuleEnv,
+    LifecycleAst, ModuleEnv,
 };
 use crate::schema::eval::eval_expr;
 use crate::schema::eval_ctors::{
@@ -50,10 +50,10 @@ pub(crate) fn collect_class_def<'a>(
     }
 }
 
-fn classify_class_bases(
-    class_def: &StmtClassDef,
+fn classify_class_bases<'a>(
+    class_def: &'a StmtClassDef,
     py_name: &str,
-    env: &ModuleEnv<'_>,
+    env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
     span: &SourceSpan,
 ) -> Result<(ClassKind, Vec<String>), PyAuthoringError> {
@@ -146,11 +146,11 @@ fn classify_single_base(
     ))
 }
 
-fn collect_enum_class(
-    class_def: &StmtClassDef,
+fn collect_enum_class<'a>(
+    class_def: &'a StmtClassDef,
     py_name: &str,
     is_str_enum: bool,
-    env: &mut ModuleEnv<'_>,
+    env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
     span: &SourceSpan,
 ) -> Result<(), PyAuthoringError> {
@@ -225,13 +225,13 @@ fn collect_enum_class(
     Ok(())
 }
 
-fn collect_enum_assign(
-    assign: &ruff_python_ast::StmtAssign,
+fn collect_enum_assign<'a>(
+    assign: &'a ruff_python_ast::StmtAssign,
     py_name: &str,
     is_str_enum: bool,
     auto_counter: &mut u64,
     members: &mut Vec<(String, EnumMemberVal)>,
-    env: &ModuleEnv<'_>,
+    env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
 ) -> Result<(), PyAuthoringError> {
     let item_span = lines.span_at(assign.range().start());
@@ -272,7 +272,7 @@ fn collect_enum_assign(
     Ok(())
 }
 
-fn is_auto_call(expr: &Expr, env: &ModuleEnv<'_>, lines: &LineTable<'_>) -> bool {
+fn is_auto_call<'a>(expr: &'a Expr, env: &mut ModuleEnv<'a>, lines: &LineTable<'_>) -> bool {
     if let Expr::Call(call) = expr
         && call.arguments.args.is_empty()
         && call.arguments.keywords.is_empty()
@@ -343,7 +343,7 @@ fn parse_concept_header<'a>(
     class_def: &'a StmtClassDef,
     py_name: String,
     base_py_names: Vec<String>,
-    env: &ModuleEnv<'a>,
+    env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
     span: &SourceSpan,
 ) -> Result<ConceptDecl<'a>, PyAuthoringError> {
@@ -484,12 +484,118 @@ fn apply_concept_kwarg<'a>(
     Ok(())
 }
 
+enum ClassMember<'a> {
+    Lifecycle(LifecycleAst<'a>),
+    Invariant(InvariantAst<'a>),
+    Other,
+}
+
+fn upsert_class_member<'a>(
+    members: &mut Vec<(String, ClassMember<'a>)>,
+    name: String,
+    member: ClassMember<'a>,
+) {
+    if let Some((_, existing)) = members.iter_mut().find(|(k, _)| k == &name) {
+        *existing = member;
+    } else {
+        members.push((name, member));
+    }
+}
+
+fn upsert_concept_field<'a>(fields: &mut Vec<ConceptFieldAst<'a>>, field: ConceptFieldAst<'a>) {
+    if let Some(existing) = fields.iter_mut().find(|f| f.name == field.name) {
+        *existing = field;
+    } else {
+        fields.push(field);
+    }
+}
+
+fn collect_concept_assign<'a>(
+    assign: &'a ruff_python_ast::StmtAssign,
+    members: &mut Vec<(String, ClassMember<'a>)>,
+    env: &mut ModuleEnv<'a>,
+    lines: &LineTable<'_>,
+    span: &SourceSpan,
+) -> Result<(), PyAuthoringError> {
+    let evaluated = eval_expr(&assign.value, env, lines)?;
+    let mut target_names = Vec::with_capacity(assign.targets.len());
+    for target in &assign.targets {
+        let Expr::Name(name) = target else {
+            return Err(PyAuthoringError::spanned(
+                CODE_SCHEMA,
+                "Concept class assignment target must be a plain identifier",
+                span.clone(),
+            ));
+        };
+        target_names.push(name.id.as_str().to_owned());
+    }
+    if let EvalValue::LifecycleSpec(lc) = evaluated {
+        let last_idx = target_names.len().saturating_sub(1);
+        let mut lc_opt = Some(*lc);
+        for (idx, name) in target_names.into_iter().enumerate() {
+            let member_lc = if idx == last_idx {
+                lc_opt.take()
+            } else {
+                lc_opt.as_ref().cloned()
+            };
+            if let Some(spec) = member_lc {
+                upsert_class_member(members, name, ClassMember::Lifecycle(spec));
+            }
+        }
+    } else {
+        for name in target_names {
+            upsert_class_member(members, name, ClassMember::Other);
+        }
+    }
+    Ok(())
+}
+
+fn collect_concept_ann_assign<'a>(
+    ann: &'a ruff_python_ast::StmtAnnAssign,
+    decl: &mut ConceptDecl<'a>,
+    members: &mut Vec<(String, ClassMember<'a>)>,
+    env: &mut ModuleEnv<'a>,
+    lines: &LineTable<'_>,
+    item_span: SourceSpan,
+) -> Result<(), PyAuthoringError> {
+    let Expr::Name(name) = ann.target.as_ref() else {
+        return Err(PyAuthoringError::spanned(
+            CODE_SCHEMA,
+            "Concept field target must be a plain identifier",
+            item_span,
+        ));
+    };
+    let field_name = name.id.as_str();
+    if field_name.starts_with('_') {
+        return Ok(());
+    }
+    let default = match ann.value.as_deref() {
+        None => None,
+        Some(val_expr) => {
+            let evaluated = eval_expr(val_expr, env, lines)?;
+            upsert_class_member(members, field_name.to_owned(), ClassMember::Other);
+            Some(eval_value_to_field_default(evaluated, &item_span)?)
+        }
+    };
+    upsert_concept_field(
+        &mut decl.fields,
+        ConceptFieldAst {
+            name: field_name.to_owned(),
+            annotation: &ann.annotation,
+            default,
+            span: item_span,
+        },
+    );
+    Ok(())
+}
+
 fn collect_concept_body<'a>(
     class_def: &'a StmtClassDef,
     decl: &mut ConceptDecl<'a>,
-    env: &ModuleEnv<'a>,
+    env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
 ) -> Result<(), PyAuthoringError> {
+    let mut members: Vec<(String, ClassMember<'a>)> = Vec::new();
     for stmt in &class_def.body {
         let item_span = lines.span_at(stmt.range().start());
         match stmt {
@@ -497,40 +603,17 @@ fn collect_concept_body<'a>(
             Stmt::Expr(expr_stmt) if matches!(expr_stmt.value.as_ref(), Expr::StringLiteral(_)) => {
             }
             Stmt::AnnAssign(ann) => {
-                let Expr::Name(name) = ann.target.as_ref() else {
-                    return Err(PyAuthoringError::spanned(
-                        CODE_SCHEMA,
-                        "Concept field target must be a plain identifier",
-                        item_span,
-                    ));
-                };
-                let field_name = name.id.as_str();
-                if field_name.starts_with('_') {
-                    continue;
-                }
-                let default = match ann.value.as_deref() {
-                    None => None,
-                    Some(val_expr) => {
-                        let evaluated = eval_expr(val_expr, env, lines)?;
-                        Some(eval_value_to_field_default(evaluated, &item_span)?)
-                    }
-                };
-                decl.fields.push(ConceptFieldAst {
-                    name: field_name.to_owned(),
-                    annotation: &ann.annotation,
-                    default,
-                    span: item_span,
-                });
+                collect_concept_ann_assign(ann, decl, &mut members, env, lines, item_span)?;
             }
             Stmt::Assign(assign) => {
-                let evaluated = eval_expr(&assign.value, env, lines)?;
-                if let EvalValue::LifecycleSpec(lc) = evaluated {
-                    decl.lifecycles.push(*lc);
-                }
+                collect_concept_assign(assign, &mut members, env, lines, &item_span)?;
             }
             Stmt::FunctionDef(func_def) => {
+                let fn_name = func_def.name.id.as_str().to_owned();
                 if let Some(inv) = parse_invariant_decorator(func_def, env, lines, &item_span)? {
-                    decl.invariants.push(inv);
+                    upsert_class_member(&mut members, fn_name, ClassMember::Invariant(inv));
+                } else {
+                    upsert_class_member(&mut members, fn_name, ClassMember::Other);
                 }
             }
             Stmt::Return(_)
@@ -562,12 +645,19 @@ fn collect_concept_body<'a>(
             }
         }
     }
+    for (_, member) in members {
+        match member {
+            ClassMember::Lifecycle(lc) => decl.lifecycles.push(lc),
+            ClassMember::Invariant(inv) => decl.invariants.push(inv),
+            ClassMember::Other => {}
+        }
+    }
     Ok(())
 }
 
 fn parse_invariant_decorator<'a>(
     func_def: &'a StmtFunctionDef,
-    env: &ModuleEnv<'a>,
+    env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
     span: &SourceSpan,
 ) -> Result<Option<InvariantAst<'a>>, PyAuthoringError> {
@@ -605,7 +695,7 @@ fn parse_invariant_decorator<'a>(
 fn extract_invariant_args<'a>(
     call: &'a ExprCall,
     func_def: &'a StmtFunctionDef,
-    env: &ModuleEnv<'a>,
+    env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
     span: &SourceSpan,
 ) -> Result<InvariantAst<'a>, PyAuthoringError> {

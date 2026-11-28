@@ -1,12 +1,12 @@
 //! Static module evaluation environment and intermediate AST declaration records
 //! for zero-execution Python-to-`EntityIR`/`LawIR` lowering.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ruff_python_ast::{Expr, ExprLambda, StmtFunctionDef};
 
 use crate::canonical::DependencyPin;
-use crate::error::SourceSpan;
+use crate::error::{CODE_SCHEMA, CODE_UNBOUNDED, PyAuthoringError, SourceSpan};
 use crate::expr::{ZenExpr, ZenLiteral};
 use crate::schema::packs::{PackManifest, SecretRef};
 use crate::schema::types::{
@@ -14,6 +14,13 @@ use crate::schema::types::{
     LinkSpec, MarkingDecl, MarkingsCatalog, MaskSpec, PropertyTypeSpec, RoleKind, ScopeRootKind,
     UnitRef,
 };
+
+/// Maximum total structural value nodes allocated or cloned during static module evaluation.
+pub(crate) const MAX_EVAL_VALUE_NODES: usize = 50_000;
+/// Maximum expression evaluation nesting depth during static module evaluation.
+pub(crate) const MAX_EVAL_DEPTH: usize = 128;
+/// Maximum `Concept` inheritance chain depth walked during field resolution.
+pub(crate) const MAX_INHERITANCE_DEPTH: usize = 64;
 
 /// Reference to a Python callback AST node (`def` or `lambda`) inside the parsed module.
 #[derive(Clone, Copy, Debug)]
@@ -192,6 +199,86 @@ pub(crate) enum EvalValue<'a> {
     OpaqueObject,
 }
 
+impl EvalValue<'_> {
+    /// Counts structural nodes in this value without recursion, stopping early once `cap` is
+    /// exceeded so exponential binding graphs cannot cause unbounded cloning.
+    pub(crate) fn bounded_node_count(&self, cap: usize) -> usize {
+        let mut total: usize = 0;
+        let mut stack: Vec<&Self> = vec![self];
+        while let Some(val) = stack.pop() {
+            total = total.saturating_add(1);
+            if total > cap {
+                return total;
+            }
+            match val {
+                Self::Tuple(items) | Self::List(items) => {
+                    for item in items {
+                        stack.push(item);
+                    }
+                }
+                Self::Dict(map) => {
+                    for entry in map.values() {
+                        total = total.saturating_add(1);
+                        if total > cap {
+                            return total;
+                        }
+                        stack.push(entry);
+                    }
+                }
+                Self::MarkingsCatalog(cat) => {
+                    total = total.saturating_add(cat.markings.len());
+                }
+                Self::PackManifest(pack) => {
+                    total = total.saturating_add(
+                        pack.requires
+                            .len()
+                            .saturating_add(pack.entities.len())
+                            .saturating_add(pack.laws.len())
+                            .saturating_add(pack.markings.len())
+                            .saturating_add(pack.functions.len()),
+                    );
+                }
+                Self::LifecycleSpec(lc) => {
+                    total = total.saturating_add(lc.transitions.len());
+                }
+                Self::None
+                | Self::Bool(_)
+                | Self::Int(_)
+                | Self::Decimal(_)
+                | Self::Str(_)
+                | Self::ModuleNamespace(_)
+                | Self::BuiltinSymbol(_)
+                | Self::EnumClass(_)
+                | Self::EnumMember(_)
+                | Self::ConceptClass(_)
+                | Self::ProtocolClass
+                | Self::UnitRef(_)
+                | Self::DependencyPin(_)
+                | Self::KeySpec(_)
+                | Self::Marking(_)
+                | Self::FieldMeta(_)
+                | Self::FieldDefault(_)
+                | Self::PropertyTypeSpec(_)
+                | Self::LinkSpec(_)
+                | Self::MaskSpec(_)
+                | Self::MarkingDecl(_)
+                | Self::LawDecl(_)
+                | Self::FnRef(_)
+                | Self::SecretRef(_)
+                | Self::DeploymentSpec
+                | Self::TransitionSpec(_)
+                | Self::ZenExpr(_)
+                | Self::Callback(_)
+                | Self::OpaqueObject => {}
+            }
+            if total > cap {
+                return total;
+            }
+        }
+        total
+    }
+}
+
 /// Ordered top-level artifact handle recorded during Phase 1 for deterministic Phase 2 emission.
 #[derive(Clone, Debug)]
 pub(crate) enum ArtifactEntry {
@@ -208,6 +295,7 @@ pub(crate) struct ModuleEnv<'a> {
     pub(crate) concepts: BTreeMap<String, ConceptDecl<'a>>,
     pub(crate) laws: BTreeMap<String, LawDeclAst<'a>>,
     pub(crate) emission_order: Vec<ArtifactEntry>,
+    pub(crate) eval_nodes_used: usize,
 }
 
 impl<'a> ModuleEnv<'a> {
@@ -221,36 +309,92 @@ impl<'a> ModuleEnv<'a> {
         env
     }
 
+    /// Returns the remaining static evaluation value-node budget before failing closed.
+    pub(crate) fn remaining_eval_nodes(&self) -> usize {
+        MAX_EVAL_VALUE_NODES.saturating_sub(self.eval_nodes_used)
+    }
+
+    /// Charges `nodes` against [`MAX_EVAL_VALUE_NODES`], failing closed with [`CODE_UNBOUNDED`].
+    pub(crate) fn charge_eval_nodes(
+        &mut self,
+        nodes: usize,
+        span: &SourceSpan,
+    ) -> Result<(), PyAuthoringError> {
+        self.eval_nodes_used = self.eval_nodes_used.saturating_add(nodes);
+        if self.eval_nodes_used > MAX_EVAL_VALUE_NODES {
+            return Err(PyAuthoringError::spanned(
+                CODE_UNBOUNDED,
+                format!("static evaluation exceeded {MAX_EVAL_VALUE_NODES} value node budget"),
+                span.clone(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Collects all declared field names for `concept_py_name`, walking base `Concept`
-    /// classes in MRO-like parent-first order (matching `Concept.declared_field_names`).
-    pub(crate) fn declared_field_names(&self, concept_py_name: &str) -> Vec<String> {
+    /// classes in MRO-like parent-first order (matching `Concept.declared_field_names`)
+    /// with cycle detection and [`MAX_INHERITANCE_DEPTH`] enforcement.
+    pub(crate) fn declared_field_names(
+        &self,
+        concept_py_name: &str,
+        span: &SourceSpan,
+    ) -> Result<Vec<String>, PyAuthoringError> {
         let mut names = Vec::new();
-        let mut visited = Vec::new();
-        self.collect_fields_recursive(concept_py_name, &mut visited, &mut names);
-        names
+        let mut visited = BTreeSet::new();
+        let mut in_progress = Vec::new();
+        self.collect_fields_recursive(
+            concept_py_name,
+            0,
+            &mut visited,
+            &mut in_progress,
+            &mut names,
+            span,
+        )?;
+        Ok(names)
     }
 
     fn collect_fields_recursive(
         &self,
         concept_py_name: &str,
-        visited: &mut Vec<String>,
+        depth: usize,
+        visited: &mut BTreeSet<String>,
+        in_progress: &mut Vec<String>,
         out: &mut Vec<String>,
-    ) {
-        if visited.iter().any(|seen| seen == concept_py_name) {
-            return;
+        span: &SourceSpan,
+    ) -> Result<(), PyAuthoringError> {
+        if in_progress.iter().any(|active| active == concept_py_name) {
+            return Err(PyAuthoringError::spanned(
+                CODE_SCHEMA,
+                format!("cyclic Concept inheritance detected involving '{concept_py_name}'"),
+                span.clone(),
+            ));
         }
-        visited.push(concept_py_name.to_owned());
+        if depth > MAX_INHERITANCE_DEPTH {
+            return Err(PyAuthoringError::spanned(
+                CODE_UNBOUNDED,
+                format!("Concept inheritance depth exceeds maximum ({MAX_INHERITANCE_DEPTH})"),
+                span.clone(),
+            ));
+        }
+        if visited.contains(concept_py_name) {
+            return Ok(());
+        }
         let Some(concept) = self.concepts.get(concept_py_name) else {
-            return;
+            return Ok(());
         };
+        in_progress.push(concept_py_name.to_owned());
+        let next_depth = depth.saturating_add(1);
         for base in &concept.base_py_names {
-            self.collect_fields_recursive(base, visited, out);
+            self.collect_fields_recursive(base, next_depth, visited, in_progress, out, span)?;
         }
+        let _popped = in_progress.pop();
+        visited.insert(concept_py_name.to_owned());
         for field in &concept.fields {
             if !out.iter().any(|existing| existing == &field.name) {
                 out.push(field.name.clone());
             }
         }
+        Ok(())
     }
 
     /// Collects all compile-time scalar and enum-member constants for callback lowering.

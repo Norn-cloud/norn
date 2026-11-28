@@ -4,15 +4,17 @@
 
 use std::collections::BTreeMap;
 use std::error::Error;
+use std::fmt::Write as _;
 
 use norn_authoring_py::{
     CODE_CANONICAL, CODE_DEPLOYMENT_ENDPOINT, CODE_DEPLOYMENT_SCOPE, CODE_ELABORATION,
-    CODE_FLOAT_LITERAL, CODE_FLOW_LITERAL, CODE_FORBIDDEN_CALL, CODE_FORBIDDEN_SYNTAX,
-    CODE_INTERFACE_LIFECYCLE, CODE_PACK_CONFLICT, CODE_PACK_CYCLE, CODE_PACK_DUPLICATE,
-    CODE_PACK_MISSING_DEP, CODE_RAW_EXPR, CODE_RAW_IR, CODE_RAW_SECRET, CODE_SCHEMA,
-    CODE_TYPE_MISMATCH, CODE_UNSAFE_ANNOTATION, CellHostKind, DeploymentSpec, EnvelopeOptions,
-    JsonValue, PackCategory, PackConflictPolicy, PackManifest, PyAuthoringError, SettingValue,
-    canonical_json, canonical_norn1_bytes, compose_packs, elaborate_source,
+    CODE_EXPRESSION, CODE_FLOAT_LITERAL, CODE_FLOW_LITERAL, CODE_FORBIDDEN_CALL,
+    CODE_FORBIDDEN_SYNTAX, CODE_INTERFACE_LIFECYCLE, CODE_PACK_CONFLICT, CODE_PACK_CYCLE,
+    CODE_PACK_DUPLICATE, CODE_PACK_MISSING_DEP, CODE_RAW_EXPR, CODE_RAW_IR, CODE_RAW_SECRET,
+    CODE_SCHEMA, CODE_TYPE_MISMATCH, CODE_UNBOUNDED, CODE_UNSAFE_ANNOTATION, CellHostKind,
+    DeploymentSpec, EnvelopeOptions, JsonValue, MAX_SOURCE_BYTES, PackCategory, PackConflictPolicy,
+    PackManifest, PyAuthoringError, SandboxLimits, SettingValue, canonical_json,
+    canonical_norn1_bytes, compose_packs, elaborate_source, elaborate_source_with_limits,
     validate_annotation_source,
 };
 
@@ -309,9 +311,23 @@ class TargetB(Concept, name="test.TargetB", title="B", version="0.1.0"):
     Ok(())
 }
 
+fn sample_pack(id: &str, requires: Vec<&str>, entities: Vec<&str>) -> PackManifest {
+    PackManifest {
+        id: id.to_owned(),
+        version: "0.1.0".to_owned(),
+        category: PackCategory::Domain,
+        title: id.to_owned(),
+        requires: requires.into_iter().map(str::to_owned).collect(),
+        entities: entities.into_iter().map(str::to_owned).collect(),
+        laws: Vec::new(),
+        markings: Vec::new(),
+        functions: Vec::new(),
+        description: None,
+    }
+}
+
 #[test]
-fn canonical_packs_and_deployment_refusals_fail_closed() -> TestResult {
-    // 1. Canonical JSON refuses duplicate NFC keys, __proto__, and depth > 128
+fn canonical_json_refuses_nfc_dups_proto_depth_and_malformed_numbers() -> TestResult {
     let mut dup = BTreeMap::new();
     dup.insert("e\u{0301}".to_owned(), JsonValue::Number("1".to_owned()));
     dup.insert("\u{00e9}".to_owned(), JsonValue::Number("2".to_owned()));
@@ -330,19 +346,36 @@ fn canonical_packs_and_deployment_refusals_fail_closed() -> TestResult {
     let err_depth = expect_err(canonical_json(&deep), "json depth > 128")?;
     assert_eq!(err_depth.code(), CODE_CANONICAL);
 
-    // 2. Pack missing dep, duplicate, cycle, and conflict refusals
-    let orphan = PackManifest {
-        id: "norn.pack.loc-eg".to_owned(),
-        version: "0.1.0".to_owned(),
-        category: PackCategory::Localization,
-        title: "Orphan".to_owned(),
-        requires: vec!["norn.pack.hr".to_owned()],
-        entities: Vec::new(),
-        laws: Vec::new(),
-        markings: Vec::new(),
-        functions: Vec::new(),
-        description: None,
-    };
+    for bad_num in [
+        "",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "+1",
+        "01",
+        "-01",
+        "1.",
+        ".5",
+        "1_000",
+        "1e",
+        "1e+",
+        "123abc",
+        "123 ",
+    ] {
+        let val = JsonValue::Number(bad_num.to_owned());
+        let err = expect_err(canonical_json(&val), bad_num)?;
+        assert_eq!(
+            err.code(),
+            CODE_CANONICAL,
+            "malformed JSON number `{bad_num}` expected {CODE_CANONICAL}, got {err}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn pack_composition_refuses_missing_dep_cycle_duplicate_and_conflict() -> TestResult {
+    let orphan = sample_pack("norn.pack.loc-eg", vec!["norn.pack.hr"], vec![]);
     assert_eq!(
         expect_err(
             compose_packs(&[orphan], PackConflictPolicy::FailClosed, None),
@@ -352,30 +385,8 @@ fn canonical_packs_and_deployment_refusals_fail_closed() -> TestResult {
         CODE_PACK_MISSING_DEP
     );
 
-    let p_a = PackManifest {
-        id: "pack.a".to_owned(),
-        version: "0.1.0".to_owned(),
-        category: PackCategory::Domain,
-        title: "A".to_owned(),
-        requires: vec!["pack.b".to_owned()],
-        entities: Vec::new(),
-        laws: Vec::new(),
-        markings: Vec::new(),
-        functions: Vec::new(),
-        description: None,
-    };
-    let p_b = PackManifest {
-        id: "pack.b".to_owned(),
-        version: "0.1.0".to_owned(),
-        category: PackCategory::Domain,
-        title: "B".to_owned(),
-        requires: vec!["pack.a".to_owned()],
-        entities: Vec::new(),
-        laws: Vec::new(),
-        markings: Vec::new(),
-        functions: Vec::new(),
-        description: None,
-    };
+    let p_a = sample_pack("pack.a", vec!["pack.b"], vec![]);
+    let p_b = sample_pack("pack.b", vec!["pack.a"], vec![]);
     assert_eq!(
         expect_err(
             compose_packs(&[p_a, p_b], PackConflictPolicy::FailClosed, None),
@@ -385,23 +396,11 @@ fn canonical_packs_and_deployment_refusals_fail_closed() -> TestResult {
         CODE_PACK_CYCLE
     );
 
-    let base = PackManifest {
-        id: "pack.base".to_owned(),
-        version: "0.1.0".to_owned(),
-        category: PackCategory::Domain,
-        title: "Base".to_owned(),
-        requires: Vec::new(),
-        entities: vec!["hr.Employee".to_owned()],
-        laws: Vec::new(),
-        markings: Vec::new(),
-        functions: Vec::new(),
-        description: None,
-    };
-    let dup_base = base.clone();
+    let base = sample_pack("pack.base", vec![], vec!["hr.Employee"]);
     assert_eq!(
         expect_err(
             compose_packs(
-                &[base.clone(), dup_base],
+                &[base.clone(), base.clone()],
                 PackConflictPolicy::FailClosed,
                 None
             ),
@@ -411,32 +410,22 @@ fn canonical_packs_and_deployment_refusals_fail_closed() -> TestResult {
         CODE_PACK_DUPLICATE
     );
 
-    let conflict_pack = PackManifest {
-        id: "pack.other".to_owned(),
-        version: "0.1.0".to_owned(),
-        category: PackCategory::Domain,
-        title: "Other".to_owned(),
-        requires: Vec::new(),
-        entities: vec!["hr.Employee".to_owned()],
-        laws: Vec::new(),
-        markings: Vec::new(),
-        functions: Vec::new(),
-        description: None,
-    };
+    let conflict = sample_pack("pack.other", vec![], vec!["hr.Employee"]);
     assert_eq!(
         expect_err(
-            compose_packs(
-                &[base.clone(), conflict_pack],
-                PackConflictPolicy::FailClosed,
-                None
-            ),
+            compose_packs(&[base, conflict], PackConflictPolicy::FailClosed, None),
             "pack conflict"
         )?
         .code(),
         CODE_PACK_CONFLICT
     );
+    Ok(())
+}
 
-    // 3. DeploymentSpec scope, raw secret, and invalid worker endpoint URL refusals
+#[test]
+fn deployment_spec_refuses_bad_scope_raw_secret_and_malformed_settings() -> TestResult {
+    let base = sample_pack("pack.base", vec![], vec!["hr.Employee"]);
+
     let bad_scope = DeploymentSpec {
         id: "d".to_owned(),
         org_id: "   ".to_owned(),
@@ -452,8 +441,8 @@ fn canonical_packs_and_deployment_refusals_fail_closed() -> TestResult {
         CODE_DEPLOYMENT_SCOPE
     );
 
-    let mut bad_settings = BTreeMap::new();
-    bad_settings.insert(
+    let mut secret_settings = BTreeMap::new();
+    secret_settings.insert(
         "whatsapp_api_token".to_owned(),
         SettingValue::Str("raw-secret-never-allowed".to_owned()),
     );
@@ -465,24 +454,75 @@ fn canonical_packs_and_deployment_refusals_fail_closed() -> TestResult {
         cell_host: CellHostKind::Rivet,
         worker_endpoints: BTreeMap::new(),
         secret_refs: Vec::new(),
-        initial_settings: bad_settings,
+        initial_settings: secret_settings,
     };
     assert_eq!(
         expect_err(bad_secret.validate(None), "raw secret")?.code(),
         CODE_RAW_SECRET
     );
 
+    let bad_setting_cases: &[(&str, SettingValue, &str)] = &[
+        (
+            "nan_dec",
+            SettingValue::Decimal("NaN".to_owned()),
+            CODE_EXPRESSION,
+        ),
+        (
+            "inf_dec",
+            SettingValue::Decimal("Infinity".to_owned()),
+            CODE_EXPRESSION,
+        ),
+        (
+            "float_int",
+            SettingValue::Int("1.5".to_owned()),
+            CODE_SCHEMA,
+        ),
+        ("lead_zero", SettingValue::Int("01".to_owned()), CODE_SCHEMA),
+        ("sign_only", SettingValue::Int("-".to_owned()), CODE_SCHEMA),
+        ("empty_int", SettingValue::Int(String::new()), CODE_SCHEMA),
+    ];
+    for (label, val, expected_code) in bad_setting_cases {
+        let mut settings = BTreeMap::new();
+        settings.insert("limit".to_owned(), val.clone());
+        let spec = DeploymentSpec {
+            id: "d".to_owned(),
+            org_id: "org".to_owned(),
+            environment_id: "dev".to_owned(),
+            packs: vec![base.clone()],
+            cell_host: CellHostKind::Rivet,
+            worker_endpoints: BTreeMap::new(),
+            secret_refs: Vec::new(),
+            initial_settings: settings,
+        };
+        let err = expect_err(spec.validate(None), label)?;
+        assert_eq!(
+            err.code(),
+            *expected_code,
+            "setting case `{label}` expected {expected_code}, got {err}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn deployment_spec_refuses_invalid_worker_endpoint_urls_without_leaking_credentials() -> TestResult
+{
+    let base = sample_pack("pack.base", vec![], vec!["hr.Employee"]);
     for bad_url in [
         "http://localhost.evil.example/solve",
         "http://127.0.0.1.evil.example/solve",
         "http://evil.example\\@localhost/solve",
         "http://evil.example\\@127.0.0.1/solve",
-        "https://user:secret@example.com/solve",
+        "https://alice:s3cr3t@example.com/solve",
         "http://user:pass@localhost/solve",
         "http://[::1/solve",
+        "https://[bogus]/",
+        "https://[1::2::3]/solve",
+        "http://[0::1]/solve",
         "https://example.com:notaport/solve",
         "https://example.com:99999/solve",
         "https://foo bar/solve",
+        "https://foo$bar/solve",
         "https:///no-host",
         "http://example.com/solve",
         "https://example.com/solve?token=abc",
@@ -502,11 +542,151 @@ fn canonical_packs_and_deployment_refusals_fail_closed() -> TestResult {
             secret_refs: Vec::new(),
             initial_settings: BTreeMap::new(),
         };
+        let err = expect_err(bad_ep.validate(None), bad_url)?;
         assert_eq!(
-            expect_err(bad_ep.validate(None), bad_url)?.code(),
+            err.code(),
             CODE_DEPLOYMENT_ENDPOINT,
-            "bad URL `{bad_url}` expected {CODE_DEPLOYMENT_ENDPOINT}"
+            "bad URL expected {CODE_DEPLOYMENT_ENDPOINT}"
+        );
+        assert!(
+            !err.message().contains("s3cr3t") && !err.message().contains("alice"),
+            "refusal diagnostic leaked URL credentials: {}",
+            err.message()
         );
     }
+    Ok(())
+}
+
+#[test]
+fn eval_refuses_exponential_value_cloning_and_deep_or_cyclic_inheritance() -> TestResult {
+    let opts = demo_opts();
+
+    // 1. Exponential binding chain (2^30 nodes if cloned naively) must fail fast.
+    let mut bomb = String::from("v0 = [0]\n");
+    for idx in 1_usize..=30 {
+        let prev = idx.saturating_sub(1);
+        let _ = writeln!(bomb, "v{idx} = [v{prev}, v{prev}]");
+    }
+    let err_bomb = expect_err(elaborate_source(&bomb, &opts), "exponential value bomb")?;
+    assert_eq!(err_bomb.code(), CODE_UNBOUNDED);
+
+    // 2. Deep inheritance chain (> MAX_INHERITANCE_DEPTH = 64) must fail closed.
+    let mut deep_chain = String::from(
+        "from __future__ import annotations\nfrom norn_py import Concept, Field\n\nclass C0(Concept):\n    f0: Field[str]\n",
+    );
+    for idx in 1_usize..=66 {
+        let prev = idx.saturating_sub(1);
+        if idx == 66 {
+            let _ = writeln!(
+                deep_chain,
+                "class C{idx}(C{prev}, name=\"test.DeepLeaf\", title=\"Deep\", version=\"0.1.0\"):\n    leaf: Field[str]"
+            );
+        } else {
+            let _ = writeln!(deep_chain, "class C{idx}(C{prev}):\n    pass");
+        }
+    }
+    let err_deep = expect_err(elaborate_source(&deep_chain, &opts), "deep inheritance")?;
+    assert_eq!(err_deep.code(), CODE_UNBOUNDED);
+
+    // 3. Rebound self-cycle (`class Loop(Concept)` followed by `class Loop(Loop, ...)`) fails closed.
+    let cycle_src = r#"from __future__ import annotations
+from norn_py import Concept, Field
+
+class Loop(Concept):
+    a: Field[str]
+
+class Loop(Loop, name="test.CyclicLoop", title="Loop", version="0.1.0"):
+    b: Field[str]
+"#;
+    let err_cycle = expect_err(elaborate_source(cycle_src, &opts), "cyclic inheritance")?;
+    assert_eq!(err_cycle.code(), CODE_SCHEMA);
+    Ok(())
+}
+
+#[test]
+fn standalone_annotation_and_elaboration_enforce_early_budgets() -> TestResult {
+    let oversized_ann = "a".repeat(MAX_SOURCE_BYTES.saturating_add(1));
+    let err_bytes = expect_err(
+        validate_annotation_source(&oversized_ann, None),
+        "oversized standalone annotation",
+    )?;
+    assert_eq!(err_bytes.code(), CODE_UNBOUNDED);
+
+    // High AST node count (> 100,000 nodes) under 1 MiB source bytes.
+    let mut wide_ann = String::from("Union[");
+    for idx in 0..50_005 {
+        if idx > 0 {
+            wide_ann.push(',');
+        }
+        wide_ann.push_str("str");
+    }
+    wide_ann.push(']');
+    let err_nodes = expect_err(
+        validate_annotation_source(&wide_ann, None),
+        "high-node standalone annotation",
+    )?;
+    assert_eq!(err_nodes.code(), CODE_UNBOUNDED);
+
+    let tight = SandboxLimits {
+        max_source_bytes: 16,
+        ..SandboxLimits::default()
+    };
+    let err_early = expect_err(
+        elaborate_source_with_limits("x = '0123456789abcdef0123456789'\n", &demo_opts(), tight),
+        "early source byte cap",
+    )?;
+    assert_eq!(err_early.code(), CODE_UNBOUNDED);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn read_regular_file_bounded_refuses_symlinks_dirs_and_oversized_files() -> TestResult {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    use norn_authoring_py::{CODE_IO, read_regular_file_bounded};
+
+    let tmp_dir =
+        std::env::temp_dir().join(format!("norn-authoring-py-io-test-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp_dir);
+    fs::create_dir_all(&tmp_dir)?;
+
+    let regular = tmp_dir.join("real.py");
+    fs::write(&regular, "x = 1\n")?;
+    let link_path = tmp_dir.join("link.py");
+    symlink(&regular, &link_path)?;
+    let oversized = tmp_dir.join("big.py");
+    fs::write(&oversized, "0123456789abcdef")?;
+
+    let err_link = expect_err(
+        read_regular_file_bounded(&link_path, "link.py", 1024),
+        "symlink",
+    )?;
+    assert_eq!(err_link.code(), CODE_IO);
+
+    let trailing_slash = format!("{}/", link_path.display());
+    let err_trailing = expect_err(
+        read_regular_file_bounded(std::path::Path::new(&trailing_slash), "link.py/", 1024),
+        "symlink with trailing slash",
+    )?;
+    assert_eq!(err_trailing.code(), CODE_IO);
+
+    let err_dir = expect_err(
+        read_regular_file_bounded(&tmp_dir, "dir", 1024),
+        "directory",
+    )?;
+    assert_eq!(err_dir.code(), CODE_IO);
+
+    let err_big = expect_err(
+        read_regular_file_bounded(&oversized, "big.py", 8),
+        "oversized regular file",
+    )?;
+    assert_eq!(err_big.code(), CODE_UNBOUNDED);
+
+    let ok_src = read_regular_file_bounded(&regular, "real.py", 1024)?;
+    assert_eq!(ok_src, "x = 1\n");
+
+    let _ = fs::remove_dir_all(&tmp_dir);
     Ok(())
 }

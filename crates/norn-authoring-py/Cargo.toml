@@ -23,5 +23,10 @@ ruff_python_parser = "=0.0.23"
 ruff_text_size = "=0.0.23"
 thiserror = "2.0.20"
 
+# Safe no-follow, non-blocking opens (openat, O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+# for reading Python authoring files without TOCTOU symlink/FIFO windows.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["fs"] }
+
 [lints]
 workspace = true

@@ -18,7 +18,7 @@ pub mod types;
 mod types_spec;
 
 use std::collections::BTreeMap;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
@@ -98,7 +98,11 @@ pub fn elaborate_file(
 }
 
 /// Reads at most `max_bytes` from a regular non-symlink file, refusing symlinks, FIFOs,
-/// and files exceeding `max_bytes`.
+/// directories, and files exceeding `max_bytes`.
+///
+/// On Unix platforms, opens the target atomically with
+/// `O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` and validates the open descriptor via
+/// `fstat` to avoid `lstat` -> `open` `TOCTOU` races.
 ///
 /// # Errors
 ///
@@ -109,36 +113,8 @@ pub fn read_regular_file_bounded(
     max_bytes: usize,
 ) -> Result<String, PyAuthoringError> {
     let span = SourceSpan::new(logical_path, 1, 0);
-    let meta = fs::symlink_metadata(path).map_err(|err| {
-        PyAuthoringError::spanned(
-            CODE_IO,
-            format!("cannot stat '{logical_path}': {err}"),
-            span.clone(),
-        )
-    })?;
-    let file_type = meta.file_type();
-    if file_type.is_symlink() {
-        return Err(PyAuthoringError::spanned(
-            CODE_IO,
-            format!("refusing to read symlink authoring source '{logical_path}'"),
-            span,
-        ));
-    }
-    if !file_type.is_file() {
-        return Err(PyAuthoringError::spanned(
-            CODE_IO,
-            format!("refusing to read non-regular authoring source '{logical_path}'"),
-            span,
-        ));
-    }
+    let file = open_regular_file_no_follow(path, logical_path, max_bytes, &span)?;
 
-    let file = File::open(path).map_err(|err| {
-        PyAuthoringError::spanned(
-            CODE_IO,
-            format!("cannot open '{logical_path}': {err}"),
-            span.clone(),
-        )
-    })?;
     let limit = u64::try_from(max_bytes.saturating_add(1)).unwrap_or(u64::MAX);
     let mut reader = file.take(limit);
     let mut bytes = Vec::new();
@@ -163,4 +139,141 @@ pub fn read_regular_file_bounded(
             span,
         )
     })
+}
+
+#[cfg(unix)]
+fn strip_trailing_slashes(path: &Path) -> &Path {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let raw = path.as_os_str().as_bytes();
+    let mut end = raw.len();
+    while end > 1 && raw.get(end.saturating_sub(1)) == Some(&b'/') {
+        end = end.saturating_sub(1);
+    }
+    Path::new(OsStr::from_bytes(raw.get(..end).unwrap_or(raw)))
+}
+
+#[cfg(unix)]
+fn open_regular_file_no_follow(
+    path: &Path,
+    logical_path: &str,
+    max_bytes: usize,
+    span: &SourceSpan,
+) -> Result<File, PyAuthoringError> {
+    use rustix::fs::{Mode, OFlags};
+
+    let open_path = strip_trailing_slashes(path);
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    let fd =
+        rustix::fs::openat(rustix::fs::CWD, open_path, flags, Mode::empty()).map_err(|err| {
+            if err == rustix::io::Errno::LOOP {
+                PyAuthoringError::spanned(
+                    CODE_IO,
+                    format!("refusing to read symlink authoring source '{logical_path}'"),
+                    span.clone(),
+                )
+            } else if err == rustix::io::Errno::NXIO || err == rustix::io::Errno::OPNOTSUPP {
+                PyAuthoringError::spanned(
+                    CODE_IO,
+                    format!("refusing to read non-regular authoring source '{logical_path}'"),
+                    span.clone(),
+                )
+            } else {
+                PyAuthoringError::spanned(
+                    CODE_IO,
+                    format!("cannot open '{logical_path}': {err}"),
+                    span.clone(),
+                )
+            }
+        })?;
+    let file = File::from(fd);
+    let meta = file.metadata().map_err(|err| {
+        PyAuthoringError::spanned(
+            CODE_IO,
+            format!("cannot stat '{logical_path}': {err}"),
+            span.clone(),
+        )
+    })?;
+    if !meta.file_type().is_file() {
+        return Err(PyAuthoringError::spanned(
+            CODE_IO,
+            format!("refusing to read non-regular authoring source '{logical_path}'"),
+            span.clone(),
+        ));
+    }
+    let max_u64 = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+    if meta.len() > max_u64 {
+        return Err(PyAuthoringError::spanned(
+            CODE_UNBOUNDED,
+            format!("source exceeds {max_bytes} byte limit"),
+            span.clone(),
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn open_regular_file_no_follow(
+    path: &Path,
+    logical_path: &str,
+    max_bytes: usize,
+    span: &SourceSpan,
+) -> Result<File, PyAuthoringError> {
+    let lstat = std::fs::symlink_metadata(path).map_err(|err| {
+        PyAuthoringError::spanned(
+            CODE_IO,
+            format!("cannot stat '{logical_path}': {err}"),
+            span.clone(),
+        )
+    })?;
+    let lstat_type = lstat.file_type();
+    if lstat_type.is_symlink() {
+        return Err(PyAuthoringError::spanned(
+            CODE_IO,
+            format!("refusing to read symlink authoring source '{logical_path}'"),
+            span.clone(),
+        ));
+    }
+    if !lstat_type.is_file() {
+        return Err(PyAuthoringError::spanned(
+            CODE_IO,
+            format!("refusing to read non-regular authoring source '{logical_path}'"),
+            span.clone(),
+        ));
+    }
+    let max_u64 = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+    if lstat.len() > max_u64 {
+        return Err(PyAuthoringError::spanned(
+            CODE_UNBOUNDED,
+            format!("source exceeds {max_bytes} byte limit"),
+            span.clone(),
+        ));
+    }
+
+    let file = File::open(path).map_err(|err| {
+        PyAuthoringError::spanned(
+            CODE_IO,
+            format!("cannot open '{logical_path}': {err}"),
+            span.clone(),
+        )
+    })?;
+    let fstat = file.metadata().map_err(|err| {
+        PyAuthoringError::spanned(
+            CODE_IO,
+            format!("cannot stat '{logical_path}': {err}"),
+            span.clone(),
+        )
+    })?;
+    if !fstat.file_type().is_file()
+        || lstat.len() != fstat.len()
+        || lstat.modified().ok() != fstat.modified().ok()
+    {
+        return Err(PyAuthoringError::spanned(
+            CODE_IO,
+            format!("refusing to read modified or non-regular authoring source '{logical_path}'"),
+            span.clone(),
+        ));
+    }
+    Ok(file)
 }

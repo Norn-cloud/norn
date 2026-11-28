@@ -11,6 +11,7 @@ use norn_authoring_py::{
     CellHostKind, DeploymentSpec, EnvelopeOptions, FnRef, JsonValue, MaskSpec, PackCategory,
     PackConflictPolicy, PackManifest, SecretRef, SettingValue, canonical_json,
     canonical_norn1_bytes, canonical_norn1_sha256, compose_packs, elaborate_file, elaborate_source,
+    is_valid_worker_endpoint_url,
 };
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -109,7 +110,7 @@ fn hr_pilot_elaborates_byte_identically_to_python_reference() -> TestResult {
 }
 
 #[test]
-fn core_agent_and_time_interval_match_checked_in_goldens_byte_for_byte() -> TestResult {
+fn core_agent_matches_checked_in_golden_byte_for_byte() -> TestResult {
     let agent_src = r#"from __future__ import annotations
 
 from enum import StrEnum
@@ -163,7 +164,11 @@ class Agent(
         canonical_norn1_sha256(agent_art)?,
         canonical_norn1_sha256(&parsed_agent_golden)?
     );
+    Ok(())
+}
 
+#[test]
+fn core_time_interval_matches_checked_in_golden_byte_for_byte() -> TestResult {
     let ti_src = r#"from __future__ import annotations
 
 from typing import Annotated
@@ -215,9 +220,7 @@ class TimeInterval(
     Ok(())
 }
 
-#[test]
-fn object_invariants_money_rate_defaults_and_anonymous_subclasses() -> TestResult {
-    let src = r#"from __future__ import annotations
+const ORDER_PARITY_SRC: &str = r#"from __future__ import annotations
 
 from decimal import Decimal
 from typing import Annotated, Literal
@@ -264,7 +267,9 @@ class AnonymousHelper(Order):
     pass
 "#;
 
-    let res = elaborate_source(src, &demo_options("order.py"))?;
+#[test]
+fn object_invariants_money_rate_defaults_and_anonymous_subclasses() -> TestResult {
+    let res = elaborate_source(ORDER_PARITY_SRC, &demo_options("order.py"))?;
     assert_eq!(
         res.artifacts.len(),
         1,
@@ -382,8 +387,7 @@ fn canonical_norn1_nfc_utf16_ordering_and_control_escaping_parity() -> TestResul
     Ok(())
 }
 
-#[test]
-fn pack_composition_deployment_spec_and_mask_spec_parity() -> TestResult {
+fn demo_hr_and_loc_packs() -> (PackManifest, PackManifest) {
     let hr_pack = PackManifest {
         id: "norn.pack.hr".to_owned(),
         version: "0.1.0".to_owned(),
@@ -413,6 +417,12 @@ fn pack_composition_deployment_spec_and_mask_spec_parity() -> TestResult {
         functions: Vec::new(),
         description: None,
     };
+    (hr_pack, loc_eg)
+}
+
+#[test]
+fn pack_composition_deployment_spec_and_mask_spec_parity() -> TestResult {
+    let (hr_pack, loc_eg) = demo_hr_and_loc_packs();
 
     let composed = compose_packs(
         &[hr_pack.clone(), loc_eg.clone()],
@@ -477,5 +487,60 @@ fn pack_composition_deployment_spec_and_mask_spec_parity() -> TestResult {
         canonical_norn1_bytes(&MaskSpec::LastN(4).to_ir())?,
         b"{\"count\":4,\"kind\":\"last-n\"}"
     );
+    Ok(())
+}
+
+#[test]
+fn lifecycle_reassignment_and_uppercase_loopback_endpoint_match_python_parity() -> TestResult {
+    let src = r#"from __future__ import annotations
+from enum import StrEnum
+from norn_py import Concept, Field, lifecycle, transition
+
+class St(StrEnum):
+    A = "a"
+    B = "b"
+
+class ReassignItem(Concept, name="test.ReassignItem", title="Item", version="0.1.0"):
+    status: Field[St]
+    state = lifecycle("status", St, initial=(St.A,), transitions=(transition("first", from_=(St.A,), to=St.B),))
+    state = lifecycle("status", St, initial=(St.B,), transitions=(transition("second", from_=(St.B,), to=St.A),))
+"#;
+    let res = elaborate_source(src, &demo_options("reassign.py"))?;
+    assert_eq!(
+        res.norn1_sha256,
+        "c00ec00b46d6fcdce7eb300f1e11208d4e7bcedc9d41b4af342e5ee281281eda"
+    );
+    let art = res.artifacts.first().ok_or("missing ReassignItem")?;
+    assert_eq!(
+        canonical_norn1_sha256(art)?,
+        "c879dfca6036e34be313d33e97d5143d20bbfd3fa466d9878751b45cf1a8158d"
+    );
+    let obj = obj_field(obj_field(art, "payload")?, "objectType")?;
+    let JsonValue::Array(lifecycles) = obj_field(obj, "lifecycles")? else {
+        return Err("expected lifecycles array".into());
+    };
+    assert_eq!(lifecycles.len(), 1);
+    let lc0 = lifecycles.first().ok_or("missing lifecycle")?;
+    let JsonValue::Array(transitions) = obj_field(lc0, "transitions")? else {
+        return Err("expected transitions array".into());
+    };
+    assert_eq!(transitions.len(), 1);
+    let tr0 = transitions.first().ok_or("missing transition")?;
+    assert_eq!(as_str(obj_field(tr0, "id")?, "transition id")?, "second");
+
+    // Loopback hostnames normalize case-insensitively (matching Python urlsplit.hostname).
+    for valid_url in [
+        "http://LOCALHOST/",
+        "http://LOCALHOST:8080/solve",
+        "http://127.0.0.1:8080/solve",
+        "http://[::1]:8080/solve",
+        "https://[2001:db8::1]:8443/solve",
+        "HTTPS://EXAMPLE.COM/solve",
+    ] {
+        assert!(
+            is_valid_worker_endpoint_url(valid_url),
+            "expected valid worker endpoint URL `{valid_url}`"
+        );
+    }
     Ok(())
 }

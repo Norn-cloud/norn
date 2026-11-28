@@ -6,8 +6,12 @@ use ruff_python_ast::{
 };
 use ruff_python_parser::parse_module;
 
-use crate::error::{CODE_FLOAT_LITERAL, CODE_UNSAFE_ANNOTATION, PyAuthoringError, SourceSpan};
-use crate::sandbox::allowed_import_symbols;
+use crate::budget::check_body_budget;
+use crate::error::{
+    CODE_FLOAT_LITERAL, CODE_UNBOUNDED, CODE_UNSAFE_ANNOTATION, PyAuthoringError, SourceSpan,
+};
+use crate::line_table::LineTable;
+use crate::sandbox::{SandboxLimits, allowed_import_symbols};
 use crate::schema::annotation_check::{ExtractedField, extract_property_and_meta};
 use crate::schema::annotation_ctors::{ANNOTATION_CALLABLES, dispatch_annotation_ctor};
 use crate::schema::env::{EnumMemberVal, EvalValue, ModuleEnv};
@@ -94,27 +98,45 @@ pub(crate) enum AnnVal {
 
 /// Validates and resolves a standalone Python annotation string without ever invoking `eval()`.
 ///
+/// Enforces [`SandboxLimits::default`] source-byte, AST node-count, and AST depth budgets
+/// before evaluating the annotation against the closed allowlist.
+///
 /// # Errors
 ///
-/// Returns [`PyAuthoringError`] with code [`CODE_UNSAFE_ANNOTATION`], [`CODE_FLOAT_LITERAL`],
-/// [`crate::error::CODE_EXPRESSION`], or [`crate::error::CODE_SCHEMA`] if the annotation violates
-/// the closed allowlist or exceeds [`MAX_ANNOTATION_DEPTH`].
+/// Returns [`PyAuthoringError`] with code [`CODE_UNBOUNDED`], [`CODE_UNSAFE_ANNOTATION`],
+/// [`CODE_FLOAT_LITERAL`], [`crate::error::CODE_EXPRESSION`], or [`crate::error::CODE_SCHEMA`]
+/// if the annotation exceeds resource budgets, violates the closed allowlist, or exceeds
+/// [`MAX_ANNOTATION_DEPTH`].
 pub fn validate_annotation_source(
     annotation: &str,
     span: Option<&SourceSpan>,
 ) -> Result<(), PyAuthoringError> {
+    let limits = SandboxLimits::default();
+    if annotation.len() > limits.max_source_bytes {
+        return Err(PyAuthoringError::with_optional_span(
+            CODE_UNBOUNDED,
+            format!(
+                "annotation source exceeds {} byte limit",
+                limits.max_source_bytes
+            ),
+            span.cloned(),
+        ));
+    }
     let parsed = parse_module(annotation).map_err(|err| {
         PyAuthoringError::with_optional_span(
             CODE_UNSAFE_ANNOTATION,
-            format!("invalid annotation syntax '{annotation}': {}", err.error),
+            format!("invalid annotation syntax: {}", err.error),
             span.cloned(),
         )
     })?;
     let body: &[Stmt] = parsed.suite();
+    let logical_path = span.map_or("<annotation>", |s| s.file.as_str());
+    let lines = LineTable::new(logical_path, annotation);
+    let _budget = check_body_budget(body, &lines, limits)?;
     let [Stmt::Expr(expr_stmt)] = body else {
         return Err(PyAuthoringError::with_optional_span(
             CODE_UNSAFE_ANNOTATION,
-            format!("invalid annotation syntax '{annotation}'"),
+            "invalid annotation syntax: expected a single expression",
             span.cloned(),
         ));
     };

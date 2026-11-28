@@ -3684,6 +3684,7 @@ dependencies = [
  "ruff_python_formatter",
  "ruff_python_parser",
  "ruff_text_size",
+ "rustix",
  "thiserror 2.0.20",
 ]
 

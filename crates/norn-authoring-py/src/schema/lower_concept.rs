@@ -29,7 +29,7 @@ pub(crate) fn lower_concept(
     }
 
     let mut ctx = LowerContext::with_root("self")
-        .with_allowed_fields(env.declared_field_names(&concept.py_name));
+        .with_allowed_fields(env.declared_field_names(&concept.py_name, &concept.span)?);
     ctx.constants = constants.clone();
 
     let lifecycles_ir = lower_concept_lifecycles(concept, lines, &ctx)?;

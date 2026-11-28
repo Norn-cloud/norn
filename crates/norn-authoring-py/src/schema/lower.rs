@@ -11,7 +11,8 @@ use crate::canonical::{
     canonical_norn1_bytes, norn1_sha256_bytes,
 };
 use crate::error::{
-    CODE_ELABORATION, CODE_FORBIDDEN_SYNTAX, CODE_SCHEMA, PyAuthoringError, SourceSpan,
+    CODE_ELABORATION, CODE_FORBIDDEN_SYNTAX, CODE_SCHEMA, CODE_UNBOUNDED, PyAuthoringError,
+    SourceSpan,
 };
 use crate::expr::LowerContext;
 use crate::expr_lower::lower_function_def;
@@ -33,6 +34,13 @@ pub(crate) fn elaborate_module_source(
     options: &EnvelopeOptions,
     limits: SandboxLimits,
 ) -> Result<ElaborationResult, PyAuthoringError> {
+    if source.len() > limits.max_source_bytes {
+        return Err(PyAuthoringError::spanned(
+            CODE_UNBOUNDED,
+            format!("source exceeds {} byte limit", limits.max_source_bytes),
+            SourceSpan::new(&options.source_path, 1, 0),
+        ));
+    }
     let lines = LineTable::new(&options.source_path, source);
     let (module, report) = parse_and_validate_module(source, &lines, limits)?;
 
@@ -69,7 +77,7 @@ fn collect_module_env<'a>(
             Stmt::AnnAssign(ann_assign) => collect_ann_assign(ann_assign, &mut env, lines, &span)?,
             Stmt::Expr(expr_stmt) => {
                 if !matches!(expr_stmt.value.as_ref(), Expr::StringLiteral(_)) {
-                    let _val = eval_expr(&expr_stmt.value, &env, lines)?;
+                    let _val = eval_expr(&expr_stmt.value, &mut env, lines)?;
                 }
             }
             Stmt::Pass(_) => {}
@@ -143,6 +151,7 @@ fn collect_assign<'a>(
 ) -> Result<(), PyAuthoringError> {
     let value = eval_expr(&assign.value, env, lines)?;
     let is_catalog = matches!(value, EvalValue::MarkingsCatalog(_));
+    let mut keys = Vec::with_capacity(assign.targets.len());
     for target in &assign.targets {
         let Expr::Name(name) = target else {
             return Err(PyAuthoringError::spanned(
@@ -151,7 +160,11 @@ fn collect_assign<'a>(
                 span.clone(),
             ));
         };
-        let key = name.id.as_str().to_owned();
+        keys.push(name.id.as_str().to_owned());
+    }
+    let last_idx = keys.len().saturating_sub(1);
+    let mut value_opt = Some(value);
+    for (idx, key) in keys.into_iter().enumerate() {
         if is_catalog {
             push_unique_emission(
                 &mut env.emission_order,
@@ -160,7 +173,18 @@ fn collect_assign<'a>(
                 },
             );
         }
-        env.bindings.insert(key, value.clone());
+        let bound = if idx == last_idx {
+            value_opt.take()
+        } else if let Some(val_ref) = value_opt.as_ref() {
+            let cost = val_ref.bounded_node_count(env.remaining_eval_nodes());
+            env.charge_eval_nodes(cost, span)?;
+            Some(val_ref.clone())
+        } else {
+            None
+        };
+        if let Some(bound_val) = bound {
+            env.bindings.insert(key, bound_val);
+        }
     }
     Ok(())
 }
@@ -267,7 +291,7 @@ struct LawArgs {
 fn parse_law_decorator<'a>(
     call: &'a ExprCall,
     func_def: &'a StmtFunctionDef,
-    env: &ModuleEnv<'a>,
+    env: &mut ModuleEnv<'a>,
     lines: &LineTable<'_>,
     span: &SourceSpan,
 ) -> Result<LawDeclAst<'a>, PyAuthoringError> {
@@ -473,7 +497,7 @@ fn lower_law(
     }
 
     let mut ctx = LowerContext::with_root("self")
-        .with_allowed_fields(env.declared_field_names(&law.subject_py_name));
+        .with_allowed_fields(env.declared_field_names(&law.subject_py_name, &law.span)?);
     ctx.constants = constants.clone();
 
     let expr = lower_function_def(law.predicate, lines, &ctx)?;
