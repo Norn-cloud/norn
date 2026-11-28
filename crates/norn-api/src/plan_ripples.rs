@@ -200,7 +200,7 @@ mod tests {
         }
         .into();
         assert_eq!(unknown.status, PlanRippleStatus::Unknown);
-        assert!(unknown.ripples.is_empty());
+        assert_eq!(unknown.ripples, Vec::new());
         assert_eq!(unknown.budget_exceeded.as_ref().map(|b| b.limit), Some(16));
         assert!(unknown.reason.is_some());
     }
