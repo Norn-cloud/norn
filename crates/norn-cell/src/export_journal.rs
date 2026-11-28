@@ -13,12 +13,12 @@ use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::export::{EXPORT_FORMAT, ExportRecord, SourceEvidenceEntry};
 #[cfg(all(test, feature = "native"))]
-pub(crate) use crate::export_evidence::read_late_source_evidence;
-#[cfg(all(test, feature = "native"))]
-pub(crate) use crate::export_evidence::{members_valid, restore_source_evidence};
+pub(crate) use crate::export_evidence::{
+    members_valid, read_late_source_evidence, restore_late_source_evidence, restore_source_evidence,
+};
 pub(crate) use crate::export_evidence::{
     read_late_source_evidence_for_version, read_source_evidence, reprocessed_target,
-    restore_late_source_evidence, restore_observation_input,
+    restore_late_source_evidence_with_events, restore_observation_input,
 };
 use crate::model::Model;
 use crate::read::{LedgerEntry, StoreReader, to_i64, to_u64};

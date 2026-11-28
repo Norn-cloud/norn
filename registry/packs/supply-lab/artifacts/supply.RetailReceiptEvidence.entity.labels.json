@@ -1,0 +1,33 @@
+{
+  "artifactId": "supply.RetailReceiptEvidence.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Retail receipt feed row labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "سطر استلام التجزئة",
+          "en": "Retail receipt row"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.RetailReceiptEvidence"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.RetailReceiptEvidence.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

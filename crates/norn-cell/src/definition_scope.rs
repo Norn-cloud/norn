@@ -63,7 +63,7 @@ pub(crate) fn parse_cell_scope(raw: &str) -> ScopeRef {
     }
 }
 
-fn bound_scope<E: SqlEngine>(engine: &E) -> Result<Option<String>, CellError> {
+pub(crate) fn bound_scope<E: SqlEngine>(engine: &E) -> Result<Option<String>, CellError> {
     engine.query_optional(
         &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
         params!["binding:scope"],

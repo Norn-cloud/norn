@@ -1,0 +1,33 @@
+{
+  "artifactId": "supply.StoreCountEvidence.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Store count feed row labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "سطر جرد المتجر",
+          "en": "Store count row"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.StoreCountEvidence"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StoreCountEvidence.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

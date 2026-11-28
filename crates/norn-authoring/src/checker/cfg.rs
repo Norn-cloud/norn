@@ -3,7 +3,7 @@ use tsrs_core::P;
 
 /// Exit classification for a `switch` clause (ports `tools/norn-ts/src/compiler/cfg.ts`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Terminator {
+pub(crate) enum Terminator {
     Break,
     Return,
     Fallthrough,
@@ -11,7 +11,7 @@ pub(super) enum Terminator {
 }
 
 /// Classifies how control exits `clause` (`CaseClause` or `DefaultClause`).
-pub(super) fn terminator(clause: P<Node>, is_last: bool) -> Terminator {
+pub(crate) fn terminator(clause: P<Node>, is_last: bool) -> Terminator {
     let stmts = clause.as_case_or_default_clause().statements.nodes();
     if let Some(&tail) = stmts.last() {
         if tail.kind() == Kind::BreakStatement {
@@ -32,7 +32,7 @@ pub(super) fn terminator(clause: P<Node>, is_last: bool) -> Terminator {
 /// `return` statement.
 ///
 /// Mirrors `returns` in `tools/norn-ts/src/compiler/cfg.ts`.
-pub(super) fn returns(node: P<Node>) -> bool {
+pub(crate) fn returns(node: P<Node>) -> bool {
     let kind = node.kind();
     if kind == Kind::ReturnStatement {
         return true;

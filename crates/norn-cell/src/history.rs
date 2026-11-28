@@ -2235,11 +2235,12 @@ impl<E: SqlEngine> CellStore<E> {
                 store.bind(key, value)?;
             }
             if let Some(install) = &record.definition_install {
-                crate::export_journal::restore_late_source_evidence(
+                crate::export_journal::restore_late_source_evidence_with_events(
                     &store.read(),
                     record.receipt.body.commit_seq,
                     &record.pending_observations,
                     &record.source_evidence,
+                    &record.batch.events,
                 )?;
                 let installed = store.install_retained_definitions(record)?;
                 if installed != install.installed {
@@ -2253,11 +2254,12 @@ impl<E: SqlEngine> CellStore<E> {
                     return Err(refused());
                 }
                 restore_input(&mut store, record)?;
-                crate::export_journal::restore_late_source_evidence(
+                crate::export_journal::restore_late_source_evidence_with_events(
                     &store.read(),
                     record.receipt.body.commit_seq,
                     &record.pending_observations,
                     &record.source_evidence,
+                    &record.batch.events,
                 )?;
                 let outcome = store.commit_retained_batch(record)?;
                 if !matches!(outcome, CommitOutcome::Committed(_))

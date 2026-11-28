@@ -1,0 +1,51 @@
+{
+  "artifactId": "supply.StoreCommercialRollup.store_commercial_rollup_period_week_matches_end.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.StoreCommercialRollup.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Store commercial KPI rollup period_week must start on or before period_end with at least one sales week.",
+  "namespace": "supply",
+  "payload": {
+    "condition": "len(self.period_week) == 10",
+    "id": "supply.StoreCommercialRollup.store_commercial_rollup_period_week_matches_end",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "Store commercial KPI rollup period_week must start on or before period_end with at least one sales week.",
+    "response": {
+      "expression": "((self.sales_weeks >= 1) and (timestamp(self.period_start) <= timestamp(self.period_end))) and (seconds_between(timestamp(self.period_week + 'T00:00:00Z'), timestamp(self.period_end)) >= 0)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.StoreCommercialRollup"
+      ],
+      "root": {
+        "id": "supply.StoreCommercialRollup",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.StoreCommercialRollup"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StoreCommercialRollup.store_commercial_rollup_period_week_matches_end.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

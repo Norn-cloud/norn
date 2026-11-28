@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.SaleEvidence.sale_positive.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.SaleEvidence.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A POS sale line sells a positive quantity with non-negative net revenue; returns are modeled separately.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.SaleEvidence.sale_positive",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "A POS sale line sells a positive quantity with non-negative net revenue; returns are modeled separately.",
+    "response": {
+      "expression": "(self.sold_qty > 0) and (self.net_revenue >= 0)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.SaleEvidence"
+      ],
+      "root": {
+        "id": "supply.SaleEvidence",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.SaleEvidence"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.SaleEvidence.sale_positive.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

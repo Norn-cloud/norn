@@ -402,3 +402,63 @@ pub(crate) fn explained(refusal: &norn_checker::mapping::RowRefusal) -> serde_js
     }
     value
 }
+
+impl<S: SqlEngine> StoreReader<'_, S> {
+    /// Emit `target: None` withdrawal claims under `obs_id` for every active
+    /// contribution owned by `bundle`'s source scope on deleted subjects.
+    pub(crate) fn delete_withdrawal_claims_for_obs(
+        &self,
+        bundle: &MappingBundle,
+        obs_id: &str,
+        batch_history: &std::collections::BTreeMap<
+            String,
+            Vec<(
+                norn_ir::SourceVersion,
+                String,
+                norn_ir::mapping::ObservedLinkClaim,
+            )>,
+        >,
+    ) -> Result<Vec<norn_ir::mapping::ObservedLinkClaim>, CellError> {
+        let scope = bundle.source_scope()?;
+        let mut withdrawals = Vec::new();
+        for delete in &bundle.deletes {
+            let mut seen_contributions = std::collections::BTreeSet::new();
+            let active = self.active_claims_for_source_delete(
+                &scope,
+                delete.object_type.as_str(),
+                &delete.key,
+            )?;
+            let mut candidates: Vec<norn_ir::mapping::ObservedLinkClaim> =
+                active.into_iter().map(|row| row.claim).collect();
+            for records in batch_history.values() {
+                if let Some((_, _, last)) = records.last()
+                    && last.source_scope == scope
+                    && last.source_type == delete.object_type
+                    && last.source_key == delete.key
+                    && last.target.is_some()
+                {
+                    candidates.push(last.clone());
+                }
+            }
+            for existing in candidates {
+                let contribution = existing.contribution_id()?;
+                if !seen_contributions.insert(contribution) {
+                    continue;
+                }
+                let mut provenance = delete.provenance.clone();
+                provenance.transform = Some(format!("{}.{}", delete.map, existing.role.as_str()));
+                withdrawals.push(norn_ir::mapping::ObservedLinkClaim {
+                    observation_id: obs_id.to_owned(),
+                    source_scope: existing.source_scope,
+                    source_type: existing.source_type,
+                    source_key: existing.source_key,
+                    role: existing.role,
+                    target: None,
+                    provenance,
+                    supersedes: std::collections::BTreeSet::new(),
+                });
+            }
+        }
+        Ok(withdrawals)
+    }
+}

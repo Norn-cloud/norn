@@ -1,9 +1,12 @@
 //! OBS-LINK-CONVERGE-1 / OBS-LINK-CONTRIBUTION-1 / OBS-LINK-PENDING-1:
 //! durable indexed link-claim frontier (`_norn_link_claim_frontier`, #1028).
 use crate::{
-    CellError, MAIN_WORLD, StoreReader, engine::SqlEngine, host::GuardView,
-    link_claim_frontier::FrontierRow, mapping_bundle::MappingBundle,
-    mapping_conflict::EventDispute,
+    CellError, MAIN_WORLD, StoreReader,
+    engine::SqlEngine,
+    host::GuardView,
+    link_claim_frontier::FrontierRow,
+    mapping_bundle::MappingBundle,
+    mapping_conflict::{EventDispute, SourceDisputeIndex},
 };
 use norn_ir::{RuntimeObject, RuntimeValue, mapping::ObservedLinkClaim};
 use norn_kernel::{
@@ -210,26 +213,21 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .as_ref()
                 .map(|t| fact(&t.object_type, &t.key))
         };
-        let mut full_groups = BTreeMap::<_, Vec<&Entry>>::new();
-        for entry in &all_entries {
-            full_groups
-                .entry((
-                    fact(&entry.claim.source_type, &entry.claim.source_key),
-                    entry.claim.role.clone(),
-                ))
-                .or_default()
-                .push(entry);
-        }
-        let mut active_groups = BTreeMap::<_, Vec<&Entry>>::new();
-        for entry in &active_entries {
-            active_groups
-                .entry((
-                    fact(&entry.claim.source_type, &entry.claim.source_key),
-                    entry.claim.role.clone(),
-                ))
-                .or_default()
-                .push(entry);
-        }
+        let group_by_sr = |list: &[Entry]| {
+            let mut groups = BTreeMap::<_, Vec<&Entry>>::new();
+            for entry in list {
+                groups
+                    .entry((
+                        fact(&entry.claim.source_type, &entry.claim.source_key),
+                        entry.claim.role.clone(),
+                    ))
+                    .or_default()
+                    .push(entry);
+            }
+            groups
+        };
+        let full_groups = group_by_sr(&all_entries);
+        let active_groups = group_by_sr(&active_entries);
         for (group_key, full_group) in &full_groups {
             let full_non_sup: BTreeMap<String, Standing> = full_group
                 .iter()
@@ -307,57 +305,6 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     ) -> Result<Vec<ObservedLinkClaim>, CellError> {
         let obs_id = format!("mapping-bundle:{}", bundle.digest);
         self.delete_withdrawal_claims_for_obs(bundle, &obs_id, batch_history)
-    }
-
-    /// Emit `target: None` withdrawal claims under `obs_id` for every active
-    /// contribution owned by `bundle`'s source scope on deleted subjects.
-    pub(crate) fn delete_withdrawal_claims_for_obs(
-        &self,
-        bundle: &MappingBundle,
-        obs_id: &str,
-        batch_history: &BTreeMap<String, Vec<(norn_ir::SourceVersion, String, ObservedLinkClaim)>>,
-    ) -> Result<Vec<ObservedLinkClaim>, CellError> {
-        let scope = bundle.source_scope()?;
-        let mut withdrawals = Vec::new();
-        for delete in &bundle.deletes {
-            let mut seen_contributions = BTreeSet::new();
-            let active = self.active_claims_for_source_delete(
-                &scope,
-                delete.object_type.as_str(),
-                &delete.key,
-            )?;
-            let mut candidates: Vec<ObservedLinkClaim> =
-                active.into_iter().map(|row| row.claim).collect();
-            for records in batch_history.values() {
-                if let Some((_, _, last)) = records.last()
-                    && last.source_scope == scope
-                    && last.source_type == delete.object_type
-                    && last.source_key == delete.key
-                    && last.target.is_some()
-                {
-                    candidates.push(last.clone());
-                }
-            }
-            for existing in candidates {
-                let contribution = existing.contribution_id()?;
-                if !seen_contributions.insert(contribution) {
-                    continue;
-                }
-                let mut provenance = delete.provenance.clone();
-                provenance.transform = Some(format!("{}.{}", delete.map, existing.role.as_str()));
-                withdrawals.push(ObservedLinkClaim {
-                    observation_id: obs_id.to_owned(),
-                    source_scope: existing.source_scope,
-                    source_type: existing.source_type,
-                    source_key: existing.source_key,
-                    role: existing.role,
-                    target: None,
-                    provenance,
-                    supersedes: BTreeSet::new(),
-                });
-            }
-        }
-        Ok(withdrawals)
     }
 
     /// Compute `supersedes` for a fresh claim of `contribution` at `version`.
@@ -439,12 +386,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         Ok(supersedes)
     }
 
-    /// OBS-LINK-DISPUTE-1: one open finding per edge a dispute holds back
-    /// from `key`: active frontier claims from `key` whose source event is
-    /// disputed, whose endpoints are both present and whose edge is absent.
-    ///
-    /// # Errors
-    /// Store or encoding failures.
+    /// OBS-LINK-DISPUTE-1: open held-link findings from `key`.
     pub(crate) fn held_link_findings(
         &self,
         object_type: &str,
@@ -453,26 +395,60 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         if !self.indexed_source_dispute(MAIN_WORLD, object_type, key)? {
             return Ok(Vec::new());
         }
+        self.held_link_findings_with(object_type, key, None)
+    }
+
+    pub(crate) fn held_link_findings_in_index(
+        &self,
+        object_type: &str,
+        key: &str,
+        index: &SourceDisputeIndex,
+    ) -> Result<Vec<norn_ir::DataQualityFinding>, CellError> {
+        let roots = self.source_dispute_roots(MAIN_WORLD, object_type, key)?;
+        if !index.has_subject(roots.as_deref(), key) {
+            return Ok(Vec::new());
+        }
+        self.held_link_findings_with(object_type, key, Some(index))
+    }
+
+    fn held_link_findings_with(
+        &self,
+        object_type: &str,
+        key: &str,
+        index: Option<&SourceDisputeIndex>,
+    ) -> Result<Vec<norn_ir::DataQualityFinding>, CellError> {
         let catalog = TypeCatalog::new(self.model().object_types())
             .with_interfaces(self.model().interfaces());
         let model = CommitModel::new(&catalog);
         let subject = model.canonical(&FactKey::new(object_type, key));
         let active_rows = self
             .active_frontier_for_scope(&BTreeSet::from([subject.key.clone()]), &BTreeSet::new())?;
-        let entries = self.frontier_rows_to_entries(active_rows, None)?;
-        let fact = |object_type: &norn_ir::ObjectTypeName, key: &str| {
-            model.canonical(&FactKey::new(object_type.as_str(), key))
+        let entries = match index {
+            Some(idx) => active_rows
+                .into_iter()
+                .map(|row| Entry {
+                    disputed: idx.events.contains_key(&row.event_keys),
+                    claim: row.claim,
+                    id: row.claim_id,
+                    contribution: row.contribution_id,
+                    event_keys: row.event_keys,
+                    fresh: false,
+                })
+                .collect(),
+            None => self.frontier_rows_to_entries(active_rows, None)?,
         };
+        let fact =
+            |ty: &norn_ir::ObjectTypeName, k: &str| model.canonical(&FactKey::new(ty.as_str(), k));
         let target = |e: &Entry| {
             e.claim
                 .target
                 .as_ref()
                 .map(|t| fact(&t.object_type, &t.key))
         };
-        let present = |key: &FactKey| -> Result<bool, CellError> {
+        let present = |k: &FactKey| -> Result<bool, CellError> {
             Ok(GuardView(self)
-                .concrete(&model.canonical(key))?
-                .is_some_and(|concrete| model.is_a(&concrete, &key.object_type)))
+                .concrete(&model.canonical(k))?
+                .is_some_and(|c| model.is_a(&c, &k.object_type)))
         };
         let mut groups = BTreeMap::<_, Vec<&Entry>>::new();
         for entry in &entries {
@@ -499,9 +475,11 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 {
                     continue;
                 }
-                let Some(dispute) = self.event_dispute_for_keys(&entry.event_keys, None)? else {
-                    continue;
+                let dispute = match index {
+                    Some(idx) => idx.events.get(&entry.event_keys).cloned(),
+                    None => self.event_dispute_for_keys(&entry.event_keys, None)?,
                 };
+                let Some(dispute) = dispute else { continue };
                 held.entry(model.canonical_link(&link))
                     .or_insert_with(|| (link, Vec::new()))
                     .1
@@ -888,23 +866,22 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         key: LinkKey,
         mutation: LinkMutation,
     ) -> Result<LinkWrite, CellError> {
+        let v = self.link_version(
+            MAIN_WORLD,
+            key.source.object_type.as_str(),
+            &key.link,
+            &key.source.key,
+            key.target.object_type.as_str(),
+            &key.target.key,
+        )?;
         Ok(LinkWrite {
-            expected: FactVersion(self.link_version(
-                MAIN_WORLD,
-                key.source.object_type.as_str(),
-                &key.link,
-                &key.source.key,
-                key.target.object_type.as_str(),
-                &key.target.key,
-            )?),
+            expected: FactVersion(v),
             key,
             mutation,
         })
     }
 
-    /// Writes this bundle's claims and prepares every active frontier claim of
-    /// each changed source/role group, so the kernel decides standing over the
-    /// frontier.
+    /// Writes this bundle's claims and prepares active frontier claims.
     pub(crate) fn prepare_mapping_links(
         &self,
         bundles: &[MappingBundle],
@@ -917,8 +894,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         self.apply_link_plan(plan, catalog, turn, commit, authority)
     }
 
-    /// Seal a computed [`LinkPlan`] into `commit` and `authority` through
-    /// `prepare_observed_link_claim_snapshot` -> `seal_observed_link_claim`.
+    /// Seal a computed [`LinkPlan`] into `commit` and `authority`.
     pub(crate) fn apply_link_plan(
         &self,
         plan: LinkPlan,

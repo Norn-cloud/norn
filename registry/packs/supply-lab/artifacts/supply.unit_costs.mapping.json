@@ -1,0 +1,90 @@
+{
+  "artifactId": "supply.unit_costs.mapping",
+  "dependencies": [
+    {
+      "artifactId": "supply.unit_costs.source",
+      "kind": "source_schema",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.CostEvidence.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.UnitCostEvidence.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "active",
+  "name": "Supplier costs into unit cost evidence",
+  "namespace": "supply",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "supply.CostEvidence.interface"
+    ],
+    "maps": [
+      {
+        "id": "unit_cost",
+        "properties": [
+          {
+            "property": "cost_id",
+            "value": "input.cost_id"
+          },
+          {
+            "property": "sku_code",
+            "value": "input.sku_code"
+          },
+          {
+            "property": "supplier_id",
+            "value": "({'ATELIER-01': 'SUP-ATELIER', 'GOLD-09': 'SUP-GOLD'})[input.vendor_code] ?? input.vendor_code"
+          },
+          {
+            "property": "unit_cost",
+            "value": "input.unit_cost"
+          },
+          {
+            "property": "currency",
+            "value": "({'EGP': 'EGP', 'USD': 'USD', 'EUR': 'EUR', 'LE': 'EGP'})[input.ccy] ?? input.ccy"
+          },
+          {
+            "property": "effective_from",
+            "value": "timestamp(input.effective_from)"
+          }
+        ],
+        "source": {
+          "dataset": "unit_cost"
+        },
+        "sourceRecord": "input.vendor_code + '/' + input.cost_id",
+        "subject": "input.cost_id",
+        "target": {
+          "entity": "supply.UnitCostEvidence.entity",
+          "interface": "supply.CostEvidence.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "supply.unit_costs.source",
+      "sha256": "b174a9fb823ba7eac488e017e559181c0ba19f6ab7d77d4fe801125332ea2b97",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.unit_costs.mapping.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

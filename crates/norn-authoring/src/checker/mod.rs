@@ -1,9 +1,9 @@
 mod admitted;
 mod calls;
-mod cfg;
+pub(crate) mod cfg;
 mod expressions;
 mod imports;
-mod resolve;
+pub(crate) mod resolve;
 mod statements;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};

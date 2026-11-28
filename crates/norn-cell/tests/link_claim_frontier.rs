@@ -2471,3 +2471,267 @@ fn pre_v13_generic_conflict_consumption_replays_and_v13_accept_first_exports_onc
         res_c1.commit_seq
     );
 }
+
+/// #1549: A sole direct `accept-first` resolution on a pre-v13 generically-
+/// consumed conflict (whose unattributed first capture was omitted from the
+/// pre-v13 export) must export that pending first capture and rebuild cleanly.
+#[test]
+fn pre_v13_direct_legacy_accept_first_exports_first_capture_and_replays() {
+    let dir = tempfile::tempdir().expect("dir");
+    let source_path = dir.path().join("direct_legacy_src.sqlite");
+    let upgraded_path = dir.path().join("direct_legacy_up.sqlite");
+    let mut cell = setup_with(&source_path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+
+    let a1 = party_ref_row("P-A", "demo/party/a", "First Pending", Some("demo/party/b"));
+    let a2 = party_ref_row("P-A", "demo/party/a", "Conflict 1", None);
+    let (r1, i1) = raw_event(&cell, "erpnext", &a1, "e1", "1", "upsert", "p1");
+    let (first_id, _) = cell.inject_mapping_bundle(&r1, &i1).expect("inject first");
+    let (r2, i2) = raw_event(&cell, "erpnext", &a2, "e1", "1", "upsert", "p1");
+    let (c1, _) = cell.inject_mapping_bundle(&r2, &i2).expect("inject c1");
+
+    let model = cell.store().model().clone();
+    drop(cell);
+    let first_row: (i64, String, String) = {
+        let conn = rusqlite::Connection::open(&source_path).expect("sqlite");
+        for id in [&first_id, &c1] {
+            conn.execute(
+                "DELETE FROM \"_norn_source_evidence\" WHERE \"observation_id\" = ?1",
+                rusqlite::params![id],
+            )
+            .expect("strip evidence");
+        }
+        conn.query_row(
+            "SELECT \"position\", \"observation_id\", \"observed\" \
+             FROM \"_norn_inbox\" WHERE \"observation_id\" = ?1",
+            rusqlite::params![&first_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("first inbox row")
+    };
+
+    let store =
+        CellStore::open(&source_path, model.clone(), StoreOptions::default()).expect("open");
+    let next_time = store
+        .read()
+        .receipt_at(store.export_commit_count().expect("seq"))
+        .expect("receipt")
+        .map_or(1, |r| r.body.logical_time.saturating_add(1));
+    store
+        .commit(&norn_cell::CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: "org_demo/dev".into(),
+            logical_time: next_time,
+            consumes: Some(norn_cell::Consumption::Observation {
+                observation_id: c1.clone(),
+            }),
+            ..norn_cell::CommitBatch::default()
+        })
+        .expect("generic consume c1");
+    let cell = SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    let (mut pre_records, _) = export_records_and_head(&cell);
+    drop(cell);
+    let last_pre = pre_records.last_mut().expect("last pre");
+    last_pre.storage_version = Some(12);
+    last_pre.pending_observations.clear();
+    let pre_head = last_pre.hash().expect("pre head");
+
+    let rebuilt_pre = CellStore::rebuild_export_history(
+        NativeEngine::open(&upgraded_path, StoreOptions::default()).expect("open upgraded"),
+        &pre_records,
+        &pre_head,
+    )
+    .expect("pre-v13 replay");
+    drop(rebuilt_pre);
+    {
+        let conn = rusqlite::Connection::open(&upgraded_path).expect("sqlite upgraded");
+        conn.execute(
+            "INSERT INTO \"_norn_inbox\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") \
+             VALUES (?1, ?2, ?3, NULL)",
+            rusqlite::params![first_row.0, &first_row.1, &first_row.2],
+        )
+        .expect("insert pending first");
+    }
+
+    let upgraded_store =
+        CellStore::open(&upgraded_path, model, StoreOptions::default()).expect("reopen");
+    let mut upgraded =
+        SqliteCell::new(upgraded_store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    let res = upgraded
+        .resolve_mapping_dispute(DisputeResolutionInput {
+            dispute_id: c1.clone(),
+            decision: DisputeDecision::AcceptFirst,
+            actor: "ops:tara".into(),
+            reason: "sole direct legacy accept-first".into(),
+        })
+        .expect("direct legacy accept-first");
+
+    let (records, head) = export_records_and_head(&upgraded);
+    let rec_res = records
+        .iter()
+        .find(|r| r.receipt.body.commit_seq == res.commit_seq)
+        .expect("res record");
+    assert_eq!(
+        rec_res
+            .pending_observations
+            .iter()
+            .filter(|p| p.observation_id == first_id)
+            .count(),
+        1,
+        "direct legacy accept-first must export its unattributed pending first capture"
+    );
+    let rebuilt = CellStore::rebuild_export_history(
+        NativeEngine::open_in_memory().expect("mem"),
+        &records,
+        &head,
+    )
+    .expect("rebuild sole direct legacy accept-first");
+    assert!(
+        rebuilt
+            .read()
+            .pending_observation(&first_id)
+            .expect("pending")
+            .is_some(),
+        "pending first capture must survive restore"
+    );
+}
+
+/// #1549: A pre-v13 conflict attributed AND generically consumed in the same
+/// export window (carrying its attribution in `consumed_input` while its
+/// unattributed pending first capture is absent) must NOT suppress exporting
+/// that first capture at a later v13 `accept-first` resolution.
+#[test]
+fn pre_v13_attributed_same_window_conflict_does_not_suppress_v13_accept_first() {
+    let dir = tempfile::tempdir().expect("dir");
+    let source_path = dir.path().join("same_win_src.sqlite");
+    let upgraded_path = dir.path().join("same_win_up.sqlite");
+    let mut cell = setup_with(&source_path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+
+    let a1 = party_ref_row("P-A", "demo/party/a", "First Pending", Some("demo/party/b"));
+    let a2 = party_ref_row("P-A", "demo/party/a", "Conflict 1 Attributed", None);
+    let a3 = party_ref_row("P-A", "demo/party/a", "Conflict 2 Pending", None);
+    let (r1, i1) = raw_event(&cell, "erpnext", &a1, "e1", "1", "upsert", "p1");
+    let (first_id, _) = cell.inject_mapping_bundle(&r1, &i1).expect("inject first");
+    let (r2, i2) = raw_event(&cell, "erpnext", &a2, "e1", "1", "upsert", "p1");
+    let (c1, _) = cell.inject_mapping_bundle(&r2, &i2).expect("inject c1");
+    let (r3, i3) = raw_event(&cell, "erpnext", &a3, "e1", "1", "upsert", "p1");
+    let (c2, _) = cell.inject_mapping_bundle(&r3, &i3).expect("inject c2");
+
+    // Strip attribution ONLY for `first_id` and `c2`; KEEP `c1`'s attribution row
+    // in the same window that `c1` is generically consumed!
+    let model = cell.store().model().clone();
+    drop(cell);
+    let pending_rows: Vec<(i64, String, String)> = {
+        let conn = rusqlite::Connection::open(&source_path).expect("sqlite");
+        for id in [&first_id, &c2] {
+            conn.execute(
+                "DELETE FROM \"_norn_source_evidence\" WHERE \"observation_id\" = ?1",
+                rusqlite::params![id],
+            )
+            .expect("strip evidence for first and c2");
+        }
+        [&first_id, &c2]
+            .into_iter()
+            .map(|id| {
+                conn.query_row(
+                    "SELECT \"position\", \"observation_id\", \"observed\" \
+                     FROM \"_norn_inbox\" WHERE \"observation_id\" = ?1",
+                    rusqlite::params![id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("read inbox row")
+            })
+            .collect()
+    };
+
+    let store =
+        CellStore::open(&source_path, model.clone(), StoreOptions::default()).expect("open");
+    let next_time = store
+        .read()
+        .receipt_at(store.export_commit_count().expect("seq"))
+        .expect("receipt")
+        .map_or(1, |r| r.body.logical_time.saturating_add(1));
+    store
+        .commit(&norn_cell::CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: "org_demo/dev".into(),
+            logical_time: next_time,
+            consumes: Some(norn_cell::Consumption::Observation {
+                observation_id: c1.clone(),
+            }),
+            ..norn_cell::CommitBatch::default()
+        })
+        .expect("same-window generic consume c1");
+    let cell = SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    let (mut pre_records, _) = export_records_and_head(&cell);
+    drop(cell);
+    let last_pre = pre_records.last_mut().expect("last pre");
+    last_pre.storage_version = Some(12);
+    last_pre.pending_observations.clear();
+    let pre_head = last_pre.hash().expect("pre head");
+
+    let rebuilt_pre = CellStore::rebuild_export_history(
+        NativeEngine::open(&upgraded_path, StoreOptions::default()).expect("open upgraded"),
+        &pre_records,
+        &pre_head,
+    )
+    .expect("pre-v13 attributed same-window replay");
+    drop(rebuilt_pre);
+    {
+        let conn = rusqlite::Connection::open(&upgraded_path).expect("sqlite upgraded");
+        for (pos, id, observed) in &pending_rows {
+            conn.execute(
+                "INSERT INTO \"_norn_inbox\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") \
+                 VALUES (?1, ?2, ?3, NULL)",
+                rusqlite::params![pos, id, observed],
+            )
+            .expect("insert pending row");
+        }
+    }
+
+    let upgraded_store =
+        CellStore::open(&upgraded_path, model, StoreOptions::default()).expect("reopen");
+    let mut upgraded =
+        SqliteCell::new(upgraded_store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    let res = upgraded
+        .resolve_mapping_dispute(DisputeResolutionInput {
+            dispute_id: c2.clone(),
+            decision: DisputeDecision::AcceptFirst,
+            actor: "ops:uma".into(),
+            reason: "accept-first after pre-v13 attributed same-window conflict".into(),
+        })
+        .expect("resolve c2");
+
+    let (records, head) = export_records_and_head(&upgraded);
+    let rec_c2 = records
+        .iter()
+        .find(|r| r.receipt.body.commit_seq == res.commit_seq)
+        .expect("c2 record");
+    assert_eq!(
+        rec_c2
+            .pending_observations
+            .iter()
+            .filter(|p| p.observation_id == first_id)
+            .count(),
+        1,
+        "earlier same-window conflict attribution must not suppress exporting pending first capture"
+    );
+    let rebuilt = CellStore::rebuild_export_history(
+        NativeEngine::open_in_memory().expect("mem"),
+        &records,
+        &head,
+    )
+    .expect("rebuild after attributed same-window conflict");
+    assert!(
+        rebuilt
+            .read()
+            .pending_observation(&first_id)
+            .expect("pending")
+            .is_some()
+    );
+}

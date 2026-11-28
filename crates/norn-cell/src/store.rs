@@ -2459,6 +2459,70 @@ impl<E: SqlEngine> CellStore<E> {
         store
     }
 
+    fn backfill_verified_claim_endpoints(conn: &E, model: &Model) -> Result<(), CellError> {
+        const BATCH_LIMIT: usize = 16;
+        let table = crate::system::CLAIM_ENDPOINT;
+        let plans = RefCell::default();
+        let _pinned = crate::mapping_bundle::PinnedPlans::open(&plans);
+        plans.borrow_mut().enable_one_pass_backfill();
+        let reader = StoreReader::new(conn, model).with_mapping_plans(&plans);
+        let mut after: Option<String> = None;
+        loop {
+            let (cmp, bound) = match after.as_deref() {
+                None => (">=", "mapping-bundle:"),
+                Some(prev) => (">", prev),
+            };
+            let missing = conn.query(
+                &format!(
+                    "SELECT i.\"observation_id\", i.\"observed\" FROM \"{INBOX}\" i \
+                     WHERE i.\"observation_id\" {cmp} ?1 \
+                     AND i.\"observation_id\" < 'mapping-bundle;' \
+                     AND i.\"consumed_commit_seq\" IS NOT NULL \
+                     AND NOT EXISTS ( \
+                         SELECT 1 FROM \"{table}\" e \
+                         WHERE e.\"side\" = 'bundle' \
+                           AND e.\"key\" = i.\"observation_id\" \
+                           AND e.\"observation_id\" = i.\"observation_id\" \
+                     ) \
+                     ORDER BY i.\"observation_id\" \
+                     LIMIT {BATCH_LIMIT}"
+                ),
+                params![bound],
+            )?;
+            if missing.is_empty() {
+                break;
+            }
+            for values in missing {
+                let row = crate::engine::SqlRow(values);
+                let observation_id: String = row.get(0)?;
+                let encoded: String = row.get(1)?;
+                let observed: norn_kernel::Observed<norn_ir::RuntimeValue> =
+                    serde_json::from_str(&encoded)
+                        .map_err(|_err| CellError::MappingBundleMismatch)?;
+                let bundle: crate::mapping_bundle::MappingBundle =
+                    norn_ir::runtime::decode(&observed.input)
+                        .map_err(|_err| CellError::MappingBundleMismatch)?;
+                if observed.id.0 != observation_id
+                    || observation_id != format!("mapping-bundle:{}", bundle.digest)
+                {
+                    return Err(CellError::MappingBundleMismatch);
+                }
+                reader.recheck_mapping_bundle(&bundle)?;
+                plans.borrow_mut().trim_backfill_plans();
+                let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?;
+                if keys.iter().any(|k| norn_ir::canonical::nfc(k) != *k) {
+                    return Err(CellError::MappingBundleMismatch);
+                }
+                conn.execute(
+                    &crate::system::claim_endpoints_of("i.\"observation_id\" = ?1"),
+                    params![&observation_id],
+                )?;
+                after = Some(observation_id);
+            }
+        }
+        Ok(())
+    }
+
     fn init_schema(
         conn: &E,
         model: &Model,
@@ -2469,14 +2533,15 @@ impl<E: SqlEngine> CellStore<E> {
         // this engine's schema statements, inside the open transaction.
         crate::engine_release::upgrade(conn)?;
         crate::system::init_core_tables(conn)?;
-        // Claim endpoints of bundles consumed before the table existed; a
-        // no-op for every bundle already indexed.
-        conn.execute(&crate::system::claim_endpoints_of("1"), params![])?;
         crate::system::intern_marking_subjects(conn)?;
         export_journal::init(conn)?;
         crate::retained::init(conn)?;
         crate::compute::materialize::init(conn)?;
         crate::payload_storage::init(conn)?;
+        // Claim endpoints and durable event/subject bindings of bundles consumed
+        // before the bindings existed; a no-op once indexed. Recheck retained bundle
+        // identity and derivation before creating any legacy binding.
+        Self::backfill_verified_claim_endpoints(conn, model)?;
         // Before the model's indexes name `p:` columns of an older file.
         crate::migration::upgrade_raw_property_columns(conn, model)?;
         for statement in model.schema().statements() {

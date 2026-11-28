@@ -210,10 +210,10 @@ pub(crate) fn capture<E: SqlEngine>(
 pub(crate) struct SourceDisputeIndex {
     revision: Option<(u64, u64)>,
     initialized: bool,
-    subjects: BTreeMap<(String, String), Vec<(bool, DataQualityFinding)>>,
+    pub(crate) subjects: BTreeMap<(String, String), Vec<(bool, DataQualityFinding)>>,
     /// Disputed source events (NFC keys), conflicts and identity disputes alike.
     pub(crate) events: BTreeMap<[String; 5], EventDispute>,
-    roots_by_key: BTreeMap<String, BTreeSet<String>>,
+    pub(crate) roots_by_key: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// OBS-LINK-DISPUTE-1: the dispute rows covering one source event.
@@ -230,7 +230,7 @@ pub(crate) struct EventDispute {
 }
 
 impl SourceDisputeIndex {
-    fn dispute(
+    pub(crate) fn dispute(
         &mut self,
         keys: [String; 5],
         position: u64,
@@ -290,7 +290,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(index)
     }
 
-    fn index_source_finding(
+    pub(crate) fn index_source_finding(
         &self,
         index: &mut SourceDisputeIndex,
         incoming: &MappingBundle,

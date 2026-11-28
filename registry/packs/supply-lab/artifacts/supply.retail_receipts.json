@@ -1,0 +1,64 @@
+{
+  "artifactId": "supply.retail_receipts",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "connector",
+  "lifecycle": "active",
+  "name": "Retail supplier receipts feed",
+  "namespace": "supply",
+  "payload": {
+    "auth": {
+      "authId": "retail_receipts",
+      "kind": "api_key",
+      "name": "X-Receipt-Key",
+      "placement": "header",
+      "secretRef": "SUPPLY_RECEIPT_READ_KEY"
+    },
+    "connectorVersion": "0.1",
+    "cursor": {
+      "cursorId": "retail_receipts",
+      "resourceId": "retail_receipts",
+      "storageKey": "supply.retail.receipts"
+    },
+    "deadLetterPolicy": {
+      "maxFailures": 5,
+      "route": "ledger"
+    },
+    "extensions": {
+      "norn.poll/1": {
+        "feeds": [
+          {
+            "recordKeyPath": "/receipt_line_id",
+            "resourceId": "retail_receipts"
+          }
+        ]
+      }
+    },
+    "mappings": [
+      {
+        "externalSource": "synthetic-retail-receipt",
+        "kind": "external_id",
+        "resourceId": "retail_receipts",
+        "sourcePath": "/receipt_line_id",
+        "targetObjectKind": "supply.RetailReceiptEvidence"
+      }
+    ],
+    "resources": [
+      {
+        "cursorParam": "after",
+        "endpoint": "/v1/retail-receipts",
+        "itemsPath": "/receipts",
+        "kind": "cursor",
+        "missingItemsIsEmpty": true,
+        "nextCursorPath": "/next",
+        "resourceId": "retail_receipts"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.retail_receipts.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

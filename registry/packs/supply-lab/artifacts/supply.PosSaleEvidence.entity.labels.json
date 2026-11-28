@@ -1,0 +1,33 @@
+{
+  "artifactId": "supply.PosSaleEvidence.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "POS sale feed row labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "سطر مبيعات نقطة البيع",
+          "en": "POS sale row"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.PosSaleEvidence"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.PosSaleEvidence.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

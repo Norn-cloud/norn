@@ -18,7 +18,9 @@ approved under **Astra** and **Fable** rulings (2026-11-23, Epic #1595).
   - `Expr`, `PropertyTypeSpec`, and `MaskSpec` are closed and unsubclassable; raw ZEN
     strings, raw IR dicts, and duck-typed `.zen` objects are refused.
   - Object `invariants` are emitted into `objectType.invariants`; interface `lifecycles`
-    are explicitly rejected rather than silently dropped.
+    (`INTERFACE-LIFECYCLE-1`, including `endings(...)`) and `disjoint_with`
+    (`INTERFACE-DISJOINT-1` -> `disjointWith`) are emitted into `interface` payloads, while
+    `disjoint_with` on concrete object types is explicitly rejected.
 - **Pre-tracing callback AST validation (`norn_py/expr.py`):**
   - Every invariant, lifecycle guard, and law callback is inspected with `ast.parse`
     BEFORE tracing. Python `if` / `if`-expr, `and` / `or` / `not`, `is` / `is not` /

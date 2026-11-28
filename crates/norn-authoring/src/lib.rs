@@ -18,6 +18,7 @@
 //!   import closure checks, and `NORN-FLOW-*` diagnostics.
 
 mod checker;
+mod compiler;
 mod error;
 mod fmt;
 mod profile;
@@ -26,6 +27,26 @@ mod vfs;
 mod vfs_mount;
 
 pub use checker::{FileReport, Position, ProfileChecker, ProfileDiagnostic, SymbolUse};
+pub use compiler::{
+    CanonicalError, CompiledExample, CompilerLimits, CurrencySource, DashboardsCompileOutcome,
+    DecimalType, DefinitionSource, DefinitionsCompileOptions, DefinitionsCompileOutcome,
+    DefinitionsCompileOutput, DependencyPin, EnumValue, EnvelopeOptions, ExampleExpectation,
+    FLOW_MAX_RECURS, FLOW_MAX_ROWS, FLOW_MAX_STEPS, FLOW_MAX_TIMER_MILLIS,
+    FLOW_SOURCE_MAP_DRAFT_FORMAT, FLOW_SOURCE_MAP_FORMAT, FlowCompileOptions, FlowCompileOutcome,
+    FlowCompileOutput, FlowDef, FlowDisplay, FlowLimits, FlowMeta, FlowSourceMapAnnotation,
+    FlowSourceMapArtifactRef, FlowSourceMapDraft, FlowSourceMapEdge, FlowSourceMapEdgeKind,
+    FlowSourceMapFlow, FlowSourceMapGraph, FlowSourceMapStep, FlowSourceMapStepKind, FlowStepLabel,
+    FnRef, InputGroup, LawMetadata, LawStatement, LimitCheck, LimitsEnvelope, LimitsProfile,
+    ObjectSchema, PENDING_SOURCE_SHA256, PropertyAdditivity, PropertyType, QuestionsCompileOutcome,
+    RetainedDefinitionDoc, RetryDelay, RetryPolicy, Rounding, SchemaLabels, SourceLocation,
+    StatementError, StepLimitKind, StepLimits, TaggedErrorDecl, TextFormat, TimezonePolicy,
+    UnitRef, ValueSchema, ValueSchemasCompileOutcome, canonical_json, compact_canonical_json,
+    compile_dashboards_program, compile_definitions_program, compile_definitions_vfs,
+    compile_flow_program, compile_flow_vfs, compile_questions_program,
+    compile_value_schemas_program, flow_limits, from_statement, lexical_bounds, may_read_actor,
+    norn_canonical_hash, norn1_sha256, parse_sentence, parse_statement, render_flow_limits,
+    render_sentence, serialize_statement, to_canonical_json, to_statement,
+};
 pub use error::AuthoringError;
 pub use fmt::{format_source, norn_format_settings};
 pub use profile::{

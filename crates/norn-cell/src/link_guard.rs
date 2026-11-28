@@ -101,7 +101,7 @@ impl LinkGuardMode {
 /// Verify mapping bundle evidence, exact pending page/bundle consumption, and
 /// `mapping_link_plan` (both link writes and fresh claim writes) inside the
 /// commit transaction. This is the ONLY constructor of [`VerifiedMappingProof`].
-pub(crate) fn verify_links<E, C, I, S: SqlEngine>(
+pub(crate) fn verify_links<E: 'static, C, I, S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     commit: &CellCommit<E, C, I>,
     batch: &crate::store::CommitBatch,
@@ -212,7 +212,7 @@ fn fresh_claim_writes_match<E, C, I, S: SqlEngine>(
     Ok(actual == expected)
 }
 
-fn verify_dispute_resolution_links<E, C, I, S: SqlEngine>(
+fn verify_dispute_resolution_links<E: 'static, C, I, S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     commit: &CellCommit<E, C, I>,
     dispute_events: &[&norn_ir::RuntimeValue],

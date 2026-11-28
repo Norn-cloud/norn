@@ -1,0 +1,128 @@
+{
+  "artifactId": "supply.store.register.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Register a retail store",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.retail.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.store.register",
+    "createLinks": [
+      {
+        "link": "owner_entity",
+        "targetIdField": "entity_id",
+        "targetType": "supply.LegalEntity"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.Store.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "store_id",
+      "objectKind": "supply.Store",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "custodian_id": {
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "location_kind": {
+          "enum": [
+            "mall_store",
+            "standalone",
+            "warehouse_outlet"
+          ],
+          "type": "string"
+        },
+        "mall_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "store_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "store_id",
+        "name",
+        "entity_id",
+        "custodian_id",
+        "location_kind",
+        "mall_code",
+        "currency"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "store_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "store_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.owner_entity.status == 'active') and (input.currency == slice.owner_entity.functional_currency)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      }
+    ],
+    "title": "Register a retail store",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.Store"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.store.register.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

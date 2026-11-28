@@ -1,0 +1,274 @@
+{
+  "artifactId": "supply.stock_valuation_cut.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record immutable stock valuation cut",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.retail.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.stock_valuation_cut.record",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "remaining_qty"
+        },
+        "filter": {
+          "sku_id": "sku_id",
+          "store_id": "store_id",
+          "unit": "unit"
+        },
+        "maxItems": 100,
+        "name": "total_remaining_qty",
+        "objectType": "supply.StockLot"
+      },
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "stock_value"
+        },
+        "filter": {
+          "currency": "currency",
+          "sku_id": "sku_id",
+          "store_id": "store_id"
+        },
+        "maxItems": 100,
+        "name": "total_stock_value",
+        "objectType": "supply.StockLot"
+      },
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "currency": "currency",
+          "sku_id": "sku_id",
+          "store_id": "store_id"
+        },
+        "maxItems": 100,
+        "name": "all_lots_count",
+        "objectType": "supply.StockLot"
+      },
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "currency": "currency",
+          "sku_id": "sku_id",
+          "store_id": "store_id"
+        },
+        "maxItems": 100,
+        "name": "lots_as_of_by_cut",
+        "objectType": "supply.StockLot",
+        "window": {
+          "end": "cut_at",
+          "endInclusive": true,
+          "property": "as_of",
+          "start": "book_epoch",
+          "startInclusive": true
+        }
+      },
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "cost_status": "cost_status",
+          "currency": "currency",
+          "sku_id": "sku_id",
+          "store_id": "store_id"
+        },
+        "maxItems": 100,
+        "name": "costed_lots_count",
+        "objectType": "supply.StockLot"
+      },
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "currency": "currency",
+          "sku_id": "sku_id",
+          "store_id": "store_id"
+        },
+        "maxItems": 100,
+        "name": "all_sales_count",
+        "objectType": "supply.PosSale"
+      },
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "currency": "currency",
+          "sku_id": "sku_id",
+          "store_id": "store_id"
+        },
+        "maxItems": 100,
+        "name": "sales_by_cut_count",
+        "objectType": "supply.PosSale",
+        "window": {
+          "end": "cut_at",
+          "endInclusive": true,
+          "property": "sold_at",
+          "start": "book_epoch",
+          "startInclusive": true
+        }
+      }
+    ],
+    "createLinks": [
+      {
+        "link": "store",
+        "targetIdField": "store_id",
+        "targetType": "supply.Store"
+      },
+      {
+        "link": "sku",
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.StockValuationCut.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "cut_id",
+      "objectKind": "supply.StockValuationCut",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "book_epoch": {
+          "type": "string"
+        },
+        "cost_status": {
+          "enum": [
+            "costed",
+            "missing_cost"
+          ],
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "cut_at": {
+          "type": "string"
+        },
+        "cut_id": {
+          "type": "string"
+        },
+        "remaining_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "stock_value": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "cut_id",
+        "store_id",
+        "sku_id",
+        "unit",
+        "currency",
+        "cost_status",
+        "book_epoch",
+        "cut_at",
+        "remaining_qty",
+        "stock_value"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cut_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cut_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((((((((slice.store.status == 'active') and (input.book_epoch == '1970-01-01T00:00:00Z')) and (input.cost_status == 'costed')) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.remaining_qty == aggregates.total_remaining_qty)) and (input.stock_value == aggregates.total_stock_value)) and (aggregates.lots_as_of_by_cut == aggregates.all_lots_count)) and (aggregates.costed_lots_count == aggregates.all_lots_count)) and (aggregates.sales_by_cut_count == aggregates.all_sales_count)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      }
+    ],
+    "title": "Record immutable stock valuation cut",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.StockValuationCut"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.stock_valuation_cut.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

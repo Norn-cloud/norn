@@ -1,0 +1,145 @@
+{
+  "artifactId": "supply.store_count.recount.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a subsequent store physical count",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.retail.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.store_count.recount",
+    "effectProgram": {
+      "entityArtifactId": "supply.StoreCount.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "store_count_id",
+      "objectKind": "supply.StoreCount",
+      "writeMode": {
+        "kind": "update_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "count_ref": {
+          "type": "string"
+        },
+        "count_source": {
+          "enum": [
+            "pos_cycle_count",
+            "store_audit",
+            "handheld_scan"
+          ],
+          "type": "string"
+        },
+        "on_hand_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "quantity_basis": {
+          "enum": [
+            "on_hand",
+            "available",
+            "reserved"
+          ],
+          "type": "string"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "store_count_id": {
+          "type": "string"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "store_count_id",
+        "store_id",
+        "sku_id",
+        "on_hand_qty",
+        "unit",
+        "quantity_basis",
+        "as_of",
+        "count_source",
+        "count_ref"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "store_count_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "store_count_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((((slice.store.status == 'active') and (slice.count.store_id == input.store_id)) and (slice.count.sku_id == input.sku_id)) and (slice.count.unit == input.unit)) and (slice.count.quantity_basis == input.quantity_basis)) and (timestamp(input.as_of) >= timestamp(slice.count.as_of))"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_count_id"
+          }
+        },
+        "name": "count",
+        "objectType": "supply.StoreCount"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "count",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      }
+    ],
+    "title": "Record a subsequent store physical count",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "supply.StoreCount"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.store_count.recount.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

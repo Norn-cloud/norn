@@ -8,8 +8,10 @@ Covers all 6 Sol blocking review findings:
    `is`/`in`, chained comparisons, loops, comprehensions, nested lambdas, and non-allowlisted
    calls BEFORE tracing).
 3. Never silently drop constraints or accept raw IR (object `invariants` emitted into
-   `objectType.invariants`, interface `lifecycles` explicitly rejected, closed `Expr`,
-   closed `PropertyTypeSpec`, closed `MaskSpec`, duck-typed `.zen` objects rejected).
+   `objectType.invariants`, interface `lifecycles` (`INTERFACE-LIFECYCLE-1`) and `disjointWith`
+   (`INTERFACE-DISJOINT-1`) emitted into `interface` payloads, `disjoint_with` on concrete
+   object types rejected, closed `Expr`, closed `PropertyTypeSpec`, closed `MaskSpec`,
+   duck-typed `.zen` objects rejected).
 4. Real determinism (subprocess without `-I` honors `PYTHONHASHSEED=0` verified by cross-process
    `hash("norn-determinism-probe")` equality, plus deterministic elaboration gate).
 5. Admission & exact TS/Python parity (`hr_pilot.py` pins `core.units@1.0.0`, avoids colliding
@@ -47,6 +49,8 @@ from norn_py import (
     Expr,
     Field,
     FieldMeta,
+    LifecycleEndingSpec,
+    LifecycleSpec,
     Link,
     Marking,
     MarkingDecl,
@@ -72,6 +76,7 @@ from norn_py import (
     date_type,
     decimal_type,
     elaborate_file,
+    ending,
     field_default,
     fn_ref,
     integer,
@@ -111,6 +116,7 @@ NORN_PY_ROOT = Path(__file__).resolve().parents[1]
 NORN_TS_ROOT = REPO_ROOT / "tools" / "norn-ts"
 HR_PILOT = NORN_PY_ROOT / "examples" / "hr_pilot.py"
 CORE_AGENT_GOLDEN = REPO_ROOT / "registry" / "core" / "artifacts" / "core.Agent.interface.json"
+CORE_CLAIM_GOLDEN = REPO_ROOT / "registry" / "core" / "artifacts" / "core.Claim.interface.json"
 CORE_TIME_INTERVAL_GOLDEN = REPO_ROOT / "registry" / "core" / "artifacts" / "core.TimeInterval.interface.json"
 
 
@@ -425,25 +431,156 @@ class TestNoSilentDropsAndClosedIR(unittest.TestCase):
             ],
         )
 
-    def test_interface_lifecycle_explicitly_rejected(self) -> None:
+    def test_interface_lifecycle_endings_and_disjoint_with(self) -> None:
         class _St(StrEnum):
-            A = "a"
-            B = "b"
+            OPEN = "open"
+            CLOSED = "closed"
+            CANCELLED = "cancelled"
 
-        class _BadIface(
+        class _OtherSt(StrEnum):
+            X = "x"
+
+        class _PeerIface(
             Concept,
-            name="test.BadLifecycleIface",
-            title="Bad interface",
+            name="test.PeerIface",
+            title="Peer interface",
             version="0.1.0",
             interface=True,
         ):
+            code: Field[str]
+
+        class _ConcreteObj(
+            Concept,
+            name="test.ConcreteObj",
+            title="Concrete object",
+            version="0.1.0",
+        ):
+            id: Field[str]
+
+        class _GoodIface(
+            Concept,
+            name="test.ConstitutionalIface",
+            title="Constitutional interface",
+            version="0.1.0",
+            interface=True,
+            disjoint_with=(_PeerIface, "core.Commitment"),
+        ):
             status: Field[_St]
-            state = lifecycle("status", _St, initial=(_St.A,), transitions=(transition("go", from_=(_St.A,), to=_St.B),))
+            state = lifecycle(
+                "status",
+                _St,
+                initial=(_St.OPEN,),
+                terminal=(_St.CLOSED, _St.CANCELLED),
+                transitions=(
+                    transition("close", from_=(_St.OPEN,), to=_St.CLOSED),
+                    transition("cancel", from_=(_St.OPEN,), to=_St.CANCELLED),
+                ),
+                endings=(
+                    ending(_St.CLOSED, "completed"),
+                    ending(_St.CANCELLED, "cancelled"),
+                ),
+            )
 
         opts = EnvelopeOptions(scope={"orgId": "o", "environmentId": "dev"}, source_path="test.py")
-        with self.assertRaises(NornTracingError) as ctx:
-            _BadIface.lower(opts, globalns={"_St": _St})
-        self.assertEqual(ctx.exception.code, "NORN-PY-INTERFACE-LIFECYCLE")
+        artifact = _GoodIface.lower(opts, globalns={"_St": _St})
+        assert isinstance(artifact, dict)
+        payload = artifact["payload"]
+        assert isinstance(payload, dict)
+        iface = payload["interface"]
+        assert isinstance(iface, dict)
+        self.assertEqual(iface["disjointWith"], ["test.PeerIface", "core.Commitment"])
+        self.assertEqual(
+            iface["lifecycles"],
+            [
+                {
+                    "endings": [
+                        {"outcome": "completed", "state": "closed"},
+                        {"outcome": "cancelled", "state": "cancelled"},
+                    ],
+                    "initial": ["open"],
+                    "property": "status",
+                    "terminal": ["closed", "cancelled"],
+                    "transitions": [
+                        {"from": ["open"], "id": "close", "to": "closed"},
+                        {"from": ["open"], "id": "cancel", "to": "cancelled"},
+                    ],
+                }
+            ],
+        )
+
+        # Concrete object types MUST reject `disjoint_with` rather than silently dropping it.
+        class _BadObjDisjoint(
+            Concept,
+            name="test.BadObjDisjoint",
+            title="Bad object disjoint",
+            version="0.1.0",
+            disjoint_with=(_PeerIface,),
+        ):
+            id: Field[str]
+
+        with self.assertRaises(NornTracingError) as ctx_obj:
+            _BadObjDisjoint.lower(opts)
+        self.assertEqual(ctx_obj.exception.code, "NORN-PY-SCHEMA")
+
+        # `disjoint_with` targeting a concrete object type or malformed name MUST fail closed.
+        with self.assertRaises(NornTracingError) as ctx_target:
+
+            class _BadDisjointTarget(
+                Concept,
+                name="test.BadDisjointTarget",
+                title="Bad disjoint target",
+                version="0.1.0",
+                interface=True,
+                disjoint_with=(_ConcreteObj,),
+            ):
+                code: Field[str]
+
+        self.assertEqual(ctx_target.exception.code, "NORN-PY-SCHEMA")
+
+        for bad_name in ("not_a_qualified_name", "core.Commitment\n"):
+            with self.subTest(bad_name=bad_name):
+                with self.assertRaises(NornTracingError) as ctx_name:
+
+                    class _BadDisjointName(
+                        Concept,
+                        name="test.BadDisjointName",
+                        title="Bad disjoint name",
+                        version="0.1.0",
+                        interface=True,
+                        disjoint_with=(bad_name,),
+                    ):
+                        code: Field[str]
+
+                self.assertEqual(ctx_name.exception.code, "NORN-PY-SCHEMA")
+
+        # Invalid ending outcome or mismatched enum state MUST fail closed on both factory and direct dataclass construction.
+        with self.assertRaises(NornTracingError) as ctx_out:
+            ending(_St.CLOSED, "invalid_outcome")  # type: ignore[arg-type]
+        self.assertEqual(ctx_out.exception.code, "NORN-PY-SCHEMA")
+
+        with self.assertRaises(NornTracingError) as ctx_direct_out:
+            LifecycleEndingSpec(state=_St.CLOSED, outcome="invalid_outcome")  # type: ignore[arg-type]
+        self.assertEqual(ctx_direct_out.exception.code, "NORN-PY-SCHEMA")
+
+        with self.assertRaises(NornTracingError) as ctx_enum:
+            lifecycle(
+                "status",
+                _St,
+                initial=(_St.OPEN,),
+                transitions=(),
+                endings=(ending(_OtherSt.X, "completed"),),
+            )
+        self.assertEqual(ctx_enum.exception.code, "NORN-PY-SCHEMA")
+
+        with self.assertRaises(NornTracingError) as ctx_direct_enum:
+            LifecycleSpec(
+                property="status",
+                enum_cls=_St,
+                initial=(_St.OPEN,),
+                transitions=(),
+                endings=(LifecycleEndingSpec(state=_OtherSt.X, outcome="completed"),),
+            )
+        self.assertEqual(ctx_direct_enum.exception.code, "NORN-PY-SCHEMA")
 
     def test_raw_expr_and_raw_ir_spec_and_duck_typed_zen_rejected(self) -> None:
         # Public Expr() constructor cannot accept arbitrary ZEN strings
@@ -841,6 +978,96 @@ class TimeInterval(
                 canonical_norn1_sha256(json.loads(expected_ti)),
             )
 
+            claim_py = Path(tmp) / "core_claim.py"
+            claim_py.write_text(
+                '''from __future__ import annotations
+
+from decimal import Decimal
+from typing import Annotated
+
+from norn_py import (
+    Concept,
+    Date,
+    DependencyPin,
+    Expr,
+    Field,
+    Link,
+    Sym,
+    invariant,
+    link,
+    ref_type,
+)
+
+
+class Claim(
+    Concept,
+    name="core.Claim",
+    title="Claim",
+    version="0.2.0",
+    interface=True,
+    role="thing",
+    disjoint_with=("core.Commitment",),
+    dependencies=(
+        DependencyPin(
+            artifact_id="core.value_types.entity",
+            version="0.2.0",
+            kind="entity",
+        ),
+        DependencyPin(
+            artifact_id="std.value_types.entity",
+            version="0.2.0",
+            kind="entity",
+        ),
+    ),
+    description=(
+        "An economic claim: a right to receive resources, such as an invoice or a receivable, "
+        "settled by economic events. Not a catalog claim about definitions. Disjoint from "
+        "core.Commitment (Commitment \\u2293 Claim = \\u2205): a promise is not yet a right, and no "
+        "type is both. A fulfilled or accepted commitment gives rise to claims (givesRiseTo); "
+        "the relation is recorded on the claim as `arises_from`, because a commitment is not "
+        "edited when a claim arises."
+    ),
+):
+    amount: Annotated[Field[Decimal], ref_type("core.money_amount")]
+    currency: Annotated[Field[str], ref_type("core.code")]
+    due_date: Annotated[Field[Date], ref_type("iso8601.date")]
+    creditor: Annotated[
+        Field[Link[str]],
+        link("core.Agent", to="one", from_="many", required=True, description="The agent entitled to receive."),
+    ]
+    debtor: Annotated[
+        Field[Link[str]],
+        link("core.Agent", to="one", from_="many", required=True, description="The agent obliged to give."),
+    ]
+    arises_from: Annotated[
+        Field[Link[str]],
+        link(
+            "core.Commitment",
+            to="one",
+            from_="many",
+            description="The commitment that gave rise to the claim (givesRiseTo, seen from the claim).",
+        ),
+    ]
+
+    @invariant("positive_amount", message="A claim amount must be strictly positive.")
+    def _positive_amount(s: Sym[Claim]) -> Expr[bool]:
+        return s.amount > Decimal("0")
+''',
+                encoding="utf-8",
+            )
+            res_claim = verify_deterministic_elaboration(
+                claim_py,
+                scope={},
+                source_path="registry/core/src/rea.ts",
+                registry_package_path="registry/core",
+            )
+            expected_claim = CORE_CLAIM_GOLDEN.read_text(encoding="utf-8")
+            self.assertEqual(canonical_json(res_claim.artifacts[0]), expected_claim)
+            self.assertEqual(
+                canonical_norn1_sha256(res_claim.artifacts[0]),
+                canonical_norn1_sha256(json.loads(expected_claim)),
+            )
+
     def test_same_pack_ts_vs_python_canonical_json_and_sha256_parity(self) -> None:
         """Paired entity+interface+lifecycle+invariant+marking pack compiled by tools/norn-ts vs tools/norn-py."""
         bun = shutil.which("bun")
@@ -899,6 +1126,32 @@ export const TimeWindow = Norn.interfaceType({
       id: "ordered_dates",
       message: "effective_from must precede effective_to",
       expression: Norn.expression(WindowBounds, (self) => Norn.dateBefore(self.effective_from, self.effective_to)),
+    },
+  ],
+})
+
+export const ClaimWindow = Norn.interfaceType({
+  name: "pilot.ClaimWindow",
+  title: "Claim window",
+  version: "0.1.0",
+  role: "thing",
+  disjointWith: [TimeWindow],
+  properties: Schema.Struct({
+    status: Schema.Literals(["open", "settled", "cancelled"]),
+  }),
+  lifecycles: [
+    {
+      property: "status",
+      initial: ["open"],
+      terminal: ["settled", "cancelled"],
+      transitions: [
+        { id: "settle", from: ["open"], to: "settled" },
+        { id: "cancel", from: ["open"], to: "cancelled" },
+      ],
+      endings: {
+        settled: "completed",
+        cancelled: "cancelled",
+      },
     },
   ],
 })
@@ -996,6 +1249,7 @@ from norn_py import (
     date_before,
     date_type,
     decimal_type,
+    ending,
     field_default,
     invariant,
     lifecycle,
@@ -1045,6 +1299,39 @@ class TimeWindow(
     @invariant("ordered_dates", message="effective_from must precede effective_to")
     def _ordered_dates(s: Sym[TimeWindow]) -> Expr[bool]:
         return date_before(s.effective_from, s.effective_to)
+
+
+class ClaimStatus(StrEnum):
+    OPEN = "open"
+    SETTLED = "settled"
+    CANCELLED = "cancelled"
+
+
+class ClaimWindow(
+    Concept,
+    name="pilot.ClaimWindow",
+    title="Claim window",
+    version="0.1.0",
+    interface=True,
+    role="thing",
+    disjoint_with=(TimeWindow,),
+):
+    status: Field[ClaimStatus]
+
+    state = lifecycle(
+        "status",
+        ClaimStatus,
+        initial=(ClaimStatus.OPEN,),
+        terminal=(ClaimStatus.SETTLED, ClaimStatus.CANCELLED),
+        transitions=(
+            transition("settle", from_=(ClaimStatus.OPEN,), to=ClaimStatus.SETTLED),
+            transition("cancel", from_=(ClaimStatus.OPEN,), to=ClaimStatus.CANCELLED),
+        ),
+        endings=(
+            ending(ClaimStatus.SETTLED, "completed"),
+            ending(ClaimStatus.CANCELLED, "cancelled"),
+        ),
+    )
 
 
 class Worker(
@@ -1932,9 +2219,9 @@ class TestSecurityBoundsAndEdgeCases(unittest.TestCase):
                 trap.called = True
                 return _TamperedEnum.A
 
-        setattr(_TamperedEnum, "FAKE", trap)
+        setattr(_TamperedEnum, "FAKE", trap)  # noqa: B010
         _TamperedEnum._member_map_["FAKE"] = trap  # type: ignore[assignment]
-        setattr(_TamperedEnum, "DESC", _Desc())
+        setattr(_TamperedEnum, "DESC", _Desc())  # noqa: B010
         _TamperedEnum._member_map_["DESC"] = _TamperedEnum.A
 
         bad_callbacks = [

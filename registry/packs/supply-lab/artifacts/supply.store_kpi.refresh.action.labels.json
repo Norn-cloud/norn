@@ -1,0 +1,30 @@
+{
+  "artifactId": "supply.store_kpi.refresh.action.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Refresh verified store commercial KPI rollup labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "تحديث ملخص مؤشرات المتجر",
+          "en": "Refresh store KPI rollup"
+        },
+        "target": {
+          "actionId": "supply.store_kpi.refresh",
+          "kind": "action"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.store_kpi.refresh.action.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

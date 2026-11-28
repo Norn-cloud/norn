@@ -1,0 +1,108 @@
+{
+  "artifactId": "supply.legal_entity.register.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Register a legal entity",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.retail.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.legal_entity.register",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "maxItems": 10,
+        "name": "existing_books",
+        "objectType": "supply.LegalEntity"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.LegalEntity.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "entity_id",
+      "objectKind": "supply.LegalEntity",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "book_code": {
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "entity_kind": {
+          "enum": [
+            "sole_proprietorship",
+            "partnership",
+            "corporation"
+          ],
+          "type": "string"
+        },
+        "functional_currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "legal_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "legal_name",
+        "entity_kind",
+        "book_code",
+        "functional_currency"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "entity_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "aggregates.existing_books == 0"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Register a legal entity",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.LegalEntity"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.legal_entity.register.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
