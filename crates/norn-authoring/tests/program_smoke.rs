@@ -474,7 +474,7 @@ fn effect_remount_preserves_on_failure_and_evicts_stale_files_on_success()
     assert!(!vfs.directory_exists(&stale_dir));
     let dist_entries = vfs.get_accessible_entries(&format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist"));
     assert_eq!(dist_entries.files, vec!["Effect.d.ts".to_owned()]);
-    assert!(dist_entries.directories.is_empty());
+    assert_eq!(dist_entries.directories, Vec::<String>::new());
     assert_eq!(
         vfs.read_file(&format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist/Effect.d.ts"))
             .as_deref(),
