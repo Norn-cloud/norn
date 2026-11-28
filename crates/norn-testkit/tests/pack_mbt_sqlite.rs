@@ -349,11 +349,12 @@ impl CellHost for SqlitePackHost {
         &mut self,
         commit: CellCommit<FactEvent, JsonObject, JsonObject>,
         proof: norn_kernel::CreatorStampProof,
+        references: Option<norn_kernel::action_commit::ActionReferenceReads>,
         quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         self.cell_mut()
             .map_err(CommitError::Host)?
-            .commit_stamped(commit, proof, quantity)
+            .commit_stamped(commit, proof, references, quantity)
     }
 
     fn commit_owned_rows(

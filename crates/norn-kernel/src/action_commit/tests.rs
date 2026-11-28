@@ -116,6 +116,7 @@ fn reference_proof_rejects_changed_outputs_and_keeps_added_guards_full() {
         writes: commit.writes.clone(),
         links: Vec::new(),
         link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
         event_count: 0,
         laws_digest: ActionReferenceReads::governing_laws_digest(&[]).expect("digest"),
     };
@@ -516,12 +517,14 @@ fn create_slice_property_reads_merges_polymorphic_aliases_and_link_laws() {
             RuntimeValue::String("E1".to_owned()),
         ),
     ]);
+    let no_predicates = std::collections::BTreeSet::new();
     let merged = super::receipt::create_reference_property_reads(
         &catalog,
         &aliased_action,
         &target,
         &input,
         std::slice::from_ref(&emp_ref),
+        &no_predicates,
     )
     .expect("aliased polymorphic reads proved");
     assert_eq!(
@@ -543,6 +546,7 @@ fn create_slice_property_reads_merges_polymorphic_aliases_and_link_laws() {
             &target,
             &input,
             &[emp_ref.clone(), extra_ref],
+            &no_predicates,
         )
         .is_none()
     );
@@ -569,6 +573,7 @@ fn create_slice_property_reads_merges_polymorphic_aliases_and_link_laws() {
         &target,
         &input,
         std::slice::from_ref(&emp_ref),
+        &no_predicates,
     )
     .expect("forward link law read attributed");
     assert_eq!(law_reads, vec![(emp_ref, vec!["national_id".to_owned()])]);
@@ -626,4 +631,87 @@ fn create_slice_property_reads_fails_closed_on_whole_object_computed_and_inverse
         super::receipt::create_slice_property_reads(&inverse_catalog, &empty_precond, &target)
             .is_none()
     );
+}
+
+#[test]
+fn create_reference_property_reads_supports_predicate_slices_and_excludes_overlaps() {
+    let types = hr_create_types();
+    let catalog = crate::decision_commit::TypeCatalog::new(&types);
+    let target = FactKey::new("hr.LeaveRequest", "L-PRED");
+    let action = hr_create_action(
+        &serde_json::json!([
+            "slice.emp.status == 'active'",
+            "all(slice.existing as r, r.days <= 5)"
+        ]),
+        &serde_json::json!([
+            {"name": "emp", "objectType": "hr.Employee", "key": {"property": {"from": "input", "property": "employee_id"}}},
+            {"name": "existing", "objectType": "hr.LeaveRequest", "key": {"predicate": {"filter": {"employee_id": "employee_id"}, "maxItems": 10}}}
+        ]),
+        &serde_json::json!([
+            {"link": "employee", "targetType": "hr.Employee", "targetIdField": "employee_id"}
+        ]),
+    );
+    let emp_ref = FactExpectation {
+        key: FactKey::new("hr.Employee", "E1"),
+        expected: FactVersion(1),
+    };
+    let input = BTreeMap::from([(
+        "employee_id".to_owned(),
+        RuntimeValue::String("E1".to_owned()),
+    )]);
+    let no_pred = std::collections::BTreeSet::new();
+    let reads = super::receipt::create_reference_property_reads(
+        &catalog,
+        &action,
+        &target,
+        &input,
+        std::slice::from_ref(&emp_ref),
+        &no_pred,
+    )
+    .expect("point slice alongside predicate slice should prove exact property reads");
+    assert_eq!(reads, vec![(emp_ref.clone(), vec!["status".to_owned()])]);
+
+    // If a predicate read matched the same canonical fact, it is excluded from
+    // `references`/`property_reads` so it retains full whole-object lineage.
+    let overlap = std::collections::BTreeSet::from([FactKey::new("hr.Person", "E1")]);
+    let excluded = super::receipt::create_reference_property_reads(
+        &catalog,
+        &action,
+        &target,
+        &input,
+        &[],
+        &overlap,
+    )
+    .expect("overlapped point slice excluded cleanly");
+    assert_eq!(excluded, Vec::new());
+
+    // Tampering with `commit.predicate_reads` invalidates `ActionReferenceReads`.
+    let commit = CellCommit::<crate::FactEvent, JsonObject, JsonObject> {
+        reads: vec![emp_ref.clone()],
+        ..CellCommit::empty()
+    };
+    let proof = ActionReferenceReads {
+        reads: commit.reads.clone(),
+        references: commit.reads.clone(),
+        property_reads: vec![(emp_ref, vec!["status".to_owned()])],
+        writes: Vec::new(),
+        links: Vec::new(),
+        link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
+        event_count: 0,
+        laws_digest: ActionReferenceReads::governing_laws_digest(&[]).expect("digest"),
+    };
+    assert!(proof.validates(&commit));
+    let mut tampered = commit;
+    tampered
+        .predicate_reads
+        .push(crate::cell_host::PredicateReadExpectation {
+            predicate: crate::cell_host::PredicateQuery {
+                object_type: norn_ir::ObjectTypeName("hr.LeaveRequest".to_owned()),
+                filter: BTreeMap::new(),
+                window: None,
+            },
+            members: Vec::new(),
+        });
+    assert!(!proof.validates(&tampered));
 }
