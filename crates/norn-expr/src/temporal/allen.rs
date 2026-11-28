@@ -276,7 +276,7 @@ mod tests {
                             assert_eq!(expected.len(), 1);
                             assert_eq!(classified, Some(expected[0]));
                         } else {
-                            assert!(expected.is_empty());
+                            assert_eq!(expected, Vec::new());
                             assert_eq!(classified, None);
                         }
                         for relation in AllenRelation::ALL {
