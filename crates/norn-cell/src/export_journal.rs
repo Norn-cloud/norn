@@ -516,12 +516,28 @@ pub(crate) fn already_exported_pending<E: SqlEngine>(
                 if !checked.insert(seq) {
                     continue;
                 }
-                if let Some(rec) = read_record(conn, seq)?
-                    && rec
+                if let Some(rec) = read_record(conn, seq)? {
+                    if rec
                         .pending_observations
                         .iter()
                         .any(|p| p.observation_id == obs_id)
-                {
+                    {
+                        return Ok(true);
+                    }
+                    continue;
+                }
+                let seq_i64 = to_i64(seq, "export commit_seq")?;
+                let committed = conn
+                    .query_optional(
+                        &format!(
+                            "SELECT 1 FROM \"{}\" WHERE \"commit_seq\" = ?1",
+                            crate::system::RECEIPT
+                        ),
+                        params![seq_i64],
+                        |_row| Ok(()),
+                    )?
+                    .is_some();
+                if !committed && fallback_exported {
                     return Ok(true);
                 }
             } else if fallback_exported {
@@ -558,58 +574,61 @@ fn conflict_export_candidates<E: SqlEngine>(
         " AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?2"
     };
     let ev_sql = format!(
-        "SELECT e.\"captured_commit_seq\", c.\"consumed_commit_seq\" \
+        "SELECT e.\"captured_commit_seq\", c.\"consumed_commit_seq\", \
+                CASE WHEN json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?2 \
+                     THEN 1 ELSE 0 END \
          FROM \"{inbox}\" c \
          JOIN \"{table}\" e ON e.\"observation_id\" = c.\"observation_id\" \
          WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
            AND e.\"captured_commit_seq\" >= 0 AND e.\"captured_commit_seq\" < ?1{dep_filter}"
     );
-    let ev_rows = if has_journal {
-        conn.query(&ev_sql, params![prev_seq])?
-    } else {
-        conn.query(&ev_sql, params![prev_seq, obs_id])?
-    };
+    let ev_rows = conn.query(&ev_sql, params![prev_seq, obs_id])?;
     for raw in ev_rows {
         let row = SqlRow(raw);
         let export_seq = to_u64(row.get(0)?, "captured_commit_seq")?.saturating_add(1);
         let consumed: Option<i64> = row.get(1)?;
-        let pending_at_export = consumed.is_none_or(|c| u64::try_from(c).ok() > Some(export_seq));
+        let dep_matches = row.get::<i64>(2)? != 0;
+        let pending_at_export =
+            dep_matches && consumed.is_none_or(|c| u64::try_from(c).ok() > Some(export_seq));
         candidates.push((export_seq, pending_at_export));
     }
     let cons_sql = format!(
         "SELECT c.\"consumed_commit_seq\", \
                 EXISTS (SELECT 1 FROM \"{res_table}\" r \
                         WHERE r.\"dispute_id\" = c.\"observation_id\" \
-                          AND r.\"commit_seq\" = c.\"consumed_commit_seq\") \
+                          AND r.\"commit_seq\" = c.\"consumed_commit_seq\"), \
+                CASE WHEN json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?2 \
+                     THEN 1 ELSE 0 END \
          FROM \"{inbox}\" c \
          WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
            AND c.\"consumed_commit_seq\" IS NOT NULL \
            AND c.\"consumed_commit_seq\" <= ?1{dep_filter}"
     );
-    let cons_rows = if has_journal {
-        conn.query(&cons_sql, params![prev_seq])?
-    } else {
-        conn.query(&cons_sql, params![prev_seq, obs_id])?
-    };
+    let cons_rows = conn.query(&cons_sql, params![prev_seq, obs_id])?;
     for raw in cons_rows {
         let row = SqlRow(raw);
         let seq = to_u64(row.get(0)?, "consumed_commit_seq")?;
         let resolved: i64 = row.get(1)?;
-        candidates.push((seq, resolved != 0));
+        let dep_matches = row.get::<i64>(2)? != 0;
+        candidates.push((seq, dep_matches && resolved != 0));
     }
     let res_rows = if has_journal {
         conn.query(
             &format!(
-                "SELECT \"commit_seq\" FROM \"{res_table}\" \
-                 WHERE substr(\"dispute_id\", 1, 17) = 'mapping-conflict:' \
-                   AND \"commit_seq\" <= ?1"
+                "SELECT r.\"commit_seq\", \
+                        CASE WHEN json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?2 \
+                             THEN 1 ELSE 0 END \
+                 FROM \"{res_table}\" r \
+                 LEFT JOIN \"{inbox}\" c ON c.\"observation_id\" = r.\"dispute_id\" \
+                 WHERE substr(r.\"dispute_id\", 1, 17) = 'mapping-conflict:' \
+                   AND r.\"commit_seq\" <= ?1"
             ),
-            params![prev_seq],
+            params![prev_seq, obs_id],
         )?
     } else {
         conn.query(
             &format!(
-                "SELECT r.\"commit_seq\" FROM \"{res_table}\" r \
+                "SELECT r.\"commit_seq\", 1 FROM \"{res_table}\" r \
                  JOIN \"{inbox}\" c ON c.\"observation_id\" = r.\"dispute_id\" \
                  WHERE substr(c.\"observation_id\", 1, 17) = 'mapping-conflict:' \
                    AND json_extract(c.\"observed\", '$.input.acceptedBundleId') = ?1 \
@@ -619,8 +638,10 @@ fn conflict_export_candidates<E: SqlEngine>(
         )?
     };
     for raw in res_rows {
-        let seq = to_u64(SqlRow(raw).get(0)?, "dispute resolution commit_seq")?;
-        candidates.push((seq, true));
+        let row = SqlRow(raw);
+        let seq = to_u64(row.get(0)?, "dispute resolution commit_seq")?;
+        let dep_matches = row.get::<i64>(1)? != 0;
+        candidates.push((seq, dep_matches));
     }
     Ok(candidates)
 }
@@ -717,8 +738,8 @@ pub(crate) fn authenticated_claim_observed<E: SqlEngine>(
     };
     if has_journal
         && let Some(prev_i64) = consumed_seq
-        && u64::try_from(prev_i64).ok().is_some_and(|p| p < commit_seq)
         && let Ok(prev_seq) = u64::try_from(prev_i64)
+        && prev_seq < commit_seq
         && let Some(reader) = reader
     {
         return reader

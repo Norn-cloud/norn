@@ -618,7 +618,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             if suppressed_by_delete {
                 break;
             }
-            claim.observation_id = dispute_id.to_owned();
+            dispute_id.clone_into(&mut claim.observation_id);
             let contribution = claim.contribution_id()?;
             covered_contributions.insert(contribution.clone());
             claim.supersedes = correction_supersedes(&contribution)?;

@@ -489,9 +489,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .into_iter()
             .filter(|r| {
                 !rejected_ids.contains(&r.claim_id)
-                    && !rejected_event_commits
+                    && rejected_event_commits
                         .get(&r.event_keys)
-                        .is_some_and(|&rej_seq| rej_seq >= r.commit_seq)
+                        .is_none_or(|&rej_seq| rej_seq < r.commit_seq)
             })
             .collect();
         let mut superseded_by_survivor = std::collections::BTreeSet::new();

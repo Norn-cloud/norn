@@ -269,9 +269,10 @@ fn has_newer_or_incomparable_landed<E: SqlEngine>(
 }
 
 fn map_corrupt_err(err: CellError, corrupt: &dyn Fn(&str) -> CellError) -> CellError {
-    match err {
-        CellError::LedgerCorrupt { .. } => err,
-        other => corrupt(&format!("{other}")),
+    if matches!(err, CellError::LedgerCorrupt { .. }) {
+        err
+    } else {
+        corrupt(&format!("{err}"))
     }
 }
 

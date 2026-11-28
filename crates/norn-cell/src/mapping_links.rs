@@ -225,8 +225,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .collect();
             if full_non_sup != active_non_sup {
                 return Err(CellError::Encoding(format!(
-                    "frontier standings diverge from full journal for {:?}: active={active_non_sup:?}, full={full_non_sup:?}",
-                    group_key
+                    "frontier standings diverge from full journal for {group_key:?}: active={active_non_sup:?}, full={full_non_sup:?}"
                 )));
             }
         }

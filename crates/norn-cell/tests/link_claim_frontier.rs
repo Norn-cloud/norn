@@ -97,6 +97,38 @@ fn raw_event(
     (raw, input)
 }
 
+fn raw_patch_event(
+    cell: &Cell,
+    system: &str,
+    row: &Value,
+    event: &str,
+    version: &str,
+    kind: &str,
+    partition: &str,
+) -> (Observed<RuntimeValue>, MappingInput) {
+    let (mut raw, input) = raw_event(cell, system, row, event, version, kind, partition);
+    if let Some(obj) = raw.input.as_object_mut() {
+        obj.insert("feed_mode".into(), RuntimeValue::from("patch"));
+        obj.insert("version_kind".into(), RuntimeValue::from("uint64"));
+    }
+    (raw, input)
+}
+
+fn capture_patch_kind(
+    cell: &mut Cell,
+    system: &str,
+    row: &Value,
+    event: &str,
+    version: &str,
+    kind: &str,
+    partition: &str,
+) -> String {
+    let (raw, input) = raw_patch_event(cell, system, row, event, version, kind, partition);
+    let (id, _) = cell.inject_mapping_bundle(&raw, &input).expect("inject");
+    cell.process_mapping_bundle(&id).expect("process");
+    id
+}
+
 fn capture_kind(
     cell: &mut Cell,
     system: &str,
@@ -1183,17 +1215,22 @@ fn source_delete_page_delivery_equals_one_by_one() {
     capture_kind(&mut single, "erpnext", &src1, "e2", "2", "delete", "p1");
     capture_kind(&mut single, "erpnext", &src2, "e2", "2", "delete", "p1");
 
-    // Paged deletes on `paged`.
+    // Paged deletes on `paged` (delete runs split into singletons for OBS-PAGE-EQUIV).
     let (r1, input) = raw_event(&paged, "erpnext", &src1, "e2", "2", "delete", "p1");
     let (r2, _) = raw_event(&paged, "erpnext", &src2, "e2", "2", "delete", "p1");
     let captured = paged
         .inject_mapping_page(&[r1, r2], &input)
         .expect("inject delete page");
-    assert_eq!(captured.pages.len(), 1);
-    let outcomes = paged
-        .process_mapping_page(&captured.pages[0].0)
-        .expect("process delete page")
-        .expect("pending");
+    assert_eq!(captured.pages.len(), 2);
+    let mut outcomes = Vec::new();
+    for (page_id, _) in &captured.pages {
+        outcomes.extend(
+            paged
+                .process_mapping_page(page_id)
+                .expect("process delete page")
+                .expect("pending"),
+        );
+    }
     assert_eq!(outcomes.len(), 2);
     assert!(outcomes.iter().all(|(_, o)| *o == MappingOutcome::Landed));
 
@@ -3216,9 +3253,9 @@ fn stale_delete_after_property_only_patch_preserves_live_link() {
     let mut cell = setup_with(&path, referring_parties_patch);
 
     let b = party_ref_row("P-B", "demo/party/b", "B", None);
-    land_party(&mut cell, &b, "eb", "1", "p1");
+    capture_patch_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
     let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", Some("demo/party/b"));
-    land_party(&mut cell, &a_v1, "ea1", "1", "p1");
+    capture_patch_kind(&mut cell, "erpnext", &a_v1, "ea1", "1", "upsert", "p1");
     assert_eq!(
         refers_targets(&cell, "demo/party/a"),
         BTreeSet::from(["demo/party/b".to_owned()])
@@ -3227,7 +3264,7 @@ fn stale_delete_after_property_only_patch_preserves_live_link() {
     // v3 property-only patch omits `refers_ref` under `FeedMode::Patch` so v1's
     // link claim stays active at version "1" while `display_name` advances to v3.
     let a_v3 = party_patch_row("P-A", "demo/party/a", "A v3 patched");
-    land_party(&mut cell, &a_v3, "ea3", "3", "p1");
+    capture_patch_kind(&mut cell, "erpnext", &a_v3, "ea3", "3", "upsert", "p1");
     assert_eq!(
         refers_targets(&cell, "demo/party/a"),
         BTreeSet::from(["demo/party/b".to_owned()])
@@ -3245,7 +3282,7 @@ fn stale_delete_after_property_only_patch_preserves_live_link() {
 
     // Late v2 delete must NOT withdraw the live link A -> B or tombstone A.
     let del_v2 = party_patch_row("P-A", "demo/party/a", "A v2");
-    capture_kind(&mut cell, "erpnext", &del_v2, "eadel2", "2", "delete", "p1");
+    capture_patch_kind(&mut cell, "erpnext", &del_v2, "eadel2", "2", "delete", "p1");
     assert_eq!(
         refers_targets(&cell, "demo/party/a"),
         BTreeSet::from(["demo/party/b".to_owned()]),
@@ -3364,9 +3401,9 @@ fn stale_delete_conflict_correction_resolves_cleanly_and_preserves_live_link() {
     let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", Some("demo/party/b"));
     let a_v3 = party_patch_row("P-A", "demo/party/a", "A v3 patched");
     let del_v2 = party_patch_row("P-A", "demo/party/a", "A v2 del");
-    land_party(&mut cell, &b, "eb", "1", "p1");
-    land_party(&mut cell, &a_v1, "e1", "1", "p1");
-    land_party(&mut cell, &a_v3, "e3", "3", "p1");
+    capture_patch_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_patch_kind(&mut cell, "erpnext", &a_v1, "e1", "1", "upsert", "p1");
+    capture_patch_kind(&mut cell, "erpnext", &a_v3, "e3", "3", "upsert", "p1");
     let active_ver: String = rusqlite::Connection::open(&path)
         .expect("sqlite")
         .query_row(
@@ -3379,7 +3416,8 @@ fn stale_delete_conflict_correction_resolves_cleanly_and_preserves_live_link() {
     assert_eq!(active_ver, "1");
 
     // Conflicting v2 delete reuses v1's event ID `e1`.
-    let (raw_del, input_del) = raw_event(&cell, "erpnext", &del_v2, "e1", "2", "delete", "p1");
+    let (raw_del, input_del) =
+        raw_patch_event(&cell, "erpnext", &del_v2, "e1", "2", "delete", "p1");
     let (conflict_id, ins) = cell
         .inject_mapping_bundle(&raw_del, &input_del)
         .expect("inject conflict delete");

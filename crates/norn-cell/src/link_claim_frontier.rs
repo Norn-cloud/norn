@@ -166,8 +166,7 @@ fn bundle_meta_with_reader<E: SqlEngine>(
         .unwrap_or_default()
         .to_owned();
     let event_keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)
-        .map(|keys| keys.map(|k| norn_ir::canonical::nfc(&k)))
-        .unwrap_or_default();
+        .map_or_default(|keys| keys.map(|k| norn_ir::canonical::nfc(&k)));
     ClaimSourceMeta {
         source_version,
         version_kind,
@@ -444,17 +443,26 @@ pub(crate) fn consume_superseded_conflict_bundle<E: SqlEngine>(
 /// `_norn_dispute_resolution` and backfill them from immutable `_norn_fact_values`,
 /// `_norn_ledger`, and `_norn_receipt`.
 pub(crate) fn migrate_v13_link_claim_frontier<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
+    let has_table = |name: &str| -> Result<bool, CellError> {
+        Ok(engine
+            .query_optional(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![name],
+                |row| row.get::<i64>(0),
+            )?
+            .is_some())
+    };
     for stmt in DDL {
+        if let Some(tbl) = [LEDGER, RECEIPT, INBOX]
+            .into_iter()
+            .find(|tbl| stmt.contains(&format!("ON \"{tbl}\"")))
+            && !has_table(tbl)?
+        {
+            continue;
+        }
         engine.execute_batch(stmt)?;
     }
-    let has_fact_values = engine
-        .query_optional(
-            &format!("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '{FACT_VALUES}'"),
-            params![],
-            |row| row.get::<i64>(0),
-        )?
-        .is_some();
-    if !has_fact_values {
+    if !has_table(FACT_VALUES)? {
         return Ok(());
     }
     rebuild_inner(engine, None)

@@ -750,7 +750,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             {
                 return Err(corrupt("ledger entry hash mismatch"));
             }
-            expected_prev = hash.clone();
+            expected_prev.clone_from(&hash);
             expected_seq = expected_seq
                 .checked_add(1)
                 .ok_or_else(|| corrupt("seq overflow"))?;
