@@ -356,7 +356,7 @@ export const UpdateStockLotBalance = Norn.action({
       && ctx.input.sku_id === ctx.slice.lot.sku_id
       && ctx.slice.lot.cost_status === "costed"
       && ctx.slice.lot.unit_cost !== null
-      && ctx.input.unit_cost === ctx.slice.lot.unit_cost
+      && ctx.input.unit_cost === (ctx.slice.lot.unit_cost ?? -1)
       && Norn.parseTimestamp(ctx.input.as_of) >= Norn.parseTimestamp(ctx.slice.lot.as_of)
       && ctx.input.depleted_qty >= ctx.slice.lot.depleted_qty
       && (ctx.input.depleted_qty + ctx.input.remaining_qty) === ctx.slice.lot.received_qty

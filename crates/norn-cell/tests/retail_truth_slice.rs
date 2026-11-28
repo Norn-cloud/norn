@@ -2330,7 +2330,7 @@ fn verify_store_kpi_rollup_temporal_refusals(
     (s1_on_hand, s1_margin, s1_opening_val, s1_closing_val): (Decimal, Decimal, Decimal, Decimal),
 ) -> Result<(), String> {
     verify_opening_cut_and_lot_date_refusals(sole)?;
-    // 1. Non-Monday `period_week` passes all preconditions and refuses via `StoreCommercialRollupPeriodWeekMatchesEnd`.
+    // 1. Non-Monday `period_week` passes all preconditions and refuses via `StoreCommercialRollupPeriodWeekIsMonday`.
     let (code, msg) = sole.refused(
         "supply.store_kpi.record_withheld",
         "planner:omar",
@@ -2347,11 +2347,11 @@ fn verify_store_kpi_rollup_temporal_refusals(
     )?;
     assert_eq!(code, "core.laws.violated", "{msg}");
     assert!(
-        msg.contains("store_commercial_rollup_period_week_matches_end"),
+        msg.contains("store_commercial_rollup_period_week_is_monday"),
         "{msg}"
     );
     // 2. Wrong-week Monday string (`2026-08-17`) matching `CUT-S1-2026-08-10` and `2 * 20 = 40`
-    // passes all preconditions and refuses via `StoreCommercialRollupPeriodWeekMatchesEnd`.
+    // passes all preconditions and refuses via `StoreCommercialRollupPeriodEndWithinWeek`.
     let (code, msg) = sole.refused(
         "supply.store_kpi.record",
         "planner:omar",
@@ -2373,7 +2373,7 @@ fn verify_store_kpi_rollup_temporal_refusals(
     )?;
     assert_eq!(code, "core.laws.violated", "{msg}");
     assert!(
-        msg.contains("store_commercial_rollup_period_week_matches_end"),
+        msg.contains("store_commercial_rollup_period_end_within_week"),
         "{msg}"
     );
     verify_store_kpi_rollup_stale_and_backdate_refusals(

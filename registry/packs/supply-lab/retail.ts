@@ -703,11 +703,20 @@ export const StoreCommercialRollupValid = Norn.law("store_commercial_rollup_vali
 
 export const StoreCommercialRollupCountNotFuture = Norn.law("store_commercial_rollup_count_not_future", {
   on: StoreCommercialRollup,
-  when: (self): self is typeof self & { readonly count_as_of: NonNullable<typeof self.count_as_of> } => self.count_as_of !== null,
+  when: (self) => self.count_as_of !== null,
   must: (self) =>
-    self.count_as_of <= self.period_end
-    && Norn.secondsBetween(self.count_as_of, self.period_end) <= 604800,
+    Norn.parseTimestamp(self.count_as_of ?? self.period_start) <= Norn.parseTimestamp(self.period_end)
+    && Norn.secondsBetween(self.count_as_of ?? self.period_start, self.period_end) <= 604800,
   because: "A verified commercial KPI rollup must cite a fresh physical count dated at or before period_end and within the 7-day freshness window.",
+})
+
+export const StoreCommercialRollupPeriodWeekIsMonday = Norn.law("store_commercial_rollup_period_week_is_monday", {
+  on: StoreCommercialRollup,
+  must: (self) =>
+    Norn.byteLength(self.period_week) === 10
+    && Norn.floor(Norn.daysBetween("2024-01-01", self.period_week) / 7) * 7
+      === Norn.daysBetween("2024-01-01", self.period_week),
+  because: "Store commercial KPI rollup period_week must be a canonical UTC ISO-week Monday YYYY-MM-DD.",
 })
 
 export const StoreCommercialRollupPeriodWeekMatchesEnd = Norn.law("store_commercial_rollup_period_week_matches_end", {
@@ -715,14 +724,23 @@ export const StoreCommercialRollupPeriodWeekMatchesEnd = Norn.law("store_commerc
   must: (self) =>
     self.sales_weeks >= 1
     && self.period_start <= self.period_end
-    && Norn.byteLength(self.period_week) === 10
-    && Norn.floor(Norn.daysBetween("2024-01-01", self.period_week) / 7) * 7
-      === Norn.daysBetween("2024-01-01", self.period_week)
-    && Norn.secondsBetween(self.period_week + "T00:00:00Z", self.period_end) >= 0
-    && Norn.secondsBetween(self.period_week + "T00:00:00Z", self.period_end) < 604800
-    && Norn.secondsBetween(self.period_start, self.period_week + "T00:00:00Z")
+    && Norn.secondsBetween(self.period_week + "T00:00:00Z", self.period_end) >= 0,
+  because: "Store commercial KPI rollup period_week must start on or before period_end with at least one sales week.",
+})
+
+export const StoreCommercialRollupPeriodEndWithinWeek = Norn.law("store_commercial_rollup_period_end_within_week", {
+  on: StoreCommercialRollup,
+  must: (self) =>
+    Norn.secondsBetween(self.period_week + "T00:00:00Z", self.period_end) < 604800,
+  because: "Store commercial KPI rollup period_end must fall within the 7-day UTC ISO week beginning at period_week.",
+})
+
+export const StoreCommercialRollupSalesWeeksMatchesSpan = Norn.law("store_commercial_rollup_sales_weeks_matches_span", {
+  on: StoreCommercialRollup,
+  must: (self) =>
+    Norn.secondsBetween(self.period_start, self.period_week + "T00:00:00Z")
       === (self.sales_weeks - 1) * 604800,
-  because: "Store commercial KPI rollup period_week must equal the canonical UTC ISO-week Monday YYYY-MM-DD containing period_end, and sales_weeks must equal the exact ISO-week span from period_start through period_week.",
+  because: "Store commercial KPI rollup sales_weeks must equal the exact ISO-week span from period_start through period_week.",
 })
 
 export const StoreCommercialRollupRequiresEvidenceLinks = Norn.law("store_commercial_rollup_requires_evidence_links", {

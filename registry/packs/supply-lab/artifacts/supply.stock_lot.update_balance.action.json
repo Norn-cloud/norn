@@ -143,7 +143,7 @@
       "type": "object"
     },
     "preconditions": [
-      "(((((((((slice.store.status == 'active') and (input.store_id == slice.lot.store_id)) and (input.sku_id == slice.lot.sku_id)) and (slice.lot.cost_status == 'costed')) and (slice.lot.unit_cost != null)) and (input.unit_cost == slice.lot.unit_cost)) and (timestamp(input.as_of) >= timestamp(slice.lot.as_of))) and (input.depleted_qty >= slice.lot.depleted_qty)) and ((input.depleted_qty + input.remaining_qty) == slice.lot.received_qty)) and (aggregates.sealed_cuts_at_or_after_as_of == 0)"
+      "(((((((((slice.store.status == 'active') and (input.store_id == slice.lot.store_id)) and (input.sku_id == slice.lot.sku_id)) and (slice.lot.cost_status == 'costed')) and (slice.lot.unit_cost != null)) and (input.unit_cost == (slice.lot.unit_cost ?? -1))) and (timestamp(input.as_of) >= timestamp(slice.lot.as_of))) and (input.depleted_qty >= slice.lot.depleted_qty)) and ((input.depleted_qty + input.remaining_qty) == slice.lot.received_qty)) and (aggregates.sealed_cuts_at_or_after_as_of == 0)"
     ],
     "scopeRequired": [
       "orgId",

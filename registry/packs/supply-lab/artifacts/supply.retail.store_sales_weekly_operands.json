@@ -37,7 +37,7 @@
             },
             {
               "expression": "input.sold_at",
-              "name": "period_week"
+              "name": "sold_at"
             },
             {
               "expression": "input.sold_qty",

@@ -226,7 +226,7 @@ export const StoreSalesWeeklyOperands = Norn.transform({
         { name: "sku_id", expression: "input.sku_id" },
         { name: "unit", expression: "input.unit" },
         { name: "currency", expression: "input.currency" },
-        { name: "period_week", expression: "input.sold_at" },
+        { name: "sold_at", expression: "input.sold_at" },
         { name: "sold_qty", expression: "input.sold_qty" },
         { name: "cost_complete", expression: "input.costed_lines == input.sale_lines" },
         { name: "effective_gross_margin", expression: "input.costed_lines == input.sale_lines ? input.gross_margin : null" },
@@ -319,7 +319,7 @@ export const StoreRollupSalesOperands = Norn.transform({
     rollup: { op: "scan", input: "rollup" },
     verified_only: {
       op: "filter", input: "rollup",
-      predicate: "input.count_status == \"verified\" && input.cost_status == \"costed\" && input.sales_weeks == 1",
+      predicate: "input.count_status == \"verified\" and input.cost_status == \"costed\" and input.sales_weeks == 1",
     },
     operands: {
       op: "project", input: "verified_only", columns: [

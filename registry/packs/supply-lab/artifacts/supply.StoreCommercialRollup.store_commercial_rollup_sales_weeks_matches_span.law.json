@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.StoreCommercialRollup.store_commercial_rollup_sales_weeks_matches_span.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.StoreCommercialRollup.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Store commercial KPI rollup sales_weeks must equal the exact ISO-week span from period_start through period_week.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.StoreCommercialRollup.store_commercial_rollup_sales_weeks_matches_span",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "Store commercial KPI rollup sales_weeks must equal the exact ISO-week span from period_start through period_week.",
+    "response": {
+      "expression": "seconds_between(timestamp(self.period_start), timestamp(self.period_week + 'T00:00:00Z')) == ((self.sales_weeks - 1) * 604800)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.StoreCommercialRollup"
+      ],
+      "root": {
+        "id": "supply.StoreCommercialRollup",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.StoreCommercialRollup"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StoreCommercialRollup.store_commercial_rollup_sales_weeks_matches_span.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

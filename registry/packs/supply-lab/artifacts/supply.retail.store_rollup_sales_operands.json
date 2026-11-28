@@ -74,7 +74,7 @@
         "verified_only": {
           "input": "rollup",
           "op": "filter",
-          "predicate": "input.count_status == \"verified\" && input.cost_status == \"costed\" && input.sales_weeks == 1"
+          "predicate": "input.count_status == \"verified\" and input.cost_status == \"costed\" and input.sales_weeks == 1"
         }
       },
       "output": "operands"

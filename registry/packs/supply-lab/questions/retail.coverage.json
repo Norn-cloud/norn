@@ -98,7 +98,7 @@
       "maxAgeMs": null,
       "expectedFilters": [
         [
-          "period_week",
+          "sold_at",
           "2026-08-31"
         ]
       ],
@@ -131,7 +131,7 @@
       "maxAgeMs": null,
       "expectedFilters": [
         [
-          "period_week",
+          "sold_at",
           "2026-08-31"
         ]
       ],

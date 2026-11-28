@@ -124,7 +124,7 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
       comparison: "eq",
       observedTimestampColumn: null,
       maxAgeMs: null,
-      expectedFilters: [["period_week", "2026-08-31"]],
+      expectedFilters: [["sold_at", "2026-08-31"]],
       observedFilters: [
         ["period_week", "2026-08-31"],
         ["period_end", "2026-09-06T23:59:59.999999999Z"],
@@ -141,7 +141,7 @@ export const RetailCombinedViewCoverage: RetailCoverageManifest = {
       comparison: "eq",
       observedTimestampColumn: null,
       maxAgeMs: null,
-      expectedFilters: [["period_week", "2026-08-31"]],
+      expectedFilters: [["sold_at", "2026-08-31"]],
       observedFilters: [
         ["period_week", "2026-08-31"],
         ["period_end", "2026-09-06T23:59:59.999999999Z"],
