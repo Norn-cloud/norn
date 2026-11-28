@@ -244,11 +244,15 @@ fn append_flag_argument(
     Ok(())
 }
 
-fn build_argv(operation: &str, arguments: RuntimeObject) -> Result<Vec<String>, Refusal> {
+pub(crate) fn build_argv(
+    operation: &str,
+    arguments: RuntimeObject,
+) -> Result<Vec<String>, Refusal> {
     if !PLATFORM_TOOLS.contains(&operation) {
         return Err(Refusal::invalid("backend unavailable"));
     }
-    let root = Cli::command();
+    let mut root = Cli::command();
+    root.build();
     let subcmd = root
         .find_subcommand(operation)
         .ok_or_else(|| Refusal::invalid("unknown command"))?;
@@ -400,7 +404,7 @@ pub(crate) fn call_tool(
             confine_opt_path(&mut check_args.context, workspace_root)?;
             confine_opt_path(&mut check_args.source, workspace_root)?;
             confine_opt_path(&mut check_args.tool_root, workspace_root)?;
-            let output = crate::run_check_args(&check_args);
+            let output = crate::run_check_args_confined(&check_args, workspace_root);
             from_command_output(output, None)
         }
         Command::Compile(mut compile_args) => {
@@ -413,7 +417,7 @@ pub(crate) fn call_tool(
             confine_opt_path(&mut compile_args.tool_root, workspace_root)?;
             confine_opt_path(&mut compile_args.root, workspace_root)?;
             confine_opt_path(&mut compile_args.modules, workspace_root)?;
-            let output = crate::authoring::execute_compile(&compile_args);
+            let output = crate::authoring::execute_compile_confined(&compile_args, workspace_root);
             from_command_output(output, Some("artifacts"))
         }
         Command::Explain(mut explain_args) => {

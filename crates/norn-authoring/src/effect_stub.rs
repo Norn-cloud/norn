@@ -132,9 +132,7 @@ export declare function isRight<R, L>(self: Either<R, L>): self is Right<L, R>
 export declare function isLeft<R, L>(self: Either<R, L>): self is Left<L, R>
 "#;
 
-const DATA_DTS: &str = r"export interface YieldableError extends Error {
-  readonly _tag: string
-}
+const DATA_DTS: &str = r"export interface YieldableError extends Error {}
 
 export declare function TaggedError<Tag extends string>(
   tag: Tag,
@@ -174,58 +172,73 @@ const EFFECT_DTS: &str = r#"import type { DurationInput } from "./Duration"
 import type { Pipeable } from "./Pipeable"
 import type { Schedule } from "./Schedule"
 
-export interface YieldWrap<T> {
-  readonly _tag: "YieldWrap"
-  readonly value: T
+export interface EffectIterator<T extends Effect<any, any, any>> {
+  next(...args: ReadonlyArray<any>): IteratorResult<T, Success<T>>
 }
 
-export interface Effect<A, E = never, R = never> extends Pipeable {
+export interface Effect<out A, out E = never, out R = never> extends Pipeable {
   readonly _A?: () => A
   readonly _E?: () => E
   readonly _R?: () => R
-  [Symbol.iterator](): Generator<YieldWrap<Effect<A, E, R>>, A, never>
+  [Symbol.iterator](): EffectIterator<Effect<A, E, R>>
 }
 
 export type Success<T> = [T] extends [Effect<infer A, any, any>] ? A : never
 export type Error<T> = [T] extends [Effect<any, infer E, any>] ? E : never
 export type Services<T> = [T] extends [Effect<any, any, infer R>] ? R : never
 
-export declare function gen<Eff extends YieldWrap<Effect<any, any, any>>, AEff>(
-  f: () => Generator<Eff, AEff, never>,
-): Effect<
-  AEff,
-  [Eff] extends [never] ? never : Eff extends YieldWrap<Effect<any, infer E, any>> ? E : never,
-  [Eff] extends [never] ? never : Eff extends YieldWrap<Effect<any, any, infer R>> ? R : never
->
+type NoInfer<A> = [A][A extends any ? 0 : never]
+
+export type Tags<E> = E extends { readonly _tag: string } ? E["_tag"] : never
+export type ExcludeTag<E, K extends string> = Exclude<E, { readonly _tag: K }>
+export type ExtractTag<E, K extends string> = E extends { readonly _tag: infer T }
+  ? K extends T
+    ? E
+    : never
+  : never
+
+export declare const gen: {
+  <Eff extends Effect<any, any, any>, AEff>(
+    f: () => Generator<Eff, AEff, never>,
+  ): Effect<
+    AEff,
+    [Eff] extends [never] ? never : Eff extends Effect<any, infer E, any> ? E : never,
+    [Eff] extends [never] ? never : Eff extends Effect<any, any, infer R> ? R : never
+  >
+}
 
 export declare function succeed<A>(value: A): Effect<A>
 export declare function fail<E>(error: E): Effect<never, E>
 export declare function sleep(duration: DurationInput): Effect<void>
 
-export declare function map<A, B>(
-  f: (a: A) => B,
-): <E, R>(self: Effect<A, E, R>) => Effect<B, E, R>
-export declare function map<A, E, R, B>(self: Effect<A, E, R>, f: (a: A) => B): Effect<B, E, R>
+export declare const map: {
+  <A, B>(f: (a: A) => B): <E, R>(self: Effect<A, E, R>) => Effect<B, E, R>
+  <A, E, R, B>(self: Effect<A, E, R>, f: (a: A) => B): Effect<B, E, R>
+}
 
-export declare function flatMap<A, B, E2, R2>(
-  f: (a: A) => Effect<B, E2, R2>,
-): <E1, R1>(self: Effect<A, E1, R1>) => Effect<B, E1 | E2, R1 | R2>
-export declare function flatMap<A, E1, R1, B, E2, R2>(
-  self: Effect<A, E1, R1>,
-  f: (a: A) => Effect<B, E2, R2>,
-): Effect<B, E1 | E2, R1 | R2>
+export declare const flatMap: {
+  <A, B, E2, R2>(
+    f: (a: A) => Effect<B, E2, R2>,
+  ): <E1, R1>(self: Effect<A, E1, R1>) => Effect<B, E1 | E2, R1 | R2>
+  <A, E1, R1, B, E2, R2>(
+    self: Effect<A, E1, R1>,
+    f: (a: A) => Effect<B, E2, R2>,
+  ): Effect<B, E1 | E2, R1 | R2>
+}
 
-export declare function catchTag<const K extends string, E, A2, E2, R2>(
-  k: K,
-  f: (e: Extract<E, { readonly _tag: K }>) => Effect<A2, E2, R2>,
-): <A, R>(
-  self: Effect<A, E, R>,
-) => Effect<A | A2, Exclude<E, { readonly _tag: K }> | E2, R | R2>
-export declare function catchTag<A, E, R, const K extends string, A2, E2, R2>(
-  self: Effect<A, E, R>,
-  k: K,
-  f: (e: Extract<E, { readonly _tag: K }>) => Effect<A2, E2, R2>,
-): Effect<A | A2, Exclude<E, { readonly _tag: K }> | E2, R | R2>
+export declare const catchTag: {
+  <const K extends Tags<E>, E, A2, E2, R2>(
+    k: K,
+    f: (e: ExtractTag<NoInfer<E>, K>) => Effect<A2, E2, R2>,
+  ): <A, R>(
+    self: Effect<A, E, R>,
+  ) => Effect<A | A2, ExcludeTag<E, K> | E2, R | R2>
+  <A, E, R, const K extends Tags<E>, A2, E2, R2>(
+    self: Effect<A, E, R>,
+    k: K,
+    f: (e: ExtractTag<E, K>) => Effect<A2, E2, R2>,
+  ): Effect<A | A2, ExcludeTag<E, K> | E2, R | R2>
+}
 
 export declare function all<const Arg extends ReadonlyArray<Effect<any, any, any>>>(
   arg: Arg,
@@ -239,13 +252,15 @@ export declare function all<const Arg extends ReadonlyArray<Effect<any, any, any
   Services<Arg[number]>
 >
 
-export declare function retry<Out, E, R2>(
-  policy: Schedule<Out, NoInfer<E>, R2>,
-): <A, R>(self: Effect<A, E, R>) => Effect<A, E, R | R2>
-export declare function retry<A, E, R, Out, R2>(
-  self: Effect<A, E, R>,
-  policy: Schedule<Out, NoInfer<E>, R2>,
-): Effect<A, E, R | R2>
+export declare const retry: {
+  <Out, E, R2>(
+    policy: Schedule<Out, NoInfer<E>, R2>,
+  ): <A, R>(self: Effect<A, E, R>) => Effect<A, E, R | R2>
+  <A, E, R, Out, R2>(
+    self: Effect<A, E, R>,
+    policy: Schedule<Out, NoInfer<E>, R2>,
+  ): Effect<A, E, R | R2>
+}
 
 export declare function runPromise(...args: ReadonlyArray<any>): any
 export declare function runPromiseExit(...args: ReadonlyArray<any>): any

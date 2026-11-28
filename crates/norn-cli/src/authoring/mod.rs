@@ -194,6 +194,7 @@ pub(crate) struct CheckSourceRequest<'a> {
     pub(crate) env: Option<&'a str>,
     pub(crate) forbid_unsafe_zen: bool,
     pub(crate) tool_root: Option<&'a Path>,
+    pub(crate) boundary_root: Option<&'a Path>,
 }
 
 struct NornAppManifest {
@@ -212,6 +213,7 @@ struct CompileDirOptions<'a> {
     env: &'a str,
     forbid_unsafe_zen: bool,
     tool_root: Option<&'a Path>,
+    boundary_root: Option<&'a Path>,
     allow_empty: bool,
 }
 
@@ -383,6 +385,7 @@ fn compile_source_dir_entries(
             env: opts.env,
             forbid_unsafe_zen: opts.forbid_unsafe_zen,
             tool_root: opts.tool_root,
+            boundary_root: opts.boundary_root,
         };
         ts::compile_ts_targets_into(
             TsCompileTarget::Directory {
@@ -444,6 +447,7 @@ fn compile_manifest_project(
         env: opts.env,
         forbid_unsafe_zen: opts.forbid_unsafe_zen,
         tool_root: opts.tool_root,
+        boundary_root: opts.boundary_root,
         allow_empty: true,
     };
     let mut out = BoundedJsonArray::new();
@@ -504,6 +508,7 @@ fn compile_single_file_pinned(
                 env: opts.env,
                 forbid_unsafe_zen: opts.forbid_unsafe_zen,
                 tool_root: opts.tool_root,
+                boundary_root: opts.boundary_root,
             };
             ts::compile_ts_targets(
                 TsCompileTarget::SingleFile {
@@ -552,6 +557,7 @@ fn compile_path_to_json(
     env: &str,
     forbid_unsafe_zen: bool,
     tool_root: Option<&Path>,
+    boundary_root: Option<&Path>,
     budget: &mut InvocationBudget,
 ) -> Result<String, AuthoringFailure> {
     validate_non_empty_scope("--org", org)?;
@@ -561,6 +567,7 @@ fn compile_path_to_json(
         env,
         forbid_unsafe_zen,
         tool_root,
+        boundary_root,
         allow_empty: false,
     };
     match open_source_target_pinned(path).map_err(AuthoringFailure::Io)? {
@@ -587,8 +594,20 @@ fn compile_path_to_json(
 
 /// Executes `norn compile`.
 pub(crate) fn execute_compile(args: &CompileArgs) -> CommandOutput {
+    execute_compile_with_boundary(args, None)
+}
+
+/// Executes `norn compile` confined strictly within `boundary_root`.
+pub(crate) fn execute_compile_confined(args: &CompileArgs, boundary_root: &Path) -> CommandOutput {
+    execute_compile_with_boundary(args, Some(boundary_root))
+}
+
+fn execute_compile_with_boundary(
+    args: &CompileArgs,
+    boundary_root: Option<&Path>,
+) -> CommandOutput {
     if args.pack_json {
-        return pack_json::execute_compile_pack_json(args);
+        return pack_json::execute_compile_pack_json(args, boundary_root);
     }
     let (Some(org), Some(env)) = (args.org.as_deref(), args.env.as_deref()) else {
         return CommandOutput::usage_or_io_error("--org and --env are required");
@@ -600,6 +619,7 @@ pub(crate) fn execute_compile(args: &CompileArgs) -> CommandOutput {
         env,
         args.forbid_unsafe_zen,
         args.tool_root.as_deref(),
+        boundary_root,
         &mut budget,
     ) {
         Ok(canonical) => {
@@ -733,6 +753,7 @@ fn compile_check_source_pinned(
                 env: &resolved_env,
                 forbid_unsafe_zen: req.forbid_unsafe_zen,
                 tool_root: req.tool_root,
+                boundary_root: req.boundary_root,
                 allow_empty: false,
             };
             compile_directory_pinned(&root_dir, manifest.as_ref(), &opts, budget)
@@ -766,6 +787,7 @@ fn compile_check_source_pinned(
                 env: &resolved_env,
                 forbid_unsafe_zen: req.forbid_unsafe_zen,
                 tool_root: req.tool_root,
+                boundary_root: req.boundary_root,
                 allow_empty: false,
             };
             compile_single_file_pinned(
@@ -790,7 +812,7 @@ pub(crate) fn execute_check_source(req: &CheckSourceRequest<'_>) -> CommandOutpu
         PinnedSourceTarget::Directory(dir) => dir,
         PinnedSourceTarget::File { parent_dir, .. } => parent_dir,
     };
-    let app_root = match find_norn_app_root_from_dir(start_dir) {
+    let app_root = match find_norn_app_root_from_dir(start_dir, req.boundary_root) {
         Ok(matched) => matched,
         Err(err) => return CommandOutput::usage_or_io_error(&err),
     };

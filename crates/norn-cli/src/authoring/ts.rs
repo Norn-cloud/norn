@@ -34,6 +34,7 @@ pub(crate) struct TsCompileOptions<'a> {
     pub(crate) env: &'a str,
     pub(crate) forbid_unsafe_zen: bool,
     pub(crate) tool_root: Option<&'a Path>,
+    pub(crate) boundary_root: Option<&'a Path>,
 }
 
 /// FD-pinned target passed to [`compile_ts_targets`].
@@ -78,9 +79,10 @@ fn mount_pinned_packages(
     profile: &Profile,
     start: &Path,
     explicit_tool_root: Option<&Path>,
+    boundary_root: Option<&Path>,
 ) -> Result<Option<&'static str>, AuthoringFailure> {
-    let Some(tool_root) =
-        discover_tool_root(start, explicit_tool_root).map_err(AuthoringFailure::Io)?
+    let Some(tool_root) = discover_tool_root(start, explicit_tool_root, boundary_root)
+        .map_err(AuthoringFailure::Io)?
     else {
         let _stub_files = vfs.mount_embedded_effect_stub(profile).map_err(|err| {
             AuthoringFailure::Io(format!(
@@ -311,9 +313,20 @@ fn seed_closure_inputs(inputs: TsClosureInputs<'_>) -> Result<SeededClosure, Aut
 fn collect_ts_import_closure(
     base_dir: &TrustedDir,
     inputs: TsClosureInputs<'_>,
+    boundary_root: Option<&Path>,
     budget: &mut InvocationBudget,
 ) -> Result<(Vec<PathBuf>, Vec<LoadedFile>), AuthoringFailure> {
     let package_hint_path = inputs.package_hint_path;
+    let boundary_pair = boundary_root
+        .map(|root| -> Result<(PathBuf, PathBuf), AuthoringFailure> {
+            let bound = std::fs::canonicalize(root)
+                .map_err(|err| AuthoringFailure::Io(format!("{}: {err}", root.display())))?;
+            let base = std::fs::canonicalize(base_dir.display_path()).map_err(|err| {
+                AuthoringFailure::Io(format!("{}: {err}", base_dir.display_path().display()))
+            })?;
+            Ok((bound, base))
+        })
+        .transpose()?;
     let SeededClosure {
         mut visited,
         root_rels,
@@ -328,6 +341,15 @@ fn collect_ts_import_closure(
                 for candidate in relative_candidates(&current.rel_path, &spec) {
                     if visited.contains(&candidate) {
                         break;
+                    }
+                    if let Some((canonical_bound, canonical_base)) = boundary_pair.as_ref() {
+                        let candidate_abs = normalize_display_join(canonical_base, &candidate);
+                        if !candidate_abs.starts_with(canonical_bound) {
+                            return Err(AuthoringFailure::Io(format!(
+                                "{}: relative import escapes workspace boundary",
+                                candidate_abs.display()
+                            )));
+                        }
                     }
                     if let Some(imported_text) = base_dir
                         .probe_import_file_rel(&candidate, budget)
@@ -365,6 +387,7 @@ pub(super) fn mount_ts_closure(
     base_dir: &TrustedDir,
     inputs: TsClosureInputs<'_>,
     explicit_tool_root: Option<&Path>,
+    boundary_root: Option<&Path>,
     budget: &mut InvocationBudget,
 ) -> Result<MountedTsContext, AuthoringFailure> {
     let profile = Profile::load().map_err(|err| AuthoringFailure::Io(err.to_string()))?;
@@ -374,9 +397,10 @@ pub(super) fn mount_ts_closure(
         &profile,
         inputs.package_hint_path,
         explicit_tool_root,
+        boundary_root,
     )?;
 
-    let (root_rels, loaded) = collect_ts_import_closure(base_dir, inputs, budget)?;
+    let (root_rels, loaded) = collect_ts_import_closure(base_dir, inputs, boundary_root, budget)?;
     let up_levels = loaded
         .iter()
         .map(|file| count_leading_parent_dirs(&file.rel_path))
@@ -422,6 +446,7 @@ pub(super) fn mount_single_file_closure(
     display_path: &Path,
     initial_content: String,
     explicit_tool_root: Option<&Path>,
+    boundary_root: Option<&Path>,
     budget: &mut InvocationBudget,
 ) -> Result<MountedTsContext, AuthoringFailure> {
     let root_file = LoadedFile {
@@ -435,7 +460,13 @@ pub(super) fn mount_single_file_closure(
         subdir_files: Vec::new(),
         package_hint_path: display_path,
     };
-    mount_ts_closure(parent_dir, inputs, explicit_tool_root, budget)
+    mount_ts_closure(
+        parent_dir,
+        inputs,
+        explicit_tool_root,
+        boundary_root,
+        budget,
+    )
 }
 
 fn open_single_ts_file_pinned(
@@ -647,6 +678,7 @@ pub(crate) fn compile_ts_targets_into(
             display_path,
             content,
             opts.tool_root,
+            opts.boundary_root,
             budget,
         )?,
         TsCompileTarget::Directory {
@@ -664,7 +696,7 @@ pub(crate) fn compile_ts_targets_into(
                 subdir_files,
                 package_hint_path: root_dir.display_path(),
             };
-            mount_ts_closure(root_dir, inputs, opts.tool_root, budget)?
+            mount_ts_closure(root_dir, inputs, opts.tool_root, opts.boundary_root, budget)?
         }
     };
     let mut sink = ArtifactSink {
@@ -701,6 +733,7 @@ pub(crate) fn run_profile(
         path,
         content,
         tool_root,
+        None,
         &mut budget,
     )?;
     let root_slices: Vec<&str> = mounted.root_vpaths.iter().map(String::as_str).collect();
@@ -741,6 +774,7 @@ pub(crate) fn run_question(
         path,
         content,
         tool_root,
+        None,
         &mut budget,
     )?;
     let vpath = mounted
@@ -798,6 +832,7 @@ pub(crate) fn run_dashboard(
         path,
         content,
         tool_root,
+        None,
         &mut budget,
     )?;
     let vpath = mounted

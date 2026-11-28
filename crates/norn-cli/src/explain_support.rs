@@ -1,8 +1,41 @@
-//! Diagnostic code lookup, `--base` context merging, and rich law rendering for `norn explain`.
+//! Diagnostic code lookup, `--base` context merging, and honest live law rendering for `norn explain`.
 
 use norn_ir::explain::{ExplainProof, ExplainedLaw};
 use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// Typed per-law runtime enforcement and proof record from `norn_checker_wasm::law_honesty_json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LawHonestyEntry {
+    pub(crate) artifact_id: String,
+    pub(crate) law_id: String,
+    pub(crate) enforcement: String,
+    pub(crate) proof: String,
+    pub(crate) evidence_digest: Option<String>,
+    pub(crate) reason: Option<String>,
+}
+
+impl LawHonestyEntry {
+    fn from_json_value(value: &Value) -> Result<Self, String> {
+        let field = |key: &str| {
+            value
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| format!("law honesty entry missing string field `{key}`"))
+        };
+        let optional_field = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
+        Ok(Self {
+            artifact_id: field("artifactId")?,
+            law_id: field("lawId")?,
+            enforcement: field("enforcement")?,
+            proof: field("proof")?,
+            evidence_digest: optional_field("evidenceDigest"),
+            reason: optional_field("reason"),
+        })
+    }
+}
 
 /// Returns `true` when `token` looks like a diagnostic code (dotted checker code or `NORN-*`).
 pub(crate) fn looks_like_diagnostic_code(token: &str) -> bool {
@@ -69,6 +102,26 @@ pub(crate) fn execute_diagnostic(code: &str, format: &str) -> Result<(String, bo
     Ok((render_diagnostic_text(&value), found))
 }
 
+fn parse_strict_context_object(path: &Path, raw: &str) -> Result<Map<String, Value>, String> {
+    if raw.trim().is_empty() {
+        return Err(format!(
+            "{}: explain --context must be a JSON object",
+            path.display()
+        ));
+    }
+    let parsed: Value =
+        serde_json::from_str(raw).map_err(|error| format!("{}: {error}", path.display()))?;
+    let Value::Object(map) = parsed else {
+        return Err("explain --context must be a JSON object".to_owned());
+    };
+    if let Some(base_val) = map.get("base")
+        && !base_val.is_array()
+    {
+        return Err("explain context.base must be a JSON array".to_owned());
+    }
+    Ok(map)
+}
+
 /// Builds the explain checker context JSON by merging optional `--context` with repeatable `--base` inputs.
 pub(crate) fn build_context_json(
     context_path: Option<&Path>,
@@ -77,27 +130,28 @@ pub(crate) fn build_context_json(
     read_defs: fn(&Path) -> Result<String, String>,
 ) -> Result<String, String> {
     if base_paths.is_empty() {
-        return Ok(context_path
-            .map(read_file)
-            .transpose()?
-            .unwrap_or_else(|| "{}".to_owned()));
+        return match context_path {
+            Some(path) => {
+                let raw = read_file(path)?;
+                let _validated = parse_strict_context_object(path, &raw)?;
+                Ok(raw)
+            }
+            None => Ok("{}".to_owned()),
+        };
     }
-    let raw_context = context_path
-        .map(read_file)
-        .transpose()?
-        .unwrap_or_else(|| "{}".to_owned());
-    let mut context_value: Value =
-        serde_json::from_str(&raw_context).map_err(|error| error.to_string())?;
-    if context_value.is_null() {
-        context_value = Value::Object(Map::new());
-    }
-    let Some(context_obj) = context_value.as_object_mut() else {
-        return Err("explain --context must be a JSON object".to_owned());
+    let mut context_obj = match context_path {
+        Some(path) => {
+            let raw = read_file(path)?;
+            parse_strict_context_object(path, &raw)?
+        }
+        None => Map::new(),
     };
     let mut base_items = match context_obj.remove("base") {
-        None | Some(Value::Null) => Vec::new(),
+        None => Vec::new(),
         Some(Value::Array(items)) => items,
-        Some(_) => return Err("explain context.base must be a JSON array".to_owned()),
+        Some(
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_),
+        ) => return Err("explain context.base must be a JSON array".to_owned()),
     };
     for base_path in base_paths {
         let raw_base = read_defs(base_path)?;
@@ -115,81 +169,78 @@ pub(crate) fn build_context_json(
         }
     }
     context_obj.insert("base".to_owned(), Value::Array(base_items));
-    serde_json::to_string(&context_value).map_err(|error| error.to_string())
+    serde_json::to_string(&Value::Object(context_obj)).map_err(|error| error.to_string())
 }
 
-fn proof_status_from_json(law_proof: ExplainProof, raw_law: Option<&Value>) -> String {
-    if let Some(status) = raw_law
-        .and_then(|value| value.get("status"))
-        .and_then(Value::as_str)
-        .filter(|text| !text.is_empty())
+fn classify_honesty_into(
+    artifacts_json: &str,
+    map: &mut BTreeMap<(String, String), LawHonestyEntry>,
+) -> Result<(), String> {
+    let raw =
+        norn_checker_wasm::law_honesty_json(artifacts_json).map_err(|error| error.to_string())?;
+    let parsed: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    let Value::Array(items) = parsed else {
+        return Err("law honesty response must be a JSON array".to_owned());
+    };
+    for item in &items {
+        let entry = LawHonestyEntry::from_json_value(item)?;
+        map.insert((entry.artifact_id.clone(), entry.law_id.clone()), entry);
+    }
+    Ok(())
+}
+
+/// Computes live `LAW-HONESTY-1` classifications for explained laws from the checker ABI.
+pub(crate) fn load_law_honesty(
+    artifacts_json: &str,
+    context_json: &str,
+) -> Result<BTreeMap<(String, String), LawHonestyEntry>, String> {
+    let mut by_key = BTreeMap::new();
+    if let Ok(Value::Object(ctx)) = serde_json::from_str::<Value>(context_json)
+        && let Some(Value::Array(base_items)) = ctx.get("base")
+        && !base_items.is_empty()
     {
-        return status.to_owned();
+        let base_json = serde_json::to_string(base_items).map_err(|error| error.to_string())?;
+        classify_honesty_into(&base_json, &mut by_key)?;
     }
-    if let Some(proof) = raw_law.and_then(|value| value.get("proof")) {
-        if let Some(text) = proof.as_str().filter(|text| !text.is_empty()) {
-            return text.to_owned();
-        }
-        if let Some(text) = proof
-            .get("status")
-            .and_then(Value::as_str)
-            .filter(|text| !text.is_empty())
-        {
-            return text.to_owned();
-        }
-    }
-    match law_proof {
-        ExplainProof::Unknown => "unknown".to_owned(),
-    }
+    classify_honesty_into(artifacts_json, &mut by_key)?;
+    Ok(by_key)
 }
 
-fn format_json_detail(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => {
-            value.to_string()
-        }
-    }
-}
-
-fn render_raw_assurance_fields(lines: &mut Vec<String>, raw_law: &Value) {
-    if let Some(tier) = raw_law
-        .get("tier")
-        .and_then(Value::as_str)
-        .filter(|text| !text.is_empty())
-    {
-        lines.push(format!("  tier: {tier}"));
-    }
-    if let Some(evidence) = raw_law.get("evidence").filter(|value| !value.is_null()) {
-        lines.push(format!("  evidence: {}", format_json_detail(evidence)));
-    }
-    if let Some(fix) = raw_law
-        .get("fix")
-        .and_then(Value::as_str)
-        .filter(|text| !text.is_empty())
-    {
-        lines.push(format!("  fix: {fix}"));
-    }
-}
-
-/// Renders one explained law using the checker's actual proof/assurance status and metadata.
+/// Renders one explained law using the checker's honest live enforcement and proof status.
 pub(crate) fn render_law_entry(
     lines: &mut Vec<String>,
     law: &ExplainedLaw,
-    raw_law: Option<&Value>,
+    honesty: Option<&LawHonestyEntry>,
 ) {
-    let proof_status = proof_status_from_json(law.proof, raw_law);
-    let enforcement = if law.enforcement.is_some() {
-        "declared invariant at commit"
+    let fallback_proof = match law.proof {
+        ExplainProof::Unknown => "unknown",
+    };
+    let proof_status = honesty
+        .and_then(|entry| (!entry.proof.is_empty()).then_some(entry.proof.as_str()))
+        .unwrap_or(fallback_proof);
+    let enforcement = honesty
+        .and_then(|entry| (!entry.enforcement.is_empty()).then_some(entry.enforcement.as_str()))
+        .unwrap_or("unknown");
+    let binding = if law.enforcement.is_some() {
+        "declared invariant"
     } else {
         "not established"
     };
     lines.push(format!(
-        "Law {}: proof {proof_status}; enforcement {enforcement}",
+        "Law {}: proof {proof_status}; enforcement {enforcement}; binding {binding}",
         law.law.id
     ));
-    if let Some(raw) = raw_law {
-        render_raw_assurance_fields(lines, raw);
+    if let Some(entry) = honesty {
+        if let Some(reason) = entry.reason.as_deref().filter(|text| !text.is_empty()) {
+            lines.push(format!("  enforcement reason: {reason}"));
+        }
+        if let Some(digest) = entry
+            .evidence_digest
+            .as_deref()
+            .filter(|text| !text.is_empty())
+        {
+            lines.push(format!("  evidence digest: {digest}"));
+        }
     }
     if let Some(source) = &law.source_path {
         lines.push(format!("  authored source: {source}"));

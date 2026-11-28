@@ -739,13 +739,90 @@ fn has_pinned_effect(root: &Path) -> bool {
     root.join("node_modules/effect/package.json").is_file()
 }
 
+fn has_pinned_effect_within(root: &Path, canonical_bound: &Path) -> bool {
+    let pkg = root.join("node_modules/effect/package.json");
+    std::fs::symlink_metadata(&pkg).is_ok_and(|meta| meta.is_file())
+        && std::fs::canonicalize(&pkg)
+            .is_ok_and(|canonical_pkg| canonical_pkg.starts_with(canonical_bound))
+}
+
+fn discover_tool_root_confined(
+    start: &Path,
+    explicit: Option<&Path>,
+    boundary_root: &Path,
+) -> Result<Option<PathBuf>, String> {
+    let canonical_bound = std::fs::canonicalize(boundary_root)
+        .map_err(|err| format!("{}: {err}", boundary_root.display()))?;
+    if let Some(root) = explicit {
+        let candidate = if root.is_absolute() {
+            root.to_path_buf()
+        } else {
+            canonical_bound.join(root)
+        };
+        let canonical_explicit = std::fs::canonicalize(&candidate)
+            .map_err(|err| format!("{}: {err}", root.display()))?;
+        if !canonical_explicit.starts_with(&canonical_bound) {
+            return Err(format!(
+                "--tool-root `{}` is outside workspace boundary",
+                root.display()
+            ));
+        }
+        if !has_pinned_effect_within(&canonical_explicit, &canonical_bound) {
+            return Err(format!(
+                "--tool-root `{}` is missing pinned node_modules/effect/package.json",
+                root.display()
+            ));
+        }
+        return Ok(Some(canonical_explicit));
+    }
+    let start_candidate = if start.is_absolute() {
+        start.to_path_buf()
+    } else {
+        canonical_bound.join(start)
+    };
+    let canonical_start = std::fs::canonicalize(&start_candidate)
+        .map_err(|err| format!("{}: {err}", start.display()))?;
+    if !canonical_start.starts_with(&canonical_bound) {
+        return Err(format!(
+            "{}: path is outside workspace boundary",
+            start.display()
+        ));
+    }
+    let initial = if canonical_start.is_dir() {
+        canonical_start.as_path()
+    } else {
+        canonical_start
+            .parent()
+            .unwrap_or(canonical_start.as_path())
+    };
+    for ancestor in initial.ancestors() {
+        if !ancestor.starts_with(&canonical_bound) {
+            break;
+        }
+        if has_pinned_effect_within(ancestor, &canonical_bound) {
+            return Ok(Some(ancestor.to_path_buf()));
+        }
+        let repo_tools = ancestor.join("tools/norn-ts");
+        if has_pinned_effect_within(&repo_tools, &canonical_bound) {
+            return Ok(Some(repo_tools));
+        }
+    }
+    Ok(None)
+}
+
 /// Discovers the directory holding pinned `node_modules/effect`.
 ///
 /// When `explicit` is provided, fails closed if `node_modules/effect/package.json` is missing.
+/// When `boundary_root` is `Some(root)`, only `start` and its ancestors up to `root` are
+/// inspected (never `current_dir()`, `current_exe()`, or paths outside `root`).
 pub(crate) fn discover_tool_root(
     start: &Path,
     explicit: Option<&Path>,
+    boundary_root: Option<&Path>,
 ) -> Result<Option<PathBuf>, String> {
+    if let Some(bound) = boundary_root {
+        return discover_tool_root_confined(start, explicit, bound);
+    }
     if let Some(root) = explicit {
         if !has_pinned_effect(root) {
             return Err(format!(

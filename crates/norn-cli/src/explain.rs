@@ -1,6 +1,7 @@
 //! Native presentation of the shared checker explanation ABI.
 use clap::Args;
 use norn_ir::explain::{ExplainOptions, ExplainReport};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Args)]
@@ -98,10 +99,11 @@ pub(crate) fn execute(args: &ExplainArgs) -> Result<(String, bool), String> {
     if !admitted {
         return Ok((diagnostic_text(&value), false));
     }
-    let raw_report = value.get("report").ok_or("missing explain report")?;
     let report: ExplainReport =
-        serde_json::from_value(raw_report.clone()).map_err(|error| error.to_string())?;
-    Ok((render(&report, raw_report), true))
+        serde_json::from_value(value.get("report").ok_or("missing explain report")?.clone())
+            .map_err(|error| error.to_string())?;
+    let law_honesty = crate::explain_support::load_law_honesty(&artifacts, &context)?;
+    Ok((render(&report, &law_honesty), true))
 }
 
 fn diagnostic_text(value: &serde_json::Value) -> String {
@@ -147,7 +149,10 @@ fn diagnostic_text(value: &serde_json::Value) -> String {
         .join("\n")
 }
 
-fn render(report: &ExplainReport, raw_report: &serde_json::Value) -> String {
+fn render(
+    report: &ExplainReport,
+    law_honesty: &BTreeMap<(String, String), crate::explain_support::LawHonestyEntry>,
+) -> String {
     let mut lines = vec![
         format!(
             "{}@{} {}",
@@ -206,10 +211,10 @@ fn render(report: &ExplainReport, raw_report: &serde_json::Value) -> String {
             ));
         }
     }
-    let raw_laws = raw_report.get("laws").and_then(serde_json::Value::as_array);
-    for (idx, law) in report.laws.iter().enumerate() {
-        let raw_law = raw_laws.and_then(|items| items.get(idx));
-        crate::explain_support::render_law_entry(&mut lines, law, raw_law);
+    for law in &report.laws {
+        let key = (law.declaration.artifact_id.clone(), law.law.id.clone());
+        let honesty = law_honesty.get(&key);
+        crate::explain_support::render_law_entry(&mut lines, law, honesty);
     }
     lines.join("\n")
 }
@@ -502,7 +507,83 @@ mod tests {
     }
 
     #[test]
-    fn render_law_uses_actual_proof_status_and_assurance_metadata_from_json() {
+    fn explain_base_refuses_explicit_null_context_and_null_base() {
+        let pid = std::process::id();
+        let base_path = std::env::temp_dir().join(format!("norn-explain-null-base-{pid}.json"));
+        let defs_path = std::env::temp_dir().join(format!("norn-explain-null-defs-{pid}.json"));
+        let ctx_path = std::env::temp_dir().join(format!("norn-explain-null-ctx-{pid}.json"));
+        std::fs::write(
+            &base_path,
+            include_str!("../../../fixtures/law-ir/entities.json"),
+        )
+        .unwrap();
+        std::fs::write(
+            &defs_path,
+            include_str!("../../../fixtures/law-ir/laws.json"),
+        )
+        .unwrap();
+
+        for (raw_ctx, expected_fragment) in [
+            ("null", "JSON object"),
+            ("", "JSON object"),
+            (r#"{"base": null}"#, "JSON array"),
+        ] {
+            std::fs::write(&ctx_path, raw_ctx).unwrap();
+            let cli = crate::Cli::try_parse_from([
+                "norn",
+                "explain",
+                "law",
+                "erpnext.no_unpaid_ship",
+                "--defs",
+                defs_path.to_str().unwrap(),
+                "--base",
+                base_path.to_str().unwrap(),
+                "--context",
+                ctx_path.to_str().unwrap(),
+            ])
+            .unwrap();
+            let crate::Command::Explain(args) = cli.command else {
+                panic!("wrong command");
+            };
+            let err = execute(&args).unwrap_err();
+            assert!(
+                err.contains(expected_fragment),
+                "expected `{expected_fragment}` refusal for context `{raw_ctx}`, got: {err}"
+            );
+        }
+
+        let _rm_base = std::fs::remove_file(&base_path);
+        let _rm_defs = std::fs::remove_file(&defs_path);
+        let _rm_ctx = std::fs::remove_file(&ctx_path);
+    }
+
+    fn run_explain_law_text(tag: &str, pool: &[serde_json::Value]) -> (String, bool) {
+        let path = std::env::temp_dir().join(format!(
+            "norn-explain-honesty-{tag}-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, serde_json::to_string(pool).unwrap()).unwrap();
+        let cli = crate::Cli::try_parse_from([
+            "norn",
+            "explain",
+            "law",
+            "erpnext.no_unpaid_ship",
+            "--defs",
+            path.to_str().unwrap(),
+            "--format",
+            "text",
+        ])
+        .unwrap();
+        let crate::Command::Explain(args) = cli.command else {
+            panic!("wrong command");
+        };
+        let result = execute(&args).unwrap();
+        let _rm = std::fs::remove_file(&path);
+        result
+    }
+
+    #[test]
+    fn explain_text_renders_live_law_honesty_for_enforced_and_declared_only_laws() {
         let mut pool: Vec<serde_json::Value> =
             serde_json::from_str(include_str!("../../../fixtures/law-ir/entities.json")).unwrap();
         pool.extend(
@@ -511,45 +592,39 @@ mod tests {
             ))
             .unwrap(),
         );
-        let output = norn_checker_wasm::explain_artifact_set_json(
-            &serde_json::to_string(&pool).unwrap(),
-            "{}",
-            "law",
-            "erpnext.no_unpaid_ship",
-            "{}",
-        )
-        .unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
-        let report: ExplainReport = serde_json::from_value(parsed["report"].clone()).unwrap();
-        let law = report.laws.first().unwrap();
 
-        let mut enriched_raw = parsed["report"]["laws"][0].clone();
-        if let Some(obj) = enriched_raw.as_object_mut() {
-            obj.insert("status".to_owned(), serde_json::json!("checked-proof"));
-            obj.insert("tier".to_owned(), serde_json::json!("T3"));
-            obj.insert(
-                "evidence".to_owned(),
-                serde_json::json!("sha256:abcdef0123456789"),
-            );
-            obj.insert(
-                "fix".to_owned(),
-                serde_json::json!("Maintain preservation certificate on edits."),
-            );
+        let (declared_text, declared_admitted) = run_explain_law_text("declared", &pool);
+        assert!(declared_admitted, "{declared_text}");
+        assert!(
+            declared_text.contains(
+                "Law erpnext.no_unpaid_ship: proof unknown; enforcement declared-only; binding declared invariant"
+            ),
+            "expected honest declared-only live status, got:\n{declared_text}"
+        );
+        assert!(
+            declared_text.contains("only single-entity root laws are enforced on commit"),
+            "expected live declared-only reason, got:\n{declared_text}"
+        );
+
+        for artifact in &mut pool {
+            if artifact["artifactId"] == "erpnext.no_unpaid_ship.law" {
+                artifact["payload"]["scope"]["root"] = serde_json::json!({
+                    "kind": "entity",
+                    "id": "erpnext.SalesOrder"
+                });
+            }
         }
-
-        let mut lines = Vec::new();
-        crate::explain_support::render_law_entry(&mut lines, law, Some(&enriched_raw));
-        let rendered = lines.join("\n");
+        let (enforced_text, enforced_admitted) = run_explain_law_text("enforced", &pool);
+        assert!(enforced_admitted, "{enforced_text}");
         assert!(
-            rendered.contains("Law erpnext.no_unpaid_ship: proof checked-proof;"),
-            "expected actual proof status, got:\n{rendered}"
+            enforced_text.contains(
+                "Law erpnext.no_unpaid_ship: proof unknown; enforcement enforced; binding declared invariant"
+            ),
+            "expected honest enforced live status, got:\n{enforced_text}"
         );
         assert!(
-            !rendered.contains("proof unknown"),
-            "must not hardcode proof unknown when status is checked-proof:\n{rendered}"
+            !enforced_text.contains("declared-only"),
+            "enforced single-entity law must not render as declared-only:\n{enforced_text}"
         );
-        assert!(rendered.contains("tier: T3"));
-        assert!(rendered.contains("evidence: sha256:abcdef0123456789"));
-        assert!(rendered.contains("fix: Maintain preservation certificate on edits."));
     }
 }

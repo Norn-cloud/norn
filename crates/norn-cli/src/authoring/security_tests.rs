@@ -230,6 +230,7 @@ fn zero_ci_fails_closed_on_github_symlinks_and_non_dir_workflows() -> TestResult
         env: None,
         forbid_unsafe_zen: false,
         tool_root: None,
+        boundary_root: None,
     });
     assert_eq!(sym_github.exit_code, 2);
     assert_eq!(sym_github.stdout, "");
@@ -245,6 +246,7 @@ fn zero_ci_fails_closed_on_github_symlinks_and_non_dir_workflows() -> TestResult
         env: None,
         forbid_unsafe_zen: false,
         tool_root: None,
+        boundary_root: None,
     });
     assert_eq!(file_workflows.exit_code, 2);
     assert_eq!(file_workflows.stdout, "");
@@ -264,6 +266,7 @@ fn zero_ci_fails_closed_on_github_symlinks_and_non_dir_workflows() -> TestResult
         env: None,
         forbid_unsafe_zen: false,
         tool_root: None,
+        boundary_root: None,
     });
     assert_eq!(sym_workflows.exit_code, 2);
     assert_eq!(sym_workflows.stdout, "");
@@ -283,6 +286,7 @@ fn zero_ci_fails_closed_on_github_symlinks_and_non_dir_workflows() -> TestResult
         env: None,
         forbid_unsafe_zen: false,
         tool_root: None,
+        boundary_root: None,
     });
     assert_eq!(regular_github.exit_code, 2);
     assert_eq!(regular_github.stdout, "");
@@ -302,7 +306,7 @@ fn zero_ci_ancestor_search_fails_closed_on_depth_limit_and_non_regular_manifest(
     let nested_dir = TrustedDir::open(&nested)?;
 
     // Exhausting ancestor depth without reaching filesystem root must return Err, never Ok(None).
-    let depth_err = find_norn_app_root_from_dir_with_limit(&nested_dir, 1);
+    let depth_err = find_norn_app_root_from_dir_with_limit(&nested_dir, 1, None);
     assert!(
         depth_err
             .as_ref()
@@ -313,7 +317,7 @@ fn zero_ci_ancestor_search_fails_closed_on_depth_limit_and_non_regular_manifest(
     // A non-regular `norn.json` (directory) must fail closed, never be ignored as absent.
     let dir_manifest = scratch.path().join("a/b/norn.json");
     std::fs::create_dir_all(&dir_manifest)?;
-    let non_regular_err = find_norn_app_root_from_dir_with_limit(&nested_dir, 4);
+    let non_regular_err = find_norn_app_root_from_dir_with_limit(&nested_dir, 4, None);
     assert!(
         non_regular_err
             .as_ref()
@@ -424,6 +428,7 @@ export const Product = Norn.type({
         env: None,
         forbid_unsafe_zen: false,
         tool_root: Some(&ts_root),
+        boundary_root: None,
     });
     assert_eq!(
         checked.exit_code, 0,
@@ -668,6 +673,7 @@ export default Norn.flow(
         "dev",
         false,
         Some(&ts_root),
+        None,
         &mut budget,
     ) {
         Ok(text) => text,
@@ -717,6 +723,7 @@ export const ping = Norn.fn<{ readonly v: string }, { readonly ok: boolean }>({
         "dev",
         false,
         Some(&ts_root),
+        None,
         &mut budget,
     );
     assert!(

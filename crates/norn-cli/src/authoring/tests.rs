@@ -114,6 +114,7 @@ fn py_compile_and_check_source_admits_hr_pilot_and_standalone_module() -> TestRe
         env: Some("dev"),
         forbid_unsafe_zen: false,
         tool_root: None,
+        boundary_root: None,
     });
     assert_eq!(
         checked.exit_code, 0,
@@ -149,6 +150,7 @@ class Item(
         env: Some("dev"),
         forbid_unsafe_zen: false,
         tool_root: None,
+        boundary_root: None,
     });
     assert_eq!(
         standalone_check.exit_code, 0,
@@ -213,6 +215,7 @@ fn ts_compile_check_profile_on_crm_fixture() -> TestResult {
         env: Some("dev"),
         forbid_unsafe_zen: false,
         tool_root: Some(&ts_root),
+        boundary_root: None,
     });
     assert_eq!(
         checked.exit_code, 0,
@@ -474,6 +477,7 @@ class Note(
             env: Some("dev"),
             forbid_unsafe_zen: false,
             tool_root: None,
+            boundary_root: None,
         });
         assert_eq!(refused.exit_code, 1);
         let parsed: Value = serde_json::from_str(&refused.stdout)?;
@@ -512,6 +516,7 @@ class Note(
         env: None,
         forbid_unsafe_zen: false,
         tool_root: None,
+        boundary_root: None,
     });
     assert_eq!(
         admitted.exit_code, 0,
@@ -809,6 +814,7 @@ export const Ticket = Norn.type({
         env: Some("dev"),
         forbid_unsafe_zen: true,
         tool_root: None,
+        boundary_root: None,
     });
     assert_eq!(
         checked.exit_code, 0,
@@ -856,6 +862,7 @@ export const Item = Norn.type({
         env: None,
         forbid_unsafe_zen: false,
         tool_root: None,
+        boundary_root: None,
     });
     assert_eq!(
         file_checked.exit_code, 0,
@@ -877,6 +884,7 @@ export const Item = Norn.type({
         env: None,
         forbid_unsafe_zen: false,
         tool_root: None,
+        boundary_root: None,
     });
     assert_eq!(
         subdir_checked.exit_code, 0,
@@ -892,6 +900,7 @@ export const Item = Norn.type({
         env: Some("prod"),
         forbid_unsafe_zen: false,
         tool_root: None,
+        boundary_root: None,
     });
     assert_eq!(
         overridden.exit_code, 0,

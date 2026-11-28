@@ -17,7 +17,8 @@ fn platform_tools() -> Result<Vec<McpTool>, String> {
     static TOOLS: OnceLock<Result<Vec<McpTool>, String>> = OnceLock::new();
     TOOLS
         .get_or_init(|| {
-            let command = Cli::command();
+            let mut command = Cli::command();
+            command.build();
             crate::mcp_tools::PLATFORM_TOOLS
                 .iter()
                 .map(|name| {
@@ -615,5 +616,102 @@ export const Ticket = Norn.type({
                     .is_some_and(|text| text.contains("working directory"))
             );
         }
+    }
+
+    #[test]
+    fn mcp_explain_preserves_positional_order_for_kind_and_id() {
+        let args = RuntimeObject::from([
+            (
+                "id".into(),
+                RuntimeValue::String("core.laws.preservation_violated".into()),
+            ),
+            ("kind".into(), RuntimeValue::String("diagnostic".into())),
+        ]);
+        let argv = crate::mcp_tools::build_argv("explain", args.clone()).unwrap();
+        assert_eq!(
+            argv,
+            vec![
+                "norn".to_owned(),
+                "explain".to_owned(),
+                "--".to_owned(),
+                "diagnostic".to_owned(),
+                "core.laws.preservation_violated".to_owned(),
+            ]
+        );
+
+        let ws = ScratchWorkspace::new("explain-positional-order");
+        let output = crate::mcp_tools::call_tool("norn.explain", args, &ws.0).unwrap();
+        assert!(!output.is_error, "norn.explain failed: {output:?}");
+        let text = output
+            .value
+            .as_object()
+            .and_then(|obj| obj.get("text"))
+            .and_then(RuntimeValue::as_str)
+            .unwrap();
+        assert!(
+            text.contains("Diagnostic core.laws.preservation_violated"),
+            "expected diagnostic text output, got: {text}"
+        );
+    }
+
+    #[test]
+    fn mcp_check_source_stops_norn_json_walk_at_workspace_root() {
+        let parent = ScratchWorkspace::new("confinement-parent");
+        parent.write(
+            "norn.json",
+            r#"{"format":"norn-project/1","name":"outside","sources":["workspace/src"],"scope":{"orgId":"org_outside","environmentId":"prod"}}"#,
+        );
+        parent.write(".github/workflows/ci.yml", "name: outside-ci\non: push\n");
+        let workspace_root = parent.0.join("workspace");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        parent.write(
+            "workspace/src/model.ts",
+            r#"import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+export const Ticket = Norn.type({
+  name: "ops.Ticket",
+  title: "Ticket",
+  version: "0.1.0",
+  properties: Schema.Struct({ ticket_id: Schema.String }),
+  identity: [{ name: "primary", properties: ["ticket_id"] }],
+})
+"#,
+        );
+
+        // Without --org/--env, confined MCP must NOT read parent/norn.json above workspace_root.
+        let without_scope = crate::mcp_tools::call_tool(
+            "norn.check",
+            RuntimeObject::from([("source".into(), RuntimeValue::String("src/model.ts".into()))]),
+            &workspace_root,
+        );
+        let refusal = without_scope.map(|_| ()).unwrap_err();
+        assert!(
+            refusal.explanation.contains("--org") && refusal.explanation.contains("--env"),
+            "expected missing-scope refusal without reading parent norn.json, got: {refusal:?}"
+        );
+
+        // With explicit --org/--env, confined MCP admits without tripping parent zero-CI or outside tool_root.
+        let with_scope = crate::mcp_tools::call_tool(
+            "norn.check",
+            RuntimeObject::from([
+                ("source".into(), RuntimeValue::String("src/model.ts".into())),
+                ("org".into(), RuntimeValue::String("org_ws".into())),
+                ("env".into(), RuntimeValue::String("dev".into())),
+            ]),
+            &workspace_root,
+        )
+        .unwrap();
+        assert!(
+            !with_scope.is_error,
+            "confined check with explicit scope failed: {with_scope:?}"
+        );
+        assert_eq!(
+            with_scope
+                .value
+                .as_object()
+                .and_then(|obj| obj.get("admitted")),
+            Some(&RuntimeValue::Bool(true))
+        );
     }
 }

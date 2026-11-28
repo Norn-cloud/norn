@@ -237,6 +237,20 @@ fn run_eval(
 }
 
 pub(crate) fn run_check_args(args: &CheckArgs) -> authoring::CommandOutput {
+    run_check_args_with_boundary(args, None)
+}
+
+pub(crate) fn run_check_args_confined(
+    args: &CheckArgs,
+    boundary_root: &Path,
+) -> authoring::CommandOutput {
+    run_check_args_with_boundary(args, Some(boundary_root))
+}
+
+fn run_check_args_with_boundary(
+    args: &CheckArgs,
+    boundary_root: Option<&Path>,
+) -> authoring::CommandOutput {
     if let Some(source_path) = &args.source {
         if args.artifacts.is_some() {
             return authoring::CommandOutput::usage_or_io_error(
@@ -255,6 +269,7 @@ pub(crate) fn run_check_args(args: &CheckArgs) -> authoring::CommandOutput {
             env: args.env.as_deref(),
             forbid_unsafe_zen: args.forbid_unsafe_zen,
             tool_root: args.tool_root.as_deref(),
+            boundary_root,
         });
     }
     let Some(artifacts_path) = &args.artifacts else {
