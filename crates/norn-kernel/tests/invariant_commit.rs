@@ -29,14 +29,15 @@ use norn_kernel::snapshot_observe::{
     commit_observed_snapshot, prepare_observed_snapshot,
 };
 use norn_kernel::{
-    ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionRefusal, CellCommit,
-    CellHost, CommitError, CommitView, Consumed, DecisionRefusal, DecisionTurn, FactEvent,
-    FactExpectation, FactKey, FactMutation, FactVersion, FactWrite, LinkKey, LinkMutation,
-    LinkWrite, LogicalTime, ObservationId, Observed, Provenance, TypeCatalog, World, commit_action,
-    commit_decision, load_slice,
+    ActionCall, ActionRefusal, CellCommit, CellHost, CommitError, CommitView, Consumed,
+    DecisionRefusal, DecisionTurn, FactEvent, FactExpectation, FactKey, FactMutation, FactVersion,
+    FactWrite, LinkKey, LinkMutation, LinkWrite, LogicalTime, ObservationId, Observed, Provenance,
+    TypeCatalog, World, commit_action, commit_decision, load_slice,
 };
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::{Value, json};
+
+use super::support::{AllowAction, Cell as CommandCell, new_cell};
 
 const ITEM: &str = "invariant.Item";
 
@@ -62,8 +63,6 @@ const NUMERIC_STRING_BASE: &str = "invariant.NumericStringBase";
 const NUMERIC_STRING_ITEM: &str = "invariant.NumericStringItem";
 const TEMPORAL_ITEM: &str = "invariant.TemporalItem";
 const SEASON_ITEM: &str = "invariant.SeasonWindow";
-
-type CommandCell = MemoryCell<FactEvent, JsonObject, JsonObject>;
 
 fn link_domain_type(scale: u32, nested: bool, default: Option<Value>) -> ObjectTypeDef {
     let decimal = json!({"kind":"decimal", "scale":scale});
@@ -98,8 +97,7 @@ fn decimal_and_record_link_values_and_defaults_refuse_atomically() {
                 let value = wrap(serde_json::from_str(text).unwrap());
                 let definition =
                     link_domain_type(3, nested, use_default.then(|| wrap(json!(text))));
-                let mut cell = CommandCell::new(|command| command.payload.clone())
-                    .with_types(vec![definition]);
+                let mut cell = new_cell().with_types(vec![definition]);
                 let source = FactKey::new("demo.LinkDomain", "source");
                 let target = FactKey::new("demo.LinkDomain", "target");
                 cell.commit(CellCommit {
@@ -313,8 +311,7 @@ fn raw_reference_host_validates_and_normalizes_temporal_link_defaults() {
             }]
         }))
         .unwrap();
-        let mut cell =
-            CommandCell::new(|command| command.payload.clone()).with_types(vec![definition]);
+        let mut cell = new_cell().with_types(vec![definition]);
         let source = FactKey::new(TEMPORAL_ITEM, "source");
         let target = FactKey::new(TEMPORAL_ITEM, "target");
         cell.commit(CellCommit {
@@ -397,9 +394,7 @@ fn slice_with_values(
 
 fn cell() -> CommandCell {
     let (types, interfaces) = definitions();
-    CommandCell::new(|command| command.payload.clone())
-        .with_types(types)
-        .with_interfaces(interfaces)
+    new_cell().with_types(types).with_interfaces(interfaces)
 }
 
 fn observation_cell() -> ObservationCell {
@@ -485,16 +480,6 @@ fn assert_refusal_record(
             && !message.is_empty()
             && refused_attempt == attempt_id
     ));
-}
-
-fn allow_action() -> impl ActionAuthorizer {
-    struct Allow;
-    impl ActionAuthorizer for Allow {
-        fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-            Ok(())
-        }
-    }
-    Allow
 }
 
 fn action_call<'a>(
@@ -725,7 +710,7 @@ fn raw_shared_commit_refuses_invalid_final_state_before_events_or_effects() {
 fn temporal_properties_are_checked_on_raw_and_decision_writes_and_observations() {
     let types = vec![temporal_type()];
     let catalog = TypeCatalog::new(&types);
-    let mut cell = CommandCell::new(|command| command.payload.clone()).with_types(types.clone());
+    let mut cell = new_cell().with_types(types.clone());
 
     for (key_name, date, timestamp, expected_id) in [
         (
@@ -1106,70 +1091,31 @@ fn quality_constraints_allow_commands_and_refresh_findings_for_unchanged_bad_obs
     assert_ne!(changed_finding.dedupe_key, first_finding.dedupe_key);
 }
 
-#[test]
-fn aggregated_read_findings_coalesce_only_exact_authorities() {
-    let quality_type = quality_item_type();
-    let catalog_types = vec![quality_type.clone()];
-    let catalog = TypeCatalog::new(&catalog_types);
-    let key = FactKey::new(ITEM, "aggregated-quality-read");
-    let values = object(json!({"item_id": "aggregated-quality-read", "amount": 0}));
-    let mut observed: ObservationCell =
-        MemoryCell::new(|_| JsonObject::new()).with_types(vec![quality_type]);
+fn seed_observed_cell(
+    types: Vec<ObjectTypeDef>,
+    entries: &[(&FactKey, &JsonObject)],
+) -> ObservationCell {
+    let mut observed: ObservationCell = MemoryCell::new(|_| JsonObject::new()).with_types(types);
     observed
         .commit(CellCommit {
-            writes: vec![FactWrite {
-                key: key.clone(),
-                expected: FactVersion::ABSENT,
-                mutation: FactMutation::Put {
-                    values: values.clone(),
-                },
-            }],
+            writes: entries
+                .iter()
+                .map(|(key, values)| FactWrite {
+                    key: (*key).clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put {
+                        values: (*values).clone(),
+                    },
+                })
+                .collect(),
             ..CellCommit::empty()
         })
-        .expect("fixture retains source state");
-    let version = observed.load(&key).expect("seeded fact").version;
-    let slice = load_slice(&observed, [key.clone()]).expect("one-key shared slice");
-
-    let mut source_a = source_provenance();
-    source_a.mapping_version = MappingVersion("map_a@1".to_owned());
-    source_a.transform = Some("map_a.header".to_owned());
-    let turn_a = turn("aggregate-map-a");
-    let snapshot_a = ObservedSnapshot {
-        key: &key,
-        values: &values,
-        lifecycles: &[],
-        provenance: &source_a,
-    };
-    let first = prepare_observed_snapshot(&catalog, &slice, &turn_a, snapshot_a)
-        .expect("first bad source prepares a finding-only authority");
-    let duplicate = prepare_observed_snapshot(&catalog, &slice, &turn_a, snapshot_a)
-        .expect("same sealed source proof prepares identically");
-    let mut source_b = source_a.clone();
-    source_b.mapping_version = MappingVersion("map_b@1".to_owned());
-    source_b.transform = Some("map_b.header".to_owned());
-    let turn_b = turn("aggregate-map-b");
-    let snapshot_b = ObservedSnapshot {
-        key: &key,
-        values: &values,
-        lifecycles: &[],
-        provenance: &source_b,
-    };
-    let distinct = prepare_observed_snapshot(&catalog, &slice, &turn_b, snapshot_b)
-        .expect("distinct lineage retains its own authority");
-
-    let (commit, mut authorization) = first.into_parts();
-    let (_, duplicate_authorization) = duplicate.into_parts();
-    let (_, distinct_authorization) = distinct.into_parts();
-    authorization.merge(duplicate_authorization);
-    authorization.merge(distinct_authorization);
-    authorization.retain_read_findings(&commit.reads, &commit.writes, &slice);
-    assert!(authorization.validates(&commit));
-
+        .expect("fixture retains seeded observed state");
     observed
-        .commit_observed(commit, authorization)
-        .expect("shared CAS read admits each distinct sealed proof once");
-    assert_eq!(observed.load(&key).expect("fact remains").version, version);
-    let findings: Vec<_> = observed
+}
+
+fn last_entry_findings(observed: &ObservationCell) -> Vec<&DataQualityFinding> {
+    observed
         .ledger()
         .last()
         .expect("finding ledger entry")
@@ -1182,7 +1128,87 @@ fn aggregated_read_findings_coalesce_only_exact_authorities() {
             | ObservationEvent::ObservedDeleted { .. }
             | ObservationEvent::ObservedRecreated { .. } => None,
         })
-        .collect();
+        .collect()
+}
+
+fn prepare_observed_parts(
+    catalog: &TypeCatalog<'_>,
+    slice: &norn_kernel::FactSlice,
+    key: &FactKey,
+    values: &JsonObject,
+    turn_id: &str,
+    provenance: &InstanceProvenance,
+) -> (
+    CellCommit<ObservationEvent, JsonObject, JsonObject>,
+    ObservationAuthorization,
+) {
+    prepare_observed_snapshot(
+        catalog,
+        slice,
+        &turn(turn_id),
+        ObservedSnapshot {
+            key,
+            values,
+            lifecycles: &[],
+            provenance,
+        },
+    )
+    .expect("observed snapshot prepares")
+    .into_parts()
+}
+
+#[test]
+fn aggregated_read_findings_coalesce_only_exact_authorities() {
+    let quality_type = quality_item_type();
+    let catalog_types = vec![quality_type.clone()];
+    let catalog = TypeCatalog::new(&catalog_types);
+    let key = FactKey::new(ITEM, "aggregated-quality-read");
+    let values = object(json!({"item_id": "aggregated-quality-read", "amount": 0}));
+    let mut observed = seed_observed_cell(vec![quality_type], &[(&key, &values)]);
+    let version = observed.load(&key).expect("seeded fact").version;
+    let slice = load_slice(&observed, [key.clone()]).expect("one-key shared slice");
+
+    let mut source_a = source_provenance();
+    source_a.mapping_version = MappingVersion("map_a@1".to_owned());
+    source_a.transform = Some("map_a.header".to_owned());
+    let mut source_b = source_a.clone();
+    source_b.mapping_version = MappingVersion("map_b@1".to_owned());
+    source_b.transform = Some("map_b.header".to_owned());
+
+    let (commit, mut authorization) = prepare_observed_parts(
+        &catalog,
+        &slice,
+        &key,
+        &values,
+        "aggregate-map-a",
+        &source_a,
+    );
+    let (_, duplicate_auth) = prepare_observed_parts(
+        &catalog,
+        &slice,
+        &key,
+        &values,
+        "aggregate-map-a",
+        &source_a,
+    );
+    let (_, distinct_auth) = prepare_observed_parts(
+        &catalog,
+        &slice,
+        &key,
+        &values,
+        "aggregate-map-b",
+        &source_b,
+    );
+    authorization.merge(duplicate_auth);
+    authorization.merge(distinct_auth);
+    authorization.retain_read_findings(&commit.reads, &commit.writes, &slice);
+    assert!(authorization.validates(&commit));
+
+    observed
+        .commit_observed(commit, authorization)
+        .expect("shared CAS read admits each distinct sealed proof once");
+    assert_eq!(observed.load(&key).expect("fact remains").version, version);
+    let findings = last_entry_findings(&observed);
     assert_eq!(findings.len(), 2, "exact duplicate was folded only once");
     let mapping_versions: BTreeSet<_> = findings
         .iter()
@@ -1190,48 +1216,30 @@ fn aggregated_read_findings_coalesce_only_exact_authorities() {
         .map(|lineage| lineage.provenance.mapping_version.0.as_str())
         .collect();
     assert_eq!(mapping_versions, BTreeSet::from(["map_a@1", "map_b@1"]));
-    assert_eq!(
-        findings
-            .iter()
-            .find(|finding| finding.provenance[0].provenance.mapping_version.0 == "map_a@1")
-            .expect("map-a finding")
-            .provenance[0]
-            .observation_ids,
-        vec![turn_a.id]
-    );
-    assert_eq!(
-        findings
-            .iter()
-            .find(|finding| finding.provenance[0].provenance.mapping_version.0 == "map_b@1")
-            .expect("map-b finding")
-            .provenance[0]
-            .observation_ids,
-        vec![turn_b.id]
-    );
+    for (mapping, expected_turn) in [
+        ("map_a@1", "aggregate-map-a"),
+        ("map_b@1", "aggregate-map-b"),
+    ] {
+        assert_eq!(
+            findings
+                .iter()
+                .find(|finding| finding.provenance[0].provenance.mapping_version.0 == mapping)
+                .expect("mapping finding")
+                .provenance[0]
+                .observation_ids,
+            vec![expected_turn.to_owned()]
+        );
+    }
 }
 
 #[test]
 fn final_write_retention_keeps_the_last_sealed_authority_once() {
-    let item_type = quality_item_type();
-    let types = vec![item_type];
+    let types = vec![quality_item_type()];
     let catalog = TypeCatalog::new(&types);
     let key = FactKey::new(ITEM, "final-write-authority");
     let valid = object(json!({"item_id": "final-write-authority", "amount": 1}));
     let invalid = object(json!({"item_id": "final-write-authority", "amount": 0}));
-    let mut observed: ObservationCell =
-        MemoryCell::new(|_| JsonObject::new()).with_types(types.clone());
-    observed
-        .commit(CellCommit {
-            writes: vec![FactWrite {
-                key: key.clone(),
-                expected: FactVersion::ABSENT,
-                mutation: FactMutation::Put {
-                    values: valid.clone(),
-                },
-            }],
-            ..CellCommit::empty()
-        })
-        .expect("valid source state seeds");
+    let mut observed = seed_observed_cell(types.clone(), &[(&key, &valid)]);
     let initial_slice = load_slice(&observed, [key.clone()]).expect("base slice");
     let invalid_slice = slice_with_values(&initial_slice, &key, &invalid);
     let valid_slice = slice_with_values(&invalid_slice, &key, &valid);
@@ -1239,51 +1247,35 @@ fn final_write_retention_keeps_the_last_sealed_authority_once() {
 
     let mut first_provenance = source_provenance();
     first_provenance.mapping_version = MappingVersion("map_b_first@1".to_owned());
-    let first = prepare_observed_snapshot(
+    let (_, mut authorization) = prepare_observed_parts(
         &catalog,
         &initial_slice,
-        &turn("map-b-first"),
-        ObservedSnapshot {
-            key: &key,
-            values: &invalid,
-            lifecycles: &[],
-            provenance: &first_provenance,
-        },
-    )
-    .expect("first B write is authorized");
-    let (_, mut authorization) = first.into_parts();
-
-    let middle = prepare_observed_snapshot(
+        &key,
+        &invalid,
+        "map-b-first",
+        &first_provenance,
+    );
+    let (_, middle_auth) = prepare_observed_parts(
         &catalog,
         &invalid_slice,
-        &turn("map-a-revert"),
-        ObservedSnapshot {
-            key: &key,
-            values: &valid,
-            lifecycles: &[],
-            provenance: &source_provenance(),
-        },
-    )
-    .expect("middle A write is authorized");
-    let (_, middle_authorization) = middle.into_parts();
-    authorization.merge(middle_authorization);
+        &key,
+        &valid,
+        "map-a-revert",
+        &source_provenance(),
+    );
+    authorization.merge(middle_auth);
 
     let mut final_provenance = source_provenance();
     final_provenance.mapping_version = MappingVersion("map_b_final@1".to_owned());
-    let final_write = prepare_observed_snapshot(
+    let (commit, final_auth) = prepare_observed_parts(
         &catalog,
         &valid_slice,
-        &turn("map-b-final"),
-        ObservedSnapshot {
-            key: &key,
-            values: &invalid,
-            lifecycles: &[],
-            provenance: &final_provenance,
-        },
-    )
-    .expect("final B write is authorized");
-    let (commit, final_authorization) = final_write.into_parts();
-    authorization.merge(final_authorization);
+        &key,
+        &invalid,
+        "map-b-final",
+        &final_provenance,
+    );
+    authorization.merge(final_auth);
     authorization.retain_writes(&commit.writes);
     authorization.retain_read_findings(&commit.reads, &commit.writes, &final_slice);
 
@@ -1292,20 +1284,7 @@ fn final_write_retention_keeps_the_last_sealed_authority_once() {
     observed
         .commit_observed(commit, authorization)
         .expect("the aggregate write uses one exact final authority");
-    let findings: Vec<_> = observed
-        .ledger()
-        .last()
-        .expect("final write ledger entry")
-        .events
-        .iter()
-        .filter_map(|event| match event {
-            ObservationEvent::DataQualityFinding { fact } => Some(fact),
-            ObservationEvent::ObservedFact { .. }
-            | ObservationEvent::ObservedTransition { .. }
-            | ObservationEvent::ObservedDeleted { .. }
-            | ObservationEvent::ObservedRecreated { .. } => None,
-        })
-        .collect();
+    let findings = last_entry_findings(&observed);
     assert_eq!(findings.len(), 1);
     assert_eq!(
         findings[0].provenance[0].provenance.mapping_version.0,
@@ -1315,71 +1294,43 @@ fn final_write_retention_keeps_the_last_sealed_authority_once() {
 
 #[test]
 fn final_read_retention_drops_findings_for_reverted_intermediate_values() {
-    let item_type = quality_item_type();
-    let types = vec![item_type];
+    let types = vec![quality_item_type()];
     let catalog = TypeCatalog::new(&types);
     let key = FactKey::new(ITEM, "final-read-authority");
     let valid = object(json!({"item_id": "final-read-authority", "amount": 1}));
     let invalid = object(json!({"item_id": "final-read-authority", "amount": 0}));
-    let mut observed: ObservationCell =
-        MemoryCell::new(|_| JsonObject::new()).with_types(types.clone());
-    observed
-        .commit(CellCommit {
-            writes: vec![FactWrite {
-                key: key.clone(),
-                expected: FactVersion::ABSENT,
-                mutation: FactMutation::Put {
-                    values: valid.clone(),
-                },
-            }],
-            ..CellCommit::empty()
-        })
-        .expect("valid source state seeds");
+    let mut observed = seed_observed_cell(types.clone(), &[(&key, &valid)]);
     let initial_slice = load_slice(&observed, [key.clone()]).expect("base slice");
     let invalid_slice = slice_with_values(&initial_slice, &key, &invalid);
+    let provenance = source_provenance();
 
-    let first = prepare_observed_snapshot(
+    let (_, mut authorization) = prepare_observed_parts(
         &catalog,
         &initial_slice,
-        &turn("read-map-b-first"),
-        ObservedSnapshot {
-            key: &key,
-            values: &invalid,
-            lifecycles: &[],
-            provenance: &source_provenance(),
-        },
-    )
-    .expect("first B write is authorized");
-    let (_, mut authorization) = first.into_parts();
-    let unchanged_invalid = prepare_observed_snapshot(
+        &key,
+        &invalid,
+        "read-map-b-first",
+        &provenance,
+    );
+    let (unchanged_commit, read_auth) = prepare_observed_parts(
         &catalog,
         &invalid_slice,
-        &turn("read-map-b-noop"),
-        ObservedSnapshot {
-            key: &key,
-            values: &invalid,
-            lifecycles: &[],
-            provenance: &source_provenance(),
-        },
-    )
-    .expect("unchanged invalid B prepares a guarded-read finding");
-    assert_eq!(unchanged_invalid.writes, []);
-    let (_, read_authorization) = unchanged_invalid.into_parts();
-    authorization.merge(read_authorization);
-    let revert = prepare_observed_snapshot(
+        &key,
+        &invalid,
+        "read-map-b-noop",
+        &provenance,
+    );
+    assert_eq!(unchanged_commit.writes, []);
+    authorization.merge(read_auth);
+    let (_, revert_auth) = prepare_observed_parts(
         &catalog,
         &invalid_slice,
-        &turn("read-map-a-revert"),
-        ObservedSnapshot {
-            key: &key,
-            values: &valid,
-            lifecycles: &[],
-            provenance: &source_provenance(),
-        },
-    )
-    .expect("A restores the original effective state");
-    let (_, revert_authorization) = revert.into_parts();
-    authorization.merge(revert_authorization);
+        &key,
+        &valid,
+        "read-map-a-revert",
+        &provenance,
+    );
+    authorization.merge(revert_auth);
 
     let initial_version = initial_slice.get(&key).expect("initial state").version;
     let mut commit: CellCommit<ObservationEvent, JsonObject, JsonObject> = CellCommit::empty();
@@ -1405,267 +1356,136 @@ fn final_read_retention_drops_findings_for_reverted_intermediate_values() {
 }
 
 #[test]
-fn repeated_guarded_read_state_shares_fuel_and_keeps_each_authority() {
+fn guarded_read_states_share_commit_fuel_per_distinct_state() {
     const AUTHORITY_COUNT: usize = 6;
-    let text_bytes = usize::try_from(EvaluationBudget::default().units() / 10)
-        .expect("fuel fixture fits platform");
-    let (quality_type, values) =
-        fuel_fixture_with_class(false, norn_ir::ConstraintClass::Quality, text_bytes);
-    let types = vec![quality_type];
-    let catalog = TypeCatalog::new(&types);
-    let key = FactKey::new(FUEL_ITEM, "shared-quality-read");
-    let mut observed: ObservationCell =
-        MemoryCell::new(|_| JsonObject::new()).with_types(types.clone());
-    observed
-        .commit(CellCommit {
-            writes: vec![FactWrite {
-                key: key.clone(),
-                expected: FactVersion::ABSENT,
-                mutation: FactMutation::Put {
-                    values: values.clone(),
-                },
-            }],
-            ..CellCommit::empty()
-        })
-        .expect("fixture retains externally reported state");
-    let slice = load_slice(&observed, [key.clone()]).expect("one-key shared slice");
-    let mut aggregate_commit = None;
-    let mut authorization = ObservationAuthorization::empty();
-
-    for index in 0..AUTHORITY_COUNT {
-        let mut provenance = source_provenance();
-        provenance.mapping_version = MappingVersion(format!("map_{index}@1"));
-        provenance.transform = Some(format!("map_{index}.payload"));
-        let observation_turn = turn(&format!("shared-read-map-{index}"));
-        let prepared = prepare_observed_snapshot(
-            &catalog,
-            &slice,
-            &observation_turn,
-            ObservedSnapshot {
-                key: &key,
-                values: &values,
-                lifecycles: &[],
-                provenance: &provenance,
-            },
-        )
-        .expect("each expensive read authority fits independently");
-        let (part_commit, part_authorization) = prepared.into_parts();
-        assert_eq!(part_commit.writes, []);
-        if aggregate_commit.is_none() {
-            aggregate_commit = Some(part_commit);
-        }
-        authorization.merge(part_authorization);
-    }
-
-    let commit = aggregate_commit.expect("at least one prepared authority");
-    authorization.retain_read_findings(&commit.reads, &commit.writes, &slice);
-    assert!(authorization.validates(&commit));
-
-    observed
-        .commit_observed(commit, authorization)
-        .expect("one guarded state is evaluated once for all source authorities");
-    let findings: Vec<_> = observed
-        .ledger()
-        .last()
-        .expect("finding ledger entry")
-        .events
-        .iter()
-        .filter_map(|event| match event {
-            ObservationEvent::DataQualityFinding { fact } => Some(fact),
-            ObservationEvent::ObservedFact { .. }
-            | ObservationEvent::ObservedTransition { .. }
-            | ObservationEvent::ObservedDeleted { .. }
-            | ObservationEvent::ObservedRecreated { .. } => None,
-        })
-        .collect();
-    assert_eq!(findings.len(), AUTHORITY_COUNT);
-    let mapping_versions: BTreeSet<_> = findings
-        .iter()
-        .filter_map(|finding| finding.provenance.first())
-        .map(|lineage| lineage.provenance.mapping_version.0.as_str())
-        .collect();
-    assert_eq!(mapping_versions.len(), AUTHORITY_COUNT);
-}
-
-#[test]
-fn distinct_guarded_read_states_still_share_and_exhaust_commit_fuel() {
-    const STATE_COUNT: usize = 6;
     let fuel_limit = EvaluationBudget::default().units();
     let text_bytes = usize::try_from(fuel_limit / 10).expect("fuel fixture fits platform");
     let (quality_type, values) =
         fuel_fixture_with_class(false, norn_ir::ConstraintClass::Quality, text_bytes);
     let types = vec![quality_type];
     let catalog = TypeCatalog::new(&types);
-    let keys: Vec<_> = (0..STATE_COUNT)
-        .map(|index| FactKey::new(FUEL_ITEM, format!("independent-read-{index}")))
-        .collect();
-    let mut observed: ObservationCell =
-        MemoryCell::new(|_| JsonObject::new()).with_types(types.clone());
-    observed
-        .commit(CellCommit {
-            writes: keys
-                .iter()
-                .cloned()
-                .map(|key| FactWrite {
-                    key,
-                    expected: FactVersion::ABSENT,
-                    mutation: FactMutation::Put {
-                        values: values.clone(),
-                    },
-                })
-                .collect(),
-            ..CellCommit::empty()
-        })
-        .expect("fixture retains all externally reported states");
-    let slice = load_slice(&observed, keys.clone()).expect("six-key shared slice");
-    let mut aggregate_commit = None;
-    let mut authorization = ObservationAuthorization::empty();
 
-    for (index, key) in keys.iter().enumerate() {
-        let mut provenance = source_provenance();
-        provenance.mapping_version = MappingVersion(format!("independent_{index}@1"));
-        provenance.transform = Some(format!("independent_{index}.payload"));
-        let observation_turn = turn(&format!("independent-read-{index}"));
-        let prepared = prepare_observed_snapshot(
+    for distinct_keys in [false, true] {
+        let keys: Vec<_> = if distinct_keys {
+            (0..AUTHORITY_COUNT)
+                .map(|index| FactKey::new(FUEL_ITEM, format!("independent-read-{index}")))
+                .collect()
+        } else {
+            vec![FactKey::new(FUEL_ITEM, "shared-quality-read")]
+        };
+        let entries: Vec<_> = keys.iter().map(|key| (key, &values)).collect();
+        let mut observed = seed_observed_cell(types.clone(), &entries);
+        let slice = load_slice(&observed, keys.clone()).expect("shared slice");
+        let mut aggregate_commit = None;
+        let mut authorization = ObservationAuthorization::empty();
+
+        for index in 0..AUTHORITY_COUNT {
+            let key = if distinct_keys {
+                &keys[index]
+            } else {
+                &keys[0]
+            };
+            let mut provenance = source_provenance();
+            provenance.mapping_version = MappingVersion(format!("map_{index}@1"));
+            provenance.transform = Some(format!("map_{index}.payload"));
+            let (part_commit, part_auth) = prepare_observed_parts(
+                &catalog,
+                &slice,
+                key,
+                &values,
+                &format!("guarded-read-{index}"),
+                &provenance,
+            );
+            assert_eq!(part_commit.writes, []);
+            if aggregate_commit.is_none() {
+                aggregate_commit = Some(part_commit);
+            }
+            authorization.merge(part_auth);
+        }
+
+        let commit = aggregate_commit.expect("at least one prepared authority");
+        authorization.retain_read_findings(&commit.reads, &commit.writes, &slice);
+        assert!(authorization.validates(&commit));
+
+        if distinct_keys {
+            let prior_entries = observed.ledger().len();
+            let error = observed.commit_observed(commit, authorization).unwrap_err();
+            assert_eq!(error.code(), "commit.invariant_budget_exceeded");
+            assert!(matches!(
+                error,
+                CommitError::InvariantBudgetExceeded { limit, .. } if limit == fuel_limit
+            ));
+            assert_eq!(observed.ledger().len(), prior_entries);
+            for key in keys {
+                assert_eq!(observed.load(&key).unwrap().values, Some(values.clone()));
+            }
+        } else {
+            observed
+                .commit_observed(commit, authorization)
+                .expect("one guarded state is evaluated once for all source authorities");
+            let findings = last_entry_findings(&observed);
+            assert_eq!(findings.len(), AUTHORITY_COUNT);
+            let mapping_versions: BTreeSet<_> = findings
+                .iter()
+                .filter_map(|finding| finding.provenance.first())
+                .map(|lineage| lineage.provenance.mapping_version.0.as_str())
+                .collect();
+            assert_eq!(mapping_versions.len(), AUTHORITY_COUNT);
+        }
+    }
+}
+
+#[test]
+fn read_only_findings_refuse_on_catalog_change_or_stale_cas() {
+    for (case_id, mutate_catalog, expected_code) in [
+        ("catalog-changed", true, "commit.observation_authorization"),
+        ("stale-finding-cas", false, "commit.conflict"),
+    ] {
+        let quality_type = quality_item_type();
+        let catalog_types = vec![quality_type.clone()];
+        let catalog = TypeCatalog::new(&catalog_types);
+        let key = FactKey::new(ITEM, case_id);
+        let values = object(json!({"item_id": case_id, "amount": 0}));
+        let mut cell = seed_observed_cell(Vec::new(), &[(&key, &values)]);
+        if !mutate_catalog {
+            cell = cell.with_types(vec![quality_type.clone()]);
+        }
+
+        let slice = load_slice(&cell, [key.clone()]).expect("one-key slice");
+        let (commit, authorization) = prepare_observed_parts(
             &catalog,
             &slice,
-            &observation_turn,
-            ObservedSnapshot {
-                key,
-                values: &values,
-                lifecycles: &[],
-                provenance: &provenance,
-            },
-        )
-        .expect("each expensive read authority fits independently");
-        let (part_commit, part_authorization) = prepared.into_parts();
-        assert_eq!(part_commit.writes, []);
-        if aggregate_commit.is_none() {
-            aggregate_commit = Some(part_commit);
+            &key,
+            &values,
+            case_id,
+            &source_provenance(),
+        );
+        assert_eq!(commit.writes, []);
+
+        if mutate_catalog {
+            let mut integrity_type = quality_type;
+            integrity_type.invariants[0].classification = norn_ir::ConstraintClass::Integrity;
+            cell = cell.with_types(vec![integrity_type]);
+        } else {
+            let current_version = cell.load(&key).unwrap().version;
+            cell.commit(CellCommit {
+                writes: vec![FactWrite {
+                    key,
+                    expected: current_version,
+                    mutation: FactMutation::Put {
+                        values: object(json!({"item_id": case_id, "amount": -1})),
+                    },
+                }],
+                ..CellCommit::empty()
+            })
+            .expect("quality violations remain admissible on commands");
         }
-        authorization.merge(part_authorization);
+
+        let prior_entries = cell.ledger().len();
+        let error = cell.commit_observed(commit, authorization).unwrap_err();
+        assert_eq!(error.code(), expected_code, "{case_id}");
+        assert_eq!(cell.ledger().len(), prior_entries, "{case_id}");
     }
-
-    let commit = aggregate_commit.expect("at least one prepared authority");
-    authorization.retain_read_findings(&commit.reads, &commit.writes, &slice);
-    assert!(authorization.validates(&commit));
-    let prior_entries = observed.ledger().len();
-    let error = observed.commit_observed(commit, authorization).unwrap_err();
-    assert_eq!(error.code(), "commit.invariant_budget_exceeded");
-    assert!(matches!(
-        error,
-        CommitError::InvariantBudgetExceeded { limit, .. } if limit == fuel_limit
-    ));
-    assert_eq!(observed.ledger().len(), prior_entries);
-    for key in keys {
-        assert_eq!(observed.load(&key).unwrap().values, Some(values.clone()));
-    }
-}
-
-#[test]
-fn read_only_findings_are_revalidated_against_the_commit_time_catalog() {
-    let quality_type = quality_item_type();
-    let catalog_types = vec![quality_type.clone()];
-    let catalog = TypeCatalog::new(&catalog_types);
-    let key = FactKey::new(ITEM, "catalog-changed");
-    let values = object(json!({"item_id": "catalog-changed", "amount": 0}));
-    let mut cell: ObservationCell = MemoryCell::new(|_| JsonObject::new());
-    cell.commit(CellCommit {
-        writes: vec![FactWrite {
-            key: key.clone(),
-            expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put {
-                values: values.clone(),
-            },
-        }],
-        ..CellCommit::empty()
-    })
-    .expect("an unmodeled host can seed the external value");
-
-    let slice = load_slice(&cell, [key.clone()]).expect("one-key slice");
-    let provenance = source_provenance();
-    let prepared = prepare_observed_snapshot(
-        &catalog,
-        &slice,
-        &turn("catalog-bound-observation"),
-        ObservedSnapshot {
-            key: &key,
-            values: &values,
-            lifecycles: &[],
-            provenance: &provenance,
-        },
-    )
-    .expect("the quality violation prepares a finding-only observation");
-    assert_eq!(prepared.writes, []);
-    let (commit, authorization) = prepared.into_parts();
-
-    let mut integrity_type = quality_type;
-    integrity_type.invariants[0].classification = norn_ir::ConstraintClass::Integrity;
-    cell = cell.with_types(vec![integrity_type]);
-    let prior_entries = cell.ledger().len();
-    let error = cell.commit_observed(commit, authorization).unwrap_err();
-
-    assert_eq!(error.code(), "commit.observation_authorization");
-    assert_eq!(cell.ledger().len(), prior_entries);
-}
-
-#[test]
-fn stale_read_only_finding_cas_does_not_append_an_event() {
-    let quality_type = quality_item_type();
-    let catalog_types = vec![quality_type.clone()];
-    let catalog = TypeCatalog::new(&catalog_types);
-    let key = FactKey::new(ITEM, "stale-finding-cas");
-    let invalid_values = object(json!({"item_id": "stale-finding-cas", "amount": 0}));
-    let mut cell: ObservationCell = MemoryCell::new(|_| JsonObject::new());
-    cell.commit(CellCommit {
-        writes: vec![FactWrite {
-            key: key.clone(),
-            expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put {
-                values: invalid_values.clone(),
-            },
-        }],
-        ..CellCommit::empty()
-    })
-    .expect("an unmodeled host can seed the external value");
-    cell = cell.with_types(vec![quality_type]);
-
-    let slice = load_slice(&cell, [key.clone()]).expect("one-key slice");
-    let provenance = source_provenance();
-    let prepared = prepare_observed_snapshot(
-        &catalog,
-        &slice,
-        &turn("stale-finding-observation"),
-        ObservedSnapshot {
-            key: &key,
-            values: &invalid_values,
-            lifecycles: &[],
-            provenance: &provenance,
-        },
-    )
-    .expect("the unchanged quality violation prepares a finding-only observation");
-    assert_eq!(prepared.writes, []);
-    let (commit, authorization) = prepared.into_parts();
-
-    let changed_values = object(json!({"item_id": "stale-finding-cas", "amount": -1}));
-    let current_version = cell.load(&key).unwrap().version;
-    cell.commit(CellCommit {
-        writes: vec![FactWrite {
-            key,
-            expected: current_version,
-            mutation: FactMutation::Put {
-                values: changed_values,
-            },
-        }],
-        ..CellCommit::empty()
-    })
-    .expect("quality violations remain admissible on commands");
-    let prior_entries = cell.ledger().len();
-
-    let error = cell.commit_observed(commit, authorization).unwrap_err();
-
-    assert_eq!(error.code(), "commit.conflict");
-    assert_eq!(cell.ledger().len(), prior_entries);
 }
 
 #[test]
@@ -1739,8 +1559,7 @@ fn omitted_nullable_default_is_evaluated_and_observed_value_is_retained() {
     let object_type = negative_default_type();
     let catalog = TypeCatalog::new(std::slice::from_ref(&object_type));
     let key = FactKey::new(ITEM, "negative-default");
-    let mut command_cell =
-        CommandCell::new(|command| command.payload.clone()).with_types(vec![object_type.clone()]);
+    let mut command_cell = new_cell().with_types(vec![object_type.clone()]);
     let error = command_cell
         .commit(CellCommit {
             writes: vec![FactWrite {
@@ -1829,38 +1648,22 @@ fn omitted_nullable_default_is_evaluated_and_observed_value_is_retained() {
 }
 
 #[test]
-fn canonical_numeric_defaults_are_evaluated_and_stored_as_runtime_numbers() {
-    let object_type: ObjectTypeDef = serde_json::from_value(json!({
+fn numeric_and_referenced_defaults_resolve_canonically_or_fail_closed() {
+    // 1. Direct numeric defaults materialize as exact runtime numbers and satisfy invariants.
+    let direct_type: ObjectTypeDef = serde_json::from_value(json!({
         "name": "test.NumericDefaults",
         "properties": [
-            {
-                "id": "amount",
-                "type": {"kind": "integer"},
-                "default": "1"
-            },
-            {
-                "id": "rate",
-                "type": {"kind": "decimal", "scale": 2},
-                "default": "12.50"
-            }
+            { "id": "amount", "type": {"kind": "integer"}, "default": "1" },
+            { "id": "rate", "type": {"kind": "decimal", "scale": 2}, "default": "12.50" }
         ],
         "invariants": [
-            {
-                "id": "positive_amount",
-                "expression": "self.amount == 1",
-                "message": "amount must equal one"
-            },
-            {
-                "id": "exact_rate",
-                "expression": "self.rate == 12.5",
-                "message": "rate must equal twelve point five"
-            }
+            { "id": "positive_amount", "expression": "self.amount == 1", "message": "amount must equal one" },
+            { "id": "exact_rate", "expression": "self.rate == 12.5", "message": "rate must equal twelve point five" }
         ]
     }))
     .expect("numeric defaults decode");
     let key = FactKey::new("test.NumericDefaults", "defaults");
-    let mut cell =
-        CommandCell::new(|command| command.payload.clone()).with_types(vec![object_type]);
+    let mut cell = new_cell().with_types(vec![direct_type]);
     cell.commit(CellCommit {
         writes: vec![FactWrite {
             key: key.clone(),
@@ -1872,22 +1675,22 @@ fn canonical_numeric_defaults_are_evaluated_and_stored_as_runtime_numbers() {
         ..CellCommit::empty()
     })
     .expect("the invariant evaluator sees exact numeric defaults");
-
-    let expected = JsonObject::from([
+    let expected_values = JsonObject::from([
         (
             "amount".to_owned(),
-            norn_ir::RuntimeValue::Number(norn_ir::Decimal::parse("1").unwrap()),
+            RuntimeValue::Number(norn_ir::Decimal::parse("1").unwrap()),
         ),
         (
             "rate".to_owned(),
-            norn_ir::RuntimeValue::Number(norn_ir::Decimal::parse("12.50").unwrap()),
+            RuntimeValue::Number(norn_ir::Decimal::parse("12.50").unwrap()),
         ),
     ]);
-    assert_eq!(cell.load(&key).unwrap().values, Some(expected));
-}
+    assert_eq!(
+        cell.load(&key).unwrap().values,
+        Some(expected_values.clone())
+    );
 
-#[test]
-fn referenced_numeric_defaults_are_resolved_before_invariant_evaluation() {
+    // 2. Referenced property-type defaults resolve before invariant evaluation.
     let property_types: Vec<PropertyTypeDef> = [
         json!({"name": "shared.count", "type": {"kind": "integer"}}),
         json!({"name": "shared.rate", "type": {"kind": "decimal", "scale": 2}}),
@@ -1899,52 +1702,27 @@ fn referenced_numeric_defaults_are_resolved_before_invariant_evaluation() {
         norn_checker::check_property_type_defs(&property_types, &BTreeSet::new()),
         []
     );
-
-    let object_type: ObjectTypeDef = serde_json::from_value(json!({
+    let referenced_type: ObjectTypeDef = serde_json::from_value(json!({
         "name": "test.ReferencedNumericDefaults",
         "properties": [
-            {
-                "id": "amount",
-                "type": {"kind": "ref", "name": "shared.count"},
-                "default": "1"
-            },
-            {
-                "id": "rate",
-                "type": {"kind": "ref", "name": "shared.rate"},
-                "default": "12.50"
-            }
+            { "id": "amount", "type": {"kind": "ref", "name": "shared.count"}, "default": "1" },
+            { "id": "rate", "type": {"kind": "ref", "name": "shared.rate"}, "default": "12.50" }
         ],
         "invariants": [
-            {
-                "id": "positive_amount",
-                "expression": "self.amount == 1",
-                "message": "amount must equal one"
-            },
-            {
-                "id": "exact_rate",
-                "expression": "self.rate == 12.5",
-                "message": "rate must equal twelve point five"
-            }
+            { "id": "positive_amount", "expression": "self.amount == 1", "message": "amount must equal one" },
+            { "id": "exact_rate", "expression": "self.rate == 12.5", "message": "rate must equal twelve point five" }
         ]
     }))
     .expect("object type with referenced numeric defaults decodes");
-    let types = [object_type];
     let type_name = ObjectTypeName("test.ReferencedNumericDefaults".to_owned());
-    let catalog = TypeCatalog::new(&types).with_property_types(&property_types);
-    let effective = catalog
-        .effective_object_values(&type_name, &JsonObject::new())
-        .expect("referenced defaults materialize");
+    let catalog = TypeCatalog::new(std::slice::from_ref(&referenced_type))
+        .with_property_types(&property_types);
     assert_eq!(
-        effective.get("amount"),
-        Some(&RuntimeValue::Number(norn_ir::Decimal::parse("1").unwrap()))
+        catalog
+            .effective_object_values(&type_name, &JsonObject::new())
+            .expect("referenced defaults materialize"),
+        expected_values
     );
-    assert_eq!(
-        effective.get("rate"),
-        Some(&RuntimeValue::Number(
-            norn_ir::Decimal::parse("12.50").unwrap()
-        ))
-    );
-
     let mut remaining = TurnFuel::new(norn_kernel::invariant_evaluation_budget());
     assert_eq!(
         norn_kernel::evaluate_invariants(
@@ -1956,61 +1734,96 @@ fn referenced_numeric_defaults_are_resolved_before_invariant_evaluation() {
         .expect("referenced defaults satisfy their invariants"),
         []
     );
-}
 
-#[test]
-fn unresolved_and_cyclic_referenced_defaults_fail_closed() {
-    let missing_type: ObjectTypeDef = serde_json::from_value(json!({
-        "name": "test.MissingReferenceDefault",
-        "properties": [{
-            "id": "amount",
-            "type": {"kind": "ref", "name": "shared.missing"},
-            "default": "1"
-        }]
-    }))
-    .expect("missing reference fixture decodes");
-    let missing_catalog = TypeCatalog::new(std::slice::from_ref(&missing_type));
-    assert!(
-        missing_catalog
-            .effective_object_values(
-                &ObjectTypeName("test.MissingReferenceDefault".to_owned()),
-                &JsonObject::new(),
-            )
-            .is_err()
-    );
-
-    let property_types: Vec<PropertyTypeDef> = [
+    // 3. Unresolved and cyclic referenced defaults fail closed.
+    let cyclic_props: Vec<PropertyTypeDef> = [
         json!({"name": "shared.first", "type": {"kind": "ref", "name": "shared.second"}}),
         json!({"name": "shared.second", "type": {"kind": "ref", "name": "shared.first"}}),
     ]
     .into_iter()
     .map(|definition| serde_json::from_value(definition).expect("cyclic type decodes"))
     .collect();
-    let cyclic_type: ObjectTypeDef = serde_json::from_value(json!({
-        "name": "test.CyclicReferenceDefault",
-        "properties": [{
-            "id": "amount",
-            "type": {"kind": "ref", "name": "shared.first"},
-            "default": "1"
-        }]
-    }))
-    .expect("cyclic reference fixture decodes");
-    let cyclic_catalog =
-        TypeCatalog::new(std::slice::from_ref(&cyclic_type)).with_property_types(&property_types);
-    assert!(
-        cyclic_catalog
-            .effective_object_values(
-                &ObjectTypeName("test.CyclicReferenceDefault".to_owned()),
-                &JsonObject::new(),
-            )
-            .is_err()
-    );
+    for (name, ref_name, props) in [
+        ("test.MissingReferenceDefault", "shared.missing", &[][..]),
+        (
+            "test.CyclicReferenceDefault",
+            "shared.first",
+            &cyclic_props[..],
+        ),
+    ] {
+        let broken_type: ObjectTypeDef = serde_json::from_value(json!({
+            "name": name,
+            "properties": [{
+                "id": "amount",
+                "type": {"kind": "ref", "name": ref_name},
+                "default": "1"
+            }]
+        }))
+        .expect("broken reference fixture decodes");
+        let broken_catalog =
+            TypeCatalog::new(std::slice::from_ref(&broken_type)).with_property_types(props);
+        assert!(
+            broken_catalog
+                .effective_object_values(&ObjectTypeName(name.to_owned()), &JsonObject::new())
+                .is_err(),
+            "{name}"
+        );
+    }
+}
+
+norn_testkit::proptest::proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn numeric_default_invariants_preserve_exact_decimal_values(
+        amount in 0_u32..=10_000,
+        whole in 0_u32..=10_000,
+        frac in 0_u8..100,
+    ) {
+        let amount_str = amount.to_string();
+        let rate_str = format!("{whole}.{frac:02}");
+        let object_type: ObjectTypeDef = serde_json::from_value(json!({
+            "name": "test.PropNumericDefaults",
+            "properties": [
+                { "id": "amount", "type": {"kind": "integer"}, "default": amount_str },
+                { "id": "rate", "type": {"kind": "decimal", "scale": 2}, "default": rate_str }
+            ],
+            "invariants": [
+                { "id": "exact_amount", "expression": format!("self.amount == {amount_str}"), "message": "amount mismatch" },
+                { "id": "exact_rate", "expression": format!("self.rate == {rate_str}"), "message": "rate mismatch" }
+            ]
+        }))
+        .expect("prop numeric defaults decode");
+        let key = FactKey::new("test.PropNumericDefaults", "row");
+        let mut cell = new_cell().with_types(vec![object_type]);
+        norn_testkit::proptest::prop_assert!(
+            cell.commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: key.clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put { values: JsonObject::new() },
+                }],
+                ..CellCommit::empty()
+            })
+            .is_ok()
+        );
+        let expected = JsonObject::from([
+            (
+                "amount".to_owned(),
+                RuntimeValue::Number(norn_ir::Decimal::parse(&amount_str).unwrap()),
+            ),
+            (
+                "rate".to_owned(),
+                RuntimeValue::Number(norn_ir::Decimal::parse(&rate_str).unwrap()),
+            ),
+        ]);
+        norn_testkit::proptest::prop_assert_eq!(cell.load(&key).unwrap().values, Some(expected));
+    }
 }
 
 #[test]
 fn missing_runtime_interface_metadata_fails_closed() {
     let (types, _) = definitions();
-    let mut cell = CommandCell::new(|command| command.payload.clone()).with_types(types);
+    let mut cell = new_cell().with_types(types);
     let error = cell
         .commit(CellCommit {
             writes: vec![FactWrite {
@@ -2259,7 +2072,7 @@ fn actions_transition_and_patch_refusals_do_not_write_record_or_enqueue_command(
         "turn-action-transition",
     );
     let before = cell.ledger().len();
-    let refusal = commit_action(&mut cell, &catalog, &invocation, &allow_action()).unwrap_err();
+    let refusal = commit_action(&mut cell, &catalog, &invocation, &AllowAction).unwrap_err();
     assert_eq!(refusal.code(), "decision.invariant_violation");
     assert!(matches!(
         &refusal,
@@ -2298,7 +2111,7 @@ fn actions_transition_and_patch_refusals_do_not_write_record_or_enqueue_command(
     );
     let created = FactKey::new(ITEM, "action-create");
     let before = cell.ledger().len();
-    let refusal = commit_action(&mut cell, &catalog, &invocation, &allow_action()).unwrap_err();
+    let refusal = commit_action(&mut cell, &catalog, &invocation, &AllowAction).unwrap_err();
     assert_eq!(refusal.code(), "decision.invariant_violation");
     assert!(cell.load(&created).unwrap().values.is_none());
     assert_refusal_record(
@@ -2319,7 +2132,7 @@ fn actions_transition_and_patch_refusals_do_not_write_record_or_enqueue_command(
         "turn-action-patch",
     );
     let before = cell.ledger().len();
-    let refusal = commit_action(&mut cell, &catalog, &invocation, &allow_action()).unwrap_err();
+    let refusal = commit_action(&mut cell, &catalog, &invocation, &AllowAction).unwrap_err();
     assert_eq!(refusal.code(), "decision.invariant_violation");
     assert_eq!(
         cell.load(&target).unwrap().values,
@@ -2383,7 +2196,7 @@ fn action_numeric_strings_are_canonical_before_invariants_and_storage() {
     .expect("numeric string object type");
     let types = [base_type, numeric_string_type];
     let catalog = TypeCatalog::new(&types);
-    let mut cell = CommandCell::new(|command| command.payload.clone()).with_types(types.to_vec());
+    let mut cell = new_cell().with_types(types.to_vec());
     let action = numeric_string_action();
 
     for (key, input, invariant_id) in [
@@ -2404,7 +2217,7 @@ fn action_numeric_strings_are_canonical_before_invariants_and_storage() {
             &mut cell,
             &catalog,
             &numeric_string_action_call(&action, input, &key.key, &key.key),
-            &allow_action(),
+            &AllowAction,
         )
         .expect_err("a forbidden numeric string must be checked as its persisted number");
         assert_eq!(refusal.code(), "decision.invariant_violation");
@@ -2440,7 +2253,7 @@ fn action_numeric_strings_are_canonical_before_invariants_and_storage() {
             "positive-numeric-strings",
             "positive-numeric-strings",
         ),
-        &allow_action(),
+        &AllowAction,
     )
     .expect("valid numeric strings are accepted");
     assert_eq!(
@@ -2719,7 +2532,7 @@ fn quality_invariants_consume_no_command_fuel_across_raw_decision_and_action_wri
         turn: turn("turn-quality-action-fuel"),
         trace: None,
     };
-    commit_action(&mut cell, &catalog, &invocation, &allow_action())
+    commit_action(&mut cell, &catalog, &invocation, &AllowAction)
         .expect("action admits quality data without quality fuel");
     assert!(
         cell.load(&FactKey::new(FUEL_ITEM, "quality-action"))
@@ -3616,7 +3429,7 @@ fn law_invariant_runtime_decision_and_action_refusals_journal_and_consume() {
                 attempt,
             );
             call.turn.consumes = Some(consumed.clone());
-            match commit_action(&mut native, &catalog, &call, &allow_action()) {
+            match commit_action(&mut native, &catalog, &call, &AllowAction) {
                 Err(ActionRefusal::Decision(refusal)) => refusal,
                 other => panic!("expected a journaled action refusal: {other:?}"),
             }
@@ -4032,8 +3845,7 @@ fn property_domain_unsupported_record_member_is_not_a_validity_finding() {
         norn_kernel::evaluate_invariants(&catalog, &key, &values, &mut TurnFuel::default()),
         Err(norn_kernel::InvariantEvaluationError::InvalidEffectiveValues(_))
     ));
-    let mut native =
-        CommandCell::new(|command| command.payload.clone()).with_types(vec![definition]);
+    let mut native = new_cell().with_types(vec![definition]);
     let refusal = native
         .commit(CellCommit {
             writes: vec![FactWrite {
@@ -4520,7 +4332,7 @@ fn law_exception_reading_links_rechecks_on_target_mutation_and_supports_observat
         "source": {"artifactId": "line_within_default_cap.law", "pointer": "/payload"}
     }]);
     let artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(law)?;
-    let mut cell = CommandCell::new(|command| command.payload.clone())
+    let mut cell = new_cell()
         .with_types(types)
         .with_governing_laws(vec![artifact]);
     let doc = FactKey::new(DOC, "d");
@@ -4805,7 +4617,7 @@ fn refusal<T>(result: &Result<T, CommitError<std::convert::Infallible>>) -> Opti
 /// (not its root `Line`) declares the link whose inverse role is `lines`.
 fn document_cell() -> Result<CommandCell, serde_json::Error> {
     let law = link_law("lines_within_limit", DOC, "len(self.lines) > self.limit")?;
-    Ok(CommandCell::new(|command| command.payload.clone())
+    Ok(new_cell()
         .with_types(document_types()?)
         .with_governing_laws(vec![law]))
 }
@@ -4822,77 +4634,38 @@ fn document_types() -> Result<Vec<ObjectTypeDef>, serde_json::Error> {
     ]))
 }
 
-/// #1701 (a): a document written in the batch that creates and links a
-/// subtype line counts that line, as a later evaluation of the stored graph
-/// would.
+/// #1701: a document (new, stored base, or stored subtype) governed by an
+/// inverse-role law counts a subtype line created and linked to it.
 #[test]
-fn inverse_role_law_counts_a_subtype_line_created_with_its_document() -> Checked {
-    for (limit, admitted) in [(0, false), (1, true)] {
-        let mut cell = document_cell()?;
-        let doc = FactKey::new(DOC, "d");
-        let line = FactKey::new(SPECIAL_LINE, "l");
-        let result = cell.commit(CellCommit {
-            writes: vec![
-                put_new(DOC, "d", json!({"limit": limit}))?,
-                put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?,
-            ],
-            links: vec![add_link(&line, "doc", &doc)],
-            ..CellCommit::empty()
-        });
-        let expected = (!admitted).then_some("core.laws.violated");
-        assert_eq!(refusal(&result), expected, "limit {limit}");
-        assert_eq!(cell.load(&doc)?.exists(), admitted);
-        assert_eq!(cell.load(&line)?.exists(), admitted);
-    }
-    Ok(())
-}
-
-/// #1701 (b): a stored document the batch does not write is re-checked with
-/// the subtype line the batch creates and links to it.
-#[test]
-fn inverse_role_law_rechecks_a_stored_document_for_a_new_subtype_line() -> Checked {
-    for (limit, admitted) in [(0, false), (1, true)] {
-        let mut cell = document_cell()?;
-        let doc = FactKey::new(DOC, "d");
-        // A document without lines holds its law.
-        cell.commit(CellCommit {
-            writes: vec![put_new(DOC, "d", json!({"limit": limit}))?],
-            ..CellCommit::empty()
-        })?;
-        let line = FactKey::new(SPECIAL_LINE, "l");
-        let result = cell.commit(CellCommit {
-            writes: vec![put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?],
-            links: vec![add_link(&line, "doc", &doc)],
-            ..CellCommit::empty()
-        });
-        let expected = (!admitted).then_some("core.laws.violated");
-        assert_eq!(refusal(&result), expected, "limit {limit}");
-        assert_eq!(cell.load(&line)?.exists(), admitted);
-    }
-    Ok(())
-}
-
-/// #1701: a stored document of a subtype is read by its canonical identity
-/// (as every host stores it) and judged by its subtype's laws when a new line
-/// links to it.
-#[test]
-fn inverse_role_law_rechecks_a_stored_subtype_document_for_a_new_line() -> Checked {
-    for (limit, admitted) in [(0, false), (1, true)] {
-        let mut cell = document_cell()?;
-        let doc = FactKey::new(SPECIAL_DOC, "d");
-        cell.commit(CellCommit {
-            writes: vec![put_new(SPECIAL_DOC, "d", json!({"limit": limit}))?],
-            ..CellCommit::empty()
-        })?;
-        let line = FactKey::new(SPECIAL_LINE, "l");
-        let result = cell.commit(CellCommit {
-            writes: vec![put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?],
-            links: vec![add_link(&line, "doc", &doc)],
-            ..CellCommit::empty()
-        });
-        let expected = (!admitted).then_some("core.laws.violated");
-        assert_eq!(refusal(&result), expected, "limit {limit}");
-        assert_eq!(cell.load(&line)?.exists(), admitted);
+fn inverse_role_law_counts_subtype_lines_for_new_and_stored_documents() -> Checked {
+    for (doc_type, preseed_doc) in [(DOC, false), (DOC, true), (SPECIAL_DOC, true)] {
+        for (limit, admitted) in [(0, false), (1, true)] {
+            let mut cell = document_cell()?;
+            let doc = FactKey::new(doc_type, "d");
+            let line = FactKey::new(SPECIAL_LINE, "l");
+            let mut writes = vec![put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?];
+            if preseed_doc {
+                cell.commit(CellCommit {
+                    writes: vec![put_new(doc_type, "d", json!({"limit": limit}))?],
+                    ..CellCommit::empty()
+                })?;
+            } else {
+                writes.insert(0, put_new(doc_type, "d", json!({"limit": limit}))?);
+            }
+            let result = cell.commit(CellCommit {
+                writes,
+                links: vec![add_link(&line, "doc", &doc)],
+                ..CellCommit::empty()
+            });
+            let expected = (!admitted).then_some("core.laws.violated");
+            assert_eq!(
+                refusal(&result),
+                expected,
+                "{doc_type} preseed={preseed_doc} limit={limit}"
+            );
+            assert_eq!(cell.load(&doc)?.exists(), preseed_doc || admitted);
+            assert_eq!(cell.load(&line)?.exists(), admitted);
+        }
     }
     Ok(())
 }
@@ -4915,21 +4688,18 @@ fn owner_cell() -> Result<CommandCell, serde_json::Error> {
         link_law("task_fits_owner", TASK, "self.size > self.owner.capacity")?,
         link_law("owner_keeps_tasks", OWNER, "len(self.tasks) < self.minimum")?,
     ];
-    Ok(CommandCell::new(|command| command.payload.clone())
-        .with_types(types)
-        .with_governing_laws(laws))
+    Ok(new_cell().with_types(types).with_governing_laws(laws))
 }
 
-/// #1701 (P2): deleting a law-governed root subject and removing its law-read
-/// link in one batch leaves it no law to hold, so it commits; the owner it
-/// leaves survives and still refuses when that breaks the owner's law.
+/// #1701 (P2): deleting and unlinking a law-governed subject rechecks only its
+/// surviving owner, and removing an absent law-read link from an absent subject
+/// commits without rechecking a non-existent subject.
 #[test]
-fn deleting_and_unlinking_a_law_governed_subject_rechecks_only_its_survivors() -> Checked {
+fn deleting_and_unlinking_law_governed_subjects_and_absent_links() -> Checked {
     for (minimum, admitted) in [(0, true), (1, false)] {
         let mut cell = owner_cell()?;
         let owner = FactKey::new(OWNER, "o");
         let task = FactKey::new(TASK, "t");
-        // A task within its owner's capacity.
         cell.commit(CellCommit {
             writes: vec![
                 put_new(OWNER, "o", json!({"capacity": 10, "minimum": minimum}))?,
@@ -4959,13 +4729,7 @@ fn deleting_and_unlinking_a_law_governed_subject_rechecks_only_its_survivors() -
         assert_eq!(cell.load(&task)?.exists(), !admitted);
         assert_eq!(cell.load_link(&link)?.exists(), !admitted);
     }
-    Ok(())
-}
 
-/// #1701: removing an already-absent law-read link from a task that was never
-/// stored re-checks no subject for that task: it has no law to hold.
-#[test]
-fn removing_an_absent_law_read_link_from_an_absent_subject_commits() -> Checked {
     let mut cell = owner_cell()?;
     let owner = FactKey::new(OWNER, "o");
     cell.commit(CellCommit {
@@ -5039,74 +4803,6 @@ impl CommitView for StoredDocument {
     }
 }
 
-/// #1701: a mapped line that pins its document as `Doc/d` and, observed,
-/// breaks the document's inverse-role law on the stored `SpecialDoc/d`, files
-/// the document's finding against that one pin: one read of the document, and
-/// the observation and its finding commit.
-#[test]
-fn observed_line_finding_binds_to_the_documents_existing_alias_pin() -> Checked {
-    let types = document_types()?;
-    let laws = vec![link_law(
-        "lines_sum_within_limit",
-        DOC,
-        "sum(map(self.lines, #.amount)) > self.limit",
-    )?];
-    let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
-    let mut cell: ObservationCell = MemoryCell::new(|_| JsonObject::new())
-        .with_types(types.clone())
-        .with_governing_laws(laws.clone());
-    let doc = FactKey::new(SPECIAL_DOC, "d");
-    let line = FactKey::new(SPECIAL_LINE, "l");
-    cell.commit(CellCommit {
-        writes: vec![
-            put_new(SPECIAL_DOC, "d", json!({"limit": 3}))?,
-            put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?,
-        ],
-        links: vec![add_link(&line, "doc", &doc)],
-        ..CellCommit::empty()
-    })?;
-    let slice = load_slice(&cell, [line.clone()])?;
-    let provenance = source_provenance();
-    let observed: JsonObject = serde_json::from_value(json!({"amount": 5}))?;
-    let prepared = prepare_observed_snapshot(
-        &catalog,
-        &slice,
-        &turn("observed-line"),
-        ObservedSnapshot {
-            key: &line,
-            values: &observed,
-            lifecycles: &[],
-            provenance: &provenance,
-        },
-    )?;
-    let (mut commit, mut authorization) = prepared.into_parts();
-    // The mapping pinned the line's document through its root type.
-    let pin = FactExpectation {
-        key: FactKey::new(DOC, "d"),
-        expected: FactVersion(1),
-    };
-    commit.reads.push(pin.clone());
-    authorization.refresh_link_findings(&catalog, &mut commit, &StoredDocument(1))?;
-    let document_reads = commit
-        .reads
-        .iter()
-        .filter(|read| read.key.key == "d")
-        .collect::<Vec<_>>();
-    assert_eq!(document_reads, [&pin]);
-    let receipt = cell.commit_observed(commit, authorization);
-    assert_eq!(refusal(&receipt), None);
-    let findings = cell.ledger().last().map_or(0, |entry| {
-        entry
-            .events
-            .iter()
-            .filter(|event| matches!(event, ObservationEvent::DataQualityFinding { .. }))
-            .count()
-    });
-    assert_ne!(findings, 0);
-    assert_eq!(cell.load(&line)?.values, Some(observed));
-    Ok(())
-}
-
 /// Documents whose `SpecialDoc` carries the inverse-role law itself, and is
 /// a `Doc` only when `aliased`.
 fn alias_types(aliased: bool) -> Result<Vec<ObjectTypeDef>, serde_json::Error> {
@@ -5128,67 +4824,92 @@ fn alias_types(aliased: bool) -> Result<Vec<ObjectTypeDef>, serde_json::Error> {
     ]))
 }
 
-/// #1701: a read finding sealed under a catalog where `SpecialDoc/d` and its
-/// `Doc/d` pin are one object is refused by a host whose catalog makes them
-/// two: the pin would guard another object than the finding's subject.
+/// #1701: an observed line finding binds to the document's existing `Doc/d`
+/// alias pin (single read, commits finding) when the host shares the alias,
+/// and refuses with `commit.observation_authorization` when the host catalog
+/// separates `Doc/d` and `SpecialDoc/d`.
 #[test]
-fn read_finding_bound_to_an_alias_the_host_does_not_share_is_refused() -> Checked {
-    let laws = vec![link_law(
-        "special_lines_within_limit",
-        SPECIAL_DOC,
-        "sum(map(self.lines, #.amount)) > self.limit",
-    )?];
-    let prep_types = alias_types(true)?;
-    let catalog = TypeCatalog::new(&prep_types).with_governing_laws(&laws);
-    let mut cell: ObservationCell = MemoryCell::new(|_| JsonObject::new())
-        .with_types(alias_types(false)?)
-        .with_governing_laws(laws.clone());
-    let line = FactKey::new(SPECIAL_LINE, "l");
-    // Here `Doc/d` is its own object, at the version the pin expects.
-    cell.commit(CellCommit {
-        writes: vec![
-            put_new(DOC, "d", json!({}))?,
-            put_new(SPECIAL_DOC, "d", json!({"limit": 3}))?,
-            put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?,
-        ],
-        links: vec![add_link(&line, "doc", &FactKey::new(SPECIAL_DOC, "d"))],
-        ..CellCommit::empty()
-    })?;
-    let slice = load_slice(&cell, [line.clone()])?;
-    let provenance = source_provenance();
-    let observed: JsonObject = serde_json::from_value(json!({"amount": 5}))?;
-    let (mut commit, mut authorization) = prepare_observed_snapshot(
-        &catalog,
-        &slice,
-        &turn("observed-line-alias"),
-        ObservedSnapshot {
-            key: &line,
-            values: &observed,
-            lifecycles: &[],
-            provenance: &provenance,
-        },
-    )?
-    .into_parts();
+fn observed_line_finding_alias_pin_admission_and_mismatched_catalog_refusal() -> Checked {
     let pin = FactExpectation {
         key: FactKey::new(DOC, "d"),
         expected: FactVersion(1),
     };
-    commit.reads.push(pin.clone());
-    authorization.refresh_link_findings(&catalog, &mut commit, &StoredDocument(1))?;
-    let document_reads = commit
-        .reads
-        .iter()
-        .filter(|read| read.key.key == "d")
-        .collect::<Vec<_>>();
-    assert_eq!(document_reads, [&pin]);
-    let before = cell.ledger().len();
-    let refused = cell.commit_observed(commit, authorization);
-    assert_eq!(refusal(&refused), Some("commit.observation_authorization"));
-    assert_eq!(cell.ledger().len(), before);
-    assert_eq!(
-        cell.load(&line)?.values,
-        Some(serde_json::from_value(json!({"amount": 1}))?)
-    );
+    let doc = FactKey::new(SPECIAL_DOC, "d");
+    let line = FactKey::new(SPECIAL_LINE, "l");
+    let observed: JsonObject = serde_json::from_value(json!({"amount": 5}))?;
+
+    for shared_alias in [true, false] {
+        let (prep_types, host_types, laws, turn_id) = if shared_alias {
+            let types = document_types()?;
+            let laws = vec![link_law(
+                "lines_sum_within_limit",
+                DOC,
+                "sum(map(self.lines, #.amount)) > self.limit",
+            )?];
+            (types.clone(), types, laws, "observed-line")
+        } else {
+            let laws = vec![link_law(
+                "special_lines_within_limit",
+                SPECIAL_DOC,
+                "sum(map(self.lines, #.amount)) > self.limit",
+            )?];
+            (
+                alias_types(true)?,
+                alias_types(false)?,
+                laws,
+                "observed-line-alias",
+            )
+        };
+        let catalog = TypeCatalog::new(&prep_types).with_governing_laws(&laws);
+        let mut cell: ObservationCell = MemoryCell::new(|_| JsonObject::new())
+            .with_types(host_types)
+            .with_governing_laws(laws.clone());
+        let mut writes = vec![
+            put_new(SPECIAL_DOC, "d", json!({"limit": 3}))?,
+            put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?,
+        ];
+        if !shared_alias {
+            writes.insert(0, put_new(DOC, "d", json!({}))?);
+        }
+        cell.commit(CellCommit {
+            writes,
+            links: vec![add_link(&line, "doc", &doc)],
+            ..CellCommit::empty()
+        })?;
+
+        let slice = load_slice(&cell, [line.clone()])?;
+        let (mut commit, mut authorization) = prepare_observed_parts(
+            &catalog,
+            &slice,
+            &line,
+            &observed,
+            turn_id,
+            &source_provenance(),
+        );
+        commit.reads.push(pin.clone());
+        authorization.refresh_link_findings(&catalog, &mut commit, &StoredDocument(1))?;
+        let document_reads: Vec<_> = commit
+            .reads
+            .iter()
+            .filter(|read| read.key.key == "d")
+            .collect();
+        assert_eq!(document_reads, [&pin]);
+
+        let before = cell.ledger().len();
+        let receipt = cell.commit_observed(commit, authorization);
+        if shared_alias {
+            assert_eq!(refusal(&receipt), None);
+            assert!(!last_entry_findings(&cell).is_empty());
+            assert_eq!(cell.load(&line)?.values, Some(observed.clone()));
+        } else {
+            assert_eq!(refusal(&receipt), Some("commit.observation_authorization"));
+            assert_eq!(cell.ledger().len(), before);
+            assert_eq!(
+                cell.load(&line)?.values,
+                Some(serde_json::from_value(json!({"amount": 1}))?)
+            );
+        }
+    }
     Ok(())
 }
 
@@ -5231,9 +4952,7 @@ fn forward_law_pins_the_created_targets_concrete_type_and_checked_version() -> C
         {"name": DOC, "links": [{"id":"line","target":LINE,"cardinality":{"to":"one","from":"many"}}]}
     ]))?;
     let law = link_law("positive_line", DOC, "self.line.amount < 0")?;
-    let mut cell = CommandCell::new(|command| command.payload.clone())
-        .with_types(types)
-        .with_governing_laws(vec![law]);
+    let mut cell = new_cell().with_types(types).with_governing_laws(vec![law]);
     let doc = FactKey::new(DOC, "d");
     let line = FactKey::new(LINE, "l");
     let result = cell.commit(CellCommit {

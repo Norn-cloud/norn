@@ -7,6 +7,8 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 
+use super::support::HookCell;
+
 use norn_ir::{ActionRoot, ActionRuleRef, ObjectTypeDef, RuleRoot};
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
@@ -679,101 +681,6 @@ fn overlapping_commitment_in_predicate_slice_refuses_with_zero_writes() -> TestR
     Ok(())
 }
 
-enum Race {
-    InsertInsideWindow,
-    InsertOutsideWindow,
-}
-
-struct RacingCell {
-    cell: RefCell<Cell>,
-    race: Option<Race>,
-}
-
-impl CellHost for RacingCell {
-    type Event = FactEvent;
-    type Command = JsonObject;
-    type Input = JsonObject;
-    type Error = Infallible;
-    fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
-        self.cell.borrow().load(key)
-    }
-    fn load_bounded(
-        &self,
-        key: &FactKey,
-        max_bytes: u64,
-    ) -> Result<Option<norn_kernel::BoundedFact>, Self::Error> {
-        self.cell.borrow().load_bounded(key, max_bytes)
-    }
-    fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error> {
-        self.cell.borrow().load_link(key)
-    }
-    fn read_predicate(
-        &self,
-        predicate: &PredicateQuery,
-        max_members: usize,
-        max_bytes: u64,
-    ) -> Result<Option<Vec<PredicateObject>>, Self::Error> {
-        self.cell
-            .borrow()
-            .read_predicate(predicate, max_members, max_bytes)
-    }
-    fn commit(
-        &mut self,
-        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
-    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
-        match self.race.take() {
-            Some(Race::InsertInsideWindow) => assert!(
-                put_fact(
-                    self.cell.get_mut(),
-                    "schedule.Commitment",
-                    "C-phantom",
-                    json!({
-                        "commitment_id": "C-phantom",
-                        "agent_id": "A1",
-                        "starts_at": "2026-11-23T11:15:00Z",
-                        "ends_at": "2026-11-23T11:45:00Z",
-                        "start_min": 675,
-                        "end_min": 705,
-                        "hours": 0.50
-                    }),
-                )
-                .is_ok()
-            ),
-            Some(Race::InsertOutsideWindow) => assert!(
-                put_fact(
-                    self.cell.get_mut(),
-                    "schedule.Commitment",
-                    "C-next-day",
-                    json!({
-                        "commitment_id": "C-next-day",
-                        "agent_id": "A1",
-                        "starts_at": "2026-11-25T11:15:00Z",
-                        "ends_at": "2026-11-25T11:45:00Z",
-                        "start_min": 675,
-                        "end_min": 705,
-                        "hours": 0.50
-                    }),
-                )
-                .is_ok()
-            ),
-            None => {}
-        }
-        self.cell.get_mut().commit(commit)
-    }
-    fn perform(&mut self) -> Result<Option<Performed<Self::Input>>, Self::Error> {
-        self.cell.get_mut().perform()
-    }
-    fn observe(&mut self) -> Result<Option<Observed<Self::Input>>, Self::Error> {
-        self.cell.get_mut().observe()
-    }
-    fn clock(&mut self) -> Result<Option<DueTimer<Self::Input>>, Self::Error> {
-        self.cell.get_mut().clock()
-    }
-    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Self::Error> {
-        self.cell.get_mut().publish(receipt)
-    }
-}
-
 #[test]
 fn concurrent_phantom_insertion_refuses_with_zero_partial_writes() -> TestResult {
     let types = schedule_types()?;
@@ -782,10 +689,25 @@ fn concurrent_phantom_insertion_refuses_with_zero_partial_writes() -> TestResult
     let catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&rule));
     let action = schedule_action(50, false)?;
 
-    let mut inside = RacingCell {
-        cell: RefCell::new(seeded_cell()?),
-        race: Some(Race::InsertInsideWindow),
-    };
+    let mut inside = HookCell::on_commit_once(seeded_cell()?, |cell| {
+        assert!(
+            put_fact(
+                cell,
+                "schedule.Commitment",
+                "C-phantom",
+                json!({
+                    "commitment_id": "C-phantom",
+                    "agent_id": "A1",
+                    "starts_at": "2026-11-23T11:15:00Z",
+                    "ends_at": "2026-11-23T11:45:00Z",
+                    "start_min": 675,
+                    "end_min": 705,
+                    "hours": 0.50
+                }),
+            )
+            .is_ok()
+        );
+    });
     let request = schedule_call(
         &action,
         "P1",
@@ -796,7 +718,7 @@ fn concurrent_phantom_insertion_refuses_with_zero_partial_writes() -> TestResult
         .expect_err("phantom inside window must conflict");
     assert_eq!(refusal.code(), "action.aggregate_stale_read");
     // ZERO partial writes: plan stays draft, none of C-batch-1..3 or links exist.
-    let cell = inside.cell.borrow();
+    let cell = inside.cell();
     assert_eq!(
         cell.load(&FactKey::new("schedule.Plan", "P1"))?
             .values
@@ -824,15 +746,29 @@ fn concurrent_phantom_insertion_refuses_with_zero_partial_writes() -> TestResult
     }
 
     // Outside window does not conflict.
-    let mut outside = RacingCell {
-        cell: RefCell::new(seeded_cell()?),
-        race: Some(Race::InsertOutsideWindow),
-    };
+    let mut outside = HookCell::on_commit_once(seeded_cell()?, |cell| {
+        assert!(
+            put_fact(
+                cell,
+                "schedule.Commitment",
+                "C-next-day",
+                json!({
+                    "commitment_id": "C-next-day",
+                    "agent_id": "A1",
+                    "starts_at": "2026-11-25T11:15:00Z",
+                    "ends_at": "2026-11-25T11:45:00Z",
+                    "start_min": 675,
+                    "end_min": 705,
+                    "hours": 0.50
+                }),
+            )
+            .is_ok()
+        );
+    });
     commit_action(&mut outside, &catalog, &request, &ALLOW)?;
     assert!(
         outside
-            .cell
-            .borrow()
+            .cell()
             .load(&FactKey::new("schedule.Commitment", "C-batch-01"))?
             .exists()
     );
@@ -1134,57 +1070,6 @@ fn blocker1_read_only_actor_on_link_source_is_refused_for_add_and_remove() -> Te
     Ok(())
 }
 
-struct NonePredicateCell {
-    cell: RefCell<Cell>,
-}
-
-impl CellHost for NonePredicateCell {
-    type Event = FactEvent;
-    type Command = JsonObject;
-    type Input = JsonObject;
-    type Error = Infallible;
-    fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
-        self.cell.borrow().load(key)
-    }
-    fn load_bounded(
-        &self,
-        key: &FactKey,
-        max_bytes: u64,
-    ) -> Result<Option<norn_kernel::BoundedFact>, Self::Error> {
-        self.cell.borrow().load_bounded(key, max_bytes)
-    }
-    fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error> {
-        self.cell.borrow().load_link(key)
-    }
-    fn read_predicate(
-        &self,
-        _: &PredicateQuery,
-        _: usize,
-        _: u64,
-    ) -> Result<Option<Vec<PredicateObject>>, Self::Error> {
-        // Simulate host byte-overflow or unenumerable scan before per-record authz.
-        Ok(None)
-    }
-    fn commit(
-        &mut self,
-        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
-    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
-        self.cell.get_mut().commit(commit)
-    }
-    fn perform(&mut self) -> Result<Option<Performed<Self::Input>>, Self::Error> {
-        self.cell.get_mut().perform()
-    }
-    fn observe(&mut self) -> Result<Option<Observed<Self::Input>>, Self::Error> {
-        self.cell.get_mut().observe()
-    }
-    fn clock(&mut self) -> Result<Option<DueTimer<Self::Input>>, Self::Error> {
-        self.cell.get_mut().clock()
-    }
-    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Self::Error> {
-        self.cell.get_mut().publish(receipt)
-    }
-}
-
 #[test]
 fn blocker2_hidden_row_over_max_items_and_unenumerable_scan_refuse_as_target_not_found()
 -> TestResult {
@@ -1230,9 +1115,7 @@ fn blocker2_hidden_row_over_max_items_and_unenumerable_scan_refuse_as_target_not
 
     // 2. Host returning Ok(None) (byte overflow during scan before per-record authz)
     //    must also conceal as TargetNotFound.
-    let mut none_host = NonePredicateCell {
-        cell: RefCell::new(seeded_cell()?),
-    };
+    let mut none_host = HookCell::without_predicates(seeded_cell()?);
     let refusal = commit_action(&mut none_host, &catalog, &request, &ALLOW)
         .expect_err("Ok(None) scan must conceal as TargetNotFound");
     assert!(

@@ -31,16 +31,18 @@ use norn_kernel::action::{ACTION_IDEMPOTENCY_KEY_MAX_BYTES, ActionCommandRejecti
 use norn_kernel::cell_host::{JsonObject, JsonValue};
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome, ActionRefusal,
-    CellCommit, CellHost, Command, CommitError, CommitModel, CommitReceipt, CommitVersions,
-    CommitView, DecisionTurn, DueTimer, FactEvent, FactKey, FactMutation, FactSlice, FactState,
-    FactVersion, FactWrite, LinkKey, LinkState, LogicalTime, Observed, OwnedRowsCommitProof,
-    Performed, TurnEnvelopeLimits, TurnEnvelopeMeter, TypeCatalog, World, check_commit,
-    commit_action, commit_action_with_limits, commit_action_with_meter, commit_decision_with_meter,
+    CellCommit, CellHost, CommitError, CommitModel, CommitReceipt, CommitVersions, CommitView,
+    DecisionTurn, DueTimer, FactEvent, FactKey, FactMutation, FactSlice, FactState, FactVersion,
+    FactWrite, LinkKey, LinkState, LogicalTime, Observed, OwnedRowsCommitProof, Performed,
+    TurnEnvelopeLimits, TurnEnvelopeMeter, TypeCatalog, World, check_commit, commit_action,
+    commit_action_with_limits, commit_action_with_meter, commit_decision_with_meter,
 };
-use norn_testkit::cell_host::MemoryCell;
 use serde_json::{Value, json};
 
-type Cell = MemoryCell<FactEvent, JsonObject, JsonObject>;
+use super::support::{
+    AllowAction, AllowWithNamingSeries as Allow, Cell, DenyAction as Deny, HookCell,
+    demo_scope as scope, new_cell,
+};
 
 const ORDER: &str = "commerce.SalesOrder";
 
@@ -358,13 +360,6 @@ fn cancel_submitted() -> ActionRoot {
     serde_json::from_value(payload).unwrap()
 }
 
-fn scope() -> BTreeMap<String, String> {
-    BTreeMap::from([
-        ("orgId".to_owned(), "org_demo".to_owned()),
-        ("environmentId".to_owned(), "dev".to_owned()),
-    ])
-}
-
 fn call<'a>(action: &'a ActionRoot, so_number: &str, key: &str) -> ActionCall<'a> {
     ActionCall {
         action,
@@ -408,62 +403,46 @@ fn synchronous_rule_never_degrades_to_the_primary_effect() {
     assert_eq!(refusal.code(), "action.unsupported_effect");
 }
 
-#[test]
-fn overlong_idempotency_key_is_refused_before_any_host_read_or_commit() {
-    let types = order_types();
-    let catalog = TypeCatalog::new(&types);
-    let action = approve();
-    let key = "k".repeat(ACTION_IDEMPOTENCY_KEY_MAX_BYTES + 1);
-    let mut host = NoReadOrCommit;
+norn_testkit::proptest::proptest! {
+    #![proptest_config(norn_testkit::proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn overlong_idempotency_and_target_keys_refuse_before_host_io(extra in 1_usize..=128) {
+        let types = order_types();
+        let catalog = TypeCatalog::new(&types);
+        let action = approve();
+        let mut host = NoReadOrCommit;
 
-    let refusal = commit_action(&mut host, &catalog, &call(&action, "SO-1", &key), &Allow)
-        .expect_err("the key is over the byte limit");
-    assert!(matches!(
-        refusal,
-        ActionRefusal::Command(ActionCommandRejection::IdempotencyKeyTooLong { .. })
-    ));
-    assert_eq!(refusal.code(), "action.idempotency_key_too_long");
-    assert_eq!(refusal.category(), norn_kernel::RefusalCategory::Limit);
-}
+        let overlong_key = "k".repeat(ACTION_IDEMPOTENCY_KEY_MAX_BYTES.saturating_add(extra));
+        let key_refusal =
+            commit_action(&mut host, &catalog, &call(&action, "SO-1", &overlong_key), &Allow)
+                .expect_err("the key is over the byte limit");
+        norn_testkit::proptest::prop_assert!(matches!(
+            key_refusal,
+            ActionRefusal::Command(ActionCommandRejection::IdempotencyKeyTooLong { .. })
+        ));
+        norn_testkit::proptest::prop_assert_eq!(key_refusal.code(), "action.idempotency_key_too_long");
+        norn_testkit::proptest::prop_assert_eq!(
+            key_refusal.category(),
+            norn_kernel::RefusalCategory::Limit
+        );
 
-#[test]
-fn overlong_target_key_is_refused_before_any_host_read_or_commit() {
-    let types = order_types();
-    let catalog = TypeCatalog::new(&types);
-    let action = approve();
-    let object_id = "k".repeat(norn_ir::identifier_limits::MAX_OBJECT_KEY_BYTES + 1);
-    let mut host = NoReadOrCommit;
-
-    let refusal = commit_action(
-        &mut host,
-        &catalog,
-        &call(&action, &object_id, "idem-1"),
-        &Allow,
-    )
-    .expect_err("the target key is over the byte limit");
-    assert!(matches!(
-        refusal,
-        ActionRefusal::Decision(norn_kernel::DecisionRefusal::IdentifierTooLong {
-            field: "object key",
-            ..
-        })
-    ));
-    assert_eq!(refusal.code(), "commit.identifier_too_long");
-    assert_eq!(refusal.category(), norn_kernel::RefusalCategory::Limit);
-}
-
-struct Allow;
-
-impl ActionAuthorizer for Allow {
-    fn can_inspect_naming_series(
-        &self,
-        _: &norn_kernel::NamingSeriesInspectionRequest<'_>,
-    ) -> bool {
-        true
-    }
-
-    fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        Ok(())
+        let overlong_id =
+            "k".repeat(norn_ir::identifier_limits::MAX_OBJECT_KEY_BYTES.saturating_add(extra));
+        let target_refusal =
+            commit_action(&mut host, &catalog, &call(&action, &overlong_id, "idem-1"), &Allow)
+                .expect_err("the target key is over the byte limit");
+        norn_testkit::proptest::prop_assert!(matches!(
+            target_refusal,
+            ActionRefusal::Decision(norn_kernel::DecisionRefusal::IdentifierTooLong {
+                field: "object key",
+                ..
+            })
+        ));
+        norn_testkit::proptest::prop_assert_eq!(target_refusal.code(), "commit.identifier_too_long");
+        norn_testkit::proptest::prop_assert_eq!(
+            target_refusal.category(),
+            norn_kernel::RefusalCategory::Limit
+        );
     }
 }
 
@@ -479,14 +458,6 @@ impl ActionAuthorizer for InputMatchesTargetKey {
                 reason: "authz.generated_key_mismatch".to_owned(),
             })
         }
-    }
-}
-
-struct Deny(ActionDenial);
-
-impl ActionAuthorizer for Deny {
-    fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        Err(self.0.clone())
     }
 }
 
@@ -620,7 +591,7 @@ fn assert_refused(
 fn action_commits_once_and_replays_retries() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let order = seed(&mut cell, ORDER, "SO-1", "draft");
     let (submit, approve) = (submit_invoice(), approve());
 
@@ -716,7 +687,7 @@ fn action_commits_once_and_replays_retries() {
 fn upsert_creates_and_replays_in_one_action_commit() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let action = upsert_action("commerce.sales_order.create", &json!({"kind": "upsert"}));
     let action_call = call(&action, "SO-CREATE", "create-upsert");
 
@@ -760,7 +731,7 @@ fn upsert_creates_and_replays_in_one_action_commit() {
 fn upsert_refuses_immutable_state_and_cancel_transition_still_works() {
     let types = immutable_order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let order = seed(&mut cell, ORDER, "SO-SUBMITTED", "submitted");
     let upsert = upsert_action("commerce.sales_order.edit", &json!({"kind": "upsert"}));
 
@@ -795,7 +766,7 @@ fn upsert_refuses_immutable_state_and_cancel_transition_still_works() {
 fn create_only_and_draft_only_action_modes_are_enforced() {
     let types = immutable_order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let create_only = upsert_action(
         "commerce.sales_order.create_only",
         &json!({"kind": "create_only"}),
@@ -849,7 +820,7 @@ fn create_only_and_draft_only_action_modes_are_enforced() {
 fn update_only_refuses_an_absent_target_and_only_patches_an_existing_one() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let update_only = upsert_action(
         "commerce.sales_order.update_only",
         &json!({"kind": "update_only"}),
@@ -907,7 +878,7 @@ fn update_only_refuses_an_absent_target_and_only_patches_an_existing_one() {
 fn upsert_authorizes_canonical_proposed_values_for_creates() {
     let types = business_unit_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let action = business_unit_upsert_action("commerce.authz_order.create");
 
     let mut own = call(&action, "OWN-1", "create-own");
@@ -1009,7 +980,7 @@ fn upsert_authorizes_canonical_proposed_values_for_creates() {
 fn action_authorizes_old_and_proposed_values_for_updates_and_transitions() {
     let types = business_unit_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let action = business_unit_upsert_action("commerce.authz_order.move");
     let first = seed_business_unit_order(&mut cell, "MOVE-1", "BU-A");
     let second = seed_business_unit_order(&mut cell, "MOVE-2", "BU-B");
@@ -1101,7 +1072,7 @@ fn action_authorizes_old_and_proposed_values_for_updates_and_transitions() {
 
     let order_types = order_types();
     let order_catalog = TypeCatalog::new(&order_types);
-    let mut transition_cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut transition_cell = new_cell();
     seed(&mut transition_cell, ORDER, "SO-AUTHZ", "draft");
     let transition_authorizer = PropertyAuthorizer::allowing("status", &["draft", "approved"]);
     assert!(matches!(
@@ -1131,7 +1102,7 @@ fn action_authorizes_old_and_proposed_values_for_updates_and_transitions() {
 fn upsert_rejects_undeclared_or_malformed_input_before_any_effect() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let upsert = upsert_action("commerce.sales_order.edit", &json!({"kind": "upsert"}));
     let mut action_call = call(&upsert, "SO-UNKNOWN-FIELD", "unknown-upsert-field");
     action_call.input.insert(
@@ -1163,7 +1134,7 @@ fn upsert_rejects_undeclared_or_malformed_input_before_any_effect() {
 fn action_enqueues_evaluated_command_in_the_transition_commit_and_replay_adds_nothing() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     seed(&mut cell, ORDER, "SO-1", "draft");
     let approve = approve_with_submit_command("input.so_number");
     let action_call = call(&approve, "SO-1", "submit-so-1");
@@ -1221,7 +1192,7 @@ fn action_enqueues_evaluated_command_in_the_transition_commit_and_replay_adds_no
 fn action_emits_evaluated_source_version_and_child_merge_wire() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     seed(&mut cell, ORDER, "SO-1", "draft");
     let action = approve_with_guarded_update_command("input.modified", "input.owner", "input.rows");
     let call = guarded_update_call(&action, "guarded-source-update");
@@ -1290,7 +1261,7 @@ fn action_refuses_invalid_source_version_and_child_merge_expression_shapes_witho
     for (index, (expected_modified, owner, rows)) in cases.into_iter().enumerate() {
         let types = order_types();
         let catalog = TypeCatalog::new(&types);
-        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+        let mut cell = new_cell();
         seed(&mut cell, ORDER, "SO-1", "draft");
         let action = approve_with_guarded_update_command(expected_modified, owner, rows);
         let key = format!("invalid-guarded-command-{index}");
@@ -1315,7 +1286,7 @@ fn action_command_expressions_share_one_turn_fuel_budget() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
     let single_action = approve_with_repeated_command_action(1);
-    let mut single_cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut single_cell = new_cell();
     seed(&mut single_cell, ORDER, "SO-1", "draft");
     let single_call = repeated_command_call(&single_action, "single-command-fuel", text_bytes);
     commit_action(&mut single_cell, &catalog, &single_call, &Allow)
@@ -1324,7 +1295,7 @@ fn action_command_expressions_share_one_turn_fuel_budget() {
     // Keep 31 commands so the action's transition plus outbound effects fit
     // the 32-event envelope while repeating the data-proportional expression.
     let action = approve_with_repeated_command_action(31);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     seed(&mut cell, ORDER, "SO-1", "draft");
     let call = repeated_command_call(&action, "shared-command-fuel", text_bytes);
     let ledger_len = cell.ledger().len();
@@ -1346,104 +1317,99 @@ fn action_command_expressions_share_one_turn_fuel_budget() {
 }
 
 #[test]
-fn action_command_expression_failure_commits_nothing() {
+fn action_command_failures_and_explicit_envelope_limits() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     seed(&mut cell, ORDER, "SO-1", "draft");
-    let approve = approve_with_submit_command("input.missing");
-    let action_call = call(&approve, "SO-1", "invalid-command-expression");
     let ledger_len = cell.ledger().len();
 
-    let refusal = commit_action(&mut cell, &catalog, &action_call, &Allow).unwrap_err();
-    assert_eq!(refusal.code(), "decision.invalid_output");
-    assert_eq!(cell.ledger().len(), ledger_len);
-    assert_eq!(cell.outbox(), []);
-    assert_eq!(
-        status(&cell, &FactKey::new(ORDER, "SO-1")),
-        Some(JsonValue::String("draft".into()))
-    );
-}
-
-#[test]
-fn action_command_envelope_counts_the_ledger_enqueue_event() {
-    let types = order_types();
-    let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
-    seed(&mut cell, ORDER, "SO-1", "draft");
-    let approve = approve_with_submit_command("input.so_number");
-    let action_call = call(&approve, "SO-1", "command-event-limit");
-    let ledger_len = cell.ledger().len();
-    let limits = norn_kernel::EnvelopeLimits {
-        max_events: 1,
-        max_commands: 1,
-        max_timers: 0,
-        ..norn_kernel::EnvelopeLimits::V1
-    };
-
-    let refusal =
-        commit_action_with_limits(&mut cell, &catalog, &action_call, &Allow, &limits).unwrap_err();
-    assert_eq!(refusal.code(), "decision.envelope_exceeded");
-    assert_eq!(cell.ledger().len(), ledger_len);
-    assert_eq!(cell.outbox(), []);
-}
-
-#[test]
-fn action_commit_applies_explicit_per_decision_limits() {
-    let types = order_types();
-    let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
-    seed(&mut cell, ORDER, "SO-1", "draft");
-    let approve = approve();
-    let call = call(&approve, "SO-1", "limits");
-    let ledger_len = cell.ledger().len();
-
-    let no_events = norn_kernel::EnvelopeLimits {
-        max_events: 0,
-        ..norn_kernel::EnvelopeLimits::V1
-    };
-    let refusal =
-        commit_action_with_limits(&mut cell, &catalog, &call, &Allow, &no_events).unwrap_err();
-    assert_eq!(refusal.code(), "decision.envelope_exceeded");
-    assert_eq!(refusal.category(), norn_kernel::RefusalCategory::Limit);
-    assert_eq!(cell.ledger().len(), ledger_len);
-    assert_eq!(
-        status(&cell, &FactKey::new(ORDER, "SO-1")),
-        Some(JsonValue::String("draft".into()))
-    );
-
-    let one_event = norn_kernel::EnvelopeLimits {
-        max_events: 1,
-        max_commands: 0,
-        max_timers: 0,
-        ..norn_kernel::EnvelopeLimits::V1
-    };
-    let refusal =
-        commit_action_with_limits(&mut cell, &catalog, &call, &Allow, &one_event).unwrap_err();
-    assert_eq!(refusal.code(), "decision.envelope_exceeded");
-    assert_eq!(cell.ledger().len(), ledger_len);
-    assert_eq!(
-        status(&cell, &FactKey::new(ORDER, "SO-1")),
-        Some(JsonValue::String("draft".into()))
-    );
+    let missing_expr = approve_with_submit_command("input.missing");
+    let submit_cmd = approve_with_submit_command("input.so_number");
+    let plain_approve = approve();
+    let v1 = norn_kernel::EnvelopeLimits::V1;
+    let refusal_cases = [
+        (
+            &missing_expr,
+            "invalid-command-expression",
+            v1,
+            "decision.invalid_output",
+            None,
+        ),
+        (
+            &submit_cmd,
+            "command-event-limit",
+            norn_kernel::EnvelopeLimits {
+                max_events: 1,
+                max_commands: 1,
+                max_timers: 0,
+                ..v1
+            },
+            "decision.envelope_exceeded",
+            Some(norn_kernel::RefusalCategory::Limit),
+        ),
+        (
+            &plain_approve,
+            "limits-zero",
+            norn_kernel::EnvelopeLimits {
+                max_events: 0,
+                ..v1
+            },
+            "decision.envelope_exceeded",
+            Some(norn_kernel::RefusalCategory::Limit),
+        ),
+        (
+            &plain_approve,
+            "limits-one",
+            norn_kernel::EnvelopeLimits {
+                max_events: 1,
+                max_commands: 0,
+                max_timers: 0,
+                ..v1
+            },
+            "decision.envelope_exceeded",
+            Some(norn_kernel::RefusalCategory::Limit),
+        ),
+    ];
+    for (act, key, limits, expected_code, expected_cat) in refusal_cases {
+        let req = call(act, "SO-1", key);
+        let refusal =
+            commit_action_with_limits(&mut cell, &catalog, &req, &Allow, &limits).unwrap_err();
+        assert_eq!(refusal.code(), expected_code, "{key}");
+        if let Some(cat) = expected_cat {
+            assert_eq!(refusal.category(), cat, "{key}");
+        }
+        assert_eq!(cell.ledger().len(), ledger_len, "{key}");
+        assert_eq!(cell.outbox(), [], "{key}");
+        assert_eq!(
+            status(&cell, &FactKey::new(ORDER, "SO-1")),
+            Some(JsonValue::String("draft".into())),
+            "{key}"
+        );
+    }
 
     let two_events = norn_kernel::EnvelopeLimits {
         max_events: 2,
-        ..one_event
+        max_commands: 0,
+        max_timers: 0,
+        ..v1
     };
+    let ok_call = call(&plain_approve, "SO-1", "limits-two");
     assert!(matches!(
-        commit_action_with_limits(&mut cell, &catalog, &call, &Allow, &two_events).unwrap(),
+        commit_action_with_limits(&mut cell, &catalog, &ok_call, &Allow, &two_events).unwrap(),
         ActionOutcome::Committed { .. }
     ));
-    assert_eq!(cell.ledger().len(), ledger_len + 1);
+    assert_eq!(cell.ledger().len(), ledger_len.saturating_add(1));
     assert_eq!(cell.ledger().last().unwrap().events.len(), 2);
 }
 
 #[test]
-fn decision_and_action_commits_share_the_aggregate_turn_meter() {
+fn turn_envelope_meter_shared_across_decision_action_and_retry() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+
+    // Decision + action commits share one aggregate turn meter; over-limit action commits nothing.
+    let mut cell = new_cell();
     seed(&mut cell, ORDER, "SO-1", "draft");
     let mut meter = TurnEnvelopeMeter::new(TurnEnvelopeLimits {
         max_events: 1,
@@ -1479,10 +1445,15 @@ fn decision_and_action_commits_share_the_aggregate_turn_meter() {
     assert_eq!(meter.used().events, 1);
 
     let approve = approve();
-    let action_call = call(&approve, "SO-1", "after-limit");
     let ledger_len = cell.ledger().len();
-    let refusal = commit_action_with_meter(&mut cell, &catalog, &action_call, &Allow, &mut meter)
-        .unwrap_err();
+    let refusal = commit_action_with_meter(
+        &mut cell,
+        &catalog,
+        &call(&approve, "SO-1", "after-limit"),
+        &Allow,
+        &mut meter,
+    )
+    .unwrap_err();
     assert_eq!(refusal.code(), "decision.turn_envelope_exceeded");
     assert_eq!(refusal.category(), norn_kernel::RefusalCategory::Limit);
     assert_eq!(cell.ledger().len(), ledger_len);
@@ -1491,32 +1462,26 @@ fn decision_and_action_commits_share_the_aggregate_turn_meter() {
         status(&cell, &FactKey::new(ORDER, "SO-1")),
         Some(JsonValue::String("draft".into()))
     );
-}
 
-#[test]
-fn action_meter_does_not_charge_an_exact_retry() {
-    let types = order_types();
-    let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
-    seed(&mut cell, ORDER, "SO-1", "draft");
-    let approve = approve();
-    let call = call(&approve, "SO-1", "meter-replay");
-    let mut meter = TurnEnvelopeMeter::new(TurnEnvelopeLimits {
+    // An exact retry replays without charging the turn meter a second time.
+    let mut replay_meter = TurnEnvelopeMeter::new(TurnEnvelopeLimits {
         max_events: 2,
         max_commands: 1,
         max_timers: 1,
     });
-
+    let replay_call = call(&approve, "SO-1", "meter-replay");
     assert!(matches!(
-        commit_action_with_meter(&mut cell, &catalog, &call, &Allow, &mut meter).unwrap(),
+        commit_action_with_meter(&mut cell, &catalog, &replay_call, &Allow, &mut replay_meter)
+            .unwrap(),
         ActionOutcome::Committed { .. }
     ));
-    assert_eq!(meter.used().events, 2);
+    assert_eq!(replay_meter.used().events, 2);
     assert!(matches!(
-        commit_action_with_meter(&mut cell, &catalog, &call, &Allow, &mut meter).unwrap(),
+        commit_action_with_meter(&mut cell, &catalog, &replay_call, &Allow, &mut replay_meter)
+            .unwrap(),
         ActionOutcome::Replayed { .. }
     ));
-    assert_eq!(meter.used().events, 2);
+    assert_eq!(replay_meter.used().events, 2);
 }
 
 /// A host on which another commit of the same call lands first.
@@ -1603,57 +1568,12 @@ impl CellHost for Racing {
     }
 }
 
-/// A cell wrapper that counts attempted commits, including refusals.
-struct CommitCounting {
-    cell: Cell,
-    commit_calls: usize,
-}
-
-impl CellHost for CommitCounting {
-    type Event = FactEvent;
-    type Command = JsonObject;
-    type Input = JsonObject;
-    type Error = Infallible;
-
-    fn load(&self, key: &FactKey) -> Result<FactState, Infallible> {
-        self.cell.load(key)
-    }
-
-    fn load_link(&self, key: &LinkKey) -> Result<LinkState, Infallible> {
-        self.cell.load_link(key)
-    }
-
-    fn commit(
-        &mut self,
-        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
-    ) -> Result<CommitReceipt, CommitError<Infallible>> {
-        self.commit_calls = self.commit_calls.saturating_add(1);
-        self.cell.commit(commit)
-    }
-
-    fn perform(&mut self) -> Result<Option<Performed<JsonObject>>, Infallible> {
-        self.cell.perform()
-    }
-
-    fn observe(&mut self) -> Result<Option<Observed<JsonObject>>, Infallible> {
-        self.cell.observe()
-    }
-
-    fn clock(&mut self) -> Result<Option<DueTimer<JsonObject>>, Infallible> {
-        self.cell.clock()
-    }
-
-    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Infallible> {
-        self.cell.publish(receipt)
-    }
-}
-
 #[test]
 fn action_race_on_the_same_key_replays() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
     let mut host = Racing {
-        cell: Cell::new(|command: &Command<JsonObject>| command.payload.clone()),
+        cell: new_cell(),
         raced: true,
         revoke_authorization_after_race: None,
     };
@@ -1679,7 +1599,7 @@ fn action_race_on_a_consumed_delivery_replays() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
     let mut host = Racing {
-        cell: Cell::new(|command: &Command<JsonObject>| command.payload.clone()),
+        cell: new_cell(),
         raced: true,
         revoke_authorization_after_race: None,
     };
@@ -1715,7 +1635,7 @@ fn action_race_on_a_consumed_delivery_replays() {
 fn naming_series_does_not_retry_a_delivery_consumed_by_another_turn() {
     let types = naming_series_types("gapless_within_commit", "year");
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     cell.commit(CellCommit {
         effects: vec![norn_kernel::Effect::Schedule(norn_kernel::Timer {
             id: norn_kernel::TimerId("consumed-elsewhere".to_owned()),
@@ -1734,10 +1654,7 @@ fn naming_series_does_not_retry_a_delivery_consumed_by_another_turn() {
     .unwrap();
 
     let ledger_before = cell.ledger().len();
-    let mut host = CommitCounting {
-        cell,
-        commit_calls: 0,
-    };
+    let mut host = HookCell::new(cell);
     let action = naming_series_action("commerce.named_order.create");
     let mut call = naming_call(&action, "ACME", "consumed-elsewhere", 1_767_225_600_000);
     call.turn.consumes = Some(consumed);
@@ -1745,12 +1662,13 @@ fn naming_series_does_not_retry_a_delivery_consumed_by_another_turn() {
     let refusal = commit_action(&mut host, &catalog, &call, &Allow).unwrap_err();
     assert_eq!(refusal.code(), "decision.not_pending");
     assert_eq!(
-        host.commit_calls, 1,
+        host.commit_calls(),
+        1,
         "the consumed delivery is checked once"
     );
-    assert_eq!(host.cell.ledger().len(), ledger_before);
+    assert_eq!(host.cell().ledger().len(), ledger_before);
     assert!(
-        host.cell
+        host.cell()
             .load(&FactKey::new("commerce.NamedOrder", "SO-ACME-2025-00001"))
             .unwrap()
             .values
@@ -1762,7 +1680,7 @@ fn naming_series_does_not_retry_a_delivery_consumed_by_another_turn() {
 fn action_existence_never_leaks() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     seed(&mut cell, ORDER, "SO-1", "draft");
     let approve = approve();
     let forbidden = Deny(ActionDenial::Forbidden {
@@ -1801,7 +1719,7 @@ fn action_existence_never_leaks() {
 fn action_shape_scope_input_preconditions_and_kind() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     seed(&mut cell, ORDER, "SO-1", "draft");
     seed(&mut cell, "commerce.Quote", "Q-1", "draft");
     let approve = approve();
@@ -1885,7 +1803,7 @@ fn action_shape_scope_input_preconditions_and_kind() {
 fn action_retry_binding_and_current_authorization_matrix() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     seed(&mut cell, ORDER, "SO-1", "draft");
     seed(&mut cell, ORDER, "SO-2", "draft");
     let mut approve = approve();
@@ -1947,7 +1865,7 @@ fn action_retry_binding_and_current_authorization_matrix() {
 fn action_preconditions_fail_closed_matrix() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let target = seed(&mut cell, ORDER, "SO-1", "draft");
     for expression in ["false", "42", "missing_field > 0"] {
         let mut approve = approve();
@@ -1989,7 +1907,7 @@ fn action_subtype_uses_effective_lifecycle_guards() {
         .unwrap(),
     );
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let blocked = seed(&mut cell, subtype, "SO-unreviewed", "draft");
     let accepted = seed(&mut cell, subtype, "SO-reviewed", "draft");
     let approve = approve();
@@ -2025,7 +1943,7 @@ fn action_race_rechecks_authorization_against_the_winning_state() {
         let catalog = TypeCatalog::new(&types);
         let authorized = Arc::new(AtomicBool::new(true));
         let mut host = Racing {
-            cell: Cell::new(|command: &Command<JsonObject>| command.payload.clone()),
+            cell: new_cell(),
             raced: true,
             revoke_authorization_after_race: Some(Arc::clone(&authorized)),
         };
@@ -2065,7 +1983,7 @@ fn action_race_rechecks_authorization_against_the_winning_state() {
 fn legacy_action_record_replays_without_action_attribution() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     seed(&mut cell, ORDER, "SO-LEGACY", "draft");
     let approve = approve();
     let committed = commit_action(
@@ -2316,8 +2234,7 @@ fn inherited_naming_series_shares_its_declaring_type_counter_for_both_gap_polici
     for gap_policy in ["gapless_within_commit", "allow_gaps"] {
         let types = inherited_naming_series_types(gap_policy);
         let catalog = TypeCatalog::new(&types);
-        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-            .with_types(types.clone());
+        let mut cell = new_cell().with_types(types.clone());
         let mut counter_keys = BTreeSet::new();
 
         for (object_type, idempotency_key, expected_key) in [
@@ -2375,8 +2292,7 @@ fn inherited_naming_series_collision_probe_covers_base_and_sibling_keys() {
         for occupied_type in [NUMBERED_BASE, NUMBERED_SIBLING] {
             let types = inherited_naming_series_types(gap_policy);
             let catalog = TypeCatalog::new(&types);
-            let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-                .with_types(types.clone());
+            let mut cell = new_cell().with_types(types.clone());
             let occupied_key = "SO-ACME-2025-00001";
             cell.commit(CellCommit {
                 writes: vec![FactWrite {
@@ -2449,8 +2365,7 @@ fn intermediate_naming_series_owner_probes_the_hierarchy_root_for_sibling_keys()
         for object_type in [NUMBERED_OWNER, NUMBERED_OWNER_CHILD] {
             let types = intermediate_owner_naming_series_types(gap_policy);
             let catalog = TypeCatalog::new(&types);
-            let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-                .with_types(types.clone());
+            let mut cell = new_cell().with_types(types.clone());
             let occupied_key = "SO-ACME-2025-00001";
             cell.commit(CellCommit {
                 writes: vec![FactWrite {
@@ -2517,130 +2432,6 @@ fn intermediate_naming_series_owner_probes_the_hierarchy_root_for_sibling_keys()
     }
 }
 
-struct BaseCollisionBeforeFirstCandidate {
-    cell: Cell,
-    injected: bool,
-}
-
-impl CellHost for BaseCollisionBeforeFirstCandidate {
-    type Event = FactEvent;
-    type Command = JsonObject;
-    type Input = JsonObject;
-    type Error = Infallible;
-
-    fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
-        self.cell.load(key)
-    }
-
-    fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error> {
-        self.cell.load_link(key)
-    }
-
-    fn commit(
-        &mut self,
-        commit: CellCommit<Self::Event, Self::Command, Self::Input>,
-    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
-        let first_child_candidate = commit.writes.iter().any(|write| {
-            write.key.object_type.as_str() == NUMBERED_CHILD
-                && write.key.key == "SO-ACME-2025-00001"
-        });
-        if first_child_candidate && !self.injected {
-            self.injected = true;
-            let key = "SO-ACME-2025-00001";
-            CellHost::commit(
-                &mut self.cell,
-                CellCommit {
-                    writes: vec![FactWrite {
-                        key: FactKey::new(NUMBERED_BASE, key),
-                        expected: FactVersion::ABSENT,
-                        mutation: FactMutation::Put {
-                            values: JsonObject::from([
-                                ("name".to_owned(), JsonValue::String(key.to_owned())),
-                                ("company".to_owned(), JsonValue::String("ACME".to_owned())),
-                            ]),
-                        },
-                    }],
-                    ..CellCommit::empty()
-                },
-            )?;
-        }
-        CellHost::commit(&mut self.cell, commit)
-    }
-
-    fn perform(&mut self) -> Result<Option<Performed<JsonObject>>, Self::Error> {
-        self.cell.perform()
-    }
-
-    fn observe(&mut self) -> Result<Option<Observed<JsonObject>>, Self::Error> {
-        self.cell.observe()
-    }
-
-    fn clock(&mut self) -> Result<Option<DueTimer<JsonObject>>, Self::Error> {
-        self.cell.clock()
-    }
-
-    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Self::Error> {
-        self.cell.publish(receipt)
-    }
-}
-
-/// A host on which a rival naming-series create commits just before the first commit it is given.
-struct RivalNamingCreate {
-    cell: Cell,
-    types: Vec<ObjectTypeDef>,
-    action: ActionRoot,
-    injected: bool,
-}
-
-impl CellHost for RivalNamingCreate {
-    type Event = FactEvent;
-    type Command = JsonObject;
-    type Input = JsonObject;
-    type Error = Infallible;
-
-    fn load(&self, key: &FactKey) -> Result<FactState, Self::Error> {
-        self.cell.load(key)
-    }
-
-    fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error> {
-        self.cell.load_link(key)
-    }
-
-    #[expect(
-        clippy::unwrap_in_result,
-        reason = "This test fixture must panic when the rival create fails rather than simulate a recoverable domain refusal"
-    )]
-    fn commit(
-        &mut self,
-        commit: CellCommit<Self::Event, Self::Command, Self::Input>,
-    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
-        if !self.injected {
-            self.injected = true;
-            let catalog = TypeCatalog::new(&self.types);
-            let rival = naming_call(&self.action, "ACME", "rival", 1_767_225_600_000);
-            let outcome = commit_action(&mut self.cell, &catalog, &rival, &Allow).unwrap();
-            assert_eq!(outcome_key(outcome), "SO-ACME-2025-00001");
-        }
-        CellHost::commit(&mut self.cell, commit)
-    }
-
-    fn perform(&mut self) -> Result<Option<Performed<JsonObject>>, Self::Error> {
-        self.cell.perform()
-    }
-
-    fn observe(&mut self) -> Result<Option<Observed<JsonObject>>, Self::Error> {
-        self.cell.observe()
-    }
-
-    fn clock(&mut self) -> Result<Option<DueTimer<JsonObject>>, Self::Error> {
-        self.cell.clock()
-    }
-
-    fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Self::Error> {
-        self.cell.publish(receipt)
-    }
-}
-
 #[test]
 fn a_losing_create_of_an_immutable_naming_series_type_retries_with_the_next_number() {
     for gap_policy in ["gapless_within_commit", "allow_gaps"] {
@@ -2648,25 +2439,33 @@ fn a_losing_create_of_an_immutable_naming_series_type_retries_with_the_next_numb
         types[0].immutable = true;
         let catalog = TypeCatalog::new(&types);
         let action = naming_series_action("commerce.named_order.create.immutable_race");
-        let mut host = RivalNamingCreate {
-            cell: Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-                .with_types(types.clone()),
-            types: types.clone(),
-            action: action.clone(),
-            injected: false,
-        };
+        let injected = Arc::new(AtomicBool::new(false));
+        let injected_hook = Arc::clone(&injected);
+        let rival_types = types.clone();
+        let rival_action = action.clone();
+        let mut host =
+            HookCell::on_commit_once(new_cell().with_types(types.clone()), move |cell| {
+                injected_hook.store(true, Ordering::SeqCst);
+                let catalog = TypeCatalog::new(&rival_types);
+                let rival = naming_call(&rival_action, "ACME", "rival", 1_767_225_600_000);
+                let outcome = commit_action(cell, &catalog, &rival, &Allow).unwrap();
+                assert_eq!(outcome_key(outcome), "SO-ACME-2025-00001");
+            });
         // Both calls select SO-ACME-2025-00001, absent when each read it. The rival commits
         // first; the loser's absent-expecting create is a retryable conflict, not an
         // immutability refusal, so it allocates the next number.
         let call = naming_call(&action, "ACME", "loser", 1_767_225_600_000);
         let outcome = commit_action(&mut host, &catalog, &call, &Allow).unwrap();
         assert_eq!(outcome_key(outcome), "SO-ACME-2025-00002", "{gap_policy}");
-        assert!(host.injected, "the rival create committed first");
-        assert_eq!(host.cell.ledger().len(), 2);
+        assert!(
+            injected.load(Ordering::SeqCst),
+            "the rival create committed first"
+        );
+        let cell = host.cell();
+        assert_eq!(cell.ledger().len(), 2);
         for key in ["SO-ACME-2025-00001", "SO-ACME-2025-00002"] {
             assert!(
-                host.cell
-                    .load(&FactKey::new("commerce.NamedOrder", key))
+                cell.load(&FactKey::new("commerce.NamedOrder", key))
                     .unwrap()
                     .exists(),
                 "{key}"
@@ -2680,11 +2479,40 @@ fn inherited_naming_series_candidate_cas_catches_concurrent_base_create() {
     for gap_policy in ["gapless_within_commit", "allow_gaps"] {
         let types = inherited_naming_series_types(gap_policy);
         let catalog = TypeCatalog::new(&types);
-        let mut host = BaseCollisionBeforeFirstCandidate {
-            cell: Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-                .with_types(types.clone()),
-            injected: false,
-        };
+        let injected = Arc::new(AtomicBool::new(false));
+        let injected_hook = Arc::clone(&injected);
+        let mut host = HookCell::on_commit_with_commit(
+            new_cell().with_types(types.clone()),
+            move |cell, commit| {
+                let first_child_candidate = commit.writes.iter().any(|write| {
+                    write.key.object_type.as_str() == NUMBERED_CHILD
+                        && write.key.key == "SO-ACME-2025-00001"
+                });
+                if first_child_candidate && !injected_hook.swap(true, Ordering::SeqCst) {
+                    let key = "SO-ACME-2025-00001";
+                    CellHost::commit(
+                        cell,
+                        CellCommit {
+                            writes: vec![FactWrite {
+                                key: FactKey::new(NUMBERED_BASE, key),
+                                expected: FactVersion::ABSENT,
+                                mutation: FactMutation::Put {
+                                    values: JsonObject::from([
+                                        ("name".to_owned(), JsonValue::String(key.to_owned())),
+                                        (
+                                            "company".to_owned(),
+                                            JsonValue::String("ACME".to_owned()),
+                                        ),
+                                    ]),
+                                },
+                            }],
+                            ..CellCommit::empty()
+                        },
+                    )?;
+                }
+                Ok(())
+            },
+        );
         let action = inherited_naming_series_action(
             "commerce.numbered.create.collision_race",
             NUMBERED_CHILD,
@@ -2696,31 +2524,28 @@ fn inherited_naming_series_candidate_cas_catches_concurrent_base_create() {
             1_767_225_600_000,
         );
         let result = commit_action(&mut host, &catalog, &call, &Allow);
+        let cell = host.cell();
 
         if gap_policy == "gapless_within_commit" {
             let refusal = result.unwrap_err();
             assert_eq!(refusal.code(), "decision.invalid_output");
-            assert_eq!(host.cell.ledger().len(), 1);
+            assert_eq!(cell.ledger().len(), 1);
         } else {
             let outcome = result.unwrap();
             assert_eq!(outcome_key(outcome), "SO-ACME-2025-00002");
-            assert_eq!(host.cell.ledger().len(), 2);
-            let counter = host
-                .cell
-                .load(&last_naming_counter_key(&host.cell))
-                .unwrap();
+            assert_eq!(cell.ledger().len(), 2);
+            let counter = cell.load(&last_naming_counter_key(&cell)).unwrap();
             assert_eq!(
                 counter.values.unwrap().get("current"),
                 Some(&JsonValue::Number(norn_ir::Decimal::parse("2").unwrap()))
             );
         }
-        let occupied = host
-            .cell
+        let occupied = cell
             .load(&FactKey::new(NUMBERED_BASE, "SO-ACME-2025-00001"))
             .unwrap();
         assert!(occupied.exists());
         assert!(
-            host.injected,
+            injected.load(Ordering::SeqCst),
             "the test host inserted the competing base create"
         );
     }
@@ -2730,7 +2555,7 @@ fn inherited_naming_series_candidate_cas_catches_concurrent_base_create() {
 fn naming_series_allocates_in_the_create_commit_replays_and_resets_in_local_timezone() {
     let types = naming_series_types("gapless_within_commit", "year");
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let action = naming_series_action("commerce.named_order.create");
 
     // 2026-01-01 00:00 UTC is still 2025 in New York.
@@ -2793,7 +2618,7 @@ fn naming_series_allocates_in_the_create_commit_replays_and_resets_in_local_time
 fn naming_series_generated_key_is_available_to_connector_command_expressions() {
     let types = naming_series_types("gapless_within_commit", "year");
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let mut action = naming_series_action("commerce.named_order.create_with_source");
     action.commands = serde_json::from_value(json!([{
         "connector": "erpnext",
@@ -2871,8 +2696,7 @@ fn naming_series_preconditions_and_connector_commands_share_one_fuel_budget() {
 
     let mut precondition_only_action = action.clone();
     precondition_only_action.commands.clear();
-    let mut precondition_only_cell =
-        Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut precondition_only_cell = new_cell();
     let mut precondition_only_call = naming_call(
         &precondition_only_action,
         "ACME",
@@ -2898,7 +2722,7 @@ fn naming_series_preconditions_and_connector_commands_share_one_fuel_budget() {
 
     let mut command_only_action = action.clone();
     command_only_action.preconditions.clear();
-    let mut command_only_cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut command_only_cell = new_cell();
     let mut command_only_call = naming_call(
         &command_only_action,
         "ACME",
@@ -2922,7 +2746,7 @@ fn naming_series_preconditions_and_connector_commands_share_one_fuel_budget() {
         Some(&JsonValue::String("SO-ACME-2025-00001".to_owned()))
     );
 
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let mut call = naming_call(&action, "ACME", "series-shared-fuel", 1_767_225_600_000);
     call.input.insert(
         "large".to_owned(),
@@ -2951,7 +2775,7 @@ fn naming_series_preconditions_and_connector_commands_share_one_fuel_budget() {
 fn naming_series_replay_rechecks_current_schema_and_preconditions() {
     let types = naming_series_types("gapless_within_commit", "year");
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let action = naming_series_action("commerce.named_order.create");
     let original = naming_call(
         &action,
@@ -3023,7 +2847,7 @@ fn naming_series_replay_rechecks_current_schema_and_preconditions() {
 fn naming_series_refusal_does_not_consume_a_counter_and_imported_seed_is_monotone() {
     let types = naming_series_types("gapless_within_commit", "year");
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let mut rejected = naming_series_action("commerce.named_order.create");
     rejected.preconditions = vec![norn_ir::ZenExpression("false".to_owned())];
     let rejected_call = naming_call(&rejected, "ACME", "series-rejected", 1_767_225_600_000);
@@ -3105,7 +2929,7 @@ fn naming_series_refusal_does_not_consume_a_counter_and_imported_seed_is_monoton
 fn naming_series_rejects_caller_supplied_keys_for_series_creates() {
     let types = naming_series_types("gapless_within_commit", "year");
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let create_only = naming_series_action("commerce.named_order.create");
     let mut supplied = naming_call(
         &create_only,
@@ -3148,7 +2972,7 @@ fn naming_series_gap_policy_skips_only_occupied_candidates_when_allowed() {
     ] {
         let types = naming_series_types(gap_policy, "year");
         let catalog = TypeCatalog::new(&types);
-        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+        let mut cell = new_cell();
         cell.commit(CellCommit {
             writes: vec![FactWrite {
                 key: FactKey::new("commerce.NamedOrder", "SO-ACME-2025-00001"),
@@ -3197,7 +3021,7 @@ fn naming_series_denied_calls_cannot_distinguish_private_allocator_failures() {
         "malformed",
         "precondition",
     ] {
-        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+        let mut cell = new_cell();
         if matches!(counter_state, "exhausted" | "malformed") {
             let seed = NamingCounterSeed {
                 object_type: ObjectTypeName("commerce.NamedOrder".to_owned()),
@@ -3272,7 +3096,7 @@ fn naming_series_denied_calls_cannot_distinguish_private_allocator_failures() {
 
     // Key-dependent authorization still sees the actual allocated key, even
     // when that authorizer has not opted into private counter diagnostics.
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let action = naming_series_action("commerce.named_order.create");
     let call = naming_call(&action, "ACME", "private-series-allowed", 1_767_225_600_000);
     assert_eq!(
@@ -3627,8 +3451,7 @@ fn owned_quantity_intent_refuses_hosts_without_combined_admission() {
         }))
         .unwrap(),
     );
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-        .with_types(definitions.clone());
+    let mut cell = new_cell().with_types(definitions.clone());
     let refusal = refuse_owned_series_atomically(&mut cell, &catalog, &request);
     assert!(
         matches!(&refusal,
@@ -3687,8 +3510,7 @@ fn owned_row_expressions_share_action_fuel_and_refuse_atomically() {
         assert!((2..100).contains(&within));
 
         for count in [within, within + 1] {
-            let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-                .with_types(definitions.clone());
+            let mut cell = new_cell().with_types(definitions.clone());
             let rows = (0..count)
                 .map(|index| {
                     let mut row = owned_series_add(&format!("row-{index}"));
@@ -3745,8 +3567,7 @@ fn existing_owned_series_cell(action: &ActionRoot) -> Cell {
     // differs from the inherited generated business-name property.
     let previous = owned_series_types(false, false);
     let catalog = TypeCatalog::new(&previous);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-        .with_types(previous.clone());
+    let mut cell = new_cell().with_types(previous.clone());
     commit_action(
         &mut cell,
         &catalog,
@@ -3846,8 +3667,7 @@ fn owned_rows_cannot_create_generated_parents_or_children_without_allocation() {
     let definitions = owned_series_types(true, true);
     let catalog = TypeCatalog::new(&definitions);
     let action = owned_series_action();
-    let mut fresh = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-        .with_types(definitions.clone());
+    let mut fresh = new_cell().with_types(definitions.clone());
     let create = owned_series_call(
         &action,
         "manual-parent",
@@ -4013,8 +3833,7 @@ fn many_owned_collections(count: usize) -> (Vec<ObjectTypeDef>, ActionRoot) {
 fn unchanged_owned_manifests_use_snapshot_bounds_not_event_limits() {
     let (definitions, action) = many_owned_collections(33);
     let catalog = TypeCatalog::new(&definitions);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-        .with_types(definitions.clone());
+    let mut cell = new_cell().with_types(definitions.clone());
     commit_action(
         &mut cell,
         &catalog,
@@ -4071,8 +3890,7 @@ fn owned_collection_manifests_still_obey_the_snapshot_record_bound() {
         .max_records;
     let (definitions, action) = many_owned_collections(usize::try_from(max_records).unwrap() + 1);
     let catalog = TypeCatalog::new(&definitions);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-        .with_types(definitions.clone());
+    let mut cell = new_cell().with_types(definitions.clone());
     let request = owned_series_call(
         &action,
         "too-many-snapshots",
@@ -4108,8 +3926,7 @@ fn base_owned_row_actions_preserve_subtype_collections_and_refuse_uncovered_dele
         *object_kind = subtype.to_owned();
         collections.push(serde_json::from_value(json!({"id": "extras"})).unwrap());
     }
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-        .with_types(definitions.clone());
+    let mut cell = new_cell().with_types(definitions.clone());
     let mut seed = owned_series_call(
         &subtype_action,
         "seed-subtype",
@@ -4228,7 +4045,7 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
     let property_types: Vec<norn_ir::PropertyTypeDef> =
         serde_json::from_value(value_types["payload"]["propertyTypes"].clone()).unwrap();
     let catalog = TypeCatalog::new(&types).with_property_types(&property_types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+    let mut cell = new_cell()
         .with_types(types.clone())
         .with_property_types(property_types.clone());
     let mut payload =
@@ -4262,7 +4079,7 @@ fn authored_brand_create_refuses_missing_required_legal_owner_without_a_receipt(
 }
 
 #[test]
-fn owned_row_defaults_are_kernel_values_but_protected_inputs_are_refused() {
+fn owned_row_protected_defaults_and_framework_fields() {
     let action = owned_series_action();
     let mut definitions = owned_series_types(false, false);
     let mut base = serde_json::to_value(&definitions[1]).unwrap();
@@ -4272,8 +4089,7 @@ fn owned_row_defaults_are_kernel_values_but_protected_inputs_are_refused() {
     definitions[1] = serde_json::from_value(base).unwrap();
     let catalog = TypeCatalog::new(&definitions);
     for supplied in [false, true] {
-        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-            .with_types(definitions.clone());
+        let mut cell = new_cell().with_types(definitions.clone());
         let mut row = owned_series_add("row-a");
         if supplied {
             row["values"]["system_value"] = json!("caller");
@@ -4300,22 +4116,17 @@ fn owned_row_defaults_are_kernel_values_but_protected_inputs_are_refused() {
             );
         }
     }
-}
 
-#[test]
-fn owned_row_actions_refuse_protected_framework_identity_and_order() {
-    let action = owned_series_action();
     for property in ["row_id", "idx"] {
-        let mut definitions = owned_series_types(false, false);
-        definitions[1]
+        let mut framework_defs = owned_series_types(false, false);
+        framework_defs[1]
             .properties
             .iter_mut()
             .find(|candidate| candidate.id.as_str() == property)
             .unwrap()
             .protected = true;
-        let catalog = TypeCatalog::new(&definitions);
-        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-            .with_types(definitions.clone());
+        let framework_catalog = TypeCatalog::new(&framework_defs);
+        let mut cell = new_cell().with_types(framework_defs.clone());
         let request = owned_series_call(
             &action,
             "protected-framework",
@@ -4323,21 +4134,15 @@ fn owned_row_actions_refuse_protected_framework_identity_and_order() {
             &json!({"name":"ORDER-1", "company":"ACME"}),
             &json!([owned_series_add("row-a")]),
         );
-        let refusal = commit_action(&mut cell, &catalog, &request, &Allow).unwrap_err();
+        let refusal = commit_action(&mut cell, &framework_catalog, &request, &Allow).unwrap_err();
         assert_eq!(refusal.code(), "action.unsupported_effect");
         assert_eq!(cell.ledger(), []);
-        assert!(
-            !cell
-                .load(&FactKey::new(OWNED_SERIES_CHILD, "row-a"))
-                .unwrap()
-                .exists()
-        );
-        assert!(
-            !cell
-                .load(&FactKey::new("commerce.NamedOrder", "ORDER-1"))
-                .unwrap()
-                .exists()
-        );
+        for (kind, id) in [
+            (OWNED_SERIES_CHILD, "row-a"),
+            ("commerce.NamedOrder", "ORDER-1"),
+        ] {
+            assert!(!cell.load(&FactKey::new(kind, id)).unwrap().exists());
+        }
     }
 }
 
@@ -4354,7 +4159,7 @@ norn_testkit::proptest::proptest! {
         });
         let action: ActionRoot = serde_json::from_value(payload).unwrap();
         let types = order_types(); let catalog = TypeCatalog::new(&types);
-        let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+        let mut cell = new_cell();
         seed(&mut cell, ORDER, "SO-1", "draft");
         let seeded = cell.ledger().len();
         let mut request = call(&action, "SO-1", "receipt-effect");
@@ -4413,7 +4218,7 @@ norn_testkit::proptest::proptest! {
         let mut action = approve_with_submit_command("input.so_number");
         action.synchronous_rule = Some(norn_ir::ActionRuleRef {artifact_id:"example.atomic.writer.rule".into(),version:"1.0.0".into()});
         action.writes.push(norn_ir::ActionWrite {entity_kind:"commerce.Quote".into(),change:norn_ir::WriteChange::Created});
-        let mut cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+        let mut cell = new_cell();
         let order = seed(&mut cell, ORDER, "SO-1", "draft");
         let mut request = call(&action, "SO-1", "atomic-rule"); request.actor = actor.clone();
         commit_action(&mut cell, &catalog, &request, &Allow).unwrap();
@@ -4426,7 +4231,7 @@ norn_testkit::proptest::proptest! {
         request.scope.insert("orgId".into(), "different".into());
         assert_refused(&mut cell, &catalog, &request, &Allow, "action.idempotency_conflict");
         request.scope = scope();
-        let mut denied = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+        let mut denied = new_cell();
         seed(&mut denied, ORDER, "SO-1", "draft");
         struct DenyQuote;
         impl ActionAuthorizer for DenyQuote {
@@ -4446,7 +4251,7 @@ norn_testkit::proptest::proptest! {
     fn rule_receipts_preserve_optional_binding_metadata(binding in "[a-f0-9]{64}") {
         let types = order_types();
         let catalog = TypeCatalog::new(&types);
-        let mut cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+        let mut cell = new_cell();
         seed(&mut cell, ORDER, "SO-1", "draft");
         let action = approve();
         let ActionOutcome::Committed { mut record, .. } = commit_action(&mut cell, &catalog, &call(&action, "SO-1", "receipt"), &Allow).unwrap() else { unreachable!() };
@@ -4490,7 +4295,7 @@ norn_testkit::proptest::proptest! {
             {"link":"quote","targetType":"commerce.Quote","targetIdField":"so_number"},
             {"source":{"objectType":"commerce.Quote","idField":"so_number"},"link":"order","targetType":ORDER,"targetIdField":"so_number"}
         ])).unwrap();
-        let mut cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone()).with_types(types.clone());
+        let mut cell = new_cell().with_types(types.clone());
         let order = seed(&mut cell, ORDER, &id, "draft");
         let mut request = call(&action, &id, "atomic-links"); request.actor = id.clone();
         commit_action(&mut cell, &catalog, &request, &Allow).unwrap();
@@ -4500,7 +4305,7 @@ norn_testkit::proptest::proptest! {
         assert_eq!(cell.ledger().len(), 2);
         assert!(matches!(commit_action(&mut cell, &catalog, &request, &Allow).unwrap(), ActionOutcome::Replayed {..}));
         action.create_links[0].target_type = "commerce.SalesOrder".into();
-        let mut refused = Cell::new(|c: &Command<JsonObject>| c.payload.clone()).with_types(types.clone());
+        let mut refused = new_cell().with_types(types.clone());
         seed(&mut refused, ORDER, &id, "draft");
         let mut request = call(&action, &id, "dangling-links"); request.actor = id;
         assert_refused(&mut refused, &catalog, &request, &Allow, "core.txn.unchecked_writer");
@@ -4532,7 +4337,7 @@ fn retained_direct_law_keeps_naming_counter_seed_and_allocation_available() {
     law["payload"]["response"] = json!({"kind":"predicate","expression":"self.company == ''"});
     let laws = vec![serde_json::from_value(law.clone()).unwrap()];
     let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+    let mut cell = new_cell()
         .with_types(types.clone())
         .with_governing_laws(laws.clone());
     let seed = NamingCounterSeed {
@@ -4569,7 +4374,7 @@ fn trace_context_is_strictly_optional_persists_in_receipts_and_refuses_malformed
     };
 
     // Omitting trace writes no `trace` key in the canonical stored ActionCall record.
-    let mut plain_cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+    let mut plain_cell = new_cell();
     seed(&mut plain_cell, ORDER, "SO-1", "draft");
     let plain_req = call(&action, "SO-1", "plain-key");
     let ActionOutcome::Committed {
@@ -4597,7 +4402,7 @@ fn trace_context_is_strictly_optional_persists_in_receipts_and_refuses_malformed
     );
 
     // Supplying trace persists it into ActionCallRecord and survives exact replay.
-    let mut traced_cell = Cell::new(|c: &Command<JsonObject>| c.payload.clone());
+    let mut traced_cell = new_cell();
     seed(&mut traced_cell, ORDER, "SO-1", "draft");
     let mut traced_req = call(&action, "SO-1", "traced-key");
     traced_req.trace = Some(trace.clone());
@@ -4742,8 +4547,7 @@ fn ancestor_addressed_action_with_subtype_slice_read_commits_and_reports_version
         .unwrap(),
     );
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-        .with_types(types.clone());
+    let mut cell = new_cell().with_types(types.clone());
     let concrete = seed(&mut cell, subtype, "SO-sub", "draft");
 
     // Bump an ordinary non-lifecycle property on the concrete subtype to version 2.
@@ -4884,7 +4688,7 @@ fn intent_digest(cell: &Cell, catalog: &TypeCatalog<'_>, call: &ActionCall<'_>) 
 fn approved_intent_binds_the_prepared_commit_not_the_raw_input() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     let target = seed(&mut cell, ORDER, "SO-1", "draft");
     let approve = approve_with_submit_command("input.so_number");
     let granted = call(&approve, "SO-1", "approve-so-1");
@@ -4949,14 +4753,14 @@ fn approved_intent_binds_the_prepared_commit_not_the_raw_input() {
     assert_eq!(cell.outbox().len(), 1);
 }
 
-/// AUTH-INDEPENDENT-PERSON (#618): the intent digest keeps the exact Unicode
-/// spelling a call writes. NFC and NFD spellings of one text prepare distinct
-/// digests, and a commit under the other spelling's approval is refused.
+/// AUTH-INDEPENDENT-PERSON (#618): intent digests preserve exact Unicode
+/// spelling (NFC vs NFD) and bind concealed generated-key allocations to
+/// `action.approved_intent_changed` rather than a concealed `TargetNotFound`.
 #[test]
-fn approved_intent_binds_the_exact_unicode_spelling() {
+fn approved_intent_binds_unicode_spelling_and_concealed_generated_keys() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = new_cell();
     seed(&mut cell, ORDER, "SO-1", "draft");
     let action = approve_with_guarded_update_command("input.modified", "input.owner", "input.rows");
     let spelled = |owner: &str| {
@@ -4983,47 +4787,34 @@ fn approved_intent_binds_the_exact_unicode_spelling() {
         "{refused:?}"
     );
     assert!(cell.outbox().is_empty());
-}
 
-/// AUTH-INDEPENDENT-PERSON (#618): a generated-key create whose allocator
-/// diagnostics stay concealed from the caller still prepares the commit its
-/// approval is granted for, and once another create has taken that number
-/// the approved call is refused as the approval's own `ApprovedIntentChanged`,
-/// never a concealed `TargetNotFound`.
-#[test]
-fn approved_intent_binds_a_generated_key_behind_concealed_allocation() {
-    struct Concealing;
-    impl ActionAuthorizer for Concealing {
-        fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-            Ok(())
-        }
-    }
-    let types = naming_series_types("gapless_within_commit", "year");
-    let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
-    let action = naming_series_action("commerce.named_order.create");
-    let first = naming_call(&action, "ACME", "create-1", 1_767_225_600_000);
-    let second = naming_call(&action, "ACME", "create-2", 1_767_225_600_000);
-    let prepared = norn_kernel::prepare_action_intent(&cell, &catalog, &first, &Concealing);
-    let Ok(norn_kernel::Prepared::Commit(granted)) = prepared else {
+    let naming_types = naming_series_types("gapless_within_commit", "year");
+    let naming_catalog = TypeCatalog::new(&naming_types);
+    let mut naming_cell = new_cell();
+    let naming_action = naming_series_action("commerce.named_order.create");
+    let first = naming_call(&naming_action, "ACME", "create-1", 1_767_225_600_000);
+    let second = naming_call(&naming_action, "ACME", "create-2", 1_767_225_600_000);
+    let prepared =
+        norn_kernel::prepare_action_intent(&naming_cell, &naming_catalog, &first, &AllowAction);
+    let Ok(norn_kernel::Prepared::Commit(granted_create)) = prepared else {
         panic!("the concealed create reaches its commit point: {prepared:?}");
     };
-    let taken = commit_action(&mut cell, &catalog, &second, &Concealing);
+    let taken = commit_action(&mut naming_cell, &naming_catalog, &second, &AllowAction);
     assert!(
         matches!(taken, Ok(ActionOutcome::Committed { .. })),
         "{taken:?}"
     );
-    let refused = commit_action(
-        &mut cell,
-        &catalog,
+    let refused_create = commit_action(
+        &mut naming_cell,
+        &naming_catalog,
         &ActionCall {
-            approved_intent: Some(granted.digest),
+            approved_intent: Some(granted_create.digest),
             ..first
         },
-        &Concealing,
+        &AllowAction,
     );
     assert!(
-        matches!(&refused, Err(refusal) if refusal.code() == "action.approved_intent_changed"),
-        "{refused:?}"
+        matches!(&refused_create, Err(refusal) if refusal.code() == "action.approved_intent_changed"),
+        "{refused_create:?}"
     );
 }
