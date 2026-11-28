@@ -42,6 +42,10 @@ fn decision() -> JsonObject {
     perform("norn.decision", "1")
 }
 
+fn question() -> JsonObject {
+    perform("norn.question", "1")
+}
+
 fn tool() -> JsonObject {
     perform("billing.notify", "1")
 }
@@ -113,6 +117,31 @@ fn not_pending(result: &Result<(), CommitError<CellError>>) -> bool {
         result,
         Err(CommitError::NotPending { .. } | CommitError::Host(CellError::NotPending(_)))
     )
+}
+
+#[test]
+fn a_parked_question_never_blocks_the_fifo_head() {
+    let mut cell = fresh();
+    dispatch(
+        &mut cell,
+        vec![command("q1", question()), command("t1", tool())],
+    );
+    // `norn.question@1` parks outside the FIFO queue; `t1` is still at the FIFO head.
+    let head = cell.store().read().next_pending_command().unwrap().unwrap();
+    assert_eq!(head.command.command_id, "t1");
+    assert_eq!(head.queue, Queue::Fifo);
+    let parked = cell.store().read().parked_commands().unwrap();
+    assert_eq!(parked.len(), 1);
+    assert_eq!(parked[0].command.command_id, "q1");
+    assert_eq!(parked[0].queue, Queue::Parked);
+    settle(
+        &mut cell,
+        "q1",
+        1,
+        BTreeMap::from([("status".to_owned(), text("Answered"))]),
+    )
+    .unwrap();
+    assert!(cell.store().read().parked_commands().unwrap().is_empty());
 }
 
 #[test]

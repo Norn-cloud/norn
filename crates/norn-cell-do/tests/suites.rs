@@ -93,6 +93,8 @@ mod olapd_credentials;
 mod olapd_credentials_datafusion;
 #[path = "provision.rs"]
 mod provision;
+#[path = "question_steps.rs"]
+mod question_steps;
 #[path = "read_policy.rs"]
 mod read_policy;
 #[path = "refusal_detail.rs"]

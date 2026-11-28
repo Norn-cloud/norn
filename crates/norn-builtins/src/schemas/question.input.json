@@ -1,0 +1,40 @@
+{
+  "type": "object",
+  "properties": {
+    "question": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "params": { "type": "object", "additionalProperties": true },
+    "asOf": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "freshness": {
+      "type": "object",
+      "properties": {
+        "maxAgeMs": { "type": "integer", "minimum": 0 },
+        "requireExact": { "type": "boolean" }
+      },
+      "minProperties": 1,
+      "additionalProperties": false
+    },
+    "trace": {
+      "type": "object",
+      "properties": {
+        "traceId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "intentRef": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "sessionDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      },
+      "required": ["traceId"],
+      "additionalProperties": false
+    },
+    "pin": {
+      "type": "object",
+      "properties": {
+        "artifactId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "definitionsVersion": { "type": "integer", "minimum": 1 }
+      },
+      "minProperties": 1,
+      "additionalProperties": false
+    }
+  },
+  "required": ["question"],
+  "additionalProperties": false
+}

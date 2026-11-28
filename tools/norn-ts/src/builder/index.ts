@@ -8,7 +8,15 @@ export * as S from "./schema.ts"
 export * as X from "./expr.ts"
 export * from "./flow.ts"
 export { type BuildOptions, type BuildResult, FLOW_LIMITS, lowerFlow, retryDelay } from "./lower-flow.ts"
-export { DECISION_FN, actionFn, type ActionStepPinField } from "./builtins.ts"
+export {
+  DECISION_FN,
+  actionFn,
+  questionFn,
+  type ActionStepPinField,
+  type QuestionFnOptions,
+  type QuestionFreshnessField,
+  type QuestionStepPinField,
+} from "./builtins.ts"
 export type { BuildDiagnostic, SourceLocation } from "./diagnostics.ts"
 export * as E from "./entity.ts"
 export { type EnvelopeOptions, envelope } from "./envelope.ts"

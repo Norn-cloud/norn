@@ -25,7 +25,6 @@
 use std::collections::BTreeMap;
 
 use http::StatusCode;
-use norn_api::actions::ActionAnswer;
 use norn_api::authz::ReadCapability;
 use norn_api::decisions::{
     DecideCall, DecideRequest, DecisionsQuery, RequestedQuery, decide, list_decisions,
@@ -268,8 +267,7 @@ fn decisions<E: SqlEngine>(
                 now,
             };
             let as_requester =
-                |principal: &RunStarter,
-                 call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+                |principal: &RunStarter, call: &mut dyn FnMut() -> Result<(), Refusal>| {
                     steps.as_present(principal, call)
                 };
             match decide(host, &call, &reads, runtime, &as_requester) {
@@ -338,15 +336,15 @@ impl<E: SqlEngine> Steps<'_, E> {
             .map(principal_of)
     }
 
-    /// Run one flow step as its run's recorded starter: it is the slot's
-    /// verified caller for exactly that call, and the request's own caller
-    /// is restored on every path. `None` when this cell cannot act as it, or
-    /// has no slot.
+    /// Run one flow step (`norn.action@1` or `norn.question@1`) as its run's
+    /// recorded starter: it is the slot's verified caller for exactly that
+    /// call, and the request's own caller is restored on every path. `None`
+    /// when this cell cannot act as it, or has no slot.
     fn as_principal(
         &self,
         principal: &RunStarter,
-        call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
-    ) -> Option<Result<ActionAnswer, Refusal>> {
+        call: &mut dyn FnMut() -> Result<(), Refusal>,
+    ) -> Option<Result<(), Refusal>> {
         let slot = self.caller?;
         let acting = acting_caller(principal, slot.current().as_ref())?;
         // Marked as acting: it carries the roles recorded when it was
@@ -369,8 +367,8 @@ impl<E: SqlEngine> Steps<'_, E> {
     fn as_present(
         &self,
         requester: &RunStarter,
-        call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
-    ) -> Option<Result<ActionAnswer, Refusal>> {
+        call: &mut dyn FnMut() -> Result<(), Refusal>,
+    ) -> Option<Result<(), Refusal>> {
         let current = self.caller?.current()?;
         (current.subject_id == requester.subject
             && current.actor_kind == requester.actor_kind
@@ -378,19 +376,18 @@ impl<E: SqlEngine> Steps<'_, E> {
             .then(call)
     }
 
-    /// Run `run_id`'s pending action steps under its recorded starter;
-    /// `true` when it could try. A failure leaves the step pending for the
-    /// next drive.
+    /// Run `run_id`'s pending cell-executed steps (`norn.action@1` and
+    /// `norn.question@1`) under its recorded starter; `true` when it could try.
+    /// A failure leaves the step pending for the next drive.
     fn drive(&self, run_id: &str, now: norn_kernel::LogicalTime) -> bool {
         let (Some(runtime), Some(_)) = (self.questions, self.caller) else {
             return false;
         };
-        let as_starter =
-            |principal: &RunStarter, call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
-                self.as_principal(principal, call)
-            };
+        let as_starter = |principal: &RunStarter, call: &mut dyn FnMut() -> Result<(), Refusal>| {
+            self.as_principal(principal, call)
+        };
         let as_requester =
-            |principal: &RunStarter, call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+            |principal: &RunStarter, call: &mut dyn FnMut() -> Result<(), Refusal>| {
                 self.as_present(principal, call)
             };
         let driven: Result<(), Refusal> = norn_api::flow_driver::drive_run(

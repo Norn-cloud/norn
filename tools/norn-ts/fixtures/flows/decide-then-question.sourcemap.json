@@ -1,0 +1,110 @@
+{
+  "flow": "ops.decide_then_question",
+  "flowAt": {
+    "file": "fixtures/flows/decide-then-question.builder.ts",
+    "line": 18
+  },
+  "format": "norn-flow-sourcemap/1",
+  "note": "non-executable: maps generated ids to the definition sites that produced them",
+  "rows": {
+    "awaiting_perform_ask_review/failure/1": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 19
+    },
+    "awaiting_perform_ask_review/failure/2": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 19
+    },
+    "awaiting_perform_ask_review/result/1": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 29
+    },
+    "awaiting_perform_ask_review/result/2": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 37
+    },
+    "awaiting_perform_check_question/failure/1": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 34
+    },
+    "awaiting_perform_check_question/failure/2": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 29
+    },
+    "awaiting_perform_check_question/failure/3": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 29
+    },
+    "awaiting_perform_check_question/result/1": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 30
+    },
+    "awaiting_perform_convert/failure/1": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 30
+    },
+    "awaiting_perform_convert/failure/2": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 30
+    },
+    "awaiting_perform_convert/result/1": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 31
+    },
+    "started/start/1": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 19
+    }
+  },
+  "sourcePath": "tools/norn-ts/fixtures/flows/decide-then-question.flow.ts",
+  "states": {
+    "awaiting_perform_ask_review": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 19
+    },
+    "awaiting_perform_check_question": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 29
+    },
+    "awaiting_perform_convert": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 30
+    },
+    "completed": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 37
+    },
+    "failed_denied": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 29
+    },
+    "failed_expired": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 19
+    },
+    "failed_refused": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 29
+    },
+    "failed_withdrawn": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 19
+    },
+    "started": null
+  },
+  "steps": {
+    "ask_review": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 19
+    },
+    "check_question": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 29
+    },
+    "convert": {
+      "file": "fixtures/flows/decide-then-question.builder.ts",
+      "line": 30
+    }
+  },
+  "version": "1.0.0"
+}

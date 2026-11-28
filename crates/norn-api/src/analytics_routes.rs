@@ -290,6 +290,9 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
     fn handle_key(&self) -> &[u8] {
         self.inner.handle_key()
     }
+    fn as_ad_hoc(&self) -> Option<&dyn AdHocQuestions<E>> {
+        Some(self)
+    }
     fn collection_access(
         &self,
         scope: &CellScope,

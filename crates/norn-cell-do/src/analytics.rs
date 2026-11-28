@@ -364,6 +364,10 @@ impl<E: SqlEngine> QuestionRuntime<E> for DemoQuestions {
         &self.handle_key
     }
 
+    fn as_ad_hoc(&self) -> Option<&dyn norn_api::question_routes::AdHocQuestions<E>> {
+        Some(self)
+    }
+
     /// #1175 (D53): the cell policy's collection request, so a role granted
     /// Values over every object type sees raw ledger and receipt hashes.
     fn collection_access(

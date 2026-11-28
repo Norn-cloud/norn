@@ -447,6 +447,31 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         revision.map_or(Ok(None), |revision| at(self.conn, id, revision))
     }
 
+    /// The latest revision of retained definition `id` installed at or before
+    /// `definitions_version`, for `STEP-PIN-1` run-start compatibility checks.
+    ///
+    /// # Errors
+    /// Store errors.
+    pub fn retained_definition_at_version(
+        &self,
+        id: &str,
+        definitions_version: u64,
+    ) -> Result<Option<RetainedDefinitionRecord>, CellError> {
+        self.check_live()?;
+        let revision = self.conn.query_optional(
+            &format!(
+                "SELECT MAX(\"revision\") FROM \"{RETAINED_DEFINITION}\" \
+                 WHERE \"id\" = ?1 AND \"definitions_version\" <= ?2"
+            ),
+            params![id, to_i64(definitions_version)?],
+            |row| row.get::<Option<i64>>(0),
+        )?;
+        match revision.flatten() {
+            Some(rev) => at(self.conn, id, to_u64(rev)?),
+            None => Ok(None),
+        }
+    }
+
     /// The latest revision of each retained definition of `kind`, ordered by
     /// id, strictly after `after`, at most `limit`; retired ones only when
     /// `include_retired`.

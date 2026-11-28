@@ -1459,14 +1459,14 @@ fn run_approved<E: SqlEngine>(
         environment_id: Some(host.scope().environment_id.clone()),
         version: held.call.definitions_version,
     };
-    let mut commit = || {
+    let mut commit = || -> Result<(), Refusal> {
         // S2: the request's own authenticated principal, as the host's
         // trusted seam verified it for this try; the dispatch compares it
         // with the parked requester under its own hold.
         let principal = host
             .authorizer
             .verified_principal(&held.call.requester.subject);
-        crate::actions::call_action_bound(
+        let _answer = crate::actions::call_action_bound(
             host,
             &crate::actions::ActionCall {
                 query: &query,
@@ -1482,10 +1482,11 @@ fn run_approved<E: SqlEngine>(
             },
             disclosure,
             Some(&command),
-        )
+        )?;
+        Ok(())
     };
     let tried = match as_requester(&held.call.requester, &mut commit) {
-        Some(Ok(_answer)) => None,
+        Some(Ok(())) => None,
         Some(Err(refusal)) => Some(refusal.code),
         // The requester's current authority cannot be established on this
         // request (it is not the requester's own): nothing runs, and the call

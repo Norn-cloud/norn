@@ -29,6 +29,14 @@ pub use norn_builtins::action::{
     parse_step as parse_action_step,
 };
 
+/// QUESTION-STEP-1: a flow step that evaluates an admitted read-only question
+/// with `RequiredSources` freshness enforcement, executed by the cell under
+/// the run starter's authority. Hosts reach the built-in through the cell.
+pub use norn_builtins::question::{
+    FUNCTION_ID as QUESTION_FUNCTION, QuestionFreshnessGuard, QuestionStep, QuestionStepPin,
+    StepRefusal as QuestionStepRefusal, parse_step as parse_question_step,
+};
+
 /// The `type` of the ledger event that starts a run.
 pub const RUN_STARTED: &str = "norn.run.started";
 /// The first generation of every run.

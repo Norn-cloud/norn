@@ -112,3 +112,152 @@ export function actionFn(
     at,
   })
 }
+
+/** Supported explicit pin fields on `norn.question@1` steps (STEP-PIN-1). */
+export type QuestionStepPinField = ActionStepPinField
+
+/** Supported monotonic freshness guard fields on `norn.question@1` steps (QUERY-FRESH-1). */
+export type QuestionFreshnessField = "maxAgeMs" | "requireExact"
+
+const QUESTION_FRESHNESS_FIELDS: ReadonlyMap<QuestionFreshnessField, S.ValueSchema> = new Map<
+  QuestionFreshnessField,
+  S.ValueSchema
+>([
+  ["maxAgeMs", S.integer],
+  ["requireExact", S.boolean],
+])
+
+function questionStepPinSchema(fields: ReadonlyArray<QuestionStepPinField>): S.ObjectSchema {
+  if (fields.length === 0) {
+    throw new Error("questionFn pinFields must declare at least one pin field (empty pin `{}` is rejected by norn.question@1)")
+  }
+  const properties: Record<string, S.ValueSchema> = {}
+  for (const field of fields) {
+    const schema = ACTION_STEP_PIN_FIELDS.get(field)
+    if (schema === undefined) {
+      throw new Error(`unknown questionFn pin field: ${String(field)}`)
+    }
+    properties[field] = schema
+  }
+  return S.record(properties)
+}
+
+function questionFreshnessSchema(fields: ReadonlyArray<QuestionFreshnessField>): S.ObjectSchema {
+  if (fields.length === 0) {
+    throw new Error("questionFn freshnessFields must declare at least one freshness field (empty freshness `{}` is rejected by norn.question@1)")
+  }
+  const properties: Record<string, S.ValueSchema> = {}
+  for (const field of fields) {
+    const schema = QUESTION_FRESHNESS_FIELDS.get(field)
+    if (schema === undefined) {
+      throw new Error(`unknown questionFn freshness field: ${String(field)}`)
+    }
+    properties[field] = schema
+  }
+  return S.record(properties)
+}
+
+const QUESTION_REVISION_SCHEMA = S.record({
+  seq: S.integer,
+  hash: S.text(),
+  commits: S.integer,
+})
+
+const QUESTION_ROW_SCHEMA = S.record({
+  bucketKey: S.text(),
+  value: S.nullable(S.text()),
+  totals: S.array(S.text()),
+  memberCount: S.integer,
+  suppressed: S.boolean,
+})
+
+/** Closed `Answered` output schema matching `crates/norn-builtins/src/schemas/question.output.json`. */
+const QUESTION_OUTPUT_SCHEMA = S.record({
+  status: S.text(["Answered"]),
+  question: S.text(),
+  grain: S.text(),
+  engine: S.text(["cell", "ivm", "duckdb", "datafusion"]),
+  freshness: S.text(["exact", "fresh"]),
+  complete: S.boolean,
+  queryPin: S.text(),
+  definitionPin: S.text(),
+  authorityPin: S.text(),
+  readToken: S.text(),
+  revision: QUESTION_REVISION_SCHEMA,
+  effectiveAsOf: S.text(),
+  knownAsOf: S.integer,
+  nowMs: S.integer,
+  rowCount: S.integer,
+  value: S.nullable(S.text()),
+  rows: S.array(QUESTION_ROW_SCHEMA),
+})
+
+/** Options for constructing a typed `norn.question@1` handle. */
+export interface QuestionFnOptions {
+  /** Closed schema for optional parameter bindings (`params`). */
+  readonly params?: S.ObjectSchema
+  /** Whether the step may pass an `asOf` RFC 3339 cutoff string. */
+  readonly asOf?: boolean
+  /** Freshness guard fields required when `freshness` is supplied (rejects empty `{}`). */
+  readonly freshnessFields?: readonly [QuestionFreshnessField, ...QuestionFreshnessField[]]
+  /** Explicit STEP-PIN-1 fields required when `pin` is supplied (rejects empty `{}`). */
+  readonly pinFields?: readonly [QuestionStepPinField, ...QuestionStepPinField[]]
+}
+
+/**
+ * `norn.question@1` (QUESTION-STEP-1): a read-only flow step that evaluates the admitted question
+ * `question` through `QuestionRuntime` under the run starter's authority and markings disclosure,
+ * enforcing `STEP-PIN-1` pins and `#1905` `RequiredSources` freshness. Its output is `Answered`
+ * (structured rows/value plus pins). Its typed failures are `StaleSource` (stale or incomplete
+ * required sources, carrying `code`, `freshness`, `complete`, and `sources`), `Denied` (permission,
+ * visibility, or markings disclosure refusal), and `Refused` (pin mismatch or other deterministic
+ * refusal with `code`).
+ */
+export function questionFn(question: string, options?: QuestionFnOptions): FnRef {
+  const properties: Record<string, S.ValueSchema> = {
+    question: S.text([question]),
+  }
+  const optional: string[] = []
+  if (options?.params !== undefined) {
+    properties.params = options.params
+    optional.push("params")
+  }
+  if (options?.asOf === true) {
+    properties.asOf = S.text()
+    optional.push("asOf")
+  }
+  if (options?.freshnessFields !== undefined) {
+    properties.freshness = questionFreshnessSchema(options.freshnessFields)
+    optional.push("freshness")
+  }
+  properties.trace = TRACE_CONTEXT
+  optional.push("trace")
+  if (options?.pinFields !== undefined) {
+    properties.pin = questionStepPinSchema(options.pinFields)
+    optional.push("pin")
+  }
+  return fn({
+    id: "norn.question",
+    version: "1",
+    input: S.record(properties, optional),
+    output: QUESTION_OUTPUT_SCHEMA,
+    errors: [
+      taggedError(
+        "StaleSource",
+        S.record(
+          {
+            code: S.text(),
+            freshness: S.text(["stale", "incomplete", "fresh"]),
+            complete: S.boolean,
+            sources: S.array(S.text()),
+          },
+          ["code", "freshness", "complete", "sources"],
+        ),
+        { at },
+      ),
+      taggedError("Denied", S.record({}), { at }),
+      taggedError("Refused", S.record({ code: S.text() }, ["code"]), { at }),
+    ],
+    at,
+  })
+}

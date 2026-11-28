@@ -70,10 +70,20 @@ fn only_the_compiled_in_table_registers_built_ins() {
         Some(format!("norn-builtins/0.1.0@{}", pin.0).as_str())
     );
     assert_eq!(registered.digest(), &manifest.content_digest().unwrap());
+    let question = norn_builtins::resolve("norn.question", 1)
+        .unwrap()
+        .expect("norn.question@1 registered");
+    assert_eq!(question.manifest().implementation.digest, pin);
+    assert_eq!(
+        question.digest(),
+        &question.manifest().content_digest().unwrap()
+    );
     for (id, version) in [
         ("norn.decision", 2),
+        ("norn.question", 2),
         ("norn.other", 1),
         ("acme.norn.decision", 1),
+        ("acme.norn.question", 1),
     ] {
         assert!(
             norn_builtins::resolve(id, version).unwrap().is_none(),

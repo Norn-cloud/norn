@@ -1,0 +1,68 @@
+{
+  "type": "object",
+  "properties": {
+    "status": { "type": "string", "enum": ["Answered"] },
+    "question": { "type": "string" },
+    "grain": { "type": "string" },
+    "engine": { "type": "string", "enum": ["cell", "ivm", "duckdb", "datafusion"] },
+    "freshness": { "type": "string", "enum": ["exact", "fresh"] },
+    "complete": { "type": "boolean" },
+    "queryPin": { "type": "string" },
+    "definitionPin": { "type": "string" },
+    "authorityPin": { "type": "string" },
+    "readToken": { "type": "string" },
+    "revision": {
+      "type": "object",
+      "properties": {
+        "seq": { "type": "integer" },
+        "hash": { "type": "string" },
+        "commits": { "type": "integer" }
+      },
+      "required": ["seq", "hash", "commits"],
+      "additionalProperties": false
+    },
+    "effectiveAsOf": { "type": "string" },
+    "knownAsOf": { "type": "integer" },
+    "nowMs": { "type": "integer" },
+    "rowCount": { "type": "integer" },
+    "value": { "type": ["string", "null"] },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "bucketKey": { "type": "string" },
+          "value": { "type": ["string", "null"] },
+          "totals": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "memberCount": { "type": "integer" },
+          "suppressed": { "type": "boolean" }
+        },
+        "required": ["bucketKey", "value", "totals", "memberCount", "suppressed"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "status",
+    "question",
+    "grain",
+    "engine",
+    "freshness",
+    "complete",
+    "queryPin",
+    "definitionPin",
+    "authorityPin",
+    "readToken",
+    "revision",
+    "effectiveAsOf",
+    "knownAsOf",
+    "nowMs",
+    "rowCount",
+    "value",
+    "rows"
+  ],
+  "additionalProperties": false
+}

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { DECISION_FN, S, actionFn } from "../src/builder/index.ts"
+import { DECISION_FN, S, actionFn, questionFn } from "../src/builder/index.ts"
 
 const schema = (name: string) => Bun.file(new URL(`../../../crates/norn-builtins/src/schemas/${name}.json`, import.meta.url)).json()
 
@@ -41,4 +41,68 @@ test("an action step handle restates the norn-builtins contract, with the action
   expect(() =>
     actionFn("ops.refund.approve", input, { pinFields: ["__proto__"] as unknown as ["artifactId"] }),
   ).toThrow(/unknown actionFn pin field/)
+})
+
+test("a question step handle restates the norn-builtins contract exactly", async () => {
+  const trace = S.record(
+    { traceId: S.text(), intentRef: S.text(), sessionDigest: S.text() },
+    ["intentRef", "sessionDigest"],
+  )
+  const basic = questionFn("inventory.on_hand")
+  expect(basic.id).toBe("norn.question")
+  expect(basic.version).toBe("1")
+  expect(basic.input).toEqual(S.record({ question: S.text(["inventory.on_hand"]), trace }, ["trace"]))
+  expect(basic.output).toEqual(await schema("question.output"))
+
+  const errors = await schema("question.error")
+  expect(basic.errors.map((error) => error.tag)).toEqual(errors.properties._tag.enum)
+  const stale = basic.errors.find((error) => error.tag === "StaleSource")
+  expect(stale?.fields).toEqual(
+    S.record(
+      {
+        code: S.text(),
+        freshness: S.text(errors.properties.freshness.enum),
+        complete: S.boolean,
+        sources: S.array(S.text()),
+      },
+      ["code", "freshness", "complete", "sources"],
+    ),
+  )
+
+  const inputDoc = await schema("question.input")
+  const params = S.record({ warehouse: S.text() })
+  const full = questionFn("inventory.on_hand", {
+    params,
+    asOf: true,
+    freshnessFields: ["maxAgeMs", "requireExact"],
+    pinFields: ["artifactId", "version", "digest", "definitionsVersion"],
+  })
+  expect(Object.keys(full.input.properties).sort()).toEqual(Object.keys(inputDoc.properties).sort())
+  expect(full.input.required).toEqual(inputDoc.required)
+
+  const pin = full.input.properties.pin as S.ObjectSchema
+  expect(Object.keys(pin.properties).sort()).toEqual(Object.keys(inputDoc.properties.pin.properties).sort())
+  expect(pin.required).toEqual(["artifactId", "version", "digest", "definitionsVersion"])
+
+  const freshness = full.input.properties.freshness as S.ObjectSchema
+  expect(Object.keys(freshness.properties).sort()).toEqual(
+    Object.keys(inputDoc.properties.freshness.properties).sort(),
+  )
+  expect(freshness.required).toEqual(["maxAgeMs", "requireExact"])
+
+  expect(() => questionFn("inventory.on_hand", { pinFields: [] as unknown as ["artifactId"] })).toThrow(
+    /at least one pin field/,
+  )
+  expect(() =>
+    questionFn("inventory.on_hand", { pinFields: ["toString"] as unknown as ["artifactId"] }),
+  ).toThrow(/unknown questionFn pin field/)
+  expect(() =>
+    questionFn("inventory.on_hand", { pinFields: ["__proto__"] as unknown as ["artifactId"] }),
+  ).toThrow(/unknown questionFn pin field/)
+  expect(() =>
+    questionFn("inventory.on_hand", { freshnessFields: [] as unknown as ["maxAgeMs"] }),
+  ).toThrow(/at least one freshness field/)
+  expect(() =>
+    questionFn("inventory.on_hand", { freshnessFields: ["allowStale"] as unknown as ["maxAgeMs"] }),
+  ).toThrow(/unknown questionFn freshness field/)
 })

@@ -164,6 +164,12 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
     ) -> Result<ForkQuestionResult, CellError> {
         store.evaluate_question_in_fork(plan, context, visible)
     }
+    /// When this runtime also supports ad-hoc and retained question admission
+    /// ([`AdHocQuestions`]), return itself so `norn.question@1` flow steps can
+    /// evaluate retained `"question"` definitions through the same authority.
+    fn as_ad_hoc(&self) -> Option<&dyn AdHocQuestions<E>> {
+        None
+    }
 }
 
 /// The declared default minimum disclosed bucket size (D53).
@@ -226,9 +232,10 @@ fn answered_at(
     }
 }
 
-type AdmittedQuestion<'h, 'a, 'r> = (RwLockReadGuard<'h, ()>, &'a str, &'r [u8], QuestionPlan);
+pub(crate) type AdmittedQuestion<'h, 'a, 'r> =
+    (RwLockReadGuard<'h, ()>, &'a str, &'r [u8], QuestionPlan);
 
-fn admit_named_question<'h, 'a, 'r, E: SqlEngine>(
+pub(crate) fn admit_named_question<'h, 'a, 'r, E: SqlEngine>(
     host: &'h DevHost<E>,
     scope: &ScopeQuery,
     actor: Option<&'a str>,
@@ -269,7 +276,7 @@ pub fn get_answer<E: SqlEngine>(
 
 /// Evaluate an admitted `plan` for `actor` under the row gates and D53
 /// redaction, after the caller's collection access was decided.
-fn answer_plan<E: SqlEngine>(
+pub(crate) fn answer_plan<E: SqlEngine>(
     host: &DevHost<E>,
     runtime: &dyn QuestionRuntime<E>,
     actor: &str,
@@ -599,7 +606,7 @@ fn trace_plan<E: SqlEngine>(
     disclosed.map_err(Refusal::from_compute)?
 }
 
-fn mapped<E: SqlEngine>(
+pub(crate) fn mapped<E: SqlEngine>(
     host: &DevHost<E>,
     runtime: &dyn QuestionRuntime<E>,
     actor: &str,
