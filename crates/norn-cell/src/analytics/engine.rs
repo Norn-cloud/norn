@@ -38,14 +38,14 @@ use super::{MAX_RESIDUE_PAGES, RESIDUE_EXCEEDED, RESIDUE_PAGE_BYTES, RESIDUE_PAG
 /// An engine outcome: a typed refusal the cell maps to its own answer.
 pub type Outcome<T> = Result<T, EngineRefusal>;
 
-fn refusal(code: &str, detail: impl Into<String>) -> EngineRefusal {
+pub(super) fn refusal(code: &str, detail: impl Into<String>) -> EngineRefusal {
     EngineRefusal {
         code: code.to_owned(),
         detail: detail.into(),
     }
 }
 
-fn db<T>(value: duckdb::Result<T>) -> Outcome<T> {
+pub(super) fn db<T>(value: duckdb::Result<T>) -> Outcome<T> {
     value.map_err(|error| refusal("analytics.engine", error.to_string()))
 }
 
@@ -267,7 +267,7 @@ fn mirror_table(name: &str) -> String {
     ident(&format!("m:{name}"))
 }
 
-fn dataset_table(name: &str) -> String {
+pub(super) fn dataset_table(name: &str) -> String {
     ident(&format!("d:{name}"))
 }
 
@@ -277,11 +277,11 @@ fn link_table(name: &str) -> String {
 }
 
 /// The residue rows of a landing: left to the per-row evaluator.
-fn residue_table(name: &str) -> String {
+pub(super) fn residue_table(name: &str) -> String {
     ident(&format!("r:{name}"))
 }
 
-fn quarantine_table(name: &str) -> String {
+pub(super) fn quarantine_table(name: &str) -> String {
     ident(&format!("q:{name}"))
 }
 
@@ -825,7 +825,9 @@ impl Engine {
                         .ok_or_else(|| refusal(STALE, "the landing attempt is unknown"))?,
                 )
                 .map_err(|e| refusal("analytics.engine", e.to_string()))?;
-                in_transaction(conn, |conn| settle_rows(conn, &staged_table, request))?;
+                in_transaction(conn, |conn| {
+                    super::settle::settle_rows(conn, &staged_table, request)
+                })?;
                 Self::landing(conn, &lease.dir, land, load)
             })();
             if settled.is_err() {
@@ -1398,7 +1400,7 @@ fn set_meta(conn: &Connection, key: &str, value: &str) -> Outcome<()> {
     Ok(())
 }
 
-fn in_transaction<T>(
+pub(super) fn in_transaction<T>(
     conn: &Connection,
     body: impl FnOnce(&Connection) -> Outcome<T>,
 ) -> Outcome<T> {
@@ -2931,7 +2933,7 @@ fn law_sql(column: &Column, i: usize) -> Outcome<String> {
     })
 }
 
-fn dataset_ddl(table: &TableSchema) -> String {
+pub(super) fn dataset_ddl(table: &TableSchema) -> String {
     let mut columns = vec![
         format!("{} VARCHAR", ident(":id")),
         format!("{} UBIGINT", ident(":v")),
@@ -3197,7 +3199,7 @@ fn load_locked(
 /// The quarantine (held-set) table: each held-back source row with its
 /// reason, the rule that holds it (none for a row that could not be typed),
 /// whether it holds the row back, and the row's text values.
-fn quarantine_ddl(table: &TableSchema) -> String {
+pub(super) fn quarantine_ddl(table: &TableSchema) -> String {
     let mut columns = vec![
         format!("{} UBIGINT", ident(":row")),
         format!("{} VARCHAR", ident(":load")),
@@ -3242,7 +3244,7 @@ fn held_columns(table: &TableSchema) -> Vec<String> {
 /// MANIFEST-LAWS-1 (S3): the held-set value columns of a typed staged row
 /// (`d`), as the text the per-row path holds: each value's text, a number
 /// as its canonical decimal (`1.500` is `1.5`).
-fn held_values(table: &TableSchema) -> Vec<String> {
+pub(super) fn held_values(table: &TableSchema) -> Vec<String> {
     table
         .columns
         .iter()
@@ -3264,7 +3266,7 @@ fn held_values(table: &TableSchema) -> Vec<String> {
 
 /// The quarantine's column list for a rule finding: the metadata and every
 /// value column.
-fn finding_columns(table: &TableSchema) -> String {
+pub(super) fn finding_columns(table: &TableSchema) -> String {
     let mut columns = vec![
         ident(":row"),
         ident(":load"),
@@ -3802,75 +3804,6 @@ fn check_rules(conn: &Connection, table: &TableSchema, request: &LandRequest) ->
         ))?;
     }
     db(conn.execute_batch("DROP TABLE \":outcome\";"))
-}
-
-/// MANIFEST-LAWS-1 / LAW-04: record the per-row findings of the residue
-/// rows up to `through` and remove those rows from the residue. A finding
-/// must name a rule the engine left to that row, once, and match the
-/// metadata the landing pinned for that rule.
-fn settle_rows(conn: &Connection, table: &TableSchema, request: &SettleRequest) -> Outcome<()> {
-    let quarantine = quarantine_table(&table.name);
-    let residue = residue_table(&table.name);
-    let dataset = dataset_table(&table.name);
-    let columns = finding_columns(table);
-    let values = finding_values(table, "?");
-    let mut statement = db(conn.prepare(&format!(
-        "SELECT count(*) FROM {residue} WHERE \":row\" = ? AND \":rule\" = ? AND \":row\" <= ?"
-    )))?;
-    let checks: BTreeMap<_, _> = request
-        .land
-        .checks
-        .iter()
-        .map(|check| (check.rule.as_str(), check))
-        .collect();
-    let mut seen = std::collections::BTreeSet::new();
-    for finding in &request.findings {
-        let Some(check) = checks
-            .get(finding.rule.as_str())
-            .filter(|check| check.label == finding.label && check.holds == finding.holds)
-        else {
-            return Err(refusal(
-                "bulk.invalid_finding",
-                "the finding does not match the landed rule's label and hold",
-            ));
-        };
-        let present: u64 = db(statement.query_row(
-            params_from_iter([
-                Sql::UBigInt(finding.row),
-                Sql::Text(finding.rule.clone()),
-                Sql::UBigInt(request.through),
-            ]),
-            |row| row.get(0),
-        ))?;
-        if present != 1 || !seen.insert((finding.row, finding.rule.clone())) {
-            return Err(refusal(
-                "bulk.invalid_finding",
-                format!(
-                    "row {} is not residue of that rule up to {}",
-                    finding.row, request.through
-                ),
-            ));
-        }
-        // S3: from the staged row, so the finding carries its values.
-        db(conn.execute(
-            &format!(
-                "INSERT INTO {quarantine} ({columns}) SELECT {values} FROM {dataset} AS d WHERE d.\":row\" = ?"
-            ),
-            params_from_iter([
-                Sql::UBigInt(finding.row),
-                Sql::Text(request.land.load.load.clone()),
-                Sql::Text(check.label.clone()),
-                Sql::Text(check.rule.clone()),
-                Sql::Boolean(check.holds),
-                Sql::UBigInt(finding.row),
-            ]),
-        ))?;
-    }
-    db(conn.execute(
-        &format!("DELETE FROM {residue} WHERE \":row\" <= ?"),
-        params_from_iter([Sql::UBigInt(request.through)]),
-    ))?;
-    Ok(())
 }
 
 /// Findings by rule, and how many admitted rows a rule holds back.

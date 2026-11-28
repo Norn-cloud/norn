@@ -96,6 +96,106 @@ fn same_capture_pin(existing: &MappingBundle, incoming: &MappingBundle) -> bool 
         && existing.derivation == incoming.derivation
 }
 
+fn source_event_key(incoming: &MappingBundle) -> Result<[String; 5], CellError> {
+    Ok([
+        incoming.input.connector_instance.clone(),
+        incoming.input.partition.clone(),
+        field(incoming, "source")?.to_owned(),
+        field(incoming, "source_id")?.to_owned(),
+        field(incoming, "event_id")?.to_owned(),
+    ])
+}
+
+/// Per-snapshot memoization of verified source-event bundles, retained subject
+/// roots, and verified committed inbox bundles during dispute index collection.
+#[derive(Default)]
+pub(crate) struct DisputeVerifyCache {
+    pub(crate) event_bundles: BTreeMap<[String; 5], Vec<MappingBundle>>,
+    pub(crate) retained_roots: BTreeMap<(u64, String), String>,
+    pub(crate) verified_bundles: BTreeSet<String>,
+    pub(crate) verified_events: BTreeSet<[String; 5]>,
+}
+
+/// Compare `incoming` against already-fetched, verified `existing` bundles for
+/// the same source event.
+pub(crate) fn classify_source_event_with(
+    incoming: &MappingBundle,
+    existing: &[MappingBundle],
+) -> Result<SourceEventCapture, CellError> {
+    let new = content(incoming)?;
+    classify_source_event_with_content(incoming, &new, existing)
+}
+
+fn classify_source_event_with_content(
+    incoming: &MappingBundle,
+    new: &str,
+    existing: &[MappingBundle],
+) -> Result<SourceEventCapture, CellError> {
+    let Some(accepted) = existing.first() else {
+        return Ok(SourceEventCapture::Fresh);
+    };
+    let accepted_id = format!("mapping-bundle:{}", accepted.digest);
+    let old = content(accepted)?;
+    if old == new {
+        if incoming.reprocesses.is_none()
+            && let Some(matched) = existing.iter().find(|b| same_capture_pin(b, incoming))
+        {
+            return Ok(SourceEventCapture::Replay(format!(
+                "mapping-bundle:{}",
+                matched.digest
+            )));
+        }
+        return Ok(SourceEventCapture::Fresh);
+    }
+    let evidence = norn_ir::canonical::domain_hash_hex(
+        b"norn.source.conflict.v1\0",
+        &(
+            &incoming.input.connector_instance,
+            &incoming.input.partition,
+            field(incoming, "source")?,
+            field(incoming, "source_id")?,
+            field(incoming, "event_id")?,
+            old,
+            new,
+        ),
+    )?;
+    let subjects = accepted
+        .records
+        .iter()
+        .chain(&incoming.records)
+        .map(|r| DataQualitySubject::new(r.object_type.clone(), &r.key))
+        .collect();
+    let observation_ids = vec![
+        accepted_id.clone(),
+        format!("mapping-bundle:{}", incoming.digest),
+    ];
+    let finding = DataQualityFinding::v2(
+        DataQualityRuleRef::Builtin {
+            id: "core.boundary.import_finding".into(),
+            version: "1".into(),
+        },
+        subjects,
+        DataQualitySeverity::Error,
+        "conflicting immutable source event content",
+        DataQualityOutcome::NotSatisfied,
+        accepted
+            .records
+            .iter()
+            .chain(&incoming.records)
+            .map(|r| DataQualityLineage::new(r.provenance.clone(), observation_ids.clone()))
+            .collect(),
+        incoming.input.recorded_at.clone(),
+        incoming.input.recorded_at.clone(),
+        DataQualityFindingStatus::Open,
+    )?
+    .with_evidence_digest(evidence)?;
+    Ok(SourceEventCapture::Conflict(Box::new(MappingConflict {
+        accepted_bundle_id: accepted_id,
+        incoming: incoming.clone(),
+        finding,
+    })))
+}
+
 impl<E: SqlEngine> StoreReader<'_, E> {
     fn source_event_bundles(
         &self,
@@ -110,75 +210,44 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )
     }
 
+    pub(crate) fn cached_source_event_bundles<'a>(
+        &self,
+        incoming: &MappingBundle,
+        cache: &'a mut BTreeMap<[String; 5], Vec<MappingBundle>>,
+    ) -> Result<&'a [MappingBundle], CellError> {
+        let key = source_event_key(incoming)?;
+        match cache.entry(key) {
+            std::collections::btree_map::Entry::Occupied(entry) => Ok(entry.into_mut().as_slice()),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let bundles = self.source_event_bundles(incoming)?;
+                Ok(entry.insert(bundles).as_slice())
+            }
+        }
+    }
+
+    pub(crate) fn cached_retained_root<'a>(
+        &self,
+        version: u64,
+        object_type: &str,
+        cache: &'a mut BTreeMap<(u64, String), String>,
+    ) -> Result<&'a str, CellError> {
+        let key = (version, object_type.to_owned());
+        match cache.entry(key) {
+            std::collections::btree_map::Entry::Occupied(entry) => Ok(entry.into_mut().as_str()),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let root = self.retained_mapping_root(version, object_type)?;
+                Ok(entry.insert(root).as_str())
+            }
+        }
+    }
+
     pub(crate) fn classify_source_event(
         &self,
         incoming: &MappingBundle,
     ) -> Result<SourceEventCapture, CellError> {
         let new = content(incoming)?;
         let existing = self.source_event_bundles(incoming)?;
-        let Some(accepted) = existing.first() else {
-            return Ok(SourceEventCapture::Fresh);
-        };
-        let accepted_id = format!("mapping-bundle:{}", accepted.digest);
-        let old = content(accepted)?;
-        if old == new {
-            if incoming.reprocesses.is_none()
-                && let Some(matched) = existing.iter().find(|b| same_capture_pin(b, incoming))
-            {
-                return Ok(SourceEventCapture::Replay(format!(
-                    "mapping-bundle:{}",
-                    matched.digest
-                )));
-            }
-            return Ok(SourceEventCapture::Fresh);
-        }
-        let evidence = norn_ir::canonical::domain_hash_hex(
-            b"norn.source.conflict.v1\0",
-            &(
-                &incoming.input.connector_instance,
-                &incoming.input.partition,
-                field(incoming, "source")?,
-                field(incoming, "source_id")?,
-                field(incoming, "event_id")?,
-                old,
-                new,
-            ),
-        )?;
-        let subjects = accepted
-            .records
-            .iter()
-            .chain(&incoming.records)
-            .map(|r| DataQualitySubject::new(r.object_type.clone(), &r.key))
-            .collect();
-        let observation_ids = vec![
-            accepted_id.clone(),
-            format!("mapping-bundle:{}", incoming.digest),
-        ];
-        let finding = DataQualityFinding::v2(
-            DataQualityRuleRef::Builtin {
-                id: "core.boundary.import_finding".into(),
-                version: "1".into(),
-            },
-            subjects,
-            DataQualitySeverity::Error,
-            "conflicting immutable source event content",
-            DataQualityOutcome::NotSatisfied,
-            accepted
-                .records
-                .iter()
-                .chain(&incoming.records)
-                .map(|r| DataQualityLineage::new(r.provenance.clone(), observation_ids.clone()))
-                .collect(),
-            incoming.input.recorded_at.clone(),
-            incoming.input.recorded_at.clone(),
-            DataQualityFindingStatus::Open,
-        )?
-        .with_evidence_digest(evidence)?;
-        Ok(SourceEventCapture::Conflict(Box::new(MappingConflict {
-            accepted_bundle_id: accepted_id,
-            incoming: incoming.clone(),
-            finding,
-        })))
+        classify_source_event_with_content(incoming, &new, &existing)
     }
 
     /// Find a conflict against the first captured source event, including consumed captures.
@@ -201,12 +270,22 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.indexed_source_findings(object_type, key, false)
     }
 
-    /// Every captured conflict with its inbox position, in capture order.
-    pub(crate) fn verified_source_conflicts(
+    /// Every captured conflict with its inbox position, in capture order, reusing
+    /// verified source-event bundles across conflicts sharing an event.
+    fn verified_source_conflicts_with(
         &self,
+        event_bundles: &mut BTreeMap<[String; 5], Vec<MappingBundle>>,
     ) -> Result<Vec<(u64, MappingConflict)>, CellError> {
-        let rows = self.conn.query(&format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-conflict:%' ORDER BY position"), params![])?;
-        let mut conflicts = Vec::new();
+        // Range bounds (`:` = 0x3A, `;` = 0x3B) use the `UNIQUE(observation_id)` index.
+        let rows = self.conn.query(
+            &format!(
+                "SELECT position, observation_id, observed FROM {INBOX} \
+                 WHERE observation_id >= 'mapping-conflict:' AND observation_id < 'mapping-conflict;' \
+                 ORDER BY position"
+            ),
+            params![],
+        )?;
+        let mut conflicts = Vec::with_capacity(rows.len());
         for values in rows {
             let row = crate::engine::SqlRow(values);
             let position = crate::read::to_u64(row.get(0)?, "inbox position")?;
@@ -215,7 +294,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
             let conflict: MappingConflict =
                 norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
-            self.recheck_mapping_conflict(&conflict)?;
+            self.recheck_mapping_bundle(&conflict.incoming)?;
+            let existing = self.cached_source_event_bundles(&conflict.incoming, event_bundles)?;
+            let expected = match classify_source_event_with(&conflict.incoming, existing)? {
+                SourceEventCapture::Conflict(expected) => Some(*expected),
+                SourceEventCapture::Fresh | SourceEventCapture::Replay(_) => None,
+            };
+            if expected.as_ref() != Some(&conflict) {
+                return Err(CellError::MappingBundleMismatch);
+            }
             if observed.id.0 != stored_id
                 || stored_id != format!("mapping-conflict:{}", conflict.finding.id)
             {
@@ -275,7 +362,9 @@ pub(crate) fn capture<E: SqlEngine>(
 pub(crate) struct SourceDisputeIndex {
     revision: Option<(u64, u64)>,
     initialized: bool,
-    pub(crate) subjects: BTreeMap<(String, String), Vec<(bool, DataQualityFinding)>>,
+    /// Disputed subjects grouped as `root -> key -> findings` for zero-allocation
+    /// lookups and O(log R + K) per-root scans.
+    pub(crate) subjects: BTreeMap<String, BTreeMap<String, Vec<(bool, DataQualityFinding)>>>,
     /// Disputed source events (NFC keys), conflicts and identity disputes alike.
     pub(crate) events: BTreeMap<[String; 5], EventDispute>,
     pub(crate) roots_by_key: BTreeMap<String, BTreeSet<String>>,
@@ -333,7 +422,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 
     fn collect_source_dispute_index(&self) -> Result<SourceDisputeIndex, CellError> {
         let mut index = SourceDisputeIndex::default();
-        for (position, conflict) in self.verified_source_conflicts()? {
+        let mut cache = DisputeVerifyCache::default();
+        for (position, conflict) in self.verified_source_conflicts_with(&mut cache.event_bundles)? {
             index.dispute(
                 crate::mapping_identity::keys(&conflict.incoming.raw, &conflict.incoming.input)?
                     .map(|key| norn_ir::canonical::nfc(&key)),
@@ -341,7 +431,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 format!("mapping-conflict:{}", conflict.finding.id),
                 &conflict.finding,
             );
-            self.index_source_finding(&mut index, &conflict.incoming, false, &conflict.finding)?;
+            let related =
+                self.cached_source_event_bundles(&conflict.incoming, &mut cache.event_bundles)?;
+            self.index_source_finding_with(
+                &mut index,
+                related,
+                &conflict.incoming,
+                false,
+                &conflict.finding,
+                &mut cache.retained_roots,
+            )?;
         }
         for (position, guard) in self.identity_evidence()? {
             index.dispute(
@@ -350,44 +449,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 format!("mapping-identity:{}", guard.finding.id),
                 &guard.finding,
             );
-            self.index_source_finding(&mut index, &guard.bundle, true, &guard.finding)?;
+            let related =
+                self.cached_source_event_bundles(&guard.bundle, &mut cache.event_bundles)?;
+            self.index_source_finding_with(
+                &mut index,
+                related,
+                &guard.bundle,
+                true,
+                &guard.finding,
+                &mut cache.retained_roots,
+            )?;
         }
         Ok(index)
-    }
-
-    pub(crate) fn index_source_finding(
-        &self,
-        index: &mut SourceDisputeIndex,
-        incoming: &MappingBundle,
-        identity: bool,
-        finding: &DataQualityFinding,
-    ) -> Result<(), CellError> {
-        let related = self.source_event_bundles(incoming)?;
-        let mut subjects = BTreeSet::new();
-        for bundle in related.iter().chain(std::iter::once(incoming)) {
-            for record in &bundle.records {
-                subjects.insert((
-                    self.retained_mapping_root(
-                        bundle.definitions_version,
-                        record.object_type.as_str(),
-                    )?,
-                    record.key.clone(),
-                ));
-            }
-        }
-        for subject in subjects {
-            index
-                .roots_by_key
-                .entry(subject.1.clone())
-                .or_default()
-                .insert(subject.0.clone());
-            index
-                .subjects
-                .entry(subject)
-                .or_default()
-                .push((identity, finding.clone()));
-        }
-        Ok(())
     }
 
     pub(crate) fn with_source_dispute_index<T>(
@@ -406,93 +479,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             *cache.borrow_mut() = rebuilt;
         }
         Ok(read(&cache.borrow()))
-    }
-
-    /// D102: identities of `root` with any source or identity finding, the
-    /// candidates an analytical answer checks for exclusion.
-    pub(crate) fn source_finding_keys(&self, root: &str) -> Result<BTreeSet<String>, CellError> {
-        self.with_source_dispute_index(|index| {
-            index
-                .subjects
-                .keys()
-                .filter(|(kind, _)| kind == root)
-                .map(|(_, key)| key.clone())
-                .collect()
-        })
-    }
-
-    pub(crate) fn indexed_source_findings(
-        &self,
-        object_type: &str,
-        key: &str,
-        identity: bool,
-    ) -> Result<Vec<DataQualityFinding>, CellError> {
-        let roots = self.source_dispute_roots(crate::MAIN_WORLD, object_type, key)?;
-        self.with_source_dispute_index(|index| {
-            let mut seen = BTreeSet::new();
-            let mut findings = Vec::new();
-            for root in roots.as_ref().into_iter().flatten().chain(
-                index
-                    .roots_by_key
-                    .get(key)
-                    .into_iter()
-                    .flatten()
-                    .filter(|_root| roots.is_none()),
-            ) {
-                for (kind, finding) in index
-                    .subjects
-                    .get(&(root.clone(), key.to_owned()))
-                    .into_iter()
-                    .flatten()
-                {
-                    if *kind == identity && seen.insert(finding.id.clone()) {
-                        findings.push(finding.clone());
-                    }
-                }
-            }
-            findings
-        })
-    }
-
-    /// QUERY-ENGINE-1: bounded member cache tokens from the rechecked source index.
-    /// Tokens include roots and complete finding contents; they grant no authority.
-    pub(crate) fn question_source_pins(
-        &self,
-        members: &BTreeSet<String>,
-    ) -> Result<BTreeMap<String, String>, CellError> {
-        if members.is_empty() {
-            return Ok(BTreeMap::new());
-        }
-        self.with_source_dispute_index(|index| {
-            let mut grouped = BTreeMap::<&str, Vec<_>>::new();
-            for ((root, key), findings) in &index.subjects {
-                if members.contains(key) {
-                    grouped
-                        .entry(key.as_str())
-                        .or_default()
-                        .push((root, findings));
-                }
-            }
-            grouped
-                .into_iter()
-                .map(|(key, findings)| Ok((key.to_owned(), crate::codec::hash_json(&findings)?)))
-                .collect()
-        })?
-    }
-
-    pub(crate) fn indexed_source_dispute(
-        &self,
-        world: &str,
-        object_type: &str,
-        key: &str,
-    ) -> Result<bool, CellError> {
-        let roots = self.source_dispute_roots(world, object_type, key)?;
-        self.with_source_dispute_index(|index| match &roots {
-            Some(roots) => roots
-                .iter()
-                .any(|root| index.subjects.contains_key(&(root.clone(), key.to_owned()))),
-            None => index.roots_by_key.contains_key(key),
-        })
     }
 
     /// OBS-EVIDENCE-1: a dispute covers the accepted event as well as its candidate.
@@ -605,10 +591,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             None => "\"consumed_commit_seq\" IS NULL".to_owned(),
         };
+        // Range bounds (`:` = 0x3A, `;` = 0x3B) use `MULTI-INDEX OR` on `_norn_inbox/id`.
         let disputes_sql = format!(
             "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
              WHERE {unconsumed_pred} \
-               AND (\"observation_id\" LIKE 'mapping-conflict:%' OR \"observation_id\" LIKE 'mapping-identity:%')"
+               AND ((\"observation_id\" >= 'mapping-conflict:' AND \"observation_id\" < 'mapping-conflict;') \
+                 OR (\"observation_id\" >= 'mapping-identity:' AND \"observation_id\" < 'mapping-identity;'))"
         );
         for values in self.conn.query(&disputes_sql, params![])? {
             let row = crate::engine::SqlRow(values);
@@ -618,20 +606,42 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let Some(bundle) = decode_evidence_bundle(&id, &encoded) else {
                 continue;
             };
-            if bundle.input.mapping != mapping_id {
+            if bundle.input.mapping != mapping_id || datasets.contains(&bundle.input.dataset) {
                 continue;
             }
             if evidence_matches_scope(self.conn, &id, pos, &bundle, connection_id, scope_at)? {
                 datasets.insert(bundle.input.dataset);
             }
         }
-        let pending_sql = format!(
-            "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
-             WHERE {unconsumed_pred} \
-               AND \"observation_id\" LIKE 'mapping-bundle:%' \
-               AND json_extract(\"observed\", '$.input.input.mapping') = ?1"
-        );
-        for values in self.conn.query(&pending_sql, params![mapping_id])? {
+        // Uses `_norn_inbox/bundle_mapping_consumed` via exact index seeks for
+        // both live (`IS NULL`) and pinned (`IS NULL UNION ALL > frontier`).
+        let pending_rows = match frontier_i64 {
+            Some(f) => self.conn.query(
+                &format!(
+                    "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
+                     WHERE \"consumed_commit_seq\" IS NULL \
+                       AND \"observation_id\" LIKE 'mapping-bundle:%' \
+                       AND json_extract(\"observed\", '$.input.input.mapping') = ?1 \
+                     UNION ALL \
+                     SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
+                     WHERE \"consumed_commit_seq\" > ?2 \
+                       AND \"observation_id\" LIKE 'mapping-bundle:%' \
+                       AND json_extract(\"observed\", '$.input.input.mapping') = ?1"
+                ),
+                params![mapping_id, f],
+            )?,
+            None => self.conn.query(
+                &format!(
+                    "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
+                     WHERE \"consumed_commit_seq\" IS NULL \
+                       AND \"observation_id\" LIKE 'mapping-bundle:%' \
+                       AND json_extract(\"observed\", '$.input.input.mapping') = ?1"
+                ),
+                params![mapping_id],
+            )?,
+        };
+        let mut landed_versions = crate::mapping_conflict_scoped::SupersededVersionCache::new();
+        for values in pending_rows {
             let row = crate::engine::SqlRow(values);
             let pos: i64 = row.get(0)?;
             let id: String = row.get(1)?;
@@ -644,12 +654,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             {
                 continue;
             }
-            if !bundle_superseded_by_newer(
+            if !crate::mapping_conflict_scoped::bundle_superseded_by_newer(
                 self.conn,
                 mapping_id,
                 connection_id,
                 &bundle,
                 supersede_frontier,
+                &mut landed_versions,
             )? {
                 datasets.insert(bundle.input.dataset);
             }
@@ -785,38 +796,6 @@ fn evidence_matches_scope<E: SqlEngine>(
     Ok(false)
 }
 
-fn landed_matches_connection<E: SqlEngine>(
-    conn: &E,
-    observation_id: &str,
-    connection_id: Option<&str>,
-    frontier: Option<i64>,
-) -> Result<bool, CellError> {
-    let Some(target) = connection_id else {
-        return Ok(true);
-    };
-    let table = crate::source_cursor::SOURCE_EVIDENCE;
-    let rows = conn.query(
-        &format!(
-            "SELECT \"connection_id\", \"captured_commit_seq\" FROM \"{table}\" \
-             WHERE \"observation_id\" = ?1"
-        ),
-        params![observation_id],
-    )?;
-    if rows.is_empty() {
-        return Ok(false);
-    }
-    for values in rows {
-        let row = crate::engine::SqlRow(values);
-        let cid: String = row.get(0)?;
-        let cap_seq: i64 = row.get(1)?;
-        if cap_seq >= 0 && (cid == target || cid.is_empty()) && frontier.is_none_or(|f| cap_seq < f)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 fn recorded_at_le(bundle: &MappingBundle, as_of_ms: u64) -> bool {
     crate::compute::freshness::parse_rfc3339_ms(&bundle.input.recorded_at.0)
         .is_none_or(|ts| ts <= as_of_ms)
@@ -846,87 +825,6 @@ pub(crate) fn decode_evidence_with_identity(
 
 fn decode_evidence_bundle(id: &str, encoded: &str) -> Option<MappingBundle> {
     decode_evidence_with_identity(id, encoded).map(|(bundle, _)| bundle)
-}
-
-fn bundle_superseded_by_newer<E: SqlEngine>(
-    conn: &E,
-    mapping_id: &str,
-    connection_id: Option<&str>,
-    bundle: &MappingBundle,
-    frontier: Option<i64>,
-) -> Result<bool, CellError> {
-    let Some(q_ver) = parse_raw_source_version(&bundle.raw) else {
-        return Ok(false);
-    };
-    let (Some(source), Some(source_id)) = (
-        bundle.raw.get("source").and_then(RuntimeValue::as_str),
-        bundle.raw.get("source_id").and_then(RuntimeValue::as_str),
-    ) else {
-        return Ok(false);
-    };
-    let consumed_pred = match frontier {
-        Some(f) => {
-            format!("(\"consumed_commit_seq\" IS NOT NULL AND \"consumed_commit_seq\" <= {f})")
-        }
-        None => "\"consumed_commit_seq\" IS NOT NULL".to_owned(),
-    };
-    let landed_sql = format!(
-        "SELECT \"observation_id\", \
-                json_extract(\"observed\", '$.input.raw.source_version'), \
-                json_extract(\"observed\", '$.input.raw.version_kind') \
-         FROM \"{INBOX}\" \
-         WHERE {consumed_pred} \
-           AND \"observation_id\" LIKE 'mapping-bundle:%' \
-           AND json_extract(\"observed\", '$.input.input.mapping') = ?1 \
-           AND json_extract(\"observed\", '$.input.input.dataset') = ?2 \
-           AND json_extract(\"observed\", '$.input.input.connectorInstance') = ?3 \
-           AND json_extract(\"observed\", '$.input.input.partition') = ?4 \
-           AND json_extract(\"observed\", '$.input.raw.source') = ?5 \
-           AND json_extract(\"observed\", '$.input.raw.source_id') = ?6"
-    );
-    let landed = conn.query(
-        &landed_sql,
-        params![
-            mapping_id,
-            bundle.input.dataset.as_str(),
-            bundle.input.connector_instance.as_str(),
-            bundle.input.partition.as_str(),
-            source,
-            source_id,
-        ],
-    )?;
-    for row_vals in landed {
-        let row = crate::engine::SqlRow(row_vals);
-        let obs_id: String = row.get(0)?;
-        let Ok(Some(ver)) = row.get::<Option<String>>(1) else {
-            continue;
-        };
-        let kind_wire = row.get::<Option<String>>(2).ok().flatten();
-        if parse_version_parts(&ver, kind_wire.as_deref())
-            .is_some_and(|lv| lv.try_cmp(&q_ver) == Ok(std::cmp::Ordering::Greater))
-            && landed_matches_connection(conn, &obs_id, connection_id, frontier)?
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn parse_version_parts(version: &str, kind_wire: Option<&str>) -> Option<norn_ir::SourceVersion> {
-    let kind = match kind_wire {
-        Some(wire) => norn_ir::VersionKind::parse_wire(wire)?,
-        None => norn_ir::VersionKind::Lexicographical,
-    };
-    norn_ir::SourceVersion::parse(kind, version).ok()
-}
-
-fn parse_raw_source_version(raw: &RuntimeValue) -> Option<norn_ir::SourceVersion> {
-    let ver = raw.get("source_version").and_then(RuntimeValue::as_str)?;
-    let kind_wire = match raw.get("version_kind").filter(|v| !v.is_null()) {
-        Some(v) => Some(v.as_str()?),
-        None => None,
-    };
-    parse_version_parts(ver, kind_wire)
 }
 
 pub(crate) fn verify_mapping_binding_in_tx<E: SqlEngine>(
@@ -1731,6 +1629,262 @@ mod tests {
                 &[]
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn inbox_lookup_queries_use_indexes() {
+        let artifacts = pack_artifacts();
+        let store = open_installed_store(&artifacts);
+        let explain = |sql: &str, args: &[crate::engine::SqlValue]| -> Vec<String> {
+            store
+                .conn
+                .query(&format!("EXPLAIN QUERY PLAN {sql}"), args)
+                .expect("explain query plan")
+                .into_iter()
+                .map(|row| crate::engine::SqlRow(row).get::<String>(3).expect("detail"))
+                .collect()
+        };
+        let conflicts_plan = explain(
+            &format!(
+                "SELECT position, observation_id, observed FROM {INBOX} \
+                 WHERE observation_id >= 'mapping-conflict:' AND observation_id < 'mapping-conflict;' \
+                 ORDER BY position"
+            ),
+            params![],
+        );
+        assert!(
+            conflicts_plan
+                .iter()
+                .any(|line| line.contains("USING INDEX _norn_inbox/id")),
+            "expected _norn_inbox/id index for conflicts, got {conflicts_plan:?}"
+        );
+        let identity_plan = explain(
+            &format!(
+                "SELECT position, observation_id, observed FROM {INBOX} \
+                 WHERE observation_id >= 'mapping-identity:' AND observation_id < 'mapping-identity;' \
+                 ORDER BY position"
+            ),
+            params![],
+        );
+        assert!(
+            identity_plan
+                .iter()
+                .any(|line| line.contains("USING INDEX _norn_inbox/id")),
+            "expected _norn_inbox/id index for identity evidence, got {identity_plan:?}"
+        );
+        let disputes_plan = explain(
+            &format!(
+                "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
+                 WHERE \"consumed_commit_seq\" IS NULL \
+                   AND ((\"observation_id\" >= 'mapping-conflict:' AND \"observation_id\" < 'mapping-conflict;') \
+                     OR (\"observation_id\" >= 'mapping-identity:' AND \"observation_id\" < 'mapping-identity;'))"
+            ),
+            params![],
+        );
+        assert!(
+            disputes_plan
+                .iter()
+                .any(|line| line.contains("USING INDEX _norn_inbox/id")),
+            "expected _norn_inbox/id index for disputes, got {disputes_plan:?}"
+        );
+        let pending_live_plan = explain(
+            &format!(
+                "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
+                 WHERE \"consumed_commit_seq\" IS NULL \
+                   AND \"observation_id\" LIKE 'mapping-bundle:%' \
+                   AND json_extract(\"observed\", '$.input.input.mapping') = ?1"
+            ),
+            params![MAPPING_ID],
+        );
+        assert!(
+            pending_live_plan
+                .iter()
+                .any(|line| line.contains("USING INDEX _norn_inbox/bundle_mapping_consumed")),
+            "expected _norn_inbox/bundle_mapping_consumed for live pending, got {pending_live_plan:?}"
+        );
+        let pending_pinned_plan = explain(
+            &format!(
+                "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
+                 WHERE \"consumed_commit_seq\" IS NULL \
+                   AND \"observation_id\" LIKE 'mapping-bundle:%' \
+                   AND json_extract(\"observed\", '$.input.input.mapping') = ?1 \
+                 UNION ALL \
+                 SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
+                 WHERE \"consumed_commit_seq\" > ?2 \
+                   AND \"observation_id\" LIKE 'mapping-bundle:%' \
+                   AND json_extract(\"observed\", '$.input.input.mapping') = ?1"
+            ),
+            params![MAPPING_ID, 5_i64],
+        );
+        let index_hits = pending_pinned_plan
+            .iter()
+            .filter(|line| line.contains("USING INDEX _norn_inbox/bundle_mapping_consumed"))
+            .count();
+        assert_eq!(
+            index_hits, 2,
+            "expected both UNION ALL branches to use _norn_inbox/bundle_mapping_consumed, got {pending_pinned_plan:?}"
+        );
+    }
+
+    #[test]
+    fn source_dispute_index_caches_multi_conflict_events_and_matches_pins() {
+        let artifacts = pack_artifacts();
+        let store = open_installed_store(&artifacts);
+        let base_obs = derive_holding_obs(
+            &store,
+            "2026-01-01",
+            "ev-multi",
+            "2026-01-01T00:00:00Z",
+            serde_json::json!(200),
+            Derivation::CURRENT,
+            None,
+        );
+        let base_bundle: MappingBundle =
+            norn_ir::runtime::decode(&base_obs.input).expect("decode base");
+        let subject = base_bundle.records.first().expect("mapped record");
+        let subject_type = subject.object_type.as_str().to_owned();
+        let subject_key = subject.key.clone();
+        let root = store
+            .read()
+            .retained_mapping_root(base_bundle.definitions_version, &subject_type)
+            .expect("retained root");
+        let (base_id, base_inserted) =
+            capture(&store, &base_obs, &base_bundle).expect("capture base");
+        assert!(base_inserted && base_id.starts_with("mapping-bundle:"));
+        for (ver, qty) in [("2026-01-02", 250), ("2026-01-03", 300)] {
+            let obs = derive_holding_obs(
+                &store,
+                ver,
+                "ev-multi",
+                "2026-01-01T00:00:00Z",
+                serde_json::json!(qty),
+                Derivation::CURRENT,
+                None,
+            );
+            let bundle: MappingBundle =
+                norn_ir::runtime::decode(&obs.input).expect("decode conflict");
+            let (cid, inserted) = capture(&store, &obs, &bundle).expect("capture conflict");
+            assert!(inserted && cid.starts_with("mapping-conflict:"));
+        }
+        let reader = store.read();
+        assert!(
+            reader
+                .indexed_source_dispute(crate::MAIN_WORLD, &subject_type, &subject_key)
+                .expect("disputed")
+        );
+        assert!(
+            !reader
+                .indexed_source_dispute(crate::MAIN_WORLD, &subject_type, "unrelated/key")
+                .expect("unrelated")
+        );
+        let keys = reader.source_finding_keys(&root).expect("finding keys");
+        assert_eq!(keys, BTreeSet::from([subject_key.clone()]));
+        let findings = reader
+            .source_conflict_findings(&subject_type, &subject_key)
+            .expect("conflict findings");
+        assert_eq!(findings.len(), 2);
+        // Exercise both branches of `question_source_pins` (`members.len() <= disputed` and `>`).
+        let single_pins = reader
+            .question_source_pins(&BTreeSet::from([subject_key.clone()]))
+            .expect("single pin");
+        let wide_pins = reader
+            .question_source_pins(&BTreeSet::from([
+                subject_key.clone(),
+                "unrelated/a".into(),
+                "unrelated/b".into(),
+            ]))
+            .expect("wide pins");
+        assert_eq!(single_pins.len(), 1);
+        assert_eq!(single_pins, wide_pins);
+        let scoped_open = reader
+            .scoped_open_source_dispute_findings(
+                "org_demo/dev",
+                &[
+                    (subject_type.clone(), subject_key),
+                    (subject_type, "unrelated/key".into()),
+                ],
+                &|_row| Ok(crate::compute::transform::RowAccess::Read),
+            )
+            .expect("scoped open count");
+        assert_eq!(scoped_open, 2);
+    }
+
+    #[test]
+    fn multiple_pending_bundles_same_source_superseded_by_single_landed_correction() {
+        let artifacts = pack_artifacts();
+        let store = open_installed_store(&artifacts);
+        let q1 = derive_holding_obs(
+            &store,
+            "2026-01-01",
+            "ev-sup-1",
+            "2026-01-01T00:00:00Z",
+            serde_json::json!("200.50"),
+            Derivation::V1,
+            None,
+        );
+        let q2 = derive_holding_obs(
+            &store,
+            "2026-01-02",
+            "ev-sup-2",
+            "2026-01-02T00:00:00Z",
+            serde_json::json!("201.50"),
+            Derivation::V1,
+            None,
+        );
+        let correction = derive_holding_obs(
+            &store,
+            "2026-01-03",
+            "ev-sup-3",
+            "2026-01-03T00:00:00Z",
+            serde_json::json!(202),
+            Derivation::CURRENT,
+            None,
+        );
+        insert_inbox_row(
+            &store.conn,
+            1,
+            &q1.id.0,
+            &serde_json::to_string(&q1).expect("q1 json"),
+            None,
+        );
+        insert_inbox_row(
+            &store.conn,
+            2,
+            &q2.id.0,
+            &serde_json::to_string(&q2).expect("q2 json"),
+            None,
+        );
+        insert_inbox_row(
+            &store.conn,
+            3,
+            &correction.id.0,
+            &serde_json::to_string(&correction).expect("c json"),
+            Some(3),
+        );
+        insert_evidence_row(&store.conn, &q1.id.0, "conn.a", 1);
+        insert_evidence_row(&store.conn, &q2.id.0, "conn.a", 1);
+        insert_evidence_row(&store.conn, &correction.id.0, "conn.a", 1);
+        let reader = store.read();
+        // At frontier 2, q1/q2 are captured (1 < 2) while correction (consumed at 3) has not landed yet.
+        assert!(
+            reader
+                .unresolved_quarantined_datasets_at(MAPPING_ID, Some("conn.a"), Some((2, 100)))
+                .expect("at f2")
+                .contains(DATASET)
+        );
+        // At frontier 3 and live, both pending bundles are superseded by the single landed correction.
+        assert!(
+            reader
+                .unresolved_quarantined_datasets_at(MAPPING_ID, Some("conn.a"), Some((3, 100)))
+                .expect("at f3")
+                .is_empty()
+        );
+        assert!(
+            reader
+                .unresolved_quarantined_datasets(MAPPING_ID, Some("conn.a"))
+                .expect("live")
+                .is_empty()
         );
     }
 }
