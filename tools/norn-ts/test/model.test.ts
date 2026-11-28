@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { compileModule } from "../src/compile-stdin.ts"
+import { compileModule } from "../src/native-compiler.ts"
 import { checker } from "./checker.ts"
 
 // ModelIR (#1171 M1): `Norn.model` lowers to one `model` artifact whose
@@ -108,7 +108,8 @@ test("a malformed trust, rule or range bound is a compile error", () => {
 test("a feature the referenced type does not declare is a compile-time type error", () => {
   const result = compileModule(SOURCE.replace('"region"],', '"region", "lifetime_value"],'), scope)
   expect(result.ok).toBe(false)
-  expect((result.diagnostics ?? []).map((d) => d.code)).toContain("NORN-FLOW-TYPE")
+  if (result.ok) return
+  expect(result.diagnostics.map((d) => d.code)).toContain("NORN-FLOW-TYPE")
 }, 30_000)
 
 test.skipIf(!checker)("Rust admits the model and refuses an unknown or non-admitted feature", () => {

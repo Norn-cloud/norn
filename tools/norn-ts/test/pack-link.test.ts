@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { compileModule } from "../src/compile-stdin.ts"
+import { compileModule } from "../src/native-compiler.ts"
 
 const link = (reason: string) => `import { Norn } from "@norn/authoring"
 export const Link = Norn.packLink({

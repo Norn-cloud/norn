@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { compileDashboards, compileDefinitions } from "../src/compiler/definitions.ts"
+import { compileDashboards, compileDefinitions } from "../src/native-compiler.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 
 const fixture = join(TOOL_ROOT, "fixtures/dashboards/refinery.ts")

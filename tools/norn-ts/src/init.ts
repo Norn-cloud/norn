@@ -15,7 +15,7 @@ export function distribution(root: string = TOOL_ROOT): "repository" | "publishe
  * them (a version on a registry, or a tarball address).
  */
 export function projectDependencies(mode: "repository" | "published" = distribution(), build: BuildInfo | undefined = buildInfo()) {
-  const pinned = { effect: "4.0.0-rc.117", typescript: "6.0.3" }
+  const pinned = { effect: "4.0.0-rc.117" }
   if (mode === "repository") return { "@norn/cli": `file:${TOOL_ROOT}`, "@norn/authoring": `file:${TOOL_ROOT}`, ...pinned }
   const cli = build?.packages["@norn/cli"]
   const authoring = build?.packages["@norn/authoring"]

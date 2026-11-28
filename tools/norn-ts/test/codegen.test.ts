@@ -2,7 +2,6 @@ import { expect, test } from "bun:test"
 import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import ts from "typescript"
 import { CodegenError, generateTypes, readArtifactSet } from "../src/codegen.ts"
 import { mayReadActor } from "../src/zen-reads.ts"
 import { admit, compilePack } from "../src/pack.ts"
@@ -308,16 +307,36 @@ test("CODEGEN-TS-7: speculative interval parses are memoized, as the ZEN parser 
 
 test("CODEGEN-TS-4: generated maps type the client: unknown actions, wrong fields and JS numbers for decimals do not compile", () => {
   const usage = join(FIXTURES, "usage.ts")
-  const program = ts.createProgram([usage], {
-    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler,
-    lib: ["lib.esnext.d.ts", "lib.dom.d.ts"], types: [], strict: true, noUncheckedIndexedAccess: true,
-    exactOptionalPropertyTypes: true, noEmit: true, skipLibCheck: true, allowImportingTsExtensions: true, verbatimModuleSyntax: true,
-    erasableSyntaxOnly: true,
-  })
-  const diagnostics = ts.getPreEmitDiagnostics(program).map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n"))
-  // Zero diagnostics means every `@ts-expect-error` line is a real error (TS2578 otherwise).
-  expect(diagnostics).toEqual([])
-  expect(readFileSync(usage, "utf8").match(/^\/\/ @ts-expect-error/gm)?.length).toBe(22)
+  const dir = mkdtempSync(join(tmpdir(), "norn-codegen-ts4-"))
+  try {
+    const tsconfig = join(dir, "tsconfig.json")
+    writeFileSync(tsconfig, JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        module: "ESNext",
+        moduleResolution: "Bundler",
+        lib: ["ESNext", "DOM"],
+        types: [],
+        strict: true,
+        noUncheckedIndexedAccess: true,
+        exactOptionalPropertyTypes: true,
+        noEmit: true,
+        skipLibCheck: true,
+        allowImportingTsExtensions: true,
+        verbatimModuleSyntax: true,
+        erasableSyntaxOnly: true,
+      },
+      files: [usage],
+    }))
+    const tsrsBin = resolve(REPO, "tools/norn-ts/node_modules/.bin/tsrs")
+    const child = Bun.spawnSync([tsrsBin, "-p", tsconfig], { stdout: "pipe", stderr: "pipe" })
+    const output = `${child.stdout.toString("utf8")}${child.stderr.toString("utf8")}`.trim()
+    // Zero diagnostics means every `@ts-expect-error` line is a real error (TS2578 otherwise).
+    expect({ exitCode: child.exitCode, output }).toEqual({ exitCode: 0, output: "" })
+    expect(readFileSync(usage, "utf8").match(/^\/\/ @ts-expect-error/gm)?.length).toBe(22)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 // #1762 milestone C: a widget's catalog islands become `WidgetIslands` and the

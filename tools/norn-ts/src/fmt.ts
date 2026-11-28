@@ -1,55 +1,11 @@
 import { lstatSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { extname, join, relative, resolve } from "node:path"
-import ts from "typescript"
-import { COMPILER_OPTIONS } from "./check.ts"
+import { formatSourceNative } from "./native-compiler.ts"
 import { ProjectError, readProject } from "./project.ts"
 
-export const FORMAT_SETTINGS: ts.FormatCodeSettings = {
-  indentSize: 2, tabSize: 2, convertTabsToSpaces: true, newLineCharacter: "\n",
-  semicolons: ts.SemicolonPreference.Remove,
-  insertSpaceAfterCommaDelimiter: true, insertSpaceAfterSemicolonInForStatements: true,
-  insertSpaceBeforeAndAfterBinaryOperators: true, insertSpaceAfterKeywordsInControlFlowStatements: true,
-  insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces: true,
-  insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets: false,
-  insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis: false,
-  placeOpenBraceOnNewLineForFunctions: false, placeOpenBraceOnNewLineForControlBlocks: false,
-}
-
-function edits(text: string, changes: readonly ts.TextChange[]): string {
-  for (const change of [...changes].sort((a, b) => b.span.start - a.span.start)) {
-    text = text.slice(0, change.span.start) + change.newText + text.slice(change.span.start + change.span.length)
-  }
-  return text
-}
-
-let currentFile = ""
-let currentText = ""
-let version = 0
-const host: ts.LanguageServiceHost = {
-  getCompilationSettings: () => COMPILER_OPTIONS,
-  getScriptFileNames: () => currentFile ? [currentFile] : [],
-  getScriptVersion: path => path === currentFile ? String(version) : "0",
-  getProjectVersion: () => String(version),
-  getScriptSnapshot: path => {
-    const source = path === currentFile ? currentText : ts.sys.readFile(path)
-    return source === undefined ? undefined : ts.ScriptSnapshot.fromString(source)
-  },
-  getCurrentDirectory: () => process.cwd(), getDefaultLibFileName: options => ts.getDefaultLibFilePath(options),
-  fileExists: ts.sys.fileExists, readFile: ts.sys.readFile, readDirectory: ts.sys.readDirectory,
-}
-// Reuse the pinned library declarations across files and formatting passes.
-const service = ts.createLanguageService(host)
-
-/** FMT-SEMANTIC-1: formatting never executes source or deletes unused imports. */
+/** FMT-SEMANTIC-1: formatting runs in native Rust `norn fmt` and never executes source or deletes unused imports. */
 export function formatSource(file: string, text: string): string {
-  currentFile = file
-  currentText = text
-  version++
-  for (const change of service.organizeImports({ type: "file", fileName: file, skipDestructiveCodeActions: true }, FORMAT_SETTINGS, {})) {
-    if (resolve(change.fileName) === resolve(file)) currentText = edits(currentText, change.textChanges)
-  }
-  version++
-  return edits(currentText, service.getFormattingEditsForDocument(file, FORMAT_SETTINGS)).replace(/\r\n/g, "\n").replace(/\n*$/, "\n")
+  return formatSourceNative(file, text)
 }
 
 function collect(path: string, files: Set<string>): void {

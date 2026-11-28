@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { interfaceType, lowerEntity } from "../src/builder/entity.ts"
-import { compileDefinitions } from "../src/compiler/definitions.ts"
+import { compileDefinitions } from "../src/native-compiler.ts"
 import { checker } from "./checker.ts"
 
 const options = { scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath: "links.ts" }

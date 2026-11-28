@@ -8,8 +8,8 @@
   "parents": [
     "tools/norn-ts/fixtures/jewelry/cp3-folds.source.ts",
     "tools/norn-ts/fixtures/stock/stock.source.ts",
-    "tools/norn-ts/src/compiler/definitions.ts",
-    "tools/norn-ts/src/compiler/index.ts",
+    "crates/norn-authoring/src/compiler/mod.rs",
+    "crates/norn-authoring/src/compiler/flow_syntax.rs",
     "tools/norn-ts/src/builder/rule.ts"
   ],
   "rights_evidence": [

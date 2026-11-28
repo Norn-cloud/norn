@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { parseRfc3339Instant } from "../src/builder/setting.ts"
-import { compileDefinitions } from "../src/compiler/definitions.ts"
+import { compileDefinitions } from "../src/native-compiler.ts"
 import { checker, CHECKER_PKG_ENV } from "./checker.ts"
 if (!checker && process.env.CI) throw new Error(`${CHECKER_PKG_ENV} is required in CI`)
 

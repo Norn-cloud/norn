@@ -55,12 +55,12 @@ pub(crate) enum TsCompileTarget<'a> {
     },
 }
 
-struct MountedTsContext {
-    profile: Profile,
-    vfs: BoundedVfs,
-    effect_dist_prefix: Option<&'static str>,
-    root_vpaths: Vec<String>,
-    source_paths: BTreeMap<String, String>,
+pub(super) struct MountedTsContext {
+    pub(super) profile: Profile,
+    pub(super) vfs: BoundedVfs,
+    pub(super) effect_dist_prefix: Option<&'static str>,
+    pub(super) root_vpaths: Vec<String>,
+    pub(super) source_paths: BTreeMap<String, String>,
 }
 
 fn diagnostics_json(file: &str, diagnostics: &[ProfileDiagnostic]) -> String {
@@ -84,19 +84,19 @@ fn mount_pinned_packages(
         return Ok(None);
     };
     let effect_dir = tool_root.join("node_modules/effect");
+    if !effect_dir.join("package.json").is_file() {
+        return Err(AuthoringFailure::Io(format!(
+            "{}: missing pinned effect package manifest",
+            effect_dir.display()
+        )));
+    }
     let _effect_files = vfs
         .mount_pinned_effect_dir(&effect_dir, profile)
         .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-    let ts_dir = tool_root.join("node_modules/typescript");
-    if ts_dir.join("package.json").is_file() {
-        let _ts_files = vfs
-            .mount_pinned_package_dir("/node_modules/typescript", &ts_dir)
-            .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-    }
     Ok(Some(PINNED_EFFECT_DIST_PREFIX))
 }
 
-fn is_ts_support_file(_name: &str, path: &Path) -> bool {
+pub(super) fn is_ts_support_file(_name: &str, path: &Path) -> bool {
     classify_source_file(path) == Some(SourceLang::TypeScript) || is_json_file(path)
 }
 
@@ -204,11 +204,11 @@ fn virtual_path_from_rel(rel: &Path, up_levels: usize) -> Result<String, Authori
     Ok(format!("/workspace/{}", parts.join("/")))
 }
 
-struct TsClosureInputs<'a> {
-    root_files: Vec<LoadedFile>,
-    support_files: &'a [LoadedFile],
-    subdir_files: Vec<LoadedFile>,
-    package_hint_path: &'a Path,
+pub(super) struct TsClosureInputs<'a> {
+    pub(super) root_files: Vec<LoadedFile>,
+    pub(super) support_files: &'a [LoadedFile],
+    pub(super) subdir_files: Vec<LoadedFile>,
+    pub(super) package_hint_path: &'a Path,
 }
 
 struct SeededClosure {
@@ -328,7 +328,7 @@ fn collect_ts_import_closure(
     Ok((root_rels, loaded))
 }
 
-fn mount_ts_closure(
+pub(super) fn mount_ts_closure(
     base_dir: &TrustedDir,
     inputs: TsClosureInputs<'_>,
     explicit_tool_root: Option<&Path>,
@@ -380,7 +380,7 @@ fn mount_ts_closure(
     })
 }
 
-fn mount_single_file_closure(
+pub(super) fn mount_single_file_closure(
     parent_dir: &TrustedDir,
     file_name: &str,
     display_path: &Path,

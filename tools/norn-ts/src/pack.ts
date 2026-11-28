@@ -9,16 +9,19 @@
  * (`src/compiler/definitions.ts`), and admission is the checker's.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
-import { join, relative, resolve, sep } from "node:path"
-import type { Diagnostic } from "./check.ts"
+import { dirname, join, relative, resolve, sep } from "node:path"
 import type { Json } from "./canonical.ts"
 import type { CheckResult, CheckerAbi } from "./checker-abi.ts"
 import { FLOW_SOURCE_MAP_DRAFT_FORMAT, FLOW_SOURCE_MAP_FORMAT, type FlowSourceMap, type FlowSourceMapDraft, type FlowSourceMapFlow } from "./flow-source-map.ts"
-import { type DefinitionSource, PENDING_SOURCE_SHA256, type RetainedDefinitionDoc, compileDefinitionFiles } from "./compiler/definitions.ts"
 import type { CompiledExample } from "./examples.ts"
-import { compileFile } from "./compiler/index.ts"
-import type { FlowDef } from "./builder/flow.ts"
-import { TOOL_ROOT, loadProfile } from "./profile.ts"
+import {
+  type DefinitionSource,
+  type Diagnostic,
+  PENDING_SOURCE_SHA256,
+  type RetainedDefinitionDoc,
+  runNativeCompilePackJson,
+} from "./native-compiler.ts"
+import { loadProfile } from "./profile.ts"
 
 export interface PackOptions {
   /** Explicit module roots for single-file checks; packs otherwise use every top-level module. */
@@ -39,7 +42,6 @@ export interface PackOptions {
 
 export interface PackFlow {
   readonly file: string
-  readonly definition: FlowDef
   readonly artifacts: ReadonlyArray<Json>
   readonly flowSourceMap: FlowSourceMapFlow
 }
@@ -132,7 +134,19 @@ function packageArtifacts(packagePath: string): Json[] {
   })
 }
 
-/** Compile a pack directory and gather its imports. */
+function commonDir(paths: ReadonlyArray<string>): string {
+  const dirs = paths.map((file) => resolve(dirname(file)).split(sep))
+  let prefix = dirs[0]!
+  for (const parts of dirs.slice(1)) {
+    let i = 0
+    while (i < prefix.length && i < parts.length && prefix[i] === parts[i]) i++
+    prefix = prefix.slice(0, i)
+  }
+  const joined = prefix.join(sep)
+  return joined.length > 0 ? joined : sep
+}
+
+/** Compile a pack directory and gather its imports natively via `norn compile --pack-json`. */
 export function compilePack(dir: string, options: PackOptions): PackResult {
   const profile = loadProfile().profile
   const root = resolve(options.root ?? process.cwd())
@@ -155,12 +169,6 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
     hasRegistrySegment(absDir) ||
     modules.some((m) => hasRegistrySegment(m))
   const forbidUnsafeZen = options.forbidUnsafeZen ?? isRegistryPath
-  const envelope = (path: string) => ({
-    scope: registryPackagePath ? {} : options.scope,
-    sourcePath: posix(relative(root, path)),
-    ...(registryPackagePath ? { registryPackagePath } : {}),
-  })
-  const results = compileDefinitionFiles(modules, envelope, {}, { allowEmpty: true, forbidUnsafeZen })
   const failures: PackModuleFailure[] = []
   const artifacts: Json[] = []
   const sources = new Map<string, string>()
@@ -168,9 +176,10 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
   const sourceMap: DefinitionSource[] = []
   const examples: CompiledExample[] = []
   const retained: RetainedDefinitionDoc[] = []
-  const retainedFrom = new Map<string, string>()
   const warnings: Array<Diagnostic & { readonly file: string }> = []
-  const add = (artifact: Json, from: string): void => {
+  let flowSourceMap: FlowSourceMapDraft | undefined
+
+  const addImported = (artifact: Json, from: string): void => {
     const id = artifactId(artifact)
     if (sources.has(id)) {
       failures.push({ file: from, diagnostics: [{ code: "NORN-FLOW-LITERAL", start: { line: 1, column: 1 }, end: { line: 1, column: 1 }, construct: id, message: `artifact ${id} is also declared by ${sources.get(id)}` }] })
@@ -179,39 +188,43 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
     sources.set(id, from)
     artifacts.push(artifact)
   }
-  results.forEach((result, i) => {
-    const path = modules[i]!, file = posix(relative(root, path))
-    if (!result.ok) { failures.push({ file, diagnostics: result.diagnostics }); return }
-    sourceMap.push(...result.sourceMap.map((s) => ({ ...s, at: { ...s.at, file: posix(relative(root, resolve(TOOL_ROOT, s.at.file))) } })))
-    warnings.push(...result.warnings.map((warning) => ({ ...warning, file })))
-    examples.push(...result.examples.map((e) => ({ ...e, at: { ...e.at, file: posix(relative(root, resolve(TOOL_ROOT, e.at.file))) } })))
-    for (const artifact of result.artifacts) add(artifact, file)
-    for (const definition of result.retained) {
-      if (retainedFrom.has(definition.id)) {
-        failures.push({ file, diagnostics: [{ code: "NORN-FLOW-LITERAL", start: { line: 1, column: 1 }, end: { line: 1, column: 1 }, construct: definition.id, message: `definition ${definition.id} is also declared by ${retainedFrom.get(definition.id)}` }] })
-        continue
+
+  if (modules.length > 0) {
+    const specs = modules.map((file) => ({
+      path: file,
+      scope: registryPackagePath ? {} : options.scope,
+      sourcePath: posix(relative(root, file)),
+      ...(registryPackagePath ? { registryPackagePath } : {}),
+    }))
+    const compiled = runNativeCompilePackJson({
+      target: commonDir(modules),
+      root,
+      ...(registryPackagePath ? { registry: registryPackagePath } : { scope: options.scope }),
+      forbidUnsafeZen,
+      allowEmpty: false,
+      modules: specs,
+    })
+    if (!compiled.ok) {
+      failures.push(...compiled.failures)
+    } else {
+      for (const artifact of compiled.artifacts) {
+        const id = artifactId(artifact)
+        sources.set(id, compiled.sources[id] ?? "")
+        artifacts.push(artifact)
       }
-      retainedFrom.set(definition.id, file)
-      retained.push(definition)
-    }
-    if (result.flows > 0) {
-      // A flow lowers through the syntax compiler to its Run type and decide rule (T7-EFX-2).
-      const flow = compileFile(path, { ...envelope(path), sourceRoot: root, forbidUnsafeZen })
-      if (!flow.ok) { failures.push({ file, diagnostics: flow.diagnostics }); return }
-      warnings.push(...flow.warnings.map((warning) => ({ ...warning, file })))
-      for (const artifact of flow.artifacts) add(artifact, file)
-      const flowSourceMap = flow.flowSourceMap?.flows[0]
-      if (!flowSourceMap) {
-        failures.push({ file, diagnostics: [{ code: "NORN-FLOW-RESULT", start: { line: 1, column: 1 }, end: { line: 1, column: 1 }, construct: file, message: "the flow compiler produced no authoring source graph" }] })
-        return
+      sourceMap.push(...compiled.sourceMap)
+      warnings.push(...compiled.warnings)
+      examples.push(...compiled.examples)
+      retained.push(...compiled.retained)
+      for (const flow of compiled.flows) {
+        flows.push({ file: flow.file, artifacts: flow.artifacts, flowSourceMap: flow.flowSourceMap })
       }
-      flows.push({ file, definition: flow.definition, artifacts: flow.artifacts, flowSourceMap })
-    } else if (result.definitions.length === 0 && result.retained.length === 0) {
-      failures.push({ file, diagnostics: [{ code: "NORN-FLOW-RESULT", start: { line: 1, column: 1 }, end: { line: 1, column: 1 }, construct: file, message: "a pack module declares no definition and no Norn.flow; move shared code under a subdirectory" }] })
+      flowSourceMap = compiled.flowSourceMap
     }
-  })
+  }
+
   for (const path of options.imports ?? []) {
-    for (const { file, artifact } of readArtifacts(path)) add(artifact, posix(relative(root, file)))
+    for (const { file, artifact } of readArtifacts(path)) addImported(artifact, posix(relative(root, file)))
   }
   if (failures.length > 0) return { ok: false, failures, profile }
   const authoredIds = new Set(artifacts.map(artifactId))
@@ -219,9 +232,6 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
     ? readArtifacts(join(registryPath, "artifacts")).map(({ artifact }) => artifact).filter((artifact) => !authoredIds.has(artifactId(artifact)))
     : []
   const baseArtifacts = [...registryBaseArtifacts, ...baseRegistryPaths.flatMap(packageArtifacts)]
-  const flowSourceMap = flows.length > 0
-    ? { format: FLOW_SOURCE_MAP_DRAFT_FORMAT, flows: flows.map((flow) => flow.flowSourceMap) }
-    : undefined
   return { ok: true, artifacts, sources, sourceMap, warnings, flows, baseArtifacts, profile, examples, retained, ...(flowSourceMap ? { flowSourceMap } : {}) }
 }
 

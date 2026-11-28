@@ -9,7 +9,7 @@
     "tools/norn-ts/fixtures/core/mapping.source.ts",
     "scripts/ci/core.sh",
     "tools/norn-ts/src/builder/mapping.ts",
-    "tools/norn-ts/src/compiler/definitions.ts"
+    "crates/norn-authoring/src/compiler/mod.rs"
   ],
   "rights_evidence": [
     {

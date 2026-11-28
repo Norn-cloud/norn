@@ -10,7 +10,7 @@ import { readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { E } from "../src/builder/index.ts"
 import { canonicalJson } from "../src/canonical.ts"
-import { compileDefinitions, compileValueSchemas } from "../src/compiler/definitions.ts"
+import { compileDefinitions } from "../src/native-compiler.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { CHECKER_PKG_ENV, checker } from "./checker.ts"
 
@@ -92,15 +92,6 @@ describe("Effect Schema -> EntityIR v2", () => {
   })
 })
 
-describe("Effect Schema -> closed value schemas", () => {
-  // Effect declarations are loaded into a fresh TypeScript program here too (#3340).
-  test("golden closed schemas (Function I/O, action and RuleIR contracts)", () => {
-    const result = compileValueSchemas(join(DIR, "closed.source.ts"))
-    if (!result.ok) throw new Error(JSON.stringify(result.diagnostics, null, 2))
-    golden("closed.schemas.json", canonicalJson(result.schemas))
-  }, 30_000)
-})
-
 const expected = (path: string): string => {
   const match = /^\/\/ expect: (NORN-FLOW-[A-Z-]+)$/m.exec(readFileSync(path, "utf8"))
   if (!match) throw new Error(`${path} has no "// expect: CODE" header`)
@@ -117,16 +108,6 @@ describe("rejected schema features (never approximated)", () => {
       if (result.ok) return
       expect(result.diagnostics.map((d) => d.code)).toContain(expected(path))
       for (const d of result.diagnostics) expect(d.start.line).toBeGreaterThan(0)
-    })
-  }
-  const closedDir = join(DIR, "invalid-closed")
-  for (const file of readdirSync(closedDir).filter((f) => f.endsWith(".ts")).sort()) {
-    test(`closed: ${file}`, () => {
-      const path = join(closedDir, file)
-      const result = compileValueSchemas(path)
-      expect(result.ok).toBe(false)
-      if (result.ok) return
-      expect(result.diagnostics.map((d) => d.code)).toContain(expected(path))
     })
   }
 })

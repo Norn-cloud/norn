@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join, relative } from "node:path"
 import { derivedMetricId } from "../src/builder/question.ts"
 import { CHECKER_PKG_ENV, staleCheckerWarning } from "../src/checker-abi.ts"
-import { compileDefinitionFiles, compileDefinitions, compileQuestions, PENDING_SOURCE_SHA256 } from "../src/compiler/definitions.ts"
+import { compileDefinitionFiles, compileDefinitions, compileQuestions, PENDING_SOURCE_SHA256 } from "../src/native-compiler.ts"
 import { REGISTRY_VALUE_TYPES } from "../src/compiler/value-types.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 

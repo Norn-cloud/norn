@@ -167,7 +167,7 @@ test("a released package knows its version, and a new project depends on that re
     expect(buildInfo(root)).toEqual(manifest)
     expect(distribution(root)).toBe("published")
     expect(versionLine(root)).toBe("norn 0.1.0-alpha.7 (0123456789ab)")
-    expect(projectDependencies("published", manifest)).toEqual({ "@norn/cli": "0.1.0-alpha.7", "@norn/authoring": "0.1.0-alpha.7", effect: "4.0.0-rc.117", typescript: "6.0.3" })
+    expect(projectDependencies("published", manifest)).toEqual({ "@norn/cli": "0.1.0-alpha.7", "@norn/authoring": "0.1.0-alpha.7", effect: "4.0.0-rc.117" })
     // Without a manifest a published tool refuses; a malformed manifest is an error, not a checkout.
     expect(() => projectDependencies("published", undefined)).toThrow("Published distribution is unavailable")
     for (const bad of [{}, { ...manifest, hosts: { "linux-x64": { url: "https://x/y", sha256: "abc", size: 1 } } }, { ...manifest, packages: { "@norn/cli": "" } }]) {
@@ -315,7 +315,7 @@ test("pinned dependencies are real paths, as TypeScript resolves them", () => {
     symlinkSync(stored, join(root, "project", "node_modules", "effect"))
     expect(dependencyDir("effect", tool)).toBe(stored)
   } finally { rmSync(root, { recursive: true }) }
-  for (const name of ["effect", "typescript"]) {
+  for (const name of ["effect"]) {
     const dir = dependencyDir(name)
     expect(realpathSync(dir)).toBe(dir)
   }

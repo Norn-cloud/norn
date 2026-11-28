@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { compileModule } from "../src/compile-stdin.ts"
+import { compileModule } from "../src/native-compiler.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { checker } from "./checker.ts"
 

@@ -212,8 +212,6 @@ prepare_inputs() {
   python3 scripts/importers/erpnext_runtime.py --output "$upstream" --interop-only
   export NORN_UPSTREAM_FIXTURE_DIR="$upstream"
   (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile)
-  bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/core --org org_demo --env dev --out "$upstream/core-artifacts.json"
-  bun -e 'const artifacts = await Bun.file(process.argv[1]).json(); for (const [id, path] of [["toy.contacts.source", "fixtures/ir/synthetic-contact.source_schema.json"], ["toy.rows", "fixtures/ir/synthetic-rows.mapping.json"]]) { const artifact = artifacts.find((value) => value.artifactId === id); if (!artifact) throw new Error(`missing ${id}`); const next = JSON.stringify(artifact, null, 2) + "\n"; const file = Bun.file(path); if (!(await file.exists()) || (await file.text()) !== next) await Bun.write(path, next); }' "$upstream/core-artifacts.json"
 }
 use_jsonschema() {
   if command -v uv > /dev/null 2>&1; then
@@ -450,7 +448,7 @@ PY
         -E '(binary_id(norn-cell) & (test(/^suites::analytics_engine::/) | test(/^suites::duckdb_transform::/) | test(/^analytics::engine::tests::/))) | (binary_id(norn-cell::suites) & test(/^dataset_laws::/))'
       ;;
     wasm)
-      cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-ui-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
+      cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-ui-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api -p norn-authoring-py
       cargo check --locked -p norn-cell --no-default-features --target wasm32-unknown-unknown
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
       cargo clippy --locked -p norn-cell-do --target wasm32-unknown-unknown -- -D warnings
@@ -484,7 +482,7 @@ PY
       RUSTDOCFLAGS="-D warnings" cargo doc --locked "${guard[@]}" --no-deps
       ;;
     cache-warm-wasm)
-      cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-ui-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
+      cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-ui-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api -p norn-authoring-py
       cargo check --locked -p norn-cell --no-default-features --target wasm32-unknown-unknown
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
       cargo clippy --locked -p norn-cell-do --target wasm32-unknown-unknown -- -D warnings
@@ -577,7 +575,11 @@ PY
       export NORN_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn"
       export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn-dev-host"
       export NORN_CHECKER_WASM_PKG="${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/pkg"
-      bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/quickstart --org example --env local --out "$upstream/task.json"
+      "$NORN_BIN" compile tools/norn-ts/fixtures/core --org org_demo --env dev --out "$upstream/core-artifacts.json"
+      bun -e 'const artifacts = await Bun.file(process.argv[1]).json(); for (const [id, path] of [["toy.contacts.source", "fixtures/ir/synthetic-contact.source_schema.json"], ["toy.rows", "fixtures/ir/synthetic-rows.mapping.json"]]) { const artifact = artifacts.find((value) => value.artifactId === id); if (!artifact) throw new Error(`missing ${id}`); const expected = JSON.stringify(artifact, null, 2) + "\n"; const actual = await Bun.file(path).text(); if (actual !== expected) throw new Error(`${path} drifted from native norn compile`); }' "$upstream/core-artifacts.json"
+      "$NORN_BIN" compile apps/norn-cell-do/probe/probe.ts --org probe-org --env probe --out "$upstream/probe.ir.json"
+      bun -e 'const live = await Bun.file(process.argv[1]).json(); const committed = await Bun.file("apps/norn-cell-do/probe/probe.ir.json").json(); if (JSON.stringify(live) !== JSON.stringify(committed)) throw new Error("apps/norn-cell-do/probe/probe.ir.json drifted from native norn compile");' "$upstream/probe.ir.json"
+      "$NORN_BIN" compile tools/norn-ts/fixtures/quickstart --org example --env local --out "$upstream/task.json"
       printf "{}\n" > "$upstream/context.json"
       "$NORN_BIN" check --artifacts "$upstream/task.json" --context "$upstream/context.json" > "$upstream/check.json"
       # runnable-docs runs each release test the status matrix names; prebuild
@@ -641,6 +643,7 @@ PY
     integration-clients)
       export CI=true
       cargo build --locked -p norn-cli --bin norn -p norn-cell-do --bin norn-dev-host
+      export NORN_BIN="$CARGO_TARGET_DIR/debug/norn"
       export NORN_DEV_HOST_BIN="$CARGO_TARGET_DIR/debug/norn-dev-host"
       # The SDK and demo UI typecheck and tests run in `cheap`; the diff below proves
       # the regenerated SDK is the committed one those runs checked.
@@ -685,7 +688,8 @@ PY
       ensure_checker_wasm_engine "$PWD/apps/studio/src/engine"
       # The live workspace rows (e2e/pack-workspace.ts) run a registry pack on the real native
       # dev host; they fail without it here, never skip.
-      cargo build --locked -p norn-cell-do --bin norn-dev-host
+      cargo build --locked -p norn-cli --bin norn -p norn-cell-do --bin norn-dev-host
+      export NORN_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn"
       export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn-dev-host"
       (cd tools/norn-ts && bun install --frozen-lockfile --ignore-scripts --backend copyfile)
       (

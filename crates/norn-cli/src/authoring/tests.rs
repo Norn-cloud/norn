@@ -69,11 +69,18 @@ fn py_compile_and_check_source_admits_hr_pilot_and_standalone_module() -> TestRe
     let hr_pilot = repo_root().join("tools/norn-py/examples/hr_pilot.py");
     let compiled = execute_compile(&CompileArgs {
         path: hr_pilot.clone(),
-        org: "org_demo".to_owned(),
-        env: "dev".to_owned(),
+        org: Some("org_demo".to_owned()),
+        env: Some("dev".to_owned()),
         forbid_unsafe_zen: false,
         out: None,
         tool_root: None,
+        pack_json: false,
+        registry: None,
+        root: None,
+        source_path: None,
+        modules: None,
+        allow_empty: false,
+        max_expansion_work: None,
     });
     assert_eq!(
         compiled.exit_code, 0,
@@ -168,11 +175,18 @@ fn ts_compile_check_profile_on_crm_fixture() -> TestResult {
 
     let compiled = execute_compile(&CompileArgs {
         path: crm.clone(),
-        org: "org_demo".to_owned(),
-        env: "dev".to_owned(),
+        org: Some("org_demo".to_owned()),
+        env: Some("dev".to_owned()),
         forbid_unsafe_zen: false,
         out: None,
         tool_root: Some(ts_root.clone()),
+        pack_json: false,
+        registry: None,
+        root: None,
+        source_path: None,
+        modules: None,
+        allow_empty: false,
+        max_expansion_work: None,
     });
     assert_eq!(
         compiled.exit_code, 0,
@@ -211,11 +225,18 @@ fn ts_compile_check_profile_on_crm_fixture() -> TestResult {
     // --forbid-unsafe-zen must refuse crm.source.ts because ArchiveContact uses Norn.unsafeZen.
     let strict = execute_compile(&CompileArgs {
         path: crm.clone(),
-        org: "org_demo".to_owned(),
-        env: "dev".to_owned(),
+        org: Some("org_demo".to_owned()),
+        env: Some("dev".to_owned()),
         forbid_unsafe_zen: true,
         out: None,
         tool_root: Some(ts_root.clone()),
+        pack_json: false,
+        registry: None,
+        root: None,
+        source_path: None,
+        modules: None,
+        allow_empty: false,
+        max_expansion_work: None,
     });
     assert_eq!(strict.exit_code, 1);
     assert!(
@@ -586,11 +607,18 @@ fn compile_and_fmt_refuse_symlink_inputs() -> TestResult {
 
     let compile_out = execute_compile(&CompileArgs {
         path: symlink_python.clone(),
-        org: "org_demo".to_owned(),
-        env: "dev".to_owned(),
+        org: Some("org_demo".to_owned()),
+        env: Some("dev".to_owned()),
         forbid_unsafe_zen: false,
         out: None,
         tool_root: None,
+        pack_json: false,
+        registry: None,
+        root: None,
+        source_path: None,
+        modules: None,
+        allow_empty: false,
+        max_expansion_work: None,
     });
     assert_eq!(compile_out.exit_code, 2);
     assert!(compile_out.stderr.contains("symlink"));
@@ -665,11 +693,18 @@ export default Norn.flow(
     for target in [scratch.path().to_path_buf(), flow_path] {
         let compiled = execute_compile(&CompileArgs {
             path: target,
-            org: "local".to_owned(),
-            env: "dev".to_owned(),
+            org: Some("local".to_owned()),
+            env: Some("dev".to_owned()),
             forbid_unsafe_zen: false,
             out: None,
             tool_root: Some(ts_root.clone()),
+            pack_json: false,
+            registry: None,
+            root: None,
+            source_path: None,
+            modules: None,
+            allow_empty: false,
+            max_expansion_work: None,
         });
         assert_eq!(
             compiled.exit_code, 0,

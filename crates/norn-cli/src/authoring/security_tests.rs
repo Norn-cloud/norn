@@ -454,11 +454,18 @@ fn compile_rejects_file_source_and_unsupported_json_in_manifest() -> TestResult 
     )?;
     let file_source_out = execute_compile(&CompileArgs {
         path: bad_file_source.path().to_path_buf(),
-        org: "local".to_owned(),
-        env: "dev".to_owned(),
+        org: Some("local".to_owned()),
+        env: Some("dev".to_owned()),
         forbid_unsafe_zen: false,
         out: None,
         tool_root: Some(ts_root.clone()),
+        pack_json: false,
+        registry: None,
+        root: None,
+        source_path: None,
+        modules: None,
+        allow_empty: false,
+        max_expansion_work: None,
     });
     assert_eq!(file_source_out.exit_code, 2);
     assert!(
@@ -482,11 +489,18 @@ fn compile_rejects_file_source_and_unsupported_json_in_manifest() -> TestResult 
     )?;
     let bad_json_out = execute_compile(&CompileArgs {
         path: bad_json.path().to_path_buf(),
-        org: "local".to_owned(),
-        env: "dev".to_owned(),
+        org: Some("local".to_owned()),
+        env: Some("dev".to_owned()),
         forbid_unsafe_zen: false,
         out: None,
         tool_root: Some(ts_root),
+        pack_json: false,
+        registry: None,
+        root: None,
+        source_path: None,
+        modules: None,
+        allow_empty: false,
+        max_expansion_work: None,
     });
     assert_eq!(bad_json_out.exit_code, 2);
     assert!(
@@ -519,11 +533,18 @@ fn norn_json_sources_refuse_symlink_and_parent_escape() -> TestResult {
 
     let refused = execute_compile(&CompileArgs {
         path: scratch.path().to_path_buf(),
-        org: "local".to_owned(),
-        env: "dev".to_owned(),
+        org: Some("local".to_owned()),
+        env: Some("dev".to_owned()),
         forbid_unsafe_zen: false,
         out: None,
         tool_root: None,
+        pack_json: false,
+        registry: None,
+        root: None,
+        source_path: None,
+        modules: None,
+        allow_empty: false,
+        max_expansion_work: None,
     });
     assert_eq!(refused.exit_code, 2);
     assert!(
@@ -560,11 +581,18 @@ fn retained_definitions_refuse_empty_payload_for_all_kinds() -> TestResult {
 
         let refused = execute_compile(&CompileArgs {
             path: scratch.path().to_path_buf(),
-            org: "local".to_owned(),
-            env: "dev".to_owned(),
+            org: Some("local".to_owned()),
+            env: Some("dev".to_owned()),
             forbid_unsafe_zen: false,
             out: None,
             tool_root: None,
+            pack_json: false,
+            registry: None,
+            root: None,
+            source_path: None,
+            modules: None,
+            allow_empty: false,
+            max_expansion_work: None,
         });
         assert_eq!(
             refused.exit_code, 2,
@@ -605,11 +633,18 @@ fn manifest_source_dir_refuses_hidden_symlink_and_hidden_unsupported_file() -> T
     )?;
     let sym_out = execute_compile(&CompileArgs {
         path: sym_ws.path().to_path_buf(),
-        org: "local".to_owned(),
-        env: "dev".to_owned(),
+        org: Some("local".to_owned()),
+        env: Some("dev".to_owned()),
         forbid_unsafe_zen: false,
         out: None,
         tool_root: None,
+        pack_json: false,
+        registry: None,
+        root: None,
+        source_path: None,
+        modules: None,
+        allow_empty: false,
+        max_expansion_work: None,
     });
     assert_eq!(sym_out.exit_code, 2);
     assert!(
@@ -633,11 +668,18 @@ fn manifest_source_dir_refuses_hidden_symlink_and_hidden_unsupported_file() -> T
     )?;
     let junk_out = execute_compile(&CompileArgs {
         path: junk_ws.path().to_path_buf(),
-        org: "local".to_owned(),
-        env: "dev".to_owned(),
+        org: Some("local".to_owned()),
+        env: Some("dev".to_owned()),
         forbid_unsafe_zen: false,
         out: None,
         tool_root: None,
+        pack_json: false,
+        registry: None,
+        root: None,
+        source_path: None,
+        modules: None,
+        allow_empty: false,
+        max_expansion_work: None,
     });
     assert_eq!(junk_out.exit_code, 2);
     assert!(

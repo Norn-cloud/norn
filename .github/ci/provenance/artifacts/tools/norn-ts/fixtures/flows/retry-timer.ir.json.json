@@ -8,7 +8,7 @@
   "parents": [
     "tools/norn-ts/fixtures/flows/retry-timer.builder.ts",
     "tools/norn-ts/fixtures/flows/retry-timer.source.ts",
-    "tools/norn-ts/src/compiler/definitions.ts"
+    "crates/norn-authoring/src/compiler/mod.rs"
   ],
   "rights_evidence": [
     {

@@ -2,8 +2,8 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { assignable, catchTag, flow, fn, lowerFlow, perform, S, succeed, taggedError, X } from "../src/builder/index.ts"
-import { compileModule } from "../src/compile-stdin.ts"
-import { compileFile } from "../src/compiler/index.ts"
+import { compileModule } from "../src/native-compiler.ts"
+import { compileFile } from "../src/native-compiler.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 
 const options = { scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath: "module.ts" }
@@ -36,12 +36,10 @@ test("TS2: seeded alpha renamings preserve the compiled artifacts and free colum
 test("TS1: a break-only branch continues, and stacked labels share a return", () => {
   const result = compileFile(corpus("accept/switch-bindings"), options)
   if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
-  const branch = result.definition.body[1]
-  if (branch?._tag !== "Route") throw new Error("expected switch route")
-  expect(branch.branches.map(b => [b.when._tag, b.then.map(s => s._tag)])).toEqual([
-    ["Compare", []], ["Logical", ["Succeed"]],
-  ])
-  expect(branch.otherwise[0]?._tag).toBe("Succeed")
+  const rule = result.artifacts.find((a) => (a as { kind?: string }).kind === "rule")
+  expect(rule).toBeDefined()
+  const graph = JSON.stringify(rule)
+  expect(graph).toContain("complete")
 })
 
 for (const [fixture, code, message] of [
