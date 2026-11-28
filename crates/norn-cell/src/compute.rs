@@ -620,21 +620,22 @@ impl<E: SqlEngine> CellStore<E> {
         }
         usize::try_from(plan.max_items()).map_err(|_bound| refused("core.compute.bound_exceeded"))
     }
+    pub(crate) fn current_definition_pin(&self) -> Result<String, CellError> {
+        let reader = self.read();
+        match reader.active_definitions_version()? {
+            Some(version) => Ok(reader
+                .installed_definitions(Some(version))?
+                .ok_or_else(|| refused("core.compute.stale_input"))?
+                .receipt_sha256),
+            None => Ok(self.model().model_hash().to_owned()),
+        }
+    }
     pub(crate) fn question_pins(
         &self,
         plan: &QuestionPlan,
         cutoff: Option<crate::KnowledgeCutoff>,
     ) -> Result<(String, String), CellError> {
-        let reader = self.read();
-        let definition_pin = match reader.active_definitions_version()? {
-            Some(version) => {
-                reader
-                    .installed_definitions(Some(version))?
-                    .ok_or_else(|| refused("core.compute.stale_input"))?
-                    .receipt_sha256
-            }
-            None => self.model().model_hash().to_owned(),
-        };
+        let definition_pin = self.current_definition_pin()?;
         let pin = historical::query_pin(self.model().model_hash(), plan, &definition_pin, cutoff)?;
         Ok((pin, definition_pin))
     }
