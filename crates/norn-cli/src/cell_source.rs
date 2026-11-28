@@ -46,16 +46,7 @@ struct ManifestTargets {
 /// `defaultTarget`). Explicit CLI flags always override manifest values;
 /// missing required fields fail closed.
 pub(crate) fn resolve_target(target: &Target) -> Result<ResolvedTarget, String> {
-    let needs_manifest = target.target.is_some()
-        || target.url.is_none()
-        || target.org.is_none()
-        || target.env.is_none();
-
-    let manifest = if needs_manifest {
-        load_enclosing_manifest_targets(target)?
-    } else {
-        None
-    };
+    let manifest = load_enclosing_manifest_targets(target)?;
 
     let profile = select_target_profile(target.target.as_deref(), manifest.as_ref())?;
 
@@ -301,7 +292,7 @@ fn parse_single_profile(
                     key,
                     field_val,
                     manifest_display,
-                )?)
+                )?);
             }
             "org" => {
                 profile.org = Some(non_empty_string_field(
@@ -309,7 +300,7 @@ fn parse_single_profile(
                     key,
                     field_val,
                     manifest_display,
-                )?)
+                )?);
             }
             "env" => {
                 profile.env = Some(non_empty_string_field(
@@ -317,7 +308,7 @@ fn parse_single_profile(
                     key,
                     field_val,
                     manifest_display,
-                )?)
+                )?);
             }
             "tokenEnv" => {
                 profile.token_env = Some(non_empty_string_field(

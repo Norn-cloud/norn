@@ -298,20 +298,13 @@ fn merge_raw_base_artifacts(
     context_json: &str,
     extra_base: Vec<Box<RawValue>>,
 ) -> Result<String, String> {
-    let trimmed = context_json.trim();
-    let mut fields: BTreeMap<String, Box<RawValue>> = if trimmed.is_empty() || trimmed == "null" {
-        BTreeMap::new()
-    } else {
-        serde_json::from_str(trimmed)
-            .map_err(|err| format!("invalid context JSON object: {err}"))?
-    };
+    let mut fields: BTreeMap<String, Box<RawValue>> = serde_json::from_str(context_json)
+        .map_err(|err| format!("invalid context JSON object: {err}"))?;
 
     let mut merged: Vec<Box<RawValue>> = match fields.remove("base") {
-        Some(existing) if existing.get().trim() != "null" => {
-            serde_json::from_str(existing.get())
-                .map_err(|err| format!("invalid context.base array: {err}"))?
-        }
-        Some(_null_val) | None => Vec::new(),
+        Some(existing) => serde_json::from_str(existing.get())
+            .map_err(|err| format!("invalid context.base array: {err}"))?,
+        None => Vec::new(),
     };
 
     let mut seen_exact: BTreeSet<(String, String, String)> = BTreeSet::new();
