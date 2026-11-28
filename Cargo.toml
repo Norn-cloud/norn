@@ -2,6 +2,7 @@
 members = [
   "crates/norn-api",
   "crates/norn-authoring",
+  "crates/norn-authoring-py",
   "crates/norn-authz",
   "crates/norn-builtins",
   "crates/norn-canonical",
@@ -29,6 +30,7 @@ members = [
 default-members = [
   "crates/norn-api",
   "crates/norn-authoring",
+  "crates/norn-authoring-py",
   "crates/norn-authz",
   "crates/norn-builtins",
   "crates/norn-canonical",
