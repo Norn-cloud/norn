@@ -168,6 +168,10 @@ pub struct DefinitionsPlan {
     /// The approvals the change installs with the set.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approvals: Vec<PlannedApproval>,
+    /// Exact transitive ripple effects of applying this change over the active set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub ripples: Option<crate::plan_ripples::PlanRippleReport>,
 }
 
 /// Whether an apply installed a new version.
@@ -216,6 +220,7 @@ fn unservable(detail: impl Into<String>) -> Refusal {
         message: detail.into(),
         law: None,
         span: None,
+        witness: None,
     }])
 }
 
@@ -330,9 +335,8 @@ fn submission<E: SqlEngine>(
 #[allow(clippy::type_complexity, reason = "the three lists of a plan")]
 fn diff(
     tenant: &[ArtifactEnvelope],
-    active: &InstalledDefinitionSet,
+    retained: &[ArtifactEnvelope],
 ) -> Result<(Vec<PlannedArtifact>, Vec<PlannedArtifact>, Vec<String>), Refusal> {
-    let retained = kernel_set::retained_artifacts(&active.canonical_set).map_err(Refusal::host)?;
     let by_id: BTreeMap<&str, &ArtifactEnvelope> = retained
         .iter()
         .map(|artifact| (artifact.artifact_id.as_str(), artifact))
@@ -376,7 +380,17 @@ fn candidate<E: SqlEngine>(
         KernelRefusal::Refused(findings) => refused(crate::provision::placed(&findings, &tenant)),
         KernelRefusal::Invalid(detail) => unservable(detail),
     })?;
-    let (added, changed, same) = diff(&tenant, &active)?;
+    let before_artifacts =
+        kernel_set::retained_artifacts(&active.canonical_set).map_err(Refusal::host)?;
+    let after_artifacts =
+        kernel_set::retained_artifacts(&admitted.canonical_set).map_err(Refusal::host)?;
+    let (added, changed, same) = diff(&tenant, &before_artifacts)?;
+    let ripples = Some(crate::plan_ripples::compute(
+        &before_artifacts,
+        &after_artifacts,
+        &added,
+        &changed,
+    ));
     let unchanged = admitted.canonical_set == active.canonical_set;
     let (model, new_object_types, next_version, checked_objects) = {
         let cell = host.cell()?;
@@ -426,6 +440,7 @@ fn candidate<E: SqlEngine>(
                 diagnostics: Vec::new(),
                 receipt_sha256: admitted.receipt_sha256.clone(),
                 approvals: Vec::new(),
+                ripples,
             },
             admitted,
             model,
@@ -605,6 +620,7 @@ pub fn live_law_refusal(error: &CellError) -> Option<Refusal> {
             span: Some(RefusalSpan {
                 pointer: format!("/objects/{}/{}", finding.object_type, finding.id),
             }),
+            witness: None,
         })
         .collect();
     // Nothing is admitted over a finding, whatever its severity.
@@ -886,6 +902,7 @@ mod tests {
             span: Some(RefusalSpan {
                 pointer: "/objects/t/1".to_owned(),
             }),
+            witness: None,
         }
     }
 

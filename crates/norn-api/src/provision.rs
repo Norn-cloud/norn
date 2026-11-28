@@ -277,6 +277,7 @@ pub fn unservable(detail: impl Into<String>) -> Refusal {
         message: detail.into(),
         law: None,
         span: None,
+        witness: None,
     }])
 }
 

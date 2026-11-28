@@ -96,7 +96,7 @@ export const SHAPES: Readonly<Record<ShapeName, Check>> = {
   },
   RefusalDiagnostic: object(
     { code: string, severity: string, message: string, span: nullOr("oneOf", shape("RefusalSpan")) },
-    { law: { kind: "nullable", of: string } },
+    { law: { kind: "nullable", of: string }, witness: { kind: "record" } },
   ),
   RefusalSpan: object({ pointer: string }),
   NornIrRefusalReason: object(

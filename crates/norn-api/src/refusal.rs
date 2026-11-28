@@ -148,7 +148,7 @@ pub struct Refusal {
 }
 
 /// One checker finding in a refusal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RefusalDiagnostic {
     /// Stable registered checker code: the rule that refused.
@@ -163,6 +163,21 @@ pub struct RefusalDiagnostic {
     /// Where in the submitted document, when the check can say.
     #[schema(required = true, nullable = true)]
     pub span: Option<RefusalSpan>,
+    /// Structured counterexample witness showing the finding, when the check found one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(schema_with = witness_schema)]
+    pub witness: Option<serde_json::Value>,
+}
+
+/// JSON witnesses contain only finite JSON values (never `NaN`), so structural
+/// equality is reflexive.
+impl Eq for RefusalDiagnostic {}
+
+fn witness_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form(
+        "Structured counterexample witness showing the finding, when the check found one.",
+        false,
+    )
 }
 
 impl RefusalDiagnostic {
@@ -185,6 +200,10 @@ impl RefusalDiagnostic {
                 span: finding.span.as_ref().map(|span| RefusalSpan {
                     pointer: format!("{under}{}", span.pointer),
                 }),
+                witness: finding
+                    .witness
+                    .as_ref()
+                    .map(norn_checker::DiagnosticWitness::to_json),
             })
             .collect()
     }
@@ -200,6 +219,7 @@ impl RefusalDiagnostic {
             span: Some(RefusalSpan {
                 pointer: pointer.into(),
             }),
+            witness: None,
         }
     }
 }

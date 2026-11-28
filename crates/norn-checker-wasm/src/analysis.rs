@@ -32,3 +32,28 @@ pub fn analyze_red_team_json(artifacts_json: &str) -> Result<String, AbiError> {
     let report = norn_checker::red_team::analyze_red_team(&envelopes).to_json_value();
     serde_json::to_string(&report).map_err(|error| AbiError::Receipt(error.to_string()))
 }
+
+/// Compute exact transitive ripple effects between `before_json` and `after_json`
+/// for the root `changed_ids_json` array using `norn_checker::ripple`.
+///
+/// # Errors
+///
+/// Invalid JSON, non-array inputs, or undecodable artifact envelopes.
+pub fn ripple_effects_json(
+    before_json: &str,
+    after_json: &str,
+    changed_ids_json: &str,
+) -> Result<String, AbiError> {
+    let before_values = parse_array("before", before_json)?;
+    let before = envelopes_or_invalid("before", &before_values)?;
+    let after_values = parse_array("after", after_json)?;
+    let after = envelopes_or_invalid("after", &after_values)?;
+    let changed_ids: Vec<String> =
+        serde_json::from_str(changed_ids_json).map_err(|error| AbiError::InvalidInput {
+            argument: "changedIds",
+            detail: error.to_string(),
+        })?;
+    let report =
+        norn_checker::ripple::compute_ripple_effects(&before, &after, &changed_ids).to_json_value();
+    serde_json::to_string(&report).map_err(|error| AbiError::Receipt(error.to_string()))
+}

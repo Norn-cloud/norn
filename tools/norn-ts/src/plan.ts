@@ -12,7 +12,35 @@
  * is reported, but it changes no behaviour.
  */
 import { type Json, canonicalJson } from "./canonical.ts"
+import type {
+  CheckerAbi,
+  RippleBudgetExceeded,
+  RippleEntry,
+  RippleImpactKind,
+  RippleStatus,
+} from "./checker-abi.ts"
 import { artifactId, isArtifact } from "./pack.ts"
+
+export type PlanRipple = RippleEntry
+
+export interface PlanRippleBudget {
+  readonly maxNodes: number
+  readonly maxEdges: number
+  readonly maxSteps: number
+}
+
+export interface PlanDiffOptions {
+  /** Authoritative Rust checker WASM ABI, when loaded. */
+  readonly checker?: Pick<CheckerAbi, "rippleEffects">
+  /** Explicit graph budget ceiling for offline/fallback ripple projection. */
+  readonly budget?: PlanRippleBudget
+}
+
+const DEFAULT_RIPPLE_BUDGET: PlanRippleBudget = {
+  maxNodes: 16_384,
+  maxEdges: 131_072,
+  maxSteps: 1_048_576,
+}
 
 export interface ArtifactChange {
   readonly artifactId: string
@@ -52,6 +80,25 @@ export interface Plan {
   readonly warnings: ReadonlyArray<LifecycleWarning>
   /** Structural removals and lifecycle narrowing, ready for install gating. */
   readonly narrowing: ReadonlyArray<PlanNarrowing>
+  /** Exact transitive ripple effects caused by added, changed, or removed artifacts. */
+  readonly ripples: ReadonlyArray<PlanRipple>
+  /** Completeness of `ripples`: `"exact"` within budget, or `"unknown"` on budget exhaustion or projection failure. */
+  readonly rippleStatus: RippleStatus
+  /** Explicit budget exhaustion metadata when `rippleStatus === "unknown"` due to a budget limit. */
+  readonly rippleBudgetExceeded?: RippleBudgetExceeded
+  /** Explicit explanation when `rippleStatus === "unknown"` (budget exhaustion or projection error). */
+  readonly rippleReason?: string
+}
+
+const cmpLex = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+
+function cmpPathLex(a: ReadonlyArray<string>, b: ReadonlyArray<string>): number {
+  const len = Math.min(a.length, b.length)
+  for (let i = 0; i < len; i++) {
+    const d = cmpLex(a[i]!, b[i]!)
+    if (d !== 0) return d
+  }
+  return a.length - b.length
 }
 
 type Obj = Readonly<Record<string, unknown>>
@@ -77,7 +124,7 @@ function differingMembers(a: Obj, b: Obj): string[] {
 }
 
 /** Diff the local (to install) set against the remote (installed) set. */
-export function planDiff(local: ReadonlyArray<Json>, remote: ReadonlyArray<Json>): Plan {
+export function planDiff(local: ReadonlyArray<Json>, remote: ReadonlyArray<Json>, options: PlanDiffOptions = {}): Plan {
   const next = index(local), prev = index(remote)
   const kind = (a: Obj): string => (typeof a.kind === "string" ? a.kind : "?")
   const added = [...next].filter(([id]) => !prev.has(id)).map(([id, a]) => ({ artifactId: id, kind: kind(a) }))
@@ -103,13 +150,38 @@ export function planDiff(local: ReadonlyArray<Json>, remote: ReadonlyArray<Json>
     warnings.push(...lifecycleWarnings(id, b, a))
   }
   for (const [id, b] of prev) if (!next.has(id)) warnings.push(...lifecycleWarnings(id, b, undefined))
-  const byId = (x: { artifactId: string }, y: { artifactId: string }) => x.artifactId.localeCompare(y.artifactId)
+  const byId = (x: { artifactId: string }, y: { artifactId: string }) => cmpLex(x.artifactId, y.artifactId)
   const narrowing = structuralNarrowings(remote, local)
   narrowing.sort((left, right) =>
-    `${left.artifactId}:${left.objectType ?? ""}:${left.property ?? ""}:${left.kind}:${left.ids.join(",")}`
-      .localeCompare(`${right.artifactId}:${right.objectType ?? ""}:${right.property ?? ""}:${right.kind}:${right.ids.join(",")}`),
+    cmpLex(
+      `${left.artifactId}:${left.objectType ?? ""}:${left.property ?? ""}:${left.kind}:${left.ids.join(",")}`,
+      `${right.artifactId}:${right.objectType ?? ""}:${right.property ?? ""}:${right.kind}:${right.ids.join(",")}`,
+    ),
   )
-  return { added: added.sort(byId), removed: removed.sort(byId), changed: changed.sort(byId), provenanceOnly: provenanceOnly.sort(), unchanged: unchanged.sort(), warnings, narrowing }
+  const sortedAdded = added.sort(byId)
+  const sortedRemoved = removed.sort(byId)
+  const sortedChanged = changed.sort(byId)
+  const rootIds = [...new Set([
+    ...sortedAdded.map((a) => a.artifactId),
+    ...sortedRemoved.map((r) => r.artifactId),
+    ...sortedChanged.map((c) => c.artifactId),
+  ])].sort(cmpLex)
+  const rippleReport = options.checker?.rippleEffects
+    ? options.checker.rippleEffects(remote, local, rootIds)
+    : computeLocalRipples(remote, local, rootIds, options.budget ?? DEFAULT_RIPPLE_BUDGET)
+  return {
+    added: sortedAdded,
+    removed: sortedRemoved,
+    changed: sortedChanged,
+    provenanceOnly: provenanceOnly.sort(cmpLex),
+    unchanged: unchanged.sort(cmpLex),
+    warnings,
+    narrowing,
+    ripples: rippleReport.ripples,
+    rippleStatus: rippleReport.status,
+    ...(rippleReport.budgetExceeded ? { rippleBudgetExceeded: rippleReport.budgetExceeded } : {}),
+    ...(rippleReport.reason ? { rippleReason: rippleReport.reason } : {}),
+  }
 }
 
 interface TypeSnapshot {
@@ -426,6 +498,620 @@ export function lifecycleWarnings(id: string, before: Obj | undefined, after: Ob
   return out
 }
 
+interface LocalRippleResult {
+  readonly status: RippleStatus
+  readonly ripples: ReadonlyArray<PlanRipple>
+  readonly budgetExceeded?: RippleBudgetExceeded
+  readonly reason?: string
+}
+
+const KNOWN_ARTIFACT_KINDS = new Set<string>([
+  "entity",
+  "relation",
+  "action",
+  "rule",
+  "connector",
+  "widget",
+  "customization",
+  "setting",
+  "business_pack",
+  "policy",
+  "derived",
+  "source_schema",
+  "mapping",
+  "law",
+  "defined_concept",
+  "labels",
+  "model",
+])
+
+function budgetExceeded(resource: "nodes" | "edges" | "steps", limit: number): LocalRippleResult {
+  const detail = `ripple graph ${resource} budget (${limit}) exceeded`
+  return {
+    status: "unknown",
+    ripples: [],
+    budgetExceeded: { resource, limit, detail },
+    reason: detail,
+  }
+}
+
+function projectionUnknown(reason: string): LocalRippleResult {
+  return {
+    status: "unknown",
+    ripples: [],
+    reason,
+  }
+}
+
+function computeLocalRipples(
+  beforeArtifacts: ReadonlyArray<Json>,
+  afterArtifacts: ReadonlyArray<Json>,
+  changedIds: ReadonlyArray<string>,
+  budget: PlanRippleBudget,
+): LocalRippleResult {
+  let steps = 0
+  const tick = (): LocalRippleResult | undefined => {
+    steps++
+    return steps > budget.maxSteps ? budgetExceeded("steps", budget.maxSteps) : undefined
+  }
+
+  const before = new Map<string, Obj>()
+  const after = new Map<string, Obj>()
+  const allIds = new Set<string>()
+  const kinds = new Map<string, string>()
+  const typeOwners = new Map<string, string>()
+  const ownerTypes = new Map<string, Set<string>>()
+  const ownedChildren = new Map<string, Set<string>>()
+  const actionOwners = new Map<string, string>()
+  const ruleOwners = new Map<string, string>()
+  const lawOwners = new Map<string, string>()
+  const widgetOwners = new Map<string, string>()
+  const hasLifecycle = new Set<string>()
+  const typeParents = new Map<string, Set<string>>()
+  const typeWriters = new Map<string, Set<string>>()
+  const lawSubjects: Array<readonly [string, string]> = []
+  const edges = new Set<string>()
+  const specializationEdges = new Set<string>()
+  const brokenDependents = new Set<string>()
+
+  const addToSetMap = (map: Map<string, Set<string>>, key: string, value: string) => {
+    let bucket = map.get(key)
+    if (!bucket) { bucket = new Set(); map.set(key, bucket) }
+    bucket.add(value)
+  }
+
+  const recordTypeOwner = (typeName: string, id: string) => {
+    typeOwners.set(typeName, id)
+    addToSetMap(ownerTypes, id, typeName)
+  }
+
+  const indexArtifact = (id: string, art: Obj): LocalRippleResult | undefined => {
+    const k = typeof art.kind === "string" ? art.kind : ""
+    if (!KNOWN_ARTIFACT_KINDS.has(k)) {
+      return projectionUnknown(`unsupported artifact kind ${JSON.stringify(art.kind)} for \`${id}\``)
+    }
+    kinds.set(id, k)
+    const payload = obj(art.payload)
+    if (!payload) {
+      return projectionUnknown(`malformed ${k} artifact \`${id}\`: payload must be an object`)
+    }
+    if (k === "entity") {
+      const ot = obj(payload.objectType)
+      const iface = obj(payload.interface)
+      const ext = obj(payload.objectTypeExtension)
+      const hasKnownForm = Boolean(
+        (ot && typeof ot.name === "string")
+        || (iface && typeof iface.name === "string")
+        || typeof payload.objectKind === "string"
+        || (ext && typeof ext.target === "string")
+        || Array.isArray(payload.propertyTypes)
+        || Array.isArray(payload.markings),
+      )
+      if (!hasKnownForm) {
+        return projectionUnknown(`malformed entity artifact \`${id}\`: unrecognized entity payload shape`)
+      }
+      if (ot && typeof ot.name === "string") {
+        recordTypeOwner(ot.name, id)
+        if (Array.isArray(ot.lifecycles) && ot.lifecycles.length > 0) hasLifecycle.add(id)
+        for (const collection of Array.isArray(ot.ownedCollections) ? ot.ownedCollections.map(obj) : []) {
+          const err = tick(); if (err) return err
+          if (collection && typeof collection.childType === "string") {
+            addToSetMap(ownedChildren, ot.name, collection.childType)
+          }
+        }
+      }
+      if (iface && typeof iface.name === "string") {
+        recordTypeOwner(iface.name, id)
+        if (Array.isArray(iface.lifecycles) && iface.lifecycles.length > 0) hasLifecycle.add(id)
+      }
+      if (typeof payload.objectKind === "string") recordTypeOwner(payload.objectKind, id)
+    } else if (k === "action") {
+      if (typeof payload.actionId !== "string") {
+        return projectionUnknown(`malformed action artifact \`${id}\`: missing actionId`)
+      }
+      actionOwners.set(payload.actionId, id)
+    } else if (k === "rule") {
+      if (typeof payload.ruleId !== "string") {
+        return projectionUnknown(`malformed rule artifact \`${id}\`: missing ruleId`)
+      }
+      ruleOwners.set(payload.ruleId, id)
+    } else if (k === "law") {
+      if (typeof payload.id !== "string" || typeof payload.subject !== "string") {
+        return projectionUnknown(`malformed law artifact \`${id}\`: missing id or subject`)
+      }
+      lawOwners.set(payload.id, id)
+    } else if (k === "widget") {
+      if (typeof payload.widgetId !== "string") {
+        return projectionUnknown(`malformed widget artifact \`${id}\`: missing widgetId`)
+      }
+      widgetOwners.set(payload.widgetId, id)
+    }
+    return undefined
+  }
+
+  for (const raw of beforeArtifacts) {
+    const err = tick(); if (err) return err
+    if (!isArtifact(raw)) return projectionUnknown("malformed artifact envelope in before set")
+    const id = artifactId(raw)
+    const art = raw as unknown as Obj
+    before.set(id, art)
+    allIds.add(id)
+    if (allIds.size > budget.maxNodes) return budgetExceeded("nodes", budget.maxNodes)
+    const idxErr = indexArtifact(id, art); if (idxErr) return idxErr
+  }
+  for (const raw of afterArtifacts) {
+    const err = tick(); if (err) return err
+    if (!isArtifact(raw)) return projectionUnknown("malformed artifact envelope in after set")
+    const id = artifactId(raw)
+    const art = raw as unknown as Obj
+    after.set(id, art)
+    allIds.add(id)
+    if (allIds.size > budget.maxNodes) return budgetExceeded("nodes", budget.maxNodes)
+    const idxErr = indexArtifact(id, art); if (idxErr) return idxErr
+  }
+
+  const removedIds = new Set<string>()
+  for (const id of before.keys()) {
+    const err = tick(); if (err) return err
+    if (!after.has(id)) removedIds.add(id)
+  }
+  const rootSet = new Set<string>(removedIds)
+  for (const id of changedIds) {
+    const err = tick(); if (err) return err
+    if (allIds.has(id)) rootSet.add(id)
+  }
+  if (rootSet.size === 0) return { status: "exact", ripples: [] }
+
+  const addEdge = (dependent: string, dependency: string): LocalRippleResult | undefined => {
+    const err = tick()
+    if (err) return err
+    if (dependent === dependency || !allIds.has(dependent) || !allIds.has(dependency)) return undefined
+    edges.add(`${dependent}\0${dependency}`)
+    if (removedIds.has(dependency)) brokenDependents.add(dependent)
+    return edges.size > budget.maxEdges ? budgetExceeded("edges", budget.maxEdges) : undefined
+  }
+  const addSpec = (dependent: string, dependency: string): LocalRippleResult | undefined => {
+    if (dependent !== dependency && allIds.has(dependent) && allIds.has(dependency)) {
+      specializationEdges.add(`${dependent}\0${dependency}`)
+    }
+    return addEdge(dependent, dependency)
+  }
+  const addType = (dependent: string, name: unknown): LocalRippleResult | undefined => {
+    const err = tick(); if (err) return err
+    if (typeof name !== "string") return undefined
+    const owner = typeOwners.get(name)
+    return owner ? addEdge(dependent, owner) : undefined
+  }
+  const addAction = (dependent: string, actionId: unknown): LocalRippleResult | undefined => {
+    const err = tick(); if (err) return err
+    if (typeof actionId !== "string") return undefined
+    return addEdge(dependent, actionOwners.get(actionId) ?? actionId)
+  }
+
+  for (const [id, art] of after) {
+    const stepErr = tick(); if (stepErr) return stepErr
+    if (Array.isArray(art.dependencies)) {
+      for (const dep of art.dependencies) {
+        const d = obj(dep)
+        if (!d || typeof d.artifactId !== "string") {
+          return projectionUnknown(`malformed dependency entry in \`${id}\``)
+        }
+        const err = addEdge(id, d.artifactId)
+        if (err) return err
+      }
+    }
+    const k = kinds.get(id)
+    const payload = obj(art.payload)
+    if (!payload) return projectionUnknown(`malformed ${k ?? "unknown"} artifact \`${id}\`: missing payload`)
+    if (k === "entity") {
+      const ot = obj(payload.objectType)
+      if (ot && typeof ot.name === "string") {
+        const parents = [...(typeof ot.extends === "string" ? [ot.extends] : []), ...strings(ot.implements)]
+        for (const p of parents) {
+          const errTick = tick(); if (errTick) return errTick
+          addToSetMap(typeParents, ot.name, p)
+          const owner = typeOwners.get(p)
+          if (owner) { const err = addSpec(id, owner); if (err) return err }
+        }
+        for (const link of Array.isArray(ot.links) ? ot.links.map(obj) : []) {
+          const err = addType(id, link?.target); if (err) return err
+        }
+      }
+      const iface = obj(payload.interface)
+      if (iface && typeof iface.name === "string") {
+        for (const p of strings(iface.extends)) {
+          const errTick = tick(); if (errTick) return errTick
+          addToSetMap(typeParents, iface.name, p)
+          const owner = typeOwners.get(p)
+          if (owner) { const err = addSpec(id, owner); if (err) return err }
+        }
+        for (const link of Array.isArray(iface.links) ? iface.links.map(obj) : []) {
+          const err = addType(id, link?.target); if (err) return err
+        }
+      }
+      const ext = obj(payload.objectTypeExtension)
+      if (ext && typeof ext.target === "string") {
+        const owner = typeOwners.get(ext.target)
+        if (owner) { const err = addSpec(id, owner); if (err) return err }
+        for (const link of Array.isArray(ext.links) ? ext.links.map(obj) : []) {
+          const err = addType(id, link?.target); if (err) return err
+        }
+      }
+    } else if (k === "relation") {
+      if (typeof payload.from !== "string" || typeof payload.to !== "string") {
+        return projectionUnknown(`malformed relation artifact \`${id}\`: missing from/to`)
+      }
+      const err1 = addType(id, payload.from); if (err1) return err1
+      const err2 = addType(id, payload.to); if (err2) return err2
+    } else if (k === "action") {
+      const targetTypes = new Set<string>()
+      for (const write of Array.isArray(payload.writes) ? payload.writes.map(obj) : []) {
+        if (write && typeof write.entityKind === "string") {
+          const err = addType(id, write.entityKind); if (err) return err
+          addToSetMap(typeWriters, write.entityKind, id)
+          targetTypes.add(write.entityKind)
+        }
+      }
+      const prog = obj(payload.effectProgram)
+      if (prog) {
+        if (typeof prog.entityArtifactId === "string") {
+          const err = addEdge(id, prog.entityArtifactId); if (err) return err
+        }
+        if (typeof prog.objectKind === "string") {
+          const err = addType(id, prog.objectKind); if (err) return err
+          addToSetMap(typeWriters, prog.objectKind, id)
+          targetTypes.add(prog.objectKind)
+          if (prog.kind === "mutate_parent_with_rows") {
+            for (const childType of ownedChildren.get(prog.objectKind) ?? []) {
+              const err2 = addType(id, childType); if (err2) return err2
+              addToSetMap(typeWriters, childType, id)
+            }
+          }
+        }
+      }
+      for (const s of Array.isArray(payload.slice) ? payload.slice.map(obj) : []) {
+        const err = addType(id, s?.objectType); if (err) return err
+      }
+      for (const a of Array.isArray(payload.aggregates) ? payload.aggregates.map(obj) : []) {
+        const err = addType(id, a?.objectType); if (err) return err
+      }
+      const syncRule = obj(payload.synchronousRule)
+      if (syncRule && typeof syncRule.artifactId === "string") { const err = addEdge(id, syncRule.artifactId); if (err) return err }
+      const access = obj(payload.access)
+      if (access && typeof access.artifactId === "string") {
+        const err = addEdge(id, access.artifactId); if (err) return err
+        for (const targetType of targetTypes) {
+          const err2 = addType(access.artifactId, targetType); if (err2) return err2
+        }
+      }
+      const comp = obj(payload.compensation)
+      if (comp) { const err = addAction(id, comp.actionId); if (err) return err }
+    } else if (k === "rule") {
+      for (const s of Array.isArray(payload.slice) ? payload.slice.map(obj) : []) {
+        const err = addType(id, s?.objectType); if (err) return err
+      }
+      for (const cmd of Array.isArray(payload.sourceCommands) ? payload.sourceCommands.map(obj) : []) {
+        if (cmd && typeof cmd.connector === "string") { const err = addEdge(id, cmd.connector); if (err) return err }
+        if (cmd && typeof cmd.mapping === "string") { const err = addEdge(id, cmd.mapping); if (err) return err }
+      }
+      // Decide-graph fact-write targets (matching Rust FactSchema projection).
+      if (payload.contract === "decide" && payload.graph !== undefined) {
+        const factsSchema = obj(obj(obj(payload.outputSchema)?.properties)?.facts)
+        const itemProps = obj(obj(factsSchema?.items)?.properties)
+        const objectTypes = strings(obj(itemProps?.objectType)?.enum)
+        for (const ty of objectTypes) {
+          const err = addType(id, ty); if (err) return err
+          addToSetMap(typeWriters, ty, id)
+        }
+      }
+    } else if (k === "policy") {
+      const hasRules = Array.isArray(payload.rules)
+      const hasObligations = Array.isArray(payload.obligations)
+      const hasAppliesTo = typeof payload.appliesTo === "string"
+      if (!hasRules && !hasObligations && !hasAppliesTo) {
+        return projectionUnknown(`malformed policy artifact \`${id}\`: unrecognized policy payload shape`)
+      }
+      for (const r of Array.isArray(payload.rules) ? payload.rules.map(obj) : []) {
+        if (!r) continue
+        const err = addType(id, r.resourceType); if (err) return err
+        for (const act of strings(r.actions)) { const err2 = addAction(id, act); if (err2) return err2 }
+      }
+      if (typeof payload.appliesTo === "string") {
+        const err = addType(id, payload.appliesTo) ?? addAction(id, payload.appliesTo); if (err) return err
+      }
+      for (const item of Array.isArray(payload.obligations) ? payload.obligations.map(obj) : []) {
+        if (item && typeof item.appliesTo === "string") {
+          const err = addType(id, item.appliesTo) ?? addAction(id, item.appliesTo); if (err) return err
+        }
+      }
+    } else if (k === "law") {
+      if (typeof payload.subject === "string") {
+        const err = addType(id, payload.subject); if (err) return err
+        lawSubjects.push([id, payload.subject])
+      }
+      const scope = obj(payload.scope)
+      for (const ty of [...strings(scope?.objectTypes), ...strings(scope?.commitments)]) {
+        const err = addType(id, ty); if (err) return err
+      }
+      const resp = obj(payload.response)
+      if (resp) {
+        if (typeof resp.artifactId === "string") { const err = addEdge(id, resp.artifactId); if (err) return err }
+        const err = addType(id, resp.objectType) ?? addType(id, resp.targetType); if (err) return err
+      }
+    } else if (k === "derived") {
+      if (!Array.isArray(payload.inputs)) {
+        return projectionUnknown(`malformed derived artifact \`${id}\`: missing inputs array`)
+      }
+      for (const inp of payload.inputs.map(obj)) {
+        if (inp && typeof inp.artifactId === "string") { const err = addEdge(id, inp.artifactId); if (err) return err }
+      }
+    } else if (k === "mapping") {
+      const format = payload.format
+      if (format === "norn.interpretation/1" || payload.sourceLayer !== undefined || payload.targetLayer !== undefined) {
+        const sourceLayer = obj(payload.sourceLayer)
+        const targetLayer = obj(payload.targetLayer)
+        if (!sourceLayer || typeof sourceLayer.artifactId !== "string" || !targetLayer || typeof targetLayer.artifactId !== "string") {
+          return projectionUnknown(`malformed law interpretation mapping \`${id}\`: missing sourceLayer/targetLayer artifactId`)
+        }
+        const err1 = addEdge(id, sourceLayer.artifactId); if (err1) return err1
+        const err2 = addEdge(id, targetLayer.artifactId); if (err2) return err2
+      } else if (format === undefined || format === "norn.mapping/1") {
+        const src = obj(payload.source)
+        if (!src || typeof src.schemaId !== "string") {
+          return projectionUnknown(`malformed mapping artifact \`${id}\`: missing source.schemaId`)
+        }
+        const errSrc = addEdge(id, src.schemaId); if (errSrc) return errSrc
+        for (const iface of strings(payload.interfaces)) { const err = addEdge(id, iface); if (err) return err }
+        for (const m of Array.isArray(payload.maps) ? payload.maps.map(obj) : []) {
+          const target = obj(m?.target)
+          if (target && typeof target.entity === "string") {
+            const err = addEdge(id, target.entity); if (err) return err
+            for (const typeName of ownerTypes.get(target.entity) ?? []) {
+              const errTick = tick(); if (errTick) return errTick
+              addToSetMap(typeWriters, typeName, id)
+            }
+          }
+        }
+        if (payload.pathMappings !== undefined) {
+          if (!Array.isArray(payload.pathMappings)) {
+            return projectionUnknown(`malformed mapping artifact \`${id}\`: pathMappings must be an array`)
+          }
+          for (const rawPathMap of payload.pathMappings) {
+            const pathMap = obj(rawPathMap)
+            if (!pathMap) {
+              return projectionUnknown(`malformed mapping artifact \`${id}\`: pathMappings entries must be objects`)
+            }
+            for (const field of ["sourceEntities", "targetEntities"] as const) {
+              const endpoints = pathMap[field]
+              if (endpoints === undefined) continue
+              if (!Array.isArray(endpoints)) {
+                return projectionUnknown(`malformed mapping artifact \`${id}\`: pathMappings.${field} must be an array`)
+              }
+              for (const entityId of endpoints) {
+                if (typeof entityId !== "string") {
+                  return projectionUnknown(`malformed mapping artifact \`${id}\`: pathMappings.${field} must contain strings`)
+                }
+                const err = addEdge(id, entityId); if (err) return err
+              }
+            }
+          }
+        }
+        for (const ent of Array.isArray(payload.entitlements) ? payload.entitlements.map(obj) : []) {
+          if (ent && typeof ent.targetType === "string") {
+            const err = addType(id, ent.targetType); if (err) return err
+          }
+        }
+      } else {
+        return projectionUnknown(`unsupported mapping format ${JSON.stringify(format)} in \`${id}\``)
+      }
+    } else if (k === "defined_concept") {
+      const base = obj(payload.base)
+      if (!base || typeof base.artifactId !== "string") {
+        return projectionUnknown(`malformed defined_concept artifact \`${id}\`: missing base.artifactId`)
+      }
+      const errBase = addSpec(id, base.artifactId); if (errBase) return errBase
+      for (const dep of Array.isArray(payload.dependencies) ? payload.dependencies.map(obj) : []) {
+        if (dep && typeof dep.artifactId === "string") { const err = addEdge(id, dep.artifactId); if (err) return err }
+      }
+    } else if (k === "widget") {
+      for (const dd of Array.isArray(payload.dataDependencies) ? payload.dataDependencies.map(obj) : []) {
+        const err = addType(id, dd?.objectKind); if (err) return err
+      }
+      for (const ab of Array.isArray(payload.actionBindings) ? payload.actionBindings.map(obj) : []) {
+        const err = addAction(id, ab?.actionId); if (err) return err
+      }
+      const ux = obj(payload.ux)
+      if (ux) {
+        for (const db of Array.isArray(ux.dataBindings) ? ux.dataBindings.map(obj) : []) {
+          const objectRef = obj(db?.object)
+          const targetId = typeof objectRef?.id === "string" ? objectRef.id : typeof objectRef?.artifactId === "string" ? objectRef.artifactId : undefined
+          if (targetId) { const err = addEdge(id, targetId); if (err) return err }
+        }
+        for (const ab of Array.isArray(ux.actionBindings) ? ux.actionBindings.map(obj) : []) {
+          const actionRef = obj(ab?.action)
+          const targetId = typeof actionRef?.id === "string" ? actionRef.id : typeof actionRef?.artifactId === "string" ? actionRef.artifactId : undefined
+          if (targetId) { const err = addEdge(id, targetId); if (err) return err }
+        }
+      }
+    } else if (k === "model") {
+      const inputObj = obj(payload.input)
+      if (!inputObj || typeof inputObj.objectType !== "string") {
+        return projectionUnknown(`malformed model artifact \`${id}\`: missing input.objectType`)
+      }
+      const err1 = addType(id, inputObj.objectType); if (err1) return err1
+      const err2 = addType(id, obj(payload.predictions)?.objectType); if (err2) return err2
+    } else if (k === "customization") {
+      const target = obj(payload.targetArtifact)
+      if (!target || typeof target.artifactId !== "string") {
+        return projectionUnknown(`malformed customization artifact \`${id}\`: missing targetArtifact.artifactId`)
+      }
+      const err = addEdge(id, target.artifactId); if (err) return err
+    } else if (k === "labels") {
+      if (!Array.isArray(payload.entries)) {
+        return projectionUnknown(`malformed labels artifact \`${id}\`: missing entries array`)
+      }
+      for (const entry of payload.entries.map(obj)) {
+        const target = obj(entry?.target)
+        if (!target) continue
+        if (typeof target.objectType === "string") { const err = addType(id, target.objectType); if (err) return err }
+        if (typeof target.actionId === "string") { const err = addAction(id, target.actionId); if (err) return err }
+        if (typeof target.ruleId === "string") {
+          const errTick = tick(); if (errTick) return errTick
+          if (ruleOwners.has(target.ruleId)) { const err = addEdge(id, ruleOwners.get(target.ruleId)!); if (err) return err }
+        }
+        if (typeof target.lawId === "string") {
+          const errTick = tick(); if (errTick) return errTick
+          if (lawOwners.has(target.lawId)) { const err = addEdge(id, lawOwners.get(target.lawId)!); if (err) return err }
+        }
+        if (typeof target.widgetId === "string") {
+          const errTick = tick(); if (errTick) return errTick
+          if (widgetOwners.has(target.widgetId)) { const err = addEdge(id, widgetOwners.get(target.widgetId)!); if (err) return err }
+        }
+      }
+    } else if (k === "business_pack") {
+      for (const member of Array.isArray(payload.artifacts) ? payload.artifacts.map(obj) : []) {
+        if (member && typeof member.artifactId === "string") { const err = addEdge(id, member.artifactId); if (err) return err }
+      }
+    }
+  }
+
+  // Project removed entity hierarchies so laws on removed supertypes still see their subtypes.
+  for (const [id, art] of before) {
+    const err = tick(); if (err) return err
+    if (!removedIds.has(id) || kinds.get(id) !== "entity") continue
+    const payload = obj(art.payload)
+    if (!payload) continue
+    const ot = obj(payload.objectType)
+    if (ot && typeof ot.name === "string") {
+      for (const p of [...(typeof ot.extends === "string" ? [ot.extends] : []), ...strings(ot.implements)]) {
+        const errTick = tick(); if (errTick) return errTick
+        addToSetMap(typeParents, ot.name, p)
+      }
+    }
+    const iface = obj(payload.interface)
+    if (iface && typeof iface.name === "string") {
+      for (const p of strings(iface.extends)) {
+        const errTick = tick(); if (errTick) return errTick
+        addToSetMap(typeParents, iface.name, p)
+      }
+    }
+  }
+
+  const childrenByParent = new Map<string, string[]>()
+  for (const [child, parents] of typeParents) {
+    for (const parent of parents) {
+      const err = tick(); if (err) return err
+      let list = childrenByParent.get(parent)
+      if (!list) { list = []; childrenByParent.set(parent, list) }
+      list.push(child)
+    }
+  }
+  for (const [lawId, subject] of lawSubjects) {
+    const covered = new Set<string>([subject])
+    const queue = [subject]
+    while (queue.length > 0) {
+      const err = tick(); if (err) return err
+      const cur = queue.shift()!
+      for (const child of childrenByParent.get(cur) ?? []) {
+        const err2 = tick(); if (err2) return err2
+        if (!covered.has(child)) { covered.add(child); queue.push(child) }
+      }
+    }
+    for (const ty of covered) {
+      for (const writerId of typeWriters.get(ty) ?? []) {
+        const err = addEdge(lawId, writerId); if (err) return err
+      }
+    }
+  }
+
+  const dependents = new Map<string, string[]>()
+  for (const edge of [...edges].sort(cmpLex)) {
+    const err = tick(); if (err) return err
+    const [dependent, dependency] = edge.split("\0") as [string, string]
+    let bucket = dependents.get(dependency)
+    if (!bucket) { bucket = []; dependents.set(dependency, bucket) }
+    bucket.push(dependent)
+  }
+
+  const triggeredBy = new Map<string, Set<string>>()
+  const bestVia = new Map<string, string[]>()
+  const sortedRoots = [...rootSet].sort(cmpLex)
+  for (const root of sortedRoots) {
+    const parent = new Map<string, string | null>([[root, null]])
+    const queue = [root]
+    while (queue.length > 0) {
+      const err = tick(); if (err) return err
+      const cur = queue.shift()!
+      addToSetMap(triggeredBy, cur, root)
+      const path: string[] = [cur]
+      let cursor = cur
+      while (parent.get(cursor) !== null && parent.get(cursor) !== undefined) {
+        cursor = parent.get(cursor)!
+        path.push(cursor)
+      }
+      path.reverse()
+      const existing = bestVia.get(cur)
+      if (!existing || path.length < existing.length || (path.length === existing.length && cmpPathLex(path, existing) < 0)) {
+        bestVia.set(cur, path)
+      }
+      for (const next of dependents.get(cur) ?? []) {
+        const err2 = tick(); if (err2) return err2
+        if (!parent.has(next)) { parent.set(next, cur); queue.push(next) }
+      }
+    }
+  }
+
+  const classify = (id: string, via: ReadonlyArray<string>): RippleImpactKind => {
+    if (rootSet.has(id)) return "direct_change"
+    if (brokenDependents.has(id)) return "removed_dependency_broken"
+    const k = kinds.get(id)
+    if (k === "law") return "law_affected"
+    if (k === "policy") return "policy_affected"
+    if (k === "action" || k === "rule" || k === "connector" || k === "mapping") return "writer_affected"
+    if (k === "defined_concept") return "specialization_affected"
+    if (k === "relation") return "lifecycle_affected"
+    if (k === "entity") {
+      const prev = via.length >= 2 ? via[via.length - 2] : undefined
+      if (prev && specializationEdges.has(`${id}\0${prev}`)) return "specialization_affected"
+      return hasLifecycle.has(id) ? "lifecycle_affected" : "specialization_affected"
+    }
+    return "projection_or_ui_affected"
+  }
+
+  const ripples: PlanRipple[] = [...triggeredBy.keys()].map((id) => {
+    const via = bestVia.get(id) ?? [id]
+    return {
+      artifactId: id,
+      kind: kinds.get(id) ?? "unknown",
+      triggeredBy: [...(triggeredBy.get(id) ?? [])].sort(cmpLex),
+      via,
+      impactKind: classify(id, via),
+    }
+  })
+  ripples.sort((left, right) => (left.via.length - right.via.length) || cmpLex(left.artifactId, right.artifactId))
+  return { status: "exact", ripples }
+}
+
 /** Human-readable plan. */
 export function renderPlan(plan: Plan): string {
   const lines: string[] = []
@@ -442,6 +1128,14 @@ export function renderPlan(plan: Plan): string {
   section("provenance only", plan.provenanceOnly)
   section("warnings", plan.warnings.map((w) => `${w.kind.toUpperCase()} ${w.objectType}.${w.property}: ${w.detail}`))
   section("narrowing changes", plan.narrowing.map((change) => `${change.kind} ${change.objectType ?? change.artifactId}${change.property ? `.${change.property}` : ""}: ${change.detail}`))
+  if (plan.rippleStatus === "unknown") {
+    lines.push(`transitive ripples: UNKNOWN (${plan.rippleReason ?? plan.rippleBudgetExceeded?.detail ?? "graph budget exceeded"})`)
+  } else {
+    section(
+      "transitive ripples",
+      plan.ripples.map((r) => `[${r.impactKind}] ${r.artifactId} [${r.kind}] (triggered by: ${r.triggeredBy.join(", ")}; via: ${r.via.join(" -> ")})`),
+    )
+  }
   lines.push(`unchanged: ${plan.unchanged.length}`)
   return lines.join("\n")
 }
