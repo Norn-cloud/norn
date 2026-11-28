@@ -1,15 +1,18 @@
 //! Native Rust Python authoring compilation (`norn-authoring-py`, zero `CPython`).
+//!
+//! All Python modules are read through trusted FD-pinned descriptors before reaching
+//! [`compile_python_files`], which elaborates in-memory sources via `elaborate_source`
+//! without ever reopening pathnames.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 
 use norn_authoring_py::{
-    CODE_IO, EnvelopeOptions, JsonValue, PyAuthoringError, canonical_json, elaborate_file,
+    CODE_IO, EnvelopeOptions, JsonValue, PyAuthoringError, canonical_json, elaborate_source,
 };
 use serde_json::json;
 
 use super::AuthoringFailure;
-use super::fs_io::display_posix_path;
+use super::fs_io::{InvocationBudget, LoadedFile, display_posix_path};
 
 fn format_py_error_json(error: &PyAuthoringError) -> String {
     let diag = match error.span() {
@@ -42,11 +45,12 @@ fn artifact_id_of(artifact: &JsonValue) -> Option<&str> {
     Some(id.as_str())
 }
 
-/// Elaborates one or more Python authoring files in-process into a canonical JSON artifact array.
+/// Elaborates pre-loaded Python authoring sources in-process into a canonical JSON artifact array.
 pub(crate) fn compile_python_files(
-    files: &[PathBuf],
+    files: &[LoadedFile],
     org: &str,
     env: &str,
+    budget: &mut InvocationBudget,
 ) -> Result<String, AuthoringFailure> {
     let mut scope = BTreeMap::new();
     scope.insert("environmentId".to_owned(), env.to_owned());
@@ -56,9 +60,9 @@ pub(crate) fn compile_python_files(
     let mut seen_ids: BTreeSet<String> = BTreeSet::new();
 
     for file in files {
-        let source_path = display_posix_path(file);
+        let source_path = display_posix_path(&file.display_path);
         let options = EnvelopeOptions::new(scope.clone(), source_path.clone());
-        let outcome = elaborate_file(file, &options).map_err(|err| {
+        let outcome = elaborate_source(&file.content, &options).map_err(|err| {
             if err.code() == CODE_IO {
                 AuthoringFailure::Io(err.to_string())
             } else {
@@ -84,6 +88,10 @@ pub(crate) fn compile_python_files(
         }
     }
 
-    canonical_json(&JsonValue::Array(all_artifacts))
-        .map_err(|err| AuthoringFailure::Diagnostics(format_py_error_json(&err)))
+    let rendered = canonical_json(&JsonValue::Array(all_artifacts))
+        .map_err(|err| AuthoringFailure::Diagnostics(format_py_error_json(&err)))?;
+    budget
+        .charge_output_bytes("python compile output", rendered.len())
+        .map_err(AuthoringFailure::Io)?;
+    Ok(rendered)
 }

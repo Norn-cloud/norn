@@ -8,10 +8,11 @@ use serde_json::{Value, json};
 
 use crate::{CheckArgs, run_check_args};
 
+use super::zero_ci::ZERO_CI_DIAGNOSTIC_CODE;
 use super::{
     CheckSourceRequest, CompileArgs, DashboardArgs, FmtArgs, ProfileArgs, QuestionArgs,
-    ZERO_CI_DIAGNOSTIC_CODE, execute_check_source, execute_compile, execute_dashboard, execute_fmt,
-    execute_profile, execute_question,
+    execute_check_source, execute_compile, execute_dashboard, execute_fmt, execute_profile,
+    execute_question,
 };
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -31,7 +32,8 @@ impl TempWorkspace {
             std::fs::remove_dir_all(&root)?;
         }
         std::fs::create_dir_all(&root)?;
-        Ok(Self(root))
+        let canonical = std::fs::canonicalize(&root)?;
+        Ok(Self(canonical))
     }
 
     fn write(&self, rel: &str, text: &str) -> Result<PathBuf, Box<dyn Error>> {
@@ -420,7 +422,9 @@ class Note(
     )?;
     scratch.write(".github/workflows/ci.yml", "name: ci\non: push\n")?;
 
-    // Both the app directory and a source file inside it must be refused.
+    // Both the app directory and a source file inside it must be refused, even if a spoofed
+    // `crates/norn-checker` directory exists inside the app.
+    std::fs::create_dir_all(scratch.path().join("crates/norn-checker"))?;
     for target in [scratch.path(), app_py.as_path()] {
         let refused = execute_check_source(&CheckSourceRequest {
             source: target,
@@ -432,8 +436,22 @@ class Note(
         });
         assert_eq!(refused.exit_code, 1);
         let parsed: Value = serde_json::from_str(&refused.stdout)?;
+        assert_eq!(
+            parsed.get("format").and_then(Value::as_str),
+            Some(norn_checker_wasm::CHECK_FORMAT)
+        );
         assert_eq!(parsed.get("admitted").and_then(Value::as_bool), Some(false));
-        let has_zero_ci = parsed
+        assert!(parsed.get("receipt").is_some_and(Value::is_null));
+        assert!(parsed.get("receiptSha256").is_some_and(Value::is_null));
+        let diag_doc = parsed
+            .get("diagnostics")
+            .and_then(Value::as_object)
+            .ok_or("expected versioned diagnostics object")?;
+        assert_eq!(
+            diag_doc.get("format").and_then(Value::as_str),
+            Some("norn-checker/diagnostics@1")
+        );
+        let has_zero_ci = diag_doc
             .get("diagnostics")
             .and_then(Value::as_array)
             .is_some_and(|items| {
@@ -466,6 +484,51 @@ class Note(
 
 #[test]
 fn check_args_validation_preserves_backward_compat_and_usage_exit_codes() {
+    use clap::{CommandFactory as _, Parser as _};
+
+    crate::Cli::command().debug_assert();
+
+    assert!(crate::Cli::try_parse_from(["norn", "check"]).is_err());
+    assert!(crate::Cli::try_parse_from(["norn", "check", "--artifacts", "a.json"]).is_err());
+    assert!(
+        crate::Cli::try_parse_from([
+            "norn",
+            "check",
+            "--artifacts",
+            "a.json",
+            "--context",
+            "c.json",
+            "--org",
+            "org_demo"
+        ])
+        .is_err()
+    );
+    assert!(
+        crate::Cli::try_parse_from(["norn", "check", "--source", "app", "--org", "org_demo"])
+            .is_err()
+    );
+    assert!(
+        crate::Cli::try_parse_from(["norn", "check", "--source", "app", "--env", "dev"]).is_err()
+    );
+    assert!(
+        crate::Cli::try_parse_from([
+            "norn",
+            "check",
+            "--artifacts",
+            "a.json",
+            "--context",
+            "c.json"
+        ])
+        .is_ok()
+    );
+    assert!(crate::Cli::try_parse_from(["norn", "check", "--source", "app"]).is_ok());
+    assert!(
+        crate::Cli::try_parse_from([
+            "norn", "check", "--source", "app", "--org", "org_demo", "--env", "dev"
+        ])
+        .is_ok()
+    );
+
     let empty = run_check_args(&CheckArgs {
         artifacts: None,
         context: None,
@@ -487,6 +550,17 @@ fn check_args_validation_preserves_backward_compat_and_usage_exit_codes() {
         tool_root: None,
     });
     assert_eq!(missing_context.exit_code, 2);
+
+    let half_scope = run_check_args(&CheckArgs {
+        artifacts: None,
+        context: None,
+        source: Some(PathBuf::from("app")),
+        org: Some("org_demo".to_owned()),
+        env: None,
+        forbid_unsafe_zen: false,
+        tool_root: None,
+    });
+    assert_eq!(half_scope.exit_code, 2);
 
     let extra_source_flag = run_check_args(&CheckArgs {
         artifacts: Some(PathBuf::from("artifacts.json")),

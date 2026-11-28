@@ -1,8 +1,11 @@
 //! Native Rust `TypeScript` authoring compilation, profiling, questions, and dashboards
 //! backed by `norn-authoring` (`tsrs`, zero Node/Bun/`tsc`).
+//!
+//! All source and relative-import reads run through FD-pinned [`TrustedDir`] handles
+//! under an invocation-wide [`InvocationBudget`] without reopening pathnames.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use norn_authoring::{
     AuthoringProgram, BoundedVfs, CompilerLimits, DashboardsCompileOutcome,
@@ -14,14 +17,31 @@ use norn_authoring::{
 use serde_json::{Value, json};
 
 use super::AuthoringFailure;
+use super::atomic_io::write_file_atomic;
 use super::fs_io::{
-    EntryKind, SourceLang, classify_source_file, collect_walk_files, discover_tool_root,
-    display_posix_path, inspect_path_no_follow, is_ts_or_json_support, read_source_file_bounded,
-    write_file_atomic,
+    InvocationBudget, SourceLang, classify_source_file, discover_tool_root, display_posix_path,
+    is_ts_or_json_support,
 };
+use super::trusted_dir::{TrustedDir, open_regular_file_pinned};
 
 const MAX_LOCAL_IMPORTS: usize = 128;
 const MAX_LOCAL_IMPORT_DEPTH: usize = 16;
+
+/// FD-pinned target passed to [`compile_ts_targets`].
+pub(crate) enum TsCompileTarget<'a> {
+    /// Single `TypeScript` file already read from its verified parent directory fd.
+    SingleFile {
+        parent_dir: &'a TrustedDir,
+        file_name: &'a str,
+        display_path: &'a Path,
+        content: String,
+    },
+    /// Directory already opened as a trusted fd with top-level relative `.ts`/`.tsx` paths.
+    Directory {
+        root_dir: &'a TrustedDir,
+        root_rel_paths: Vec<PathBuf>,
+    },
+}
 
 struct MountedTsContext {
     profile: Profile,
@@ -91,134 +111,174 @@ fn first_quoted_literal(text: &str) -> Option<String> {
     Some(inner.to_owned())
 }
 
-fn normalize_lexical_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
+fn normalize_lexical_relative(path: &Path) -> PathBuf {
+    let mut up_count: usize = 0;
+    let mut normals: Vec<&std::ffi::OsStr> = Vec::new();
     for component in path.components() {
         match component {
-            std::path::Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            std::path::Component::RootDir => normalized.push(Path::new("/")),
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if !normalized.pop() {
-                    normalized.push("..");
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if normals.pop().is_none() {
+                    up_count = up_count.saturating_add(1);
                 }
             }
-            std::path::Component::Normal(part) => normalized.push(part),
+            Component::Normal(part) => normals.push(part),
+            Component::RootDir | Component::Prefix(_) => {}
         }
+    }
+    let mut normalized = PathBuf::new();
+    for _step in 0..up_count {
+        normalized.push("..");
+    }
+    for part in normals {
+        normalized.push(part);
     }
     normalized
 }
 
-fn resolve_local_specifier(importer: &Path, specifier: &str) -> Option<PathBuf> {
-    let parent = importer.parent().unwrap_or_else(|| Path::new("."));
-    let candidate = normalize_lexical_path(&parent.join(specifier));
-    if candidate.is_file() {
-        return Some(candidate);
-    }
-    for suffix in [".ts", ".tsx", ".json"] {
-        let mut with_ext = candidate.as_os_str().to_os_string();
-        with_ext.push(suffix);
-        let probe = PathBuf::from(with_ext);
-        if probe.is_file() {
-            return Some(probe);
-        }
-    }
-    let index_ts = candidate.join("index.ts");
-    if index_ts.is_file() {
-        return Some(index_ts);
-    }
-    None
-}
-
-fn common_base_dir(paths: &[PathBuf]) -> PathBuf {
-    let Some(first) = paths.first() else {
-        return PathBuf::from(".");
-    };
-    let mut base = first
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
-    for path in paths.iter().skip(1) {
-        let dir = path
-            .parent()
-            .filter(|dir| !dir.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        while !dir.starts_with(&base) {
-            if !base.pop() {
-                return PathBuf::from(".");
+fn normalize_display_join(base: &Path, rel: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in base.join(rel).components() {
+        match component {
+            Component::Prefix(prefix) => out.push(prefix.as_os_str()),
+            Component::RootDir => out.push(Path::new("/")),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
             }
+            Component::Normal(part) => out.push(part),
         }
     }
-    base
+    out
 }
 
-fn virtual_path_for(base: &Path, file: &Path) -> Result<String, AuthoringFailure> {
-    let rel = file.strip_prefix(base).unwrap_or(file);
-    let mut parts = Vec::new();
+fn relative_candidates(importer_rel: &Path, specifier: &str) -> Vec<PathBuf> {
+    let importer_dir = importer_rel.parent().unwrap_or_else(|| Path::new(""));
+    let base = normalize_lexical_relative(&importer_dir.join(specifier));
+    let mut probes = Vec::with_capacity(5);
+    probes.push(base.clone());
+    for suffix in [".ts", ".tsx", ".json"] {
+        let mut with_ext = base.as_os_str().to_os_string();
+        with_ext.push(suffix);
+        probes.push(PathBuf::from(with_ext));
+    }
+    probes.push(base.join("index.ts"));
+    probes
+}
+
+fn count_leading_parent_dirs(rel: &Path) -> usize {
+    let mut count = 0_usize;
     for comp in rel.components() {
-        if let std::path::Component::Normal(seg) = comp {
-            let text = seg.to_str().ok_or_else(|| {
-                AuthoringFailure::Io(format!("{}: non-UTF-8 path component", file.display()))
-            })?;
-            parts.push(text);
+        if comp == Component::ParentDir {
+            count = count.saturating_add(1);
+        } else {
+            break;
+        }
+    }
+    count
+}
+
+fn virtual_path_from_rel(rel: &Path, up_levels: usize) -> Result<String, AuthoringFailure> {
+    let mut parts: Vec<String> = (0..up_levels).map(|idx| format!("d{idx}")).collect();
+    for comp in rel.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if parts.pop().is_none() {
+                    return Err(AuthoringFailure::Io(format!(
+                        "{}: relative path escaped virtual workspace",
+                        rel.display()
+                    )));
+                }
+            }
+            Component::Normal(seg) => {
+                let text = seg.to_str().ok_or_else(|| {
+                    AuthoringFailure::Io(format!("{}: non-UTF-8 path component", rel.display()))
+                })?;
+                parts.push(text.to_owned());
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(AuthoringFailure::Io(format!(
+                    "{}: expected relative path inside virtual workspace",
+                    rel.display()
+                )));
+            }
         }
     }
     if parts.is_empty() {
         return Err(AuthoringFailure::Io(format!(
             "{}: cannot map path into virtual filesystem",
-            file.display()
+            rel.display()
         )));
     }
     Ok(format!("/workspace/{}", parts.join("/")))
 }
 
 fn mount_single_file_closure(
-    file: &Path,
+    parent_dir: &TrustedDir,
+    file_name: &str,
+    display_path: &Path,
+    initial_content: String,
     explicit_tool_root: Option<&Path>,
+    budget: &mut InvocationBudget,
 ) -> Result<MountedTsContext, AuthoringFailure> {
     let profile = Profile::load().map_err(|err| AuthoringFailure::Io(err.to_string()))?;
     let mut vfs = BoundedVfs::default();
-    let effect_dist_prefix = mount_pinned_packages(&mut vfs, &profile, file, explicit_tool_root)?;
+    let effect_dist_prefix =
+        mount_pinned_packages(&mut vfs, &profile, display_path, explicit_tool_root)?;
 
-    let mut queue: Vec<(PathBuf, usize)> = vec![(file.to_path_buf(), 0)];
+    let initial_rel = PathBuf::from(file_name);
     let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
+    visited.insert(initial_rel.clone());
+    let mut queue: Vec<(PathBuf, usize, String)> = vec![(initial_rel, 0, initial_content)];
     let mut loaded: Vec<(PathBuf, String)> = Vec::new();
 
-    while let Some((current, depth)) = queue.pop() {
-        if !visited.insert(current.clone()) {
-            continue;
-        }
+    while let Some((current_rel, depth, text)) = queue.pop() {
         if loaded.len() >= MAX_LOCAL_IMPORTS {
             return Err(AuthoringFailure::Io(format!(
                 "{}: local import closure exceeds {MAX_LOCAL_IMPORTS} files",
-                file.display()
+                display_path.display()
             )));
         }
-        let text = read_source_file_bounded(&current).map_err(AuthoringFailure::Io)?;
         if depth < MAX_LOCAL_IMPORT_DEPTH {
             for spec in extract_relative_specifiers(&text) {
-                if let Some(target) = resolve_local_specifier(&current, &spec) {
-                    queue.push((target, depth.saturating_add(1)));
+                for candidate in relative_candidates(&current_rel, &spec) {
+                    if visited.contains(&candidate) {
+                        break;
+                    }
+                    if let Some(imported_text) = parent_dir
+                        .probe_import_file_rel(&candidate, budget)
+                        .map_err(AuthoringFailure::Io)?
+                    {
+                        visited.insert(candidate.clone());
+                        queue.push((candidate, depth.saturating_add(1), imported_text));
+                        break;
+                    }
                 }
             }
         }
-        loaded.push((current, text));
+        loaded.push((current_rel, text));
     }
 
-    let disk_paths: Vec<PathBuf> = loaded.iter().map(|(path, _)| path.clone()).collect();
-    let base = common_base_dir(&disk_paths);
+    let up_levels = loaded
+        .iter()
+        .map(|(rel, _)| count_leading_parent_dirs(rel))
+        .max()
+        .unwrap_or(0);
     let mut source_paths = BTreeMap::new();
     let mut primary_vpath = String::new();
-    for (idx, (disk_path, text)) in loaded.into_iter().enumerate() {
-        let vpath = virtual_path_for(&base, &disk_path)?;
+    for (idx, (rel_path, text)) in loaded.into_iter().enumerate() {
+        let vpath = virtual_path_from_rel(&rel_path, up_levels)?;
         let normalized = vfs
             .add_file(&vpath, text)
             .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
         if idx == 0 {
             primary_vpath.clone_from(&normalized);
         }
-        source_paths.insert(normalized, display_posix_path(&disk_path));
+        let disk_display = normalize_display_join(parent_dir.display_path(), &rel_path);
+        source_paths.insert(normalized, display_posix_path(&disk_display));
     }
 
     Ok(MountedTsContext {
@@ -231,40 +291,48 @@ fn mount_single_file_closure(
 }
 
 fn mount_ts_files_and_support(
-    root_dir: &Path,
-    root_files: &[PathBuf],
+    root_dir: &TrustedDir,
+    root_rel_paths: &[PathBuf],
     explicit_tool_root: Option<&Path>,
+    budget: &mut InvocationBudget,
 ) -> Result<MountedTsContext, AuthoringFailure> {
     let profile = Profile::load().map_err(|err| AuthoringFailure::Io(err.to_string()))?;
     let mut vfs = BoundedVfs::default();
-    let effect_dist_prefix =
-        mount_pinned_packages(&mut vfs, &profile, root_dir, explicit_tool_root)?;
+    let effect_dist_prefix = mount_pinned_packages(
+        &mut vfs,
+        &profile,
+        root_dir.display_path(),
+        explicit_tool_root,
+    )?;
 
-    let support_files =
-        collect_walk_files(root_dir, is_ts_or_json_support).map_err(AuthoringFailure::Io)?;
+    let support_files = root_dir
+        .walk_files(is_ts_or_json_support, budget)
+        .map_err(AuthoringFailure::Io)?;
     let mut source_paths = BTreeMap::new();
-    let mut disk_to_vpath = BTreeMap::new();
-    for file in support_files {
-        let text = read_source_file_bounded(&file).map_err(AuthoringFailure::Io)?;
-        let vpath = virtual_path_for(root_dir, &file)?;
+    let mut rel_to_vpath = BTreeMap::new();
+    for loaded in support_files {
+        let vpath = virtual_path_from_rel(&loaded.rel_path, 0)?;
         let normalized = vfs
-            .add_file(&vpath, text)
+            .add_file(&vpath, loaded.content)
             .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-        source_paths.insert(normalized.clone(), display_posix_path(&file));
-        disk_to_vpath.insert(file, normalized);
+        source_paths.insert(normalized.clone(), display_posix_path(&loaded.display_path));
+        rel_to_vpath.insert(loaded.rel_path, normalized);
     }
 
-    let mut root_vpaths = Vec::with_capacity(root_files.len());
-    for root_file in root_files {
-        if let Some(vpath) = disk_to_vpath.get(root_file) {
+    let mut root_vpaths = Vec::with_capacity(root_rel_paths.len());
+    for root_rel in root_rel_paths {
+        if let Some(vpath) = rel_to_vpath.get(root_rel) {
             root_vpaths.push(vpath.clone());
         } else {
-            let text = read_source_file_bounded(root_file).map_err(AuthoringFailure::Io)?;
-            let vpath = virtual_path_for(root_dir, root_file)?;
+            let text = root_dir
+                .read_regular_file_rel(root_rel, budget)
+                .map_err(AuthoringFailure::Io)?;
+            let vpath = virtual_path_from_rel(root_rel, 0)?;
             let normalized = vfs
                 .add_file(&vpath, text)
                 .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-            source_paths.insert(normalized.clone(), display_posix_path(root_file));
+            let shown = display_posix_path(&root_dir.display_path().join(root_rel));
+            source_paths.insert(normalized.clone(), shown);
             root_vpaths.push(normalized);
         }
     }
@@ -278,21 +346,17 @@ fn mount_ts_files_and_support(
     })
 }
 
-fn validate_single_ts_file(path: &Path) -> Result<(), AuthoringFailure> {
-    let kind = inspect_path_no_follow(path).map_err(AuthoringFailure::Io)?;
-    if kind != EntryKind::File {
-        return Err(AuthoringFailure::Io(format!(
-            "{}: expected a single TypeScript (.ts) file",
-            path.display()
-        )));
-    }
+fn open_single_ts_file_pinned(
+    path: &Path,
+    budget: &mut InvocationBudget,
+) -> Result<(TrustedDir, String, String), AuthoringFailure> {
     if classify_source_file(path) != Some(SourceLang::TypeScript) {
         return Err(AuthoringFailure::Io(format!(
             "{}: expected a TypeScript (.ts) authoring file",
             path.display()
         )));
     }
-    Ok(())
+    open_regular_file_pinned(path, budget).map_err(AuthoringFailure::Io)
 }
 
 fn append_unique_artifact(
@@ -391,24 +455,14 @@ fn collect_module_artifacts(
     Ok(failures)
 }
 
-/// Compiles one `TypeScript` file or a directory's top-level `TypeScript` modules into canonical JSON IR.
-pub(crate) fn compile_ts_targets(
-    mount_root: Option<&Path>,
-    ts_files: &[PathBuf],
+fn run_ts_program_compilation(
+    mounted: MountedTsContext,
     org: &str,
     env: &str,
     forbid_unsafe_zen: bool,
-    tool_root: Option<&Path>,
+    single_module: bool,
+    budget: &mut InvocationBudget,
 ) -> Result<String, AuthoringFailure> {
-    let mounted = match mount_root {
-        Some(dir) => mount_ts_files_and_support(dir, ts_files, tool_root)?,
-        None => {
-            let first = ts_files.first().ok_or_else(|| {
-                AuthoringFailure::Io("no TypeScript source files provided".into())
-            })?;
-            mount_single_file_closure(first, tool_root)?
-        }
-    };
     let root_slices: Vec<&str> = mounted.root_vpaths.iter().map(String::as_str).collect();
     let checker = ProfileChecker::new(mounted.profile.clone());
     let mut program = AuthoringProgram::new(mounted.vfs, &root_slices, mounted.profile)
@@ -446,7 +500,7 @@ pub(crate) fn compile_ts_targets(
         program: &program,
         scope: &scope,
         forbid_unsafe_zen,
-        single_module: ts_files.len() == 1,
+        single_module,
     };
     let mut artifacts = Vec::new();
     let mut seen_ids = BTreeSet::new();
@@ -475,7 +529,47 @@ pub(crate) fn compile_ts_targets(
         return Err(AuthoringFailure::Diagnostics(doc));
     }
 
-    canonical_json(&Value::Array(artifacts)).map_err(|err| AuthoringFailure::Io(err.to_string()))
+    let rendered = canonical_json(&Value::Array(artifacts))
+        .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
+    budget
+        .charge_output_bytes("typescript compile output", rendered.len())
+        .map_err(AuthoringFailure::Io)?;
+    Ok(rendered)
+}
+
+/// Compiles one `TypeScript` file or a trusted directory's top-level `TypeScript` modules into canonical JSON IR.
+pub(crate) fn compile_ts_targets(
+    target: TsCompileTarget<'_>,
+    org: &str,
+    env: &str,
+    forbid_unsafe_zen: bool,
+    tool_root: Option<&Path>,
+    budget: &mut InvocationBudget,
+) -> Result<String, AuthoringFailure> {
+    let single_module = match &target {
+        TsCompileTarget::SingleFile { .. } => true,
+        TsCompileTarget::Directory { root_rel_paths, .. } => root_rel_paths.len() == 1,
+    };
+    let mounted = match target {
+        TsCompileTarget::SingleFile {
+            parent_dir,
+            file_name,
+            display_path,
+            content,
+        } => mount_single_file_closure(
+            parent_dir,
+            file_name,
+            display_path,
+            content,
+            tool_root,
+            budget,
+        )?,
+        TsCompileTarget::Directory {
+            root_dir,
+            root_rel_paths,
+        } => mount_ts_files_and_support(root_dir, &root_rel_paths, tool_root, budget)?,
+    };
+    run_ts_program_compilation(mounted, org, env, forbid_unsafe_zen, single_module, budget)
 }
 
 /// Runs `ProfileChecker` on a single `TypeScript` file and returns `(reports_json, all_clean)`.
@@ -483,8 +577,16 @@ pub(crate) fn run_profile(
     path: &Path,
     tool_root: Option<&Path>,
 ) -> Result<(String, bool), AuthoringFailure> {
-    validate_single_ts_file(path)?;
-    let mounted = mount_single_file_closure(path, tool_root)?;
+    let mut budget = InvocationBudget::new();
+    let (parent_dir, file_name, content) = open_single_ts_file_pinned(path, &mut budget)?;
+    let mounted = mount_single_file_closure(
+        &parent_dir,
+        &file_name,
+        path,
+        content,
+        tool_root,
+        &mut budget,
+    )?;
     let root_slices: Vec<&str> = mounted.root_vpaths.iter().map(String::as_str).collect();
     let checker = ProfileChecker::new(mounted.profile);
     let reports = checker
@@ -493,6 +595,9 @@ pub(crate) fn run_profile(
     let clean = reports.iter().all(|report| report.diagnostics.is_empty());
     let rendered =
         serde_json::to_string(&reports).map_err(|err| AuthoringFailure::Io(err.to_string()))?;
+    budget
+        .charge_output_bytes("profile output", rendered.len())
+        .map_err(AuthoringFailure::Io)?;
     Ok((rendered, clean))
 }
 
@@ -502,8 +607,16 @@ pub(crate) fn run_question(
     out: Option<&Path>,
     tool_root: Option<&Path>,
 ) -> Result<String, AuthoringFailure> {
-    validate_single_ts_file(path)?;
-    let mounted = mount_single_file_closure(path, tool_root)?;
+    let mut budget = InvocationBudget::new();
+    let (parent_dir, file_name, content) = open_single_ts_file_pinned(path, &mut budget)?;
+    let mounted = mount_single_file_closure(
+        &parent_dir,
+        &file_name,
+        path,
+        content,
+        tool_root,
+        &mut budget,
+    )?;
     let vpath = mounted
         .root_vpaths
         .first()
@@ -521,6 +634,9 @@ pub(crate) fn run_question(
         QuestionsCompileOutcome::Ok { questions } => {
             let rendered = canonical_json(&Value::Array(questions))
                 .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
+            budget
+                .charge_output_bytes("question output", rendered.len())
+                .map_err(AuthoringFailure::Io)?;
             if let Some(out_path) = out {
                 write_file_atomic(out_path, &rendered).map_err(AuthoringFailure::Io)?;
                 Ok(String::new())
@@ -540,8 +656,16 @@ pub(crate) fn run_dashboard(
     out: Option<&Path>,
     tool_root: Option<&Path>,
 ) -> Result<String, AuthoringFailure> {
-    validate_single_ts_file(path)?;
-    let mounted = mount_single_file_closure(path, tool_root)?;
+    let mut budget = InvocationBudget::new();
+    let (parent_dir, file_name, content) = open_single_ts_file_pinned(path, &mut budget)?;
+    let mounted = mount_single_file_closure(
+        &parent_dir,
+        &file_name,
+        path,
+        content,
+        tool_root,
+        &mut budget,
+    )?;
     let vpath = mounted
         .root_vpaths
         .first()
@@ -559,6 +683,9 @@ pub(crate) fn run_dashboard(
         DashboardsCompileOutcome::Ok { dashboards } => {
             let rendered = canonical_json(&Value::Array(dashboards))
                 .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
+            budget
+                .charge_output_bytes("dashboard output", rendered.len())
+                .map_err(AuthoringFailure::Io)?;
             if let Some(out_path) = out {
                 write_file_atomic(out_path, &rendered).map_err(AuthoringFailure::Io)?;
                 Ok(String::new())

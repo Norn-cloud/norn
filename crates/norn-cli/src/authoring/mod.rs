@@ -2,25 +2,34 @@
 //! and in-process `check --source` wiring both `norn-authoring` (`TypeScript`) and
 //! `norn-authoring-py` (Python) with zero Node/Bun/`tsc`/`CPython`.
 
+mod atomic_io;
 mod fmt;
 mod fs_io;
 mod py;
 #[cfg(test)]
+mod security_tests;
+#[cfg(test)]
 mod tests;
+mod trusted_dir;
 mod ts;
+mod zero_ci;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use clap::Args;
 use serde_json::{Value, json};
 
+use self::atomic_io::write_file_atomic;
 use self::fs_io::{
-    EntryKind, SourceLang, classify_source_file, collect_top_level_files, inspect_path_no_follow,
-    read_source_file_bounded, validate_safe_relative, write_file_atomic,
+    EntryKind, InvocationBudget, LoadedFile, SourceLang, classify_source_file, display_posix_path,
+    inspect_path_no_follow, is_declaration_file, is_json_file, validate_safe_relative,
 };
+use self::trusted_dir::{TrustedDir, open_regular_file_pinned};
+use self::ts::TsCompileTarget;
+use self::zero_ci::{ZeroCiOutcome, check_zero_ci_app_dir};
 
 const MAX_CHECK_CONTEXT_BYTES: u64 = 16 * 1024 * 1024;
-const ZERO_CI_DIAGNOSTIC_CODE: &str = "NORN-APP-ZERO-CI";
 
 /// Structured CLI execution result supporting exit codes `0` (ok), `1` (refusal), and `2` (usage/IO).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,23 +164,48 @@ struct NornAppManifest {
     environment_id: Option<String>,
 }
 
-fn read_norn_manifest(app_dir: &Path) -> Result<NornAppManifest, String> {
-    let manifest_path = app_dir.join("norn.json");
-    let raw = read_source_file_bounded(&manifest_path)?;
+enum JsonSourceEntry {
+    Artifact(Value),
+    RetainedDefinition,
+}
+
+struct CompileDirOptions<'a> {
+    org: &'a str,
+    env: &'a str,
+    forbid_unsafe_zen: bool,
+    tool_root: Option<&'a Path>,
+    allow_empty: bool,
+}
+
+fn read_norn_manifest_from_dir(
+    app_root: &TrustedDir,
+    budget: &mut InvocationBudget,
+) -> Result<Option<NornAppManifest>, String> {
+    let Some(raw) = app_root.try_read_regular_file_rel(Path::new("norn.json"), budget)? else {
+        return Ok(None);
+    };
+    let manifest_display = app_root.display_path().join("norn.json");
     let parsed: Value = serde_json::from_str(&raw)
-        .map_err(|err| format!("{}: invalid JSON: {err}", manifest_path.display()))?;
-    let mut sources = Vec::new();
-    if let Some(items) = parsed.get("sources").and_then(Value::as_array) {
-        for item in items {
-            let text = item.as_str().ok_or_else(|| {
-                format!(
-                    "{}: `sources` entries must be relative strings",
-                    manifest_path.display()
-                )
-            })?;
-            let rel = validate_safe_relative(text)?;
-            sources.push(app_dir.join(rel));
-        }
+        .map_err(|err| format!("{}: invalid JSON: {err}", manifest_display.display()))?;
+    let items = parsed
+        .get("sources")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            format!(
+                "{}: `sources` must be an array of relative directory paths",
+                manifest_display.display()
+            )
+        })?;
+    let mut sources = Vec::with_capacity(items.len());
+    for item in items {
+        let text = item.as_str().ok_or_else(|| {
+            format!(
+                "{}: `sources` entries must be relative strings",
+                manifest_display.display()
+            )
+        })?;
+        let rel = validate_safe_relative(text)?;
+        sources.push(rel);
     }
     let org_id = parsed
         .pointer("/scope/orgId")
@@ -185,57 +219,11 @@ fn read_norn_manifest(app_dir: &Path) -> Result<NornAppManifest, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
-    Ok(NornAppManifest {
+    Ok(Some(NornAppManifest {
         sources,
         org_id,
         environment_id,
-    })
-}
-
-fn find_norn_app_root(path: &Path) -> Option<PathBuf> {
-    let resolved = if path.is_absolute() {
-        path.to_path_buf()
-    } else if let Ok(cwd) = std::env::current_dir() {
-        cwd.join(path)
-    } else {
-        path.to_path_buf()
-    };
-    let start = if resolved.is_dir() {
-        resolved.as_path()
-    } else {
-        resolved.parent().unwrap_or(resolved.as_path())
-    };
-    for ancestor in start.ancestors() {
-        if ancestor.join("crates/norn-checker").is_dir() {
-            return None;
-        }
-        if ancestor.join("norn.json").is_file() {
-            return Some(ancestor.to_path_buf());
-        }
-    }
-    None
-}
-
-fn check_zero_ci_app_dir(path: &Path) -> Option<String> {
-    let app_root = find_norn_app_root(path)?;
-    let workflows_dir = app_root.join(".github/workflows");
-    if std::fs::symlink_metadata(&workflows_dir).is_err() {
-        return None;
-    }
-    let report = json!({
-        "format": "norn-checker-abi/check@1",
-        "admitted": false,
-        "diagnostics": [{
-            "code": ZERO_CI_DIAGNOSTIC_CODE,
-            "severity": "error",
-            "message": "Downstream Norn apps must not define `.github/workflows/` CI pipelines; Norn apps compile, format, and verify locally and in-browser via native Rust `norn` with zero CI.",
-            "path": ".github/workflows",
-        }],
-        "receipt": null,
-        "receiptSha256": null,
-    })
-    .to_string();
-    Some(report)
+    }))
 }
 
 fn validate_non_empty_scope(label: &str, value: &str) -> Result<(), AuthoringFailure> {
@@ -247,65 +235,228 @@ fn validate_non_empty_scope(label: &str, value: &str) -> Result<(), AuthoringFai
     Ok(())
 }
 
-fn merge_artifact_arrays(batches: &[String]) -> Result<String, AuthoringFailure> {
-    let mut merged = Vec::new();
-    for batch in batches {
-        let parsed: Value =
-            serde_json::from_str(batch).map_err(|err| AuthoringFailure::Io(err.to_string()))?;
-        let Some(items) = parsed.as_array() else {
-            return Err(AuthoringFailure::Io(
-                "compiled batch did not produce a JSON array".to_owned(),
-            ));
-        };
-        merged.extend(items.iter().cloned());
+fn append_unique_value(
+    artifact: Value,
+    source_label: &str,
+    seen_ids: &mut BTreeSet<String>,
+    out: &mut Vec<Value>,
+) -> Result<(), AuthoringFailure> {
+    if let Some(id) = artifact.get("artifactId").and_then(Value::as_str)
+        && !seen_ids.insert(id.to_owned())
+    {
+        let refused = json!({
+            "ok": false,
+            "diagnostics": [{
+                "code": "NORN-FLOW-LITERAL",
+                "message": format!("duplicate artifactId `{id}` declared in `{source_label}`"),
+                "file": source_label,
+            }],
+        })
+        .to_string();
+        return Err(AuthoringFailure::Diagnostics(refused));
     }
-    norn_authoring::canonical_json(&Value::Array(merged))
-        .map_err(|err| AuthoringFailure::Io(err.to_string()))
+    out.push(artifact);
+    Ok(())
 }
 
-fn compile_directory_targets(
-    dir: &Path,
-    org: &str,
-    env: &str,
-    forbid_unsafe_zen: bool,
-    tool_root: Option<&Path>,
-) -> Result<String, AuthoringFailure> {
-    let top_files = collect_top_level_files(dir).map_err(AuthoringFailure::Io)?;
-    let mut typescript_files = Vec::new();
+fn parse_compiled_array(
+    batch_json: &str,
+    source_label: &str,
+    seen_ids: &mut BTreeSet<String>,
+    out: &mut Vec<Value>,
+) -> Result<(), AuthoringFailure> {
+    let parsed: Value =
+        serde_json::from_str(batch_json).map_err(|err| AuthoringFailure::Io(err.to_string()))?;
+    let Value::Array(items) = parsed else {
+        return Err(AuthoringFailure::Io(
+            "compiled batch did not produce a JSON array".to_owned(),
+        ));
+    };
+    for item in items {
+        append_unique_value(item, source_label, seen_ids, out)?;
+    }
+    Ok(())
+}
+
+fn classify_json_source(
+    file: &LoadedFile,
+    seen_retained_ids: &mut BTreeSet<String>,
+) -> Result<JsonSourceEntry, AuthoringFailure> {
+    let shown = display_posix_path(&file.display_path);
+    let parsed: Value = serde_json::from_str(&file.content)
+        .map_err(|err| AuthoringFailure::Io(format!("{shown}: invalid JSON: {err}")))?;
+    let Some(obj) = parsed.as_object() else {
+        return Err(AuthoringFailure::Io(format!(
+            "{shown}: unsupported JSON source (expected a precompiled artifact envelope or retained definition object)"
+        )));
+    };
+    if obj.get("artifactId").and_then(Value::as_str).is_some()
+        && obj.get("irVersion").and_then(Value::as_str).is_some()
+    {
+        let _envelope: norn_ir::ArtifactEnvelope =
+            serde_json::from_str(&file.content).map_err(|err| {
+                AuthoringFailure::Io(format!(
+                    "{shown}: invalid precompiled artifact envelope: {err}"
+                ))
+            })?;
+        return Ok(JsonSourceEntry::Artifact(parsed));
+    }
+    if let Some(kind) = obj.get("kind").and_then(Value::as_str)
+        && matches!(kind, "approval" | "question" | "dashboard")
+    {
+        let Some(id) = obj
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|val| !val.is_empty())
+        else {
+            return Err(AuthoringFailure::Io(format!(
+                "{shown}: retained {kind} definition must have a non-empty string `id`"
+            )));
+        };
+        if !obj.get("payload").is_some_and(Value::is_object) {
+            return Err(AuthoringFailure::Io(format!(
+                "{shown}: retained {kind} definition `{id}` must have an object `payload`"
+            )));
+        }
+        if !seen_retained_ids.insert(id.to_owned()) {
+            return Err(AuthoringFailure::Io(format!(
+                "{shown}: duplicate retained definition id `{id}`"
+            )));
+        }
+        return Ok(JsonSourceEntry::RetainedDefinition);
+    }
+    Err(AuthoringFailure::Io(format!(
+        "{shown}: unsupported JSON source (expected an artifact envelope with `artifactId`/`irVersion` or a retained definition with `kind`/`id`/`payload`)"
+    )))
+}
+
+fn compile_source_dir_entries(
+    source_dir: &TrustedDir,
+    opts: &CompileDirOptions<'_>,
+    seen_ids: &mut BTreeSet<String>,
+    seen_retained_ids: &mut BTreeSet<String>,
+    budget: &mut InvocationBudget,
+) -> Result<Vec<Value>, AuthoringFailure> {
+    let top_files = source_dir
+        .read_top_level_files(budget)
+        .map_err(AuthoringFailure::Io)?;
+    let mut typescript_rels = Vec::new();
     let mut python_files = Vec::new();
+    let mut json_files = Vec::new();
     for file in top_files {
-        match classify_source_file(&file) {
-            Some(SourceLang::TypeScript) => typescript_files.push(file),
+        let name = file
+            .rel_path
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .unwrap_or("");
+        if is_declaration_file(name) {
+            continue;
+        }
+        if is_json_file(&file.display_path) {
+            json_files.push(file);
+            continue;
+        }
+        match classify_source_file(&file.display_path) {
+            Some(SourceLang::TypeScript) => typescript_rels.push(file.rel_path),
             Some(SourceLang::Python) => python_files.push(file),
-            None => {}
+            None => {
+                return Err(AuthoringFailure::Io(format!(
+                    "{}: unsupported file in authoring source directory (expected .ts, .tsx, .py, or .json)",
+                    file.display_path.display()
+                )));
+            }
         }
     }
-    if typescript_files.is_empty() && python_files.is_empty() {
-        return Err(AuthoringFailure::Io(format!(
-            "{}: no .ts or .py authoring modules found",
-            dir.display()
-        )));
-    }
-    let mut batches = Vec::new();
-    if !typescript_files.is_empty() {
-        batches.push(ts::compile_ts_targets(
-            Some(dir),
-            &typescript_files,
-            org,
-            env,
-            forbid_unsafe_zen,
-            tool_root,
-        )?);
+
+    let mut artifacts = Vec::new();
+    let mut retained_count = 0_usize;
+    let dir_label = display_posix_path(source_dir.display_path());
+    if !typescript_rels.is_empty() {
+        let typescript_batch_json = ts::compile_ts_targets(
+            TsCompileTarget::Directory {
+                root_dir: source_dir,
+                root_rel_paths: typescript_rels,
+            },
+            opts.org,
+            opts.env,
+            opts.forbid_unsafe_zen,
+            opts.tool_root,
+            budget,
+        )?;
+        parse_compiled_array(&typescript_batch_json, &dir_label, seen_ids, &mut artifacts)?;
     }
     if !python_files.is_empty() {
-        batches.push(py::compile_python_files(&python_files, org, env)?);
+        let python_batch_json =
+            py::compile_python_files(&python_files, opts.org, opts.env, budget)?;
+        parse_compiled_array(&python_batch_json, &dir_label, seen_ids, &mut artifacts)?;
     }
-    if batches.len() == 1
-        && let Some(only) = batches.pop()
-    {
-        return Ok(only);
+    for json_file in &json_files {
+        match classify_json_source(json_file, seen_retained_ids)? {
+            JsonSourceEntry::Artifact(val) => {
+                let label = display_posix_path(&json_file.display_path);
+                append_unique_value(val, &label, seen_ids, &mut artifacts)?;
+            }
+            JsonSourceEntry::RetainedDefinition => {
+                retained_count = retained_count.saturating_add(1);
+            }
+        }
     }
-    merge_artifact_arrays(&batches)
+    if artifacts.is_empty() && retained_count == 0 && !opts.allow_empty {
+        return Err(AuthoringFailure::Io(format!(
+            "{}: no .ts, .py, or .json authoring artifacts found",
+            source_dir.display_path().display()
+        )));
+    }
+    Ok(artifacts)
+}
+
+fn compile_manifest_project(
+    app_root: &TrustedDir,
+    manifest: &NornAppManifest,
+    opts: &CompileDirOptions<'_>,
+    budget: &mut InvocationBudget,
+) -> Result<String, AuthoringFailure> {
+    if manifest.sources.is_empty() {
+        return Err(AuthoringFailure::Io(format!(
+            "{}: norn.json declares no authoring source directories",
+            app_root.display_path().display()
+        )));
+    }
+    let dir_opts = CompileDirOptions {
+        org: opts.org,
+        env: opts.env,
+        forbid_unsafe_zen: opts.forbid_unsafe_zen,
+        tool_root: opts.tool_root,
+        allow_empty: true,
+    };
+    let mut all_artifacts = Vec::new();
+    let mut seen_ids = BTreeSet::new();
+    let mut seen_retained_ids = BTreeSet::new();
+    for rel_source in &manifest.sources {
+        let source_dir = app_root
+            .open_subdir_rel(rel_source)
+            .map_err(AuthoringFailure::Io)?;
+        let batch = compile_source_dir_entries(
+            &source_dir,
+            &dir_opts,
+            &mut seen_ids,
+            &mut seen_retained_ids,
+            budget,
+        )?;
+        all_artifacts.extend(batch);
+    }
+    if all_artifacts.is_empty() {
+        return Err(AuthoringFailure::Io(format!(
+            "{}: norn.json sources contain no authoring artifacts",
+            app_root.display_path().display()
+        )));
+    }
+    let rendered = norn_authoring::canonical_json(&Value::Array(all_artifacts))
+        .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
+    budget
+        .charge_output_bytes("merged project artifacts", rendered.len())
+        .map_err(AuthoringFailure::Io)?;
+    Ok(rendered)
 }
 
 fn compile_path_to_json(
@@ -314,68 +465,87 @@ fn compile_path_to_json(
     env: &str,
     forbid_unsafe_zen: bool,
     tool_root: Option<&Path>,
+    budget: &mut InvocationBudget,
 ) -> Result<String, AuthoringFailure> {
     validate_non_empty_scope("--org", org)?;
     validate_non_empty_scope("--env", env)?;
     match inspect_path_no_follow(path).map_err(AuthoringFailure::Io)? {
         EntryKind::File => match classify_source_file(path) {
-            Some(SourceLang::Python) => py::compile_python_files(&[path.to_path_buf()], org, env),
-            Some(SourceLang::TypeScript) => ts::compile_ts_targets(
-                None,
-                &[path.to_path_buf()],
-                org,
-                env,
-                forbid_unsafe_zen,
-                tool_root,
-            ),
+            Some(SourceLang::Python) => {
+                let (_parent_dir, file_name, content) =
+                    open_regular_file_pinned(path, budget).map_err(AuthoringFailure::Io)?;
+                let loaded = LoadedFile {
+                    display_path: path.to_path_buf(),
+                    rel_path: PathBuf::from(file_name),
+                    content,
+                };
+                py::compile_python_files(&[loaded], org, env, budget)
+            }
+            Some(SourceLang::TypeScript) => {
+                let (parent_dir, file_name, content) =
+                    open_regular_file_pinned(path, budget).map_err(AuthoringFailure::Io)?;
+                ts::compile_ts_targets(
+                    TsCompileTarget::SingleFile {
+                        parent_dir: &parent_dir,
+                        file_name: &file_name,
+                        display_path: path,
+                        content,
+                    },
+                    org,
+                    env,
+                    forbid_unsafe_zen,
+                    tool_root,
+                    budget,
+                )
+            }
             None => Err(AuthoringFailure::Io(format!(
                 "{}: expected a .ts or .py authoring source file",
                 path.display()
             ))),
         },
         EntryKind::Directory => {
-            if path.join("norn.json").is_file() {
-                let manifest = read_norn_manifest(path).map_err(AuthoringFailure::Io)?;
-                let mut batches = Vec::new();
-                for source_dir in &manifest.sources {
-                    if inspect_path_no_follow(source_dir).map_err(AuthoringFailure::Io)?
-                        == EntryKind::Directory
-                    {
-                        batches.push(compile_directory_targets(
-                            source_dir,
-                            org,
-                            env,
-                            forbid_unsafe_zen,
-                            tool_root,
-                        )?);
-                    }
-                }
-                if batches.is_empty() {
-                    return Err(AuthoringFailure::Io(format!(
-                        "{}: norn.json declares no authoring source directories",
-                        path.display()
-                    )));
-                }
-                if batches.len() == 1
-                    && let Some(only) = batches.pop()
-                {
-                    return Ok(only);
-                }
-                return merge_artifact_arrays(&batches);
+            let root_dir = TrustedDir::open(path).map_err(AuthoringFailure::Io)?;
+            let opts = CompileDirOptions {
+                org,
+                env,
+                forbid_unsafe_zen,
+                tool_root,
+                allow_empty: false,
+            };
+            if let Some(manifest) =
+                read_norn_manifest_from_dir(&root_dir, budget).map_err(AuthoringFailure::Io)?
+            {
+                return compile_manifest_project(&root_dir, &manifest, &opts, budget);
             }
-            compile_directory_targets(path, org, env, forbid_unsafe_zen, tool_root)
+            let mut seen_ids = BTreeSet::new();
+            let mut seen_retained_ids = BTreeSet::new();
+            let artifacts = compile_source_dir_entries(
+                &root_dir,
+                &opts,
+                &mut seen_ids,
+                &mut seen_retained_ids,
+                budget,
+            )?;
+            let rendered = norn_authoring::canonical_json(&Value::Array(artifacts))
+                .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
+            budget
+                .charge_output_bytes("compiled directory artifacts", rendered.len())
+                .map_err(AuthoringFailure::Io)?;
+            Ok(rendered)
         }
     }
 }
 
 /// Executes `norn compile`.
 pub(crate) fn execute_compile(args: &CompileArgs) -> CommandOutput {
+    let mut budget = InvocationBudget::new();
     match compile_path_to_json(
         &args.path,
         &args.org,
         &args.env,
         args.forbid_unsafe_zen,
         args.tool_root.as_deref(),
+        &mut budget,
     ) {
         Ok(canonical) => {
             if let Some(out_path) = &args.out {
@@ -421,39 +591,94 @@ pub(crate) fn execute_dashboard(args: &DashboardArgs) -> CommandOutput {
     }
 }
 
-fn resolve_check_scope(req: &CheckSourceRequest<'_>) -> Result<(String, String), String> {
-    if let (Some(org), Some(env)) = (req.org, req.env) {
-        return Ok((org.to_owned(), env.to_owned()));
-    }
-    if req.source.is_dir() && req.source.join("norn.json").is_file() {
-        let manifest = read_norn_manifest(req.source)?;
-        let org = req.org.map(str::to_owned).or(manifest.org_id);
-        let env = req.env.map(str::to_owned).or(manifest.environment_id);
-        if let (Some(org_id), Some(env_id)) = (org, env) {
-            return Ok((org_id, env_id));
+fn resolve_check_scope(
+    req: &CheckSourceRequest<'_>,
+    manifest: Option<&NornAppManifest>,
+) -> Result<(String, String), String> {
+    match (req.org, req.env) {
+        (Some(org), Some(env)) => Ok((org.to_owned(), env.to_owned())),
+        (Some(_), None) | (None, Some(_)) => Err(
+            "--org and --env must be supplied together with --source (or omit both when checking a norn.json project)"
+                .to_owned(),
+        ),
+        (None, None) => {
+            if let Some(app) = manifest
+                && let (Some(org_id), Some(env_id)) = (&app.org_id, &app.environment_id)
+            {
+                return Ok((org_id.clone(), env_id.clone()));
+            }
+            Err(
+                "--org and --env are required with --source (or omit both when checking a norn.json project with scope)"
+                    .to_owned(),
+            )
         }
     }
-    Err("--org and --env are required with --source".to_owned())
 }
 
-/// Executes `norn check --source <PATH> --org <ID> --env <ID> [--context <FILE>]`.
+fn compile_check_source_artifacts(
+    req: &CheckSourceRequest<'_>,
+    budget: &mut InvocationBudget,
+) -> Result<String, AuthoringFailure> {
+    match inspect_path_no_follow(req.source).map_err(AuthoringFailure::Io)? {
+        EntryKind::Directory => {
+            let root_dir = TrustedDir::open(req.source).map_err(AuthoringFailure::Io)?;
+            let manifest =
+                read_norn_manifest_from_dir(&root_dir, budget).map_err(AuthoringFailure::Io)?;
+            let (resolved_org, resolved_env) =
+                resolve_check_scope(req, manifest.as_ref()).map_err(AuthoringFailure::Io)?;
+            validate_non_empty_scope("--org", &resolved_org)?;
+            validate_non_empty_scope("--env", &resolved_env)?;
+            let opts = CompileDirOptions {
+                org: &resolved_org,
+                env: &resolved_env,
+                forbid_unsafe_zen: req.forbid_unsafe_zen,
+                tool_root: req.tool_root,
+                allow_empty: false,
+            };
+            if let Some(app_manifest) = manifest {
+                return compile_manifest_project(&root_dir, &app_manifest, &opts, budget);
+            }
+            let mut seen_ids = BTreeSet::new();
+            let mut seen_retained_ids = BTreeSet::new();
+            let artifacts = compile_source_dir_entries(
+                &root_dir,
+                &opts,
+                &mut seen_ids,
+                &mut seen_retained_ids,
+                budget,
+            )?;
+            let rendered = norn_authoring::canonical_json(&Value::Array(artifacts))
+                .map_err(|err| AuthoringFailure::Io(err.to_string()))?;
+            budget
+                .charge_output_bytes("compiled directory artifacts", rendered.len())
+                .map_err(AuthoringFailure::Io)?;
+            Ok(rendered)
+        }
+        EntryKind::File => {
+            let (resolved_org, resolved_env) =
+                resolve_check_scope(req, None).map_err(AuthoringFailure::Io)?;
+            compile_path_to_json(
+                req.source,
+                &resolved_org,
+                &resolved_env,
+                req.forbid_unsafe_zen,
+                req.tool_root,
+                budget,
+            )
+        }
+    }
+}
+
+/// Executes `norn check --source <PATH> [--org <ID> --env <ID>] [--context <FILE>]`.
 pub(crate) fn execute_check_source(req: &CheckSourceRequest<'_>) -> CommandOutput {
-    if let Some(refused_report) = check_zero_ci_app_dir(req.source) {
-        return CommandOutput::refused(refused_report);
+    match check_zero_ci_app_dir(req.source) {
+        ZeroCiOutcome::Clean => {}
+        ZeroCiOutcome::Refused(report) => return CommandOutput::refused(report),
+        ZeroCiOutcome::IoError(err) => return CommandOutput::usage_or_io_error(err),
     }
 
-    let (resolved_org, resolved_env) = match resolve_check_scope(req) {
-        Ok(pair) => pair,
-        Err(err) => return CommandOutput::usage_or_io_error(err),
-    };
-
-    let artifacts_json = match compile_path_to_json(
-        req.source,
-        &resolved_org,
-        &resolved_env,
-        req.forbid_unsafe_zen,
-        req.tool_root,
-    ) {
+    let mut budget = InvocationBudget::new();
+    let artifacts_json = match compile_check_source_artifacts(req, &mut budget) {
         Ok(json_text) => json_text,
         Err(failure) => return failure.into_output(),
     };

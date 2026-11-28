@@ -30,25 +30,34 @@ struct Cli {
 #[derive(Debug, Args)]
 pub(crate) struct CheckArgs {
     /// JSON array emitted by typed authoring.
-    #[arg(long, conflicts_with = "source")]
+    #[arg(
+        long,
+        conflicts_with = "source",
+        requires = "context",
+        required_unless_present = "source"
+    )]
     pub(crate) artifacts: Option<PathBuf>,
-    /// Checker context JSON, containing the explicit tenant scope.
-    #[arg(long)]
+    /// Checker context JSON, containing the explicit tenant scope (required with `--artifacts`, optional with `--source`).
+    #[arg(long, required_unless_present = "source")]
     pub(crate) context: Option<PathBuf>,
     /// `TypeScript` (`.ts`) or Python (`.py`) authoring file or directory to compile and check in-process.
-    #[arg(long, conflicts_with = "artifacts")]
+    #[arg(
+        long,
+        conflicts_with = "artifacts",
+        required_unless_present = "artifacts"
+    )]
     pub(crate) source: Option<PathBuf>,
-    /// Explicit organization scope for `--source` compilation (`scope.orgId`).
-    #[arg(long)]
+    /// Explicit organization scope for `--source` compilation (`scope.orgId`; pair with `--env`, or omit both to use `norn.json` scope).
+    #[arg(long, requires_all = ["source", "env"])]
     pub(crate) org: Option<String>,
-    /// Explicit environment scope for `--source` compilation (`scope.environmentId`).
-    #[arg(long)]
+    /// Explicit environment scope for `--source` compilation (`scope.environmentId`; pair with `--org`, or omit both to use `norn.json` scope).
+    #[arg(long, requires_all = ["source", "org"])]
     pub(crate) env: Option<String>,
     /// Promote `NORN-AUTHORING-UNSAFE-ZEN` warnings to hard errors when compiling `--source`.
-    #[arg(long)]
+    #[arg(long, requires = "source")]
     pub(crate) forbid_unsafe_zen: bool,
     /// Optional path to `tools/norn-ts` containing pinned `node_modules/effect` and `node_modules/typescript`.
-    #[arg(long)]
+    #[arg(long, requires = "source")]
     pub(crate) tool_root: Option<PathBuf>,
 }
 
@@ -85,7 +94,7 @@ enum Command {
     },
     /// Check a JSON artifact array or native authoring source using the shared checker and resource limits.
     #[command(
-        long_about = "Check a JSON artifact array or native TypeScript/Python authoring source using the shared checker and resource limits. Pass --artifacts <FILE> --context <FILE> for compiled IR, or --source <PATH> --org <ID> --env <ID> to compile and check in-process. A refused report retains diagnostic codes, source locations, remediation and receipt/profile pins. Checking never installs definitions."
+        long_about = "Check a JSON artifact array or native TypeScript/Python authoring source using the shared checker and resource limits. Pass --artifacts <FILE> --context <FILE> for compiled IR, or --source <PATH> [--org <ID> --env <ID>] to compile and check in-process (supply both --org and --env, or omit both to read scope from norn.json). A refused report retains diagnostic codes, source locations, remediation and receipt/profile pins. Checking never installs definitions."
     )]
     Check(CheckArgs),
     /// Evaluate an admitted decision, with its sub-decision closure, over
@@ -226,6 +235,17 @@ fn run_eval(
 
 pub(crate) fn run_check_args(args: &CheckArgs) -> authoring::CommandOutput {
     if let Some(source_path) = &args.source {
+        if args.artifacts.is_some() {
+            return authoring::CommandOutput::usage_or_io_error(
+                "--artifacts and --source cannot be combined".to_owned(),
+            );
+        }
+        if args.org.is_some() != args.env.is_some() {
+            return authoring::CommandOutput::usage_or_io_error(
+                "--org and --env must be supplied together with --source (or omit both when checking a norn.json project)"
+                    .to_owned(),
+            );
+        }
         return authoring::execute_check_source(&authoring::CheckSourceRequest {
             source: source_path,
             context: args.context.as_deref(),
@@ -237,7 +257,8 @@ pub(crate) fn run_check_args(args: &CheckArgs) -> authoring::CommandOutput {
     }
     let Some(artifacts_path) = &args.artifacts else {
         return authoring::CommandOutput::usage_or_io_error(
-            "specify either --artifacts <FILE> --context <FILE> or --source <PATH> --org <ID> --env <ID>".to_owned(),
+            "specify either --artifacts <FILE> --context <FILE> or --source <PATH> [--org <ID> --env <ID>]"
+                .to_owned(),
         );
     };
     if args.org.is_some()

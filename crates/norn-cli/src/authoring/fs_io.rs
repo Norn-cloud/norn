@@ -1,11 +1,7 @@
-//! Bounded, symlink-safe filesystem helpers for native Rust authoring commands.
-//!
-//! All reads on Unix use `openat` with `O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`
-//! to avoid symlink traversal, `TOCTOU` directory swaps, and FIFO blocking.
+//! Bounded, symlink-safe filesystem primitives and [`InvocationBudget`] for native Rust authoring.
 
-use std::io::Write as _;
+use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Maximum single authoring source file size (`4 MiB`).
 pub(crate) const MAX_SOURCE_FILE_BYTES: u64 = 4 * 1024 * 1024;
@@ -16,13 +12,160 @@ pub(crate) const MAX_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 /// Maximum recursive directory walk depth.
 pub(crate) const MAX_WALK_DEPTH: usize = 32;
 
-/// Maximum files admitted during one recursive walk.
-pub(crate) const MAX_WALK_FILES: usize = 1_024;
+/// Maximum raw directory entries scanned across one CLI invocation.
+pub(crate) const MAX_SCANNED_ENTRIES: usize = 16_384;
 
-/// Maximum cumulative bytes across one recursive walk (`32 MiB`).
-pub(crate) const MAX_WALK_TOTAL_BYTES: u64 = 32 * 1024 * 1024;
+/// Maximum accepted files read across one CLI invocation.
+pub(crate) const MAX_TREE_FILES: usize = 1_024;
 
-static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+/// Maximum cumulative source bytes read across one CLI invocation (`32 MiB`).
+pub(crate) const MAX_TREE_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Invocation-wide resource budget shared across directory walks, file reads,
+/// import closures, manifest batches, and retained outputs.
+#[derive(Clone, Debug)]
+pub(crate) struct InvocationBudget {
+    max_scanned_entries: usize,
+    scanned_entries: usize,
+    max_accepted_files: usize,
+    accepted_files: usize,
+    max_file_bytes: u64,
+    max_bytes_read: u64,
+    bytes_read: u64,
+    max_output_bytes: usize,
+    retained_output_bytes: usize,
+}
+
+impl InvocationBudget {
+    /// Creates a new invocation budget with default hard ceilings.
+    pub(crate) const fn new() -> Self {
+        Self {
+            max_scanned_entries: MAX_SCANNED_ENTRIES,
+            scanned_entries: 0,
+            max_accepted_files: MAX_TREE_FILES,
+            accepted_files: 0,
+            max_file_bytes: MAX_SOURCE_FILE_BYTES,
+            max_bytes_read: MAX_TREE_BYTES,
+            bytes_read: 0,
+            max_output_bytes: MAX_OUTPUT_BYTES,
+            retained_output_bytes: 0,
+        }
+    }
+
+    /// Creates a budget with custom ceilings for unit testing.
+    #[cfg(test)]
+    pub(crate) const fn with_limits(
+        max_scanned_entries: usize,
+        max_accepted_files: usize,
+        max_file_bytes: u64,
+        max_bytes_read: u64,
+        max_output_bytes: usize,
+    ) -> Self {
+        Self {
+            max_scanned_entries,
+            scanned_entries: 0,
+            max_accepted_files,
+            accepted_files: 0,
+            max_file_bytes,
+            max_bytes_read,
+            bytes_read: 0,
+            max_output_bytes,
+            retained_output_bytes: 0,
+        }
+    }
+
+    /// Charges one raw directory entry before storing or sorting it.
+    pub(crate) fn charge_scanned_entry(&mut self, dir: &Path) -> Result<(), String> {
+        let next = self
+            .scanned_entries
+            .checked_add(1)
+            .filter(|&count| count <= self.max_scanned_entries)
+            .ok_or_else(|| {
+                format!(
+                    "{}: directory scan exceeds {} entry invocation limit",
+                    dir.display(),
+                    self.max_scanned_entries
+                )
+            })?;
+        self.scanned_entries = next;
+        Ok(())
+    }
+
+    /// Charges one accepted source file before reading it.
+    pub(crate) fn charge_accepted_file(&mut self, path: &Path) -> Result<(), String> {
+        let next = self
+            .accepted_files
+            .checked_add(1)
+            .filter(|&count| count <= self.max_accepted_files)
+            .ok_or_else(|| {
+                format!(
+                    "{}: invocation exceeds {} file limit",
+                    path.display(),
+                    self.max_accepted_files
+                )
+            })?;
+        self.accepted_files = next;
+        Ok(())
+    }
+
+    /// Returns the maximum bytes that may be read from the next single file.
+    pub(crate) fn remaining_file_read_limit(&self) -> u64 {
+        let remaining_total = self.max_bytes_read.saturating_sub(self.bytes_read);
+        self.max_file_bytes.min(remaining_total)
+    }
+
+    /// Charges the actual bytes read from a single file descriptor.
+    pub(crate) fn charge_bytes_read(&mut self, path: &Path, actual: u64) -> Result<(), String> {
+        if actual > self.max_file_bytes {
+            return Err(format!(
+                "{}: exceeds {} byte authoring source limit",
+                path.display(),
+                self.max_file_bytes
+            ));
+        }
+        let next = self
+            .bytes_read
+            .checked_add(actual)
+            .filter(|&total| total <= self.max_bytes_read)
+            .ok_or_else(|| {
+                format!(
+                    "{}: invocation exceeds {} byte read limit",
+                    path.display(),
+                    self.max_bytes_read
+                )
+            })?;
+        self.bytes_read = next;
+        Ok(())
+    }
+
+    /// Charges retained output bytes emitted or staged during one invocation.
+    pub(crate) fn charge_output_bytes(&mut self, label: &str, bytes: usize) -> Result<(), String> {
+        let next = self
+            .retained_output_bytes
+            .checked_add(bytes)
+            .filter(|&total| total <= self.max_output_bytes)
+            .ok_or_else(|| {
+                format!(
+                    "{label}: invocation exceeds {} byte output limit",
+                    self.max_output_bytes
+                )
+            })?;
+        self.retained_output_bytes = next;
+        Ok(())
+    }
+
+    /// Returns cumulative source bytes charged so far (test inspection helper).
+    #[cfg(test)]
+    pub(crate) const fn bytes_read(&self) -> u64 {
+        self.bytes_read
+    }
+
+    /// Returns cumulative raw directory entries scanned so far (test inspection helper).
+    #[cfg(test)]
+    pub(crate) const fn scanned_entries(&self) -> usize {
+        self.scanned_entries
+    }
+}
 
 /// Regular filesystem entry kind after a no-follow open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,6 +183,28 @@ pub(crate) enum SourceLang {
     TypeScript,
     /// Typed Python (`.py`).
     Python,
+}
+
+/// Result of inspecting `.github/workflows` relative to a trusted Norn app root.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ZeroCiStatus {
+    /// Neither `.github` nor `.github/workflows` exists (verified via `ENOENT`).
+    Absent,
+    /// `.github/workflows` exists (directory, non-directory, or symlink).
+    Present(String),
+    /// Fail-closed inspection refusal (`ELOOP`, `EACCES`, or other OS error).
+    Error(String),
+}
+
+/// A regular file already opened and read directly from a trusted descriptor.
+#[derive(Clone, Debug)]
+pub(crate) struct LoadedFile {
+    /// Logical display path (used for diagnostics and provenance).
+    pub(crate) display_path: PathBuf,
+    /// Relative path from the owning directory handle.
+    pub(crate) rel_path: PathBuf,
+    /// UTF-8 contents read directly from the opened descriptor.
+    pub(crate) content: String,
 }
 
 /// Returns `true` if `file_name` is a `TypeScript` declaration file (`.d.ts`, `.d.mts`, `.d.cts`).
@@ -63,6 +228,12 @@ pub(crate) fn classify_source_file(path: &Path) -> Option<SourceLang> {
         return Some(SourceLang::TypeScript);
     }
     None
+}
+
+/// Returns `true` if `path` has a `.json` extension (case-insensitive).
+pub(crate) fn is_json_file(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
 }
 
 /// Returns `true` if `path` has a `.ts` (non-`.d.ts`) or `.json` extension.
@@ -91,24 +262,172 @@ pub(crate) fn display_posix_path(path: &Path) -> String {
     raw.strip_prefix("./").unwrap_or(&raw).to_owned()
 }
 
-/// Reads a regular non-symlink source file under [`MAX_SOURCE_FILE_BYTES`].
-pub(crate) fn read_source_file_bounded(path: &Path) -> Result<String, String> {
-    crate::cell::read_regular_file_bounded(
-        path,
-        MAX_SOURCE_FILE_BYTES,
-        "4 MiB authoring source limit",
-    )
+/// Returns `true` for directories skipped during recursive walks.
+pub(crate) fn should_skip_dir(name: &str) -> bool {
+    name.starts_with('.') || name == "node_modules" || name == "target"
 }
 
-/// Inspects `path` without following symlinks or blocking on FIFOs.
+/// Reads an already-opened regular file directly from its descriptor, charging actual bytes read.
+pub(crate) fn read_opened_file_budgeted(
+    file: std::fs::File,
+    display_path: &Path,
+    budget: &mut InvocationBudget,
+) -> Result<String, String> {
+    let meta = file
+        .metadata()
+        .map_err(|err| format!("{}: {err}", display_path.display()))?;
+    if !meta.file_type().is_file() {
+        return Err(format!("{}: not a regular file", display_path.display()));
+    }
+    let read_cap = budget.remaining_file_read_limit();
+    if meta.len() > read_cap {
+        budget.charge_bytes_read(display_path, meta.len())?;
+    }
+    let mut bytes = Vec::new();
+    file.take(read_cap.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|err| format!("{}: {err}", display_path.display()))?;
+    let actual =
+        u64::try_from(bytes.len()).map_err(|err| format!("{}: {err}", display_path.display()))?;
+    budget.charge_bytes_read(display_path, actual)?;
+    String::from_utf8(bytes)
+        .map_err(|err| format!("{}: invalid UTF-8: {err}", display_path.display()))
+}
+
+#[cfg(unix)]
+pub(crate) fn ancestor_dir_flags() -> rustix::fs::OFlags {
+    use rustix::fs::OFlags;
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    {
+        OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+    {
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn final_dir_flags() -> rustix::fs::OFlags {
+    use rustix::fs::OFlags;
+    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
+}
+
+#[cfg(unix)]
+pub(crate) fn format_dir_open_error(
+    parent_fd: std::os::fd::BorrowedFd<'_>,
+    segment: &std::ffi::OsStr,
+    walked: &Path,
+    err: rustix::io::Errno,
+) -> String {
+    use rustix::fs::{AtFlags, FileType, statat};
+    use rustix::io::Errno;
+
+    if err == Errno::LOOP {
+        return format!("{}: symlinks are refused", walked.display());
+    }
+    if err == Errno::NOTDIR
+        && let Ok(stat) = statat(parent_fd, segment, AtFlags::SYMLINK_NOFOLLOW)
+        && FileType::from_raw_mode(stat.st_mode) == FileType::Symlink
+    {
+        return format!("{}: symlinks are refused", walked.display());
+    }
+    if err == Errno::NOTDIR {
+        return format!("{}: not a directory", walked.display());
+    }
+    format!("{}: {err}", walked.display())
+}
+
+/// Opens `dir` component-by-component with `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC`,
+/// refusing any symlink along the path.
+#[cfg(unix)]
+pub(crate) fn open_dir_components_no_follow(dir: &Path) -> Result<std::os::fd::OwnedFd, String> {
+    use rustix::fs::{CWD, Mode, openat};
+    use std::os::fd::AsFd as _;
+
+    let mut is_absolute = false;
+    let mut segments: Vec<&std::ffi::OsStr> = Vec::new();
+    for comp in dir.components() {
+        match comp {
+            Component::RootDir => is_absolute = true,
+            Component::CurDir => {}
+            Component::ParentDir => segments.push(std::ffi::OsStr::new("..")),
+            Component::Normal(seg) => segments.push(seg),
+            Component::Prefix(_) => {
+                return Err(format!("{}: unsupported path prefix", dir.display()));
+            }
+        }
+    }
+
+    let start_name = if is_absolute { "/" } else { "." };
+    if segments.is_empty() {
+        return openat(CWD, start_name, final_dir_flags(), Mode::empty())
+            .map_err(|err| format!("{}: {err}", dir.display()));
+    }
+
+    let mut current = openat(CWD, start_name, ancestor_dir_flags(), Mode::empty())
+        .map_err(|err| format!("{start_name}: {err}"))?;
+    let mut walked = if is_absolute {
+        PathBuf::from("/")
+    } else {
+        PathBuf::new()
+    };
+    let last_idx = segments.len().saturating_sub(1);
+    for (idx, segment) in segments.iter().enumerate() {
+        let flags = if idx == last_idx {
+            final_dir_flags()
+        } else {
+            ancestor_dir_flags()
+        };
+        walked.push(segment);
+        current = openat(current.as_fd(), *segment, flags, Mode::empty())
+            .map_err(|err| format_dir_open_error(current.as_fd(), segment, &walked, err))?;
+    }
+    Ok(current)
+}
+
+#[cfg(unix)]
+pub(crate) fn open_entry_no_follow<P: rustix::path::Arg>(
+    dir: impl std::os::fd::AsFd,
+    name: P,
+    display_path: &Path,
+) -> Result<std::fs::File, String> {
+    use rustix::fs::{Mode, OFlags, openat};
+    use rustix::io::Errno;
+
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    openat(dir, name, flags, Mode::empty())
+        .map(std::fs::File::from)
+        .map_err(|err| {
+            if err == Errno::LOOP {
+                format!("{}: symlinks are refused", display_path.display())
+            } else if err == Errno::NXIO || err == Errno::OPNOTSUPP {
+                format!("{}: not a regular file", display_path.display())
+            } else {
+                format!("{}: {err}", display_path.display())
+            }
+        })
+}
+
+/// Inspects `path` component-by-component without following symlinks or blocking on FIFOs.
 #[cfg(unix)]
 pub(crate) fn inspect_path_no_follow(path: &Path) -> Result<EntryKind, String> {
+    use std::os::fd::AsFd as _;
     use std::os::unix::ffi::OsStrExt as _;
+
     let shown = path.display();
     let raw = path.as_os_str().as_bytes();
     let must_be_dir = raw.ends_with(b"/") || raw.ends_with(b"/.");
-    let target: PathBuf = path.components().collect();
-    let opened = open_no_follow(rustix::fs::CWD, &target, path)?;
+    let Some(final_name) = path.file_name() else {
+        let _dir_fd = open_dir_components_no_follow(path)?;
+        return Ok(EntryKind::Directory);
+    };
+    let parent = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let parent_fd = open_dir_components_no_follow(parent)?;
+    let opened = open_entry_no_follow(parent_fd.as_fd(), final_name, path)?;
     let kind = opened
         .metadata()
         .map_err(|err| format!("{shown}: {err}"))?
@@ -129,6 +448,9 @@ pub(crate) fn inspect_path_no_follow(path: &Path) -> Result<EntryKind, String> {
 #[cfg(not(unix))]
 pub(crate) fn inspect_path_no_follow(path: &Path) -> Result<EntryKind, String> {
     let shown = path.display();
+    if let Some(parent) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+        verify_no_symlink_ancestors_non_unix(parent)?;
+    }
     let meta = std::fs::symlink_metadata(path).map_err(|err| format!("{shown}: {err}"))?;
     if meta.file_type().is_symlink() {
         return Err(format!("{shown}: symlinks are refused"));
@@ -142,352 +464,22 @@ pub(crate) fn inspect_path_no_follow(path: &Path) -> Result<EntryKind, String> {
     Err(format!("{shown}: not a regular file or directory"))
 }
 
-#[cfg(unix)]
-fn open_no_follow<P: rustix::path::Arg>(
-    dir: impl std::os::fd::AsFd,
-    name: P,
-    display_path: &Path,
-) -> Result<std::fs::File, String> {
-    use rustix::fs::{Mode, OFlags};
-    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-    rustix::fs::openat(dir, name, flags, Mode::empty())
-        .map(std::fs::File::from)
-        .map_err(|err| {
-            if err == rustix::io::Errno::LOOP {
-                format!("{}: symlinks are refused", display_path.display())
-            } else if err == rustix::io::Errno::NXIO || err == rustix::io::Errno::OPNOTSUPP {
-                format!("{}: not a regular file", display_path.display())
-            } else {
-                format!("{}: {err}", display_path.display())
-            }
-        })
-}
-
-fn should_skip_dir(name: &str) -> bool {
-    name.starts_with('.') || name == "node_modules" || name == "target"
-}
-
-/// Collects regular files directly inside `dir` (non-recursive) in sorted path order.
-#[cfg(unix)]
-pub(crate) fn collect_top_level_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let target: PathBuf = dir.components().collect();
-    let dir_handle = open_no_follow(rustix::fs::CWD, &target, dir)?;
-    if !dir_handle
-        .metadata()
-        .map_err(|err| format!("{}: {err}", dir.display()))?
-        .is_dir()
-    {
-        return Err(format!("{}: not a directory", dir.display()));
-    }
-    let mut files = Vec::new();
-    for entry in read_sorted_dir_names(&dir_handle, dir)? {
-        let name = entry
-            .to_str()
-            .map_err(|err| format!("non-UTF-8 name under {}: {err}", dir.display()))?;
-        if name.starts_with('.') {
-            continue;
-        }
-        let child = dir.join(name);
-        let opened = open_no_follow(&dir_handle, entry.as_c_str(), &child)?;
-        let kind = opened
-            .metadata()
-            .map_err(|err| format!("{}: {err}", child.display()))?
-            .file_type();
-        if kind.is_file() {
-            if files.len() >= MAX_WALK_FILES {
-                return Err(format!(
-                    "{}: directory exceeds {MAX_WALK_FILES} files",
-                    dir.display()
-                ));
-            }
-            files.push(child);
-        } else if !kind.is_dir() {
-            return Err(format!("{}: not a regular file", child.display()));
-        }
-    }
-    Ok(files)
-}
-
-/// Collects regular files directly inside `dir` (non-Unix fallback).
+/// Verifies no ancestor directory of `dir` is a symlink (non-Unix fallback).
 #[cfg(not(unix))]
-pub(crate) fn collect_top_level_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let meta = std::fs::symlink_metadata(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
-    if meta.file_type().is_symlink() {
-        return Err(format!("{}: symlinks are refused", dir.display()));
-    }
-    if !meta.is_dir() {
-        return Err(format!("{}: not a directory", dir.display()));
-    }
-    let mut entries = std::fs::read_dir(dir)
-        .map_err(|err| format!("{}: {err}", dir.display()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| format!("{}: {err}", dir.display()))?;
-    entries.sort_by_key(std::fs::DirEntry::file_name);
-    let mut files = Vec::new();
-    for entry in entries {
-        let raw_name = entry.file_name();
-        let Some(name) = raw_name.to_str() else {
-            return Err(format!("non-UTF-8 name under {}", dir.display()));
-        };
-        if name.starts_with('.') {
-            continue;
-        }
-        let child = entry.path();
-        let kind = entry
-            .file_type()
-            .map_err(|err| format!("{}: {err}", child.display()))?;
-        if kind.is_symlink() {
-            return Err(format!("{}: symlinks are refused", child.display()));
-        }
-        if kind.is_file() {
-            if files.len() >= MAX_WALK_FILES {
-                return Err(format!(
-                    "{}: directory exceeds {MAX_WALK_FILES} files",
-                    dir.display()
-                ));
+pub(crate) fn verify_no_symlink_ancestors_non_unix(dir: &Path) -> Result<(), String> {
+    let mut cursor = PathBuf::new();
+    for comp in dir.components() {
+        cursor.push(comp.as_os_str());
+        if matches!(comp, Component::Normal(_)) {
+            let meta = std::fs::symlink_metadata(&cursor)
+                .map_err(|err| format!("{}: {err}", cursor.display()))?;
+            if meta.file_type().is_symlink() {
+                return Err(format!("{}: symlinks are refused", cursor.display()));
             }
-            files.push(child);
-        } else if !kind.is_dir() {
-            return Err(format!("{}: not a regular file", child.display()));
-        }
-    }
-    Ok(files)
-}
-
-#[cfg(unix)]
-fn read_sorted_dir_names(
-    dir_handle: &std::fs::File,
-    display_dir: &Path,
-) -> Result<Vec<std::ffi::CString>, String> {
-    let mut names = Vec::new();
-    for item in rustix::fs::Dir::read_from(dir_handle)
-        .map_err(|err| format!("{}: {err}", display_dir.display()))?
-    {
-        let entry = item.map_err(|err| format!("{}: {err}", display_dir.display()))?;
-        let owned = entry.file_name().to_owned();
-        if owned.as_bytes() == b"." || owned.as_bytes() == b".." {
-            continue;
-        }
-        names.push(owned);
-    }
-    names.sort();
-    Ok(names)
-}
-
-struct WalkState {
-    remaining_bytes: u64,
-    files: Vec<PathBuf>,
-}
-
-/// Recursively walks `root` skipping hidden directories, `node_modules`, and `target`,
-/// refusing symlinks and special files, and keeping only entries accepted by `accept`.
-#[cfg(unix)]
-pub(crate) fn collect_walk_files(
-    root: &Path,
-    accept: fn(&str, &Path) -> bool,
-) -> Result<Vec<PathBuf>, String> {
-    let target: PathBuf = root.components().collect();
-    let root_handle = open_no_follow(rustix::fs::CWD, &target, root)?;
-    if !root_handle
-        .metadata()
-        .map_err(|err| format!("{}: {err}", root.display()))?
-        .is_dir()
-    {
-        return Err(format!("{}: not a directory", root.display()));
-    }
-    let mut state = WalkState {
-        remaining_bytes: MAX_WALK_TOTAL_BYTES,
-        files: Vec::new(),
-    };
-    walk_unix_recursive(&root_handle, root, 0, accept, &mut state)?;
-    Ok(state.files)
-}
-
-#[cfg(unix)]
-fn walk_unix_recursive(
-    dir_handle: &std::fs::File,
-    dir_display: &Path,
-    depth: usize,
-    accept: fn(&str, &Path) -> bool,
-    state: &mut WalkState,
-) -> Result<(), String> {
-    if depth > MAX_WALK_DEPTH {
-        return Err(format!(
-            "{}: directory nesting exceeds {MAX_WALK_DEPTH}",
-            dir_display.display()
-        ));
-    }
-    for entry in read_sorted_dir_names(dir_handle, dir_display)? {
-        let name = entry
-            .to_str()
-            .map_err(|err| format!("non-UTF-8 name under {}: {err}", dir_display.display()))?;
-        if name.starts_with('.') {
-            continue;
-        }
-        let child = dir_display.join(name);
-        let opened = open_no_follow(dir_handle, entry.as_c_str(), &child)?;
-        let meta = opened
-            .metadata()
-            .map_err(|err| format!("{}: {err}", child.display()))?;
-        let kind = meta.file_type();
-        if kind.is_dir() {
-            if should_skip_dir(name) {
-                continue;
+            if !meta.is_dir() {
+                return Err(format!("{}: not a directory", cursor.display()));
             }
-            walk_unix_recursive(&opened, &child, depth.saturating_add(1), accept, state)?;
-        } else if kind.is_file() {
-            if !accept(name, &child) {
-                continue;
-            }
-            record_walk_file(&child, meta.len(), state)?;
-        } else {
-            return Err(format!("{}: not a regular file", child.display()));
         }
-    }
-    Ok(())
-}
-
-/// Recursively walks `root` without following symlinks (non-Unix fallback).
-#[cfg(not(unix))]
-pub(crate) fn collect_walk_files(
-    root: &Path,
-    accept: fn(&str, &Path) -> bool,
-) -> Result<Vec<PathBuf>, String> {
-    let meta =
-        std::fs::symlink_metadata(root).map_err(|err| format!("{}: {err}", root.display()))?;
-    if meta.file_type().is_symlink() {
-        return Err(format!("{}: symlinks are refused", root.display()));
-    }
-    if !meta.is_dir() {
-        return Err(format!("{}: not a directory", root.display()));
-    }
-    let mut state = WalkState {
-        remaining_bytes: MAX_WALK_TOTAL_BYTES,
-        files: Vec::new(),
-    };
-    walk_non_unix_recursive(root, 0, accept, &mut state)?;
-    Ok(state.files)
-}
-
-#[cfg(not(unix))]
-fn walk_non_unix_recursive(
-    dir: &Path,
-    depth: usize,
-    accept: fn(&str, &Path) -> bool,
-    state: &mut WalkState,
-) -> Result<(), String> {
-    if depth > MAX_WALK_DEPTH {
-        return Err(format!(
-            "{}: directory nesting exceeds {MAX_WALK_DEPTH}",
-            dir.display()
-        ));
-    }
-    let mut entries = std::fs::read_dir(dir)
-        .map_err(|err| format!("{}: {err}", dir.display()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| format!("{}: {err}", dir.display()))?;
-    entries.sort_by_key(std::fs::DirEntry::file_name);
-    for entry in entries {
-        let raw_name = entry.file_name();
-        let Some(name) = raw_name.to_str() else {
-            return Err(format!("non-UTF-8 name under {}", dir.display()));
-        };
-        if name.starts_with('.') {
-            continue;
-        }
-        let child = entry.path();
-        let meta = std::fs::symlink_metadata(&child)
-            .map_err(|err| format!("{}: {err}", child.display()))?;
-        let kind = meta.file_type();
-        if kind.is_symlink() {
-            return Err(format!("{}: symlinks are refused", child.display()));
-        }
-        if kind.is_dir() {
-            if should_skip_dir(name) {
-                continue;
-            }
-            walk_non_unix_recursive(&child, depth.saturating_add(1), accept, state)?;
-        } else if kind.is_file() {
-            if !accept(name, &child) {
-                continue;
-            }
-            record_walk_file(&child, meta.len(), state)?;
-        } else {
-            return Err(format!("{}: not a regular file", child.display()));
-        }
-    }
-    Ok(())
-}
-
-fn record_walk_file(path: &Path, size: u64, state: &mut WalkState) -> Result<(), String> {
-    if state.files.len() >= MAX_WALK_FILES {
-        return Err(format!(
-            "{}: source tree exceeds {MAX_WALK_FILES} files",
-            path.display()
-        ));
-    }
-    if size > MAX_SOURCE_FILE_BYTES {
-        return Err(format!(
-            "{}: exceeds 4 MiB authoring source limit",
-            path.display()
-        ));
-    }
-    state.remaining_bytes = state
-        .remaining_bytes
-        .checked_sub(size)
-        .ok_or_else(|| format!("{}: source tree exceeds 32 MiB limit", path.display()))?;
-    state.files.push(path.to_path_buf());
-    Ok(())
-}
-
-/// Atomically writes `content` to `path`, refusing symlinks, directories, and oversized writes.
-pub(crate) fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
-    if content.len() > MAX_OUTPUT_BYTES {
-        return Err(format!(
-            "{}: output exceeds {MAX_OUTPUT_BYTES} byte limit",
-            path.display()
-        ));
-    }
-    if let Ok(meta) = std::fs::symlink_metadata(path) {
-        if meta.file_type().is_symlink() {
-            return Err(format!("{}: refusing to overwrite symlink", path.display()));
-        }
-        if meta.is_dir() {
-            return Err(format!("{}: target path is a directory", path.display()));
-        }
-    }
-    let parent = path
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let base = path
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .ok_or_else(|| {
-            format!(
-                "{}: output path must have a UTF-8 file name",
-                path.display()
-            )
-        })?;
-    let seq = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let tmp_name = format!(".{base}.norn-tmp-{}-{seq}", std::process::id());
-    let tmp_path = parent.join(tmp_name);
-    let mut handle = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp_path)
-        .map_err(|err| format!("{}: {err}", tmp_path.display()))?;
-    let write_res = handle
-        .write_all(content.as_bytes())
-        .and_then(|()| handle.flush());
-    drop(handle);
-    if let Err(err) = write_res {
-        if let Err(_cleanup) = std::fs::remove_file(&tmp_path) {}
-        return Err(format!("{}: {err}", path.display()));
-    }
-    if let Err(err) = std::fs::rename(&tmp_path, path) {
-        if let Err(_cleanup) = std::fs::remove_file(&tmp_path) {}
-        return Err(format!("{}: {err}", path.display()));
     }
     Ok(())
 }
