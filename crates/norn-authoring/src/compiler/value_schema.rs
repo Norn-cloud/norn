@@ -89,7 +89,6 @@ impl ObjectSchema {
     }
 
     /// Iterates property names in deterministic order.
-    #[must_use]
     pub fn ordered_keys(&self) -> impl Iterator<Item = &str> {
         self.properties.keys().map(String::as_str)
     }
@@ -257,7 +256,12 @@ impl ValueSchema {
     pub fn into_nullable(self) -> Self {
         match self {
             Self::Null { .. } | Self::Nullable(_) | Self::JsonValue { .. } => self,
-            other => Self::Nullable(Box::new(other)),
+            other @ (Self::String { .. }
+            | Self::Integer { .. }
+            | Self::Number { .. }
+            | Self::Boolean { .. }
+            | Self::Array { .. }
+            | Self::Object(_)) => Self::Nullable(Box::new(other)),
         }
     }
 
@@ -266,7 +270,14 @@ impl ValueSchema {
     pub fn non_null(&self) -> &Self {
         match self {
             Self::Nullable(inner) => inner.as_ref(),
-            other => other,
+            other @ (Self::String { .. }
+            | Self::Integer { .. }
+            | Self::Number { .. }
+            | Self::Boolean { .. }
+            | Self::Null { .. }
+            | Self::Array { .. }
+            | Self::Object(_)
+            | Self::JsonValue { .. }) => other,
         }
     }
 
@@ -349,7 +360,7 @@ impl ValueSchema {
             Self::Object(obj) => &mut obj.labels,
             Self::Nullable(inner) => {
                 let updated = (**inner).clone().with_labels(extra);
-                *inner = Box::new(updated);
+                **inner = updated;
                 return self;
             }
         };
@@ -497,11 +508,11 @@ pub(crate) fn literal_schema(value: &Value) -> Option<ValueSchema> {
         Value::Bool(_) => Some(ValueSchema::boolean()),
         Value::String(_) => Some(ValueSchema::text()),
         Value::Number(num) => {
-            if num.is_i64() || num.is_u64() {
-                Some(ValueSchema::integer())
-            } else if num
-                .as_f64()
-                .is_some_and(|f| f.is_finite() && f.fract().abs().to_bits() == 0)
+            if num.is_i64()
+                || num.is_u64()
+                || num
+                    .as_f64()
+                    .is_some_and(|f| f.is_finite() && f.fract().abs().to_bits() == 0)
             {
                 Some(ValueSchema::integer())
             } else {

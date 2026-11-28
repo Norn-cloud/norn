@@ -310,7 +310,7 @@ impl DefinitionCompiler<'_> {
         self.compile_decision_callback(
             checker,
             expansion,
-            CallbackGraphSpec {
+            &CallbackGraphSpec {
                 body: body_node,
                 hit: spec.hit,
                 artifact_id: spec.artifact_id,

@@ -159,7 +159,7 @@ impl DefinitionCompiler<'_> {
             None => format!("{}.{name}", subj.subject),
         };
         let artifact_id = format!("{law_id}.law");
-        let (rationale, law_ir) = self.compile_law_v2_body(
+        let (rationale, payload) = self.compile_law_v2_body(
             checker,
             expansion,
             &spec,
@@ -181,7 +181,7 @@ impl DefinitionCompiler<'_> {
                 version: subj.version,
                 dependencies: subj.deps,
             },
-            law_ir,
+            payload,
             options,
             call,
         )?;
@@ -247,7 +247,7 @@ impl DefinitionCompiler<'_> {
         });
         let resp_expr = self.lambda(checker, expansion, resp_node, &response_self)?;
         let rationale = self.string(checker, Self::member(spec, "because", spec_arg)?)?;
-        let law_ir = build_law_v2_payload(
+        let payload = build_law_v2_payload(
             subj,
             LawV2Fields {
                 law_id,
@@ -261,7 +261,7 @@ impl DefinitionCompiler<'_> {
                 source_path: target.source_path,
             },
         );
-        Ok((rationale, law_ir))
+        Ok((rationale, payload))
     }
 
     fn resolve_law_v2_subject(

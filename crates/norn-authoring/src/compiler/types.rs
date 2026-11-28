@@ -132,10 +132,7 @@ pub(crate) fn relative_virtual_path(base: &str, target: &str) -> String {
         .zip(target_parts.iter())
         .take_while(|(a, b)| a == b)
         .count();
-    let mut out: Vec<&str> = Vec::new();
-    for _ in common..base_parts.len() {
-        out.push("..");
-    }
+    let mut out: Vec<&str> = vec![".."; base_parts.len().saturating_sub(common)];
     if let Some(rest) = target_parts.get(common..) {
         out.extend(rest.iter().copied());
     }
@@ -413,8 +410,7 @@ fn f64_to_json_number(val: f64, node: P<Node>) -> Result<Number, CompileError> {
         return Ok(Number::from(0_i64));
     }
     if val.fract().abs().to_bits() == 0
-        && val >= -9_007_199_254_740_991.0
-        && val <= 9_007_199_254_740_991.0
+        && (-9_007_199_254_740_991.0..=9_007_199_254_740_991.0).contains(&val)
         && let Ok(i) = format!("{val:.0}").parse::<i64>()
         && (MIN_SAFE_INTEGER_I64..=MAX_SAFE_INTEGER_I64).contains(&i)
     {
@@ -481,7 +477,7 @@ fn normalize_decimal_str(
     let mut first: usize = 0;
     let mut end: usize = bytes.len();
     while first < end && bytes.get(first).copied() == Some(b'0') {
-        if (first & 4095) == 0 {
+        if first.trailing_zeros() >= 12 {
             check_time()?;
         }
         first = first.saturating_add(1);
@@ -490,7 +486,7 @@ fn normalize_decimal_str(
         return Ok(("0".to_owned(), 0));
     }
     while end > first && bytes.get(end.saturating_sub(1)).copied() == Some(b'0') {
-        if (end & 4095) == 0 {
+        if end.trailing_zeros() >= 12 {
             check_time()?;
         }
         end = end.saturating_sub(1);

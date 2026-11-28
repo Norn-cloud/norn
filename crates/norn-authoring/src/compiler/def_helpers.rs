@@ -182,11 +182,23 @@ pub(crate) struct LocalizedData {
     pub(crate) needs_review: Option<Vec<String>>,
 }
 
+/// Ordered `(locale, text)` label entries.
+pub(crate) type LocaleEntries = Vec<(String, String)>;
+
+/// Ordered `(property_name, locale_entries)` entries for inline property labels.
+pub(crate) type PropertyLabelEntries = Vec<(String, LocaleEntries)>;
+
+/// Ordered `(value_key, locale_entries)` entries for one enum property's values.
+pub(crate) type EnumValueLabelEntries = Vec<(String, LocaleEntries)>;
+
+/// Ordered `(property_name, enum_value_labels)` entries for inline enum-value labels.
+pub(crate) type ValueLabelEntries = Vec<(String, EnumValueLabelEntries)>;
+
 /// Inline property and enum-value labels on a type (`MemberLabels`).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MemberLabelsData {
-    pub(crate) property_labels: Option<Vec<(String, Vec<(String, String)>)>>,
-    pub(crate) value_labels: Option<Vec<(String, Vec<(String, Vec<(String, String)>)>)>>,
+    pub(crate) property_labels: Option<PropertyLabelEntries>,
+    pub(crate) value_labels: Option<ValueLabelEntries>,
 }
 
 /// A law subject's expression schema and temporal property path map.
@@ -251,7 +263,7 @@ pub(crate) struct DefinitionCompiler<'a> {
 }
 
 impl<'a> DefinitionCompiler<'a> {
-    pub(crate) fn new(config: DefCompilerConfig<'a>) -> Self {
+    pub(crate) fn new(config: &DefCompilerConfig<'a>) -> Self {
         let schemas = SchemaProjection::new(
             config.intrinsics_module,
             config.effect_dist_prefix,
@@ -482,7 +494,7 @@ impl<'a> DefinitionCompiler<'a> {
         allowed: &[&str],
     ) -> Result<Members, CompileError> {
         let args = call.as_call_expression().arguments().nodes();
-        let Some(&arg0) = args.first() else {
+        let Some(&first_arg) = args.first() else {
             return Err(CompileError::new(
                 "NORN-FLOW-LITERAL",
                 "a definition takes one metadata object",
@@ -498,7 +510,7 @@ impl<'a> DefinitionCompiler<'a> {
                 call,
             ));
         }
-        let members = self.record(checker, arg0)?;
+        let members = self.record(checker, first_arg)?;
         for (key, value) in members.iter() {
             if !allowed.contains(&key) {
                 return Err(CompileError::new(

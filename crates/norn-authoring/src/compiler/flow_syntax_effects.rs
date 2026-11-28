@@ -13,11 +13,28 @@ use super::flow_syntax::{Env, Plan, SyntaxCompiler, json_scalar_to_string};
 use super::types::CompileError;
 use super::value_schema::{BudgetExceeded, ExpansionBudget, ValueSchema, merge_schemas};
 
+/// Binding-name hint for lowering an Effect expression.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum EffectHint<'a> {
+    None,
+    Discard,
+    Bind(&'a str),
+}
+
+impl<'a> EffectHint<'a> {
+    const fn name(self) -> Option<&'a str> {
+        match self {
+            Self::Bind(name) => Some(name),
+            Self::None | Self::Discard => None,
+        }
+    }
+}
+
 struct OperatorCall<'a> {
     call: P<Node>,
     plan: Plan,
     env: &'a Env,
-    hint: Option<Option<&'a str>>,
+    hint: EffectHint<'a>,
     direct: bool,
 }
 
@@ -226,7 +243,13 @@ impl SyntaxCompiler<'_> {
                     outputs: vec![return_ty],
                 })
             } else {
-                self.effect(body, env, hint.map(Some), checker, expansion)
+                self.effect(
+                    body,
+                    env,
+                    hint.map_or(EffectHint::None, EffectHint::Bind),
+                    checker,
+                    expansion,
+                )
             };
         }
         let outputs = if pure {
@@ -245,13 +268,12 @@ impl SyntaxCompiler<'_> {
         self.compose(body_steps, outputs, fn_node, hint, checker, expansion)
     }
 
-    /// Lowers an effect expression.
-    /// `hint`: `None` = no hint, `Some(None)` = discard result, `Some(Some(s))` = binding hint.
+    /// Lowers an effect expression with an [`EffectHint`].
     pub(super) fn effect(
         &mut self,
         input: P<Node>,
         env: &Env,
-        hint: Option<Option<&str>>,
+        hint: EffectHint<'_>,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
     ) -> Result<Plan, CompileError> {
@@ -297,7 +319,7 @@ impl SyntaxCompiler<'_> {
         &mut self,
         call: (P<Node>, &[P<Node>], Option<&str>),
         env: &Env,
-        hint: Option<Option<&str>>,
+        hint: EffectHint<'_>,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
     ) -> Result<Plan, CompileError> {
@@ -340,7 +362,7 @@ impl SyntaxCompiler<'_> {
                 let inner_hint = if id == Some("effect/Effect#retry") {
                     hint
                 } else {
-                    None
+                    EffectHint::None
                 };
                 let plan = self.effect(a0, env, inner_hint, checker, expansion)?;
                 self.operator(
@@ -368,7 +390,7 @@ impl SyntaxCompiler<'_> {
         e: P<Node>,
         args: &[P<Node>],
         env: &Env,
-        hint: Option<Option<&str>>,
+        hint: EffectHint<'_>,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
     ) -> Result<Plan, CompileError> {
@@ -380,9 +402,9 @@ impl SyntaxCompiler<'_> {
             ));
         };
         let bind = match hint {
-            Some(None) => None,
-            Some(Some(h)) => Some(self.fresh(h)),
-            None => Some(self.fresh("result")),
+            EffectHint::Discard => None,
+            EffectHint::Bind(h) => Some(self.fresh(h)),
+            EffectHint::None => Some(self.fresh("result")),
         };
         let step_name = json_scalar_to_string(&self.scalar(a0, checker, expansion)?);
         let func = self.fn_handle(a1, checker, expansion)?;
@@ -415,7 +437,7 @@ impl SyntaxCompiler<'_> {
         &mut self,
         e: P<Node>,
         args: &[P<Node>],
-        hint: Option<Option<&str>>,
+        hint: EffectHint<'_>,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
     ) -> Result<Plan, CompileError> {
@@ -426,12 +448,11 @@ impl SyntaxCompiler<'_> {
                 e,
             ));
         };
-        let step_name = match hint.flatten() {
-            Some(h) => h.to_owned(),
-            None => {
-                self.ordinal = self.ordinal.saturating_add(1);
-                format!("sleep_{}", self.ordinal)
-            }
+        let step_name = if let Some(h) = hint.name() {
+            h.to_owned()
+        } else {
+            self.ordinal = self.ordinal.saturating_add(1);
+            format!("sleep_{}", self.ordinal)
         };
         let millis = self.duration(a0, checker, expansion)?;
         let node = self.annotate(
@@ -529,7 +550,7 @@ impl SyntaxCompiler<'_> {
         let mut steps = Vec::new();
         let mut values = Vec::new();
         for &item in list.as_array_literal_expression().elements.nodes() {
-            let part = self.effect(item, env, None, checker, expansion)?;
+            let part = self.effect(item, env, EffectHint::None, checker, expansion)?;
             steps.extend(part.steps);
             values.push(part.value);
         }
@@ -557,7 +578,7 @@ impl SyntaxCompiler<'_> {
         e: P<Node>,
         args: &[P<Node>],
         env: &Env,
-        hint: Option<Option<&str>>,
+        hint: EffectHint<'_>,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
     ) -> Result<Plan, CompileError> {
@@ -591,7 +612,7 @@ impl SyntaxCompiler<'_> {
             expansion,
         )?;
         let outs = Self::outputs_of(e, checker)?;
-        self.compose(body_steps, outs, e, hint.flatten(), checker, expansion)
+        self.compose(body_steps, outs, e, hint.name(), checker, expansion)
     }
 
     fn operator(
@@ -632,14 +653,8 @@ impl SyntaxCompiler<'_> {
         };
         let fn_node = Self::callback_node(cb_arg)?;
         let next_env = self.callback_env(fn_node, op.plan.value, op.env, checker)?;
-        let next = self.callback_plan(
-            fn_node,
-            &next_env,
-            pure,
-            op.hint.flatten(),
-            checker,
-            expansion,
-        )?;
+        let next =
+            self.callback_plan(fn_node, &next_env, pure, op.hint.name(), checker, expansion)?;
         let mut steps = op.plan.steps;
         steps.extend(next.steps);
         Ok(Plan {
@@ -756,7 +771,7 @@ impl SyntaxCompiler<'_> {
             vec![caught],
             combined_outputs,
             op.call,
-            op.hint.flatten(),
+            op.hint.name(),
             checker,
             expansion,
         )

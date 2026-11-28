@@ -96,9 +96,6 @@ pub fn lexical_bounds(source: &str) -> bool {
         let opens = match byte {
             b'(' | b'[' | b'{' => {
                 brackets = brackets.saturating_add(1);
-                if brackets > MAX_DEPTH {
-                    return false;
-                }
                 true
             }
             b')' | b']' | b'}' => {
@@ -108,6 +105,9 @@ pub fn lexical_bounds(source: &str) -> bool {
             b'.' => !(digit_at(idx.checked_sub(1)) && digit_at(idx.checked_add(1))),
             other => is_opening_byte(other),
         };
+        if brackets > MAX_DEPTH {
+            return false;
+        }
         levels = levels
             .saturating_add(usize::from(opens))
             .saturating_add(usize::from(keyword));

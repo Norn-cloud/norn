@@ -19,6 +19,9 @@ use super::schema::NullableMode;
 use super::types::{CompileError, is_string_literal_like};
 use super::value_schema::{ExpansionBudget, ValueSchema};
 
+type JsonObject = Map<String, Value>;
+type QuestionAsOf = (JsonObject, JsonObject);
+
 const VALUE_TYPE_CALLS: &[&str] = &[
     "@norn/authoring#Norn.boundDecimal",
     "@norn/authoring#Norn.rate",
@@ -177,7 +180,7 @@ impl DefinitionCompiler<'_> {
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
         time_node: P<Node>,
-    ) -> Result<(Map<String, Value>, Map<String, Value>), CompileError> {
+    ) -> Result<QuestionAsOf, CompileError> {
         let time = self.closed_record(
             checker,
             time_node,
@@ -208,7 +211,7 @@ impl DefinitionCompiler<'_> {
         }
         let age_node = Self::member(&fresh, "maxAgeMs", fresh_node)?;
         let age = self.json(checker, expansion, age_node, 0)?;
-        if !age.as_i64().is_some_and(|v| v > 0) {
+        if age.as_i64().is_none_or(|v| v <= 0) {
             return Err(CompileError::new(
                 "NORN-FLOW-LITERAL",
                 "freshness requires a positive exact integer age",

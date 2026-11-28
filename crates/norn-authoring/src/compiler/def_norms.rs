@@ -118,14 +118,18 @@ impl DefinitionCompiler<'_> {
                     continue;
                 }
                 let args = init.as_call_expression().arguments().nodes();
-                let Some(&arg1) = args.get(1) else {
+                let Some(&spec_arg) = args.get(1) else {
                     continue;
                 };
-                let spec =
-                    self.closed_record(checker, arg1, NORM_MEMBERS, &["on", "cite", "because"])?;
+                let spec = self.closed_record(
+                    checker,
+                    spec_arg,
+                    NORM_MEMBERS,
+                    &["on", "cite", "because"],
+                )?;
                 let (target_call, _) = self.referenced(
                     checker,
-                    Self::member(&spec, "on", arg1)?,
+                    Self::member(&spec, "on", spec_arg)?,
                     OBJECT_TYPES,
                     "a Norn.type definition",
                 )?;
@@ -139,10 +143,10 @@ impl DefinitionCompiler<'_> {
                         init,
                     ));
                 }
-                let Some(&arg0) = args.first() else {
+                let Some(&name_arg) = args.first() else {
                     continue;
                 };
-                found.push((init, self.string(checker, arg0)?));
+                found.push((init, self.string(checker, name_arg)?));
             }
         }
         Ok(found)

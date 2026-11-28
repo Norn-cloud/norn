@@ -1,4 +1,5 @@
-//! Effect Schema syntax → `EntityIR` v2 properties and closed [`ValueSchema`] projection.
+//! Effect Schema syntax → `EntityIR` v2 properties and closed
+//! [`super::value_schema::ValueSchema`] projection.
 //!
 //! Faithful Rust port of `tools/norn-ts/src/compiler/schema.ts`. Reads Effect
 //! Schema AST calls and value references by resolved profile symbol identity
@@ -19,6 +20,8 @@ use super::types::{CompileError, CompilerLimits, is_string_literal_like};
 use super::value_types::PropertyType;
 
 pub(crate) const MAX_SCHEMA_DEPTH: usize = 32;
+
+type StructEntry = (String, P<Node>, P<Node>);
 
 /// Nullable admission mode for [`SchemaProjection::closed`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -633,9 +636,7 @@ impl<'a> SchemaProjection<'a> {
         Ok(fields)
     }
 
-    fn read_struct_entries(
-        input: P<Node>,
-    ) -> Result<Vec<(String, P<Node>, P<Node>)>, CompileError> {
+    fn read_struct_entries(input: P<Node>) -> Result<Vec<StructEntry>, CompileError> {
         let obj = Self::unwrap(input);
         if obj.kind() != Kind::ObjectLiteralExpression {
             return Err(projection_err(

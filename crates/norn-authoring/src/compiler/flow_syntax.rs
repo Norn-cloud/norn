@@ -117,7 +117,7 @@ pub(crate) struct SyntaxCompiler<'a> {
 }
 
 impl<'a> SyntaxCompiler<'a> {
-    pub(crate) fn new(config: SyntaxConfig<'a>) -> Self {
+    pub(crate) fn new(config: &SyntaxConfig<'a>) -> Self {
         Self {
             intrinsics_module: config.intrinsics_module,
             effect_dist_prefix: config.effect_dist_prefix,

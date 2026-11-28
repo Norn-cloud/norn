@@ -18,6 +18,9 @@ use super::types::{
 };
 use super::value_schema::ExpansionBudget;
 
+type ArtifactPin = (String, String);
+type CompiledObjectMap = (Value, ArtifactPin, ArtifactPin);
+
 impl DefinitionCompiler<'_> {
     pub(crate) fn compile_mapping(
         &mut self,
@@ -265,7 +268,7 @@ impl DefinitionCompiler<'_> {
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
         item: P<Node>,
-    ) -> Result<(Value, (String, String), (String, String)), CompileError> {
+    ) -> Result<CompiledObjectMap, CompileError> {
         let m = self.closed_record(
             checker,
             item,

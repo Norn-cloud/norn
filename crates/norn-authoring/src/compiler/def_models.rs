@@ -1,7 +1,7 @@
 //! Model (`Norn.model`) and relational transform (`Norn.transform`) lowering
 //! split out of [`super::def_catalog`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, btree_map::Entry};
 
 use serde_json::{Map, Value};
 use tsrs_ast::Node;
@@ -302,13 +302,13 @@ impl DefinitionCompiler<'_> {
             self.compile_transform_inputs(checker, Self::member(&m, "inputs", call)?)?;
         let title = self.string(checker, Self::member(&m, "title", call)?)?;
         let version = self.string(checker, Self::member(&m, "version", call)?)?;
-        let mut calc = Map::new();
-        calc.insert("kind".to_owned(), Value::String("relational".to_owned()));
-        calc.insert(
+        let mut calc_spec = Map::new();
+        calc_spec.insert("kind".to_owned(), Value::String("relational".to_owned()));
+        calc_spec.insert(
             "nodes".to_owned(),
             self.json(checker, expansion, Self::member(&m, "nodes", call)?, 0)?,
         );
-        calc.insert(
+        calc_spec.insert(
             "output".to_owned(),
             Value::String(self.string(checker, Self::member(&m, "output", call)?)?),
         );
@@ -316,7 +316,7 @@ impl DefinitionCompiler<'_> {
         payload.insert("viewVersion".to_owned(), Value::String("0.1".to_owned()));
         payload.insert("viewId".to_owned(), Value::String(id.clone()));
         payload.insert("inputs".to_owned(), Value::Array(inputs));
-        payload.insert("calc".to_owned(), Value::Object(calc));
+        payload.insert("calc".to_owned(), Value::Object(calc_spec));
         payload.insert("outputSchema".to_owned(), Value::Object(Map::new()));
         payload.insert(
             "maintenance".to_owned(),
@@ -371,14 +371,14 @@ impl DefinitionCompiler<'_> {
             inputs.push(Value::Object(inp));
 
             let key = format!("{artifact_id}@{t_ver}");
-            if !pins.contains_key(&key) {
-                pin_order.push(key.clone());
+            if let Entry::Vacant(entry) = pins.entry(key) {
+                pin_order.push(entry.key().clone());
                 let mut dep = Map::new();
                 dep.insert("artifactId".to_owned(), Value::String(artifact_id));
                 dep.insert("kind".to_owned(), Value::String("entity".to_owned()));
                 dep.insert("version".to_owned(), Value::String(t_ver));
                 dep.insert("required".to_owned(), Value::Bool(true));
-                pins.insert(key, Value::Object(dep));
+                entry.insert(Value::Object(dep));
             }
         }
         if inputs.is_empty() {

@@ -272,9 +272,9 @@ pub enum ValueSchemasCompileOutcome {
 fn new_budget(limits: CompilerLimits, started: Instant) -> ExpansionBudget {
     ExpansionBudget::with_started(
         ExpansionLimits {
-            max_work: limits.max_expansion_work,
-            max_output_bytes: limits.max_output_bytes,
-            max_millis: Some(limits.max_millis),
+            work: limits.max_expansion_work,
+            output_bytes: limits.max_output_bytes,
+            millis: Some(limits.max_millis),
         },
         started,
     )
@@ -332,7 +332,7 @@ fn compile_one_flow_file(
     let raw_program = program.raw_program();
     let ctx = Context::default();
     let mut checker = raw_program.get_type_checker_for_file_exclusive(&ctx, sf);
-    let mut lowering = SyntaxCompiler::new(SyntaxConfig {
+    let mut lowering = SyntaxCompiler::new(&SyntaxConfig {
         intrinsics_module: profile_checker.profile().intrinsics_module.as_str(),
         effect_dist_prefix: program.effect_dist_prefix(),
         vfs: program.vfs(),
@@ -483,16 +483,16 @@ fn compile_one_definitions_file(
         };
     }
     expansion.begin_module(ExpansionLimits {
-        max_work: limits.max_expansion_work,
-        max_output_bytes: limits.max_output_bytes,
-        max_millis: Some(limits.max_millis),
+        work: limits.max_expansion_work,
+        output_bytes: limits.max_output_bytes,
+        millis: Some(limits.max_millis),
     });
     let forbid_unsafe = opts
         .forbid_unsafe_zen
         .unwrap_or_else(|| opts.envelope.registry_package_path.is_some());
     let ctx = Context::default();
     let mut checker = raw_program.get_type_checker_for_file_exclusive(&ctx, sf);
-    let mut compiler = DefinitionCompiler::new(DefCompilerConfig {
+    let mut compiler = DefinitionCompiler::new(&DefCompilerConfig {
         intrinsics_module: profile_checker.profile().intrinsics_module.as_str(),
         effect_dist_prefix: program.effect_dist_prefix(),
         vfs: program.vfs(),
@@ -509,8 +509,8 @@ fn compile_one_definitions_file(
         &opts.envelope,
         opts.allow_empty,
     ) {
-        Ok(compiled) => {
-            for art in &compiled.artifacts {
+        Ok(module_out) => {
+            for art in &module_out.artifacts {
                 if let Err(BudgetExceeded(msg)) = expansion.add_output(art) {
                     return DefinitionsCompileOutcome::Err {
                         diagnostics: vec![diagnostic_for_node(
@@ -522,12 +522,12 @@ fn compile_one_definitions_file(
                 }
             }
             DefinitionsCompileOutcome::Ok(Box::new(DefinitionsCompileOutput {
-                artifacts: compiled.artifacts,
-                flows: compiled.flows,
+                artifacts: module_out.artifacts,
+                flows: module_out.flows,
                 source_map: compiler.source_map,
                 warnings: compiler.warnings,
-                examples: compiled.examples,
-                retained: compiled.retained,
+                examples: module_out.examples,
+                retained: module_out.retained,
                 work_used: expansion.work_used(),
             }))
         }
@@ -587,7 +587,7 @@ pub fn compile_questions_program(
     let mut expansion = new_budget(limits, started);
     let ctx = Context::default();
     let mut checker = raw_program.get_type_checker_for_file_exclusive(&ctx, sf);
-    let mut compiler = DefinitionCompiler::new(DefCompilerConfig {
+    let mut compiler = DefinitionCompiler::new(&DefCompilerConfig {
         intrinsics_module: &profile_checker.profile().intrinsics_module,
         effect_dist_prefix: program.effect_dist_prefix(),
         vfs: program.vfs(),
@@ -636,7 +636,7 @@ pub fn compile_dashboards_program(
     let mut expansion = new_budget(limits, started);
     let ctx = Context::default();
     let mut checker = raw_program.get_type_checker_for_file_exclusive(&ctx, sf);
-    let mut compiler = DefinitionCompiler::new(DefCompilerConfig {
+    let mut compiler = DefinitionCompiler::new(&DefCompilerConfig {
         intrinsics_module: &profile_checker.profile().intrinsics_module,
         effect_dist_prefix: program.effect_dist_prefix(),
         vfs: program.vfs(),
@@ -685,7 +685,7 @@ pub fn compile_value_schemas_program(
     let mut expansion = new_budget(limits, started);
     let ctx = Context::default();
     let mut checker = raw_program.get_type_checker_for_file_exclusive(&ctx, sf);
-    let mut compiler = DefinitionCompiler::new(DefCompilerConfig {
+    let mut compiler = DefinitionCompiler::new(&DefCompilerConfig {
         intrinsics_module: &profile_checker.profile().intrinsics_module,
         effect_dist_prefix: program.effect_dist_prefix(),
         vfs: program.vfs(),

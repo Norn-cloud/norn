@@ -25,7 +25,7 @@ struct SubjectAcc<'a> {
 
 impl<'a> DefinitionCompiler<'a> {
     pub(crate) fn syntax_compiler(&self, sf: P<SourceFile>) -> SyntaxCompiler<'a> {
-        SyntaxCompiler::new(SyntaxConfig {
+        SyntaxCompiler::new(&SyntaxConfig {
             intrinsics_module: self.intrinsics_module,
             effect_dist_prefix: self.effect_dist_prefix,
             vfs: self.vfs,
@@ -274,7 +274,7 @@ impl DefinitionCompiler<'_> {
         };
         let mut syntax = self.syntax_compiler(sf);
         let rows = syntax.decision_rows(fn_node, checker, expansion, None)?;
-        self.warnings.extend(syntax.warnings.drain(..));
+        self.warnings.append(&mut syntax.warnings);
         let Some(row) = rows.first() else {
             return Err(CompileError::new(
                 "NORN-FLOW-EXPRESSION",

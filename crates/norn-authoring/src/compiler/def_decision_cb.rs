@@ -419,7 +419,7 @@ impl DefinitionCompiler<'_> {
         &mut self,
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
-        spec: CallbackGraphSpec<'_>,
+        spec: &CallbackGraphSpec<'_>,
         called_deps: &mut Vec<DependencyPin>,
     ) -> Result<Value, CompileError> {
         let bk = spec.body.kind();
@@ -458,7 +458,7 @@ impl DefinitionCompiler<'_> {
             };
             syntax.decision_rows(spec.body, checker, expansion, Some(&mut hooks))?
         };
-        self.warnings.extend(syntax.warnings.drain(..));
+        self.warnings.append(&mut syntax.warnings);
 
         let exact = ValueSchema::object(spec.input_schema.clone()).has_exact()
             || ValueSchema::object(spec.output_schema.clone()).has_exact();
@@ -472,7 +472,7 @@ impl DefinitionCompiler<'_> {
         let outputs: Vec<&str> = spec.output_schema.ordered_keys().collect();
         let table_idx = calls.len().saturating_add(1);
         let rules =
-            self.render_callback_rows(&syntax, &rows, &scope, &outputs, &spec, (table_idx, exact))?;
+            self.render_callback_rows(&syntax, &rows, &scope, &outputs, spec, (table_idx, exact))?;
         if spec.hit == "unique" {
             return Err(CompileError::new(
                 "NORN-FLOW-EXPRESSION",

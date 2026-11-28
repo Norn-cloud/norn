@@ -186,7 +186,7 @@ fn decide_table_rows(rule: Option<&Value>) -> Vec<&serde_json::Map<String, Value
 }
 
 fn usize_to_f64(value: usize) -> f64 {
-    u32::try_from(value).map_or(f64::from(u32::MAX), f64::from)
+    u32::try_from(value).map_or_else(|_| f64::from(u32::MAX), f64::from)
 }
 
 fn u64_to_f64(value: u64) -> f64 {

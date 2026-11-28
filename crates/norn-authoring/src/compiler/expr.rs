@@ -505,7 +505,7 @@ impl Expr {
 
     /// Wraps a raw date expression in `date(...)` unless already parsed as a date.
     #[must_use]
-    pub(crate) fn as_date(self) -> Self {
+    pub(crate) fn into_date(self) -> Self {
         if temporal_kind(&self) == Some(TemporalKind::Date) {
             self
         } else {
@@ -515,7 +515,7 @@ impl Expr {
 
     /// Wraps a raw timestamp expression in `timestamp(...)` unless already parsed as a timestamp.
     #[must_use]
-    pub(crate) fn as_timestamp(self) -> Self {
+    pub(crate) fn into_timestamp(self) -> Self {
         if temporal_kind(&self) == Some(TemporalKind::Timestamp) {
             self
         } else {

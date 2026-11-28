@@ -209,7 +209,7 @@ impl SyntaxCompiler<'_> {
                 };
                 Ok(Some(Expr::call(
                     func,
-                    vec![a.as_timestamp(), b.as_timestamp()],
+                    vec![a.into_timestamp(), b.into_timestamp()],
                 )))
             }
             "@norn/authoring#Norn.daysBetween"
@@ -257,14 +257,14 @@ impl SyntaxCompiler<'_> {
         };
         let expr = match spec.id {
             "@norn/authoring#Norn.daysBetween" => {
-                Expr::call(CallFn::DaysBetween, vec![a.as_date(), b.as_date()])
+                Expr::call(CallFn::DaysBetween, vec![a.into_date(), b.into_date()])
             }
-            "@norn/authoring#Norn.addDays" => Expr::call(CallFn::AddDays, vec![a.as_date(), b]),
+            "@norn/authoring#Norn.addDays" => Expr::call(CallFn::AddDays, vec![a.into_date(), b]),
             "@norn/authoring#Norn.secondsBetween" => Expr::call(
                 CallFn::SecondsBetween,
-                vec![a.as_timestamp(), b.as_timestamp()],
+                vec![a.into_timestamp(), b.into_timestamp()],
             ),
-            _ => Expr::call(CallFn::AddSeconds, vec![a.as_timestamp(), b]),
+            _ => Expr::call(CallFn::AddSeconds, vec![a.into_timestamp(), b]),
         };
         Ok(Some(expr))
     }
@@ -300,10 +300,10 @@ impl SyntaxCompiler<'_> {
         Ok(Some(Expr::call(
             func,
             vec![
-                a.as_timestamp(),
-                b.as_timestamp(),
-                c.as_timestamp(),
-                d.as_timestamp(),
+                a.into_timestamp(),
+                b.into_timestamp(),
+                c.into_timestamp(),
+                d.into_timestamp(),
             ],
         )))
     }

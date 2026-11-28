@@ -439,12 +439,12 @@ fn regression_decision_large_predicate_clone_work_bounded() -> Result<(), Box<dy
 export const BigPred = Norn.decision({ id: \"demo.rule.big_pred\", title: \"BigPred\", version: \"1.0.0\", \
 contract: \"sub_decision\", scopeRequired: [\"orgId\"], \
 input: Schema.Struct({ x: Schema.Int }), output: Schema.Struct({ y: Schema.Int }) }, input => {\n\
-  const p = input.x === 1 || input.x === 2 || input.x === 3 || input.x === 4 || input.x === 5 || input.x === 6 || input.x === 7 || input.x === 8\n",
+  const p = input.x > 1 || input.x > 2 || input.x > 3 || input.x > 4 || input.x > 5 || input.x > 6 || input.x > 7 || input.x > 8\n",
     );
     for i in 0_usize..20 {
         writeln!(
             big_pred_src,
-            "  if (p && input.x === {i}) return {{ y: {i} }}"
+            "  if (p && input.x > {i}) return {{ y: {i} }}"
         )?;
     }
     big_pred_src.push_str("  return { y: 99 }\n})\n");

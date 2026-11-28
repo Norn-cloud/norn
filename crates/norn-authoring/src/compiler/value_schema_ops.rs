@@ -264,19 +264,19 @@ fn assignable_concrete(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ExpansionLimits {
     /// Maximum expansion work units per module.
-    pub(crate) max_work: usize,
+    pub(crate) work: usize,
     /// Maximum accumulated output bytes across the compilation batch.
-    pub(crate) max_output_bytes: usize,
+    pub(crate) output_bytes: usize,
     /// Optional cooperative wall-clock deadline duration from start.
-    pub(crate) max_millis: Option<u64>,
+    pub(crate) millis: Option<u64>,
 }
 
 impl Default for ExpansionLimits {
     fn default() -> Self {
         Self {
-            max_work: 100_000,
-            max_output_bytes: 8_388_608,
-            max_millis: None,
+            work: 100_000,
+            output_bytes: 8_388_608,
+            millis: None,
         }
     }
 }
@@ -324,9 +324,9 @@ impl ExpansionBudget {
     ///
     /// # Errors
     ///
-    /// Returns [`BudgetExceeded`] when the elapsed duration reaches `max_millis`.
+    /// Returns [`BudgetExceeded`] when the elapsed duration reaches `millis`.
     pub(crate) fn check(&self) -> Result<(), BudgetExceeded> {
-        if let Some(max_ms) = self.limits.max_millis
+        if let Some(max_ms) = self.limits.millis
             && self.started.elapsed() >= Duration::from_millis(max_ms)
         {
             return Err(BudgetExceeded(
@@ -341,11 +341,11 @@ impl ExpansionBudget {
     /// counters while preserving pack-wide output bytes and the deadline anchor.
     pub(crate) fn begin_module(&mut self, module_limits: ExpansionLimits) {
         self.limits = ExpansionLimits {
-            max_work: module_limits.max_work.min(self.pack_limits.max_work),
-            max_output_bytes: module_limits
-                .max_output_bytes
-                .min(self.pack_limits.max_output_bytes),
-            max_millis: match (self.pack_limits.max_millis, module_limits.max_millis) {
+            work: module_limits.work.min(self.pack_limits.work),
+            output_bytes: module_limits
+                .output_bytes
+                .min(self.pack_limits.output_bytes),
+            millis: match (self.pack_limits.millis, module_limits.millis) {
                 (Some(pack_ms), Some(mod_ms)) => Some(pack_ms.min(mod_ms)),
                 (Some(pack_ms), None) => Some(pack_ms),
                 (None, mod_ms) => mod_ms,
@@ -362,18 +362,18 @@ impl ExpansionBudget {
     }
 
     fn cap_work(&self, value: usize) -> usize {
-        value.min(self.limits.max_work.saturating_add(1))
+        value.min(self.limits.work.saturating_add(1))
     }
 
     fn cap_bytes(&self, value: usize) -> usize {
-        value.min(self.limits.max_output_bytes.saturating_add(1))
+        value.min(self.limits.output_bytes.saturating_add(1))
     }
 
     fn charge(&mut self, cost: Cost) -> Result<(), BudgetExceeded> {
         self.check()?;
         self.work = self.cap_work(self.work.saturating_add(cost.work));
-        if self.work > self.limits.max_work
-            || cost.bytes > self.limits.max_output_bytes.saturating_sub(self.output)
+        if self.work > self.limits.work
+            || cost.bytes > self.limits.output_bytes.saturating_sub(self.output)
         {
             return Err(BudgetExceeded(
                 "expanded data exceeds compiler work or output byte bound".to_owned(),
@@ -538,8 +538,8 @@ impl ExpansionBudget {
         self.check()?;
         self.work = self.cap_work(self.work.saturating_add(work));
         self.pending_bytes = self.cap_bytes(self.pending_bytes.saturating_add(bytes));
-        if self.work > self.limits.max_work
-            || self.pending_bytes > self.limits.max_output_bytes.saturating_sub(self.output)
+        if self.work > self.limits.work
+            || self.pending_bytes > self.limits.output_bytes.saturating_sub(self.output)
         {
             return Err(BudgetExceeded(
                 "expanded data exceeds compiler work or output byte bound".to_owned(),
@@ -558,7 +558,7 @@ impl ExpansionBudget {
         let cost = self.value_cost(value, 0)?;
         self.charge(cost)?;
         self.output = self.cap_bytes(self.output.saturating_add(cost.bytes).saturating_add(1));
-        if self.output > self.limits.max_output_bytes {
+        if self.output > self.limits.output_bytes {
             return Err(BudgetExceeded(
                 "accumulated rows exceed compiler output byte bound".to_owned(),
             ));
@@ -602,9 +602,9 @@ mod tests {
         // Raw length is 40 bytes, but escaped JSON is `"\u0000..."` = 2 + 240 = 242 bytes.
         let mut budget = ExpansionBudget::with_started(
             ExpansionLimits {
-                max_work: 1_000,
-                max_output_bytes: 100,
-                max_millis: None,
+                work: 1_000,
+                output_bytes: 100,
+                millis: None,
             },
             Instant::now(),
         );
@@ -612,9 +612,9 @@ mod tests {
 
         let mut generous = ExpansionBudget::with_started(
             ExpansionLimits {
-                max_work: 1_000,
-                max_output_bytes: 300,
-                max_millis: None,
+                work: 1_000,
+                output_bytes: 300,
+                millis: None,
             },
             Instant::now(),
         );
@@ -625,28 +625,28 @@ mod tests {
     fn begin_module_clamps_within_fixed_pack_ceilings() {
         let mut budget = ExpansionBudget::with_started(
             ExpansionLimits {
-                max_work: 500,
-                max_output_bytes: 200,
-                max_millis: Some(1_000),
+                work: 500,
+                output_bytes: 200,
+                millis: Some(1_000),
             },
             Instant::now(),
         );
         budget.begin_module(ExpansionLimits {
-            max_work: 9_999,
-            max_output_bytes: 9_999,
-            max_millis: Some(9_999),
+            work: 9_999,
+            output_bytes: 9_999,
+            millis: Some(9_999),
         });
-        assert_eq!(budget.limits.max_work, 500);
-        assert_eq!(budget.limits.max_output_bytes, 200);
-        assert_eq!(budget.limits.max_millis, Some(1_000));
+        assert_eq!(budget.limits.work, 500);
+        assert_eq!(budget.limits.output_bytes, 200);
+        assert_eq!(budget.limits.millis, Some(1_000));
 
         budget.begin_module(ExpansionLimits {
-            max_work: 100,
-            max_output_bytes: 50,
-            max_millis: Some(250),
+            work: 100,
+            output_bytes: 50,
+            millis: Some(250),
         });
-        assert_eq!(budget.limits.max_work, 100);
-        assert_eq!(budget.limits.max_output_bytes, 50);
-        assert_eq!(budget.limits.max_millis, Some(250));
+        assert_eq!(budget.limits.work, 100);
+        assert_eq!(budget.limits.output_bytes, 50);
+        assert_eq!(budget.limits.millis, Some(250));
     }
 }

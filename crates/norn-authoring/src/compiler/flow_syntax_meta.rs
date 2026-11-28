@@ -398,7 +398,7 @@ impl SyntaxCompiler<'_> {
         match self.call_id(checker, call).as_deref() {
             Some("effect/Schedule#recurs") => self.policy_recurs(call, args, checker, expansion),
             Some("effect/Schedule#spaced") => {
-                let Some(&arg0) = args.first() else {
+                let Some(&duration_arg) = args.first() else {
                     return Err(CompileError::new(
                         "NORN-FLOW-LITERAL",
                         "Schedule.spaced requires a duration",
@@ -408,7 +408,7 @@ impl SyntaxCompiler<'_> {
                 Ok(RetryPolicy {
                     recurs: None,
                     delay: Some(RetryDelay::Spaced {
-                        millis: self.duration(arg0, checker, expansion)?,
+                        millis: self.duration(duration_arg, checker, expansion)?,
                     }),
                 })
             }
@@ -431,14 +431,14 @@ impl SyntaxCompiler<'_> {
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
     ) -> Result<RetryPolicy, CompileError> {
-        let Some(&arg0) = args.first() else {
+        let Some(&count_arg) = args.first() else {
             return Err(CompileError::new(
                 "NORN-FLOW-UNBOUNDED",
                 "each finite schedule count must satisfy the retry bound",
                 call,
             ));
         };
-        let val = self.scalar(arg0, checker, expansion)?;
+        let val = self.scalar(count_arg, checker, expansion)?;
         let recurs_f = val.as_f64().unwrap_or(f64::NAN);
         let recurs_u32 = val
             .as_u64()
@@ -471,17 +471,17 @@ impl SyntaxCompiler<'_> {
         checker: &mut Checker,
         expansion: &mut ExpansionBudget,
     ) -> Result<RetryPolicy, CompileError> {
-        let Some(&arg0) = args.first() else {
+        let Some(&base_arg) = args.first() else {
             return Err(CompileError::new(
                 "NORN-FLOW-LITERAL",
                 "Schedule.exponential requires a base duration",
                 call,
             ));
         };
-        let base_millis = self.duration(arg0, checker, expansion)?;
+        let base_millis = self.duration(base_arg, checker, expansion)?;
         let factor = match args.get(1) {
-            Some(&arg1) => self
-                .scalar(arg1, checker, expansion)?
+            Some(&factor_arg) => self
+                .scalar(factor_arg, checker, expansion)?
                 .as_f64()
                 .unwrap_or(f64::NAN),
             None => 2.0,
@@ -520,13 +520,11 @@ impl SyntaxCompiler<'_> {
         for &item in list.as_array_literal_expression().elements.nodes() {
             let part = self.policy(item, checker, expansion)?;
             let recurs = match (policy.recurs, part.recurs) {
-                (None, r) => r,
-                (l, None) => l,
+                (None, r) | (r, None) => r,
                 (Some(l), Some(r)) => Some(l.min(r)),
             };
             let delay = match (policy.delay, part.delay) {
-                (None, d) => d,
-                (d, None) => d,
+                (None, d) | (d, None) => d,
                 (Some(l), Some(r)) => Some(RetryDelay::Max(vec![l, r])),
             };
             policy = RetryPolicy { recurs, delay };

@@ -175,8 +175,7 @@ fn normalize_number(num: &Number, path: &str) -> Result<Value, CanonicalError> {
         return Ok(Value::Number(Number::from(0_u64)));
     }
     if f.fract().abs().to_bits() == 0
-        && f >= -9_007_199_254_740_991.0
-        && f <= 9_007_199_254_740_991.0
+        && (-9_007_199_254_740_991.0..=9_007_199_254_740_991.0).contains(&f)
         && let Ok(i) = format!("{f:.0}").parse::<i64>()
     {
         return Ok(Value::Number(Number::from(i)));

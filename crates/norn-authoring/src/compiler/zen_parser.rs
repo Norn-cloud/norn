@@ -247,24 +247,18 @@ impl Parser {
                 Err(()) => Err(()),
             };
         }
-        match self.binary_at(0) {
-            Ok(node) => {
-                self.memo.insert(key, Ok((node.clone(), self.at)));
-                Ok(node)
-            }
-            Err(()) => {
-                self.memo.insert(key, Err(()));
-                Err(())
-            }
+        if let Ok(node) = self.binary_at(0) {
+            self.memo.insert(key, Ok((node.clone(), self.at)));
+            Ok(node)
+        } else {
+            self.memo.insert(key, Err(()));
+            Err(())
         }
     }
 
     fn binary_at(&mut self, precedence: u8) -> Result<ZenNode, ()> {
         let mut left = self.unary()?;
-        loop {
-            let Some(tok) = self.current() else {
-                break;
-            };
+        while let Some(tok) = self.current() {
             if tok.kind != ZenTokenKind::Operator {
                 break;
             }
@@ -342,12 +336,11 @@ impl Parser {
                 literal: None,
             })
         })();
-        match parsed {
-            Ok(node) => Some(node),
-            Err(()) => {
-                self.at = start;
-                None
-            }
+        if let Ok(node) = parsed {
+            Some(node)
+        } else {
+            self.at = start;
+            None
         }
     }
 

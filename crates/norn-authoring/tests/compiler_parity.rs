@@ -96,12 +96,12 @@ fn canonical_json_and_norn1_hash_determinism() -> Result<(), Box<dyn std::error:
         "a": [true, null, -0.0],
         "m": { "b": "hello", "a": "world" }
     });
-    let pretty_a = canonical_json(&sample)?;
-    let pretty_b = canonical_json(&sample)?;
-    assert_eq!(pretty_a, pretty_b);
-    assert!(pretty_a.ends_with('\n'));
-    assert!(pretty_a.contains("\n  \"a\": ["));
-    assert!(pretty_a.contains("    0\n"));
+    let first_pretty = canonical_json(&sample)?;
+    let second_pretty = canonical_json(&sample)?;
+    assert_eq!(first_pretty, second_pretty);
+    assert!(first_pretty.ends_with('\n'));
+    assert!(first_pretty.contains("\n  \"a\": ["));
+    assert!(first_pretty.contains("    0\n"));
 
     let compact = compact_canonical_json(&sample)?;
     assert_eq!(
@@ -109,15 +109,15 @@ fn canonical_json_and_norn1_hash_determinism() -> Result<(), Box<dyn std::error:
         r#"{"a":[true,null,0],"m":{"a":"world","b":"hello"},"z":1}"#
     );
 
-    let digest_a = norn1_sha256(&sample).ok_or("expected norn1_sha256 digest")?;
-    let digest_b = norn1_sha256(&sample).ok_or("expected norn1_sha256 digest")?;
-    assert_eq!(digest_a, digest_b);
-    assert_eq!(digest_a.len(), 64);
+    let first_digest = norn1_sha256(&sample).ok_or("expected norn1_sha256 digest")?;
+    let second_digest = norn1_sha256(&sample).ok_or("expected norn1_sha256 digest")?;
+    assert_eq!(first_digest, second_digest);
+    assert_eq!(first_digest.len(), 64);
     assert!(
-        digest_a
+        first_digest
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
-        "expected lower-case 64-hex SHA-256 digest, got: {digest_a}"
+        "expected lower-case 64-hex SHA-256 digest, got: {first_digest}"
     );
 
     let js_parity = json!({
@@ -362,12 +362,12 @@ fn golden_flow_parity_matches_ts_compiler_and_limits() -> Result<(), Box<dyn std
         &vert_dir.join("support"),
         "/tools/norn-ts/fixtures/vertical/support",
     )?;
-    let vert_vpath = "/tools/norn-ts/fixtures/vertical/route-message.source.ts".to_owned();
+    let vert_vpath = "/tools/norn-ts/fixtures/vertical/route-message.source.ts";
     vfs.add_file(
-        &vert_vpath,
+        vert_vpath,
         std::fs::read_to_string(vert_dir.join("route-message.source.ts"))?,
     )?;
-    flow_roots.push(vert_vpath.clone());
+    flow_roots.push(vert_vpath.to_owned());
 
     let root_slices: Vec<&str> = flow_roots.iter().map(String::as_str).collect();
     let program = AuthoringProgram::new(vfs, &root_slices, profile)?
@@ -387,7 +387,7 @@ fn golden_flow_parity_matches_ts_compiler_and_limits() -> Result<(), Box<dyn std
     for name in flow_names {
         verify_one_flow_golden(&checker, &program, &flows_dir, name, &limits_profile)?;
     }
-    verify_vertical_flow_golden(&checker, &program, &vert_dir, &vert_vpath)?;
+    verify_vertical_flow_golden(&checker, &program, &vert_dir, vert_vpath)?;
     Ok(())
 }
 
@@ -551,8 +551,8 @@ fn golden_definitions_and_schema_parity_matches_ts_compiler()
         return Err("closed.source.ts failed to compile value schemas".into());
     };
     let mut schema_map = Map::new();
-    for (name, schema) in schemas {
-        schema_map.insert(name, schema.to_json());
+    for (name, compiled_schema) in schemas {
+        schema_map.insert(name, compiled_schema.to_json());
     }
     let actual_closed = canonical_json(&Value::Object(schema_map))?;
     let expected_closed = std::fs::read_to_string(schema_dir.join("closed.schemas.json"))?;
@@ -570,44 +570,52 @@ fn golden_questions_and_dashboards_parity_matches_ts_compiler()
     let checker = ProfileChecker::new(profile.clone());
     let (root, mut vfs) = mount_pinned_packages(&profile)?;
 
-    let q_vpath = "/tools/norn-ts/fixtures/questions/scrap-yield.ts";
-    let d_vpath = "/tools/norn-ts/fixtures/dashboards/refinery.ts";
+    let question_vpath = "/tools/norn-ts/fixtures/questions/scrap-yield.ts";
+    let dashboard_vpath = "/tools/norn-ts/fixtures/dashboards/refinery.ts";
     vfs.add_file(
-        q_vpath,
+        question_vpath,
         std::fs::read_to_string(root.join("fixtures/questions/scrap-yield.ts"))?,
     )?;
     vfs.add_file(
-        d_vpath,
+        dashboard_vpath,
         std::fs::read_to_string(root.join("fixtures/dashboards/refinery.ts"))?,
     )?;
 
-    let program = AuthoringProgram::new(vfs, &[q_vpath, d_vpath], profile)?
+    let program = AuthoringProgram::new(vfs, &[question_vpath, dashboard_vpath], profile)?
         .with_effect_dist_prefix(PINNED_EFFECT_DIST_PREFIX);
 
-    let q_outcome =
-        compile_questions_program(&checker, &program, q_vpath, CompilerLimits::default())?;
-    let QuestionsCompileOutcome::Ok { questions } = q_outcome else {
+    let question_outcome = compile_questions_program(
+        &checker,
+        &program,
+        question_vpath,
+        CompilerLimits::default(),
+    )?;
+    let QuestionsCompileOutcome::Ok { questions } = question_outcome else {
         return Err("scrap-yield.ts failed to compile questions".into());
     };
-    let q_expected =
+    let question_expected =
         std::fs::read_to_string(root.join("fixtures/questions/scrap-yield.question.json"))?;
     assert_eq!(
         format!("{}\n", compact_canonical_json(&Value::Array(questions))?),
-        q_expected,
+        question_expected,
         "scrap-yield.question.json mismatch"
     );
 
-    let d_outcome =
-        compile_dashboards_program(&checker, &program, d_vpath, CompilerLimits::default())?;
-    let DashboardsCompileOutcome::Ok { dashboards } = d_outcome else {
+    let dashboard_outcome = compile_dashboards_program(
+        &checker,
+        &program,
+        dashboard_vpath,
+        CompilerLimits::default(),
+    )?;
+    let DashboardsCompileOutcome::Ok { dashboards } = dashboard_outcome else {
         return Err("refinery.ts failed to compile dashboards".into());
     };
-    let d_expected: Value = serde_json::from_str(&std::fs::read_to_string(
+    let dashboard_expected: Value = serde_json::from_str(&std::fs::read_to_string(
         root.join("fixtures/dashboards/refinery.dashboard.json"),
     )?)?;
     assert_eq!(
         Value::Array(dashboards),
-        d_expected,
+        dashboard_expected,
         "refinery.dashboard.json mismatch"
     );
     Ok(())
@@ -618,28 +626,28 @@ fn compiler_rejection_parity_preserves_profile_and_schema_refusals()
 -> Result<(), Box<dyn std::error::Error>> {
     let profile = Profile::load()?;
     let checker = ProfileChecker::new(profile.clone());
-    let (root, mut vfs) = mount_pinned_packages(&profile)?;
+    let (ts_root, mut vfs) = mount_pinned_packages(&profile)?;
 
-    let corpus_dir = root.join("corpus");
+    let corpus_dir = ts_root.join("corpus");
     mount_ts_dir(&mut vfs, &corpus_dir.join("support"), "/corpus/support")?;
     let reject_names = mount_ts_dir(&mut vfs, &corpus_dir.join("reject"), "/corpus/reject")?;
-    let invalid_dir = root.join("fixtures/schema/invalid");
+    let invalid_dir = ts_root.join("fixtures/schema/invalid");
     let invalid_names = mount_ts_dir(&mut vfs, &invalid_dir, "/schema/invalid")?;
-    let invalid_closed_dir = root.join("fixtures/schema/invalid-closed");
+    let invalid_closed_dir = ts_root.join("fixtures/schema/invalid-closed");
     let invalid_closed_names =
         mount_ts_dir(&mut vfs, &invalid_closed_dir, "/schema/invalid-closed")?;
 
-    let mut roots: Vec<String> = Vec::new();
+    let mut root_paths: Vec<String> = Vec::new();
     for name in &reject_names {
-        roots.push(format!("/corpus/reject/{name}"));
+        root_paths.push(format!("/corpus/reject/{name}"));
     }
     for name in &invalid_names {
-        roots.push(format!("/schema/invalid/{name}"));
+        root_paths.push(format!("/schema/invalid/{name}"));
     }
     for name in &invalid_closed_names {
-        roots.push(format!("/schema/invalid-closed/{name}"));
+        root_paths.push(format!("/schema/invalid-closed/{name}"));
     }
-    let root_slices: Vec<&str> = roots.iter().map(String::as_str).collect();
+    let root_slices: Vec<&str> = root_paths.iter().map(String::as_str).collect();
     let program = AuthoringProgram::new(vfs, &root_slices, profile)?
         .with_effect_dist_prefix(PINNED_EFFECT_DIST_PREFIX);
 
@@ -654,8 +662,8 @@ fn compiler_rejection_parity_preserves_profile_and_schema_refusals()
         &flow_reject_slices,
         &FlowCompileOptions::default(),
     )?;
-    for (name, outcome) in reject_names.iter().zip(flow_outcomes) {
-        let FlowCompileOutcome::Err { diagnostics } = outcome else {
+    for (name, flow_outcome) in reject_names.iter().zip(flow_outcomes) {
+        let FlowCompileOutcome::Err { diagnostics } = flow_outcome else {
             return Err(format!("reject corpus fixture `{name}` unexpectedly compiled").into());
         };
         assert!(
@@ -665,39 +673,19 @@ fn compiler_rejection_parity_preserves_profile_and_schema_refusals()
     }
 
     for name in &invalid_names {
-        let vpath = format!("/schema/invalid/{name}");
-        let expected_code = expected_code_header(&invalid_dir.join(name))?;
-        let outcomes = compile_definitions_program(&checker, &program, &[vpath.as_str()], |_| {
-            DefinitionsCompileOptions {
-                envelope: EnvelopeOptions {
-                    scope: demo_scope(),
-                    source_path: format!("tools/norn-ts/fixtures/schema/invalid/{name}"),
-                    registry_package_path: None,
-                },
-                ..DefinitionsCompileOptions::default()
-            }
-        })?;
-        let Some(DefinitionsCompileOutcome::Err { diagnostics }) = outcomes.into_iter().next()
-        else {
-            return Err(format!("invalid schema fixture `{name}` unexpectedly compiled").into());
-        };
-        assert!(
-            diagnostics.iter().any(|d| d.code == expected_code),
-            "invalid schema `{name}` expected `{expected_code}`, got: {diagnostics:?}"
-        );
-        assert!(diagnostics.iter().all(|d| d.start.line > 0));
+        verify_invalid_schema_refusal(&checker, &program, &invalid_dir, name)?;
     }
 
     for name in &invalid_closed_names {
         let vpath = format!("/schema/invalid-closed/{name}");
         let expected_code = expected_code_header(&invalid_closed_dir.join(name))?;
-        let outcome = compile_value_schemas_program(
+        let schema_outcome = compile_value_schemas_program(
             &checker,
             &program,
             vpath.as_str(),
             CompilerLimits::default(),
         )?;
-        let ValueSchemasCompileOutcome::Err { diagnostics } = outcome else {
+        let ValueSchemasCompileOutcome::Err { diagnostics } = schema_outcome else {
             return Err(
                 format!("invalid-closed schema fixture `{name}` unexpectedly compiled").into(),
             );
@@ -707,6 +695,36 @@ fn compiler_rejection_parity_preserves_profile_and_schema_refusals()
             "invalid-closed schema `{name}` expected `{expected_code}`, got: {diagnostics:?}"
         );
     }
+    Ok(())
+}
+
+fn verify_invalid_schema_refusal(
+    checker: &ProfileChecker,
+    program: &AuthoringProgram,
+    invalid_dir: &Path,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let vpath = format!("/schema/invalid/{name}");
+    let expected_code = expected_code_header(&invalid_dir.join(name))?;
+    let def_outcomes = compile_definitions_program(checker, program, &[vpath.as_str()], |_| {
+        DefinitionsCompileOptions {
+            envelope: EnvelopeOptions {
+                scope: demo_scope(),
+                source_path: format!("tools/norn-ts/fixtures/schema/invalid/{name}"),
+                registry_package_path: None,
+            },
+            ..DefinitionsCompileOptions::default()
+        }
+    })?;
+    let Some(DefinitionsCompileOutcome::Err { diagnostics }) = def_outcomes.into_iter().next()
+    else {
+        return Err(format!("invalid schema fixture `{name}` unexpectedly compiled").into());
+    };
+    assert!(
+        diagnostics.iter().any(|d| d.code == expected_code),
+        "invalid schema `{name}` expected `{expected_code}`, got: {diagnostics:?}"
+    );
+    assert!(diagnostics.iter().all(|d| d.start.line > 0));
     Ok(())
 }
 

@@ -415,7 +415,7 @@ impl DefinitionCompiler<'_> {
         }
         let ttl_node = Self::member(&rm, "ttlMs", op_node)?;
         let ttl = self.json(checker, expansion, ttl_node, 0)?;
-        if !ttl.as_i64().is_some_and(|v| v > 0) {
+        if ttl.as_i64().is_none_or(|v| v <= 0) {
             return Err(CompileError::new(
                 "NORN-FLOW-LITERAL",
                 "quantityEffect reserve ttlMs must be a positive integer",

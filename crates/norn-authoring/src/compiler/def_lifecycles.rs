@@ -13,6 +13,9 @@ use super::def_helpers::{DefinitionCompiler, Members};
 use super::types::CompileError;
 use super::value_schema::ExpansionBudget;
 
+type DeclaredEvent = (String, Option<String>);
+type MachineEvents = (Vec<DeclaredEvent>, HashSet<String>);
+
 struct MachineMove {
     id: String,
     from: Vec<String>,
@@ -230,7 +233,7 @@ impl DefinitionCompiler<'_> {
         &self,
         checker: &mut Checker,
         m: &Members,
-    ) -> Result<(Vec<(String, Option<String>)>, HashSet<String>), CompileError> {
+    ) -> Result<MachineEvents, CompileError> {
         let mut declared = Vec::new();
         let mut declared_names = HashSet::new();
         if let Some(ev_node) = m.get("events") {
@@ -638,7 +641,7 @@ impl DefinitionCompiler<'_> {
     }
 }
 
-fn build_machine_events(declared: Vec<(String, Option<String>)>, acc: &MachineAcc) -> Vec<Value> {
+fn build_machine_events(declared: Vec<DeclaredEvent>, acc: &MachineAcc) -> Vec<Value> {
     let mut events_json = Vec::new();
     for (id, reason) in declared {
         let mut ev = Map::new();
@@ -648,8 +651,7 @@ fn build_machine_events(declared: Vec<(String, Option<String>)>, acc: &MachineAc
                 .moves
                 .iter()
                 .find(|mv| mv.id == id)
-                .map(|mv| mv.from.iter().map(String::as_str).collect())
-                .unwrap_or_default();
+                .map_or_default(|mv| mv.from.iter().map(String::as_str).collect());
             let ignored: Vec<Value> = acc
                 .states
                 .iter()

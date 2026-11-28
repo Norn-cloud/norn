@@ -11,6 +11,7 @@ use crate::checker::resolve::node_text;
 use super::expr::{CompareOp, Expr};
 use super::flow_source_map::{FlowSourceMapStepKind, RouteBranch, Step};
 use super::flow_syntax::{Env, SyntaxCompiler, json_scalar_to_string};
+use super::flow_syntax_effects::EffectHint;
 use super::types::CompileError;
 use super::value_schema::ExpansionBudget;
 
@@ -55,7 +56,7 @@ impl SyntaxCompiler<'_> {
                 );
             }
         }
-        let plan = self.effect(e, env, None, checker, expansion)?;
+        let plan = self.effect(e, env, EffectHint::None, checker, expansion)?;
         let mut steps = plan.steps;
         steps.push(self.annotate(
             Step::Succeed {
@@ -241,7 +242,7 @@ impl SyntaxCompiler<'_> {
                 let plan = self.effect(
                     y_expr,
                     env,
-                    Some(Some(vd.name().text())),
+                    EffectHint::Bind(vd.name().text()),
                     checker,
                     expansion,
                 )?;
@@ -279,7 +280,7 @@ impl SyntaxCompiler<'_> {
                 stmt,
             ));
         };
-        let plan = self.effect(y_expr, env, Some(None), checker, expansion)?;
+        let plan = self.effect(y_expr, env, EffectHint::Discard, checker, expansion)?;
         steps.extend(plan.steps);
         Ok(())
     }
@@ -305,7 +306,7 @@ impl SyntaxCompiler<'_> {
             if root {
                 steps.extend(self.root(ret_expr, env, checker, expansion)?);
             } else {
-                let plan = self.effect(ret_expr, env, None, checker, expansion)?;
+                let plan = self.effect(ret_expr, env, EffectHint::None, checker, expansion)?;
                 steps.extend(plan.steps);
                 steps.push(self.returned(plan.value, stmt, false));
             }
@@ -317,7 +318,7 @@ impl SyntaxCompiler<'_> {
                     ret_expr,
                 ));
             };
-            let plan = self.effect(y_expr, env, None, checker, expansion)?;
+            let plan = self.effect(y_expr, env, EffectHint::None, checker, expansion)?;
             steps.extend(plan.steps);
             steps.push(self.returned(plan.value, stmt, root));
         } else {

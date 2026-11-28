@@ -642,12 +642,10 @@ impl FlowLowering<'_> {
         let mut steps = Vec::with_capacity(graph.steps.len());
         for step in &graph.steps {
             let links = self.source_map_links.get(&step.id);
-            let state_ids: Vec<String> = links
-                .map(|l| l.states.iter().cloned().collect())
-                .unwrap_or_default();
-            let decision_row_ids: Vec<String> = links
-                .map(|l| l.rows.iter().cloned().collect())
-                .unwrap_or_default();
+            let state_ids: Vec<String> =
+                links.map_or_default(|l| l.states.iter().cloned().collect());
+            let decision_row_ids: Vec<String> =
+                links.map_or_default(|l| l.rows.iter().cloned().collect());
             let mut artifact_ids = Vec::new();
             if !state_ids.is_empty() {
                 artifact_ids.push(entity_id.clone());
