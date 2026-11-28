@@ -191,25 +191,91 @@ class Crate:
 SHARED_SUPPORT_HEADER = "// Shared test support, compiled once for every suite in this binary."
 
 
+def _strip_leading_outer_attrs(line: str) -> str:
+    """Strip any same-line outer `#[...]` attributes before an item declaration."""
+    rest = line.lstrip()
+    while rest.startswith("#["):
+        depth = 0
+        idx = 1
+        while idx < len(rest):
+            ch = rest[idx]
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    rest = rest[idx + 1 :].lstrip()
+                    break
+            idx += 1
+        else:
+            return rest
+    return rest
+
+
 def split_suites_sections(text: str) -> tuple[list[str], list[str]]:
     """Split an existing `tests/suites.rs` into `(shared_support_lines, suite_mod_lines)`."""
     lines = text.splitlines()
     try:
         start = lines.index(SHARED_SUPPORT_HEADER)
     except ValueError:
+        for line in lines:
+            item = _strip_leading_outer_attrs(line)
+            if re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use\b", item):
+                raise Refused(
+                    f"tests/{SUITE}.rs: `use` statement without `{SHARED_SUPPORT_HEADER}` header ({item!r})"
+                )
         return [], lines
+    # Before SHARED_SUPPORT_HEADER, only crate doc comments, blank lines, and `#![allow(...)]` are preserved.
+    in_inner_allow = False
+    for line in lines[:start]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//!"):
+            continue
+        if in_inner_allow:
+            if stripped.endswith(")]"):
+                in_inner_allow = False
+            continue
+        if stripped.startswith("#![allow("):
+            if not stripped.endswith(")]"):
+                in_inner_allow = True
+            continue
+        raise Refused(
+            f"tests/{SUITE}.rs: unexpected declaration before `{SHARED_SUPPORT_HEADER}` ({stripped!r})"
+        )
     end = start
     while end < len(lines) and lines[end].strip():
         if lines[end].lstrip().startswith("#!["):
             raise Refused(f"tests/{SUITE}.rs: inner attribute not allowed in shared support block")
         end += 1
     rest = lines[end:]
-    for line in rest:
-        stripped = line.lstrip()
-        if re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use\b", stripped):
+    # After the contiguous shared-support block, only suite module blocks (`#[path = "<name>.rs"]` + `mod <name>;`)
+    # and their comments/`#[cfg(...)]` attributes are allowed; any other declaration would be dropped on regen.
+    idx = 0
+    while idx < len(rest):
+        stripped = rest[idx].strip()
+        if not stripped or stripped.startswith("//"):
+            idx += 1
+            continue
+        item = _strip_leading_outer_attrs(stripped)
+        if re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use\b", item):
             raise Refused(
-                f"tests/{SUITE}.rs: `use` statement outside contiguous shared support block ({stripped!r}); remove blank lines inside the shared support block"
+                f"tests/{SUITE}.rs: `use` statement outside contiguous shared support block ({stripped!r})"
             )
+        mod_match = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?mod ([A-Za-z0-9_]+);$", item)
+        if mod_match:
+            # Must be preceded directly by `#[path = "<name>.rs"]` (a folded suite, not a dropped helper).
+            prev = rest[idx - 1].strip() if idx > 0 else ""
+            if prev != f'#[path = "{mod_match[1]}.rs"]':
+                raise Refused(
+                    f"tests/{SUITE}.rs: helper `mod {mod_match[1]};` outside contiguous shared support block"
+                )
+            idx += 1
+            continue
+        if not stripped.startswith("#["):
+            raise Refused(
+                f"tests/{SUITE}.rs: unexpected line outside shared support block ({stripped!r})"
+            )
+        idx += 1
     return lines[start:end], rest
 
 
@@ -221,28 +287,63 @@ def parse_shared_support(text: str) -> list[str]:
 def shared_support_names(lines: list[str]) -> set[str]:
     """Return module and re-export names bound in the shared support block."""
     names: set[str] = set()
+    attr_depth = 0
     for line in lines:
         stripped = line.strip()
-        if not stripped or stripped.startswith(("//", "#[")):
+        if not stripped or stripped.startswith("//"):
             continue
-        mod_match = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?mod ([A-Za-z0-9_]+);$", stripped)
+        cursor = stripped
+        if attr_depth > 0:
+            # Consume remainder of an open multi-line outer attribute `#[...]`.
+            idx = 0
+            while idx < len(cursor) and attr_depth > 0:
+                if cursor[idx] == "[":
+                    attr_depth += 1
+                elif cursor[idx] == "]":
+                    attr_depth -= 1
+                idx += 1
+            cursor = cursor[idx:].lstrip()
+            if not cursor:
+                continue
+        while cursor.startswith("#["):
+            depth = 0
+            idx = 1
+            while idx < len(cursor):
+                if cursor[idx] == "[":
+                    depth += 1
+                elif cursor[idx] == "]":
+                    depth -= 1
+                    if depth == 0:
+                        cursor = cursor[idx + 1 :].lstrip()
+                        break
+                idx += 1
+            else:
+                attr_depth = depth
+                cursor = ""
+                break
+        if not cursor or cursor.startswith("//"):
+            continue
+        mod_match = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?mod ([A-Za-z0-9_]+);$", cursor)
         if mod_match:
             names.add(mod_match[1])
             continue
-        if re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use\b", stripped):
-            if "{" in stripped or "}" in stripped or "*" in stripped or not stripped.endswith(";"):
+        if re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use\b", cursor):
+            if "{" in cursor or "}" in cursor or "*" in cursor or not cursor.endswith(";"):
                 raise Refused(
                     f"tests/{SUITE}.rs: shared support block only supports single-item `use` statements ({stripped!r})"
                 )
-            use_as = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use .+\s+as\s+([A-Za-z0-9_]+);$", stripped)
+            use_as = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use .+\s+as\s+([A-Za-z0-9_]+);$", cursor)
             if use_as:
                 names.add(use_as[1])
                 continue
-            use_tail = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use (?:.+::)?([A-Za-z0-9_]+);$", stripped)
+            use_tail = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use (?:.+::)?([A-Za-z0-9_]+);$", cursor)
             if use_tail:
                 names.add(use_tail[1])
                 continue
             raise Refused(f"tests/{SUITE}.rs: unparseable `use` in shared support block ({stripped!r})")
+        raise Refused(f"tests/{SUITE}.rs: unsupported item in shared support block ({stripped!r})")
+    if attr_depth != 0:
+        raise Refused(f"tests/{SUITE}.rs: unclosed outer attribute in shared support block")
     return names
 
 

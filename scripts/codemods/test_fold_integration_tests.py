@@ -262,8 +262,31 @@ class CommandAndFilterRewriteTests(unittest.TestCase):
         )
         with self.assertRaises(fold.Refused):
             fold.split_suites_sections(split_text)
+        before_marker = (
+            "use query_support::governed;\n"
+            f"{fold.SHARED_SUPPORT_HEADER}\n"
+            "mod query_support;\n"
+        )
+        with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(before_marker)
+        helper_after_blank = (
+            f"{fold.SHARED_SUPPORT_HEADER}\n"
+            "mod query_support;\n"
+            "\n"
+            "mod extra_helper;\n"
+            '#[path = "a.rs"]\n'
+            "mod a;\n"
+        )
+        with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(helper_after_blank)
         with self.assertRaises(fold.Refused):
             fold.shared_support_names([fold.SHARED_SUPPORT_HEADER, "use query_support::{governed, other};"])
+        with self.assertRaises(fold.Refused):
+            fold.shared_support_names([fold.SHARED_SUPPORT_HEADER, "#[cfg(test)] use fixture::{Helper, Other};"])
+        self.assertEqual(
+            fold.shared_support_names([fold.SHARED_SUPPORT_HEADER, "#[cfg(test)] mod helper;"]),
+            {"helper"},
+        )
 
     def test_pinned_target_requires_explicit_manifest_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
