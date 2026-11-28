@@ -689,6 +689,16 @@ mod tests {
         use norn_kernel::receipt_binding::{ReceiptBindingError, ReceiptReference};
         use std::collections::BTreeMap;
 
+        struct AllowAllResults;
+        impl norn_kernel::result_reconciliation::ResultAuthorizer for AllowAllResults {
+            fn authorize(
+                &self,
+                _request: &norn_kernel::result_reconciliation::ResultAuthzRequest<'_>,
+            ) -> Result<(), norn_kernel::result_reconciliation::ResultDenial> {
+                Ok(())
+            }
+        }
+
         let scope = CellScope {
             org_id: "org_demo".into(),
             environment_id: "dev".into(),
@@ -715,15 +725,6 @@ mod tests {
         // Custom overrides stay wrapped with ScopedResultAuthorizer so tenant
         // scope and non-blank identity checks are always enforced and the
         // authorizer is never cleared to None.
-        struct AllowAllResults;
-        impl norn_kernel::result_reconciliation::ResultAuthorizer for AllowAllResults {
-            fn authorize(
-                &self,
-                _request: &norn_kernel::result_reconciliation::ResultAuthzRequest<'_>,
-            ) -> Result<(), norn_kernel::result_reconciliation::ResultDenial> {
-                Ok(())
-            }
-        }
         let scoped_custom =
             ScopedResultAuthorizer::boxed("org_demo/dev", Box::new(AllowAllResults));
         let worker = norn_ir::function::Authority {
