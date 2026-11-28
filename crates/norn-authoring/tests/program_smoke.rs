@@ -354,11 +354,13 @@ fn generic_mount_and_pinned_file_reject_reserved_and_overlapping_roots()
         );
     }
 
-    // Reject direct add_pinned_file under `/node_modules/effect/` or its ancestors,
-    // as well as `/@norn` ancestors of `/@norn/authoring/`.
+    // Reject direct add_pinned_file on reserved roots, descendants, and ancestors.
     for forbidden_file in [
+        PINNED_EFFECT_VIRTUAL_ROOT,
         "/node_modules/effect/dist/Effect.d.ts",
         "/node_modules",
+        "/@norn/authoring",
+        "/@norn/authoring/extra.d.ts",
         "/@norn",
     ] {
         let res = vfs.add_pinned_file(forbidden_file, "export declare function gen(): void\n");
@@ -367,6 +369,14 @@ fn generic_mount_and_pinned_file_reject_reserved_and_overlapping_roots()
             "expected InvalidPath for add_pinned_file({forbidden_file:?}), got {res:?}"
         );
     }
+
+    // Reject direct add_pinned_file colliding with an ordinary caller directory path.
+    vfs.add_file("/caller_dir/a.ts", "export const x = 1;\n")?;
+    let dir_collision = vfs.add_pinned_file("/caller_dir", "export {};\n");
+    assert!(matches!(
+        dir_collision,
+        Err(AuthoringError::InvalidPath { .. })
+    ));
 
     // Strict ancestor/descendant mount overlaps are rejected.
     vfs.mount_pinned_package_dir("/__norn_pinned__/a", &pkg_dir)?;
@@ -506,5 +516,41 @@ fn pinned_mount_skips_unreadable_non_declaration_files() -> Result<(), Box<dyn s
     assert_eq!(mounted, 2);
     assert!(vfs.is_pinned_file("/__norn_pinned__/readme_test/dist/Index.d.ts"));
     assert!(!vfs.file_exists("/__norn_pinned__/readme_test/README.md"));
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn pinned_mount_traverses_search_only_ancestor_directory() -> Result<(), Box<dyn std::error::Error>>
+{
+    use std::os::unix::fs::PermissionsExt;
+
+    let pid = std::process::id();
+    let base = std::env::temp_dir().join(format!("norn-authoring-exec-only-{pid}"));
+    if base.exists() {
+        std::fs::remove_dir_all(&base)?;
+    }
+    let exec_only = base.join("exec_only");
+    let pkg_dir = exec_only.join("pkg");
+    let dist_dir = pkg_dir.join("dist");
+    std::fs::create_dir_all(&dist_dir)?;
+    std::fs::write(
+        pkg_dir.join("package.json"),
+        "{\"name\":\"demo\",\"version\":\"1.0.0\"}\n",
+    )?;
+    std::fs::write(
+        dist_dir.join("Index.d.ts"),
+        "export declare const ok: boolean\n",
+    )?;
+    std::fs::set_permissions(&exec_only, std::fs::Permissions::from_mode(0o111))?;
+
+    let mut vfs = BoundedVfs::default();
+    let mount_res = vfs.mount_pinned_package_dir("/__norn_pinned__/exec_only_test", &pkg_dir);
+    std::fs::set_permissions(&exec_only, std::fs::Permissions::from_mode(0o755))?;
+    std::fs::remove_dir_all(&base)?;
+
+    let mounted = mount_res?;
+    assert_eq!(mounted, 2);
+    assert!(vfs.is_pinned_file("/__norn_pinned__/exec_only_test/dist/Index.d.ts"));
     Ok(())
 }

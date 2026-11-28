@@ -6,7 +6,7 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 #[cfg(unix)]
-use rustix::fs::{CWD, Dir, FileType, Mode, OFlags, openat};
+use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags, openat, statat};
 #[cfg(unix)]
 use rustix::io::Errno;
 
@@ -302,15 +302,7 @@ fn open_unix_root_dir(canonical_root: &Path) -> Result<File, AuthoringError> {
             reason: "canonical pinned package root is not absolute".to_owned(),
         });
     }
-    let root_flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
-    let mut current = openat(CWD, "/", root_flags, Mode::empty())
-        .map(File::from)
-        .map_err(|err| AuthoringError::Io {
-            path: "/".to_owned(),
-            reason: err.to_string(),
-        })?;
-    let step_flags = root_flags | OFlags::NOFOLLOW;
-    let mut walked = PathBuf::from("/");
+    let mut segments = Vec::new();
     for component in components {
         let Component::Normal(segment) = component else {
             return Err(AuthoringError::Io {
@@ -318,8 +310,40 @@ fn open_unix_root_dir(canonical_root: &Path) -> Result<File, AuthoringError> {
                 reason: "unexpected non-normal path component in canonical root".to_owned(),
             });
         };
+        segments.push(segment);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    let ancestor_base = OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+    let ancestor_base = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let final_base = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+
+    if segments.is_empty() {
+        return openat(CWD, "/", final_base, Mode::empty())
+            .map(File::from)
+            .map_err(|err| AuthoringError::Io {
+                path: "/".to_owned(),
+                reason: err.to_string(),
+            });
+    }
+
+    let mut current = openat(CWD, "/", ancestor_base, Mode::empty())
+        .map(File::from)
+        .map_err(|err| AuthoringError::Io {
+            path: "/".to_owned(),
+            reason: err.to_string(),
+        })?;
+    let mut walked = PathBuf::from("/");
+    for (idx, segment) in segments.iter().enumerate() {
+        let is_final = idx.saturating_add(1) == segments.len();
+        let flags = if is_final {
+            final_base | OFlags::NOFOLLOW
+        } else {
+            ancestor_base | OFlags::NOFOLLOW
+        };
         walked.push(segment);
-        current = openat(&current, segment, step_flags, Mode::empty())
+        current = openat(&current, *segment, flags, Mode::empty())
             .map(File::from)
             .map_err(|err| AuthoringError::Io {
                 path: walked.display().to_string(),
@@ -399,12 +423,27 @@ fn visit_unix_entry(
     let dir_flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
     let file_flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
 
-    match entry_type {
+    // On filesystems without `d_type`, inspect the entry with `statat(AT_SYMLINK_NOFOLLOW)`
+    // before opening so special files (FIFOs, devices, sockets, symlinks) never reach `openat`.
+    let resolved_type = if entry_type == FileType::Unknown {
+        let st = statat(ctx.fd, entry_name, AtFlags::SYMLINK_NOFOLLOW).map_err(|err| {
+            AuthoringError::Io {
+                path: child_display.display().to_string(),
+                reason: err.to_string(),
+            }
+        })?;
+        FileType::from_raw_mode(st.st_mode)
+    } else {
+        entry_type
+    };
+
+    match resolved_type {
         FileType::Symlink
         | FileType::CharacterDevice
         | FileType::BlockDevice
         | FileType::Fifo
-        | FileType::Socket => Ok(()),
+        | FileType::Socket
+        | FileType::Unknown => Ok(()),
         FileType::RegularFile => {
             if !is_declaration_or_manifest(name) {
                 return Ok(());
@@ -444,40 +483,6 @@ fn visit_unix_entry(
                     ctx.depth.saturating_add(1),
                     staged,
                 )?;
-            }
-            Ok(())
-        }
-        FileType::Unknown => {
-            let flags = if is_declaration_or_manifest(name) {
-                file_flags
-            } else {
-                dir_flags
-            };
-            let Some(opened) = open_unix_or_skip(ctx.fd, entry_name, flags, &child_display)? else {
-                return Ok(());
-            };
-            let file_type = opened
-                .metadata()
-                .map_err(|err| AuthoringError::Io {
-                    path: child_display.display().to_string(),
-                    reason: err.to_string(),
-                })?
-                .file_type();
-            if file_type.is_dir() {
-                walk_unix_dir(
-                    &opened,
-                    &child_display,
-                    &next_virtual,
-                    ctx.depth.saturating_add(1),
-                    staged,
-                )?;
-            } else if file_type.is_file() && is_declaration_or_manifest(name) {
-                let content = read_opened_regular_file_bounded(
-                    opened,
-                    &child_display,
-                    MAX_PINNED_FILE_BYTES,
-                )?;
-                stage_file_content(&next_virtual, content, staged)?;
             }
             Ok(())
         }
@@ -556,7 +561,14 @@ fn verify_same_regular_file(
             reason: "opened path is no longer a regular file".to_owned(),
         });
     }
-    let _ = lstat;
+    // Stable Rust std does not expose Windows file-index/volume-serial without `unsafe`;
+    // compare size and modification time between `lstat` and `fstat` as a best-effort check.
+    if lstat.len() != fstat.len() || lstat.modified().ok() != fstat.modified().ok() {
+        return Err(AuthoringError::Io {
+            path: full_path.display().to_string(),
+            reason: "file metadata changed concurrently while opening".to_owned(),
+        });
+    }
     Ok(())
 }
 
