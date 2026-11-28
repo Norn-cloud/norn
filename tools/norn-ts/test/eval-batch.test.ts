@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { compileDefinitions } from "../src/compiler/definitions.ts"
+import { compileDefinitions } from "../src/native-compiler.ts"
 
 const native = process.env.NORN_BIN
 if (process.env.CI && !native) throw new Error("eval batch tests require NORN_BIN")

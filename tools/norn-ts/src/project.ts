@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, isAbsolute, resolve } from "node:path"
-import type { Diagnostic } from "./check.ts"
+import type { Diagnostic } from "./native-compiler.ts"
 
 export interface Project {
   readonly format: "norn-project/1"

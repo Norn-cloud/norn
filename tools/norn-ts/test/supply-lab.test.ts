@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { canonicalJson } from "../src/canonical.ts"
-import { compileDashboards, compileQuestions } from "../src/compiler/definitions.ts"
+import { compileDashboards, compileQuestions } from "../src/native-compiler.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 
 // Supply lab (registry/packs/supply-lab): its questions and dashboard sit in

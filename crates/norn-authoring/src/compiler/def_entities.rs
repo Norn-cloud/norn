@@ -23,6 +23,7 @@ use super::types::{
 use super::value_schema::ExpansionBudget;
 
 const NORMATIVE_SLOT: &str = "norn.normative/1.0.0";
+const VALID_ORIGINS: &[&str] = &["caller", "actor", "receipt", "derived", "clock", "default"];
 
 const OBJECT_TYPE_ALLOWED: &[&str] = &[
     "name",
@@ -43,6 +44,8 @@ const OBJECT_TYPE_ALLOWED: &[&str] = &[
     "dependencies",
     "pathEquations",
     "protected",
+    "origins",
+    "immutableAfterCreate",
     "label",
     "localizedDescription",
     "needsReview",
@@ -72,6 +75,14 @@ const INTERFACE_ALLOWED: &[&str] = &[
     "valueLabels",
 ];
 
+struct ObjectPropExtras<'a> {
+    protected_ids: &'a HashSet<String>,
+    origins: &'a BTreeMap<String, String>,
+    immutable_after_create_ids: &'a HashSet<String>,
+    prop_markings: &'a BTreeMap<String, Vec<String>>,
+    defaults: &'a BTreeMap<String, Value>,
+}
+
 impl DefinitionCompiler<'_> {
     pub(crate) fn compile_object_type(
         &mut self,
@@ -84,14 +95,28 @@ impl DefinitionCompiler<'_> {
         let base = self.type_base(checker, expansion, call, &members)?;
         let prop_ids: Vec<String> = base.projected.iter().map(|p| p.id.clone()).collect();
         let prop_markings = self.property_markings(checker, &members, &prop_ids)?;
-        let protected_ids = self.collect_protected_ids(checker, &members, &prop_ids)?;
+        let protected_ids =
+            self.collect_declared_prop_set(checker, &members, &prop_ids, "protected")?;
+        let origins = self.collect_origins(checker, &members, &prop_ids)?;
+        let immutable_ids =
+            self.collect_declared_prop_set(checker, &members, &prop_ids, "immutableAfterCreate")?;
         let defaults = self.collect_defaults(checker, &members, &prop_ids)?;
         let localized = self.localized(checker, &members)?;
         let member_labels = self.member_labels(checker, &members, &prop_ids)?;
-        Self::validate_type_name(&base.name, call)?;
+        if let Err(err) = Self::validate_type_name(&base.name, call) {
+            self.deferred_errors.push(err);
+        }
 
-        let props_json =
-            Self::build_object_properties(&base, &protected_ids, &prop_markings, &defaults);
+        let props_json = Self::build_object_properties(
+            &base,
+            &ObjectPropExtras {
+                protected_ids: &protected_ids,
+                origins: &origins,
+                immutable_after_create_ids: &immutable_ids,
+                prop_markings: &prop_markings,
+                defaults: &defaults,
+            },
+        );
         let obj_type =
             self.build_object_type_body(checker, expansion, &members, &base, props_json)?;
         let extensions = self.build_object_extensions(checker, expansion, call, &members)?;
@@ -148,20 +173,21 @@ impl DefinitionCompiler<'_> {
         Ok(())
     }
 
-    fn build_object_properties(
-        base: &TypeBase,
-        protected_ids: &HashSet<String>,
-        prop_markings: &BTreeMap<String, Vec<String>>,
-        defaults: &BTreeMap<String, Value>,
-    ) -> Vec<Value> {
+    fn build_object_properties(base: &TypeBase, extras: &ObjectPropExtras<'_>) -> Vec<Value> {
         let mut props_json = Vec::with_capacity(base.projected.len());
         for p in &base.projected {
             let mut obj = Map::new();
-            if protected_ids.contains(&p.id) {
+            if extras.protected_ids.contains(&p.id) {
                 obj.insert("protected".to_owned(), Value::Bool(true));
             }
+            if let Some(origin) = extras.origins.get(&p.id) {
+                obj.insert("origin".to_owned(), Value::String(origin.clone()));
+            }
+            if extras.immutable_after_create_ids.contains(&p.id) {
+                obj.insert("immutableAfterCreate".to_owned(), Value::Bool(true));
+            }
             obj.insert("id".to_owned(), Value::String(p.id.clone()));
-            if let Some(ms) = prop_markings.get(&p.id)
+            if let Some(ms) = extras.prop_markings.get(&p.id)
                 && !ms.is_empty()
             {
                 obj.insert(
@@ -175,7 +201,7 @@ impl DefinitionCompiler<'_> {
                 c.insert("nullable".to_owned(), Value::Bool(true));
                 obj.insert("constraints".to_owned(), Value::Object(c));
             }
-            if let Some(def_val) = defaults.get(&p.id) {
+            if let Some(def_val) = extras.defaults.get(&p.id) {
                 obj.insert("default".to_owned(), def_val.clone());
             }
             props_json.push(Value::Object(obj));
@@ -357,10 +383,23 @@ impl DefinitionCompiler<'_> {
         let prop_markings = self.property_markings(checker, &members, &prop_ids)?;
         let localized = self.localized(checker, &members)?;
         let member_labels = self.member_labels(checker, &members, &prop_ids)?;
-        Self::validate_type_name(&base.name, call)?;
+        if let Err(err) = Self::validate_type_name(&base.name, call) {
+            self.deferred_errors.push(err);
+        }
 
-        let props_json =
-            Self::build_object_properties(&base, &HashSet::new(), &prop_markings, &BTreeMap::new());
+        let empty_set = HashSet::new();
+        let empty_origins = BTreeMap::new();
+        let empty_defaults = BTreeMap::new();
+        let props_json = Self::build_object_properties(
+            &base,
+            &ObjectPropExtras {
+                protected_ids: &empty_set,
+                origins: &empty_origins,
+                immutable_after_create_ids: &empty_set,
+                prop_markings: &prop_markings,
+                defaults: &empty_defaults,
+            },
+        );
         let iface = self.build_interface_body(checker, expansion, &members, &base, props_json)?;
 
         let mut payload = Map::new();
@@ -472,30 +511,61 @@ impl DefinitionCompiler<'_> {
         Ok(iface)
     }
 
-    fn collect_protected_ids(
+    fn collect_declared_prop_set(
         &self,
         checker: &mut Checker,
         members: &Members,
         prop_ids: &[String],
+        field: &str,
     ) -> Result<HashSet<String>, CompileError> {
         let mut out = HashSet::new();
-        if let Some(node) = members.get("protected") {
+        if let Some(node) = members.get(field) {
             for item in self.list(checker, node)? {
                 let id = self.string(checker, item)?;
                 if !prop_ids.iter().any(|p| p == &id) {
                     return Err(CompileError::new(
                         "NORN-FLOW-LITERAL",
-                        format!("protected names undeclared property {id}"),
+                        format!("{field} names undeclared property {id}"),
                         item,
                     ));
                 }
                 if !out.insert(id.clone()) {
                     return Err(CompileError::new(
                         "NORN-FLOW-LITERAL",
-                        format!("protected names {id} twice"),
+                        format!("{field} names {id} twice"),
                         item,
                     ));
                 }
+            }
+        }
+        Ok(out)
+    }
+
+    fn collect_origins(
+        &self,
+        checker: &mut Checker,
+        members: &Members,
+        prop_ids: &[String],
+    ) -> Result<BTreeMap<String, String>, CompileError> {
+        let mut out = BTreeMap::new();
+        if let Some(node) = members.get("origins") {
+            for (key, value) in self.record(checker, node)?.iter() {
+                if !prop_ids.iter().any(|p| p == key) {
+                    return Err(CompileError::new(
+                        "NORN-FLOW-LITERAL",
+                        format!("origins names undeclared property {key}"),
+                        value,
+                    ));
+                }
+                let origin = self.string(checker, value)?;
+                if !VALID_ORIGINS.contains(&origin.as_str()) {
+                    return Err(CompileError::new(
+                        "NORN-FLOW-LITERAL",
+                        "origin must be one of caller, actor, receipt, derived, clock, default",
+                        value,
+                    ));
+                }
+                out.insert(key.to_owned(), origin);
             }
         }
         Ok(out)
@@ -521,62 +591,6 @@ impl DefinitionCompiler<'_> {
             }
         }
         Ok(out)
-    }
-
-    fn compile_invariant(
-        &mut self,
-        checker: &mut Checker,
-        expansion: &mut ExpansionBudget,
-        input: P<Node>,
-    ) -> Result<Value, CompileError> {
-        let m = self.closed_record(
-            checker,
-            input,
-            &[
-                "id",
-                "description",
-                "classification",
-                "expression",
-                "message",
-            ],
-            &["id", "expression", "message"],
-        )?;
-        let mut obj = Map::new();
-        if let Some(cls_node) = m.get("classification") {
-            let cls = self.string(checker, cls_node)?;
-            if cls != "integrity" && cls != "quality" {
-                return Err(CompileError::new(
-                    "NORN-FLOW-LITERAL",
-                    "constraint classification must be integrity or quality",
-                    cls_node,
-                ));
-            }
-            if cls == "quality" {
-                obj.insert("classification".to_owned(), Value::String(cls));
-            }
-        }
-        obj.insert(
-            "id".to_owned(),
-            Value::String(self.string(checker, Self::member(&m, "id", input)?)?),
-        );
-        if let Some(desc) = m.get("description") {
-            obj.insert(
-                "description".to_owned(),
-                Value::String(self.string(checker, desc)?),
-            );
-        }
-        let expr_str = self.zen(
-            checker,
-            expansion,
-            Self::member(&m, "expression", input)?,
-            "self",
-        )?;
-        obj.insert("expression".to_owned(), Value::String(expr_str));
-        obj.insert(
-            "message".to_owned(),
-            Value::String(self.string(checker, Self::member(&m, "message", input)?)?),
-        );
-        Ok(Value::Object(obj))
     }
 
     pub(crate) fn compile_link(

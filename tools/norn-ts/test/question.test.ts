@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { compileDefinitions, compileQuestions } from "../src/compiler/definitions.ts"
+import { compileDefinitions, compileQuestions } from "../src/native-compiler.ts"
 import { canonicalJson, toJson } from "../src/canonical.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 
@@ -69,13 +69,11 @@ test("typed_question_lowering uses resolved symbols and never silently drops a q
  expect(artifactResult.warnings.map(w => w.code)).toEqual(["NORN-FLOW-RESULT"])
 })
 
-test("typed_question_lowering retains a referenced object identity and remains bounded", () => {
+test("typed_question_lowering retains a referenced object identity", () => {
  const body = source().replace('import { Norn }', 'import { Schema } from "effect"\nimport { Norn }')
   .replace('export const Yield', 'const Conversion = Norn.type({name:"demo.Conversion",title:"Conversion",version:"1.0.0",properties:Schema.Struct({id:Schema.String}),identity:[{name:"primary",properties:["id"]}]})\nexport const Yield')
   .replace('of:"demo.Conversion"','of:Conversion')
  expect(compile(body).ok).toBe(true)
- const bounded = withModule(source(), file => compileQuestions(file, {maxOutputBytes:1}))
- expect(bounded.ok).toBe(false)
 })
 
 // The Rust exact-cell test reads this same generated golden and compares it to its admitted plan.

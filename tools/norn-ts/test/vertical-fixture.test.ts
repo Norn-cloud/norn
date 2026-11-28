@@ -18,7 +18,7 @@ import { join } from "node:path"
 import type { FlowDef } from "../src/builder/index.ts"
 import { lowerFlow } from "../src/builder/index.ts"
 import { canonicalJson } from "../src/canonical.ts"
-import { compileFile } from "../src/compiler/index.ts"
+import { compileFile } from "../src/native-compiler.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { CHECKER_PKG_ENV, checker } from "./checker.ts"
 

@@ -28,6 +28,7 @@ impl DefinitionCompiler<'_> {
                 "transition",
                 "writeMode",
                 "acceptReceipt",
+                "setFields",
                 "parentValuesField",
                 "rowOpsField",
                 "parentVersionField",
@@ -80,6 +81,7 @@ impl DefinitionCompiler<'_> {
             "lifecycle",
             "transition",
             "acceptReceipt",
+            "setFields",
             "parentValuesField",
             "rowOpsField",
             "parentVersionField",
@@ -111,7 +113,13 @@ impl DefinitionCompiler<'_> {
         input: P<Node>,
         mut obj: Map<String, Value>,
     ) -> Result<(Value, Option<String>), CompileError> {
-        for extra in ["lifecycle", "transition", "writeMode", "acceptReceipt"] {
+        for extra in [
+            "lifecycle",
+            "transition",
+            "writeMode",
+            "acceptReceipt",
+            "setFields",
+        ] {
             if let Some(ex) = m.get(extra) {
                 return Err(CompileError::new(
                     "NORN-FLOW-LITERAL",
@@ -276,6 +284,12 @@ impl DefinitionCompiler<'_> {
                 ),
             );
             obj.insert("acceptReceipt".to_owned(), Value::Object(ro));
+        }
+        if let Some(set_fields) = m.get("setFields") {
+            let map = self.string_map(checker, set_fields)?;
+            if !map.is_empty() {
+                obj.insert("setFields".to_owned(), Value::Object(map));
+            }
         }
         Ok((Value::Object(obj), None))
     }

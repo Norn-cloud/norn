@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { join, resolve } from "node:path"
-import { compileDefinitions } from "../src/compiler/definitions.ts"
+import { compileDefinitions } from "../src/native-compiler.ts"
 import { readArtifacts, checkPack, artifactId } from "../src/pack.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { canonicalJson } from "../src/canonical.ts"

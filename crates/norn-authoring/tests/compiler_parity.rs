@@ -60,22 +60,14 @@ fn mount_pinned_packages(
 ) -> Result<(PathBuf, BoundedVfs), Box<dyn std::error::Error>> {
     let root = tool_root();
     let effect_dir = root.join("node_modules/effect");
-    let ts_dir = root.join("node_modules/typescript");
     assert!(
         effect_dir.join("package.json").is_file(),
         "pinned effect package must be installed at {}",
         effect_dir.display()
     );
-    assert!(
-        ts_dir.join("package.json").is_file(),
-        "pinned typescript package must be installed at {}",
-        ts_dir.display()
-    );
     let mut vfs = BoundedVfs::default();
     let effect_count = vfs.mount_pinned_effect_dir(&effect_dir, profile)?;
     assert!(effect_count > 0, "expected pinned effect declarations");
-    let ts_count = vfs.mount_pinned_package_dir("/node_modules/typescript", &ts_dir)?;
-    assert!(ts_count > 0, "expected pinned typescript declarations");
     Ok((root, vfs))
 }
 

@@ -8,8 +8,8 @@
   "parents": [
     "scripts/demo/jewelry.source.ts",
     "tools/norn-ts/src/cli.ts",
-    "tools/norn-ts/src/compiler/definitions.ts",
-    "tools/norn-ts/src/compiler/index.ts",
+    "crates/norn-authoring/src/compiler/mod.rs",
+    "crates/norn-authoring/src/compiler/flow_syntax.rs",
     "tools/norn-ts/src/builder/entity.ts",
     "tools/norn-ts/src/builder/law.ts"
   ],

@@ -164,9 +164,9 @@ export async function loadChecker(dir: string | undefined = checkerPackageDir())
 /** Map a checker JSON pointer to its most specific compiler-owned TS location. */
 export function sourceMappedDiagnostics<D extends { readonly span?: unknown; readonly artifactId?: string | null }>(
   diagnostics: ReadonlyArray<D>,
-  sourceMap: ReadonlyArray<import("./compiler/definitions.ts").DefinitionSource>,
+  sourceMap: ReadonlyArray<import("./native-compiler.ts").DefinitionSource>,
 ): ReadonlyArray<D & { readonly source?: import("./builder/diagnostics.ts").SourceLocation }> {
-  const byArtifact = new Map<string, Array<import("./compiler/definitions.ts").DefinitionSource>>()
+  const byArtifact = new Map<string, Array<import("./native-compiler.ts").DefinitionSource>>()
   for (const entry of sourceMap) {
     let bucket = byArtifact.get(entry.artifactId)
     if (!bucket) { bucket = []; byArtifact.set(entry.artifactId, bucket) }

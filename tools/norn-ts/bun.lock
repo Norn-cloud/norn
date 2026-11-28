@@ -6,7 +6,6 @@
       "name": "@norn/authoring",
       "dependencies": {
         "effect": "4.0.0-rc.117",
-        "typescript": "6.0.3",
       },
       "devDependencies": {
         "@types/bun": "1.4.2",
@@ -40,8 +39,6 @@
     "effect": ["effect@4.0.0-rc.117", "", {}, "sha512-UUyi9QiOW4nySFIBM3KnYbNMd9EZliOdKfBcyLD0mPMPheO2fkuXS5y0opjWc9oqzlJxPQICEGm8gGw3kh9j/w=="],
 
     "tsrs": ["tsrs@7.1.0-beta.tsrs5", "", { "optionalDependencies": { "@tsrs/darwin-arm64": "7.1.0-beta.tsrs5", "@tsrs/darwin-x64": "7.1.0-beta.tsrs5", "@tsrs/linux-arm64-gnu": "7.1.0-beta.tsrs5", "@tsrs/linux-arm64-musl": "7.1.0-beta.tsrs5", "@tsrs/linux-x64-gnu": "7.1.0-beta.tsrs5", "@tsrs/linux-x64-musl": "7.1.0-beta.tsrs5", "@tsrs/win32-arm64": "7.1.0-beta.tsrs5", "@tsrs/win32-x64": "7.1.0-beta.tsrs5" }, "bin": { "tsrs": "./bin/tsrs", "tsrs-lint": "./bin/tsrs-lint" } }, "sha512-z+hNizBykB1mv/XxMnMYMSGuwnYEk6S708LGEEaTmdLu6eaH4NOtVemySycbEiW/SCjMeYMk+SZfVdRJwEmYXA=="],
-
-    "typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 
     "undici-types": ["undici-types@8.9.0", "", {}, "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="],
   }

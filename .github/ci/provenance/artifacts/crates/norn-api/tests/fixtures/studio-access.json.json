@@ -8,7 +8,7 @@
   "parents": [
     "tools/norn-ts/fixtures/host/studio-access.source.ts",
     "tools/norn-ts/src/builder/access.ts",
-    "tools/norn-ts/src/compiler/definitions.ts"
+    "crates/norn-authoring/src/compiler/mod.rs"
   ],
   "rights_evidence": [
     {

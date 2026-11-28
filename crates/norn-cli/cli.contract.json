@@ -312,6 +312,20 @@
     },
     "compile": {
       "args": {
+        "allow_empty": {
+          "long": "allow-empty",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": false,
+          "multiple": false,
+          "required": false,
+          "default": [],
+          "values": [
+            "true",
+            "false"
+          ]
+        },
         "env": {
           "long": "env",
           "short": null,
@@ -319,7 +333,7 @@
           "positional": false,
           "takes_value": true,
           "multiple": false,
-          "required": true,
+          "required": false,
           "default": [],
           "values": []
         },
@@ -337,6 +351,28 @@
             "false"
           ]
         },
+        "max_expansion_work": {
+          "long": "max-expansion-work",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": false,
+          "default": [],
+          "values": []
+        },
+        "modules": {
+          "long": "modules",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": false,
+          "default": [],
+          "values": []
+        },
         "org": {
           "long": "org",
           "short": null,
@@ -344,7 +380,7 @@
           "positional": false,
           "takes_value": true,
           "multiple": false,
-          "required": true,
+          "required": false,
           "default": [],
           "values": []
         },
@@ -359,6 +395,20 @@
           "default": [],
           "values": []
         },
+        "pack_json": {
+          "long": "pack-json",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": false,
+          "multiple": false,
+          "required": false,
+          "default": [],
+          "values": [
+            "true",
+            "false"
+          ]
+        },
         "path": {
           "long": null,
           "short": null,
@@ -367,6 +417,39 @@
           "takes_value": true,
           "multiple": false,
           "required": true,
+          "default": [],
+          "values": []
+        },
+        "registry": {
+          "long": "registry",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": false,
+          "default": [],
+          "values": []
+        },
+        "root": {
+          "long": "root",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": false,
+          "default": [],
+          "values": []
+        },
+        "source_path": {
+          "long": "source-path",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": false,
+          "required": false,
           "default": [],
           "values": []
         },

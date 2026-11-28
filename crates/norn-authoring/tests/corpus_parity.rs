@@ -208,16 +208,10 @@ fn golden_corpus_parity_matches_ts_profile_checker() -> Result<(), Box<dyn std::
     let root = tool_root();
     let corpus_dir = root.join("corpus");
     let effect_dir = root.join("node_modules/effect");
-    let ts_dir = root.join("node_modules/typescript");
     assert!(
         effect_dir.join("package.json").is_file(),
         "pinned effect package must be installed at {} before running corpus parity",
         effect_dir.display()
-    );
-    assert!(
-        ts_dir.join("package.json").is_file(),
-        "pinned typescript package must be installed at {} before running corpus parity",
-        ts_dir.display()
     );
 
     let profile = Profile::load()?;
@@ -226,8 +220,6 @@ fn golden_corpus_parity_matches_ts_profile_checker() -> Result<(), Box<dyn std::
     let mut vfs = BoundedVfs::default();
     let effect_count = vfs.mount_pinned_effect_dir(&effect_dir, &profile)?;
     assert!(effect_count > 0, "expected pinned effect declarations");
-    let ts_count = vfs.mount_pinned_package_dir("/node_modules/typescript", &ts_dir)?;
-    assert!(ts_count > 0, "expected pinned typescript declarations");
 
     mount_corpus_dir(&mut vfs, &corpus_dir.join("support"), "/corpus/support")?;
     mount_corpus_dir(&mut vfs, &corpus_dir.join("accept"), "/corpus/accept")?;

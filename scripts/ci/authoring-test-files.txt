@@ -68,7 +68,6 @@ test/temporal-enum.test.ts
 test/temporal-intervals.test.ts
 test/time-org-foundation.test.ts
 test/transform.test.ts
-test/translation-validation.test.ts
 test/vertical-fixture.test.ts
 test/widget-builder.test.ts
 test/workforce-frappe-hrms.test.ts

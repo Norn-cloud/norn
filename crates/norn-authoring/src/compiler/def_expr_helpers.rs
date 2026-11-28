@@ -8,8 +8,8 @@ use tsrs_checker::Checker;
 use tsrs_core::P;
 
 use super::def_helpers::{
-    ANY_TYPE, CALLER_ID, DefinitionCompiler, DefinitionSource, INTERFACE, INTERFACES, Members,
-    OBJECT_TYPES, SubjectSchema,
+    ANY_TYPE, CALLER_ID, COMMIT_TIME, COMMIT_TIME_MILLIS, DefinitionCompiler, DefinitionSource,
+    INTERFACE, INTERFACES, Members, OBJECT_TYPES, SubjectSchema,
 };
 use super::expr::{Binding, Expr, Scope, TemporalKind, parsed_temporal, render, type_of};
 use super::flow_syntax::{SyntaxCompiler, SyntaxConfig};
@@ -78,6 +78,26 @@ impl DefinitionCompiler<'_> {
                     ));
                 }
                 return Ok("actor.subjectId".to_owned());
+            }
+            if id.as_deref() == Some(COMMIT_TIME) {
+                if !args.is_empty() {
+                    return Err(CompileError::new(
+                        "NORN-FLOW-EXPRESSION",
+                        "Norn.commitTime() takes no argument",
+                        e,
+                    ));
+                }
+                return Ok("clock.nowIso".to_owned());
+            }
+            if id.as_deref() == Some(COMMIT_TIME_MILLIS) {
+                if !args.is_empty() {
+                    return Err(CompileError::new(
+                        "NORN-FLOW-EXPRESSION",
+                        "Norn.commitTimeMillis() takes no argument",
+                        e,
+                    ));
+                }
+                return Ok("clock.nowMillis".to_owned());
             }
             if id.as_deref() == Some("@norn/authoring#Norn.unsafeZen") {
                 return self.zen_unsafe(checker, e, args);

@@ -81,6 +81,9 @@ impl DefinitionCompiler<'_> {
             ));
         }
         let examples = self.compile_examples(checker, expansion, source)?;
+        if let Some(err) = self.deferred_errors.drain(..).next() {
+            return Err(err);
+        }
         Ok(CompiledModuleDefs {
             artifacts: acc.artifacts,
             flows: acc.flows,
