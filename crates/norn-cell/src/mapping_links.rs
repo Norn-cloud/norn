@@ -348,7 +348,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     fn claim_bundles_for_source(
         &self,
         subject: &FactKey,
-        model: &CommitModel<'_>,
+        model: CommitModel<'_, '_>,
         limit: usize,
     ) -> Result<Vec<String>, CellError> {
         let mut sides = BTreeSet::from([format!("source:{}", subject.object_type.as_str())]);
@@ -421,7 +421,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             targets: BTreeSet::new(),
         };
         let entries = self.claim_journal(&[], Some(&scope))?;
-        self.held_link_findings_from_entries(&model, &subject, &entries, |bundle| {
+        self.held_link_findings_from_entries(model, &subject, &entries, |bundle| {
             self.mapping_event_dispute(bundle)
         })
     }
@@ -441,20 +441,20 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let model = CommitModel::new(&catalog);
         let subject = model.canonical(&FactKey::new(object_type, key));
         let mut bundles = Vec::new();
-        for id in self.claim_bundles_for_source(&subject, &model, MAX_CLAIM_BUNDLES)? {
+        for id in self.claim_bundles_for_source(&subject, model, MAX_CLAIM_BUNDLES)? {
             let bundle = self.claim_bundle(&id)?;
             let disputed = index.event_dispute(&bundle)?.is_some();
             bundles.push((bundle, false, disputed));
         }
         let entries = self.claim_journal_entries(&bundles)?;
-        self.held_link_findings_from_entries(&model, &subject, &entries, |bundle| {
+        self.held_link_findings_from_entries(model, &subject, &entries, |bundle| {
             index.event_dispute(bundle)
         })
     }
 
     fn held_link_findings_from_entries(
         &self,
-        model: &CommitModel<'_>,
+        model: CommitModel<'_, '_>,
         subject: &FactKey,
         entries: &[Entry],
         mut event_dispute: impl FnMut(&MappingBundle) -> Result<Option<EventDispute>, CellError>,
