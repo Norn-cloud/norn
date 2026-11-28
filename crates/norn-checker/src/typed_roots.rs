@@ -116,7 +116,7 @@ const RETIRED_KINDS: &[(&str, &str)] = &[(
     "artifact kind 'process' is retired: model Run and Task as EntityIR types and decision graphs as RuleIR",
 )];
 
-const ACTION_CODE: &str = "action.validation.invalid_payload";
+pub(crate) const ACTION_CODE: &str = "action.validation.invalid_payload";
 const ENTITY_CODE: &str = "entity.validation.invalid_payload";
 const RULE_CODE: &str = "rule.validation.invalid_payload";
 
@@ -880,8 +880,9 @@ fn validate_action_derivations(
     // them conservatively as possibly absent so a malformed payload cannot
     // gain admission by whichever declaration happened to be last.
     required_targets.retain(|field| !optional_targets.contains(field));
+    let local_limit = crate::typed_roots_post_slice::local_derivation_limit(payload, &derive);
     validate_action_derivation_steps(
-        &derive,
+        derive.get(..local_limit).unwrap_or(&derive),
         input_schema,
         &optional_targets,
         &required_targets,
@@ -1128,6 +1129,8 @@ fn check_action_input_preconditions(
     aggregate_cost
 }
 
+pub(crate) use crate::typed_roots_post_slice::check_action_slice_derivations;
+
 /// Type-check action preconditions over the resolved slice object records
 /// and aggregate result types. Entity type resolution belongs to the
 /// artifact-set checker; this helper only assembles the closed ZEN
@@ -1156,7 +1159,7 @@ pub(crate) fn check_action_slice_preconditions(
             artifact_id,
         )];
     }
-    let Some(environment) =
+    let Some((environment, derivation_cost)) =
         action_slice_environment(root, &schema, records, slice_fields, aggregate_fields)
     else {
         return vec![invalid_diagnostic(
@@ -1167,7 +1170,7 @@ pub(crate) fn check_action_slice_preconditions(
         )];
     };
     let mut diagnostics = Vec::new();
-    let mut aggregate_cost = action_derivation_static_cost(root).unwrap_or_default();
+    let mut aggregate_cost = derivation_cost;
     for (index, expression) in root.preconditions.iter().enumerate() {
         if let Some(cost) = check_action_expression_with_cost(
             expression,
@@ -1196,11 +1199,6 @@ pub(crate) fn check_action_slice_preconditions(
         ));
     }
     diagnostics
-}
-
-fn action_derivation_static_cost(root: &ActionRoot) -> Option<u64> {
-    action_post_derivation_fields(&JsonValue::Object(root.input_schema.clone()), &root.derive)
-        .map(|(_, cost)| cost)
 }
 
 /// Input-only action expressions have the receipt bound as well as the slice
@@ -1243,7 +1241,7 @@ pub(crate) fn action_expression_root_bounds(
         .collect()
 }
 
-fn refined_derivation_type(expected: Type, inferred: &InferredType) -> Type {
+pub(crate) fn refined_derivation_type(expected: Type, inferred: &InferredType) -> Type {
     if matches!(inferred, InferredType::Null | InferredType::Optional(_)) {
         expected.optional()
     } else if let Type::Optional(inner) = expected {
@@ -1253,23 +1251,24 @@ fn refined_derivation_type(expected: Type, inferred: &InferredType) -> Type {
     }
 }
 
-fn action_post_derivation_fields(
+pub(crate) fn action_post_derivation_fields_prefix(
     schema: &JsonValue,
-    derive: &[ActionInputDerivation],
+    all_derive: &[ActionInputDerivation],
+    limit: usize,
 ) -> Option<(BTreeMap<String, Type>, u64)> {
-    let optional: BTreeSet<_> = derive
+    let optional: BTreeSet<_> = all_derive
         .iter()
         .filter(|step| !step.input_required)
         .map(|step| step.field.clone())
         .collect();
-    let required: BTreeSet<_> = derive
+    let required: BTreeSet<_> = all_derive
         .iter()
         .filter(|step| step.input_required && !optional.contains(&step.field))
         .map(|step| step.field.clone())
         .collect();
     let mut fields = action_input_fields(schema, &optional, &required)?;
     let mut cost = 0_u64;
-    for step in derive {
+    for step in all_derive.iter().take(limit) {
         let environment = action_derivation_environment(fields.clone())?;
         let expected = action_input_field_type(Some(schema), &step.field)?;
         let expression = Expression::compile(step.expression.as_str()).ok()?;
@@ -1296,12 +1295,19 @@ fn action_slice_environment(
     mut records: BTreeMap<String, BTreeMap<String, Type>>,
     slice_fields: BTreeMap<String, Type>,
     aggregate_fields: BTreeMap<String, Type>,
-) -> Option<ZenTypeEnv> {
-    let (fields, _) = action_post_derivation_fields(input_schema, &root.derive)?;
+) -> Option<(ZenTypeEnv, u64)> {
+    let (fields, total_cost) = crate::typed_roots_post_slice::post_slice_fields_and_cost(
+        input_schema,
+        root,
+        &records,
+        &slice_fields,
+        &aggregate_fields,
+    )?;
+    let declares_aggregates = !root.aggregates.is_empty();
     let slice_record = "norn:ActionSlice".to_owned();
     records.insert(slice_record.clone(), slice_fields);
     let aggregate_record = "norn:ActionAggregates".to_owned();
-    if !root.aggregates.is_empty() {
+    if declares_aggregates {
         records.insert(aggregate_record.clone(), aggregate_fields);
     }
     let mut environment = ZenTypeEnv::input_only_with_records(
@@ -1313,12 +1319,12 @@ fn action_slice_environment(
     environment = environment
         .bind_operand("slice", Type::Record(slice_record))
         .ok()?;
-    if !root.aggregates.is_empty() {
+    if declares_aggregates {
         environment = environment
             .bind_operand("aggregates", Type::Record(aggregate_record))
             .ok()?;
     }
-    bind_flat_input_aliases(environment)
+    bind_flat_input_aliases(environment).map(|env| (env, total_cost))
 }
 
 /// Validate declared outbound commands and type-check their expressions
@@ -1581,7 +1587,11 @@ fn action_input_environment(
         Some(value) => serde_json::from_value(serde_json::to_value(value).ok()?).ok()?,
         None => Vec::new(),
     };
-    let (fields, _) = action_post_derivation_fields(schema, &derivations)?;
+    let fields = crate::typed_roots_post_slice::action_input_fields_with_post_slice(
+        payload,
+        schema,
+        &derivations,
+    )?;
     let environment = ZenTypeEnv::input_only(fields, EnvOptions::default()).ok()?;
     if flat_aliases {
         bind_flat_input_aliases(environment)
@@ -1596,7 +1606,7 @@ fn action_derivation_environment(fields: BTreeMap<String, Type>) -> Option<ZenTy
     ZenTypeEnv::action_derivation_with_records(BTreeMap::new(), fields, EnvOptions::default()).ok()
 }
 
-fn bind_flat_input_aliases(mut environment: ZenTypeEnv) -> Option<ZenTypeEnv> {
+pub(crate) fn bind_flat_input_aliases(mut environment: ZenTypeEnv) -> Option<ZenTypeEnv> {
     let input = environment.record(INPUT_RECORD)?;
     let aliases: Vec<(String, Type)> = input
         .fields
@@ -1657,7 +1667,10 @@ pub(crate) fn action_input_field_type(
 /// Derivations require a target schema whose value domain the expression
 /// checker can prove. `Type::Json` is intentionally permissive, so accepting
 /// it here would admit values that fail the final JSON Schema at invocation.
-fn action_derivation_target_type(input_schema: Option<&JsonValue>, field: &str) -> Option<Type> {
+pub(crate) fn action_derivation_target_type(
+    input_schema: Option<&JsonValue>,
+    field: &str,
+) -> Option<Type> {
     let ty = action_input_field_type(input_schema, field)?;
     (!contains_opaque_json(&ty)).then_some(ty)
 }

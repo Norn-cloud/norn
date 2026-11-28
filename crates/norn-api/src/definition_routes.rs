@@ -12,7 +12,7 @@
 //! [`Operation::WriteDefinitions`](crate::authz::Operation::WriteDefinitions). Every denied or out-of-scope request gets
 //! the one opaque 403, decided before the body is interpreted.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -719,7 +719,7 @@ fn validate<E: SqlEngine>(
         "approval" => {
             let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
             let (actions, gated) = crate::approval_definitions::approval_context(host, id)?;
-            findings.extend(crate::approval_definitions::check(
+            findings.extend(crate::approval_definitions::check_against(
                 &value, &actions, &roles, &gated,
             ));
         }
@@ -1647,7 +1647,7 @@ pub(crate) fn riding_approval<E: SqlEngine>(
     actor: &str,
     kinds: &DefinitionKinds,
     request: &InstallDefinitionRequest,
-    actions: &BTreeSet<String>,
+    actions: &BTreeMap<String, bool>,
     signed_at: Option<u64>,
     pointer: &str,
     superseded: &BTreeSet<String>,
@@ -1678,7 +1678,7 @@ pub(crate) fn riding_approval<E: SqlEngine>(
     let gated = crate::approval_definitions::gated_except(host, &|other| {
         other == request.id || superseded.contains(other)
     })?;
-    let findings = crate::approval_definitions::check(&value, actions, &roles, &gated);
+    let findings = crate::approval_definitions::check_against(&value, actions, &roles, &gated);
     if !admitted(&findings) {
         return Err(place(findings));
     }

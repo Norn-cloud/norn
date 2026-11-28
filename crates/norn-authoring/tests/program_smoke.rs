@@ -1,8 +1,8 @@
-//! Program, VFS quota, and symbol-identity smoke tests for `norn-authoring`.
+//! Smoke and boundary tests for `Profile`, `BoundedVfs`, and `AuthoringProgram`.
 
 use norn_authoring::{
     AuthoringError, AuthoringProgram, BoundedVfs, DiagnosticCategory, INTRINSICS_VIRTUAL_PATH,
-    Profile, VfsLimits,
+    PINNED_EFFECT_VIRTUAL_ROOT, Profile, ProfileChecker, VfsLimits,
 };
 use tsrs_vfs::FS;
 
@@ -134,7 +134,7 @@ fn lookalike_node_modules_effect_does_not_receive_profile_id()
         "/app/node_modules/effect/Effect.d.ts",
         "export declare function gen(): void\n",
     )?;
-    vfs.add_file(
+    vfs.add_pinned_file(
         "/__norn_pinned__/effect/dist/Effect.d.ts",
         "export declare function gen(): void\n",
     )?;
@@ -171,5 +171,386 @@ export const pinned = realGen
         pinned.declaring_file,
         "/__norn_pinned__/effect/dist/Effect.d.ts"
     );
+    Ok(())
+}
+
+#[test]
+fn caller_cannot_spoof_reserved_pinned_namespaces_or_effect_prefix()
+-> Result<(), Box<dyn std::error::Error>> {
+    let profile = Profile::load()?;
+    let mut vfs = BoundedVfs::default();
+
+    // Reserved pinned namespaces reject caller files even before any disk mount.
+    let reserved_effect_dts = format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist/Effect.d.ts");
+    let spoof_effect = vfs.add_file(
+        &reserved_effect_dts,
+        "export declare function gen(): void\n",
+    );
+    assert!(matches!(
+        spoof_effect,
+        Err(AuthoringError::InvalidPath { .. })
+    ));
+    assert!(!vfs.file_exists(&reserved_effect_dts));
+
+    let spoof_intrinsics = vfs.add_file(
+        "/@norn/authoring/extra.d.ts",
+        "export declare const spoof: number\n",
+    );
+    assert!(matches!(
+        spoof_intrinsics,
+        Err(AuthoringError::InvalidPath { .. })
+    ));
+    assert!(!vfs.file_exists("/@norn/authoring/extra.d.ts"));
+
+    // Even if a caller file sits under a custom `with_effect_dist_prefix`,
+    // both `resolve_profile_module` and `ProfileChecker` import admission require
+    // verified pinned membership (`is_pinned_file`).
+    vfs.add_file(
+        "/app/node_modules/effect/package.json",
+        "{\"name\":\"effect\",\"exports\":{\"./Effect\":{\"types\":\"./dist/Effect.d.ts\"}}}\n",
+    )?;
+    vfs.add_file(
+        "/app/node_modules/effect/dist/Effect.d.ts",
+        "export declare function gen(): void\n",
+    )?;
+    let entry = vfs.add_file(
+        "/app/use_fake.ts",
+        "import * as Effect from \"effect/Effect\"\nexport const spoofed = Effect.gen\n",
+    )?;
+    let program = AuthoringProgram::new(vfs, &[entry.as_str()], profile.clone())?
+        .with_effect_dist_prefix("/app/node_modules/effect/dist/");
+    let resolved = program.resolve_initializer_identities(entry.as_str())?;
+    let spoofed = resolved
+        .iter()
+        .find(|(name, _)| name == "spoofed")
+        .ok_or("spoofed initializer present")?;
+    assert!(
+        spoofed.1.is_none(),
+        "caller-supplied file under custom effect_dist_prefix must never receive a profile ID: {:?}",
+        spoofed.1
+    );
+
+    let checker = ProfileChecker::new(profile);
+    let reports = checker.check_program(&program, &[entry.as_str()])?;
+    let report = reports.first().ok_or("expected one FileReport")?;
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == "NORN-FLOW-MODULE"),
+        "caller-spoofed effect package must fail pinned module admission: {:?}",
+        report.diagnostics
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_pinned_effect_mount_leaves_vfs_unmodified() -> Result<(), Box<dyn std::error::Error>> {
+    let profile = Profile::load()?;
+    let tmp = std::env::temp_dir().join(format!(
+        "norn-authoring-atomic-mount-{}",
+        std::process::id()
+    ));
+    if tmp.exists() {
+        std::fs::remove_dir_all(&tmp)?;
+    }
+    let dist_dir = tmp.join("dist");
+    std::fs::create_dir_all(&dist_dir)?;
+    std::fs::write(
+        tmp.join("package.json"),
+        "{\"name\":\"effect\",\"version\":\"0.0.0-wrong\"}\n",
+    )?;
+    std::fs::write(
+        dist_dir.join("Effect.d.ts"),
+        "export declare function gen(): void\n",
+    )?;
+
+    let mut vfs = BoundedVfs::default();
+    let err = vfs.mount_pinned_effect_dir(&tmp, &profile);
+    std::fs::remove_dir_all(&tmp)?;
+
+    let pkg_json = format!("{PINNED_EFFECT_VIRTUAL_ROOT}/package.json");
+    let effect_dts = format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist/Effect.d.ts");
+    assert!(matches!(err, Err(AuthoringError::PinMismatch { .. })));
+    assert!(!vfs.file_exists(&pkg_json));
+    assert!(!vfs.file_exists(&effect_dts));
+    assert!(!vfs.is_pinned_file(&effect_dts));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn pinned_mount_ignores_internal_symlinks() -> Result<(), Box<dyn std::error::Error>> {
+    let pid = std::process::id();
+    let base = std::env::temp_dir().join(format!("norn-authoring-symlink-mount-{pid}"));
+    if base.exists() {
+        std::fs::remove_dir_all(&base)?;
+    }
+    let pkg_dir = base.join("pkg");
+    let dist_dir = pkg_dir.join("dist");
+    std::fs::create_dir_all(&dist_dir)?;
+    let secret = base.join("outside.d.ts");
+    std::fs::write(&secret, "export declare const leaked: string\n")?;
+    std::fs::write(
+        pkg_dir.join("package.json"),
+        "{\"name\":\"effect\",\"version\":\"1.0.0\"}\n",
+    )?;
+    std::fs::write(
+        dist_dir.join("Effect.d.ts"),
+        "export declare function gen(): void\n",
+    )?;
+    std::os::unix::fs::symlink(&secret, dist_dir.join("Leaked.d.ts"))?;
+
+    let mut vfs = BoundedVfs::default();
+    let mounted = vfs.mount_pinned_package_dir("/__norn_pinned__/symtest", &pkg_dir)?;
+    std::fs::remove_dir_all(&base)?;
+
+    assert_eq!(mounted, 2);
+    assert!(vfs.is_pinned_file("/__norn_pinned__/symtest/dist/Effect.d.ts"));
+    assert!(!vfs.file_exists("/__norn_pinned__/symtest/dist/Leaked.d.ts"));
+    // Mounted prefix is reserved against caller writes.
+    let caller_write = vfs.add_file(
+        "/__norn_pinned__/symtest/dist/Caller.d.ts",
+        "export declare const x: number\n",
+    );
+    assert!(matches!(
+        caller_write,
+        Err(AuthoringError::InvalidPath { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn generic_mount_and_pinned_file_reject_reserved_and_overlapping_roots()
+-> Result<(), Box<dyn std::error::Error>> {
+    let pid = std::process::id();
+    let pkg_dir = std::env::temp_dir().join(format!("norn-authoring-overlap-{pid}"));
+    if pkg_dir.exists() {
+        std::fs::remove_dir_all(&pkg_dir)?;
+    }
+    let dist = pkg_dir.join("dist");
+    std::fs::create_dir_all(&dist)?;
+    std::fs::write(
+        pkg_dir.join("package.json"),
+        "{\"name\":\"demo\",\"version\":\"1.0.0\"}\n",
+    )?;
+    std::fs::write(
+        dist.join("Index.d.ts"),
+        "export declare const ok: boolean\n",
+    )?;
+
+    let mut vfs = BoundedVfs::default();
+
+    // Generic mount API must reject `/node_modules/effect`, any descendant, and any ancestor.
+    for forbidden in [
+        PINNED_EFFECT_VIRTUAL_ROOT,
+        "/node_modules/effect/sub",
+        "/node_modules",
+    ] {
+        let res = vfs.mount_pinned_package_dir(forbidden, &pkg_dir);
+        assert!(
+            matches!(res, Err(AuthoringError::InvalidPath { .. })),
+            "expected InvalidPath for mount_pinned_package_dir({forbidden:?}), got {res:?}"
+        );
+    }
+
+    // Reject direct add_pinned_file on reserved roots, descendants, and ancestors.
+    for forbidden_file in [
+        PINNED_EFFECT_VIRTUAL_ROOT,
+        "/node_modules/effect/dist/Effect.d.ts",
+        "/node_modules",
+        "/@norn/authoring",
+        "/@norn/authoring/extra.d.ts",
+        "/@norn",
+    ] {
+        let res = vfs.add_pinned_file(forbidden_file, "export declare function gen(): void\n");
+        assert!(
+            matches!(res, Err(AuthoringError::InvalidPath { .. })),
+            "expected InvalidPath for add_pinned_file({forbidden_file:?}), got {res:?}"
+        );
+    }
+
+    // Reject direct add_pinned_file colliding with an ordinary caller directory path.
+    vfs.add_file("/caller_dir/a.ts", "export const x = 1;\n")?;
+    let dir_collision = vfs.add_pinned_file("/caller_dir", "export {};\n");
+    assert!(matches!(
+        dir_collision,
+        Err(AuthoringError::InvalidPath { .. })
+    ));
+
+    // Strict ancestor/descendant mount overlaps are rejected.
+    vfs.mount_pinned_package_dir("/__norn_pinned__/a", &pkg_dir)?;
+    let child_overlap = vfs.mount_pinned_package_dir("/__norn_pinned__/a/b", &pkg_dir);
+    assert!(matches!(
+        child_overlap,
+        Err(AuthoringError::InvalidPath { .. })
+    ));
+    vfs.mount_pinned_package_dir("/__norn_pinned__/c/d", &pkg_dir)?;
+    let parent_overlap = vfs.mount_pinned_package_dir("/__norn_pinned__/c", &pkg_dir);
+    assert!(matches!(
+        parent_overlap,
+        Err(AuthoringError::InvalidPath { .. })
+    ));
+
+    std::fs::remove_dir_all(&pkg_dir)?;
+    Ok(())
+}
+
+#[test]
+fn effect_remount_preserves_on_failure_and_evicts_stale_files_on_success()
+-> Result<(), Box<dyn std::error::Error>> {
+    let profile = Profile::load()?;
+    let pid = std::process::id();
+    let base = std::env::temp_dir().join(format!("norn-authoring-remount-{pid}"));
+    if base.exists() {
+        std::fs::remove_dir_all(&base)?;
+    }
+
+    let valid_pkg = format!(
+        "{{\"name\":\"effect\",\"version\":\"{}\"}}\n",
+        profile.pins.effect.version
+    );
+    let v1_dir = base.join("effect-v1");
+    let v1_stale_dir = v1_dir.join("dist").join("stale");
+    std::fs::create_dir_all(&v1_stale_dir)?;
+    std::fs::write(v1_dir.join("package.json"), &valid_pkg)?;
+    std::fs::write(
+        v1_dir.join("dist").join("Effect.d.ts"),
+        "export declare function gen(): void\n",
+    )?;
+    std::fs::write(
+        v1_stale_dir.join("Legacy.d.ts"),
+        "export declare function legacy(): void\n",
+    )?;
+
+    let bad_dir = base.join("effect-bad");
+    std::fs::create_dir_all(bad_dir.join("dist"))?;
+    std::fs::write(
+        bad_dir.join("package.json"),
+        "{\"name\":\"effect\",\"version\":\"0.0.0-bad\"}\n",
+    )?;
+    std::fs::write(
+        bad_dir.join("dist").join("Effect.d.ts"),
+        "export declare function broken(): void\n",
+    )?;
+
+    let v2_dir = base.join("effect-v2");
+    std::fs::create_dir_all(v2_dir.join("dist"))?;
+    std::fs::write(v2_dir.join("package.json"), &valid_pkg)?;
+    std::fs::write(
+        v2_dir.join("dist").join("Effect.d.ts"),
+        "export declare function succeed(): void\n",
+    )?;
+
+    let mut vfs = BoundedVfs::default();
+    let first_count = vfs.mount_pinned_effect_dir(&v1_dir, &profile)?;
+    assert_eq!(first_count, 3);
+    let stale_file = format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist/stale/Legacy.d.ts");
+    let stale_dir = format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist/stale");
+    assert!(vfs.is_pinned_file(&stale_file));
+    assert!(vfs.directory_exists(&stale_dir));
+
+    // A failed remount over an existing valid effect mount must leave prior files intact.
+    let failed_remount = vfs.mount_pinned_effect_dir(&bad_dir, &profile);
+    assert!(matches!(
+        failed_remount,
+        Err(AuthoringError::PinMismatch { .. })
+    ));
+    assert!(vfs.is_pinned_file(&stale_file));
+    assert_eq!(
+        vfs.read_file(&format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist/Effect.d.ts"))
+            .as_deref(),
+        Some("export declare function gen(): void\n")
+    );
+
+    // Re-mount v2 over the same effect root: stale files and stale directories must vanish.
+    let second_count = vfs.mount_pinned_effect_dir(&v2_dir, &profile)?;
+    std::fs::remove_dir_all(&base)?;
+
+    assert_eq!(second_count, 2);
+    assert!(!vfs.is_pinned_file(&stale_file));
+    assert!(!vfs.file_exists(&stale_file));
+    assert!(vfs.read_file(&stale_file).is_none());
+    assert!(!vfs.directory_exists(&stale_dir));
+    let dist_entries = vfs.get_accessible_entries(&format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist"));
+    assert_eq!(dist_entries.files, vec!["Effect.d.ts".to_owned()]);
+    assert_eq!(dist_entries.directories, Vec::<String>::new());
+    assert_eq!(
+        vfs.read_file(&format!("{PINNED_EFFECT_VIRTUAL_ROOT}/dist/Effect.d.ts"))
+            .as_deref(),
+        Some("export declare function succeed(): void\n")
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn pinned_mount_skips_unreadable_non_declaration_files() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let pid = std::process::id();
+    let base = std::env::temp_dir().join(format!("norn-authoring-unreadable-readme-{pid}"));
+    if base.exists() {
+        std::fs::remove_dir_all(&base)?;
+    }
+    let dist_dir = base.join("dist");
+    std::fs::create_dir_all(&dist_dir)?;
+    std::fs::write(
+        base.join("package.json"),
+        "{\"name\":\"demo\",\"version\":\"1.0.0\"}\n",
+    )?;
+    std::fs::write(
+        dist_dir.join("Index.d.ts"),
+        "export declare const ok: boolean\n",
+    )?;
+    let readme = base.join("README.md");
+    std::fs::write(&readme, "unreadable readme\n")?;
+    std::fs::set_permissions(&readme, std::fs::Permissions::from_mode(0o000))?;
+
+    let mut vfs = BoundedVfs::default();
+    let mount_res = vfs.mount_pinned_package_dir("/__norn_pinned__/readme_test", &base);
+    std::fs::set_permissions(&readme, std::fs::Permissions::from_mode(0o644))?;
+    std::fs::remove_dir_all(&base)?;
+
+    let mounted = mount_res?;
+    assert_eq!(mounted, 2);
+    assert!(vfs.is_pinned_file("/__norn_pinned__/readme_test/dist/Index.d.ts"));
+    assert!(!vfs.file_exists("/__norn_pinned__/readme_test/README.md"));
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn pinned_mount_traverses_search_only_ancestor_directory() -> Result<(), Box<dyn std::error::Error>>
+{
+    use std::os::unix::fs::PermissionsExt;
+
+    let pid = std::process::id();
+    let base = std::env::temp_dir().join(format!("norn-authoring-exec-only-{pid}"));
+    if base.exists() {
+        std::fs::remove_dir_all(&base)?;
+    }
+    let exec_only = base.join("exec_only");
+    let pkg_dir = exec_only.join("pkg");
+    let dist_dir = pkg_dir.join("dist");
+    std::fs::create_dir_all(&dist_dir)?;
+    std::fs::write(
+        pkg_dir.join("package.json"),
+        "{\"name\":\"demo\",\"version\":\"1.0.0\"}\n",
+    )?;
+    std::fs::write(
+        dist_dir.join("Index.d.ts"),
+        "export declare const ok: boolean\n",
+    )?;
+    std::fs::set_permissions(&exec_only, std::fs::Permissions::from_mode(0o111))?;
+
+    let mut vfs = BoundedVfs::default();
+    let mount_res = vfs.mount_pinned_package_dir("/__norn_pinned__/exec_only_test", &pkg_dir);
+    std::fs::set_permissions(&exec_only, std::fs::Permissions::from_mode(0o755))?;
+    std::fs::remove_dir_all(&base)?;
+
+    let mounted = mount_res?;
+    assert_eq!(mounted, 2);
+    assert!(vfs.is_pinned_file("/__norn_pinned__/exec_only_test/dist/Index.d.ts"));
     Ok(())
 }

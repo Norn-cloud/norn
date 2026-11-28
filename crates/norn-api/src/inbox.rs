@@ -1413,7 +1413,8 @@ fn offer<E: SqlEngine>(
     };
     let schema = serde_json::to_value(&action.input_schema).ok()?;
     let fields = schema.get("properties")?.as_object()?;
-    let derived = norn_kernel::actor_derived_fields(action);
+    let mut derived = norn_kernel::actor_derived_fields(action);
+    derived.extend(norn_kernel::clock_derived_fields(action));
     if !fields.contains_key(property) || derived.contains(property) {
         return None;
     }
