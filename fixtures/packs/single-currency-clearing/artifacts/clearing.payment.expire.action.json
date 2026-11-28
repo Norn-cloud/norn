@@ -3,7 +3,7 @@
   "dependencies": [],
   "irVersion": "0.1",
   "kind": "action",
-  "lifecycle": "draft",
+  "lifecycle": "active",
   "name": "Expire uncaptured payment hold",
   "namespace": "clearing",
   "payload": {
@@ -60,12 +60,9 @@
     ]
   },
   "provenance": {
-    "source": "authoring_sdk",
-    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+    "source": "system",
+    "sourcePath": "fixtures/packs/single-currency-clearing/artifacts/clearing.payment.expire.action.json"
   },
-  "scope": {
-    "environmentId": "dev",
-    "orgId": "org_clear"
-  },
+  "scope": {},
   "version": "0.1.0"
 }

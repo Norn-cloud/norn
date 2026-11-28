@@ -10,7 +10,7 @@
   ],
   "irVersion": "0.1",
   "kind": "law",
-  "lifecycle": "draft",
+  "lifecycle": "active",
   "name": "Settled payments require an authenticated clear AML/sanctions screening receipt",
   "namespace": "clearing",
   "payload": {
@@ -43,12 +43,9 @@
     "subject": "clearing.PaymentInstruction"
   },
   "provenance": {
-    "source": "authoring_sdk",
-    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+    "source": "system",
+    "sourcePath": "fixtures/packs/single-currency-clearing/artifacts/clearing.payment.settled_requires_clear_screening.law.json"
   },
-  "scope": {
-    "environmentId": "dev",
-    "orgId": "org_clear"
-  },
+  "scope": {},
   "version": "0.1.0"
 }

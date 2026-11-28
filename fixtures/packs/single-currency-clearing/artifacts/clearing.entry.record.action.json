@@ -16,7 +16,7 @@
   ],
   "irVersion": "0.1",
   "kind": "action",
-  "lifecycle": "draft",
+  "lifecycle": "active",
   "name": "Record REA ClearingEntry bound to settled payment",
   "namespace": "clearing",
   "payload": {
@@ -112,12 +112,9 @@
     ]
   },
   "provenance": {
-    "source": "authoring_sdk",
-    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+    "source": "system",
+    "sourcePath": "fixtures/packs/single-currency-clearing/artifacts/clearing.entry.record.action.json"
   },
-  "scope": {
-    "environmentId": "dev",
-    "orgId": "org_clear"
-  },
+  "scope": {},
   "version": "0.1.0"
 }

@@ -10,7 +10,7 @@
   ],
   "irVersion": "0.1",
   "kind": "law",
-  "lifecycle": "draft",
+  "lifecycle": "active",
   "name": "Every clearing ledger effect is denominated in USD",
   "namespace": "clearing",
   "payload": {
@@ -43,12 +43,9 @@
     "subject": "clearing.ClearingEntry"
   },
   "provenance": {
-    "source": "authoring_sdk",
-    "sourcePath": "fixtures/packs/single-currency-clearing/clearing.ts"
+    "source": "system",
+    "sourcePath": "fixtures/packs/single-currency-clearing/artifacts/clearing.entry.single_currency_usd.law.json"
   },
-  "scope": {
-    "environmentId": "dev",
-    "orgId": "org_clear"
-  },
+  "scope": {},
   "version": "0.1.0"
 }
