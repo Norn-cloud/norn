@@ -5,7 +5,7 @@ use crate::{
     engine::{SqlEngine, params},
     host::GuardView,
     mapping_bundle::MappingBundle,
-    mapping_conflict::EventDispute,
+    mapping_conflict::{EventDispute, SourceDisputeIndex},
     system::INBOX,
 };
 use norn_ir::{RuntimeObject, RuntimeValue, mapping::ObservedLinkClaim};
@@ -358,6 +358,30 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         if !self.indexed_source_dispute(MAIN_WORLD, object_type, key)? {
             return Ok(Vec::new());
         }
+        self.held_link_findings_with_lookup(object_type, key, |bundle| {
+            self.mapping_event_dispute(bundle)
+        })
+    }
+
+    pub(crate) fn held_link_findings_in_index(
+        &self,
+        object_type: &str,
+        key: &str,
+        index: &SourceDisputeIndex,
+    ) -> Result<Vec<norn_ir::DataQualityFinding>, CellError> {
+        let roots = self.source_dispute_roots(MAIN_WORLD, object_type, key)?;
+        if !index.has_subject(roots.as_deref(), key) {
+            return Ok(Vec::new());
+        }
+        self.held_link_findings_with_lookup(object_type, key, |bundle| index.event_dispute(bundle))
+    }
+
+    fn held_link_findings_with_lookup(
+        &self,
+        object_type: &str,
+        key: &str,
+        mut event_dispute: impl FnMut(&MappingBundle) -> Result<Option<EventDispute>, CellError>,
+    ) -> Result<Vec<norn_ir::DataQualityFinding>, CellError> {
         let catalog = TypeCatalog::new(self.model().object_types())
             .with_interfaces(self.model().interfaces());
         let model = CommitModel::new(&catalog);
@@ -408,7 +432,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     continue;
                 }
                 let bundle = self.claim_bundle(&entry.claim.observation_id)?;
-                let Some(dispute) = self.mapping_event_dispute(&bundle)? else {
+                let Some(dispute) = event_dispute(&bundle)? else {
                     continue;
                 };
                 held.entry(model.canonical_link(&link))

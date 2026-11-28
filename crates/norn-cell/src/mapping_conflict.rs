@@ -313,6 +313,51 @@ impl SourceDisputeIndex {
         }
         entry.rows.insert(row);
     }
+
+    pub(crate) fn has_subject(&self, roots: Option<&[String]>, key: &str) -> bool {
+        match roots {
+            Some(roots) => roots
+                .iter()
+                .any(|root| self.subjects.contains_key(&(root.clone(), key.to_owned()))),
+            None => self.roots_by_key.contains_key(key),
+        }
+    }
+
+    pub(crate) fn event_dispute(
+        &self,
+        bundle: &MappingBundle,
+    ) -> Result<Option<EventDispute>, CellError> {
+        let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
+            .map(|key| norn_ir::canonical::nfc(&key));
+        Ok(self.events.get(&keys).cloned())
+    }
+
+    fn open_findings_for(&self, roots: Option<&[String]>, key: &str, identity: bool) -> usize {
+        let mut seen = BTreeSet::new();
+        let mut count = 0_usize;
+        for root in roots.into_iter().flatten().chain(
+            self.roots_by_key
+                .get(key)
+                .into_iter()
+                .flatten()
+                .filter(|_root| roots.is_none()),
+        ) {
+            for (kind, finding) in self
+                .subjects
+                .get(&(root.clone(), key.to_owned()))
+                .into_iter()
+                .flatten()
+            {
+                if *kind == identity
+                    && seen.insert(finding.id.clone())
+                    && matches!(finding.status, DataQualityFindingStatus::Open)
+                {
+                    count = count.saturating_add(1);
+                }
+            }
+        }
+        count
+    }
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
@@ -513,5 +558,188 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
             .map(|key| norn_ir::canonical::nfc(&key));
         self.with_source_dispute_index(|index| index.events.get(&keys).cloned())
+    }
+
+    fn subject_matches_readable(
+        &self,
+        version: u64,
+        object_type: &str,
+        key: &str,
+        readable_map: &BTreeMap<&str, Option<BTreeSet<String>>>,
+    ) -> bool {
+        let Some(allowed_roots) = readable_map.get(key) else {
+            return false;
+        };
+        let Some(roots) = allowed_roots else {
+            return true;
+        };
+        if let Ok(root) = self.retained_mapping_root(version, object_type) {
+            return roots.contains(&root);
+        }
+        if let Ok(root) = self.root_type(object_type) {
+            return roots.contains(root);
+        }
+        true
+    }
+
+    fn dispute_touches_readable(
+        &self,
+        version: u64,
+        finding: &DataQualityFinding,
+        records: &[norn_ir::mapping::MappedRecord],
+        readable_map: &BTreeMap<&str, Option<BTreeSet<String>>>,
+    ) -> bool {
+        finding.subjects.iter().any(|s| {
+            self.subject_matches_readable(version, s.object_type.as_str(), &s.key, readable_map)
+        }) || records.iter().any(|r| {
+            self.subject_matches_readable(version, r.object_type.as_str(), &r.key, readable_map)
+        })
+    }
+
+    fn collect_scoped_source_conflicts(
+        &self,
+        readable_map: &BTreeMap<&str, Option<BTreeSet<String>>>,
+        index: &mut SourceDisputeIndex,
+    ) -> Result<(), CellError> {
+        let rows = self.conn.query(&format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-conflict:%' ORDER BY position"), params![])?;
+        for values in rows {
+            let row = crate::engine::SqlRow(values);
+            let position = crate::read::to_u64(row.get(0)?, "inbox position")?;
+            let stored_id: String = row.get(1)?;
+            let encoded: String = row.get(2)?;
+            let Ok(observed) = serde_json::from_str::<Observed<RuntimeValue>>(&encoded) else {
+                continue;
+            };
+            let Ok(conflict) = norn_ir::runtime::decode::<MappingConflict>(&observed.input) else {
+                continue;
+            };
+            if observed.id.0 != stored_id
+                || stored_id != format!("mapping-conflict:{}", conflict.finding.id)
+                || !self.dispute_touches_readable(
+                    conflict.incoming.definitions_version,
+                    &conflict.finding,
+                    &conflict.incoming.records,
+                    readable_map,
+                )
+            {
+                continue;
+            }
+            if let Err(err) = self.recheck_mapping_bundle(&conflict.incoming) {
+                if crate::mapping_page::is_store_failure(&err) {
+                    return Err(err);
+                }
+                continue;
+            }
+            let expected = self.mapping_conflict(&conflict.incoming)?;
+            if expected.as_ref() != Some(&conflict) {
+                continue;
+            }
+            index.dispute(
+                crate::mapping_identity::keys(&conflict.incoming.raw, &conflict.incoming.input)?
+                    .map(|key| norn_ir::canonical::nfc(&key)),
+                position,
+                stored_id,
+                &conflict.finding,
+            );
+            self.index_source_finding(index, &conflict.incoming, false, &conflict.finding)?;
+        }
+        Ok(())
+    }
+
+    fn collect_scoped_identity_evidence(
+        &self,
+        readable_map: &BTreeMap<&str, Option<BTreeSet<String>>>,
+        index: &mut SourceDisputeIndex,
+    ) -> Result<(), CellError> {
+        let rows = self.conn.query(&format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-identity:%' ORDER BY position"), params![])?;
+        for values in rows {
+            let row = crate::engine::SqlRow(values);
+            let position = crate::read::to_u64(row.get(0)?, "inbox position")?;
+            let stored_id: String = row.get(1)?;
+            let encoded: String = row.get(2)?;
+            let Ok(observed) = serde_json::from_str::<Observed<RuntimeValue>>(&encoded) else {
+                continue;
+            };
+            let Ok(guard) = norn_ir::runtime::decode::<crate::mapping_identity::IdentityEvidence>(
+                &observed.input,
+            ) else {
+                continue;
+            };
+            if observed.id.0 != stored_id
+                || stored_id != format!("mapping-identity:{}", guard.finding.id)
+                || !self.dispute_touches_readable(
+                    guard.bundle.definitions_version,
+                    &guard.finding,
+                    &guard.bundle.records,
+                    readable_map,
+                )
+            {
+                continue;
+            }
+            if let Err(err) = self.recheck_identity_evidence(&guard) {
+                if crate::mapping_page::is_store_failure(&err) {
+                    return Err(err);
+                }
+                continue;
+            }
+            index.dispute(
+                crate::mapping_identity::keys(&guard.bundle.raw, &guard.bundle.input)?,
+                position,
+                stored_id,
+                &guard.finding,
+            );
+            self.index_source_finding(index, &guard.bundle, true, &guard.finding)?;
+        }
+        Ok(())
+    }
+
+    /// Count open source-conflict, identity-dispute, and held-link findings strictly
+    /// for `readable` subjects (`HOST-READ-2`), avoiding cell-wide dispute verification
+    /// over unreadable conflicts while remaining fail-closed for relevant evidence.
+    pub(crate) fn scoped_open_source_dispute_findings(
+        &self,
+        readable: &[(String, String)],
+    ) -> Result<usize, CellError> {
+        let mut readable_roots = Vec::with_capacity(readable.len());
+        let mut readable_map: BTreeMap<&str, Option<BTreeSet<String>>> = BTreeMap::new();
+        for (ty, key) in readable {
+            let roots = self.source_dispute_roots(crate::MAIN_WORLD, ty, key)?;
+            match (&roots, readable_map.entry(key.as_str())) {
+                (Some(rs), std::collections::btree_map::Entry::Vacant(slot)) => {
+                    slot.insert(Some(rs.iter().cloned().collect()));
+                }
+                (Some(rs), std::collections::btree_map::Entry::Occupied(mut slot)) => {
+                    if let Some(existing) = slot.get_mut() {
+                        existing.extend(rs.iter().cloned());
+                    }
+                }
+                (None, std::collections::btree_map::Entry::Vacant(slot)) => {
+                    slot.insert(None);
+                }
+                (None, std::collections::btree_map::Entry::Occupied(mut slot)) => {
+                    slot.insert(None);
+                }
+            }
+            readable_roots.push((ty.as_str(), key.as_str(), roots));
+        }
+        let mut scoped_index = SourceDisputeIndex::default();
+        self.collect_scoped_source_conflicts(&readable_map, &mut scoped_index)?;
+        self.collect_scoped_identity_evidence(&readable_map, &mut scoped_index)?;
+        if scoped_index.subjects.is_empty() {
+            return Ok(0);
+        }
+        let mut open = 0_usize;
+        for (ty, key, roots) in &readable_roots {
+            open =
+                open.saturating_add(scoped_index.open_findings_for(roots.as_deref(), key, false));
+            open = open.saturating_add(scoped_index.open_findings_for(roots.as_deref(), key, true));
+            let held = self.held_link_findings_in_index(ty, key, &scoped_index)?;
+            open = open.saturating_add(
+                held.into_iter()
+                    .filter(|f| matches!(f.status, DataQualityFindingStatus::Open))
+                    .count(),
+            );
+        }
+        Ok(open)
     }
 }

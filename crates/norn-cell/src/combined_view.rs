@@ -628,6 +628,7 @@ fn count_open_findings<E: SqlEngine>(
     let reader = store.read();
     let mut open = 0_usize;
     let mut withheld = false;
+    let mut readable_subjects = Vec::new();
     for ty in evidence_types {
         let mut after: Option<String> = None;
         loop {
@@ -650,19 +651,23 @@ fn count_open_findings<E: SqlEngine>(
                     }
                     RowAccess::Read => {}
                 }
-                let found = reader.observation_findings(world, ty, id)?;
+                let found = reader.review_findings(world, ty, id)?;
                 open = open.saturating_add(
                     found
                         .into_iter()
-                        .filter(|f| matches!(f.status, DataQualityFindingStatus::Open))
+                        .filter(|(f, _)| matches!(f.status, DataQualityFindingStatus::Open))
                         .count(),
                 );
+                readable_subjects.push(((*ty).to_owned(), id.clone()));
             }
             if page.len() < 1_000 {
                 break;
             }
             after = page.last().cloned();
         }
+    }
+    if world == crate::MAIN_WORLD && !readable_subjects.is_empty() {
+        open = open.saturating_add(reader.scoped_open_source_dispute_findings(&readable_subjects)?);
     }
     Ok((open, withheld))
 }

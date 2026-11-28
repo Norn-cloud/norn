@@ -5446,8 +5446,8 @@ fn eval_pending_only_cut(
         required_feeds: &REQUIRED_FEEDS,
         read_frontier: &live_frontier,
         min_fresh_ms: book.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
-        evidence_types: &["supply.PosSaleEvidence"],
-        feed_mappings: &[("supply.pos_sales.mapping", "supply.PosSaleEvidence")],
+        evidence_types: &EVIDENCE_TYPES,
+        feed_mappings: &FEED_MAPPINGS,
         evidence_access,
         coverage_transforms: &[],
         reconciliation_gates: &[],
@@ -5503,61 +5503,84 @@ fn verify_conflict_related_evidence_failure_and_filter_order(
     book: &mut EntityBook,
 ) -> Result<(), String> {
     // Inject a corrupted related `mapping-bundle:` sharing the exact 5 source-event keys
-    // of the genuine pending `mapping-conflict:` (`POS-CONFLICT-1`, incoming net_revenue=200).
-    // All policies below deny live committed POS rows (net_revenue != 200) so `count_open_findings`
-    // never invokes `observation_findings`, exercising `count_scoped_pending_observations` directly.
+    // of the genuine pending `mapping-conflict:` (`POS-CONFLICT-1`, incoming net_revenue=200)
+    // on a cell that also holds readable unrelated committed POS + non-POS evidence rows.
     inject_corrupted_related_pos_bundle(book)?;
 
-    // 1. Authorized for the incoming conflict row (`net_revenue == 200`): MUST fail closed
-    //    with `MappingBundleMismatch` from `verify_visible_pending_candidate`.
-    let read_incoming_only = |obj: &norn_cell::ObjectRecord| {
-        if obj.id == norn_cell::compute::ALL_MEMBERS
-            || (obj.id == "POS-CONFLICT-1"
-                && obj.values.get("net_revenue").map(scalar).as_deref() == Some("200"))
-        {
-            Ok(RowAccess::Read)
-        } else {
+    // 1. Mixed visibility: unrelated committed POS + non-POS rows are `Read`, while the
+    //    conflicting row (`POS-CONFLICT-1`) is `None` or `Count`. Both `count_open_findings`
+    //    and `count_scoped_pending_observations` MUST succeed with 0 findings and 0 pending.
+    let saw_unrelated_pos = AtomicBool::new(false);
+    let mixed_hidden = |obj: &norn_cell::ObjectRecord| {
+        if obj.object_type == "supply.PosSaleEvidence" && obj.id == "POS-CONFLICT-1" {
             Ok(RowAccess::None)
+        } else {
+            if obj.object_type == "supply.PosSaleEvidence"
+                && obj.id != norn_cell::compute::ALL_MEMBERS
+            {
+                saw_unrelated_pos.store(true, Ordering::Relaxed);
+            }
+            Ok(RowAccess::Read)
         }
     };
-    let auth_res = eval_pending_only_cut(book, &read_incoming_only);
+    let hidden_cut = eval_pending_only_cut(book, &mixed_hidden)
+        .map_err(|e| format!("mixed_hidden must succeed with unrelated POS rows: {e}"))?;
     assert!(
-        matches!(auth_res, Err(CellError::MappingBundleMismatch)),
-        "visible genuine conflict with corrupted related bundle must fail closed: {auth_res:?}"
+        saw_unrelated_pos.load(Ordering::Relaxed),
+        "mixed-visibility test must read at least one unrelated committed PosSaleEvidence row"
     );
-
-    // 2. Collection `Read` on `ALL_MEMBERS` with `None` or `Count` on the incoming row:
-    //    row visibility runs BEFORE related-evidence lookup, so excluded conflicts return `0`.
-    let row_hidden = |obj: &norn_cell::ObjectRecord| {
-        if obj.id == norn_cell::compute::ALL_MEMBERS {
-            Ok(RowAccess::Read)
-        } else {
-            Ok(RowAccess::None)
-        }
-    };
-    let hidden_cut = eval_pending_only_cut(book, &row_hidden)
-        .map_err(|e| format!("row_hidden must succeed: {e}"))?;
+    assert_eq!(hidden_cut.open_findings, 0);
     assert_eq!(hidden_cut.pending_observations, 0);
 
-    let row_count_only = |obj: &norn_cell::ObjectRecord| {
-        if obj.id == norn_cell::compute::ALL_MEMBERS {
-            Ok(RowAccess::Read)
-        } else if obj.id == "POS-CONFLICT-1"
-            && obj.values.get("net_revenue").map(scalar).as_deref() == Some("200")
-        {
+    let mixed_count_only = |obj: &norn_cell::ObjectRecord| {
+        if obj.object_type == "supply.PosSaleEvidence" && obj.id == "POS-CONFLICT-1" {
             Ok(RowAccess::Count)
         } else {
-            Ok(RowAccess::None)
+            Ok(RowAccess::Read)
         }
     };
-    let count_cut = eval_pending_only_cut(book, &row_count_only)
-        .map_err(|e| format!("row_count_only must succeed: {e}"))?;
+    let count_cut = eval_pending_only_cut(book, &mixed_count_only)
+        .map_err(|e| format!("mixed_count_only must succeed: {e}"))?;
+    assert_eq!(count_cut.open_findings, 0);
     assert_eq!(count_cut.pending_observations, 0);
 
-    // 3. Collection-denied reader (`None` on `ALL_MEMBERS`): filtered BEFORE recheck.
-    let deny_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::None);
-    let denied_cut = eval_pending_only_cut(book, &deny_all)
-        .map_err(|e| format!("deny_all must succeed: {e}"))?;
+    // 2. Authorized for incoming conflict row (`net_revenue == 200`) + unrelated committed rows,
+    //    with live committed `POS-CONFLICT-1` hidden: pending scan fails closed.
+    let read_incoming_only = |obj: &norn_cell::ObjectRecord| {
+        if obj.object_type == "supply.PosSaleEvidence"
+            && obj.id == "POS-CONFLICT-1"
+            && obj.values.get("net_revenue").map(scalar).as_deref() != Some("200")
+        {
+            Ok(RowAccess::None)
+        } else {
+            Ok(RowAccess::Read)
+        }
+    };
+    let pending_fail = eval_pending_only_cut(book, &read_incoming_only);
+    assert!(
+        matches!(pending_fail, Err(CellError::MappingBundleMismatch)),
+        "visible incoming conflict with corrupted related bundle must fail closed: {pending_fail:?}"
+    );
+
+    // 3. Authorized for committed `POS-CONFLICT-1`: `count_open_findings` fails closed.
+    let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
+    let committed_fail = eval_pending_only_cut(book, &allow_all);
+    assert!(
+        matches!(committed_fail, Err(CellError::MappingBundleMismatch)),
+        "readable conflicted committed row must fail closed: {committed_fail:?}"
+    );
+
+    // 4. Collection-denied for `PosSaleEvidence`, readable non-POS evidence: succeeds with 0.
+    let hide_pos_type = |obj: &norn_cell::ObjectRecord| {
+        if obj.object_type == "supply.PosSaleEvidence" {
+            Ok(RowAccess::None)
+        } else {
+            Ok(RowAccess::Read)
+        }
+    };
+    let denied_cut = eval_pending_only_cut(book, &hide_pos_type)
+        .map_err(|e| format!("hide_pos_type must succeed: {e}"))?;
+    assert_eq!(denied_cut.open_findings, 0);
     assert_eq!(denied_cut.pending_observations, 0);
     Ok(())
 }
