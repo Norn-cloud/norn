@@ -142,7 +142,9 @@ impl Backend for Human {
             | Command::Eval { .. }
             | Command::Openapi
             | Command::SourceDigest { .. }
-            | Command::Explain(_) => {
+            | Command::Explain(_)
+            | Command::Test(_)
+            | Command::Dev(_) => {
                 return Err(Refusal::invalid("backend unavailable"));
             }
         };
