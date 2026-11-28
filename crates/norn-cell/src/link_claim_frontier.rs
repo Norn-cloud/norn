@@ -165,7 +165,7 @@ pub(crate) fn parse_claim_from_values(
 fn bundle_meta_with_reader<E: SqlEngine>(
     reader: Option<&StoreReader<'_, E>>,
     bundle: &MappingBundle,
-) -> Result<ClaimSourceMeta, CellError> {
+) -> ClaimSourceMeta {
     let version_kind = if let Some(reader) = reader {
         reader
             .bundle_version_kind(bundle)
@@ -182,11 +182,11 @@ fn bundle_meta_with_reader<E: SqlEngine>(
     let event_keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)
         .map(|keys| keys.map(|k| norn_ir::canonical::nfc(&k)))
         .unwrap_or_default();
-    Ok(ClaimSourceMeta {
+    ClaimSourceMeta {
         source_version,
         version_kind,
         event_keys,
-    })
+    }
 }
 
 fn raw_version_kind(raw: &Value) -> VersionKind {
@@ -214,16 +214,16 @@ fn claim_source_meta<E: SqlEngine>(
     };
     if observation_id.starts_with("mapping-bundle:") {
         if let Ok(bundle) = norn_ir::runtime::decode::<MappingBundle>(&observed.input) {
-            return bundle_meta_with_reader(reader, &bundle);
+            return Ok(bundle_meta_with_reader(reader, &bundle));
         }
     } else if observation_id.starts_with("mapping-conflict:") {
         if let Ok(conflict) = norn_ir::runtime::decode::<MappingConflict>(&observed.input) {
-            return bundle_meta_with_reader(reader, &conflict.incoming);
+            return Ok(bundle_meta_with_reader(reader, &conflict.incoming));
         }
     } else if observation_id.starts_with("mapping-identity:")
         && let Ok(identity) = norn_ir::runtime::decode::<IdentityEvidence>(&observed.input)
     {
-        return bundle_meta_with_reader(reader, &identity.bundle);
+        return Ok(bundle_meta_with_reader(reader, &identity.bundle));
     }
     Ok(ClaimSourceMeta::default())
 }
@@ -260,10 +260,9 @@ fn insert_claim_row<E: SqlEngine>(
     active: bool,
 ) -> Result<(), CellError> {
     let contribution_id = claim.contribution_id()?;
-    let claim_json =
-        String::from_utf8(norn_ir::canonical::canonical_json_of(claim)?).map_err(|error| {
-            CellError::Encoding(format!("observed link claim JSON is not UTF-8: {error}"))
-        })?;
+    // Preserve exact Unicode spelling of immutable claim provenance (no NFC
+    // rewriting) so resealing retained claims matches `_norn_fact_values`.
+    let claim_json = serde_json::to_string(claim)?;
     let event_keys_json = serde_json::to_string(&meta.event_keys)?;
     let commit_seq_i64 = to_i64(commit_seq, "claim commit_seq")?;
     let ordinal_i64 = to_i64(claim_ordinal, "claim ordinal")?;
@@ -530,10 +529,7 @@ pub(crate) fn frontier_has_drift<E: SqlEngine>(
         let exp_contrib = exp_claim.contribution_id()?;
         let exp_active = i64::from(!expected_superseded.contains(&id));
         let exp_event_keys_json = serde_json::to_string(&exp_meta.event_keys)?;
-        let exp_json = String::from_utf8(norn_ir::canonical::canonical_json_of(exp_claim)?)
-            .map_err(|e| {
-                CellError::Encoding(format!("observed link claim JSON is not UTF-8: {e}"))
-            })?;
+        let exp_json = serde_json::to_string(exp_claim)?;
         let matches = row.get::<String>(1)? == exp_contrib
             && row.get::<String>(2)? == exp_claim.source_scope
             && row.get::<String>(3)? == exp_claim.source_type.as_str()

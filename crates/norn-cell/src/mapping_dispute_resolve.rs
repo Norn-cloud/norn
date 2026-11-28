@@ -225,9 +225,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         excluding_dispute: Option<&str>,
     ) -> Result<Option<crate::mapping_conflict::EventDispute>, CellError> {
         self.with_source_dispute_index(|index| {
-            let Some(dispute) = index.events.get(keys) else {
-                return None;
-            };
+            let dispute = index.events.get(keys)?;
             let Some(exclude) = excluding_dispute else {
                 return Some(dispute.clone());
             };
