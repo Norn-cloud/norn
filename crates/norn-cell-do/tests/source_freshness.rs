@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn unsynced_source_backed_question_is_incomplete_across_cell_ivm_and_http() {
         let (host, principals, scope) = open_hosted(&["erpnext"]);
-        let derived = DerivedQuestions::new([7; 32], scope.clone());
+        let derived = DerivedQuestions::new([7; 32], scope);
         let runtime = derived.questions(&host).expect("runtime");
         let order_metric =
             metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
@@ -765,15 +765,8 @@ mod tests {
 
     #[test]
     fn tenant_serve_enforces_configured_secondary_connection_via_connect() {
-        let dir = std::env::temp_dir().join(format!(
-            "norn-b6-tenant-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).expect("mkdir");
-        let db = dir.join("cell.sqlite");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("cell.sqlite");
         let (disk, scope2) = open_store_at(&["erpnext"], Some(&db));
         let (seed_host, seed_principals, _) = wrap_host(disk, scope2.clone());
         sync_erpnext(&seed_host, &scope2, T0);
@@ -788,12 +781,11 @@ mod tests {
         );
         drop(seed_host);
 
-        let db_open = db.clone();
         let mut tenant = Tenant::open(
             scope2.clone(),
             &DEMO_GRANTS,
             Box::new(move || {
-                NativeEngine::open(&db_open, StoreOptions::default()).map_err(|e| e.to_string())
+                NativeEngine::open(&db, StoreOptions::default()).map_err(|e| e.to_string())
             }),
             Some(&[7; 32]),
         )
@@ -835,7 +827,6 @@ mod tests {
         let doc: Value = serde_json::from_str(&resp.body).unwrap();
         assert_eq!(doc["freshness"], "incomplete", "{doc}");
         assert_eq!(doc["complete"], false);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn commit_connection(
@@ -1290,12 +1281,11 @@ mod tests {
             "ok",
         );
 
-        let derived = DerivedQuestions::new([7; 32], scope.clone()).with_configured_connections(
-            BTreeMap::from([
+        let derived =
+            DerivedQuestions::new([7; 32], scope).with_configured_connections(BTreeMap::from([
                 ("erpnext.a".into(), "erpnext.rest.mapping".into()),
                 ("erpnext.b".into(), "erpnext.rest.mapping".into()),
-            ]),
-        );
+            ]));
         let runtime = derived.questions(&host).expect("runtime");
         let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
         let q = order_line_question(&metric, 60_000);

@@ -1087,6 +1087,10 @@ mod tests {
         store
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "json! literals in test fixture helper"
+    )]
     fn derive_holding_obs(
         store: &CellStore<crate::engine::NativeEngine>,
         source_version: &str,

@@ -1990,7 +1990,7 @@ mod tests {
                     &[
                         SqlValue::Text(v2_digest.clone()),
                         SqlValue::Text("erpnext.rest".into()),
-                        SqlValue::Text(dataset.clone()),
+                        SqlValue::Text(dataset),
                     ],
                 )
                 .expect("rewrite to v2 digest");

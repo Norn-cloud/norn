@@ -2491,11 +2491,11 @@ fn a_mid_page_ingest_failure_does_not_advance_the_durable_watermark() {
             .is_some(),
         "stranded row {stranded_party_key} must become durable during recovery"
     );
-    assert!(
+    assert_eq!(
         owning_host
             .pending_source_captures("odoo.rest")
-            .expect("pending after recovery")
-            .is_empty()
+            .expect("pending after recovery"),
+        Vec::new()
     );
     let recovered_conn = owning_host
         .host_object("source.Connection", "odoo.rest")

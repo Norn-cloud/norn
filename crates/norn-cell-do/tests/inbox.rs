@@ -404,6 +404,10 @@ fn a_marked_name_is_a_pseudonym_for_every_caller_and_the_fix_stays() {
 /// neither lists nor counts it. A connection whose read was refused has
 /// failed and stays listed, with the section's count matching.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "end-to-end inbox + sync route receipt regression"
+)]
 fn a_connection_whose_connector_is_not_installed_is_not_a_failed_source() {
     let directory = tempfile::tempdir().unwrap();
     let sources = json!([
