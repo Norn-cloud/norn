@@ -1656,6 +1656,9 @@ pub struct WrittenRow {
     /// Missing legacy commitments deserialize but never prove historical values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_sha256: Option<String>,
+    /// FORK-EVIDENCE-1 (Unit 2b, v11): minting fork world (`None` on `main`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_world: Option<String>,
 }
 
 /// Ordered atomic intents/results. A singleton retains its canonical scalar encoding.
@@ -1715,25 +1718,9 @@ pub struct ReceiptBody {
     pub enqueued: Vec<String>,
     /// Timer ids scheduled.
     pub scheduled: Vec<String>,
-}
-impl ReceiptBody {
-    pub(crate) fn quantity_requests(&self) -> &[norn_ir::quantity_ledger::QuantityRequest] {
-        self.quantity.as_ref().map_or(&[], |requests| &requests.0)
-    }
-    pub(crate) fn quantity_result(
-        &self,
-        ledger: &str,
-    ) -> Option<&norn_kernel::quantity::QuantityResult> {
-        let requests = self.quantity.as_ref()?;
-        let results = self.quantity_result.as_ref()?;
-        if requests.len() != results.len() {
-            return None;
-        }
-        requests
-            .iter()
-            .zip(results.iter())
-            .find_map(|(request, result)| (request.ledger_id == ledger).then_some(result))
-    }
+    /// FORK-EVIDENCE-1 (Unit 2b, v11): durable fork pin (`None` on `main`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_pin: Option<crate::fork::ForkPin>,
 }
 
 #[allow(
@@ -3519,7 +3506,8 @@ impl<E: SqlEngine> CellStore<E> {
             let watch = automation_outbox::capture_before(
                 &writer.reader(), effective_batch, automation_outbox::preimage_limit(retained),
             )?;
-            let written = writer.apply_writes()?;
+            let mut written = writer.apply_writes()?;
+            crate::fork_evidence::tag_written_for_fork(&mut written, self.fork.as_ref());
             crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
             let automation = automation_outbox::record(
@@ -3547,7 +3535,8 @@ impl<E: SqlEngine> CellStore<E> {
             if !matches!(origin, CommitOrigin::Retained(_)) {
                 crate::identity::validate(&writer.reader())?;
             }
-            let (first_event_seq, ledger_head, entries) = writer.append_events()?;
+            let (first_event_seq, ledger_head, entries) =
+                writer.append_events(self.fork.as_ref())?;
             if let Some(boundary) = new_boundary {
                 crate::quantity::establish_boundary(&self.conn, boundary)?;
             }
@@ -3598,6 +3587,7 @@ impl<E: SqlEngine> CellStore<E> {
                         | EffectRow::CancelTimer { .. } => None,
                     })
                     .collect(),
+                fork_pin: self.fork.clone(),
             };
             if let (Some(requests), Some(results)) = (&body.quantity, &body.quantity_result) {
                 for (request, result) in requests.iter().zip(results.iter()) {
