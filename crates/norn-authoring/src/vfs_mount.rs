@@ -314,10 +314,10 @@ fn open_unix_root_dir(canonical_root: &Path) -> Result<File, AuthoringError> {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-    let ancestor_base = OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let ancestor_base = OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
     #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
-    let ancestor_base = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
-    let final_base = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let ancestor_base = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let final_base = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
 
     if segments.is_empty() {
         return openat(CWD, "/", final_base, Mode::empty())
@@ -337,11 +337,7 @@ fn open_unix_root_dir(canonical_root: &Path) -> Result<File, AuthoringError> {
     let mut walked = PathBuf::from("/");
     for (idx, segment) in segments.iter().enumerate() {
         let is_final = idx.saturating_add(1) == segments.len();
-        let flags = if is_final {
-            final_base | OFlags::NOFOLLOW
-        } else {
-            ancestor_base | OFlags::NOFOLLOW
-        };
+        let flags = if is_final { final_base } else { ancestor_base };
         walked.push(segment);
         current = openat(&current, *segment, flags, Mode::empty())
             .map(File::from)
