@@ -87,6 +87,8 @@ fn parse_optional_string(
 }
 
 pub(super) fn parse_module_specs(raw: &str) -> Result<Vec<ModuleSpec>, AuthoringFailure> {
+    let _ = norn_ir::RuntimeValue::from_json_text(raw)
+        .map_err(|err| AuthoringFailure::Io(format!("invalid --modules manifest: {err}")))?;
     let parsed: Value = serde_json::from_str(raw)
         .map_err(|err| AuthoringFailure::Io(format!("invalid --modules manifest: {err}")))?;
     let Some(items) = parsed.as_array() else {
@@ -188,6 +190,21 @@ pub(super) fn resolve_module_rel_inside_base(
 mod tests {
     use super::*;
     use clap::Parser as _;
+
+    #[test]
+    fn manifest_parser_rejects_duplicate_keys() {
+        assert!(parse_module_specs(r#"[{"path":"a.ts","path":"b.ts"}]"#).is_err());
+        assert!(
+            parse_module_specs(r#"[{"path":"a.ts","scope":{"orgId":"a","orgId":"b"}}]"#).is_err()
+        );
+        assert!(
+            parse_module_specs(
+                r#"[{"path":"a.ts","registryPackagePath":"p1","registryPackagePath":"p2"}]"#
+            )
+            .is_err()
+        );
+        assert!(parse_module_specs(r#"[{"path":"a.ts","scope":{"orgId":"a"}}]"#).is_ok());
+    }
 
     #[test]
     fn module_paths_escaping_base_are_refused() {

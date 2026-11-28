@@ -212,6 +212,8 @@ prepare_inputs() {
   python3 scripts/importers/erpnext_runtime.py --output "$upstream" --interop-only
   export NORN_UPSTREAM_FIXTURE_DIR="$upstream"
   (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile)
+  cargo build --locked -p norn-cli --bin norn
+  "${CARGO_TARGET_DIR:-$PWD/target}/debug/norn" compile tools/norn-ts/fixtures/core --org org_demo --env dev --out "$upstream/core-artifacts.json"
 }
 use_jsonschema() {
   if command -v uv > /dev/null 2>&1; then
