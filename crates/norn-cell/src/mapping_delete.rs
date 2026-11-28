@@ -5,12 +5,17 @@
 //! quarantined delete bundles while enabling `CompiledMapping::apply_delete`
 //! and `prepare_observed_delete` for derivation 3 delete bundles.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use norn_checker::Diagnostic;
 use norn_checker::mapping::{CompiledMapping, SourceDocument};
-use norn_ir::mapping::MappedDelete;
+use norn_ir::SourceVersion;
+use norn_ir::mapping::{MappedDelete, ObservedLinkClaim};
 use norn_ir::provenance::UtcTimestamp;
 use norn_ir::{RuntimeObject, RuntimeValue};
-use norn_kernel::snapshot_observe::{ObservedDelete, prepare_observed_delete, tombstone_key};
+use norn_kernel::snapshot_observe::{
+    OBSERVED_TOMBSTONE_TYPE, ObservedDelete, prepare_observed_delete, tombstone_key,
+};
 use norn_kernel::{
     CellCommit, DecisionTurn, FactKey, FactSlice, FactState, FactVersion, ObservationAuthorization,
     ObservationEvent, TypeCatalog,
@@ -18,6 +23,7 @@ use norn_kernel::{
 
 use crate::engine::SqlEngine;
 use crate::error::CellError;
+use crate::mapping_bundle::MappingBundle;
 use crate::read::StoreReader;
 
 /// Runtime derivation number for `kind == "delete"` bundles (#1028/#1931).
@@ -74,9 +80,7 @@ pub(crate) fn prepare_mapping_deletes<E: SqlEngine>(
     {
         return Ok(());
     }
-    let has_tombstone = reader
-        .model()
-        .has_type(norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE);
+    let has_tombstone = reader.model().has_type(OBSERVED_TOMBSTONE_TYPE);
     for delete in &bundle.deletes {
         let key = FactKey::new(delete.object_type.as_str(), &delete.key);
         let slice = delete_slice(reader, &key)?;
@@ -88,8 +92,18 @@ pub(crate) fn prepare_mapping_deletes<E: SqlEngine>(
         let mut prepared = prepare_observed_delete(catalog, &slice, turn, del)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
         if !has_tombstone {
-            let ty = norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE;
-            prepared.reads.retain(|r| r.key.object_type.as_str() != ty);
+            if prepared
+                .writes
+                .iter()
+                .any(|w| w.key.object_type.as_str() == OBSERVED_TOMBSTONE_TYPE)
+            {
+                return Err(CellError::UnknownObjectType(
+                    OBSERVED_TOMBSTONE_TYPE.to_owned(),
+                ));
+            }
+            prepared
+                .reads
+                .retain(|r| r.key.object_type.as_str() != OBSERVED_TOMBSTONE_TYPE);
         }
         prepared
             .append_to(commit, authorization)
@@ -858,10 +872,7 @@ pub(crate) fn upsert_slice<E: SqlEngine>(
     key: &FactKey,
 ) -> Result<FactSlice, CellError> {
     let mut slice = reader.mapping_observation_slice(key)?;
-    if reader
-        .model()
-        .has_type(norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE)
-    {
+    if reader.model().has_type(OBSERVED_TOMBSTONE_TYPE) {
         let buried = tombstone_key(key);
         if let Some(record) =
             reader.object(crate::MAIN_WORLD, buried.object_type.as_str(), &buried.key)?
@@ -934,17 +945,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     /// contribution owned by `bundle`'s source scope on deleted subjects.
     pub(crate) fn delete_withdrawal_claims_for_obs(
         &self,
-        bundle: &crate::mapping_bundle::MappingBundle,
+        bundle: &MappingBundle,
         obs_id: &str,
-        batch_history: &std::collections::BTreeMap<
-            String,
-            Vec<(
-                norn_ir::SourceVersion,
-                String,
-                norn_ir::mapping::ObservedLinkClaim,
-            )>,
-        >,
-    ) -> Result<Vec<norn_ir::mapping::ObservedLinkClaim>, CellError> {
+        batch_history: &BTreeMap<String, Vec<(SourceVersion, String, ObservedLinkClaim)>>,
+    ) -> Result<Vec<ObservedLinkClaim>, CellError> {
         if bundle.deletes.is_empty()
             || has_newer_or_incomparable_landed_source_version(self, bundle)?
         {
@@ -953,13 +957,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let scope = bundle.source_scope()?;
         let mut withdrawals = Vec::new();
         for delete in &bundle.deletes {
-            let mut seen_contributions = std::collections::BTreeSet::new();
+            let mut seen_contributions = BTreeSet::new();
             let active = self.active_claims_for_source_delete(
                 &scope,
                 delete.object_type.as_str(),
                 &delete.key,
             )?;
-            let mut candidates: Vec<norn_ir::mapping::ObservedLinkClaim> =
+            let mut candidates: Vec<ObservedLinkClaim> =
                 active.into_iter().map(|row| row.claim).collect();
             for records in batch_history.values() {
                 if let Some((_, _, last)) = records.last()
@@ -972,14 +976,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 }
             }
             for existing in candidates {
-                let contribution = existing.contribution_id()?;
-                if !seen_contributions.insert(contribution) {
+                if !seen_contributions.insert(existing.contribution_id()?) {
                     continue;
                 }
                 let mut provenance = delete.provenance.clone();
                 provenance.transform =
                     Some(format!("{}.{}#delete", delete.map, existing.role.as_str()));
-                withdrawals.push(norn_ir::mapping::ObservedLinkClaim {
+                withdrawals.push(ObservedLinkClaim {
                     observation_id: obs_id.to_owned(),
                     source_scope: existing.source_scope,
                     source_type: existing.source_type,
@@ -987,7 +990,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     role: existing.role,
                     target: None,
                     provenance,
-                    supersedes: std::collections::BTreeSet::new(),
+                    supersedes: BTreeSet::new(),
                 });
             }
         }

@@ -4079,12 +4079,8 @@ fn reopened_legacy_cell_without_tombstone_supports_absent_and_on_delete_refuses_
     assert!(
         matches!(
             err,
-            CellError::ObservationCommit(ref inner)
-                if matches!(
-                    inner.as_ref(),
-                    norn_kernel::CommitError::Host(CellError::UnknownObjectType(ty))
-                        if ty == norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE
-                )
+            CellError::UnknownObjectType(ref ty)
+                if ty == norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE
         ),
         "expected UnknownObjectType(norn.ObservedTombstone), got: {err:?}"
     );
