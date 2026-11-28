@@ -678,7 +678,14 @@ export default Norn.flow(
         );
         let parsed: Value = serde_json::from_str(&compiled.stdout)?;
         let items = parsed.as_array().ok_or("expected JSON artifact array")?;
-        assert_eq!(items.len(), 1);
+        assert_eq!(items.len(), 2);
+        assert!(
+            items.iter().any(|item| {
+                item.get("artifactId").and_then(Value::as_str)
+                    == Some("billing.multiline_flow.flow.rule")
+            }),
+            "expected compiled flow rule artifact in output: {items:?}"
+        );
     }
     Ok(())
 }
