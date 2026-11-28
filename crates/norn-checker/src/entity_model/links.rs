@@ -41,6 +41,7 @@ use norn_ir::{
 
 use super::Checker;
 use super::link_witness;
+use crate::Diagnostic;
 use crate::entity_instance::{EffectiveLink, EffectiveProperty};
 use crate::object_types::{
     MEMBER_ID_GRAMMAR, Origin, Resolved, check_property_default, check_property_shape,
