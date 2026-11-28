@@ -15,7 +15,7 @@ use norn_api::{
     authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest},
     host::DevHost,
     question_routes::{
-        QuestionAnswer, QuestionRuntime, QuestionSnapshot, TraceQuery, get_answer,
+        QuestionAnswer, QuestionRuntime, QuestionSnapshot, TraceQuery, get_answer, get_fork_answer,
         get_numeric_trace,
     },
     refusal::{Refusal, RefusalCategory},
@@ -2649,5 +2649,242 @@ fn check_question_markings_catches_marked_measure_with_empty_groupby_and_filter(
                 if pointer.ends_with("/measure")
         ),
         "must catch marked measure with empty groupBy/filter: {hit:?}"
+    );
+}
+
+struct ForkHostFixture {
+    main_host: DevHost<NativeEngine>,
+    fork_host: DevHost<NativeEngine>,
+    main_head: LedgerHead,
+    fork_head: LedgerHead,
+    main_cutoff: KnowledgeCutoff,
+    raw_auditor_fork: norn_cell::compute::ForkQuestionResult,
+    runtime: Runtime,
+}
+
+fn seed_main_and_fork_hosts() -> ForkHostFixture {
+    let (mut main_store, plan, mut context) = fixture();
+    context.scope = physical().key();
+    context.world = norn_cell::MAIN_WORLD.into();
+    let main_writes = fixture_writes();
+    let main_events: Vec<_> = main_writes.iter().filter_map(created_event).collect();
+    let main_commit = main_store
+        .commit(&CommitBatch {
+            world: norn_cell::MAIN_WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK,
+            writes: main_writes,
+            events: main_events,
+            ..CommitBatch::default()
+        })
+        .expect("commit main rows");
+    let main_head = main_store.verified_head().expect("main head");
+    assert_ne!(
+        main_head.hash,
+        norn_cell::system::GENESIS_HASH,
+        "main ledger head must be non-genesis so D53 revision keying is exercised"
+    );
+    let main_cutoff = KnowledgeCutoff {
+        recorded_at: LogicalTime::from_millis(main_commit.receipt().body.logical_time),
+        frontier: main_commit.receipt().body.commit_seq,
+    };
+
+    let mut fork_store = main_store
+        .fork("decision-d1", &main_head)
+        .expect("fork main store");
+    let fork_writes = vec![put(
+        "SYN-MELT-FORK-1",
+        100_000,
+        95_000,
+        "2026-10-21T00:00:00Z",
+        "gold",
+    )];
+    let fork_events: Vec<_> = fork_writes.iter().filter_map(created_event).collect();
+    fork_store
+        .commit(&CommitBatch {
+            world: norn_cell::MAIN_WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK + 1,
+            writes: fork_writes,
+            events: fork_events,
+            ..CommitBatch::default()
+        })
+        .expect("commit fork row");
+    let fork_head = fork_store.verified_head().expect("fork head");
+    assert_ne!(
+        fork_head.hash,
+        norn_cell::system::GENESIS_HASH,
+        "fork ledger head must be non-genesis so D53 revision keying is exercised"
+    );
+    assert_ne!(fork_head.hash, main_head.hash);
+
+    let mut auditor_ctx = context.clone();
+    auditor_ctx.population_pin = "fixture:auditor".into();
+    let raw_auditor_fork = fork_store
+        .evaluate_question_in_fork(&plan, auditor_ctx, |_| Ok(true))
+        .expect("raw fork eval");
+
+    let main_host = DevHost::from_store(main_store, physical(), |_| BTreeMap::new())
+        .expect("main host")
+        .with_authorizer(Policy);
+    let fork_host = DevHost::from_store(fork_store, physical(), |_| BTreeMap::new())
+        .expect("fork host")
+        .with_authorizer(Policy);
+    let runtime = Runtime {
+        bad_row: false,
+        plan,
+        context,
+        cutoff: None,
+        cutoff_receipt: None,
+        resolved: Arc::new(AtomicUsize::new(0)),
+        min_disclosed: 6,
+    };
+    ForkHostFixture {
+        main_host,
+        fork_host,
+        main_head,
+        fork_head,
+        main_cutoff,
+        raw_auditor_fork,
+        runtime,
+    }
+}
+
+fn assert_fork_restricted_disclosure(f: &ForkHostFixture) {
+    // Restricted reader (`mixed` lacks Values on SYN-MELT-15-1): D53 suppresses
+    // the 5-row bucket (min_disclosed = 6) and keys revision, pin.base, and fork pins.
+    let main_mixed = get_answer(&f.main_host, &scope(), Some("mixed"), QUESTION, &f.runtime)
+        .expect("main mixed answer");
+    let fork_mixed = get_fork_answer(&f.fork_host, &scope(), Some("mixed"), QUESTION, &f.runtime)
+        .expect("fork mixed answer");
+    assert!(fork_mixed.simulated);
+    assert_eq!(
+        fork_mixed.result.revision.hash,
+        keyed_revision_handle(&HANDLE_KEY, &f.fork_head.hash)
+    );
+    assert_eq!(
+        fork_mixed.pin.base.hash,
+        keyed_revision_handle(&HANDLE_KEY, &f.main_head.hash)
+    );
+    assert_ne!(fork_mixed.fork_query_pin, f.raw_auditor_fork.fork_query_pin);
+    assert_eq!(
+        fork_mixed.fork_query_pin,
+        norn_cell::compute::fork_query_pin(&fork_mixed.base_query_pin, &fork_mixed.pin)
+            .expect("disclosed fork_query_pin stays self-consistent")
+    );
+    assert_eq!(fork_mixed.result.query_pin, fork_mixed.fork_query_pin);
+    let week_row = fork_mixed.result.rows.get(WEEK).expect("week bucket");
+    assert!(week_row.suppressed && week_row.value.is_none() && week_row.totals.is_empty());
+
+    let suppressed_diff = norn_cell::compute::compare_main_and_fork(
+        main_mixed.live().expect("main mixed live"),
+        fork_mixed.as_inner(),
+    )
+    .expect("compare suppressed disclosed main vs fork");
+    let week_delta = suppressed_diff.deltas.get(WEEK).expect("week delta");
+    assert!(
+        week_delta.suppressed
+            && week_delta.baseline_value.is_none()
+            && week_delta.candidate_value.is_none()
+            && week_delta.delta_value.is_none()
+    );
+}
+
+/// Core 08 (E1, #1944): `get_fork_answer` on a forked host dispatches through
+/// `evaluate_in_fork`, labels the answer simulated under the durable fork pin,
+/// enforces D53 bucket suppression and keyed fork handles, refuses cross-world
+/// misuse on `get_answer` and `get_fork_answer`, and composes cleanly through
+/// `compare_main_and_fork`.
+#[test]
+fn get_answer_on_forked_host_labels_simulated_and_enforces_d53_disclosure() {
+    let f = seed_main_and_fork_hosts();
+
+    let main_route_on_fork = get_answer(
+        &f.fork_host,
+        &scope(),
+        Some("auditor"),
+        QUESTION,
+        &f.runtime,
+    )
+    .expect_err("main get_answer must refuse forked host");
+    assert_eq!(
+        (main_route_on_fork.status, main_route_on_fork.code.as_str()),
+        (422, "core.world.fork_invalid_world")
+    );
+    let fork_route_on_main = get_fork_answer(
+        &f.main_host,
+        &scope(),
+        Some("auditor"),
+        QUESTION,
+        &f.runtime,
+    )
+    .expect_err("get_fork_answer must refuse main host");
+    assert_eq!(
+        (fork_route_on_main.status, fork_route_on_main.code.as_str()),
+        (422, "core.world.simulation_forbidden")
+    );
+
+    let main_auditor = get_answer(
+        &f.main_host,
+        &scope(),
+        Some("auditor"),
+        QUESTION,
+        &f.runtime,
+    )
+    .expect("main auditor answer");
+    let fork_auditor = get_fork_answer(
+        &f.fork_host,
+        &scope(),
+        Some("auditor"),
+        QUESTION,
+        &f.runtime,
+    )
+    .expect("fork auditor answer");
+    assert!(fork_auditor.simulated);
+    assert_eq!(
+        fork_auditor.world,
+        norn_kernel::World::Fork {
+            id: norn_kernel::WorldId("decision-d1".into()),
+        }
+    );
+    assert_eq!(fork_auditor.result.context.world, "decision-d1");
+    assert_eq!(fork_auditor.result.revision.hash, f.fork_head.hash);
+    assert_eq!(fork_auditor.pin.base.hash, f.main_head.hash);
+    assert_eq!(
+        fork_auditor.result.lineage_ref,
+        keyed_lineage_handle(&HANDLE_KEY, &f.raw_auditor_fork.result.lineage_ref)
+    );
+    assert_ne!(fork_auditor.result_pin, f.raw_auditor_fork.result_pin);
+    assert_eq!(
+        fork_auditor.result_pin,
+        norn_cell::compute::fork_result_pin(
+            &fork_auditor.fork_query_pin,
+            &fork_auditor.result.lineage_ref,
+            &fork_auditor.result.revision,
+        )
+        .expect("disclosed fork result_pin")
+    );
+    let diff = norn_cell::compute::compare_main_and_fork(
+        main_auditor.live().expect("main live"),
+        fork_auditor.as_inner(),
+    )
+    .expect("compare disclosed main vs fork");
+    assert!(diff.deltas.get(WEEK).and_then(|d| d.delta_value).is_some());
+
+    assert_fork_restricted_disclosure(&f);
+
+    let mut cutoff_runtime = f.runtime;
+    cutoff_runtime.cutoff = Some(f.main_cutoff);
+    let err = get_fork_answer(
+        &f.fork_host,
+        &scope(),
+        Some("auditor"),
+        QUESTION,
+        &cutoff_runtime,
+    )
+    .expect_err("cutoff on fork must fail closed");
+    assert_eq!(
+        (err.status, err.code.as_str()),
+        (422, "core.world.fork_invalid_world")
     );
 }

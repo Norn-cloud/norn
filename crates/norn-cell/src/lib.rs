@@ -51,6 +51,7 @@ mod export_journal;
 mod export_journal_residue;
 pub mod flow_run;
 pub mod fork;
+pub mod fork_scenario;
 pub mod function_receipt;
 mod history;
 mod history_selection;
@@ -127,6 +128,7 @@ pub use definition_scope::{
 pub use error::CellError;
 
 pub use fork::{ForkEngine, ForkPin, StoreImage};
+pub use fork_scenario::{ForkScenario, RecordedEntropy, WorldContext, fixture_key};
 pub use function_receipt::ResultAuthority;
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{ClaimOutcome, CommitRecord, Responder, Settlement, SqliteCell};

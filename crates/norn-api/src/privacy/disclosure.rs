@@ -19,7 +19,9 @@ use norn_cell::compute::lineage::{
     NumericTrace, keyed_finding_handle, keyed_lineage_handle, keyed_receipt_handle,
     keyed_revision_handle,
 };
-use norn_cell::compute::{HistoricalQuestionResult, QueryResult};
+use norn_cell::compute::{
+    ForkQuestionResult, HistoricalQuestionResult, QueryResult, fork_query_pin, fork_result_pin,
+};
 use norn_cell::reactive::DecodeBudget;
 use norn_cell::source_provenance::InstanceSourceProvenance;
 use norn_cell::system::GENESIS_HASH;
@@ -231,6 +233,40 @@ impl AsRef<QuestionAnswer> for DisclosedAnswer {
 
 impl sealed::Sealed for DisclosedAnswer {}
 impl DisclosedDocument for DisclosedAnswer {}
+
+/// One projected simulated fork question answer (`WORLD-ISOLATE-1`,
+/// `FORK-PIN-1`, D53) with bucket suppression, keyed handles, and fork-pin
+/// redaction enforced.
+#[derive(Debug, Serialize)]
+#[serde(transparent)]
+pub struct DisclosedForkAnswer {
+    inner: ForkQuestionResult,
+}
+
+impl DisclosedForkAnswer {
+    /// Read-only access to the already-projected simulated fork answer.
+    #[must_use]
+    pub const fn as_inner(&self) -> &ForkQuestionResult {
+        &self.inner
+    }
+}
+
+impl Deref for DisclosedForkAnswer {
+    type Target = ForkQuestionResult;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl AsRef<ForkQuestionResult> for DisclosedForkAnswer {
+    fn as_ref(&self) -> &ForkQuestionResult {
+        &self.inner
+    }
+}
+
+impl sealed::Sealed for DisclosedForkAnswer {}
+impl DisclosedDocument for DisclosedForkAnswer {}
 
 /// One projected numeric trace with marked contribution redaction, `fact_digest`
 /// withholding, `source = Restricted`, keyed receipt handles, and D53 bucket
@@ -532,6 +568,49 @@ pub(crate) fn project_answer<E: SqlEngine>(
     withhold_values(result, withheld, runtime.min_disclosed_bucket());
     result.lineage_ref = keyed_lineage_handle(key, &result.lineage_ref);
     Ok(DisclosedAnswer { inner: answer })
+}
+
+/// Core 08 (#1944, DATA-VALUES-1, D53): project one simulated
+/// [`ForkQuestionResult`] under D53 bucket suppression, keyed revision/pin
+/// handles, and recomputed fork result pin so unredacted row hashes and raw
+/// ledger heads never leave the host while disclosed answers remain
+/// self-consistent for host world comparisons.
+pub(crate) fn project_fork_answer<E: SqlEngine>(
+    (host, runtime, store): (&DevHost<E>, &dyn QuestionRuntime<E>, &CellStore<E>),
+    (actor, key): (&str, &[u8]),
+    withheld: &BTreeSet<String>,
+    mut fork: ForkQuestionResult,
+) -> Result<DisclosedForkAnswer, Refusal> {
+    let valid_world = matches!(
+        &fork.world,
+        norn_kernel::World::Fork { id } if id.0 == fork.pin.world
+    );
+    if !fork.simulated
+        || !valid_world
+        || fork.result.context.world != fork.pin.world
+        || fork.result.query_pin != fork.fork_query_pin
+    {
+        return Err(Refusal::from_compute(CellError::ForkInvalidWorld));
+    }
+    let world = withheld.is_empty() && world_values(host, runtime, store, actor);
+    let base_genesis = fork.pin.base.seq == 0 && fork.pin.base.hash == GENESIS_HASH;
+    if !(world || base_genesis) {
+        fork.pin.base.hash = keyed_revision_handle(key, &fork.pin.base.hash);
+        fork.fork_query_pin =
+            fork_query_pin(&fork.base_query_pin, &fork.pin).map_err(Refusal::from_compute)?;
+        fork.fork_query_pin.clone_into(&mut fork.result.query_pin);
+    }
+    withhold_ledger_head(&mut fork.result, key, world);
+    withhold_exclusions(&mut fork.result, key, world);
+    withhold_values(&mut fork.result, withheld, runtime.min_disclosed_bucket());
+    fork.result.lineage_ref = keyed_lineage_handle(key, &fork.result.lineage_ref);
+    fork.result_pin = fork_result_pin(
+        &fork.fork_query_pin,
+        &fork.result.lineage_ref,
+        &fork.result.revision,
+    )
+    .map_err(Refusal::from_compute)?;
+    Ok(DisclosedForkAnswer { inner: fork })
 }
 
 /// Project one evaluated [`NumericTrace`] under PRIVACY-1 contribution

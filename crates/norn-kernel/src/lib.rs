@@ -195,7 +195,10 @@ pub use limits::{
 pub use naming_series::{
     NAMING_SERIES_COUNTER_TYPE, NamingCounterSeed, install_naming_counter_seeds,
 };
-pub use observations::{CommitId, Entropy, LogicalTime, Observations, World, WorldId};
+pub use observations::{
+    CommitId, Entropy, LogicalTime, Observations, ScenarioClock, ScenarioObservations, World,
+    WorldId,
+};
 pub use refusal::{INTERNAL_MESSAGE, NOT_FOUND_MESSAGE, Refusable, Refusal, RefusalCategory};
 
 mod action_quantity;

@@ -5278,23 +5278,18 @@ fn install_refuses_unsupported_law_scope_and_modality_even_with_zero_live_rows()
     let (base, base_input) = governing_law_input("self.name != 'bad'", 1);
     let mut store = CellStore::open_in_memory(base.clone()).expect("store");
     store
-        .install_definitions(base.clone(), base_input, Some(0), "org_demo/dev")
+        .install_definitions(base, base_input, Some(0), "org_demo/dev")
         .expect("v1");
 
-    for (label, patch) in [
-        (
-            "app_root",
-            Box::new(|law: &mut serde_json::Value| {
-                law["payload"]["scope"]["root"] = json!({"kind": "app", "id": "defs"});
-            }) as Box<dyn Fn(&mut serde_json::Value)>,
-        ),
-        (
-            "eventually_modality",
-            Box::new(|law: &mut serde_json::Value| {
-                law["payload"]["modality"] = json!({"kind": "eventually"});
-            }) as Box<dyn Fn(&mut serde_json::Value)>,
-        ),
-    ] {
+    let patches: [(&str, fn(&mut serde_json::Value)); 2] = [
+        ("app_root", |law| {
+            law["payload"]["scope"]["root"] = json!({"kind": "app", "id": "defs"});
+        }),
+        ("eventually_modality", |law| {
+            law["payload"]["modality"] = json!({"kind": "eventually"});
+        }),
+    ];
+    for (label, patch) in patches {
         let (candidate, mut input) = governing_law_input("self.name != 'bad'", 2);
         let mut artifacts: Vec<serde_json::Value> =
             serde_json::from_str(&input.canonical_set).expect("artifacts");
