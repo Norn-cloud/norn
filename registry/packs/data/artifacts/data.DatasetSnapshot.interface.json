@@ -1,0 +1,111 @@
+{
+  "artifactId": "data.DatasetSnapshot.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Dataset snapshot",
+  "namespace": "data",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "description": "An immutable content-addressed snapshot of a dataset with bitemporal effective_at and known_at instants (W3C DCAT v3 DatasetSeries member + W3C PROV-O prov:Entity).",
+      "invariants": [
+        {
+          "expression": "(self.record_count >= 0) and (self.byte_size >= 0)",
+          "id": "non_negative_counts",
+          "message": "record_count and byte_size must be non-negative."
+        },
+        {
+          "expression": "(self.content_sha256 != '') and (self.schema_digest != '')",
+          "id": "non_empty_digests",
+          "message": "content_sha256 and schema_digest must be non-empty."
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Logical dataset this snapshot materializes (W3C DCAT dcat:inSeries).",
+          "id": "dataset",
+          "target": "data.Dataset"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Prior snapshot superseded by this revision (W3C PROV-O prov:wasRevisionOf; convention: concrete implementations declare acyclic: true, as on data.SnapshotRecord).",
+          "id": "supersedes",
+          "target": "data.DatasetSnapshot"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Provenance activity that produced this snapshot (W3C PROV-O prov:wasGeneratedBy).",
+          "id": "generated_by",
+          "target": "data.Activity"
+        }
+      ],
+      "name": "data.DatasetSnapshot",
+      "properties": [
+        {
+          "id": "snapshot_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "content_sha256",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "schema_digest",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "record_count",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "byte_size",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "effective_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "id": "known_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.DatasetSnapshot.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

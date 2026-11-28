@@ -51,6 +51,7 @@ mod export_journal;
 mod export_journal_residue;
 pub mod flow_run;
 pub mod fork;
+pub mod fork_evidence;
 pub mod fork_merge;
 pub mod fork_scenario;
 pub mod function_receipt;
@@ -129,6 +130,10 @@ pub use definition_scope::{
 pub use error::CellError;
 
 pub use fork::{ForkEngine, ForkPin, ForkState, StoreImage};
+pub use fork_evidence::{
+    ComparisonBaseline, ForkCommitEvidence, SimulatedDecisionCardEvidence,
+    verify_fork_commit_evidence, verify_main_export_record, verify_main_receipt,
+};
 pub use fork_merge::{
     ForkActionCall, ForkMergeRefusalReason, ForkPromotionReport, PromotedCommand,
     execute_action_in_fork, promote_decision_fork,

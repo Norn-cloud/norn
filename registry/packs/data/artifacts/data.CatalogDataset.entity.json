@@ -1,0 +1,91 @@
+{
+  "artifactId": "data.CatalogDataset.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Catalog dataset",
+  "namespace": "data",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Reference catalog dataset record implementing data.Dataset.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "dataset_id"
+          ]
+        }
+      ],
+      "implements": [
+        "data.Dataset"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Owning data steward.",
+          "id": "owner",
+          "target": "data.Steward"
+        }
+      ],
+      "name": "data.CatalogDataset",
+      "properties": [
+        {
+          "id": "dataset_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "schema_uri",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "freshness_sla_ms",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "table"
+              },
+              {
+                "value": "stream"
+              },
+              {
+                "value": "log"
+              },
+              {
+                "value": "metric_cube"
+              },
+              {
+                "value": "document_corpus"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.CatalogDataset.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -477,6 +477,10 @@ run_gate fast bi-additivity-lean \
   "lean -DwarningAsError=true verification/bi-additivity-v1/BiAdditivity.lean" \
   command \
   lean -DwarningAsError=true verification/bi-additivity-v1/BiAdditivity.lean
+run_gate fast data-lineage-lean \
+  "lean -DwarningAsError=true verification/data-lineage-v1/DataLineage.lean" \
+  command \
+  lean -DwarningAsError=true verification/data-lineage-v1/DataLineage.lean
 run_gate fast transition-lean \
   "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean" \
   command \
