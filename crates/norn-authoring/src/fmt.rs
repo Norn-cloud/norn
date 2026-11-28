@@ -354,7 +354,7 @@ fn format_document_pass(file_name: &str, text: &str) -> Result<String, Authoring
     apply_text_changes(text, changes)
 }
 
-const MAX_FORMAT_PASSES: usize = 3;
+const MAX_FORMAT_PASSES: usize = 4;
 
 fn normalize_lf_and_trailing_newline(text: &str) -> String {
     let lf = text.replace("\r\n", "\n");
@@ -363,6 +363,28 @@ fn normalize_lf_and_trailing_newline(text: &str) -> String {
     out.push_str(trimmed);
     out.push('\n');
     out
+}
+
+fn converge_format_passes<F>(
+    initial: String,
+    max_passes: usize,
+    mut step: F,
+) -> Result<String, AuthoringError>
+where
+    F: FnMut(&str) -> Result<String, AuthoringError>,
+{
+    let mut current = initial;
+    for _ in 0..max_passes {
+        let formatted = step(&current)?;
+        let next = normalize_lf_and_trailing_newline(&formatted);
+        if next == current {
+            return Ok(current);
+        }
+        current = next;
+    }
+    Err(AuthoringError::FormatFailed {
+        message: format!("formatter did not reach a fixed point within {max_passes} passes"),
+    })
 }
 
 /// Formats a Norn TypeScript source file in memory without executing code.
@@ -379,7 +401,8 @@ fn normalize_lf_and_trailing_newline(text: &str) -> String {
 ///
 /// Returns [`AuthoringError::InvalidPath`] if `file_name` is not a valid
 /// virtual path, or [`AuthoringError::FormatFailed`] /
-/// [`AuthoringError::InvalidEditRange`] if formatting fails.
+/// [`AuthoringError::InvalidEditRange`] if formatting fails or fails to reach
+/// a fixed point.
 pub fn format_source(file_name: &str, text: &str) -> Result<String, AuthoringError> {
     let normalized_file = normalize_virtual_path(file_name)?;
     // Normalize CRLF and collapse trailing blank lines before formatting:
@@ -388,25 +411,25 @@ pub fn format_source(file_name: &str, text: &str) -> Result<String, AuthoringErr
     // trailing trivia extends past the first trailing newline.
     let normalized_input = normalize_lf_and_trailing_newline(text);
     let sorted = sort_imports_non_destructive(&normalized_file, &normalized_input)?;
-    let mut current = normalize_lf_and_trailing_newline(&sorted);
+    let initial = normalize_lf_and_trailing_newline(&sorted);
 
     // Bounded fixed-point loop guarantees idempotence even when pass 1 trims
     // whitespace-only trailing lines before pass 2 removes the final semicolon.
-    for _ in 0..MAX_FORMAT_PASSES {
-        let formatted = format_document_pass(&normalized_file, &current)?;
-        let next = normalize_lf_and_trailing_newline(&formatted);
-        if next == current {
-            return Ok(current);
-        }
-        current = next;
-    }
-    Ok(current)
+    converge_format_passes(initial, MAX_FORMAT_PASSES, |source| {
+        format_document_pass(&normalized_file, source)
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::apply_byte_edits;
+    use super::{apply_byte_edits, converge_format_passes};
     use crate::AuthoringError;
+
+    #[test]
+    fn rejects_non_converging_format_passes() {
+        let result = converge_format_passes("a\n".to_owned(), 3, |s| Ok(format!("{s}x")));
+        assert!(matches!(result, Err(AuthoringError::FormatFailed { .. })));
+    }
 
     #[test]
     fn rejects_overlapping_edit_ranges() {
