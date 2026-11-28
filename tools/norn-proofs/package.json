@@ -3,7 +3,7 @@
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
-  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" },
+  "scripts": { "typecheck": "tsrs --noEmit -p tsconfig.json" },
   "dependencies": { "tla-ts": "0.0.7" },
-  "devDependencies": { "@types/bun": "1.4.2", "typescript": "6.0.3" }
+  "devDependencies": { "@types/bun": "1.4.2", "tsrs": "7.1.0-beta.tsrs5" }
 }

@@ -203,6 +203,30 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         &mut self.store
     }
 
+    /// FORK-LIFE-1: durable lifecycle state of this cell's fork (`None` on `main`).
+    ///
+    /// # Errors
+    /// Store read or fork-state decoding errors.
+    pub fn fork_state(&self) -> Result<Option<crate::fork::ForkState>, CellError> {
+        self.store.fork_state()
+    }
+
+    /// FORK-LIFE-1: close an open fork as `discarded`.
+    ///
+    /// # Errors
+    /// As [`CellStore::discard_fork`].
+    pub fn discard_fork(&mut self) -> Result<(), CellError> {
+        self.store.discard_fork()
+    }
+
+    /// FORK-LIFE-1: close an open fork as `expired`.
+    ///
+    /// # Errors
+    /// As [`CellStore::expire_fork`].
+    pub fn expire_fork(&mut self) -> Result<(), CellError> {
+        self.store.expire_fork()
+    }
+
     /// Capture pinned mapping evidence while the cell owns its store.
     ///
     /// # Errors
