@@ -136,11 +136,11 @@ fn invocation_budget_enforces_scanned_entry_cap_and_shared_byte_cap() -> TestRes
     let second_batch = root_dir.open_subdir_rel(Path::new("second_batch"))?;
 
     let mut byte_budget = InvocationBudget::with_limits(100, 100, 64, 45, 4096);
-    let loaded_first = first_batch.read_top_level_files(&mut byte_budget)?;
-    assert_eq!(loaded_first.len(), 1);
+    let loaded_first = first_batch.scan_top_level(&mut byte_budget)?;
+    assert_eq!(loaded_first.files.len(), 1);
     assert_eq!(byte_budget.bytes_read(), 31);
 
-    let byte_err = second_batch.read_top_level_files(&mut byte_budget);
+    let byte_err = second_batch.scan_top_level(&mut byte_budget);
     assert!(
         byte_err
             .as_ref()
@@ -693,7 +693,8 @@ export default Norn.flow(
         .saturating_add(charge_src.len())
         .saturating_add(sequence_src.len());
     let expected_bytes = u64::try_from(total_len)?;
-    let mut budget = InvocationBudget::with_limits(100, 3, 65_536, expected_bytes, 65_536);
+    // Exact entry cap: 3 root entries (`billing.ts`, `sequence.ts`, `support`) + 1 subdir entry (`charge.ts`).
+    let mut budget = InvocationBudget::with_limits(4, 3, 65_536, expected_bytes, 65_536);
 
     let compiled = match compile_path_to_json(
         scratch.path(),
@@ -709,6 +710,7 @@ export default Norn.flow(
         }
         Err(AuthoringFailure::Io(msg)) => return Err(msg.into()),
     };
+    assert_eq!(budget.scanned_entries(), 4);
     assert_eq!(budget.bytes_read(), expected_bytes);
     let parsed: Value = serde_json::from_str(&compiled)?;
     let items = parsed.as_array().ok_or("expected JSON artifact array")?;
@@ -733,7 +735,7 @@ export const ping = Norn.fn<{ readonly v: string }, { readonly ok: boolean }>({
     scratch.write("importer.ts", importer_src)?;
 
     let expected_bytes = u64::try_from(config_json.len().saturating_add(importer_src.len()))?;
-    let mut budget = InvocationBudget::with_limits(100, 2, 65_536, expected_bytes, 65_536);
+    let mut budget = InvocationBudget::with_limits(2, 2, 65_536, expected_bytes, 65_536);
     let outcome = compile_path_to_json(
         scratch.path(),
         "local",
@@ -746,6 +748,7 @@ export const ping = Norn.fn<{ readonly v: string }, { readonly ok: boolean }>({
         matches!(outcome, Err(AuthoringFailure::Diagnostics(_))),
         "expected profile diagnostics without IO/budget double-read for top-level .json import"
     );
+    assert_eq!(budget.scanned_entries(), 2);
     assert_eq!(budget.bytes_read(), expected_bytes);
     Ok(())
 }

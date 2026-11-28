@@ -16,11 +16,14 @@
 //! - [`ProfileChecker`]: faithful Rust port of `tools/norn-ts/src/check.ts`
 //!   enforcing the `norn-effect` positive grammar, symbol identity checks,
 //!   import closure checks, and `NORN-FLOW-*` diagnostics.
+//! - [`extract_relative_module_specifiers`]: `tsrs_parser`-backed static
+//!   relative module specifier extraction for `.ts` and `.tsx` sources.
 
 mod checker;
 mod compiler;
 mod error;
 mod fmt;
+mod imports;
 mod profile;
 mod program;
 mod vfs;
@@ -50,6 +53,7 @@ pub use compiler::{
 };
 pub use error::AuthoringError;
 pub use fmt::{format_source, format_source as format_ts, norn_format_settings};
+pub use imports::extract_relative_module_specifiers;
 pub use profile::{
     AdmittedSymbol, AllowedImports, DiagnosticDoc, INTRINSICS_DTS, PROFILE_JSON, PackagePin,
     Profile, ProfilePins, RejectedConstruct, RejectedModule, RejectedSymbol, SymbolContext,

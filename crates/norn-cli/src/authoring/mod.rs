@@ -13,7 +13,6 @@ mod security_tests;
 mod tests;
 mod trusted_dir;
 mod ts;
-mod ts_imports;
 mod zero_ci;
 
 use std::collections::BTreeSet;
@@ -312,13 +311,13 @@ fn compile_source_dir_entries(
     opts: &CompileDirOptions<'_>,
     state: &mut DirCompileState<'_>,
 ) -> Result<(), AuthoringFailure> {
-    let top_files = source_dir
-        .read_top_level_files(state.budget)
+    let top_scan = source_dir
+        .scan_top_level(state.budget)
         .map_err(AuthoringFailure::Io)?;
     let mut typescript_files = Vec::new();
     let mut python_files = Vec::new();
     let mut json_files = Vec::new();
-    for file in top_files {
+    for file in top_scan.files {
         let name = file
             .rel_path
             .file_name()
@@ -357,6 +356,7 @@ fn compile_source_dir_entries(
                 root_dir: source_dir,
                 root_files: typescript_files,
                 support_files: &json_files,
+                pinned_subdirs: &top_scan.subdirs,
             },
             &ts_opts,
             state.seen_ids,

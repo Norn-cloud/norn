@@ -35,9 +35,15 @@ pub(crate) struct PinnedLoadedFile {
     pub(crate) content: String,
 }
 
-enum TopEntry {
-    File(PathBuf, std::fs::File),
-    Dir(TrustedDir),
+/// Result of a single non-recursive scan of a trusted root directory:
+/// pre-loaded top-level regular files and retained child [`TrustedDir`] handles
+/// for non-skipped subdirectories opened during the same scan.
+#[derive(Debug)]
+pub(crate) struct TopLevelScan {
+    /// Top-level regular files loaded in sorted entry-name order.
+    pub(crate) files: Vec<LoadedFile>,
+    /// Pinned non-skipped child subdirectories `(rel_path, dir)` ready for recursive traversal.
+    pub(crate) subdirs: Vec<(PathBuf, Arc<TrustedDir>)>,
 }
 
 /// Single-open FD-pinned CLI source target (either a directory or a pinned regular file).
@@ -316,130 +322,104 @@ impl TrustedDir {
         read_opened_file_budgeted(opened, &walked, budget).map(Some)
     }
 
-    /// Reads all top-level regular files directly from `self` in sorted name order.
+    /// Scans immediate entries of `self` once in sorted name order, loading top-level
+    /// regular files and retaining pinned child [`TrustedDir`] handles for non-skipped
+    /// subdirectories.
     ///
     /// Inspects every non-`.`/`..` entry (including hidden dotfiles/dotdirs) without
     /// following symlinks so hidden symlinks and special files always fail closed.
-    pub(crate) fn read_top_level_files(
+    #[cfg(unix)]
+    pub(crate) fn scan_top_level(
         &self,
         budget: &mut InvocationBudget,
-    ) -> Result<Vec<LoadedFile>, String> {
+    ) -> Result<TopLevelScan, String> {
+        use std::os::fd::AsFd as _;
+
         let mut files = Vec::new();
-        self.visit_top_entries(budget, &mut |name, entry, entry_budget| match entry {
-            TopEntry::File(child, opened) => {
-                entry_budget.charge_accepted_file(&child)?;
-                let content = read_opened_file_budgeted(opened, &child, entry_budget)?;
+        let mut subdirs = Vec::new();
+        for entry in read_sorted_dir_names_budgeted(self.fd.as_fd(), &self.display_path, budget)? {
+            let name = entry.to_str().map_err(|err| {
+                format!(
+                    "non-UTF-8 name under {}: {err}",
+                    self.display_path.display()
+                )
+            })?;
+            let child = self.display_path.join(name);
+            let opened = open_entry_no_follow(self.fd.as_fd(), entry.as_c_str(), &child)?;
+            let kind = opened
+                .metadata()
+                .map_err(|err| format!("{}: {err}", child.display()))?
+                .file_type();
+            if kind.is_file() {
+                budget.charge_accepted_file(&child)?;
+                let content = read_opened_file_budgeted(opened, &child, budget)?;
                 files.push(LoadedFile {
                     display_path: child,
                     rel_path: PathBuf::from(name),
                     content,
                 });
-                Ok(())
-            }
-            TopEntry::Dir(_) => Ok(()),
-        })?;
-        Ok(files)
-    }
-
-    /// Recursively reads accepted files from subdirectories below `self` without re-reading
-    /// any top-level regular files directly inside `self`.
-    pub(crate) fn read_subdir_files(
-        &self,
-        accept: fn(&str, &Path) -> bool,
-        budget: &mut InvocationBudget,
-    ) -> Result<Vec<LoadedFile>, String> {
-        let mut files = Vec::new();
-        self.visit_top_entries(budget, &mut |name, entry, entry_budget| match entry {
-            TopEntry::File(_, _) => Ok(()),
-            TopEntry::Dir(child_dir) => {
-                if should_skip_dir(name) {
-                    return Ok(());
-                }
-                let child_arc = Arc::new(child_dir);
-                walk_dir_shared(
-                    &child_arc,
-                    Path::new(name),
-                    1,
-                    accept,
-                    entry_budget,
-                    &mut |_parent, _fname, display_path, rel_path, content| {
-                        files.push(LoadedFile {
-                            display_path,
-                            rel_path,
-                            content,
-                        });
-                    },
-                )
-            }
-        })?;
-        Ok(files)
-    }
-
-    fn visit_top_entries(
-        &self,
-        budget: &mut InvocationBudget,
-        on_entry: &mut dyn FnMut(&str, TopEntry, &mut InvocationBudget) -> Result<(), String>,
-    ) -> Result<(), String> {
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsFd as _;
-            for entry in
-                read_sorted_dir_names_budgeted(self.fd.as_fd(), &self.display_path, budget)?
-            {
-                let name = entry.to_str().map_err(|err| {
-                    format!(
-                        "non-UTF-8 name under {}: {err}",
-                        self.display_path.display()
-                    )
-                })?;
-                let child = self.display_path.join(name);
-                let opened = open_entry_no_follow(self.fd.as_fd(), entry.as_c_str(), &child)?;
-                let kind = opened
-                    .metadata()
-                    .map_err(|err| format!("{}: {err}", child.display()))?
-                    .file_type();
-                if kind.is_file() {
-                    on_entry(name, TopEntry::File(child, opened), budget)?;
-                } else if kind.is_dir() {
+            } else if kind.is_dir() {
+                if !should_skip_dir(name) {
                     let child_dir = Self::from_fd(std::os::fd::OwnedFd::from(opened), child);
-                    on_entry(name, TopEntry::Dir(child_dir), budget)?;
-                } else {
-                    return Err(format!("{}: not a regular file", child.display()));
+                    subdirs.push((PathBuf::from(name), Arc::new(child_dir)));
                 }
+            } else {
+                return Err(format!("{}: not a regular file", child.display()));
             }
         }
-        #[cfg(not(unix))]
-        {
-            for entry in read_sorted_entries_non_unix(&self.display_path, budget)? {
-                let raw_name = entry.file_name();
-                let Some(name) = raw_name.to_str() else {
-                    return Err(format!(
-                        "non-UTF-8 name under {}",
-                        self.display_path.display()
-                    ));
-                };
-                let child = entry.path();
-                let kind = std::fs::symlink_metadata(&child)
-                    .map_err(|err| format!("{}: {err}", child.display()))?
-                    .file_type();
-                if kind.is_symlink() {
-                    return Err(format!("{}: symlinks are refused", child.display()));
-                }
-                if kind.is_file() {
-                    let opened = std::fs::File::open(&child)
-                        .map_err(|err| format!("{}: {err}", child.display()))?;
-                    on_entry(name, TopEntry::File(child, opened), budget)?;
-                } else if kind.is_dir() {
+        Ok(TopLevelScan { files, subdirs })
+    }
+
+    /// Scans immediate entries of `self` once in sorted name order, loading top-level
+    /// regular files and retaining pinned child [`TrustedDir`] handles for non-skipped
+    /// subdirectories.
+    ///
+    /// Inspects every non-`.`/`..` entry (including hidden dotfiles/dotdirs) without
+    /// following symlinks so hidden symlinks and special files always fail closed.
+    #[cfg(not(unix))]
+    pub(crate) fn scan_top_level(
+        &self,
+        budget: &mut InvocationBudget,
+    ) -> Result<TopLevelScan, String> {
+        let mut files = Vec::new();
+        let mut subdirs = Vec::new();
+        for entry in read_sorted_entries_non_unix(&self.display_path, budget)? {
+            let raw_name = entry.file_name();
+            let Some(name) = raw_name.to_str() else {
+                return Err(format!(
+                    "non-UTF-8 name under {}",
+                    self.display_path.display()
+                ));
+            };
+            let child = entry.path();
+            let kind = std::fs::symlink_metadata(&child)
+                .map_err(|err| format!("{}: {err}", child.display()))?
+                .file_type();
+            if kind.is_symlink() {
+                return Err(format!("{}: symlinks are refused", child.display()));
+            }
+            if kind.is_file() {
+                budget.charge_accepted_file(&child)?;
+                let opened = std::fs::File::open(&child)
+                    .map_err(|err| format!("{}: {err}", child.display()))?;
+                let content = read_opened_file_budgeted(opened, &child, budget)?;
+                files.push(LoadedFile {
+                    display_path: child,
+                    rel_path: PathBuf::from(name),
+                    content,
+                });
+            } else if kind.is_dir() {
+                if !should_skip_dir(name) {
                     let child_dir = Self {
                         display_path: child,
                     };
-                    on_entry(name, TopEntry::Dir(child_dir), budget)?;
-                } else {
-                    return Err(format!("{}: not a regular file", child.display()));
+                    subdirs.push((PathBuf::from(name), Arc::new(child_dir)));
                 }
+            } else {
+                return Err(format!("{}: not a regular file", child.display()));
             }
         }
-        Ok(())
+        Ok(TopLevelScan { files, subdirs })
     }
 
     /// Recursively walks `self`, retaining the exact opened parent [`TrustedDir`] handle
@@ -467,6 +447,33 @@ impl TrustedDir {
         )?;
         Ok(files)
     }
+}
+
+/// Recursively reads accepted files from already-pinned child [`TrustedDir`] handles
+/// without re-enumerating the parent root directory or reopening any top-level files.
+pub(crate) fn read_files_in_pinned_subdirs(
+    subdirs: &[(PathBuf, Arc<TrustedDir>)],
+    accept: fn(&str, &Path) -> bool,
+    budget: &mut InvocationBudget,
+) -> Result<Vec<LoadedFile>, String> {
+    let mut files = Vec::new();
+    for (rel_dir, child_dir) in subdirs {
+        walk_dir_shared(
+            child_dir,
+            rel_dir,
+            1,
+            accept,
+            budget,
+            &mut |_parent, _fname, display_path, rel_path, content| {
+                files.push(LoadedFile {
+                    display_path,
+                    rel_path,
+                    content,
+                });
+            },
+        )?;
+    }
+    Ok(files)
 }
 
 fn walk_dir_shared(

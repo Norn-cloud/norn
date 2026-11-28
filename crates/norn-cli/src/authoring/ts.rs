@@ -6,13 +6,14 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use norn_authoring::{
     AuthoringProgram, BoundedVfs, CompilerLimits, DashboardsCompileOutcome,
     DefinitionsCompileOptions, DefinitionsCompileOutcome, EnvelopeOptions, FlowCompileOptions,
     FlowCompileOutcome, PINNED_EFFECT_DIST_PREFIX, Profile, ProfileChecker, ProfileDiagnostic,
     QuestionsCompileOutcome, compile_dashboards_vfs, compile_definitions_program,
-    compile_flow_program, compile_questions_vfs,
+    compile_flow_program, compile_questions_vfs, extract_relative_module_specifiers,
 };
 use serde_json::{Value, json};
 
@@ -22,8 +23,7 @@ use super::fs_io::{
     BoundedJsonArray, InvocationBudget, LoadedFile, SourceLang, classify_source_file,
     discover_tool_root, display_posix_path, is_json_file,
 };
-use super::trusted_dir::{TrustedDir, open_regular_file_pinned};
-use super::ts_imports::extract_relative_specifiers;
+use super::trusted_dir::{TrustedDir, open_regular_file_pinned, read_files_in_pinned_subdirs};
 
 const MAX_LOCAL_IMPORTS: usize = 128;
 const MAX_LOCAL_IMPORT_DEPTH: usize = 16;
@@ -46,11 +46,12 @@ pub(crate) enum TsCompileTarget<'a> {
         content: String,
     },
     /// Directory already opened as a trusted fd with pre-loaded top-level `.ts`/`.tsx`
-    /// root files and pre-loaded top-level `.json` support files.
+    /// root files, pre-loaded `.json` support files, and pinned child subdirectories.
     Directory {
         root_dir: &'a TrustedDir,
         root_files: Vec<LoadedFile>,
         support_files: &'a [LoadedFile],
+        pinned_subdirs: &'a [(PathBuf, Arc<TrustedDir>)],
     },
 }
 
@@ -290,7 +291,8 @@ fn collect_ts_import_closure(
     let mut imported_count: usize = 0;
     while let Some((current, depth)) = queue.pop_front() {
         if depth < MAX_LOCAL_IMPORT_DEPTH && !is_json_file(&current.display_path) {
-            for spec in extract_relative_specifiers(&current.content) {
+            let file_name = display_posix_path(&current.rel_path);
+            for spec in extract_relative_module_specifiers(&current.content, &file_name) {
                 for candidate in relative_candidates(&current.rel_path, &spec) {
                     if visited.contains(&candidate) {
                         break;
@@ -614,10 +616,11 @@ pub(crate) fn compile_ts_targets_into(
             root_dir,
             root_files,
             support_files,
+            pinned_subdirs,
         } => {
-            let subdir_files = root_dir
-                .read_subdir_files(is_ts_support_file, budget)
-                .map_err(AuthoringFailure::Io)?;
+            let subdir_files =
+                read_files_in_pinned_subdirs(pinned_subdirs, is_ts_support_file, budget)
+                    .map_err(AuthoringFailure::Io)?;
             let inputs = TsClosureInputs {
                 root_files,
                 support_files,
