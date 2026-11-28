@@ -22,7 +22,7 @@ heavy=(
   'binary_id(norn-cell) & (test(=suites::definitions_install::overflow_backfill_refuses_more_than_the_row_limit_in_check_and_install) | test(=suites::definitions_install::removing_an_empty_overflow_property_refuses_an_incomplete_row_scan))'
   '(binary_id(norn-cell) & test(=suites::quantity_reservations::generated_reservation_sequences_match_independent_scalar_fold)) | (binary_id(norn-cell::suites) & test(=cell_host::cell_host_laws_hold_across_reopen_for_the_restricted_engine))'
 )
-rest_shards=3
+rest_shards=6
 # Selection comes only from here: every run ignores nextest's configurable
 # default filter and uses the pinned `ci` profile (no retries).
 nextest=(cargo nextest --profile ci)
@@ -807,11 +807,11 @@ if len(tasks) != len(set(tasks)) or set(tasks) - known:
     raise SystemExit("duplicate or unknown planned task")
 if plan["mode"] == "full" and set(tasks) != known:
     raise SystemExit("full bundle plan omitted a registered task")
-target_seconds = 11 * 60
+target_seconds = 5 * 60
 # #1652 moved `core` to hosted `ubuntu-24.04`, so only `test` bundles take a Boat start.
-# Six bundles balance ~20m wall clock with +33% daily Boat start capacity (140 full runs
-# per 840 daily starts).
-max_bundles = 6
+# Eight bundles with 6 rest shards fan out Rust test suites cleanly while keeping 105 full
+# runs per 840 daily starts (#1951; main pushes use 1 cache-warm bundle).
+max_bundles = 8
 # Use the fewest jobs that meet the service target. If an indivisible task
 # exceeds it, minimize the critical path before allocating additional VMs.
 # For each bundle count, try both splitting and coalescing each shared build group
