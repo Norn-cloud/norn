@@ -93,9 +93,24 @@ describe("pins", () => {
 
   test("every locked package carries an allowed license (MIT / Apache-2.0)", () => {
     const lock = readFileSync(join(TOOL_ROOT, "bun.lock"), "utf8")
-    const names = [...lock.matchAll(/^\s{4}"([^"]+)": \["/gm)].map((m) => m[1]!)
-    expect(names.length).toBeGreaterThan(0)
-    for (const name of names) {
+    const parsed = Bun.JSONC.parse(lock) as {
+      packages: Record<
+        string,
+        [string, string, { os?: string | string[]; cpu?: string | string[]; optionalDependencies?: Record<string, string> }, string]
+      >
+    }
+    const optionalNames = new Set<string>()
+    for (const [, , info] of Object.values(parsed.packages)) {
+      for (const opt of Object.keys(info.optionalDependencies ?? {})) optionalNames.add(opt)
+    }
+    const matchesHost = (value: string | string[] | undefined, current: string) =>
+      value === undefined ? true : Array.isArray(value) ? value.includes(current) : value === current
+    const entries = Object.entries(parsed.packages)
+    expect(entries.length).toBeGreaterThan(0)
+    for (const [name, [, , info]] of entries) {
+      if (optionalNames.has(name) && (!matchesHost(info.os, process.platform) || !matchesHost(info.cpu, process.arch))) {
+        continue
+      }
       const meta = JSON.parse(readFileSync(join(TOOL_ROOT, "node_modules", name, "package.json"), "utf8")) as {
         license: string
       }
