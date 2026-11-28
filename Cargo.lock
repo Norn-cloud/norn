@@ -6363,7 +6363,7 @@ dependencies = [
  "dragonbox_ecma",
  "hashbrown 0.17.1",
  "icu_normalizer",
- "indexmap 2.14.0",
+ "indexmap 2.14.2",
  "libc",
  "memchr",
  "num-bigint 0.5.1",
@@ -6417,7 +6417,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9aed7739639b7fb1d33e0e047c0ae85a7b6813391014b45e3747e9c475dd19e9"
 dependencies = [
  "bitflags 2.13.1",
- "indexmap 2.14.0",
+ "indexmap 2.14.2",
  "rayon",
  "rustc-hash",
  "tsrs_ast",
