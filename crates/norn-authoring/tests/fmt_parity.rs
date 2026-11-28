@@ -1,4 +1,4 @@
-//! Formatter parity integration tests for `norn-authoring` (`FMT-SEMANTIC-1`).
+//! Formatting parity tests for `norn-authoring` (`FMT-SEMANTIC-1`).
 
 use norn_authoring::{AuthoringError, format_source};
 

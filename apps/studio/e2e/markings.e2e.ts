@@ -32,7 +32,10 @@ async function privacyCell(page: Page, reader: "viewer" | "auditor") {
   })
 }
 
+const shots = process.env.SHOTS
+
 async function shoot(page: Page, info: { outputPath: (name: string) => string }, name: string) {
+  if (!shots) return
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme })
     await page.waitForTimeout(300)

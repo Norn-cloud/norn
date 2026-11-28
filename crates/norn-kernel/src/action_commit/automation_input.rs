@@ -13,6 +13,7 @@ use super::input::{
     action_link_key, actor_derived_fields, check_call_receipt_input, check_canonical_object_bound,
     reserved_action_identity, rfc6901_token,
 };
+use super::post_slice::clock_derived_fields;
 
 /// The shortest target id the runtime can inject when the target id schema
 /// leaves it unconstrained (an object key is nonblank). See
@@ -143,12 +144,13 @@ pub fn validate_automation_static_input(
         }]);
     };
 
-    let actor_fields = actor_derived_fields(action);
+    let mut server_fields = actor_derived_fields(action);
+    server_fields.extend(clock_derived_fields(action));
     let mut violations = Vec::new();
     check_reserved_and_required(
         action,
         target_id_field,
-        &actor_fields,
+        &server_fields,
         required,
         supplied,
         &mut violations,
@@ -156,7 +158,7 @@ pub fn validate_automation_static_input(
     check_supplied_values(
         action,
         target_id_field,
-        &actor_fields,
+        &server_fields,
         properties,
         supplied,
         &mut violations,

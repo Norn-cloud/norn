@@ -3213,6 +3213,25 @@ fn apply_change<X>(
                 });
             }
             if origin != AdmissionOrigin::Observation
+                && effective
+                    .property(property.as_str())
+                    .is_some_and(norn_checker::EffectiveProperty::immutable_after_create)
+            {
+                let canonical_next = catalog.canonicalize_working_temporal_value(
+                    &key.object_type,
+                    property.as_str(),
+                    value,
+                );
+                if values.get(property.as_str()) != Some(&canonical_next) {
+                    return Err(DecisionRefusal::InvalidOutput {
+                        reason: format!(
+                            "ORIGIN-DATAFLOW-1: immutableAfterCreate property '{}' of {key} cannot be modified after creation",
+                            property.as_str()
+                        ),
+                    });
+                }
+            }
+            if origin != AdmissionOrigin::Observation
                 && let Some((lifecycle, state)) = catalog.immutable_state(&key.object_type, values)
             {
                 return Err(DecisionRefusal::ImmutableStateWrite {

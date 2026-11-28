@@ -19,7 +19,7 @@
 //! with `eq`/`ne` only. A record without the property, or a comparison the
 //! values do not support, parks the call (fail closed).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_cell::engine::SqlEngine;
 use norn_cell::retained::RetainedDefinition;
@@ -73,6 +73,22 @@ pub fn check(
     roles: &[&str],
     gated: &BTreeSet<String>,
 ) -> Vec<RefusalDiagnostic> {
+    let specs: BTreeMap<String, bool> = actions
+        .iter()
+        .map(|action| (action.clone(), false))
+        .collect();
+    check_against(payload, &specs, roles, gated)
+}
+
+/// The findings for an approval payload against admitted action specs
+/// (`action_id -> reads_clock`).
+#[must_use]
+pub(crate) fn check_against(
+    payload: &Value,
+    actions: &BTreeMap<String, bool>,
+    roles: &[&str],
+    gated: &BTreeSet<String>,
+) -> Vec<RefusalDiagnostic> {
     let mut findings = Vec::new();
     let Some(object) = payload.as_object() else {
         return vec![finding(codes::INVALID, "an approval is an object", "")];
@@ -84,27 +100,7 @@ pub fn check(
             &format!("/{key}"),
         ));
     }
-    match object.get("action").and_then(Value::as_str) {
-        Some(action) if actions.contains(action) => {
-            if gated.contains(action) {
-                findings.push(finding(
-                    codes::DUPLICATE,
-                    "another active approval already gates this action",
-                    "/action",
-                ));
-            }
-        }
-        Some(_) => findings.push(finding(
-            codes::ACTION_UNKNOWN,
-            "the action is not admitted in this cell",
-            "/action",
-        )),
-        None => findings.push(finding(
-            codes::INVALID,
-            "action is the admitted action id",
-            "/action",
-        )),
-    }
+    check_action_target(object, actions, gated, &mut findings);
     let decider = object.get("decider").and_then(Value::as_object);
     let named: Vec<&str> = decider
         .and_then(|decider| decider.get("roles"))
@@ -165,6 +161,40 @@ pub fn check(
         ));
     }
     findings
+}
+
+fn check_action_target(
+    object: &serde_json::Map<String, Value>,
+    actions: &BTreeMap<String, bool>,
+    gated: &BTreeSet<String>,
+    findings: &mut Vec<RefusalDiagnostic>,
+) {
+    match object.get("action").and_then(Value::as_str) {
+        Some(action) if actions.get(action).copied() == Some(true) => findings.push(finding(
+            codes::INVALID,
+            "an approval cannot gate an action that derives from `clock` (advancing the clock between approval and release invalidates the prepared intent digest)",
+            "/action",
+        )),
+        Some(action) if actions.contains_key(action) => {
+            if gated.contains(action) {
+                findings.push(finding(
+                    codes::DUPLICATE,
+                    "another active approval already gates this action",
+                    "/action",
+                ));
+            }
+        }
+        Some(_) => findings.push(finding(
+            codes::ACTION_UNKNOWN,
+            "the action is not admitted in this cell",
+            "/action",
+        )),
+        None => findings.push(finding(
+            codes::INVALID,
+            "action is the admitted action id",
+            "/action",
+        )),
+    }
 }
 
 fn check_when(when: &Value, findings: &mut Vec<RefusalDiagnostic>) {
@@ -261,19 +291,20 @@ pub fn restate(canonical: &str) -> Result<String, String> {
     Ok(lines.join("\n"))
 }
 
-/// The admitted action ids of the active definitions, and the actions an
-/// active approval other than `id` already gates.
+/// The admitted action specs (`action_id -> reads_clock`) of the active
+/// definitions, and the actions an active approval other than `id` already
+/// gates.
 pub(crate) fn approval_context<E: SqlEngine>(
     host: &DevHost<E>,
     id: &str,
-) -> Result<(BTreeSet<String>, BTreeSet<String>), Refusal> {
+) -> Result<(BTreeMap<String, bool>, BTreeSet<String>), Refusal> {
     let actions = {
         let cell = host.cell()?;
         let reader = cell.store().read();
         reader
             .installed_definitions(None)
             .map_err(Refusal::host)?
-            .map(|active| crate::cell_definitions::set_actions(&active.canonical_set))
+            .map(|active| crate::cell_definitions::set_action_specs(&active.canonical_set))
             .transpose()?
             .unwrap_or_default()
     };
@@ -416,5 +447,24 @@ mod tests {
             assert_eq!(found.len(), 1, "{when}");
             assert_eq!(found[0].code, codes::INVALID, "{when}");
         }
+    }
+
+    #[test]
+    fn a_clock_deriving_action_cannot_be_gated() {
+        let payload = json!({
+            "action": "test.payout.create",
+            "decider": { "roles": ["admin"] },
+            "question": "Approve payout?",
+            "risk": "high"
+        });
+        let found = check_against(
+            &payload,
+            &BTreeMap::from([("test.payout.create".to_owned(), true)]),
+            &["admin"],
+            &BTreeSet::new(),
+        );
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, codes::INVALID);
+        assert!(found[0].message.contains("clock"), "{found:?}");
     }
 }

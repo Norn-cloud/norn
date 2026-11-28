@@ -79,6 +79,7 @@ pub const INPUT_VARIABLE: &str = "input";
 pub const ACTOR_VARIABLE: &str = "actor";
 /// Record name of the authenticated action principal.
 pub const ACTION_PRINCIPAL_RECORD: &str = "norn:ActionPrincipal";
+pub use crate::{ACTION_CLOCK_RECORD, CLOCK_VARIABLE};
 
 /// Record name of a bound `input` (outside the object type name grammar, so
 /// it never collides with a model type).
@@ -670,10 +671,16 @@ impl ZenTypeEnv {
             ACTION_PRINCIPAL_RECORD.to_owned(),
             BTreeMap::from([("subjectId".to_owned(), Type::text())]),
         );
-        Self::input_only_with_records(records, fields, options)?.bind_operand(
-            ACTOR_VARIABLE,
-            Type::Record(ACTION_PRINCIPAL_RECORD.to_owned()),
-        )
+        records.insert(
+            ACTION_CLOCK_RECORD.to_owned(),
+            crate::action_clock_record_fields(),
+        );
+        Self::input_only_with_records(records, fields, options)?
+            .bind_operand(
+                ACTOR_VARIABLE,
+                Type::Record(ACTION_PRINCIPAL_RECORD.to_owned()),
+            )?
+            .bind_operand(CLOCK_VARIABLE, Type::Record(ACTION_CLOCK_RECORD.to_owned()))
     }
 
     /// An actor-free environment that binds only `input`, with explicitly

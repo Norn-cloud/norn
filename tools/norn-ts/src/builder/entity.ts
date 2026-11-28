@@ -105,6 +105,8 @@ export const ref = (name: string, additivity?: PropertyAdditivity, unitSource: R
  */
 export type DefaultValue = string | boolean | { readonly decimal: string }
 
+export type PropertyOrigin = "caller" | "actor" | "receipt" | "derived" | "clock" | "default"
+
 export interface PropertyDecl {
   readonly id: string
   readonly description?: string
@@ -118,6 +120,10 @@ export interface PropertyDecl {
    * principal (`fromCaller`), and it is immutable afterwards.
    */
   readonly protected?: boolean
+  /** ORIGIN-DATAFLOW-1: declared write-origin provenance constraint. */
+  readonly origin?: PropertyOrigin
+  /** ORIGIN-DATAFLOW-1: forbids any write after creation (`create_only`). */
+  readonly immutableAfterCreate?: boolean
   readonly at?: SourceLocation
 }
 
@@ -361,6 +367,8 @@ function defaultJson(value: DefaultValue): Json {
 function propertyJson(p: PropertyDecl, withDefault: boolean): Json {
   return {
     protected: p.protected === true ? true : undefined,
+    origin: p.origin,
+    immutableAfterCreate: p.immutableAfterCreate === true ? true : undefined,
     id: p.id,
     markings: omitEmpty(p.markings ?? []),
     description: p.description,

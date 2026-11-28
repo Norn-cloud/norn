@@ -587,9 +587,12 @@ impl<'a, 'r> Checker<'a, 'r> {
                     let mut property = crate::entity_instance::EffectiveProperty::from_resolved(
                         resolved, markings,
                     );
-                    if self.protected(&def.name, &property.id) {
-                        property.protect();
-                    }
+                    crate::entity_model_origin::apply_property_origin_flags(
+                        self.ancestors(&def.name),
+                        &def.name,
+                        &mut property,
+                        |owner| self.owner_properties(owner),
+                    );
                     if let Some(reads) = computed_reads.get(resolved.property.id.as_str()) {
                         property.computed_inputs = reads.fields.iter().cloned().collect();
                         property.computed_reads_all = reads.whole_root;
@@ -998,23 +1001,19 @@ impl<'a> Checker<'a, '_> {
             .map(|(parent, _)| *parent)
     }
 
-    fn protected(&self, name: &ObjectTypeName, property: &PropertyId) -> bool {
-        std::iter::once(name)
-            .chain(self.ancestors(name))
-            .flat_map(|name| {
-                self.types
-                    .get(name)
-                    .into_iter()
-                    .flat_map(|entry| &entry.def.properties)
-                    .chain(
-                        self.extensions
-                            .get(name)
-                            .into_iter()
-                            .flatten()
-                            .flat_map(|(_, _, extension)| &extension.properties),
-                    )
-            })
-            .any(|candidate| candidate.id == *property && candidate.protected)
+    fn owner_properties(&self, owner: &ObjectTypeName) -> impl Iterator<Item = &norn_ir::Property> {
+        let base = self
+            .types
+            .get(owner)
+            .into_iter()
+            .flat_map(|e| &e.def.properties);
+        let exts = self
+            .extensions
+            .get(owner)
+            .into_iter()
+            .flatten()
+            .flat_map(|(_, _, x)| &x.properties);
+        base.chain(exts)
     }
 
     /// The registered supertypes of `name`, nearest first.

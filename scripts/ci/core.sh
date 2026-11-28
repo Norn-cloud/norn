@@ -429,9 +429,11 @@ PY
       cargo test --locked "${guard[@]}" --doc
       ;;
     features)
-      cargo test --locked -p norn-canonical -p norn-checker -p norn-ui-checker
-      cargo test --locked -p norn-canonical -p norn-checker -p norn-ui-checker --features norn-canonical/preserve-order-probe
-      cargo test --locked -p norn-canonical -p norn-ir -p norn-checker -p norn-ui-checker --features serde_json/arbitrary_precision
+      ensure_nextest
+      "${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast -p norn-canonical -p norn-checker -p norn-ui-checker
+      "${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast -p norn-canonical -p norn-checker -p norn-ui-checker --features norn-canonical/preserve-order-probe
+      "${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast -p norn-canonical -p norn-ir -p norn-checker -p norn-ui-checker --features serde_json/arbitrary_precision
+      cargo test --locked --doc -p norn-ir --features serde_json/arbitrary_precision
       ;;
     duckdb)
       # The workspace never enables the optional DuckDB backend, so a change that breaks it

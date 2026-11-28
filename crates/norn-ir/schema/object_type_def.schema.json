@@ -795,12 +795,20 @@
           "description": "Unique id within the object type.",
           "$ref": "#/$defs/PropertyId"
         },
+        "immutableAfterCreate": {
+          "description": "ORIGIN-DATAFLOW-1: once created, no update, patch, or transition may overwrite this property.",
+          "type": "boolean"
+        },
         "markings": {
           "description": "Classification markings declared on this property. Markings from\nproperty types, interfaces, supertypes, and computed inputs are unioned\nby the checker and cannot be removed by narrowing. Omitted when empty.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/MarkingId"
           }
+        },
+        "origin": {
+          "description": "ORIGIN-DATAFLOW-1: declared write-origin constraint for this property.",
+          "$ref": "#/$defs/PropertyOrigin"
         },
         "protected": {
           "description": "FA-PROTECT-1: only sealed rule outputs may write this inherited field.",
@@ -937,6 +945,41 @@
       "description": "Id of a property within its object type (`sku_code`), unique there.",
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "PropertyOrigin": {
+      "description": "ORIGIN-DATAFLOW-1: declared write-origin provenance of a stored property.\n\nEvery non-`Caller` origin restricts which action mechanisms may write the\nproperty at admission time (and `immutableAfterCreate` is additionally\nenforced on every non-observation commit in `norn-kernel`), eliminating\ncaller-spoofed timestamps, derived calculations, and external evidence.",
+      "oneOf": [
+        {
+          "description": "Any validated caller input (the default when omitted).",
+          "type": "string",
+          "const": "caller"
+        },
+        {
+          "description": "Authenticated principal subject id (`actor.subjectId`, `inputRequired: false`).",
+          "type": "string",
+          "const": "actor"
+        },
+        {
+          "description": "Host-authenticated Function receipt (`acceptReceipt` `digestProperty` or `resultBindings`).",
+          "type": "string",
+          "const": "receipt"
+        },
+        {
+          "description": "Server-side deterministic derivation (`derive` with `inputRequired: false`).",
+          "type": "string",
+          "const": "derived"
+        },
+        {
+          "description": "Server commit clock (`clock.nowIso` / `clock.nowMillis`, `inputRequired: false`).",
+          "type": "string",
+          "const": "clock"
+        },
+        {
+          "description": "Entity default value only (never caller-supplied).",
+          "type": "string",
+          "const": "default"
+        }
+      ]
     },
     "PropertyType": {
       "description": "The value kind of a property, tagged by `kind`.",

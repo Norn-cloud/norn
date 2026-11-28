@@ -790,6 +790,100 @@ pub fn action_derivation_environment(
     action_environment_with(action, None, completed, true)
 }
 
+/// ACTION-SLICE-DERIVE-1: index of the first derivation step that reads
+/// `slice` or `aggregates` (when declared on the action) and therefore runs
+/// after `load_action_slice`. Malformed expressions fail closed as post-slice
+/// when a slice or aggregate is declared so checker and kernel agree on the
+/// exact split point.
+#[must_use]
+pub fn first_slice_derivation_index_for(
+    derive: &[norn_ir::ActionInputDerivation],
+    has_slice: bool,
+    has_aggregates: bool,
+) -> Option<usize> {
+    if !has_slice && !has_aggregates {
+        return None;
+    }
+    derive.iter().position(|step| {
+        (has_slice
+            && crate::expression_reads(step.expression.as_str(), "slice")
+                .map_or(true, |reads| reads.whole_root || !reads.fields.is_empty()))
+            || (has_aggregates
+                && crate::expression_reads(step.expression.as_str(), "aggregates")
+                    .map_or(true, |reads| reads.whole_root || !reads.fields.is_empty()))
+    })
+}
+
+/// ACTION-SLICE-DERIVE-1: single source of truth for the first post-slice
+/// derivation index on an [`norn_ir::ActionRoot`].
+#[must_use]
+pub fn first_slice_derivation_index(action: &norn_ir::ActionRoot) -> Option<usize> {
+    first_slice_derivation_index_for(
+        &action.derive,
+        !action.slice.is_empty(),
+        !action.aggregates.is_empty(),
+    )
+}
+
+/// ORIGIN-DATAFLOW-1: input fields derived solely from server roots (`actor`,
+/// `clock`, `slice`, `aggregates`, literals) with `inputRequired: false`.
+#[must_use]
+pub fn trusted_server_derived_fields(action: &norn_ir::ActionRoot) -> BTreeSet<String> {
+    let all_input_fields: BTreeSet<&str> = action
+        .input_schema
+        .get("properties")
+        .and_then(JsonValue::as_object)
+        .map_or_default(|props| props.keys().map(String::as_str).collect());
+    let has_slice = !action.slice.is_empty();
+    let has_aggregates = !action.aggregates.is_empty();
+    let mut trusted = BTreeSet::new();
+    for step in &action.derive {
+        if action
+            .derive
+            .iter()
+            .any(|other| other.field == step.field && other.input_required)
+        {
+            trusted.remove(&step.field);
+            continue;
+        }
+        let expr = step.expression.as_str();
+        let input_clean = crate::expression_reads(expr, "input").is_ok_and(|reads| {
+            !reads.whole_root && reads.fields.iter().all(|field| trusted.contains(field))
+        });
+        let flat_clean = input_clean
+            && all_input_fields.iter().all(|field| {
+                if trusted.contains(*field)
+                    || matches!(*field, "input" | "actor" | "clock")
+                    || (*field == "slice" && has_slice)
+                    || (*field == "aggregates" && has_aggregates)
+                {
+                    return true;
+                }
+                crate::expression_reads(expr, field)
+                    .is_ok_and(|reads| !reads.whole_root && reads.fields.is_empty())
+            });
+        if flat_clean {
+            trusted.insert(step.field.clone());
+        } else {
+            trusted.remove(&step.field);
+        }
+    }
+    trusted
+}
+
+/// ACTION-SLICE-DERIVE-1: post-slice derivation environment combining `input`,
+/// `actor`, `clock`, resolved `slice` records, and `aggregates`.
+///
+/// # Errors
+/// Returns the reason the action input, slice, or a completed derivation cannot be typed.
+pub fn action_slice_derivation_environment(
+    action: &norn_ir::ActionRoot,
+    catalog: Option<&crate::ZenTypeEnv>,
+    completed: usize,
+) -> Result<crate::ZenTypeEnv, String> {
+    action_environment_with(action, catalog, completed, true)
+}
+
 /// #1105: each aggregate is a count (an integer) or a sum typed as its
 /// summed property, read as `aggregates.<name>`.
 fn aggregate_types(

@@ -90,11 +90,14 @@ use crate::predicate_property::{
     EQUALITY, ScalarClass, WINDOW, indexed_scalar_property, scalar_class,
 };
 use crate::property_types::error;
-use crate::typed_roots::{action_input_field_type, check_action_slice_preconditions};
+use crate::typed_roots::{
+    action_input_field_type, check_action_slice_derivations, check_action_slice_preconditions,
+};
 use crate::{Diagnostic, DiagnosticCode, Span};
 
 mod actor_binding;
 mod compensation;
+mod set_fields;
 
 use actor_binding::{actor_binding_findings, transition_guard_findings, writer_protected_findings};
 use compensation::compensation_findings;
@@ -138,19 +141,13 @@ pub mod codes {
     /// the action can bypass allocation for an existing series key.
     pub const NAMING_SERIES_TARGET_MISMATCH: &str =
         "artifact_set.action.naming_series_target_mismatch";
-    /// ACTOR-INDEPENDENT-1: an independent-actor check names a property that
-    /// is not a protected text property of an existing transition target, so
-    /// a caller-controlled value could satisfy it.
+    /// ACTOR-INDEPENDENT-1: independent-actor check names an unprotected or non-text property.
     pub const INDEPENDENT_ACTOR: &str = "artifact_set.action.independent_actor";
-    /// ACTION-COMPENSATION-1: `compensation.actionId` names no action of the
-    /// artifact set or installed base.
+    /// ACTION-COMPENSATION-1: `compensation.actionId` names no admitted action.
     pub const UNRESOLVED_COMPENSATION: &str = "artifact_set.action.unresolved_compensation";
-    /// ACTION-COMPENSATION-1: action compensation links form a cycle (including
-    /// self-compensation).
+    /// ACTION-COMPENSATION-1: action compensation links form a cycle.
     pub const COMPENSATION_CYCLE: &str = "artifact_set.action.compensation_cycle";
-    /// ACTION-COMPENSATION-1: the compensating action violates ledgering,
-    /// uniqueness, lifecycle reachability, scope coverage, or active lifecycle
-    /// requirements.
+    /// ACTION-COMPENSATION-1: compensating action violates ledgering, uniqueness, lifecycle, or scope rules.
     pub const INVALID_COMPENSATION: &str = "artifact_set.action.invalid_compensation";
     /// D66: a string-enum input writes no enum property.
     pub const INPUT_ENUM_UNBOUND: &str = "action.validation.input_enum_unbound";
@@ -225,6 +222,9 @@ pub fn check_action_set(
         .filter_map(|artifact| decode_action(artifact).map(|root| (artifact, root)))
         .collect();
     let mut findings = Model::inventory(artifacts, base).duplicate_findings();
+    findings.extend(set_fields::approval_clock_conflict_findings(
+        artifacts, base,
+    ));
     if actions.is_empty() {
         return findings;
     }
@@ -597,6 +597,20 @@ fn action_slice_findings(
         let aggregates = action_aggregate_types(artifact, root, model);
         findings.extend(aggregates.findings);
         if slice.typed_slice && aggregates.typed {
+            findings.extend(set_fields::post_slice_effect_findings(
+                artifact, root, model,
+            ));
+            findings.extend(
+                check_action_slice_derivations(
+                    root,
+                    &slice.records,
+                    &slice.fields,
+                    &aggregates.fields,
+                    Some(&artifact.artifact_id),
+                )
+                .into_iter()
+                .map(Diagnostic::from),
+            );
             findings.extend(
                 check_action_slice_preconditions(
                     root,
@@ -1487,6 +1501,28 @@ impl Defined<'_> {
                 findings.push(finding(codes::TARGET_NOT_WRITABLE, "acceptReceipt requires a required string reference, a manifest digest, and writable typed result/digest properties".to_owned(), action, "/payload/effectProgram/acceptReceipt"));
             }
         }
+        if let ActionEffectProgram::FireTransition {
+            lifecycle,
+            transition,
+            accept_receipt,
+            set_fields,
+            ..
+        } = program
+        {
+            let view = self
+                .effective_object_type
+                .as_ref()
+                .and_then(|v| v.as_ref().ok());
+            findings.extend(set_fields::fire_transition_set_fields_findings(
+                action,
+                root,
+                view,
+                lifecycle,
+                transition,
+                accept_receipt.as_ref(),
+                set_fields,
+            ));
+        }
         findings.extend(self.naming_series_findings(action, root, program));
         findings.extend(self.input_enum_findings(action, root, program));
         if let (
@@ -1539,46 +1575,9 @@ impl Defined<'_> {
             .effective_object_type
             .as_ref()
             .and_then(|view| view.as_ref().ok());
-        let upsert = matches!(program, ActionEffectProgram::UpsertInputObject { .. });
-        let mut findings = Vec::new();
         let mut enums = Vec::new();
         collect_input_enums(properties, "/payload/inputSchema", true, &mut enums);
-        for (field, top_level, values, at) in enums {
-            let target = view
-                .filter(|_| upsert && top_level)
-                .and_then(|view| view.property(&field))
-                .and_then(|property| {
-                    if let crate::EffectiveKind::Base(norn_ir::PropertyType::Enum { values }) =
-                        &property.kind
-                    {
-                        Some(values)
-                    } else {
-                        None
-                    }
-                });
-            let Some(declared) = target else {
-                findings.push(finding(
-                    codes::INPUT_ENUM_UNBOUND,
-                    format!("input {field:?} declares an enum but writes no enum property"),
-                    action,
-                    &at,
-                ));
-                continue;
-            };
-            let missing: Vec<&String> = values
-                .iter()
-                .filter(|value| !declared.iter().any(|declared| &declared.value == *value))
-                .collect();
-            if !missing.is_empty() {
-                findings.push(finding(
-                    codes::INPUT_ENUM_NOT_SUBSET,
-                    format!("input {field:?} admits {missing:?}, which property {field:?} does not declare"),
-                    action,
-                    &at,
-                ));
-            }
-        }
-        findings
+        set_fields::check_input_enums(action, program, view, &enums)
     }
 
     #[allow(
@@ -1923,10 +1922,9 @@ fn owned_rows_effect_findings(
             let child_effective = declared.get(id).and_then(|collection| {
                 model.effective_object_type_named(collection.child_type.as_str())
             });
-            // ACTOR-STAMP-1 parity with runtime owned rows: never a protected property.
             let computed = child_effective
                 .and_then(|child| child.property(property.as_str()))
-                .is_none_or(|property| property.computed || property.protected());
+                .is_none_or(set_fields::is_owned_row_property_restricted);
             let lifecycle =
                 child_effective.is_some_and(|child| child.lifecycle(property.as_str()).is_some());
             if lifecycle {
