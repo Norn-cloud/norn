@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.PosSale.pos_sale_cost_valid.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.PosSale.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A costed sale links a cost reference and applied unit cost with non-negative COGS; an uncosted sale carries null cost fields and zero placeholder COGS so margin totals withhold.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.PosSale.pos_sale_cost_valid",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "A costed sale links a cost reference and applied unit cost with non-negative COGS; an uncosted sale carries null cost fields and zero placeholder COGS so margin totals withhold.",
+    "response": {
+      "expression": "((((self.cost_status == 'costed') and (self.costed_ref != null)) and (self.applied_unit_cost != null)) and (self.cogs_amount >= 0)) or ((((self.cost_status == 'missing_cost') and (self.costed_ref == null)) and (self.applied_unit_cost == null)) and (self.cogs_amount == 0))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.PosSale"
+      ],
+      "root": {
+        "id": "supply.PosSale",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.PosSale"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.PosSale.pos_sale_cost_valid.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

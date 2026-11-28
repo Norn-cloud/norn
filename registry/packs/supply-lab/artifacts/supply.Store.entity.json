@@ -1,0 +1,158 @@
+{
+  "artifactId": "supply.Store.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Retail store",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "store_id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "resting",
+              "state": "active"
+            },
+            {
+              "outcome": "completed",
+              "state": "closed"
+            }
+          ],
+          "immutable": [
+            "closed"
+          ],
+          "initial": [
+            "active"
+          ],
+          "property": "status",
+          "terminal": [
+            "closed"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "active"
+              ],
+              "id": "close",
+              "to": "closed"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "owner_entity",
+          "inverse": "stores",
+          "target": "supply.LegalEntity"
+        }
+      ],
+      "name": "supply.Store",
+      "properties": [
+        {
+          "id": "store_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "name",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "entity_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "custodian_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "location_kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "mall_store"
+              },
+              {
+                "value": "standalone"
+              },
+              {
+                "value": "warehouse_outlet"
+              }
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "mall_code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        },
+        {
+          "default": "active",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "active"
+              },
+              {
+                "value": "closed"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.Store.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

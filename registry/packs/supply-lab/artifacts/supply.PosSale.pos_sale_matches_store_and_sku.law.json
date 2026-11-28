@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.PosSale.pos_sale_matches_store_and_sku.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.PosSale.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A POS sale must record quantities in its catalog SKU's unit of measure and amounts in its store's functional currency.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.PosSale.pos_sale_matches_store_and_sku",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "A POS sale must record quantities in its catalog SKU's unit of measure and amounts in its store's functional currency.",
+    "response": {
+      "expression": "(self.unit == self.sku.unit_of_measure) and (self.currency == self.store.currency)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.PosSale"
+      ],
+      "root": {
+        "id": "supply.PosSale",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.PosSale"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.PosSale.pos_sale_matches_store_and_sku.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,164 @@
+{
+  "artifactId": "supply.Store.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Retail store labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "متجر تجزئة",
+          "en": "Retail store"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.Store"
+        }
+      },
+      {
+        "label": {
+          "ar": "رمز المتجر",
+          "en": "Store code"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "supply.Store",
+          "property": "store_id"
+        }
+      },
+      {
+        "label": {
+          "ar": "الكيان القانوني المالك",
+          "en": "Owner legal entity"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "supply.Store",
+          "property": "entity_id"
+        }
+      },
+      {
+        "label": {
+          "ar": "أمين العهدة",
+          "en": "Custodian"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "supply.Store",
+          "property": "custodian_id"
+        }
+      },
+      {
+        "label": {
+          "ar": "رمز المركز التجاري",
+          "en": "Mall code"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "supply.Store",
+          "property": "mall_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "متجر داخل مول",
+          "en": "Mall store"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.Store",
+          "property": "location_kind",
+          "value": "mall_store"
+        }
+      },
+      {
+        "label": {
+          "ar": "متجر مستقل",
+          "en": "Standalone store"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.Store",
+          "property": "location_kind",
+          "value": "standalone"
+        }
+      },
+      {
+        "label": {
+          "ar": "منفذ مستودع",
+          "en": "Warehouse outlet"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.Store",
+          "property": "location_kind",
+          "value": "warehouse_outlet"
+        }
+      },
+      {
+        "label": {
+          "ar": "نشط",
+          "en": "Active"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.Store",
+          "property": "status",
+          "value": "active"
+        }
+      },
+      {
+        "label": {
+          "ar": "مغلق",
+          "en": "Closed"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.Store",
+          "property": "status",
+          "value": "closed"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.Store.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

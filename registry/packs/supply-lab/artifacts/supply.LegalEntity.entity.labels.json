@@ -1,0 +1,150 @@
+{
+  "artifactId": "supply.LegalEntity.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Legal entity labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "كيان قانوني",
+          "en": "Legal entity"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.LegalEntity"
+        }
+      },
+      {
+        "label": {
+          "ar": "رمز الكيان",
+          "en": "Entity code"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "supply.LegalEntity",
+          "property": "entity_id"
+        }
+      },
+      {
+        "label": {
+          "ar": "رمز الدفتر",
+          "en": "Book code"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "supply.LegalEntity",
+          "property": "book_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "العملة الوظيفية",
+          "en": "Functional currency"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "supply.LegalEntity",
+          "property": "functional_currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "منشأة فردية",
+          "en": "Sole proprietorship"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.LegalEntity",
+          "property": "entity_kind",
+          "value": "sole_proprietorship"
+        }
+      },
+      {
+        "label": {
+          "ar": "شركة تضامن",
+          "en": "Partnership"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.LegalEntity",
+          "property": "entity_kind",
+          "value": "partnership"
+        }
+      },
+      {
+        "label": {
+          "ar": "شركة مساهمة",
+          "en": "Corporation"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.LegalEntity",
+          "property": "entity_kind",
+          "value": "corporation"
+        }
+      },
+      {
+        "label": {
+          "ar": "نشط",
+          "en": "Active"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.LegalEntity",
+          "property": "status",
+          "value": "active"
+        }
+      },
+      {
+        "label": {
+          "ar": "مغلق",
+          "en": "Closed"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.LegalEntity",
+          "property": "status",
+          "value": "closed"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.LegalEntity.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

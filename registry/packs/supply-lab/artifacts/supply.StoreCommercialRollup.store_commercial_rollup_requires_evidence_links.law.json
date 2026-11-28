@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.StoreCommercialRollup.store_commercial_rollup_requires_evidence_links.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.StoreCommercialRollup.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A verified commercial KPI rollup must link its governed on-hand StoreCount and a costed rollup must link both its UnitCost and immutable opening StockValuationCut.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.StoreCommercialRollup.store_commercial_rollup_requires_evidence_links",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "A verified commercial KPI rollup must link its governed on-hand StoreCount and a costed rollup must link both its UnitCost and immutable opening StockValuationCut.",
+    "response": {
+      "expression": "(((self.count_status == 'verified') and (self.on_hand_count != null)) or ((self.count_status == 'unverified') and (self.on_hand_count == null))) and ((((self.cost_status == 'costed') and (self.cost_record != null)) and (self.opening_cut != null)) or (((self.cost_status == 'missing_cost') and (self.cost_record == null)) and (self.opening_cut == null)))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.StoreCommercialRollup"
+      ],
+      "root": {
+        "id": "supply.StoreCommercialRollup",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.StoreCommercialRollup"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StoreCommercialRollup.store_commercial_rollup_requires_evidence_links.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

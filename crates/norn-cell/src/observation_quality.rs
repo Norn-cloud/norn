@@ -323,7 +323,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )
     }
 
-    fn review_findings(
+    pub(crate) fn review_findings(
         &self,
         world: &str,
         object_type: &str,

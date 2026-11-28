@@ -127,6 +127,18 @@ pub mod pack_mbt_support {
         WriteChange, ZenExpression, lifecycle_codes,
     };
 
+    /// ACTION-ACTOR-1 / ACTION-CLOCK-1 / ORIGIN-DATAFLOW-1: every input field
+    /// classified by the kernel as server-derived (actor-derived, clock-derived,
+    /// or purely server-derived from non-caller roots) that callers must omit
+    /// from raw action input.
+    #[must_use]
+    pub fn server_derived_input_fields(action: &ActionRoot) -> std::collections::BTreeSet<String> {
+        let mut fields = crate::action_commit::actor_derived_fields(action);
+        fields.extend(crate::action_commit::clock_derived_fields(action));
+        fields.extend(norn_expr::schema::trusted_server_derived_fields(action));
+        fields
+    }
+
     /// Computes the canonical `sha256:...` content pin for a retained [`LawIR`],
     /// matching [`crate::governing_laws`]'s `DataQualityRuleRef::Law::version`.
     ///

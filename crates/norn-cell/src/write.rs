@@ -752,6 +752,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                         ),
                         params![commit_seq, observation_id],
                     )?;
+                    self.conn.execute(
+                        &crate::system::claim_endpoints_of(&format!(
+                            "i.\"observation_id\" = (SELECT json_extract(\"observed\", '$.input.reprocesses') FROM \"{INBOX}\" WHERE \"observation_id\" = ?1)"
+                        )),
+                        params![observation_id],
+                    )?;
                 }
                 if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
                     // OBS-PAGE-1: the page's still-pending members are consumed

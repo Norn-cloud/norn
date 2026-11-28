@@ -1,0 +1,194 @@
+{
+  "artifactId": "supply.retail.store_lot_aging",
+  "dependencies": [
+    {
+      "artifactId": "supply.StockLot.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.Store.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Store holding lot aging cohorts",
+  "namespace": "supply",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "active_lots": {
+          "input": "lot",
+          "op": "filter",
+          "predicate": "input.remaining_qty > 0"
+        },
+        "aging": {
+          "columns": [
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.st_entity_id",
+              "name": "entity_id"
+            },
+            {
+              "expression": "input.st_custodian_id",
+              "name": "custodian_id"
+            },
+            {
+              "expression": "input.st_mall_code",
+              "name": "mall_code"
+            },
+            {
+              "expression": "input.sku_id",
+              "name": "sku_id"
+            },
+            {
+              "expression": "input.unit",
+              "name": "unit"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.received_at",
+              "name": "received_at"
+            },
+            {
+              "expression": "input.received_qty",
+              "name": "received_qty"
+            },
+            {
+              "expression": "input.lot_count",
+              "name": "lot_count"
+            },
+            {
+              "expression": "input.costed_lots",
+              "name": "costed_lots"
+            },
+            {
+              "expression": "input.costed_lots == input.lot_count",
+              "name": "cost_complete"
+            },
+            {
+              "expression": "input.oldest_received_at",
+              "name": "oldest_received_at"
+            },
+            {
+              "expression": "input.latest_as_of",
+              "name": "latest_as_of"
+            }
+          ],
+          "input": "joined",
+          "op": "project"
+        },
+        "cohorts": {
+          "groupBy": [
+            {
+              "column": "store_id"
+            },
+            {
+              "column": "sku_id"
+            },
+            {
+              "column": "unit"
+            },
+            {
+              "column": "currency"
+            },
+            {
+              "column": "received_at",
+              "grain": "week",
+              "label": "Receipt week"
+            }
+          ],
+          "input": "active_lots",
+          "measures": [
+            {
+              "column": "received_qty",
+              "fn": "sum",
+              "label": "Received",
+              "name": "received_qty"
+            },
+            {
+              "fn": "count",
+              "name": "lot_count"
+            },
+            {
+              "column": "unit_cost",
+              "fn": "count",
+              "name": "costed_lots"
+            },
+            {
+              "column": "received_at",
+              "fn": "min",
+              "name": "oldest_received_at"
+            },
+            {
+              "column": "as_of",
+              "fn": "max",
+              "name": "latest_as_of"
+            }
+          ],
+          "op": "aggregate"
+        },
+        "joined": {
+          "kind": "inner",
+          "left": "cohorts",
+          "on": {
+            "key": {
+              "left": [
+                "store_id"
+              ],
+              "right": "primary"
+            }
+          },
+          "op": "join",
+          "prefix": "st_",
+          "right": "store"
+        },
+        "lot": {
+          "input": "lot",
+          "op": "scan"
+        },
+        "store": {
+          "input": "store",
+          "op": "scan"
+        }
+      },
+      "output": "aging"
+    },
+    "inputs": [
+      {
+        "alias": "lot",
+        "artifactId": "supply.StockLot.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "store",
+        "artifactId": "supply.Store.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "supply.retail.store_lot_aging",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.retail.store_lot_aging.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

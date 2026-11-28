@@ -1,0 +1,64 @@
+{
+  "artifactId": "supply.pos_sales",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "connector",
+  "lifecycle": "active",
+  "name": "Retail POS sales feed",
+  "namespace": "supply",
+  "payload": {
+    "auth": {
+      "authId": "pos",
+      "kind": "api_key",
+      "name": "X-Pos-Key",
+      "placement": "header",
+      "secretRef": "SUPPLY_POS_READ_KEY"
+    },
+    "connectorVersion": "0.1",
+    "cursor": {
+      "cursorId": "pos_sales",
+      "resourceId": "pos_sale_lines",
+      "storageKey": "supply.pos.sales"
+    },
+    "deadLetterPolicy": {
+      "maxFailures": 5,
+      "route": "ledger"
+    },
+    "extensions": {
+      "norn.poll/1": {
+        "feeds": [
+          {
+            "recordKeyPath": "/pos_line_id",
+            "resourceId": "pos_sale_lines"
+          }
+        ]
+      }
+    },
+    "mappings": [
+      {
+        "externalSource": "synthetic-pos",
+        "kind": "external_id",
+        "resourceId": "pos_sale_lines",
+        "sourcePath": "/pos_line_id",
+        "targetObjectKind": "supply.PosSaleEvidence"
+      }
+    ],
+    "resources": [
+      {
+        "cursorParam": "after",
+        "endpoint": "/v1/pos/sales",
+        "itemsPath": "/lines",
+        "kind": "cursor",
+        "missingItemsIsEmpty": true,
+        "nextCursorPath": "/next",
+        "resourceId": "pos_sale_lines"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.pos_sales.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

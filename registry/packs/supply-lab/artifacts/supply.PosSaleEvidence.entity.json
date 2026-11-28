@@ -1,0 +1,119 @@
+{
+  "artifactId": "supply.PosSaleEvidence.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "POS sale feed row",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "pos_line_id"
+          ]
+        }
+      ],
+      "implements": [
+        "supply.SaleEvidence"
+      ],
+      "name": "supply.PosSaleEvidence",
+      "properties": [
+        {
+          "id": "pos_line_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "store_code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "sku_code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "sold_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "each"
+              },
+              {
+                "value": "kg"
+              },
+              {
+                "value": "l"
+              }
+            ]
+          }
+        },
+        {
+          "id": "net_revenue",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        },
+        {
+          "id": "sold_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.PosSaleEvidence.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

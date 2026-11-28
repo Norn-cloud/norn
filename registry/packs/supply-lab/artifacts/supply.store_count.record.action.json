@@ -1,0 +1,157 @@
+{
+  "artifactId": "supply.store_count.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Open a store physical count position",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.retail.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.store_count.record",
+    "createLinks": [
+      {
+        "link": "store",
+        "targetIdField": "store_id",
+        "targetType": "supply.Store"
+      },
+      {
+        "link": "sku",
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.StoreCount.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "store_count_id",
+      "objectKind": "supply.StoreCount",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "count_ref": {
+          "type": "string"
+        },
+        "count_source": {
+          "enum": [
+            "pos_cycle_count",
+            "store_audit",
+            "handheld_scan"
+          ],
+          "type": "string"
+        },
+        "on_hand_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "quantity_basis": {
+          "enum": [
+            "on_hand",
+            "available",
+            "reserved"
+          ],
+          "type": "string"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "store_count_id": {
+          "type": "string"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "store_count_id",
+        "store_id",
+        "sku_id",
+        "on_hand_qty",
+        "unit",
+        "quantity_basis",
+        "as_of",
+        "count_source",
+        "count_ref"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "store_count_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "store_count_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.store.status == 'active') and (input.unit == slice.sku.unit_of_measure)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      }
+    ],
+    "title": "Open a store physical count position",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.StoreCount"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.store_count.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -607,8 +607,10 @@ fn prepare_action_fixture<H: PackHost>(
     }
 
     encode_action_wire_input(&admitted.root.input_schema, &mut values);
-    // ACTION-ACTOR-1: a stamped field comes from the principal, never the input.
-    values.retain(|field, _| !admitted.root.actor_stamped_fields().contains(field));
+    // ACTION-ACTOR-1 / ACTION-CLOCK-1 / ORIGIN-DATAFLOW-1: server-derived
+    // fields come from the kernel, never caller input.
+    let server_derived = norn_kernel::pack_mbt_support::server_derived_input_fields(&admitted.root);
+    values.retain(|field, _| !server_derived.contains(field));
     Ok(values)
 }
 
