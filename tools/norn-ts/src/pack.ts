@@ -26,6 +26,8 @@ import { loadProfile } from "./profile.ts"
 export interface PackOptions {
   /** Explicit module roots for single-file checks; packs otherwise use every top-level module. */
   readonly modules?: ReadonlyArray<string>
+  /** Optional logical provenance `sourcePath` overrides keyed by resolved module path (for validated in-project symlinks). */
+  readonly moduleSourcePaths?: ReadonlyMap<string, string>
   /** Envelope scope of every compiled artifact (`orgId`, `environmentId`, …). */
   readonly scope: Readonly<Record<string, string>>
   /** Registry package path enables active/system envelopes and is used as the checker's read-only base. */
@@ -193,7 +195,7 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
     const specs = modules.map((file) => ({
       path: file,
       scope: registryPackagePath ? {} : options.scope,
-      sourcePath: posix(relative(root, file)),
+      sourcePath: options.moduleSourcePaths?.get(file) ?? posix(relative(root, file)),
       ...(registryPackagePath ? { registryPackagePath } : {}),
     }))
     const compiled = runNativeCompilePackJson({

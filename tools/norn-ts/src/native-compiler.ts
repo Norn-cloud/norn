@@ -426,8 +426,14 @@ export class ProfileChecker {
       return {
         file: posix(relative(TOOL_ROOT, abs)),
         profile: first.profile,
-        diagnostics: first.diagnostics,
-        uses: first.uses,
+        diagnostics: first.diagnostics.map((d) => ({
+          code: d.code,
+          start: { line: d.start.line, column: d.start.column },
+          end: { line: d.end.line, column: d.end.column },
+          construct: d.construct,
+          message: d.message,
+        })),
+        uses: first.uses.map((u) => ({ at: u.at, symbol: u.symbol, row: u.row })),
       }
     })
   }

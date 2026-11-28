@@ -146,9 +146,9 @@ fn normalize_display_join(base: &Path, rel: &Path) -> PathBuf {
 fn relative_candidates(importer_rel: &Path, specifier: &str) -> Vec<PathBuf> {
     let importer_dir = importer_rel.parent().unwrap_or_else(|| Path::new(""));
     let base = normalize_lexical_relative(&importer_dir.join(specifier));
-    let mut probes = Vec::with_capacity(5);
+    let mut probes = Vec::with_capacity(6);
     probes.push(base.clone());
-    for suffix in [".ts", ".tsx", ".json"] {
+    for suffix in [".ts", ".tsx", ".d.ts", ".json"] {
         let mut with_ext = base.as_os_str().to_os_string();
         with_ext.push(suffix);
         probes.push(PathBuf::from(with_ext));

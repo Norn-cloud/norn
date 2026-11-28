@@ -220,17 +220,6 @@ fn golden_corpus_parity_matches_ts_profile_checker() -> Result<(), Box<dyn std::
     let mut vfs = BoundedVfs::default();
     let effect_count = vfs.mount_pinned_effect_dir(&effect_dir, &profile)?;
     assert!(effect_count > 0, "expected pinned effect declarations");
-    // Minimal in-memory stub for `corpus/reject/import-allowlist.ts`, which
-    // imports from `"typescript"` so the profile checker rejects it with
-    // `NORN-FLOW-MODULE` rather than `NORN-FLOW-TYPE`.
-    vfs.add_pinned_file(
-        "/node_modules/typescript/package.json",
-        r#"{"name":"typescript","types":"index.d.ts"}"#,
-    )?;
-    vfs.add_pinned_file(
-        "/node_modules/typescript/index.d.ts",
-        "export declare const version: string;\nexport declare function transpile(input: string): string;\n",
-    )?;
 
     mount_corpus_dir(&mut vfs, &corpus_dir.join("support"), "/corpus/support")?;
     mount_corpus_dir(&mut vfs, &corpus_dir.join("accept"), "/corpus/accept")?;

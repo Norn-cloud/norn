@@ -253,10 +253,21 @@ export function omittedLines(omitted: ReadonlyArray<OmittedDefinition>): string[
 function projectPack(root: string, manifest: Project, options: { readonly forbidUnsafeZen?: boolean }): { readonly pack: PackResult; readonly reads: SourceDefinitionDoc[] } {
   const realRoot = realpathSync(root)
   const dirs = sourceDirs(root, manifest)
-  const pack = compilePack(root, {
-    modules: projectModules(root, dirs, realRoot),
+  const logicalModules = projectModules(root, dirs, realRoot)
+  // Every module is already verified to resolve inside `realRoot`; pass its
+  // canonical realpath to native `norn` (which refuses symlinks with O_NOFOLLOW)
+  // while preserving the logical project-relative path for provenance.
+  const moduleSourcePaths = new Map<string, string>()
+  const resolvedModules = logicalModules.map((module) => {
+    const realModule = realpathSync(module)
+    moduleSourcePaths.set(realModule, posix(relative(root, module)))
+    return realModule
+  })
+  const pack = compilePack(realRoot, {
+    modules: resolvedModules,
+    moduleSourcePaths,
     scope: { orgId: manifest.scope.orgId, environmentId: manifest.scope.environmentId },
-    root,
+    root: realRoot,
     ...(options.forbidUnsafeZen !== undefined ? { forbidUnsafeZen: options.forbidUnsafeZen } : {}),
   })
   if (!pack.ok) return { pack, reads: [] }

@@ -405,6 +405,26 @@ fn fmt_check_and_write_for_ts_and_py() -> TestResult {
     });
     assert_eq!(check_clean.exit_code, 0);
     assert_eq!(check_clean.stdout, "");
+
+    // Explicit single-file formatting of `.d.ts` succeeds while directory walks skip it.
+    let dts_file = scratch.write(
+        "src/types.d.ts",
+        "export type Foo = { readonly a: string };\n",
+    )?;
+    let dir_check = execute_fmt(&FmtArgs {
+        check: true,
+        path: scratch.path().to_path_buf(),
+    });
+    assert_eq!(dir_check.exit_code, 0);
+    let dts_fmt = execute_fmt(&FmtArgs {
+        check: false,
+        path: dts_file.clone(),
+    });
+    assert_eq!(dts_fmt.exit_code, 0, "dts fmt failed: {}", dts_fmt.stderr);
+    assert_eq!(
+        std::fs::read_to_string(&dts_file)?,
+        "export type Foo = { readonly a: string }\n"
+    );
     Ok(())
 }
 

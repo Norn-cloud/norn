@@ -639,6 +639,62 @@ impl DefinitionCompiler<'_> {
         }
         Ok(total.to_string())
     }
+
+    pub(super) fn compile_invariant(
+        &mut self,
+        checker: &mut Checker,
+        expansion: &mut ExpansionBudget,
+        input: P<Node>,
+    ) -> Result<Value, CompileError> {
+        let m = self.closed_record(
+            checker,
+            input,
+            &[
+                "id",
+                "description",
+                "classification",
+                "expression",
+                "message",
+            ],
+            &["id", "expression", "message"],
+        )?;
+        let mut obj = Map::new();
+        if let Some(cls_node) = m.get("classification") {
+            let cls = self.string(checker, cls_node)?;
+            if cls != "integrity" && cls != "quality" {
+                return Err(CompileError::new(
+                    "NORN-FLOW-LITERAL",
+                    "constraint classification must be integrity or quality",
+                    cls_node,
+                ));
+            }
+            if cls == "quality" {
+                obj.insert("classification".to_owned(), Value::String(cls));
+            }
+        }
+        obj.insert(
+            "id".to_owned(),
+            Value::String(self.string(checker, Self::member(&m, "id", input)?)?),
+        );
+        if let Some(desc) = m.get("description") {
+            obj.insert(
+                "description".to_owned(),
+                Value::String(self.string(checker, desc)?),
+            );
+        }
+        let expr_str = self.zen(
+            checker,
+            expansion,
+            Self::member(&m, "expression", input)?,
+            "self",
+        )?;
+        obj.insert("expression".to_owned(), Value::String(expr_str));
+        obj.insert(
+            "message".to_owned(),
+            Value::String(self.string(checker, Self::member(&m, "message", input)?)?),
+        );
+        Ok(Value::Object(obj))
+    }
 }
 
 fn build_machine_events(declared: Vec<DeclaredEvent>, acc: &MachineAcc) -> Vec<Value> {
