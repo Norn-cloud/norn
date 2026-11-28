@@ -329,7 +329,7 @@ impl FileWalk<'_> {
         };
         if decl.kind() == Kind::ClassDeclaration {
             let where_decl = self.where_declared(Some(decl));
-            let text = node_text(self.sf, node).to_owned();
+            let text = node_text(self.sf, node);
             self.report(
                 node,
                 "NORN-FLOW-VALUE",
@@ -483,7 +483,7 @@ impl FileWalk<'_> {
             self.admitted_value(expr, &resolved, ctx);
             return;
         }
-        let text = node_text(self.sf, expr).to_owned();
+        let text = node_text(self.sf, expr);
         if self.owner.spelled_like_admitted(&text, false) {
             let where_decl = self.where_declared(resolved.declaration);
             self.report(
@@ -638,7 +638,7 @@ impl FileWalk<'_> {
             );
             return;
         }
-        let op_text = node_text(self.sf, bin.operator_token()).to_owned();
+        let op_text = node_text(self.sf, bin.operator_token());
         self.report(
             expr,
             "NORN-FLOW-EXPRESSION",

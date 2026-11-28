@@ -474,7 +474,7 @@ impl FileWalk<'_> {
     }
 
     pub(super) fn emit_span(&mut self, start: u32, end: u32, code: &str, detail: &str) {
-        let construct = format_construct(slice_text(self.sf, start, end));
+        let construct = format_construct(&slice_text(self.sf, start, end));
         let summary = self.owner.profile.diagnostics.get(code);
         let suffix = summary.map_or_else(String::new, |doc| format!(" — {}", doc.fix));
         self.diagnostics.push(ProfileDiagnostic {

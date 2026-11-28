@@ -112,7 +112,7 @@ impl FileWalk<'_> {
     }
 
     fn report_unknown_call(&mut self, callee: P<Node>, declaration: Option<P<Node>>) {
-        let text = node_text(self.sf, callee).to_owned();
+        let text = node_text(self.sf, callee);
         if self
             .owner
             .spelled_like_admitted(&text, callee.kind() == Kind::Identifier)

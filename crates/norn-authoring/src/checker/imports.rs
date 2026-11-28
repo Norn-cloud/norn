@@ -218,7 +218,7 @@ pub(super) fn import_diagnostics(
             code: "NORN-FLOW-IMPORT".to_owned(),
             start,
             end,
-            construct: node_text(root, specifier).to_owned(),
+            construct: node_text(root, specifier),
             message: format!(
                 "imported module fails the profile: {found} — {fix} [{}]",
                 owner.profile.profile
