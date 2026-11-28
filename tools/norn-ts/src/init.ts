@@ -23,6 +23,16 @@ export function projectDependencies(mode: "repository" | "published" = distribut
   return { "@norn/cli": cli, "@norn/authoring": authoring, ...pinned }
 }
 
+/** Fail-closed guard: downstream Norn apps verify locally/in-browser with zero CI and must never scaffold `.github/` files. */
+export function assertNoCiScaffoldFiles(files: Readonly<Record<string, string>>): void {
+  for (const rawPath of Object.keys(files)) {
+    const normalized = rawPath.replaceAll("\\", "/").replace(/^\.\//, "")
+    if (normalized === ".github" || normalized.startsWith(".github/")) {
+      throw new Error(`Refusing to scaffold CI file "${rawPath}": downstream Norn apps verify locally/in-browser with zero CI.`)
+    }
+  }
+}
+
 export async function init(args: readonly string[]): Promise<void> {
   try { await initProject(args) }
   catch (error) {
@@ -138,6 +148,7 @@ async function initProject(args: readonly string[]): Promise<void> {
   }
   Object.assign(files, packs?.files)
   if (template === "starter") files["src/product.ts"] = readFileSync(join(TOOL_ROOT, "templates/starter/src/product.ts"), "utf8").replaceAll("__NAMESPACE__", namespace)
+  assertNoCiScaffoldFiles(files)
   mkdirSync(join(target, "src"), { recursive: true })
   const written: string[] = []
   try {

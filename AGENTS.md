@@ -101,6 +101,11 @@ rewrite other entries. The subsystem id is its directory name.
 - **Heavy work runs off shared machines.** Full builds, test suites, fuzzing,
   security scans and formal verification run in CI or disposable Boat
   sandboxes, never on a shared development host.
+- **Zero-CI downstream Norn apps.** Downstream Norn apps compile, format, and
+  check locally or in-browser via native Rust `norn` (`norn-authoring`,
+  `norn-authoring-py`, `norn-checker`) with zero CI. Downstream app templates
+  never scaffold `.github/` workflows and `norn check --source` refuses
+  `.github/workflows/` in `norn.json` app directories.
 
 ## Working in the tree
 
