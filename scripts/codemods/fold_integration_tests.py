@@ -156,6 +156,14 @@ class Crate:
         return names
 
     def foldable(self) -> list[dict]:
+        for crate_name, pinned_name in sorted(PINNED_TARGETS):
+            if crate_name != self.name:
+                continue
+            pinned = self.targets.get(pinned_name)
+            if pinned is None or pinned.get("auto"):
+                raise Refused(
+                    f"{self.name}: pinned test target {pinned_name!r} must have an explicit [[test]] table in Cargo.toml"
+                )
         folded = []
         for name, target in sorted(self.targets.items()):
             if name == SUITE or (self.name, name) in PINNED_TARGETS:
@@ -195,7 +203,14 @@ def split_suites_sections(text: str) -> tuple[list[str], list[str]]:
         if lines[end].lstrip().startswith("#!["):
             raise Refused(f"tests/{SUITE}.rs: inner attribute not allowed in shared support block")
         end += 1
-    return lines[start:end], lines[end:]
+    rest = lines[end:]
+    for line in rest:
+        stripped = line.lstrip()
+        if re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use\b", stripped):
+            raise Refused(
+                f"tests/{SUITE}.rs: `use` statement outside contiguous shared support block ({stripped!r}); remove blank lines inside the shared support block"
+            )
+    return lines[start:end], rest
 
 
 def parse_shared_support(text: str) -> list[str]:
@@ -207,17 +222,27 @@ def shared_support_names(lines: list[str]) -> set[str]:
     """Return module and re-export names bound in the shared support block."""
     names: set[str] = set()
     for line in lines:
-        mod_match = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?mod ([A-Za-z0-9_]+);$", line)
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("//", "#[")):
+            continue
+        mod_match = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?mod ([A-Za-z0-9_]+);$", stripped)
         if mod_match:
             names.add(mod_match[1])
             continue
-        use_as = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use .+\s+as\s+([A-Za-z0-9_]+);$", line)
-        if use_as:
-            names.add(use_as[1])
-            continue
-        use_tail = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use .+::([A-Za-z0-9_]+);$", line)
-        if use_tail:
-            names.add(use_tail[1])
+        if re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use\b", stripped):
+            if "{" in stripped or "}" in stripped or "*" in stripped or not stripped.endswith(";"):
+                raise Refused(
+                    f"tests/{SUITE}.rs: shared support block only supports single-item `use` statements ({stripped!r})"
+                )
+            use_as = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use .+\s+as\s+([A-Za-z0-9_]+);$", stripped)
+            if use_as:
+                names.add(use_as[1])
+                continue
+            use_tail = re.match(r"^(?:pub(?:\([^)]*\))?\s+)?use (?:.+::)?([A-Za-z0-9_]+);$", stripped)
+            if use_tail:
+                names.add(use_tail[1])
+                continue
+            raise Refused(f"tests/{SUITE}.rs: unparseable `use` in shared support block ({stripped!r})")
     return names
 
 

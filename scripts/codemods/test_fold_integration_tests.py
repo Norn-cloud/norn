@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -249,6 +250,40 @@ class CommandAndFilterRewriteTests(unittest.TestCase):
             fold.module_cfg({"required-features": ["duckdb", "native"]}),
             'all(feature = "duckdb", feature = "native")',
         )
+
+    def test_shared_support_rejects_blank_line_use_and_grouped_use(self) -> None:
+        split_text = (
+            f"{fold.SHARED_SUPPORT_HEADER}\n"
+            "mod query_support;\n"
+            "\n"
+            "use query_support::governed;\n"
+            '#[path = "a.rs"]\n'
+            "mod a;\n"
+        )
+        with self.assertRaises(fold.Refused):
+            fold.split_suites_sections(split_text)
+        with self.assertRaises(fold.Refused):
+            fold.shared_support_names([fold.SHARED_SUPPORT_HEADER, "use query_support::{governed, other};"])
+
+    def test_pinned_target_requires_explicit_manifest_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            crate_dir = root / "crates" / "norn-checker-wasm"
+            (crate_dir / "tests").mkdir(parents=True)
+            (crate_dir / "tests" / "parity.rs").write_text("#[test] fn p() {}\n")
+            (crate_dir / "tests" / "suites.rs").write_text("")
+            (crate_dir / "Cargo.toml").write_text(
+                '[package]\nname = "norn-checker-wasm"\nautotests = false\n\n'
+                '[[test]]\nname = "suites"\npath = "tests/suites.rs"\n'
+            )
+            orig_root = fold.ROOT
+            try:
+                fold.ROOT = root
+                crate = fold.Crate("norn-checker-wasm")
+                with self.assertRaises(fold.Refused):
+                    crate.foldable()
+            finally:
+                fold.ROOT = orig_root
 
 
 if __name__ == "__main__":
