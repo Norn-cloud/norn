@@ -244,7 +244,7 @@ pub(crate) fn governing_core_rules(
         let expected = match law.modality {
             LawModality::Always {} => true,
             LawModality::Never {} => false,
-            LawModality::Eventually {} | LawModality::Until {} => continue,
+            LawModality::Eventually {} | LawModality::Until { .. } => continue,
         };
         if let LawResponse::Predicate { expression } = &law.response
             && seen_ids.insert(law.id.clone())
@@ -420,7 +420,7 @@ fn defeat_finding(
         codes::CONSTITUTIONAL_DEFEAT,
         artifact,
         pointer,
-        reason.as_str(),
+        reason.clone(),
         Some(DiagnosticWitness::core_law_weakening(
             artifact.artifact_id.as_str(),
             offending_law_id,
@@ -702,7 +702,7 @@ fn check_core_law_enrollment(
                     codes::ENROLLMENT_GAP,
                     artifact,
                     "/payload/objectType/implements",
-                    reason.as_str(),
+                    reason.clone(),
                     Some(DiagnosticWitness::core_law_weakening(
                         artifact.artifact_id.as_str(),
                         type_name,
@@ -751,7 +751,7 @@ fn check_law_binding_on_subtype(
                 codes::ENROLLMENT_GAP,
                 artifact,
                 "/payload/objectType/implements",
-                reason.as_str(),
+                reason.clone(),
                 Some(DiagnosticWitness::core_law_weakening(
                     artifact.artifact_id.as_str(),
                     type_name,

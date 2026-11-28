@@ -458,7 +458,7 @@ pub(super) fn check_rule_literal_writes(
                         codes::PRESERVATION_VIOLATED,
                         owner_artifact,
                         &write.pointer,
-                        detail.as_str(),
+                        detail.clone(),
                         Some(DiagnosticWitness::core_law_violation(
                             Vec::new(),
                             action_id,

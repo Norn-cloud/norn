@@ -496,7 +496,7 @@ fn upsert_violation_finding(
         codes::PRESERVATION_VIOLATED,
         artifact,
         "/payload/effectProgram",
-        detail.as_str(),
+        detail.clone(),
         Some(DiagnosticWitness::core_law_violation(
             Vec::new(),
             root.action_id.as_str(),

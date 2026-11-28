@@ -380,7 +380,7 @@ fn check_illegal_initial_states(
                 codes::PRESERVATION_VIOLATED,
                 artifact,
                 "/payload/objectType/lifecycles",
-                detail.as_str(),
+                detail.clone(),
                 Some(DiagnosticWitness::core_law_violation(
                     Vec::new(),
                     "<lifecycle>",
@@ -541,7 +541,7 @@ fn report_lifecycle_exits(
             codes::PRESERVATION_VIOLATED,
             artifact,
             "/payload/objectType/lifecycles",
-            detail.as_str(),
+            detail.clone(),
             Some(DiagnosticWitness::core_law_violation(
                 steps,
                 "<lifecycle>",
@@ -647,7 +647,10 @@ fn finite_property_domain(effective: &EffectiveObjectType, field: &str) -> Optio
         EffectiveKind::Base(PropertyType::Enum { values })
             if !values.is_empty() && values.len() <= MAX_FINITE_ENUM =>
         {
-            values.iter().cloned().map(Value::String).collect()
+            values
+                .iter()
+                .map(|entry| Value::String(entry.value.clone()))
+                .collect()
         }
         EffectiveKind::Base(
             PropertyType::Text { .. }
