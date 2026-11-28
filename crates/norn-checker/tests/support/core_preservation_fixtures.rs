@@ -12,6 +12,10 @@ pub(crate) fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+#[allow(
+    clippy::panic,
+    reason = "test fixture loader panics on unreadable or malformed JSON"
+)]
 pub(crate) fn read_json(path: &Path) -> Value {
     let text = fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.display()));
@@ -19,6 +23,7 @@ pub(crate) fn read_json(path: &Path) -> Value {
         .unwrap_or_else(|error| panic!("{} should be valid JSON: {error}", path.display()))
 }
 
+#[allow(clippy::expect_used, reason = "test fixture envelope must decode")]
 pub(crate) fn decode_envelopes(values: Vec<Value>) -> Vec<ArtifactEnvelope> {
     values
         .into_iter()
@@ -26,6 +31,11 @@ pub(crate) fn decode_envelopes(values: Vec<Value>) -> Vec<ArtifactEnvelope> {
         .collect()
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test fixture pack directory must exist and be readable"
+)]
 pub(crate) fn load_pack_values(pack: &str) -> Vec<Value> {
     let dir = repo_root()
         .join("registry/packs")
@@ -125,6 +135,10 @@ pub(crate) fn errors_of(findings: &[Diagnostic]) -> Vec<&Diagnostic> {
     findings.iter().filter(|d| d.is_error()).collect()
 }
 
+#[allow(
+    clippy::panic,
+    reason = "test fixture lookup panics if artifact is missing"
+)]
 pub(crate) fn find_mut<'a>(values: &'a mut [Value], artifact_id: &str) -> &'a mut Value {
     values
         .iter_mut()
@@ -410,6 +424,10 @@ pub(crate) fn zero_hold_literal_rule() -> Value {
     rule
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "test action fixture arrays must be present"
+)]
 pub(crate) fn pack_with_place_sync_rule(
     rule_artifact_id: &str,
     rule_id: &str,

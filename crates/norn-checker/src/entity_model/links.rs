@@ -41,13 +41,13 @@ use norn_ir::{
 
 use super::Checker;
 use super::link_witness;
-use crate::Diagnostic;
 use crate::entity_instance::{EffectiveLink, EffectiveProperty};
 use crate::object_types::{
     MEMBER_ID_GRAMMAR, Origin, Resolved, check_property_default, check_property_shape,
     check_zen_syntax, codes,
 };
 use crate::property_types::{error, matches_grammar, span_at};
+use crate::{Diagnostic, Span};
 
 /// One link declaration: the link, the type it belongs to (its declaring
 /// type, or the target of the extension that adds it), where it is
@@ -975,10 +975,6 @@ impl<'a> Checker<'a, '_> {
 
     /// Conformance of the type's link to one requirement of an interface it
     /// lists (or inherits through a base supertype).
-    #[allow(
-        clippy::too_many_lines,
-        reason = "inverse and forward interface link conformance share one requirement context"
-    )]
     fn check_link_conformance(
         &mut self,
         base: &[&str],
@@ -994,49 +990,16 @@ impl<'a> Checker<'a, '_> {
             None => return,
         };
         let name = interface.name.as_str();
-        let expected =
-            link_witness::format_link_contract(&requirement.target, requirement.cardinality);
         // LAW-LINK-MANY-1: an interface is a read contract, so an inverse role
         // meets a link requirement: the role's sources must narrow the
         // required target, and its view (`to` = the link's `from`, never
         // required) the required cardinality.
         if let Some(MemberKind::Inverse(decl)) = table.get(id).map(|member| member.kind) {
-            let view = LinkCardinality {
-                to: decl.link.cardinality.from,
-                from: decl.link.cardinality.to,
-                required: false,
-            };
-            let actual = format!(
-                "inverse({})",
-                link_witness::format_link_contract(decl.source, view)
-            );
-            // A law reads a to-one requirement as one target, which an inverse
-            // role does not bind: only a to-many requirement takes one.
-            if requirement.cardinality.to != Multiplicity::Many {
-                self.out.push(link_witness::inverse_requires_forward_link(
-                    child_name, name, id, expected, actual, at,
-                ));
-                return;
-            }
-            if self.target_narrows(decl.source, &requirement.target) == Some(false) {
-                self.out.push(link_witness::inverse_target_mismatch(
-                    child_name,
-                    name,
-                    id,
-                    decl.source,
-                    &requirement.target,
-                    expected.clone(),
-                    actual.clone(),
-                    at.clone(),
-                ));
-            }
-            if !cardinality_narrows(view, requirement.cardinality) {
-                self.out.push(link_witness::inverse_widens_cardinality(
-                    child_name, name, id, expected, actual, at,
-                ));
-            }
+            self.check_inverse_link_conformance(child_name, name, requirement, decl, at);
             return;
         }
+        let expected =
+            link_witness::format_link_contract(&requirement.target, requirement.cardinality);
         let Some(MemberKind::Link(decl)) = table.get(id).map(|member| member.kind) else {
             let (found, actual) = table.get(id).map_or_else(
                 || {
@@ -1100,6 +1063,53 @@ impl<'a> Checker<'a, '_> {
                 .push(link_witness::interface_link_widens_cardinality(
                     child_name, name, id, expected, actual, at,
                 ));
+        }
+    }
+
+    fn check_inverse_link_conformance(
+        &mut self,
+        child_name: &str,
+        name: &str,
+        requirement: &InterfaceLink,
+        decl: LinkDecl<'a>,
+        at: Span,
+    ) {
+        let id = requirement.id.as_str();
+        let expected =
+            link_witness::format_link_contract(&requirement.target, requirement.cardinality);
+        let view = LinkCardinality {
+            to: decl.link.cardinality.from,
+            from: decl.link.cardinality.to,
+            required: false,
+        };
+        let actual = format!(
+            "inverse({})",
+            link_witness::format_link_contract(decl.source, view)
+        );
+        // A law reads a to-one requirement as one target, which an inverse
+        // role does not bind: only a to-many requirement takes one.
+        if requirement.cardinality.to != Multiplicity::Many {
+            self.out.push(link_witness::inverse_requires_forward_link(
+                child_name, name, id, expected, actual, at,
+            ));
+            return;
+        }
+        if self.target_narrows(decl.source, &requirement.target) == Some(false) {
+            self.out.push(link_witness::inverse_target_mismatch(
+                child_name,
+                name,
+                id,
+                decl.source,
+                &requirement.target,
+                expected.clone(),
+                actual.clone(),
+                at.clone(),
+            ));
+        }
+        if !cardinality_narrows(view, requirement.cardinality) {
+            self.out.push(link_witness::inverse_widens_cardinality(
+                child_name, name, id, expected, actual, at,
+            ));
         }
     }
 

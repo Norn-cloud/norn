@@ -1,13 +1,5 @@
-#![allow(
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic,
-    clippy::pedantic,
-    missing_docs,
-    reason = "integration tests for Track #4 core-link completeness and core-law preservation"
-)]
-
-//! End-to-end tests for Track #4:
+//! End-to-end tests for Track #4 core-link completeness and core-law preservation.
+//!
 //! - Gap A: explicit core-link and specialization completeness with structured
 //!   [`CounterexampleWitness::CoreLink`] witnesses (direct, transitive parent
 //!   interface, incompatible target, widened cardinality, dangling `core.*`
@@ -39,7 +31,55 @@ use norn_checker::{
     EntityArtifactSetContext, WitnessMove, WitnessSide, WitnessStep, check_artifact_set,
 };
 use norn_ir::PropertyTypeName;
-use serde_json::json;
+use serde_json::{Value, json};
+
+#[allow(
+    clippy::panic,
+    reason = "test assertion helper fails with full diagnostic context"
+)]
+fn assert_core_link_witness(
+    findings: &[Diagnostic],
+    code: &str,
+    expected_child: &str,
+    expected_parent: &str,
+    expected_link: &str,
+) -> (String, String) {
+    let diag = findings
+        .iter()
+        .find(|d| d.code == code)
+        .unwrap_or_else(|| panic!("expected {code}, got {findings:#?}"));
+    let cx = diag
+        .witness
+        .as_ref()
+        .and_then(|w| w.counterexample.as_deref());
+    let Some(CounterexampleWitness::CoreLink {
+        child_concept,
+        parent_interface,
+        link_id,
+        expected_contract,
+        actual_contract,
+    }) = cx
+    else {
+        panic!("expected CoreLink witness for {code}, got {cx:#?}");
+    };
+    assert_eq!(child_concept, expected_child);
+    assert_eq!(parent_interface, expected_parent);
+    assert_eq!(link_id, expected_link);
+    (expected_contract.clone(), actual_contract.clone())
+}
+
+fn check_single_boolean_entity(entity_id: &str, subject: &str, rules: Value) -> Vec<Diagnostic> {
+    let registry = BTreeSet::<PropertyTypeName>::new();
+    let entity = decode_envelopes(vec![boolean_entity_envelope(entity_id, subject, rules)]);
+    check_artifact_set(
+        &entity,
+        &EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        },
+    )
+}
 
 #[test]
 fn real_canon_and_compute_units_packs_pass_cleanly_over_core_laws() {
@@ -57,6 +97,7 @@ fn real_canon_and_compute_units_packs_pass_cleanly_over_core_laws() {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "test fixture links field is an array")]
 fn missing_widened_incompatible_and_dangling_core_links_emit_core_link_witness() {
     // 1. Missing required core link `resource` on `compute.QuotaHold` (implements `core.Hold`).
     let mut missing = load_pack_values("compute-units");
@@ -66,30 +107,15 @@ fn missing_widened_incompatible_and_dangling_core_links_emit_core_link_witness()
         .expect("links array")
         .retain(|link| link["id"] != "resource");
     let findings = check_over_core(missing);
-    let diag = findings
-        .iter()
-        .find(|d| d.code == object_codes::MISSING_INTERFACE_LINK)
-        .unwrap_or_else(|| panic!("expected missing_interface_link, got {findings:#?}"));
-    match diag
-        .witness
-        .as_ref()
-        .and_then(|w| w.counterexample.as_deref())
-    {
-        Some(CounterexampleWitness::CoreLink {
-            child_concept,
-            parent_interface,
-            link_id,
-            expected_contract,
-            actual_contract,
-        }) => {
-            assert_eq!(child_concept, "compute.QuotaHold");
-            assert_eq!(parent_interface, "core.Hold");
-            assert_eq!(link_id, "resource");
-            assert!(expected_contract.contains("required=true"));
-            assert_eq!(actual_contract, "missing");
-        }
-        other => panic!("expected CoreLink witness, got {other:#?}"),
-    }
+    let (expected_contract, actual_contract) = assert_core_link_witness(
+        &findings,
+        object_codes::MISSING_INTERFACE_LINK,
+        "compute.QuotaHold",
+        "core.Hold",
+        "resource",
+    );
+    assert!(expected_contract.contains("required=true"));
+    assert_eq!(actual_contract, "missing");
 
     // 2. Widened cardinality (`to: many`, `required: false`) on `resource`.
     let mut widened = load_pack_values("compute-units");
@@ -103,30 +129,15 @@ fn missing_widened_incompatible_and_dangling_core_links_emit_core_link_witness()
         }
     }
     let findings = check_over_core(widened);
-    let diag = findings
-        .iter()
-        .find(|d| d.code == object_codes::INTERFACE_LINK_WIDENS_CARDINALITY)
-        .unwrap_or_else(|| panic!("expected interface_link_widens_cardinality, got {findings:#?}"));
-    match diag
-        .witness
-        .as_ref()
-        .and_then(|w| w.counterexample.as_deref())
-    {
-        Some(CounterexampleWitness::CoreLink {
-            child_concept,
-            parent_interface,
-            link_id,
-            expected_contract,
-            actual_contract,
-        }) => {
-            assert_eq!(child_concept, "compute.QuotaHold");
-            assert_eq!(parent_interface, "core.Hold");
-            assert_eq!(link_id, "resource");
-            assert!(expected_contract.contains("to=one"));
-            assert!(actual_contract.contains("to=many"));
-        }
-        other => panic!("expected CoreLink witness, got {other:#?}"),
-    }
+    let (expected_contract, actual_contract) = assert_core_link_witness(
+        &findings,
+        object_codes::INTERFACE_LINK_WIDENS_CARDINALITY,
+        "compute.QuotaHold",
+        "core.Hold",
+        "resource",
+    );
+    assert!(expected_contract.contains("to=one"));
+    assert!(actual_contract.contains("to=many"));
 
     // 3. Incompatible target (`compute.Agent` does not implement `core.Resource`).
     let mut mismatch = load_pack_values("compute-units");
@@ -140,23 +151,13 @@ fn missing_widened_incompatible_and_dangling_core_links_emit_core_link_witness()
         }
     }
     let findings = check_over_core(mismatch);
-    let diag = findings
-        .iter()
-        .find(|d| d.code == object_codes::INTERFACE_LINK_TARGET_MISMATCH)
-        .unwrap_or_else(|| panic!("expected interface_link_target_mismatch, got {findings:#?}"));
-    assert!(matches!(
-        diag.witness
-            .as_ref()
-            .and_then(|w| w.counterexample.as_deref()),
-        Some(CounterexampleWitness::CoreLink {
-            child_concept,
-            parent_interface,
-            link_id,
-            ..
-        }) if child_concept == "compute.QuotaHold"
-            && parent_interface == "core.Hold"
-            && link_id == "resource"
-    ));
+    let _ = assert_core_link_witness(
+        &findings,
+        object_codes::INTERFACE_LINK_TARGET_MISMATCH,
+        "compute.QuotaHold",
+        "core.Hold",
+        "resource",
+    );
 
     // 4. Dangling `core.*` link target.
     let mut dangling = load_pack_values("compute-units");
@@ -170,55 +171,34 @@ fn missing_widened_incompatible_and_dangling_core_links_emit_core_link_witness()
             "cardinality": { "to": "one", "from": "many", "required": false }
         }));
     let findings = check_over_core(dangling);
-    let diag = findings
-        .iter()
-        .find(|d| d.code == object_codes::UNKNOWN_LINK_TARGET)
-        .unwrap_or_else(|| panic!("expected unknown_link_target, got {findings:#?}"));
-    assert!(matches!(
-        diag.witness
-            .as_ref()
-            .and_then(|w| w.counterexample.as_deref()),
-        Some(CounterexampleWitness::CoreLink {
-            child_concept,
-            parent_interface,
-            link_id,
-            ..
-        }) if child_concept == "compute.QuotaHold"
-            && parent_interface == "core.NonExistentConcept"
-            && link_id == "phantom_core_ref"
-    ));
+    let _ = assert_core_link_witness(
+        &findings,
+        object_codes::UNKNOWN_LINK_TARGET,
+        "compute.QuotaHold",
+        "core.NonExistentConcept",
+        "phantom_core_ref",
+    );
 }
 
 #[test]
 fn transitive_interface_link_widening_emits_core_link_witness() {
     let findings = check_over_core(vec![custom_widened_hold_interface()]);
-    let diag = findings
-        .iter()
-        .find(|d| d.code == interface_codes::INVALID_INHERITANCE)
-        .unwrap_or_else(|| panic!("expected invalid_inheritance, got {findings:#?}"));
-    match diag
-        .witness
-        .as_ref()
-        .and_then(|w| w.counterexample.as_deref())
-    {
-        Some(CounterexampleWitness::CoreLink {
-            child_concept,
-            parent_interface,
-            link_id,
-            expected_contract,
-            actual_contract,
-        }) => {
-            assert_eq!(child_concept, "acme.CustomHold");
-            assert_eq!(parent_interface, "core.Hold");
-            assert_eq!(link_id, "resource");
-            assert!(expected_contract.contains("to=one"));
-            assert!(actual_contract.contains("to=many"));
-        }
-        other => panic!("expected CoreLink witness on widened parent interface, got {other:#?}"),
-    }
+    let (expected_contract, actual_contract) = assert_core_link_witness(
+        &findings,
+        interface_codes::INVALID_INHERITANCE,
+        "acme.CustomHold",
+        "core.Hold",
+        "resource",
+    );
+    assert!(expected_contract.contains("to=one"));
+    assert!(actual_contract.contains("to=many"));
 }
 
 #[test]
+#[allow(
+    clippy::panic,
+    reason = "test fails with full findings when expected diagnostic is absent"
+)]
 fn constitutional_core_law_defeat_and_shadowing_are_refused_with_witness() {
     // 1. Downstream non-core artifact attempting to shadow a `core.*` law id.
     let mut shadow = read_json(
@@ -293,8 +273,11 @@ fn constitutional_core_law_defeat_and_shadowing_are_refused_with_witness() {
 }
 
 #[test]
+#[allow(
+    clippy::panic,
+    reason = "test fails with full findings when expected diagnostic is absent"
+)]
 fn normative_defeated_by_precedence_admits_yielding_to_core_and_refuses_defeating_core() {
-    let registry = BTreeSet::<PropertyTypeName>::new();
     let entity_id = "core.SalesOrder.entity";
     let subject = "core.SalesOrder";
 
@@ -319,19 +302,7 @@ fn normative_defeated_by_precedence_admits_yielding_to_core_and_refuses_defeatin
             &[],
         ),
     ]);
-    let lawful_entity = decode_envelopes(vec![boolean_entity_envelope(
-        entity_id,
-        subject,
-        yielding_rules,
-    )]);
-    let lawful_findings = check_artifact_set(
-        &lawful_entity,
-        &EntityArtifactSetContext {
-            registry: &registry,
-            base: &[],
-            tenant: None,
-        },
-    );
+    let lawful_findings = check_single_boolean_entity(entity_id, subject, yielding_rules);
     assert!(
         errors_of(&lawful_findings).is_empty(),
         "downstream rule lawfully yielding to core.* via defeatedBy must be admitted: {lawful_findings:#?}"
@@ -358,19 +329,7 @@ fn normative_defeated_by_precedence_admits_yielding_to_core_and_refuses_defeatin
             &["acme.sales_override"],
         ),
     ]);
-    let attack_entity = decode_envelopes(vec![boolean_entity_envelope(
-        entity_id,
-        subject,
-        defeating_rules,
-    )]);
-    let attack_findings = check_artifact_set(
-        &attack_entity,
-        &EntityArtifactSetContext {
-            registry: &registry,
-            base: &[],
-            tenant: None,
-        },
-    );
+    let attack_findings = check_single_boolean_entity(entity_id, subject, defeating_rules);
     let diag = attack_findings
         .iter()
         .find(|d| d.code == core_codes::CONSTITUTIONAL_DEFEAT)
@@ -388,6 +347,10 @@ fn normative_defeated_by_precedence_admits_yielding_to_core_and_refuses_defeatin
 }
 
 #[test]
+#[allow(
+    clippy::expect_used,
+    reason = "test fixture createLinks field is an array"
+)]
 fn required_core_link_binding_rejects_generic_rule_and_mismatched_source_id_field() {
     // 1. Missing required link in `createLinks` -> REFUSED with CoreLink witness.
     let mut missing = load_pack_values("compute-units");
@@ -397,23 +360,13 @@ fn required_core_link_binding_rejects_generic_rule_and_mismatched_source_id_fiel
         .expect("createLinks array")
         .retain(|binding| binding["link"] != "resource");
     let findings = check_over_core(missing);
-    let diag = findings
-        .iter()
-        .find(|d| d.code == core_codes::MISSING_REQUIRED_LINK_BINDING)
-        .unwrap_or_else(|| panic!("expected missing_required_link_binding, got {findings:#?}"));
-    assert!(matches!(
-        diag.witness
-            .as_ref()
-            .and_then(|w| w.counterexample.as_deref()),
-        Some(CounterexampleWitness::CoreLink {
-            child_concept,
-            parent_interface,
-            link_id,
-            ..
-        }) if child_concept == "compute.QuotaHold"
-            && parent_interface == "core.Hold"
-            && link_id == "resource"
-    ));
+    let _ = assert_core_link_witness(
+        &findings,
+        core_codes::MISSING_REQUIRED_LINK_BINDING,
+        "compute.QuotaHold",
+        "core.Hold",
+        "resource",
+    );
 
     // 2. `synchronousRule` with generic `outputSchema.properties.links` (empty array, does not
     //    bind required `resource` link) -> REFUSED.
@@ -479,6 +432,11 @@ fn required_core_link_binding_rejects_generic_rule_and_mismatched_source_id_fiel
 }
 
 #[test]
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "test asserts attached witness fields and fails with full diagnostics"
+)]
 fn action_derive_and_fire_transition_violations_emit_counterexample_witnesses() {
     // 1. `upsert_input_object` + `derive` violating inherited core invariant.
     let mut pack = load_pack_values("compute-units");
@@ -495,30 +453,29 @@ fn action_derive_and_fire_transition_violations_emit_counterexample_witnesses() 
         .iter()
         .find(|d| d.code == core_codes::PRESERVATION_VIOLATED)
         .unwrap_or_else(|| panic!("expected preservation_violated, got {findings:#?}"));
-    match diag
+    let cx = diag
         .witness
         .as_ref()
-        .and_then(|w| w.counterexample.as_deref())
-    {
-        Some(CounterexampleWitness::CoreLawViolation {
-            action_id,
-            writer_id,
-            subject_type,
-            core_law_id,
-            state_assignment,
-            ..
-        }) => {
-            assert_eq!(action_id, "compute.capacity_commitment.create");
-            assert_eq!(writer_id, "derive:quantity");
-            assert_eq!(subject_type, "compute.CapacityCommitment");
-            assert_eq!(core_law_id, "core.Commitment.positive_quantity");
-            assert_eq!(
-                state_assignment.get("quantity").map(String::as_str),
-                Some("0")
-            );
-        }
-        other => panic!("expected CoreLawViolation witness, got {other:#?}"),
-    }
+        .and_then(|w| w.counterexample.as_deref());
+    let Some(CounterexampleWitness::CoreLawViolation {
+        action_id,
+        writer_id,
+        subject_type,
+        core_law_id,
+        state_assignment,
+        ..
+    }) = cx
+    else {
+        panic!("expected CoreLawViolation witness, got {cx:#?}");
+    };
+    assert_eq!(action_id, "compute.capacity_commitment.create");
+    assert_eq!(writer_id, "derive:quantity");
+    assert_eq!(subject_type, "compute.CapacityCommitment");
+    assert_eq!(core_law_id, "core.Commitment.positive_quantity");
+    assert_eq!(
+        state_assignment.get("quantity").map(String::as_str),
+        Some("0")
+    );
 
     // 2. `fire_transition` + `setFields` violating core invariant.
     let mut pack = load_pack_values("compute-units");
@@ -539,8 +496,13 @@ fn action_derive_and_fire_transition_violations_emit_counterexample_witnesses() 
         .unwrap_or_else(|| panic!("expected preservation_violated, got {findings:#?}"));
     let witness = diag.witness.as_ref().expect("witness attached");
     assert_eq!(witness.steps.len(), 1);
-    assert_eq!(witness.steps[0].moves[0].side, WitnessSide::Backend);
-    assert_eq!(witness.steps[0].moves[0].label, "release");
+    let first_move = witness
+        .steps
+        .first()
+        .and_then(|step| step.moves.first())
+        .expect("backend witness move");
+    assert_eq!(first_move.side, WitnessSide::Backend);
+    assert_eq!(first_move.label, "release");
     assert!(matches!(
         witness.counterexample.as_deref(),
         Some(CounterexampleWitness::CoreLawViolation {
@@ -557,6 +519,10 @@ fn action_derive_and_fire_transition_violations_emit_counterexample_witnesses() 
 }
 
 #[test]
+#[allow(
+    clippy::panic,
+    reason = "test fails with full findings when expected diagnostic is absent"
+)]
 fn synchronous_rule_literal_write_violating_core_invariant_emits_counterexample() {
     let mut pack = load_pack_values("compute-units");
     pack.push(zero_hold_literal_rule());
@@ -585,6 +551,10 @@ fn synchronous_rule_literal_write_violating_core_invariant_emits_counterexample(
 }
 
 #[test]
+#[allow(
+    clippy::panic,
+    reason = "test fails with full findings when expected diagnostic is absent"
+)]
 fn lifecycle_core_law_blocked_exit_and_unevaluated_exit_emit_honest_verdicts() {
     // 1. Concrete blocked exit emits PRESERVATION_VIOLATED with shortest-run witness.
     let mut blocked_pack = load_pack_values("compute-units");
