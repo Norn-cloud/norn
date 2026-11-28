@@ -64,6 +64,7 @@ pub mod actor;
 pub mod check;
 mod convert;
 pub mod env;
+mod env_index;
 mod error;
 mod expression;
 mod fuel;

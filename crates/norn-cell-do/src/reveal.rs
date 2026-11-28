@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 
 use norn_api::scope::CellScope;
 use norn_cell::Model;
-use norn_ir::access::{AccessIr, AccessRule, PolicyRoot};
-use norn_ir::{ArtifactEnvelope, ArtifactKind, IrVersion01};
+use norn_ir::access::{AccessIr, AccessRule, MARKING_RESOURCE_TYPE, REVEAL_ACTION};
+use norn_ir::{ArtifactEnvelope, IrVersion01};
 use norn_kernel::authz::{
     self, AccessRequest, ActorKind, AuthzSchema, Binding, CapabilityGrant, Pdp, PdpDecision,
     ResourceInput, ScopeKey, UnboundProfile, VerifiedPrincipal,
@@ -25,10 +25,10 @@ use crate::policy::{Caller, scope_key};
 use crate::seed::SeedError;
 
 /// The `AccessIR` action and capability of a reveal.
-pub const REVEAL: &str = "norn.reveal";
+pub const REVEAL: &str = REVEAL_ACTION;
 
 /// The synthetic resource type a reveal rule governs.
-pub const MARKING_TYPE: &str = "norn.Marking";
+pub const MARKING_TYPE: &str = MARKING_RESOURCE_TYPE;
 
 /// The id of the compiled reveal policy.
 pub const REVEAL_POLICY_ID: &str = "tenant.reveal";
@@ -51,30 +51,15 @@ impl std::fmt::Debug for RevealPolicy {
 /// # Errors
 /// A policy does not decode.
 pub fn reveal_rules(artifacts: &[ArtifactEnvelope]) -> Result<Vec<AccessRule>, SeedError> {
-    let mut rules = Vec::new();
-    for artifact in artifacts
-        .iter()
-        .filter(|artifact| artifact.kind() == ArtifactKind::Policy)
-    {
-        let root: PolicyRoot = serde_json::to_value(artifact.payload.to_json_value())
-            .and_then(serde_json::from_value)
-            .map_err(|error| SeedError(format!("{}: {error}", artifact.artifact_id)))?;
-        let PolicyRoot::Access(access) = root else {
-            continue;
-        };
-        for rule in access.rules.iter().filter(|rule| {
-            rule.resource_type.as_str() == MARKING_TYPE
-                && rule.actions.iter().any(|action| action == REVEAL)
-        }) {
-            let policy_id = artifact.artifact_id.as_str();
-            rules.push(AccessRule {
-                rule_id: format!("{}:{policy_id}.{}", policy_id.len(), rule.rule_id),
-                actions: vec![REVEAL.to_owned()],
-                ..rule.clone()
-            });
-        }
-    }
-    Ok(rules)
+    let extracted = norn_ir::access::extract_reveal_rules(artifacts)
+        .map_err(|(policy_id, error)| SeedError(format!("{policy_id}: {error}")))?;
+    Ok(extracted
+        .into_iter()
+        .map(|(policy_id, mut rule)| {
+            rule.rule_id = format!("{}:{policy_id}.{}", policy_id.len(), rule.rule_id);
+            rule
+        })
+        .collect())
 }
 
 impl RevealPolicy {

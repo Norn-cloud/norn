@@ -360,6 +360,114 @@ pub struct DefinitionCatalog {
     pub laws: Vec<LawRow>,
 }
 
+/// Canonical row identity for a [`DefinitionCatalog`] relation.
+///
+/// Member-keyed rows (`CatalogArtifact`, `TypeRow`, `PropertyRow`, `LinkRow`,
+/// `TransitionRow`, and `MemberRef`) identify by their canonical [`MemberRef`];
+/// edge and multi-subject rows (`ConceptFacetRow`, `WritesRow`, `DependsOnRow`,
+/// `MappingRow`, `LawRow`) identify by the full serialized row.
+pub trait CatalogRow: Serialize {
+    /// The typed value serialized as the row's canonical virtual key.
+    type Identity<'a>: Serialize
+    where
+        Self: 'a;
+
+    /// Return the typed identity value for this catalog row.
+    fn identity(&self) -> Self::Identity<'_>;
+}
+
+impl CatalogRow for CatalogArtifact {
+    type Identity<'a> = MemberRef;
+
+    fn identity(&self) -> Self::Identity<'_> {
+        MemberRef {
+            artifact_id: self.artifact_id.clone(),
+            version: self.version.clone(),
+            member: Member::Artifact {},
+        }
+    }
+}
+
+impl CatalogRow for TypeRow {
+    type Identity<'a> = &'a MemberRef;
+
+    fn identity(&self) -> Self::Identity<'_> {
+        &self.at
+    }
+}
+
+impl CatalogRow for ConceptFacetRow {
+    type Identity<'a> = &'a Self;
+
+    fn identity(&self) -> Self::Identity<'_> {
+        self
+    }
+}
+
+impl CatalogRow for PropertyRow {
+    type Identity<'a> = &'a MemberRef;
+
+    fn identity(&self) -> Self::Identity<'_> {
+        &self.at
+    }
+}
+
+impl CatalogRow for LinkRow {
+    type Identity<'a> = &'a MemberRef;
+
+    fn identity(&self) -> Self::Identity<'_> {
+        &self.at
+    }
+}
+
+impl CatalogRow for TransitionRow {
+    type Identity<'a> = &'a MemberRef;
+
+    fn identity(&self) -> Self::Identity<'_> {
+        &self.at
+    }
+}
+
+impl CatalogRow for MemberRef {
+    type Identity<'a> = &'a Self;
+
+    fn identity(&self) -> Self::Identity<'_> {
+        self
+    }
+}
+
+impl CatalogRow for WritesRow {
+    type Identity<'a> = &'a Self;
+
+    fn identity(&self) -> Self::Identity<'_> {
+        self
+    }
+}
+
+impl CatalogRow for DependsOnRow {
+    type Identity<'a> = &'a Self;
+
+    fn identity(&self) -> Self::Identity<'_> {
+        self
+    }
+}
+
+impl CatalogRow for MappingRow {
+    type Identity<'a> = &'a Self;
+
+    fn identity(&self) -> Self::Identity<'_> {
+        self
+    }
+}
+
+impl CatalogRow for LawRow {
+    type Identity<'a> = &'a Self;
+
+    fn identity(&self) -> Self::Identity<'_> {
+        self
+    }
+}
+
 impl DefinitionCatalog {
     /// The artifact a key names.
     #[must_use]

@@ -214,6 +214,50 @@ fn bindings(engine: &impl SqlEngine) -> Result<BTreeMap<String, String>, CellErr
     Ok(bindings)
 }
 
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if passes a reference to the slice reference field"
+)]
+const fn slice_is_empty<T>(slice: &&[T]) -> bool {
+    slice.is_empty()
+}
+
+/// Borrowing view of [`ExportRecord`] with identical serde field names, order,
+/// and omission rules, so commit-time canonicalization and hashing avoid
+/// cloning `ddl_sql`, `batch`, and `receipt`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExportRecordRef<'a> {
+    pub(crate) format: &'a str,
+    pub(crate) store_format: &'a str,
+    pub(crate) ddl_hash: &'a str,
+    pub(crate) model_hash: &'a str,
+    pub(crate) ddl_sql: &'a str,
+    pub(crate) bindings: &'a BTreeMap<String, String>,
+    pub(crate) previous: &'a str,
+    pub(crate) batch: &'a CommitBatch,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) quantity_input: Option<&'a Value>,
+    pub(crate) receipt: &'a Receipt,
+    pub(crate) entries: &'a [LedgerEntry],
+    pub(crate) consumed_input: Option<&'a Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) definition_install: Option<&'a DefinitionInstallRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) initial_model: Option<&'a crate::model::ModelDefinitionSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) storage_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) automation_continuation:
+        Option<&'a crate::automation_outbox::AutomationOutboxContinuation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) automation_inline: Option<&'a crate::automation_outbox::AutomationInlineEvidence>,
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    pub(crate) source_evidence: &'a [SourceEvidenceEntry],
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    pub(crate) pending_observations: &'a [crate::PendingObservation],
+}
+
 /// Persist a commit's replayable export record in the same engine transaction.
 ///
 /// INGEST-JOURNAL-MEMORY-1: `entries` are the ledger entries this commit's
@@ -233,13 +277,13 @@ pub(crate) fn record<E: SqlEngine>(
     engine: &E,
     model: &Model,
     batch: &CommitBatch,
-    quantity_input: Option<Value>,
+    quantity_input: Option<&Value>,
     receipt: &Receipt,
-    consumed_input: Option<Value>,
-    definition_install: Option<DefinitionInstallRecord>,
+    consumed_input: Option<&Value>,
+    definition_install: Option<&DefinitionInstallRecord>,
     storage_version: Option<u32>,
-    automation: crate::automation_outbox::RecordedAutomation,
-    entries: Vec<LedgerEntry>,
+    automation: &crate::automation_outbox::RecordedAutomation,
+    entries: &[LedgerEntry],
 ) -> Result<(), CellError> {
     let commit_seq = receipt.body.commit_seq;
     let prior: Option<(i64, String)> = engine
@@ -279,36 +323,38 @@ pub(crate) fn record<E: SqlEngine>(
     // just inserted: one read-only pass, so the receipt is verified once.
     let receipts = std::cell::RefCell::default();
     let reader = StoreReader::new(engine, model).with_transaction_verified_receipts(&receipts);
-    for entry in &entries {
+    for entry in entries {
         reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
     }
     let (pending_observations, source_evidence) = read_late_source_evidence(engine, commit_seq)?;
     let bindings = bindings(engine)?;
-    let export = ExportRecord {
-        format: EXPORT_FORMAT.to_owned(),
-        store_format: engine.query_row(
-            &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\"='format'"),
-            &[],
-            |row| row.get(0),
-        )?,
-        ddl_hash: model.ddl_hash().to_owned(),
-        model_hash: model.model_hash().to_owned(),
-        ddl_sql: model.ddl_sql().to_owned(),
-        bindings,
-        previous,
-        batch: batch.clone(),
+    let store_format: String = engine.query_row(
+        &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\"='format'"),
+        &[],
+        |row| row.get(0),
+    )?;
+    let initial_model =
+        (commit_seq == 1 && definition_install.is_none()).then(|| model.definitions_snapshot());
+    let export = ExportRecordRef {
+        format: EXPORT_FORMAT,
+        store_format: &store_format,
+        ddl_hash: model.ddl_hash(),
+        model_hash: model.model_hash(),
+        ddl_sql: model.ddl_sql(),
+        bindings: &bindings,
+        previous: &previous,
+        batch,
         quantity_input,
-        receipt: receipt.clone(),
+        receipt,
         entries,
         consumed_input,
-        initial_model: (commit_seq == 1 && definition_install.is_none())
-            .then(|| model.definitions_snapshot()),
         definition_install,
+        initial_model: initial_model.as_ref(),
         storage_version,
-        automation_continuation: automation.continuation,
-        automation_inline: automation.inline,
-        source_evidence,
-        pending_observations,
+        automation_continuation: automation.continuation.as_ref(),
+        automation_inline: automation.inline.as_ref(),
+        source_evidence: &source_evidence,
+        pending_observations: &pending_observations,
     };
     // The record's hash and its stored encoding both start from its canonical
     // text; canonicalize it once. A steady-state main-world record stores its

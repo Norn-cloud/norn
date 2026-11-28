@@ -2,10 +2,9 @@
 use crate::engine::SqlEngine;
 use crate::reactive::{ReactiveLimits, SliceItem, SliceQuery, SliceResult};
 use crate::{CellError, CellStore};
-use norn_ir::definition_catalog::{DefinitionCatalog, Member, MemberRef};
+use norn_ir::definition_catalog::{CatalogRow, DefinitionCatalog};
 use norn_ir::{ArtifactEnvelope, PropertyTypeName, RuntimeValue};
 use norn_kernel::authz::{self, AccessRequest, Pdp, ResourceInput, ScopeKey};
-use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One immutable projection of installed, admitted definitions.
@@ -132,53 +131,62 @@ impl CatalogSnapshot {
 }
 
 type CatalogRows = BTreeMap<String, Vec<(u64, SliceItem)>>;
+
+fn index_relation<R: CatalogRow>(
+    name: &str,
+    rows: &[R],
+    commit_seq: u64,
+) -> Result<Vec<(u64, SliceItem)>, CatalogReadError> {
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        let key = crate::codec::canonical_json(&row.identity())?;
+        let row_json = serde_json::to_value(row).map_err(CellError::from)?;
+        let RuntimeValue::Object(values) =
+            RuntimeValue::from_json(row_json).map_err(CellError::from)?
+        else {
+            return Err(CatalogReadError::Refused("invalid catalog row"));
+        };
+        let item = SliceItem {
+            object_type: name.to_owned(),
+            key,
+            version: commit_seq,
+            values,
+        };
+        let bytes = u64::try_from(
+            norn_ir::canonical::canonical_json_byte_len(&item).map_err(CellError::from)?,
+        )
+        .unwrap_or(u64::MAX);
+        items.push((bytes, item));
+    }
+    items.sort_by(|a, b| a.1.key.cmp(&b.1.key));
+    if items
+        .windows(2)
+        .any(|rows| matches!(rows, [(_, a), (_, b)] if a.key == b.key))
+    {
+        return Err(CatalogReadError::Refused("ambiguous catalog identity"));
+    }
+    Ok(items)
+}
+
 fn index(catalog: &DefinitionCatalog, commit_seq: u64) -> Result<CatalogRows, CatalogReadError> {
     let mut index = BTreeMap::new();
     macro_rules! relations { ($($name:literal => $field:ident),* $(,)?) => { $(
-        let mut items = Vec::new();
-        for row in &catalog.$field {
-            let row = serde_json::to_value(row).map_err(CellError::from)?;
-            let key = crate::codec::canonical_json(&identity(&row))?;
-            let RuntimeValue::Object(values) = RuntimeValue::from_json(row).map_err(CellError::from)? else {
-                return Err(CatalogReadError::Refused("invalid catalog row"));
-            };
-            let item = SliceItem { object_type:$name.into(), key, version:commit_seq, values };
-            let bytes = u64::try_from(crate::codec::canonical_json(&item)?.len()).unwrap_or(u64::MAX);
-            items.push((bytes, item));
-        }
-        items.sort_by(|a, b| a.1.key.cmp(&b.1.key));
-        if items.windows(2).any(|rows| matches!(rows, [(_, a), (_, b)] if a.key == b.key)) {
-            return Err(CatalogReadError::Refused("ambiguous catalog identity"));
-        }
-        index.insert($name.into(), items);
+        index.insert($name.into(), index_relation($name, &catalog.$field, commit_seq)?);
     )* }; }
-    relations!("norn.catalog.Artifact" => artifacts, "norn.catalog.Type" => types,
-        "norn.catalog.Facet" => facets, "norn.catalog.Property" => properties,
-        "norn.catalog.Link" => links, "norn.catalog.Transition" => transitions,
-        "norn.catalog.State" => states, "norn.catalog.Writes" => writes,
-        "norn.catalog.DependsOn" => depends_on, "norn.catalog.Mapping" => mappings,
-        "norn.catalog.Law" => laws);
+    relations!(
+        "norn.catalog.Artifact" => artifacts,
+        "norn.catalog.Type" => types,
+        "norn.catalog.Facet" => facets,
+        "norn.catalog.Property" => properties,
+        "norn.catalog.Link" => links,
+        "norn.catalog.Transition" => transitions,
+        "norn.catalog.State" => states,
+        "norn.catalog.Writes" => writes,
+        "norn.catalog.DependsOn" => depends_on,
+        "norn.catalog.Mapping" => mappings,
+        "norn.catalog.Law" => laws
+    );
     Ok(index)
-}
-
-fn identity(row: &Value) -> Value {
-    if row.get("subject").is_some() {
-        return row.clone();
-    }
-    if let Some(at) = row.get("at") {
-        return at.clone();
-    }
-    if serde_json::from_value::<MemberRef>(row.clone()).is_ok() {
-        return row.clone();
-    }
-    match (row.get("artifactId"), row.get("version")) {
-        (Some(Value::String(id)), Some(Value::String(version))) => serde_json::json!(MemberRef {
-            artifact_id: id.clone(),
-            version: version.clone(),
-            member: Member::Artifact {}
-        }),
-        _ => row.clone(),
-    }
 }
 
 /// Virtual read descriptors for Cedar projection; never install them as stored types.
@@ -197,18 +205,48 @@ pub fn resource_types() -> Result<Vec<norn_ir::ObjectTypeDef>, serde_json::Error
 #[cfg(test)]
 mod tests {
     use super::*;
+    use norn_ir::definition_catalog::{
+        CatalogArtifact, ConceptFacet, ConceptFacetRow, LawRow, Member, MemberRef, TypeKind,
+        TypeRow,
+    };
     use norn_testkit::proptest;
     proptest::proptest! {
         #[test]
         fn exact_member_identity_is_preserved(id in "test.[a-z]{1,12}", version in "[1-9]\\.[0-9]\\.[0-9]", name in "[A-Z][a-z]{0,8}") {
-            let at = MemberRef { artifact_id:id, version, member:Member::Type {type_name:format!("test.{name}")} };
-            proptest::prop_assert_eq!(identity(&serde_json::json!({"at":at, "role":"thing"})), serde_json::json!(at));
-            proptest::prop_assert_eq!(identity(&serde_json::json!({"at":at, "subject":at})), serde_json::json!({"at":at, "subject":at}));
+            let at = MemberRef { artifact_id: id.clone(), version: version.clone(), member: Member::Type { type_name: format!("test.{name}") } };
+            let type_row = TypeRow {
+                at: at.clone(),
+                kind: TypeKind::ObjectType,
+                role: norn_ir::ConceptRole::Thing,
+                extends: Vec::new(),
+                implements: Vec::new(),
+            };
+            proptest::prop_assert_eq!(type_row.identity(), &at);
+            let law_row = LawRow {
+                at: at.clone(),
+                subject: at.clone(),
+                binds: None,
+            };
+            proptest::prop_assert_eq!(law_row.identity(), &law_row);
+            let artifact_row = CatalogArtifact {
+                artifact_id: id.clone(),
+                version: version.clone(),
+                kind: norn_ir::ArtifactKind::Entity,
+                sha256: String::new(),
+                candidate: false,
+            };
+            proptest::prop_assert_eq!(
+                artifact_row.identity(),
+                MemberRef {
+                    artifact_id: id,
+                    version,
+                    member: Member::Artifact {},
+                }
+            );
             let mut catalog = norn_checker::definition_catalog::project(&[], &[], &BTreeSet::new()).map_err(|error| proptest::test_runner::TestCaseError::fail(error.to_string()))?;
-            catalog.facets = [norn_ir::definition_catalog::ConceptFacet::Props, norn_ir::definition_catalog::ConceptFacet::Access].into_iter().map(|facet| norn_ir::definition_catalog::ConceptFacetRow { concept:at.clone(), facet, member:at.clone() }).collect();
+            catalog.facets = [ConceptFacet::Props, ConceptFacet::Access].into_iter().map(|facet| ConceptFacetRow { concept: at.clone(), facet, member: at.clone() }).collect();
             let indexed = index(&catalog, 0).map_err(|error| proptest::test_runner::TestCaseError::fail(error.to_string()))?;
             proptest::prop_assert_eq!(indexed.get("norn.catalog.Facet").and_then(|rows| rows.first()).and_then(|(_, item)| item.values.get("facet")), Some(&RuntimeValue::String("access".into())));
-
         }
     }
 }

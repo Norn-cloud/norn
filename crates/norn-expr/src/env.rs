@@ -1078,6 +1078,7 @@ struct Derivation<'d, 'e> {
     catalog: BTreeMap<&'d str, &'d PropertyTypeDef>,
     objects: BTreeMap<&'d str, &'d ObjectTypeDef>,
     interfaces: BTreeMap<&'d str, &'d InterfaceDef>,
+    extensions: crate::env_index::ExtensionIndex<'d>,
     value_records: BTreeMap<String, RecordType>,
     intersection_members: BTreeMap<String, BTreeSet<String>>,
     /// Interface property types by declaring site: each ancestor's structured
@@ -1128,6 +1129,7 @@ impl<'d, 'e> Derivation<'d, 'e> {
             catalog,
             objects,
             interfaces,
+            extensions: crate::env_index::ExtensionIndex::new(defs.extensions),
             value_records: BTreeMap::new(),
             intersection_members: BTreeMap::new(),
             interface_property_types: BTreeMap::new(),
@@ -1378,11 +1380,8 @@ impl<'d, 'e> Derivation<'d, 'e> {
                 }
             }
         }
-        for ext in self.defs.extensions {
+        for ext in self.extensions.applicable_for(chain) {
             let target = ext.target.as_str();
-            if !chain.iter().any(|def| def.name.as_str() == target) {
-                continue;
-            }
             for property in &ext.properties {
                 let field = self.property_field(target, property);
                 insert_field(self.errors, name, &mut fields, property.id.as_str(), field);

@@ -114,73 +114,71 @@ pub(super) fn load_action_slice_predicate<H: CellHost + ?Sized>(
 /// enforcing per-record `authorize_read` BEFORE surfacing source disputes,
 /// `AggregateBoundExceeded`, or `AggregateBytesExceeded`, and concealing
 /// unsupported/over-bound scans as [`ActionRefusal::TargetNotFound`].
-pub(super) fn load_aggregate_predicate_objects<H: CellHost + ?Sized>(
+pub(super) fn load_aggregate_predicate_objects<'s, H: CellHost + ?Sized>(
     context: &ActionSliceContext<'_, '_, '_, H>,
     aggregate: &ActionAggregateInput,
     predicate: &PredicateQuery,
     max_items: usize,
     meter: &mut SliceMeter,
     limits: &SliceLimits,
-    snapshots: &mut Vec<(PredicateQuery, Vec<PredicateObject>)>,
-) -> Result<Vec<PredicateObject>, ActionRefusal<H::Error>> {
+    snapshots: &'s mut Vec<(PredicateQuery, Vec<PredicateObject>)>,
+) -> Result<&'s [PredicateObject], ActionRefusal<H::Error>> {
     let unavailable = |reason: String| ActionRefusal::AggregateUnavailable {
         aggregate: aggregate.name.clone(),
         reason,
     };
-    let fresh = !snapshots.iter().any(|(read, _)| *read == *predicate);
-    let objects = if fresh {
-        let remaining = limits.max_canonical_bytes.saturating_sub(meter.bytes());
-        let objects = match context
-            .host
-            .read_predicate_for_action(predicate, max_items, remaining, &mut |object| {
-                authorize_predicate_object(context, &aggregate.object_type, object)
-            })
-            .map_err(host_failure)?
-        {
-            PredicateActionRead::Admitted(objects) => objects,
-            PredicateActionRead::Concealed => return Err(ActionRefusal::TargetNotFound),
-        };
-        if objects.len() > max_items {
-            return Err(ActionRefusal::AggregateBoundExceeded {
-                aggregate: aggregate.name.clone(),
-                max_items: aggregate.max_items,
-            });
-        }
-        for object in &objects {
-            let bytes = norn_ir::canonical::canonical_json_of(&object.values)
-                .map_err(|error| unavailable(error.to_string()))?
-                .len();
-            meter
-                .admit_record(u64::try_from(bytes).unwrap_or(u64::MAX), 0)
-                .map_err(|exceeded| match exceeded.kind {
-                    crate::IngressLimit::SliceBytes => ActionRefusal::AggregateBytesExceeded {
-                        aggregate: aggregate.name.clone(),
-                        max_bytes: limits.max_canonical_bytes,
-                    },
-                    crate::IngressLimit::SliceRecords
-                    | crate::IngressLimit::SliceRelationDepth
-                    | crate::IngressLimit::EnvelopeBytes => unavailable(exceeded.to_string()),
-                })?;
-        }
-        snapshots.push((predicate.clone(), objects.clone()));
-        objects
-    } else {
-        let Some((_, existing)) = snapshots.iter().find(|(read, _)| *read == *predicate) else {
+    if let Some(index) = snapshots.iter().position(|(read, _)| *read == *predicate) {
+        let Some((_, existing)) = snapshots.get(index) else {
             return Err(unavailable(
                 "the predicate snapshot was not retained".to_owned(),
             ));
         };
-        let objects = existing.clone();
-        authorize_predicate_matches(context, &aggregate.object_type, &objects)?;
-        if objects.len() > max_items {
+        authorize_predicate_matches(context, &aggregate.object_type, existing)?;
+        if existing.len() > max_items {
             return Err(ActionRefusal::AggregateBoundExceeded {
                 aggregate: aggregate.name.clone(),
                 max_items: aggregate.max_items,
             });
         }
-        objects
+        return Ok(existing.as_slice());
+    }
+    let remaining = limits.max_canonical_bytes.saturating_sub(meter.bytes());
+    let objects = match context
+        .host
+        .read_predicate_for_action(predicate, max_items, remaining, &mut |object| {
+            authorize_predicate_object(context, &aggregate.object_type, object)
+        })
+        .map_err(host_failure)?
+    {
+        PredicateActionRead::Admitted(objects) => objects,
+        PredicateActionRead::Concealed => return Err(ActionRefusal::TargetNotFound),
     };
-    Ok(objects)
+    if objects.len() > max_items {
+        return Err(ActionRefusal::AggregateBoundExceeded {
+            aggregate: aggregate.name.clone(),
+            max_items: aggregate.max_items,
+        });
+    }
+    for object in &objects {
+        let bytes = norn_ir::canonical::canonical_json_byte_len(&object.values)
+            .map_err(|error| unavailable(error.to_string()))?;
+        meter
+            .admit_record(u64::try_from(bytes).unwrap_or(u64::MAX), 0)
+            .map_err(|exceeded| match exceeded.kind {
+                crate::IngressLimit::SliceBytes => ActionRefusal::AggregateBytesExceeded {
+                    aggregate: aggregate.name.clone(),
+                    max_bytes: limits.max_canonical_bytes,
+                },
+                crate::IngressLimit::SliceRecords
+                | crate::IngressLimit::SliceRelationDepth
+                | crate::IngressLimit::EnvelopeBytes => unavailable(exceeded.to_string()),
+            })?;
+    }
+    snapshots.push((predicate.clone(), objects));
+    snapshots
+        .last()
+        .map(|(_, objects)| objects.as_slice())
+        .ok_or_else(|| unavailable("the predicate snapshot was not retained".to_owned()))
 }
 
 fn authorize_predicate_object<H: CellHost + ?Sized>(

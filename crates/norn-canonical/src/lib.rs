@@ -21,7 +21,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use unicode_normalization::UnicodeNormalization;
 
+mod byte_len;
 pub mod number;
+
+use byte_len::CanonicalSink;
+pub use byte_len::canonical_json_byte_len;
 
 /// Deterministic per-thread work counters for the commit path (#1421, #1417 T0).
 ///
@@ -1550,9 +1554,9 @@ fn lower_hex(digest: [u8; 32]) -> String {
     output
 }
 
-fn write_value(
+fn write_value<S: CanonicalSink>(
     value: &JsonValue,
-    output: &mut String,
+    output: &mut S,
     depth: usize,
     normalize: bool,
     number_bytes: &mut usize,
@@ -1582,26 +1586,26 @@ fn write_value(
             }
         }
         JsonValue::Array(values) => {
-            output.push('[');
+            output.push_char('[');
             let mut first = true;
             for value in values {
                 if !first {
-                    output.push(',');
+                    output.push_char(',');
                 }
                 first = false;
                 let child_depth = next_depth(depth, 0)?;
                 write_value(value, output, child_depth, normalize, number_bytes)?;
             }
-            output.push(']');
+            output.push_char(']');
         }
         JsonValue::Object(values) => write_object(values, output, depth, normalize, number_bytes)?,
     }
     Ok(())
 }
 
-fn write_object(
+fn write_object<S: CanonicalSink>(
     values: &BTreeMap<String, JsonValue>,
-    output: &mut String,
+    output: &mut S,
     depth: usize,
     normalize: bool,
     number_bytes: &mut usize,
@@ -1611,20 +1615,20 @@ fn write_object(
             unicode_normalization::is_nfc_quick(key.chars())
                 == unicode_normalization::IsNormalized::Yes
         });
-    output.push('{');
+    output.push_char('{');
     if already_sorted {
         let mut first = true;
         for (key, value) in values {
             if !first {
-                output.push(',');
+                output.push_char(',');
             }
             first = false;
             write_string_raw(key, output);
-            output.push(':');
+            output.push_char(':');
             let child_depth = next_depth(depth, 0)?;
             write_value(value, output, child_depth, normalize, number_bytes)?;
         }
-        output.push('}');
+        output.push_char('}');
         return Ok(());
     }
 
@@ -1647,25 +1651,25 @@ fn write_object(
     let mut first = true;
     for (key, value) in entries {
         if !first {
-            output.push(',');
+            output.push_char(',');
         }
         first = false;
         write_string_raw(&key, output);
-        output.push(':');
+        output.push_char(':');
         let child_depth = next_depth(depth, 0)?;
         write_value(value, output, child_depth, normalize, number_bytes)?;
     }
-    output.push('}');
+    output.push_char('}');
     Ok(())
 }
 
-fn write_string(value: &str, output: &mut String) {
+fn write_string<S: CanonicalSink>(value: &str, output: &mut S) {
     let normalized = nfc_borrowed(value);
     write_string_raw(&normalized, output);
 }
 
-fn write_string_raw(value: &str, output: &mut String) {
-    output.push('"');
+fn write_string_raw<S: CanonicalSink>(value: &str, output: &mut S) {
+    output.push_char('"');
     // Runs that need no escape are copied whole; only `"`, `\\` and the C0
     // controls (all ASCII) are escaped, exactly as one character at a time.
     let mut rest = value;
@@ -1681,11 +1685,11 @@ fn write_string_raw(value: &str, output: &mut String) {
         rest = characters.as_str();
     }
     output.push_str(rest);
-    output.push('"');
+    output.push_char('"');
 }
 
 /// One character [`write_string`] escapes.
-fn write_escaped(character: char, output: &mut String) {
+fn write_escaped<S: CanonicalSink>(character: char, output: &mut S) {
     match character {
         '"' => output.push_str("\\\""),
         '\\' => output.push_str("\\\\"),
@@ -1694,14 +1698,7 @@ fn write_escaped(character: char, output: &mut String) {
         '\n' => output.push_str("\\n"),
         '\r' => output.push_str("\\r"),
         '\t' => output.push_str("\\t"),
-        character => {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "fmt::Write for String is infallible; its trait signature still returns Result"
-            )]
-            let _ =
-                std::fmt::Write::write_fmt(output, format_args!("\\u{:04x}", u32::from(character)));
-        }
+        character => output.push_unicode_escape(character),
     }
 }
 
@@ -3029,6 +3026,14 @@ mod direct_equivalence {
             let mut output = String::new();
             super::write_string(&value, &mut output);
             prop_assert_eq!(output, write_string_by_character(&value));
+        }
+
+        #[test]
+        fn canonical_json_byte_len_agrees_with_canonical_json_of(value in arb_value()) {
+            prop_assert_eq!(
+                super::canonical_json_byte_len(&value),
+                super::canonical_json_of(&value).map(|bytes| bytes.len())
+            );
         }
     }
 

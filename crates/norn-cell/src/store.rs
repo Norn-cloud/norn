@@ -91,16 +91,16 @@ fn source_field_markings(
 }
 
 fn preflight_mask_policy_changes(previous: Option<&str>, candidate: &str) -> Result<(), CellError> {
-    let catalog = |encoded: &str| {
-        let artifacts: Vec<norn_ir::ArtifactEnvelope> =
-            serde_json::from_str(encoded).map_err(CellError::Json)?;
-        Ok::<_, CellError>(norn_checker::marking_catalog_from_artifacts(&artifacts))
-    };
     let Some(previous) = previous else {
         return Ok(());
     };
-    let old = catalog(previous)?;
-    let new = catalog(candidate)?;
+    let previous_artifacts: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_str(previous).map_err(CellError::Json)?;
+    let candidate_artifacts: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_str(candidate).map_err(CellError::Json)?;
+    let old = norn_checker::marking_catalog_from_artifacts(&previous_artifacts);
+    let new = norn_checker::marking_catalog_from_artifacts(&candidate_artifacts);
+    let mut reveal_indexes: Option<(RevealRuleIndex, RevealRuleIndex)> = None;
     for (id, marking) in old {
         let weakens = new
             .get(&id)
@@ -112,11 +112,15 @@ fn preflight_mask_policy_changes(previous: Option<&str>, candidate: &str) -> Res
             )));
         }
         // PRIVACY-2: no rule may newly allow revealing a declared marking.
-        let (before, after) = (
-            reveal_rules(previous, id.as_str())?,
-            reveal_rules(candidate, id.as_str())?,
-        );
-        if let Some(rule) = after.difference(&before).next() {
+        if reveal_indexes.is_none() {
+            reveal_indexes = Some((
+                RevealRuleIndex::from_artifacts(&previous_artifacts)?,
+                RevealRuleIndex::from_artifacts(&candidate_artifacts)?,
+            ));
+        }
+        if let Some((before, after)) = &reveal_indexes
+            && let Some(rule) = after.first_widened(before, id.as_str())
+        {
             return Err(CellError::DefinitionMigrationRefused(format!(
                 "install widens who may reveal `{}` (rule {rule}); reveal grants on a declared marking are never widened in place",
                 id.as_str()
@@ -126,46 +130,7 @@ fn preflight_mask_policy_changes(previous: Option<&str>, candidate: &str) -> Res
     Ok(())
 }
 
-/// The `norn.reveal` rules of every `AccessIR` policy in `encoded` that can
-/// apply to `marking`, without their ids (a renamed rule is the same rule).
-fn reveal_rules(encoded: &str, marking: &str) -> Result<BTreeSet<String>, CellError> {
-    let artifacts: Vec<norn_ir::ArtifactEnvelope> =
-        serde_json::from_str(encoded).map_err(CellError::Json)?;
-    let mut rules = BTreeSet::new();
-    for artifact in artifacts
-        .iter()
-        .filter(|artifact| artifact.kind() == norn_ir::ArtifactKind::Policy)
-    {
-        let Ok(norn_ir::access::PolicyRoot::Access(access)) =
-            serde_json::to_value(artifact.payload.to_json_value())
-                .and_then(serde_json::from_value::<norn_ir::access::PolicyRoot>)
-        else {
-            continue;
-        };
-        for rule in &access.rules {
-            let reveals = rule.resource_type.as_str() == "norn.Marking"
-                && rule.actions.iter().any(|action| action == "norn.reveal");
-            let names = rule.all_of.iter().all(|condition| match condition {
-                norn_ir::access::AccessCondition::Marking(marking_condition) => marking_condition
-                    .any_of
-                    .iter()
-                    .any(|id| id.as_str() == marking),
-                norn_ir::access::AccessCondition::Role(_)
-                | norn_ir::access::AccessCondition::Rel(_)
-                | norn_ir::access::AccessCondition::Context(_)
-                | norn_ir::access::AccessCondition::Resource(_)
-                | norn_ir::access::AccessCondition::Entitlement(_) => true,
-            });
-            if reveals && names {
-                let mut unnamed = rule.clone();
-                unnamed.rule_id.clear();
-                unnamed.actions = vec!["norn.reveal".to_owned()];
-                rules.insert(serde_json::to_string(&unnamed).map_err(CellError::Json)?);
-            }
-        }
-    }
-    Ok(rules)
-}
+use crate::reveal_policy::RevealRuleIndex;
 
 fn preflight_source_marking_changes<E: SqlEngine>(
     engine: &E,
@@ -3669,10 +3634,10 @@ impl<E: SqlEngine> CellStore<E> {
                 &self.conn,
                 commit_model,
                 effective_batch,
-                quantity_input,
+                quantity_input.as_ref(),
                 &receipt,
-                consumed_input,
-                install_record,
+                consumed_input.as_ref(),
+                install_record.as_ref(),
                 // A replayed record keeps the version that first wrote it.
                 match origin {
                     CommitOrigin::Retained(record) => record.storage_version,
@@ -3680,8 +3645,8 @@ impl<E: SqlEngine> CellStore<E> {
                         Some(crate::engine_release::STORAGE_VERSION)
                     }
                 },
-                automation,
-                entries,
+                &automation,
+                &entries,
             )?;
             probe(CommitPoint::ReceiptWritten)?;
             Ok((admitted, CommitOutcome::Committed(receipt)))

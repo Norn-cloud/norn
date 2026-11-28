@@ -752,40 +752,25 @@ fn date_days(text: &str) -> Option<i64> {
         return None;
     }
     let year: i64 = text.get(0..4)?.parse().ok()?;
-    let month: i64 = text.get(5..7)?.parse().ok()?;
-    let day: i64 = text.get(8..10)?.parse().ok()?;
+    let month: u32 = text.get(5..7)?.parse().ok()?;
+    let day: u32 = text.get(8..10)?.parse().ok()?;
     if !(1..=12).contains(&month) || day < 1 || day > days_in_month(year, month) {
         return None;
     }
-    Some(days_from_civil(year, month, day))
+    norn_ir::calendar::days_from_civil(year, month, day)
 }
 
 #[allow(
     clippy::arithmetic_side_effects,
     reason = "remainders by non-zero constants"
 )]
-const fn days_in_month(year: i64, month: i64) -> i64 {
+const fn days_in_month(year: i64, month: u32) -> u32 {
     match month {
         2 if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
         2 => 28,
         4 | 6 | 9 | 11 => 30,
         _ => 31,
     }
-}
-
-/// Howard Hinnant's days-from-civil.
-#[allow(
-    clippy::arithmetic_side_effects,
-    reason = "a four-digit year, a month and a day: every term is far inside i64"
-)]
-const fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let mp = (month + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
 }
 
 /// Nanoseconds since the epoch for RFC 3339 with an explicit offset (`Z` or `±HH:MM`).

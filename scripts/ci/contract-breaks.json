@@ -92,6 +92,10 @@
     {
       "ruling": "#1762",
       "break": "crates/norn-ir/schema/widget.schema.json/$defs/WidgetActionPlacement.label{*}: output schema widened from {\"type\": \"string\"} to true"
+    },
+    {
+      "ruling": "#2006",
+      "break": "refusal code norn.reveal: production spellings reduced from 4 to 2"
     }
   ]
 }

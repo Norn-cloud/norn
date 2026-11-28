@@ -608,69 +608,15 @@ fn join(
     Ok(out)
 }
 
-/// Days since 1970-01-01 of a proleptic Gregorian date (years 0–9999).
-fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
-    let year = if month <= 2 {
-        year.checked_sub(1)?
-    } else {
-        year
-    };
-    let era = year.div_euclid(400);
-    let yoe = year.checked_sub(era.checked_mul(400)?)?;
-    let mp = month.checked_add(9)?.checked_rem(12)?;
-    let doy = mp
-        .checked_mul(153)?
-        .checked_add(2)?
-        .checked_div(5)?
-        .checked_add(day)?
-        .checked_sub(1)?;
-    let doe = yoe
-        .checked_mul(365)?
-        .checked_add(yoe.checked_div(4)?)?
-        .checked_sub(yoe.checked_div(100)?)?
-        .checked_add(doy)?;
-    era.checked_mul(146_097)?
-        .checked_add(doe)?
-        .checked_sub(719_468)
-}
-
-/// The proleptic Gregorian date of a day count since 1970-01-01.
-fn civil_from_days(days: i64) -> Option<(i64, i64, i64)> {
-    let z = days.checked_add(719_468)?;
-    let era = z.div_euclid(146_097);
-    let doe = z.checked_sub(era.checked_mul(146_097)?)?;
-    let yoe = doe
-        .checked_sub(doe.checked_div(1460)?)?
-        .checked_add(doe.checked_div(36_524)?)?
-        .checked_sub(doe.checked_div(146_096)?)?
-        .checked_div(365)?;
-    let doy = doe.checked_sub(
-        yoe.checked_mul(365)?
-            .checked_add(yoe.checked_div(4)?)?
-            .checked_sub(yoe.checked_div(100)?)?,
-    )?;
-    let mp = doy.checked_mul(5)?.checked_add(2)?.checked_div(153)?;
-    let day = doy
-        .checked_sub(mp.checked_mul(153)?.checked_add(2)?.checked_div(5)?)?
-        .checked_add(1)?;
-    let month = if mp < 10 {
-        mp.checked_add(3)?
-    } else {
-        mp.checked_sub(9)?
-    };
-    let year = yoe
-        .checked_add(era.checked_mul(400)?)?
-        .checked_add(i64::from(month <= 2))?;
-    Some((year, month, day))
-}
-
 /// The first day of `days`'s bucket.
-fn bucket_start(days: i64, grain: TimeGrain) -> Option<(i64, i64, i64)> {
-    let (year, month, day) = civil_from_days(days)?;
+fn bucket_start(days: i64, grain: TimeGrain) -> Option<(i64, u32, u32)> {
+    let (year, month, day) = norn_ir::calendar::civil_from_days(days)?;
     Some(match grain {
         TimeGrain::Day => (year, month, day),
         // 1970-01-01 is a Thursday: Monday is three days earlier.
-        TimeGrain::Week => civil_from_days(days.checked_sub(days.checked_add(3)?.rem_euclid(7))?)?,
+        TimeGrain::Week => norn_ir::calendar::civil_from_days(
+            days.checked_sub(days.checked_add(3)?.rem_euclid(7))?,
+        )?,
         TimeGrain::Month => (year, month, 1),
         TimeGrain::Quarter => (
             year,
@@ -712,13 +658,15 @@ pub fn bucket_text(text: &str, ty: &Type, grain: TimeGrain) -> Result<String, Ev
         seconds.div_euclid(86_400)
     } else {
         norn_expr::temporal::validate_date(text).map_err(|_error| invalid())?;
-        let mut parts = text.splitn(3, '-').map(str::parse::<i64>);
-        let (Some(Ok(year)), Some(Ok(month)), Some(Ok(day))) =
-            (parts.next(), parts.next(), parts.next())
-        else {
+        let mut parts = text.splitn(3, '-');
+        let (Some(Ok(year)), Some(Ok(month)), Some(Ok(day))) = (
+            parts.next().map(str::parse::<i64>),
+            parts.next().map(str::parse::<u32>),
+            parts.next().map(str::parse::<u32>),
+        ) else {
             return Err(invalid());
         };
-        days_from_civil(year, month, day).ok_or_else(invalid)?
+        norn_ir::calendar::days_from_civil(year, month, day).ok_or_else(invalid)?
     };
     let (year, month, day) = bucket_start(days, grain).ok_or_else(invalid)?;
     if !(0..=9999).contains(&year) {

@@ -26,6 +26,7 @@ use crate::codec::canonical_json;
 use crate::engine::{MAX_SAFE_INTEGER, SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::export::{EXPORT_FORMAT, ExportRecord};
+use crate::export_journal::ExportRecordRef;
 use crate::read::{LedgerEntry, to_i64, to_u64};
 use crate::scrub::RowBudget;
 use crate::store::{CommitBatch, MAIN_WORLD, Receipt};
@@ -74,6 +75,18 @@ struct Residue {
     storage_version: Option<u32>,
 }
 
+/// Borrowing view of [`Residue`] with identical serde layout.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResidueRef<'a> {
+    commit_seq: u64,
+    context: &'a str,
+    previous: &'a str,
+    batch: &'a CommitBatch,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    storage_version: Option<u32>,
+}
+
 /// The record fields a context row holds, in their content-address preimage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -86,22 +99,34 @@ struct Context {
     bindings: BTreeMap<String, String>,
 }
 
-impl Context {
-    fn of(record: &ExportRecord) -> Self {
+/// Borrowing view of [`Context`] with identical serde layout.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContextRef<'a> {
+    format: &'a str,
+    store_format: &'a str,
+    ddl_hash: &'a str,
+    model_hash: &'a str,
+    ddl_sql: &'a str,
+    bindings: &'a BTreeMap<String, String>,
+}
+
+impl<'a> ContextRef<'a> {
+    const fn of(record: &ExportRecordRef<'a>) -> Self {
         Self {
-            format: CONTEXT_FORMAT.to_owned(),
-            store_format: record.store_format.clone(),
-            ddl_hash: record.ddl_hash.clone(),
-            model_hash: record.model_hash.clone(),
-            ddl_sql: record.ddl_sql.clone(),
-            bindings: record.bindings.clone(),
+            format: CONTEXT_FORMAT,
+            store_format: record.store_format,
+            ddl_hash: record.ddl_hash,
+            model_hash: record.model_hash,
+            ddl_sql: record.ddl_sql,
+            bindings: record.bindings,
         }
     }
 }
 
 /// Whether `record` is a steady-state main-world commit the residue
 /// reconstructs exactly from its receipt, ledger span and context.
-pub(crate) fn eligible(record: &ExportRecord) -> bool {
+pub(crate) fn eligible(record: &ExportRecordRef<'_>) -> bool {
     record.format == EXPORT_FORMAT
         && record.batch.world == MAIN_WORLD
         && record.receipt.body.fork_pin.is_none()
@@ -128,14 +153,14 @@ pub(crate) fn eligible(record: &ExportRecord) -> bool {
 /// bytes are equal.
 pub(crate) fn encode(
     engine: &impl SqlEngine,
-    record: &ExportRecord,
+    record: &ExportRecordRef<'_>,
     canonical: &str,
 ) -> Result<String, CellError> {
     let commit_seq = record.receipt.body.commit_seq;
     // The packed encoding checks the batch against the bound scope whenever
     // it stores a body (always its DDL); the residue keeps that refusal.
     crate::payload_storage::check_batch_scope(engine, &record.batch.scope)?;
-    let preimage = canonical_json(&Context::of(record))?;
+    let preimage = canonical_json(&ContextRef::of(record))?;
     let hash = HashProfile::Norn1.hash_canonical_bytes(preimage.as_bytes());
     if let Some(stored) = load_context(engine, &hash, commit_seq)? {
         if canonical_json(&stored)? != preimage {
@@ -160,11 +185,11 @@ pub(crate) fn encode(
                 ],
             )?;
     }
-    let residue = Residue {
+    let residue = ResidueRef {
         commit_seq,
-        context: hash,
-        previous: record.previous.clone(),
-        batch: record.batch.clone(),
+        context: &hash,
+        previous: record.previous,
+        batch: record.batch,
         storage_version: record.storage_version,
     };
     let text = format!("{PREFIX}{}", canonical_json(&residue)?);

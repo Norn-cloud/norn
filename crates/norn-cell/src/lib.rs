@@ -81,6 +81,7 @@ mod outbox_generations;
 pub mod outbox_ledger;
 mod outbox_ledger_migrate;
 pub mod provision;
+mod reveal_policy;
 pub use observation_quality::AuthoritativePage;
 mod identity;
 pub mod model;
