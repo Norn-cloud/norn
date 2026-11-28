@@ -1,0 +1,142 @@
+{
+  "artifactId": "supply.RetailReceiptEvidence.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Retail receipt feed row",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "receipt_line_id"
+          ]
+        }
+      ],
+      "implements": [
+        "supply.ReceiptEvidence"
+      ],
+      "name": "supply.RetailReceiptEvidence",
+      "properties": [
+        {
+          "id": "receipt_line_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "store_code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "sku_code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "supplier_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "received_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "damaged_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "each"
+              },
+              {
+                "value": "kg"
+              },
+              {
+                "value": "l"
+              }
+            ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit_cost",
+          "type": {
+            "additivity": {
+              "kind": "non_additive"
+            },
+            "currencySource": {
+              "links": [],
+              "property": "currency"
+            },
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        },
+        {
+          "id": "received_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.RetailReceiptEvidence.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

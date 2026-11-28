@@ -1,0 +1,68 @@
+{
+  "artifactId": "supply.store.close.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Close a retail store",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.retail.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.store.close",
+    "effectProgram": {
+      "entityArtifactId": "supply.Store.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "store_id",
+      "objectKind": "supply.Store",
+      "transition": "close"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "store_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "store_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "store_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "store_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Close a retail store",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "supply.Store"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.store.close.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

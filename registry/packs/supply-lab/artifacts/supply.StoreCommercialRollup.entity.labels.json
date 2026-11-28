@@ -1,0 +1,138 @@
+{
+  "artifactId": "supply.StoreCommercialRollup.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Store commercial KPI rollup labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "ملخص مؤشرات المتجر",
+          "en": "Store KPI rollup"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.StoreCommercialRollup"
+        }
+      },
+      {
+        "label": {
+          "ar": "قطعة",
+          "en": "Each"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StoreCommercialRollup",
+          "property": "unit",
+          "value": "each"
+        }
+      },
+      {
+        "label": {
+          "ar": "كيلوغرام",
+          "en": "Kilogram"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StoreCommercialRollup",
+          "property": "unit",
+          "value": "kg"
+        }
+      },
+      {
+        "label": {
+          "ar": "لتر",
+          "en": "Litre"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StoreCommercialRollup",
+          "property": "unit",
+          "value": "l"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسعّر بالتكلفة",
+          "en": "Costed"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StoreCommercialRollup",
+          "property": "cost_status",
+          "value": "costed"
+        }
+      },
+      {
+        "label": {
+          "ar": "تكلفة مفقودة",
+          "en": "Missing cost"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StoreCommercialRollup",
+          "property": "cost_status",
+          "value": "missing_cost"
+        }
+      },
+      {
+        "label": {
+          "ar": "موثق",
+          "en": "Verified"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StoreCommercialRollup",
+          "property": "count_status",
+          "value": "verified"
+        }
+      },
+      {
+        "label": {
+          "ar": "غير موثق",
+          "en": "Unverified"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StoreCommercialRollup",
+          "property": "count_status",
+          "value": "unverified"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StoreCommercialRollup.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

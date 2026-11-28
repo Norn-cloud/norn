@@ -1,0 +1,33 @@
+{
+  "artifactId": "supply.UnitCost.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "SKU unit cost labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "تكلفة وحدة الصنف",
+          "en": "SKU unit cost"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.UnitCost"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.UnitCost.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

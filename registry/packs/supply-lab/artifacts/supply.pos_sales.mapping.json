@@ -1,0 +1,98 @@
+{
+  "artifactId": "supply.pos_sales.mapping",
+  "dependencies": [
+    {
+      "artifactId": "supply.pos_sales.source",
+      "kind": "source_schema",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.SaleEvidence.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.PosSaleEvidence.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "active",
+  "name": "POS sales into sale evidence",
+  "namespace": "supply",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "supply.SaleEvidence.interface"
+    ],
+    "maps": [
+      {
+        "id": "pos_sale",
+        "properties": [
+          {
+            "property": "pos_line_id",
+            "value": "input.pos_line_id"
+          },
+          {
+            "property": "store_code",
+            "value": "input.branch_code"
+          },
+          {
+            "property": "sku_code",
+            "value": "input.barcode_sku"
+          },
+          {
+            "property": "sold_qty",
+            "value": "input.qty"
+          },
+          {
+            "property": "unit",
+            "value": "({'PCS': 'each', 'EA': 'each', 'KG': 'kg', 'L': 'l'})[input.uom] ?? input.uom"
+          },
+          {
+            "property": "net_revenue",
+            "value": "input.net_amount"
+          },
+          {
+            "property": "currency",
+            "value": "({'EGP': 'EGP', 'USD': 'USD', 'EUR': 'EUR', 'LE': 'EGP'})[input.ccy] ?? input.ccy"
+          },
+          {
+            "property": "sold_at",
+            "value": "timestamp(input.sold_at)"
+          }
+        ],
+        "source": {
+          "dataset": "pos_sale_line"
+        },
+        "sourceRecord": "input.branch_code + '/' + input.pos_line_id",
+        "subject": "input.pos_line_id",
+        "target": {
+          "entity": "supply.PosSaleEvidence.entity",
+          "interface": "supply.SaleEvidence.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "supply.pos_sales.source",
+      "sha256": "b8a1d6c4115586d10517c00e7b8c60901885d354d275409c317a6f8e557c8935",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.pos_sales.mapping.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

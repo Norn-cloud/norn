@@ -1,0 +1,310 @@
+[
+  {
+    "origin": {
+      "by": "code"
+    },
+    "tiles": [
+      {
+        "id": "t1",
+        "layout": {
+          "h": 1,
+          "w": 2,
+          "x": 0,
+          "y": 0
+        },
+        "question": {
+          "aggregate": [
+            {
+              "metric": "analysis.object_737570706c792e506f7353616c65.sold_qty.by_sold_at"
+            }
+          ],
+          "calendar": "iso_utc",
+          "freshness": {
+            "kind": "live",
+            "maxAgeMs": 60000
+          },
+          "groupBy": [
+            {
+              "path": {
+                "property": "unit"
+              }
+            },
+            {
+              "path": {
+                "property": "store_id"
+              }
+            },
+            {
+              "grain": "week",
+              "path": {
+                "property": "sold_at"
+              }
+            }
+          ],
+          "irVersion": "0.1",
+          "name": "supply.retail.store_sales_weekly",
+          "objectSet": "supply.PosSale",
+          "window": {
+            "end": "2026-10-26T00:00:00Z",
+            "start": "2026-07-06T00:00:00Z"
+          }
+        },
+        "title": "Store unit sales, weekly",
+        "view": {
+          "chart": "bar",
+          "kind": "chart"
+        }
+      },
+      {
+        "id": "t2",
+        "layout": {
+          "h": 1,
+          "w": 2,
+          "x": 0,
+          "y": 1
+        },
+        "question": {
+          "aggregate": [
+            {
+              "metric": "analysis.object_737570706c792e506f7353616c65.net_revenue.by_sold_at"
+            }
+          ],
+          "calendar": "iso_utc",
+          "freshness": {
+            "kind": "live",
+            "maxAgeMs": 60000
+          },
+          "groupBy": [
+            {
+              "path": {
+                "property": "currency"
+              }
+            },
+            {
+              "path": {
+                "property": "store_id"
+              }
+            },
+            {
+              "grain": "week",
+              "path": {
+                "property": "sold_at"
+              }
+            }
+          ],
+          "irVersion": "0.1",
+          "name": "supply.retail.store_revenue_weekly",
+          "objectSet": "supply.PosSale",
+          "window": {
+            "end": "2026-10-26T00:00:00Z",
+            "start": "2026-07-06T00:00:00Z"
+          }
+        },
+        "title": "Store net revenue, weekly",
+        "view": {
+          "chart": "bar",
+          "kind": "chart"
+        }
+      },
+      {
+        "id": "t3",
+        "layout": {
+          "h": 1,
+          "w": 2,
+          "x": 0,
+          "y": 2
+        },
+        "question": {
+          "aggregate": [
+            {
+              "metric": "analysis.object_737570706c792e53746f636b4c6f74.remaining_qty.as_of_as_of"
+            }
+          ],
+          "calendar": "iso_utc",
+          "freshness": {
+            "kind": "live",
+            "maxAgeMs": 60000
+          },
+          "groupBy": [
+            {
+              "path": {
+                "property": "unit"
+              }
+            },
+            {
+              "path": {
+                "property": "store_id"
+              }
+            },
+            {
+              "grain": "week",
+              "path": {
+                "property": "as_of"
+              }
+            }
+          ],
+          "irVersion": "0.1",
+          "name": "supply.retail.store_on_hand_weekly",
+          "objectSet": "supply.StockLot",
+          "window": {
+            "end": "2026-10-26T00:00:00Z",
+            "start": "2026-07-06T00:00:00Z"
+          }
+        },
+        "title": "Store on-hand, weekly",
+        "view": {
+          "chart": "line",
+          "kind": "chart"
+        }
+      },
+      {
+        "id": "t4",
+        "layout": {
+          "h": 1,
+          "w": 2,
+          "x": 0,
+          "y": 3
+        },
+        "question": {
+          "aggregate": [
+            {
+              "metric": "analysis.object_737570706c792e53746f636b4c6f74.received_qty.by_received_at"
+            }
+          ],
+          "calendar": "iso_utc",
+          "freshness": {
+            "kind": "live",
+            "maxAgeMs": 60000
+          },
+          "groupBy": [
+            {
+              "path": {
+                "property": "unit"
+              }
+            },
+            {
+              "path": {
+                "property": "store_id"
+              }
+            },
+            {
+              "grain": "week",
+              "path": {
+                "property": "received_at"
+              }
+            }
+          ],
+          "irVersion": "0.1",
+          "name": "supply.retail.lot_received_aging_weekly",
+          "objectSet": "supply.StockLot",
+          "window": {
+            "end": "2026-10-26T00:00:00Z",
+            "start": "2026-07-06T00:00:00Z"
+          }
+        },
+        "title": "Lot receipt aging cohorts, weekly",
+        "view": {
+          "chart": "bar",
+          "kind": "chart"
+        }
+      },
+      {
+        "id": "t5",
+        "layout": {
+          "h": 1,
+          "w": 2,
+          "x": 0,
+          "y": 4
+        },
+        "question": {
+          "aggregate": [
+            {
+              "metric": "analysis.object_737570706c792e53746f636b4c6f74.sell_through_rate.by_as_of.ratio_of_sums"
+            }
+          ],
+          "calendar": "iso_utc",
+          "freshness": {
+            "kind": "live",
+            "maxAgeMs": 60000
+          },
+          "groupBy": [
+            {
+              "path": {
+                "property": "unit"
+              }
+            },
+            {
+              "path": {
+                "property": "store_id"
+              }
+            }
+          ],
+          "irVersion": "0.1",
+          "name": "supply.retail.store_sell_through_weekly",
+          "objectSet": "supply.StockLot",
+          "window": {
+            "end": "2026-10-26T00:00:00Z",
+            "start": "2026-07-06T00:00:00Z"
+          }
+        },
+        "title": "Store sell-through, weekly",
+        "view": {
+          "chart": "line",
+          "kind": "chart"
+        }
+      },
+      {
+        "id": "t6",
+        "layout": {
+          "h": 1,
+          "w": 2,
+          "x": 0,
+          "y": 5
+        },
+        "question": {
+          "aggregate": [
+            {
+              "metric": "analysis.object_737570706c792e506f7353616c6545766964656e6365.net_revenue.by_sold_at"
+            }
+          ],
+          "calendar": "iso_utc",
+          "freshness": {
+            "kind": "live",
+            "maxAgeMs": 60000
+          },
+          "groupBy": [
+            {
+              "path": {
+                "property": "currency"
+              }
+            },
+            {
+              "path": {
+                "property": "store_code"
+              }
+            },
+            {
+              "grain": "week",
+              "path": {
+                "property": "sold_at"
+              }
+            }
+          ],
+          "irVersion": "0.1",
+          "name": "supply.retail.pos_feed_revenue_weekly",
+          "objectSet": "supply.PosSaleEvidence",
+          "window": {
+            "end": "2026-10-26T00:00:00Z",
+            "start": "2026-07-06T00:00:00Z"
+          }
+        },
+        "title": "POS feed revenue, weekly",
+        "view": {
+          "chart": "bar",
+          "kind": "chart"
+        }
+      }
+    ],
+    "title": "Retail combined management view (read-only; not consolidated financial statements)"
+  }
+]

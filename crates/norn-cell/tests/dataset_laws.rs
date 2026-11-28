@@ -1599,3 +1599,9 @@ fn excepted_predicate_laws_match_per_row_evaluation_across_nested_overrides() {
     assert_eq!(bulk.held, BTreeSet::from([3, 5, 6, 7]));
     assert_eq!(bulk.data, BTreeSet::from([1, 2, 4]));
 }
+
+#[test]
+fn retail_truth_slice_combined_view_duckdb_parity() {
+    super::retail_truth_slice::run_s1_duckdb_combined_view_parity()
+        .expect("S1 DuckDB combined management view full parity");
+}
