@@ -186,14 +186,22 @@ pub(crate) fn check_link_requirements(
             ));
         }
         if !known(&requirement.target) {
-            out.push(error(
+            let mut diagnostic = error(
                 codes::UNKNOWN_LINK_TARGET,
                 format!(
                     "required link {id:?} targets {:?}, which names no object type or interface",
                     requirement.target.as_str()
                 ),
                 span_at(&pointer, &["target"]),
+            );
+            diagnostic.witness = Some(crate::DiagnosticWitness::core_link(
+                def.name.as_str(),
+                requirement.target.as_str(),
+                id,
+                "admitted object type or interface in effective catalog",
+                format!("unresolved target {}", requirement.target.as_str()),
             ));
+            out.push(diagnostic);
         }
         if requirement.target.as_str().len() > MAX_OBJECT_TYPE_NAME_BYTES {
             out.push(error(

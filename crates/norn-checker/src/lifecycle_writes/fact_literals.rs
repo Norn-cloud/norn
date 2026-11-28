@@ -694,6 +694,67 @@ fn undeclared_transition(
     })
 }
 
+/// One literal fact-change record extracted from a decide graph's expression or
+/// table sites for downstream core-law preservation checking.
+#[derive(Debug, Clone)]
+pub(crate) struct LiteralFactWrite {
+    pub(crate) op: Option<FactChangeOp>,
+    pub(crate) object_type: Option<String>,
+    pub(crate) property: Option<String>,
+    pub(crate) value: Option<RuntimeValue>,
+    pub(crate) values: BTreeMap<String, RuntimeValue>,
+    pub(crate) patch: BTreeMap<String, RuntimeValue>,
+    pub(crate) pointer: String,
+}
+
+/// Extract literal fact-change writes (`create`, `set`, `patch`) from a decide
+/// graph's fact-feeding expression and table sites.
+pub(crate) fn extract_literal_fact_writes(artifact: &ArtifactEnvelope) -> Vec<LiteralFactWrite> {
+    let mut out = Vec::new();
+    for (pointer, site) in sites(artifact) {
+        let records: Vec<Record> = match site {
+            Site::StoredRecord(record) => vec![record],
+            Site::Records(records) => records
+                .into_iter()
+                .filter(|record| record.get("op").is_some() || record.get("objectType").is_some())
+                .collect(),
+            Site::Cell { .. } => Vec::new(),
+        };
+        for record in records {
+            let op = record.literal("op").and_then(FactChangeOp::parse);
+            let object_type = record.literal("objectType").map(str::to_owned);
+            let property = record.literal("property").map(str::to_owned);
+            let value = record.get("value").and_then(Value::runtime_value);
+            let values = record_literal_map(&record, "values");
+            let patch = record_literal_map(&record, "patch");
+            if value.is_some() || !values.is_empty() || !patch.is_empty() {
+                out.push(LiteralFactWrite {
+                    op,
+                    object_type,
+                    property,
+                    value,
+                    values,
+                    patch,
+                    pointer: pointer.clone(),
+                });
+            }
+        }
+    }
+    out
+}
+
+fn record_literal_map(record: &Record, field: &str) -> BTreeMap<String, RuntimeValue> {
+    let mut out = BTreeMap::new();
+    if let Some(Value::Object(nested)) = record.get(field) {
+        for (key, value) in nested.entries() {
+            if let Some(runtime) = value.runtime_value() {
+                out.insert(key.to_owned(), runtime);
+            }
+        }
+    }
+    out
+}
+
 /// The effective lifecycle of `property` among `machines`, if declared.
 fn machine_of<'m>(
     machines: &'m [EffectiveLifecycle],

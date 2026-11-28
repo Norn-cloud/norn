@@ -40,22 +40,23 @@ use norn_ir::{
 };
 
 use super::Checker;
-use crate::Diagnostic;
+use super::link_witness;
 use crate::entity_instance::{EffectiveLink, EffectiveProperty};
 use crate::object_types::{
     MEMBER_ID_GRAMMAR, Origin, Resolved, check_property_default, check_property_shape,
     check_zen_syntax, codes,
 };
 use crate::property_types::{error, matches_grammar, span_at};
+use crate::{Diagnostic, Span};
 
 /// One link declaration: the link, the type it belongs to (its declaring
 /// type, or the target of the extension that adds it), where it is
 /// declared, and its position in that declaration's `links`.
 #[derive(Clone, Copy)]
 pub(super) struct LinkDecl<'a> {
-    link: &'a Link,
+    pub(super) link: &'a Link,
     source: &'a ObjectTypeName,
-    origin: Origin<'a>,
+    pub(super) origin: Origin<'a>,
     position: usize,
 }
 
@@ -142,11 +143,11 @@ pub(super) type LinkTable<'a> = BTreeMap<&'a str, Member<'a>>;
 
 /// One required link of an interface a type is held to, with the position of
 /// the `implements` entry that lists the interface directly.
-type LinkRequirement<'a> = (Option<usize>, &'a InterfaceDef, &'a InterfaceLink);
+pub(super) type LinkRequirement<'a> = (Option<usize>, &'a InterfaceDef, &'a InterfaceLink);
 
 /// `sub` narrows `sup`: no end widens from `one` to `many`, and a required
 /// link stays required.
-const fn cardinality_narrows(sub: LinkCardinality, sup: LinkCardinality) -> bool {
+pub(super) const fn cardinality_narrows(sub: LinkCardinality, sup: LinkCardinality) -> bool {
     end_narrows(sub.to, sup.to)
         && end_narrows(sub.from, sup.from)
         && (sub.required || !sup.required)
@@ -267,7 +268,11 @@ impl<'a> Checker<'a, '_> {
     /// Whether every object `sub` admits, `sup` admits: the same definition,
     /// a subtype of an object type, or an object type held to an interface.
     /// `None` when either is unknown.
-    fn target_narrows(&self, sub: &ObjectTypeName, sup: &ObjectTypeName) -> Option<bool> {
+    pub(super) fn target_narrows(
+        &self,
+        sub: &ObjectTypeName,
+        sup: &ObjectTypeName,
+    ) -> Option<bool> {
         if !self.definition_known(sub) || !self.definition_known(sup) {
             return None;
         }
@@ -582,7 +587,7 @@ impl<'a> Checker<'a, '_> {
             match inherited.get(link.id.as_str()).map(|member| member.kind) {
                 Some(MemberKind::Link(overridden)) => {
                     if registered {
-                        self.check_link_override(&at, link, &overridden);
+                        self.check_link_override(&at, def.name.as_str(), link, &overridden);
                     }
                 }
                 None if fresh => {
@@ -672,12 +677,22 @@ impl<'a> Checker<'a, '_> {
             ));
         }
         if !self.definition_known(&link.target) {
-            self.out.push(error(
-                codes::UNKNOWN_LINK_TARGET,
-                format!(
-                    "link target {:?} names no object type or interface",
-                    link.target.as_str()
-                ),
+            let owner_name: &str = match origin {
+                Origin::Type(owner) => owner.as_str(),
+                Origin::Extension { index, local } => {
+                    let list = if local {
+                        self.model.extensions
+                    } else {
+                        self.context.base.extensions
+                    };
+                    list.get(index)
+                        .map_or("<extension>", |ext| ext.target.as_str())
+                }
+            };
+            self.out.push(link_witness::unknown_link_target(
+                owner_name,
+                id,
+                &link.target,
                 span_at(at, &["target"]),
             ));
         }
@@ -819,59 +834,6 @@ impl<'a> Checker<'a, '_> {
         None
     }
 
-    /// A link override only narrows the link it overrides, and inherits its
-    /// inverse role and link properties.
-    fn check_link_override(&mut self, at: &[&str], link: &'a Link, overridden: &LinkDecl<'a>) {
-        let id = link.id.as_str();
-        let owner = match overridden.origin {
-            Origin::Type(owner) => format!("supertype {:?}", owner.as_str()),
-            Origin::Extension { .. } => "an extension of a supertype".to_owned(),
-        };
-        for (member, present) in [
-            ("inverse", link.inverse.is_some()),
-            ("properties", !link.properties.is_empty()),
-        ] {
-            if present {
-                self.out.push(error(
-                    codes::LINK_OVERRIDE_REDECLARES,
-                    format!(
-                        "link {id:?} overrides the one {owner} declares and redeclares its {member}, which the override inherits; omit it"
-                    ),
-                    span_at(at, &[member]),
-                ));
-            }
-        }
-        let inherited = overridden.link;
-        if self.target_narrows(&link.target, &inherited.target) == Some(false) {
-            self.out.push(error(
-                codes::LINK_OVERRIDE_TARGET_MISMATCH,
-                format!(
-                    "link {id:?} overrides the one {owner} declares with a target that is not {:?} or a narrowing of it; an override may only narrow",
-                    inherited.target.as_str()
-                ),
-                span_at(at, &["target"]),
-            ));
-        }
-        if inherited.acyclic != link.acyclic {
-            self.out.push(error(
-                codes::LINK_OVERRIDE_CHANGES_ACYCLIC,
-                format!(
-                    "link {id:?} overrides the one {owner} declares and changes its acyclic constraint; an override must preserve the inherited value (subtype-only acyclicity is unsound)"
-                ),
-                span_at(at, &["acyclic"]),
-            ));
-        }
-        if !cardinality_narrows(link.cardinality, inherited.cardinality) {
-            self.out.push(error(
-                codes::LINK_OVERRIDE_WIDENS_CARDINALITY,
-                format!(
-                    "link {id:?} overrides the one {owner} declares with a wider cardinality; an override may only narrow (many to one, optional to required)"
-                ),
-                span_at(at, &["cardinality"]),
-            ));
-        }
-    }
-
     // ----- interface link requirements -------------------------------------
 
     /// Required links of the interfaces a type lists: conflicts among every
@@ -904,6 +866,17 @@ impl<'a> Checker<'a, '_> {
             Rc::new(LinkTable::new())
         };
 
+        let has_base_ancestor = ancestors.iter().any(|ancestor| {
+            self.types
+                .get(ancestor)
+                .is_some_and(|entry| entry.local.is_none())
+        });
+        let inherited_table = if registered && has_base_ancestor {
+            self.parent(&def.name).map(|parent| self.link_table(parent))
+        } else {
+            None
+        };
+
         for (id, group) in groups {
             let properties: Vec<(Option<usize>, &InterfaceDef)> = held
                 .iter()
@@ -915,19 +888,21 @@ impl<'a> Checker<'a, '_> {
                 })
                 .map(|(position, interface)| (*position, *interface))
                 .collect();
-            let Some(first) = group
+            let first = group
                 .iter()
                 .map(|(position, _, _)| *position)
                 .chain(properties.iter().map(|(position, _)| *position))
                 .flatten()
-                .min()
-            else {
-                continue; // the supertype's
-            };
+                .min();
+            if first.is_none() && !has_base_ancestor {
+                continue; // local supertype checks its own interface requirements
+            }
             if conflicted.iter().any(|property| property.as_str() == id) {
                 continue;
             }
-            if let Some(reason) = self.link_requirement_conflict(&group, &properties) {
+            if let Some(first) = first
+                && let Some(reason) = self.link_requirement_conflict(&group, &properties)
+            {
                 let names: Vec<&str> = group
                     .iter()
                     .map(|(_, interface, _)| interface.name.as_str())
@@ -948,7 +923,14 @@ impl<'a> Checker<'a, '_> {
             }
             if registered {
                 for requirement in &group {
-                    self.check_link_conformance(base, id, requirement, &table);
+                    self.check_link_conformance(
+                        base,
+                        def.name.as_str(),
+                        id,
+                        requirement,
+                        &table,
+                        inherited_table.as_deref(),
+                    );
                 }
             }
         }
@@ -992,88 +974,141 @@ impl<'a> Checker<'a, '_> {
     }
 
     /// Conformance of the type's link to one requirement of an interface it
-    /// lists.
+    /// lists (or inherits through a base supertype).
     fn check_link_conformance(
         &mut self,
         base: &[&str],
+        child_name: &str,
         id: &str,
         (position, interface, requirement): &LinkRequirement<'a>,
         table: &LinkTable<'a>,
+        inherited_table: Option<&LinkTable<'a>>,
     ) {
-        let Some(position) = position else { return };
-        let at = span_at(base, &["implements", position.to_string().as_str()]);
+        let at = match position {
+            Some(position) => span_at(base, &["implements", position.to_string().as_str()]),
+            None if inherited_table.is_some() => span_at(base, &["extends"]),
+            None => return,
+        };
         let name = interface.name.as_str();
         // LAW-LINK-MANY-1: an interface is a read contract, so an inverse role
         // meets a link requirement: the role's sources must narrow the
         // required target, and its view (`to` = the link's `from`, never
         // required) the required cardinality.
         if let Some(MemberKind::Inverse(decl)) = table.get(id).map(|member| member.kind) {
-            // A law reads a to-one requirement as one target, which an inverse
-            // role does not bind: only a to-many requirement takes one.
-            if requirement.cardinality.to != Multiplicity::Many {
-                self.out.push(error(
-                    codes::MISSING_INTERFACE_LINK,
-                    format!(
-                        "interface {name:?} requires link {id:?} to one target, but the type's member of that id is an inverse role; declare a forward link"
-                    ),
-                    at,
-                ));
-                return;
-            }
-            if self.target_narrows(decl.source, &requirement.target) == Some(false) {
-                self.out.push(error(
-                    codes::INTERFACE_LINK_TARGET_MISMATCH,
-                    format!(
-                        "inverse role {id:?} reads {:?}, which does not narrow {:?}, the target interface {name:?} requires",
-                        decl.source.as_str(),
-                        requirement.target.as_str()
-                    ),
-                    at.clone(),
-                ));
-            }
-            let view = LinkCardinality {
-                to: decl.link.cardinality.from,
-                from: decl.link.cardinality.to,
-                required: false,
-            };
-            if !cardinality_narrows(view, requirement.cardinality) {
-                self.out.push(error(
-                    codes::INTERFACE_LINK_WIDENS_CARDINALITY,
-                    format!(
-                        "inverse role {id:?} has a wider cardinality than interface {name:?} requires"
-                    ),
-                    at,
-                ));
-            }
+            self.check_inverse_link_conformance(child_name, name, requirement, decl, at);
             return;
         }
+        let expected =
+            link_witness::format_link_contract(&requirement.target, requirement.cardinality);
         let Some(MemberKind::Link(decl)) = table.get(id).map(|member| member.kind) else {
-            let found = table.get(id).map_or_else(
-                || "the type neither declares nor inherits it".to_owned(),
-                |member| format!("the type's member of that id is the {}", member.describe()),
+            let (found, actual) = table.get(id).map_or_else(
+                || {
+                    (
+                        "the type neither declares nor inherits it".to_owned(),
+                        "missing".to_owned(),
+                    )
+                },
+                |member| {
+                    let desc = member.describe();
+                    (format!("the type's member of that id is the {desc}"), desc)
+                },
             );
-            self.out.push(error(
-                codes::MISSING_INTERFACE_LINK,
-                format!("interface {name:?} requires link {id:?}, but {found}"),
-                at,
+            self.out.push(link_witness::missing_interface_link(
+                child_name, name, id, &found, expected, actual, at,
             ));
             return;
         };
-        if self.target_narrows(&decl.link.target, &requirement.target) == Some(false) {
-            self.out.push(error(
-                codes::INTERFACE_LINK_TARGET_MISMATCH,
-                format!(
-                    "link {id:?} does not target {:?}, which interface {name:?} requires, or a narrowing of it",
-                    requirement.target.as_str()
-                ),
+        // When an interface is inherited through `extends` (`position.is_none()`),
+        // avoid emitting duplicate `interface_link_*` diagnostics at `/extends`
+        // when `check_link_override` already rejected this type's direct override
+        // of the inherited link for target mismatch or widened cardinality.
+        let overridden_link = if position.is_none()
+            && matches!(decl.origin, Origin::Type(owner) if owner.as_str() == child_name)
+        {
+            inherited_table.and_then(|parent| {
+                parent.get(id).and_then(|member| match member.kind {
+                    MemberKind::Link(inherited) => Some(inherited.link),
+                    MemberKind::Property(_) | MemberKind::Inverse(_) => None,
+                })
+            })
+        } else {
+            None
+        };
+        let actual = link_witness::format_link_contract(&decl.link.target, decl.link.cardinality);
+        let override_failed_target = overridden_link.is_some_and(|inherited| {
+            inherited.target == requirement.target
+                && self.target_narrows(&decl.link.target, &inherited.target) == Some(false)
+        });
+        if !override_failed_target
+            && self.target_narrows(&decl.link.target, &requirement.target) == Some(false)
+        {
+            self.out.push(link_witness::interface_link_target_mismatch(
+                child_name,
+                name,
+                id,
+                &requirement.target,
+                expected.clone(),
+                actual.clone(),
                 at.clone(),
             ));
         }
-        if !cardinality_narrows(decl.link.cardinality, requirement.cardinality) {
-            self.out.push(error(
-                codes::INTERFACE_LINK_WIDENS_CARDINALITY,
-                format!("link {id:?} has a wider cardinality than interface {name:?} requires"),
-                at,
+        let override_widened_cardinality = overridden_link.is_some_and(|inherited| {
+            inherited.cardinality == requirement.cardinality
+                && !cardinality_narrows(decl.link.cardinality, inherited.cardinality)
+        });
+        if !override_widened_cardinality
+            && !cardinality_narrows(decl.link.cardinality, requirement.cardinality)
+        {
+            self.out
+                .push(link_witness::interface_link_widens_cardinality(
+                    child_name, name, id, expected, actual, at,
+                ));
+        }
+    }
+
+    fn check_inverse_link_conformance(
+        &mut self,
+        child_name: &str,
+        name: &str,
+        requirement: &InterfaceLink,
+        decl: LinkDecl<'a>,
+        at: Span,
+    ) {
+        let id = requirement.id.as_str();
+        let expected =
+            link_witness::format_link_contract(&requirement.target, requirement.cardinality);
+        let view = LinkCardinality {
+            to: decl.link.cardinality.from,
+            from: decl.link.cardinality.to,
+            required: false,
+        };
+        let actual = format!(
+            "inverse({})",
+            link_witness::format_link_contract(decl.source, view)
+        );
+        // A law reads a to-one requirement as one target, which an inverse
+        // role does not bind: only a to-many requirement takes one.
+        if requirement.cardinality.to != Multiplicity::Many {
+            self.out.push(link_witness::inverse_requires_forward_link(
+                child_name, name, id, expected, actual, at,
+            ));
+            return;
+        }
+        if self.target_narrows(decl.source, &requirement.target) == Some(false) {
+            self.out.push(link_witness::inverse_target_mismatch(
+                child_name,
+                name,
+                id,
+                decl.source,
+                &requirement.target,
+                expected.clone(),
+                actual.clone(),
+                at.clone(),
+            ));
+        }
+        if !cardinality_narrows(view, requirement.cardinality) {
+            self.out.push(link_witness::inverse_widens_cardinality(
+                child_name, name, id, expected, actual, at,
             ));
         }
     }
@@ -1081,7 +1116,7 @@ impl<'a> Checker<'a, '_> {
     /// Why the requirements for one link id cannot be met by one link: a
     /// property requirement shares the id, or two targets are object types
     /// unrelated by inheritance. Cardinalities always meet (the narrowest).
-    fn link_requirement_conflict(
+    pub(super) fn link_requirement_conflict(
         &self,
         group: &[LinkRequirement<'a>],
         properties: &[(Option<usize>, &'a InterfaceDef)],
@@ -1110,50 +1145,6 @@ impl<'a> Checker<'a, '_> {
     }
 
     // ----- invariants --------------------------------------------------------
-
-    pub(super) fn check_interface_parent_links(&mut self, base: &[&str], def: &'a InterfaceDef) {
-        let lineage = self.interface_lineage(def);
-        let mut groups: BTreeMap<&str, Vec<LinkRequirement<'a>>> = BTreeMap::new();
-        for owner in &lineage {
-            for link in &owner.links {
-                groups
-                    .entry(link.id.as_str())
-                    .or_default()
-                    .push((Some(0), owner, link));
-            }
-        }
-        for (id, group) in groups {
-            let properties: Vec<_> = lineage
-                .iter()
-                .filter(|owner| {
-                    owner
-                        .properties
-                        .iter()
-                        .any(|property| property.id.as_str() == id)
-                })
-                .map(|owner| (Some(0), *owner))
-                .collect();
-            let conflict = self.link_requirement_conflict(&group, &properties);
-            let widens = group.iter().any(|(_, child, link)| {
-                child.name == def.name
-                    && group.iter().any(|(_, parent, requirement)| {
-                        parent.name != def.name
-                            && (self.target_narrows(&link.target, &requirement.target)
-                                == Some(false)
-                                || !cardinality_narrows(link.cardinality, requirement.cardinality))
-                    })
-            });
-            if conflict.is_some() || widens {
-                self.out.push(error(
-                    crate::interfaces::codes::INVALID_INHERITANCE,
-                    conflict.unwrap_or_else(|| {
-                        "interface redeclaration widens a parent link".to_owned()
-                    }),
-                    span_at(base, &["extends"]),
-                ));
-            }
-        }
-    }
 
     /// Invariant ids (unique across the type's effective contract, including
     /// supertype and interface invariants), namespaces, and non-blank
