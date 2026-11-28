@@ -105,3 +105,6 @@ mod stress_purchase;
 mod supply_lab_stress;
 #[path = "synchronous_action.rs"]
 mod synchronous_action;
+#[cfg(feature = "native")]
+#[path = "xpa_dst_harness.rs"]
+mod xpa_dst_harness;

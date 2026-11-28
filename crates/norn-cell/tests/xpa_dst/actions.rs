@@ -1,0 +1,444 @@
+//! Domain action helpers for [`super::env::EntityCell`] over
+//! `registry/packs/supply-lab/` omitting kernel-derived fields (`ORIGIN-DATAFLOW-1`).
+
+use serde_json::json;
+
+use super::env::{
+    COSTS_FEED_ID, COUNTS_FEED_ID, EntityCell, FeedRow, POS_FEED_ID, RECEIPTS_FEED_ID,
+};
+
+impl EntityCell {
+    /// Register this cell's single `LegalEntity` book.
+    ///
+    /// # Errors
+    /// Returns an error if registration fails.
+    pub fn register_book(&mut self, legal_name: &str, entity_kind: &str) -> Result<(), String> {
+        let entity_id = self.entity_id.clone();
+        let currency = self.currency.clone();
+        self.ok(
+            "supply.legal_entity.register",
+            "eng:dina",
+            json!({
+                "entity_id": entity_id,
+                "legal_name": legal_name,
+                "entity_kind": entity_kind,
+                "book_code": format!("BOOK-{entity_id}-{currency}"),
+                "functional_currency": currency,
+            }),
+        )
+    }
+
+    /// Register a SKU in this cell.
+    ///
+    /// # Errors
+    /// Returns an error if registration fails.
+    pub fn register_sku(&mut self, sku_id: &str, category: &str, uom: &str) -> Result<(), String> {
+        self.ok(
+            "supply.sku.register",
+            "eng:dina",
+            json!({
+                "sku_id": sku_id,
+                "category": category,
+                "unit_of_measure": uom,
+                "shelf_life_days": 365,
+            }),
+        )
+    }
+
+    /// Register a store owned by this cell's `LegalEntity`.
+    ///
+    /// # Errors
+    /// Returns an error if registration fails.
+    pub fn register_store(
+        &mut self,
+        store_id: &str,
+        name: &str,
+        custodian_id: &str,
+        location_kind: &str,
+        mall_code: Option<&str>,
+    ) -> Result<(), String> {
+        let entity_id = self.entity_id.clone();
+        let currency = self.currency.clone();
+        self.ok(
+            "supply.store.register",
+            "eng:dina",
+            json!({
+                "store_id": store_id,
+                "name": name,
+                "entity_id": entity_id,
+                "custodian_id": custodian_id,
+                "location_kind": location_kind,
+                "mall_code": mall_code,
+                "currency": currency,
+            }),
+        )
+    }
+
+    /// Record a governed SKU `UnitCost` (create-only per SKU in `supply-lab`).
+    ///
+    /// # Errors
+    /// Returns an error if the action refuses.
+    pub fn record_unit_cost(
+        &mut self,
+        sku_id: &str,
+        cost_ref: &str,
+        supplier_id: &str,
+        unit_cost: &str,
+        effective_from: &str,
+    ) -> Result<(), String> {
+        let entity_id = self.entity_id.clone();
+        let currency = self.currency.clone();
+        self.ok(
+            "supply.unit_cost.record",
+            "eng:dina",
+            json!({
+                "sku_id": sku_id,
+                "cost_ref": cost_ref,
+                "owner_entity_id": entity_id,
+                "supplier_id": supplier_id,
+                "unit_cost": unit_cost,
+                "currency": currency,
+                "effective_from": effective_from,
+            }),
+        )
+    }
+
+    /// Record a costed `StockLot` omitting kernel-derived fields (`ORIGIN-DATAFLOW-1`).
+    ///
+    /// # Errors
+    /// Returns an error if the action refuses.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit domain fields for governed stock lot"
+    )]
+    pub fn record_costed_lot(
+        &mut self,
+        lot_id: &str,
+        store_id: &str,
+        sku_id: &str,
+        custodian_id: &str,
+        received_qty: &str,
+        unit: &str,
+        unit_cost: &str,
+        received_at: &str,
+    ) -> Result<(), String> {
+        let entity_id = self.entity_id.clone();
+        let currency = self.currency.clone();
+        self.ok(
+            "supply.stock_lot.record",
+            "clerk:hana",
+            json!({
+                "lot_id": lot_id,
+                "store_id": store_id,
+                "sku_id": sku_id,
+                "owner_entity_id": entity_id,
+                "custodian_id": custodian_id,
+                "received_qty": received_qty,
+                "remaining_qty": received_qty,
+                "unit": unit,
+                "received_at": received_at,
+                "as_of": received_at,
+                "cost_status": "costed",
+                "unit_cost": unit_cost,
+                "currency": currency,
+            }),
+        )
+    }
+
+    /// Record an uncosted `StockLot` omitting kernel-derived fields (`ORIGIN-DATAFLOW-1`).
+    ///
+    /// # Errors
+    /// Returns an error if the action refuses.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit domain fields for uncosted stock lot"
+    )]
+    pub fn record_uncosted_lot(
+        &mut self,
+        lot_id: &str,
+        store_id: &str,
+        sku_id: &str,
+        custodian_id: &str,
+        received_qty: &str,
+        unit: &str,
+        received_at: &str,
+    ) -> Result<(), String> {
+        let entity_id = self.entity_id.clone();
+        let currency = self.currency.clone();
+        self.ok(
+            "supply.stock_lot.record_uncosted",
+            "clerk:hana",
+            json!({
+                "lot_id": lot_id,
+                "store_id": store_id,
+                "sku_id": sku_id,
+                "owner_entity_id": entity_id,
+                "custodian_id": custodian_id,
+                "received_qty": received_qty,
+                "remaining_qty": received_qty,
+                "unit": unit,
+                "received_at": received_at,
+                "as_of": received_at,
+                "cost_status": "missing_cost",
+                "currency": currency,
+            }),
+        )
+    }
+
+    /// Update a costed `StockLot` balance omitting kernel-derived fields (`ORIGIN-DATAFLOW-1`).
+    ///
+    /// # Errors
+    /// Returns an error if the action refuses.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit domain fields for stock lot balance update"
+    )]
+    pub fn update_lot_balance(
+        &mut self,
+        lot_id: &str,
+        store_id: &str,
+        sku_id: &str,
+        remaining_qty: &str,
+        depleted_qty: &str,
+        unit_cost: &str,
+        as_of: &str,
+    ) -> Result<(), String> {
+        self.ok(
+            "supply.stock_lot.update_balance",
+            "clerk:hana",
+            json!({
+                "lot_id": lot_id,
+                "store_id": store_id,
+                "sku_id": sku_id,
+                "remaining_qty": remaining_qty,
+                "depleted_qty": depleted_qty,
+                "as_of": as_of,
+                "unit_cost": unit_cost,
+            }),
+        )
+    }
+
+    /// Record a costed `PosSale` omitting kernel-derived fields (`ORIGIN-DATAFLOW-1`).
+    ///
+    /// # Errors
+    /// Returns an error if the action refuses.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit domain fields for costed POS sale"
+    )]
+    pub fn record_costed_sale(
+        &mut self,
+        sale_id: &str,
+        store_id: &str,
+        sku_id: &str,
+        sold_qty: &str,
+        unit: &str,
+        net_revenue: &str,
+        applied_unit_cost: &str,
+        costed_ref: &str,
+        sold_at: &str,
+    ) -> Result<(), String> {
+        let currency = self.currency.clone();
+        self.ok(
+            "supply.pos_sale.record",
+            "clerk:hana",
+            json!({
+                "sale_id": sale_id,
+                "store_id": store_id,
+                "sku_id": sku_id,
+                "sold_qty": sold_qty,
+                "unit": unit,
+                "net_revenue": net_revenue,
+                "applied_unit_cost": applied_unit_cost,
+                "cost_status": "costed",
+                "costed_ref": costed_ref,
+                "currency": currency,
+                "sold_at": sold_at,
+            }),
+        )
+    }
+
+    /// Record an uncosted `PosSale` omitting kernel-derived fields (`ORIGIN-DATAFLOW-1`).
+    ///
+    /// # Errors
+    /// Returns an error if the action refuses.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit domain fields for uncosted POS sale"
+    )]
+    pub fn record_uncosted_sale(
+        &mut self,
+        sale_id: &str,
+        store_id: &str,
+        sku_id: &str,
+        sold_qty: &str,
+        unit: &str,
+        net_revenue: &str,
+        sold_at: &str,
+    ) -> Result<(), String> {
+        let currency = self.currency.clone();
+        self.ok(
+            "supply.pos_sale.record_uncosted",
+            "clerk:hana",
+            json!({
+                "sale_id": sale_id,
+                "store_id": store_id,
+                "sku_id": sku_id,
+                "sold_qty": sold_qty,
+                "unit": unit,
+                "net_revenue": net_revenue,
+                "cost_status": "missing_cost",
+                "currency": currency,
+                "sold_at": sold_at,
+            }),
+        )
+    }
+
+    /// Record an initial physical `StoreCount` or recount an existing count position.
+    ///
+    /// # Errors
+    /// Returns an error if the action refuses.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit domain fields for store count"
+    )]
+    pub fn record_store_count(
+        &mut self,
+        recount: bool,
+        store_count_id: &str,
+        store_id: &str,
+        sku_id: &str,
+        on_hand_qty: &str,
+        unit: &str,
+        quantity_basis: &str,
+        as_of: &str,
+        count_ref: &str,
+    ) -> Result<(), String> {
+        let action = if recount {
+            "supply.store_count.recount"
+        } else {
+            "supply.store_count.record"
+        };
+        self.ok(
+            action,
+            "clerk:hana",
+            json!({
+                "store_count_id": store_count_id,
+                "store_id": store_id,
+                "sku_id": sku_id,
+                "on_hand_qty": on_hand_qty,
+                "unit": unit,
+                "quantity_basis": quantity_basis,
+                "as_of": as_of,
+                "count_source": "pos_cycle_count",
+                "count_ref": count_ref,
+            }),
+        )
+    }
+
+    /// Ingest one clean baseline row per required feed (`pos_sales`, `store_counts`,
+    /// `retail_receipts`, `unit_costs`) so durable cursors and watermarks are initialized.
+    ///
+    /// # Errors
+    /// Returns an error if any baseline feed row fails ingestion or quarantines.
+    pub fn ingest_baseline_feeds(
+        &mut self,
+        store_id: &str,
+        sku_id: &str,
+        unit_cost: &str,
+        sold_at: &str,
+        tag: &str,
+    ) -> Result<(), String> {
+        let rows =
+            baseline_feed_payloads(&self.currency, store_id, sku_id, unit_cost, sold_at, tag);
+        for (feed, dataset, source, event, record, payload) in &rows {
+            let (_, clean) = self.ingest_feed(&FeedRow {
+                feed_id: feed,
+                mapping: feed,
+                dataset,
+                source,
+                event,
+                record,
+                payload,
+            })?;
+            if !clean {
+                return Err(format!(
+                    "baseline feed {feed}/{record} quarantined unexpectedly"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn baseline_feed_payloads(
+    ccy: &str,
+    store_id: &str,
+    sku_id: &str,
+    unit_cost: &str,
+    sold_at: &str,
+    tag: &str,
+) -> [(
+    &'static str,
+    &'static str,
+    &'static str,
+    String,
+    String,
+    String,
+); 4] {
+    [
+        (
+            POS_FEED_ID,
+            "pos_sale_line",
+            "synthetic-pos",
+            format!("ev-pos-base-{tag}"),
+            format!("POS-BASE-{tag}"),
+            json!({
+                "pos_line_id": format!("POS-BASE-{tag}"), "branch_code": store_id,
+                "barcode_sku": sku_id, "qty": 2, "uom": "PCS",
+                "net_amount": 400, "ccy": ccy, "sold_at": sold_at,
+            })
+            .to_string(),
+        ),
+        (
+            COUNTS_FEED_ID,
+            "store_count",
+            "synthetic-store-count",
+            format!("ev-cnt-base-{tag}"),
+            format!("CNT-BASE-{tag}"),
+            json!({
+                "count_id": format!("CNT-BASE-{tag}"), "store_code": store_id,
+                "sku_code": sku_id, "counted_qty": 20, "uom": "PCS",
+                "basis": "on_hand", "counted_at": sold_at,
+            })
+            .to_string(),
+        ),
+        (
+            RECEIPTS_FEED_ID,
+            "retail_receipt",
+            "synthetic-retail-receipt",
+            format!("ev-rcpt-base-{tag}"),
+            format!("RCPT-BASE-{tag}"),
+            json!({
+                "receipt_line_id": format!("RCPT-BASE-{tag}"), "store_code": store_id,
+                "sku_code": sku_id, "vendor_code": "ATELIER-01", "received_qty": 25,
+                "damaged_qty": 0, "uom": "PCS", "unit_cost": unit_cost,
+                "ccy": ccy, "received_at": sold_at,
+            })
+            .to_string(),
+        ),
+        (
+            COSTS_FEED_ID,
+            "unit_cost",
+            "synthetic-cost",
+            format!("ev-cost-base-{tag}"),
+            format!("COST-BASE-{tag}"),
+            json!({
+                "cost_id": format!("COST-BASE-{tag}"), "sku_code": sku_id,
+                "vendor_code": "ATELIER-01", "unit_cost": unit_cost,
+                "ccy": ccy, "effective_from": "2026-07-01T00:00:00Z",
+            })
+            .to_string(),
+        ),
+    ]
+}
