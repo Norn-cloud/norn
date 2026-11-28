@@ -9,12 +9,13 @@
   },
   "scripts": {
     "generate": "openapi-typescript ../../sdks/openapi/norn-api.openapi.json -o src/generated/norn-api.ts",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsrs -p tsconfig.json",
     "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "1.4.2",
     "openapi-typescript": "7.13.0",
+    "tsrs": "7.1.0-beta.tsrs5",
     "typescript": "6.0.3"
   }
 }
