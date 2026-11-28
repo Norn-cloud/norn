@@ -28,7 +28,7 @@ axioms) over the algebraic structure implemented in
      strict total order agreeing exactly with `totalNanos = epochSeconds * 10^9 + nanos`.
    * Watermark advancement (`watermarkStep` / `watermarkFold`) is monotone, ignores
      stale versions, and is idempotent on duplicate versions.
-   * `VersionKind.opaque` is strictly non-orderable (`opaque_unorderable`).
+   * `VersionKind.opaqueToken` is strictly non-orderable (`opaque_unorderable`).
 
 Evidence scope: checked proofs of the reference mathematical model (`Int` and
 polymorphic `Type`). Rust correspondence to `crates/norn-ir/src/feed_patch_core.rs`
@@ -257,7 +257,7 @@ inductive VersionKind where
   | rfc3339
   | uint64
   | int64
-  | opaque
+  | opaqueToken
   deriving DecidableEq
 
 /-- Whether versions of a kind admit watermark ordering. -/
@@ -266,9 +266,9 @@ def VersionKind.isOrderable : VersionKind → Bool
   | .rfc3339 => true
   | .uint64 => true
   | .int64 => true
-  | .opaque => false
+  | .opaqueToken => false
 
-theorem opaque_unorderable : VersionKind.isOrderable .opaque = false := rfl
+theorem opaque_unorderable : VersionKind.isOrderable .opaqueToken = false := rfl
 
 /-- Normalized UTC instant `(epochSeconds, nanos)` with `0 ≤ nanos < 10^9`. -/
 structure InstantKey where
