@@ -20,6 +20,7 @@ Formal models and proofs for parts of Norn, and the scripts that check them. Thi
 | `canonical-values-v1/`, `cell-profile-v1/`, `ordered-fold-v1/`, `parameters/`, `values-v1/` | Kani harnesses and contracts. Crates include some of them under `#[cfg(kani)]`. |
 | `ontology/` | Ontology packs, registry and their validator |
 | `atomic-partitions-v1/`, `definition-catalog-v1/`, `posting-v1/` | Written contracts and specs |
+| `xpa-dst-v1/` | Whole-business xP&A DST, adversarial fault injection, OLAP differential parity, E1–E4 fork stress, and M5/FPABench benchmark evidence matrix (`README.md`) |
 | `profiles/` | An input profile used by the checker's generated Quint obligation tests (`norn-checker/src/obligations/quint/driver.rs`) |
 | `archive/` | Retired material |
 

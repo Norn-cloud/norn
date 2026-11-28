@@ -1605,3 +1605,9 @@ fn retail_truth_slice_combined_view_duckdb_parity() {
     super::retail_truth_slice::run_s1_duckdb_combined_view_parity()
         .expect("S1 DuckDB combined management view full parity");
 }
+
+#[test]
+fn xpa_dst_layer3_duckdb_parity() {
+    super::xpa_dst_harness::run_layer3_duckdb_parity()
+        .expect("xP&A Layer 3 Exact vs DuckDB differential parity");
+}
