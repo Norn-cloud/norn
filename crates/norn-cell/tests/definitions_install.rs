@@ -5833,21 +5833,6 @@ fn obs_evidence_legacy_candidates_do_not_block_a_verified_producer() {
     );
 }
 
-fn observed_tombstone_type() -> norn_ir::ObjectTypeDef {
-    serde_json::from_value(json!({
-        "name": norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE,
-        "properties": [
-            { "id": "objectType", "type": { "kind": "text" } },
-            { "id": "key", "type": { "kind": "text" } },
-            { "id": "at", "type": { "kind": "text" } },
-            { "id": "source", "type": { "kind": "text" } },
-            { "id": "mappingVersion", "type": { "kind": "text" } },
-            { "id": "provenance", "type": { "kind": "json-ext" } }
-        ]
-    }))
-    .expect("tombstone type")
-}
-
 fn mapping_bundle_store(path: &Path) -> CellStore {
     let cell = purity_quality_host(path);
     let previous = cell
@@ -5904,7 +5889,7 @@ fn mapping_bundle_store(path: &Path) -> CellStore {
     let model = Model::from_definitions_with_interfaces(
         &[
             serde_json::from_value(object).expect("object"),
-            observed_tombstone_type(),
+            norn_cell::observed_tombstone_record_type(),
         ],
         &[],
         &[serde_json::from_value(interface).expect("interface")],

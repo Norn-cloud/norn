@@ -317,12 +317,23 @@ fn only_the_exact_kernel_record_types_ride_beside_a_definition_set() -> TestResu
         json!({ "id": "extra", "type": { "kind": "text" }, "constraints": { "nullable": true } }),
     )?);
     tampered_function_cmd.push(bad_fn_cmd);
+    // Optional exact observed-delete tombstone record for cells installing mappings (#1028).
+    let mut with_tombstone = exact.clone();
+    with_tombstone.push(norn_cell::observed_tombstone_record_type());
+    let mut tampered_tombstone = exact.clone();
+    let mut bad_tombstone = norn_cell::observed_tombstone_record_type();
+    bad_tombstone.properties.push(serde_json::from_value(
+        json!({ "id": "extra", "type": { "kind": "text" }, "constraints": { "nullable": true } }),
+    )?);
+    tampered_tombstone.push(bad_tombstone);
     for (records, admitted) in [
         (tampered, false),
         (tampered_function_cmd, false),
+        (tampered_tombstone, false),
         (exact, true),
         (recording, true),
         (with_function_cmd, true),
+        (with_tombstone, true),
     ] {
         let mut types = vec![item.clone()];
         types.extend(records);
@@ -476,7 +487,12 @@ fn a_v1_definition_may_not_declare_a_kernel_record_kind() -> TestResult {
 
 #[test]
 fn a_definition_set_may_not_declare_a_kernel_record_type() -> TestResult {
-    for name in [norn_kernel::ACTION_CALL_TYPE, "norn.actioncall"] {
+    for name in [
+        norn_kernel::ACTION_CALL_TYPE,
+        "norn.actioncall",
+        norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE,
+        "norn.observedtombstone",
+    ] {
         let mut record = norn_cell::kernel_record_types()
             .into_iter()
             .next()

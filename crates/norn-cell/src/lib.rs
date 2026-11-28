@@ -132,6 +132,7 @@ pub use coverage_observer::{
 pub use definition_scope::{
     PRINCIPAL_INPUTS_PROPERTY, function_command_record_type, is_reserved_kernel_name,
     kernel_record_types, kernel_record_types_recording_principal_inputs,
+    observed_tombstone_record_type,
 };
 pub use error::CellError;
 

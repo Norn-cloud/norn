@@ -3851,3 +3851,89 @@ fn held_link_finding_retains_all_disputed_surviving_predecessors() {
     );
     assert!(held_findings_for(&cell, "canon.Party", "demo/party/a").is_empty());
 }
+
+/// #1028 / #1931: Normal definition admission via `AdmittedDefinitions::from_envelopes`
+/// automatically includes `norn.ObservedTombstone` whenever mappings are present,
+/// allowing source deletes to commit tombstones and the cell to reopen cleanly.
+#[test]
+fn admitted_definitions_normal_install_applies_delete_and_reopens() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("admitted_delete_reopen.sqlite");
+    let mut artifacts = mapped_cell::fixture_artifacts();
+    referring_parties(&mut artifacts);
+    artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+
+    let definitions =
+        norn_cell::AdmittedDefinitions::from_envelopes(&artifacts).expect("admitted defs");
+    assert!(
+        definitions
+            .model()
+            .has_type(norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE),
+        "AdmittedDefinitions with mappings must include norn.ObservedTombstone"
+    );
+
+    let mut store = CellStore::open(&path, definitions.model().clone(), StoreOptions::default())
+        .expect("open store");
+    store.bind("scope", "org_demo/dev").expect("scope");
+    store
+        .install_definitions(
+            definitions.model().clone(),
+            norn_cell::InstalledDefinitionInput {
+                canonical_set: String::from_utf8(
+                    norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set"),
+                )
+                .expect("utf8"),
+                registry: vec![],
+                receipt_sha256: norn_ir::canonical::domain_hash_hex(
+                    b"norn.test.receipt\0",
+                    &"admitted-normal-delete",
+                )
+                .expect("receipt digest"),
+                admission_receipt: None,
+                readmission: None,
+                diff: json!({}),
+                installed_at: 1_793_702_400_000,
+                layout: None,
+            },
+            None,
+            "org_demo/dev",
+        )
+        .expect("install definitions");
+
+    let mut cell = SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let a = party_ref_row("P-A", "demo/party/a", "A", Some("demo/party/b"));
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &a, "ea1", "1", "upsert", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+
+    capture_kind(&mut cell, "erpnext", &a, "ea2", "2", "delete", "p1");
+    assert!(refers_targets(&cell, "demo/party/a").is_empty());
+    let tombstone =
+        norn_kernel::snapshot_observe::tombstone_key(&FactKey::new("canon.Party", "demo/party/a"));
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, tombstone.object_type.as_str(), &tombstone.key)
+            .expect("tombstone read")
+            .is_some()
+    );
+
+    drop(cell);
+    let reopened = CellStore::open(&path, definitions.model().clone(), StoreOptions::default())
+        .expect("reopen admitted cell after delete");
+    reopened
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence after reopen");
+    assert!(
+        reopened
+            .read()
+            .object(MAIN_WORLD, tombstone.object_type.as_str(), &tombstone.key)
+            .expect("reopened tombstone read")
+            .is_some()
+    );
+}

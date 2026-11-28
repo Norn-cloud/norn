@@ -826,15 +826,19 @@ fn delete_slice<E: SqlEngine>(
 ) -> Result<FactSlice, CellError> {
     let mut slice = reader.mapping_observation_slice(key)?;
     let buried = tombstone_key(key);
-    let state = FactState {
-        version: FactVersion(reader.version(
-            crate::MAIN_WORLD,
-            buried.object_type.as_str(),
-            &buried.key,
-        )?),
-        values: reader
-            .object(crate::MAIN_WORLD, buried.object_type.as_str(), &buried.key)?
-            .map(|r| r.values),
+    let ty = buried.object_type.as_str();
+    let state = if reader.model().has_type(ty) {
+        FactState {
+            version: FactVersion(reader.version(crate::MAIN_WORLD, ty, &buried.key)?),
+            values: reader
+                .object(crate::MAIN_WORLD, ty, &buried.key)?
+                .map(|r| r.values),
+        }
+    } else {
+        FactState {
+            version: FactVersion::ABSENT,
+            values: None,
+        }
     };
     slice.insert(buried, state);
     Ok(slice)
