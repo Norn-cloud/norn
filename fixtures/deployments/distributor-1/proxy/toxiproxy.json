@@ -1,0 +1,6 @@
+[
+  {"name": "legacy-pg", "listen": "0.0.0.0:15433", "upstream": "legacy:5432", "enabled": true},
+  {"name": "erpnext-tcp", "listen": "0.0.0.0:18100", "upstream": "erpnext:8000", "enabled": true},
+  {"name": "odoo-tcp", "listen": "0.0.0.0:18169", "upstream": "odoo:8069", "enabled": true},
+  {"name": "saleor-tcp", "listen": "0.0.0.0:18101", "upstream": "saleor:8000", "enabled": true}
+]
