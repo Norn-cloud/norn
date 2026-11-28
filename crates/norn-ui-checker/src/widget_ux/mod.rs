@@ -86,17 +86,14 @@ pub(super) fn exceeds_widget_node_depth(ux: &WidgetUx) -> Option<String> {
 }
 
 fn has_initial_lifecycle_default(property: &EffectiveProperty, initial_states: &[String]) -> bool {
-    property
-        .default
-        .as_ref()
-        .is_some_and(|default| match &default.0 {
-            JsonValue::String(value) => initial_states.iter().any(|state| state == value),
-            JsonValue::Null
-            | JsonValue::Bool(_)
-            | JsonValue::Number(_)
-            | JsonValue::Array(_)
-            | JsonValue::Object(_) => false,
-        })
+    property.default().is_some_and(|default| match &default.0 {
+        JsonValue::String(value) => initial_states.iter().any(|state| state == value),
+        JsonValue::Null
+        | JsonValue::Bool(_)
+        | JsonValue::Number(_)
+        | JsonValue::Array(_)
+        | JsonValue::Object(_) => false,
+    })
 }
 
 /// Check every candidate widget's typed UX contract against the resolved set.

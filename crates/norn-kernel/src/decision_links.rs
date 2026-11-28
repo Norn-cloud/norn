@@ -39,7 +39,7 @@ pub(crate) fn check_submitted_link_keys(
             .iter()
             .find(|property| property.id.as_str() == key)
         {
-            Some(property) if !property.computed => {}
+            Some(property) if !property.is_computed() => {}
             Some(_) => {
                 return Err(EffectiveValuesError::ValueType {
                     property: key.clone(),

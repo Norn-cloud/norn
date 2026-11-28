@@ -486,7 +486,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         if id != pending.timer.timer_id
             || deadline.due != pending.timer.due
             || reservation.expires_at != deadline.due
-            || reservation.status != "open"
+            || !reservation.status.is_open()
         {
             return Err(norn_kernel::quantity::QuantityError::Corrupt.into());
         }

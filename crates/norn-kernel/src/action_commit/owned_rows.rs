@@ -1206,7 +1206,7 @@ where
             })?;
             let lifecycle_properties = catalog.lifecycle_properties(&object_type);
             let touch = effective_type.properties.iter().find_map(|property| {
-                if property.computed
+                if property.is_computed()
                     || property.protected()
                     || lifecycle_properties.contains(&property.id)
                 {

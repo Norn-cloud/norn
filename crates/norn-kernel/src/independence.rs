@@ -122,7 +122,7 @@ pub(crate) fn check_independent_actor<X>(
         let stampable = effective
             .and_then(|effective| effective.property(property.as_str()))
             .is_some_and(|declared| {
-                declared.protected() && !declared.computed && declared.default.is_none()
+                declared.protected() && !declared.is_computed() && declared.default().is_none()
             })
             && !lifecycles.contains(property);
         let recorded = state

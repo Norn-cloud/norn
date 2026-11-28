@@ -133,9 +133,10 @@ pub use entity_artifacts::{
     check_property_type_catalog_local,
 };
 pub use entity_instance::{
-    EffectiveCatalog, EffectiveKey, EffectiveKind, EffectiveLifecycle, EffectiveLink,
-    EffectiveObjectType, EffectiveProperty, IDENTITY_COLLISION, IDENTITY_REUSE,
-    IDENTITY_REUSE_MESSAGE, InstanceError, KeyComponent, Unsupported, normalize_text,
+    ComputedInputs, EffectiveCatalog, EffectiveKey, EffectiveKind, EffectiveLifecycle,
+    EffectiveLink, EffectiveObjectType, EffectiveProperty, IDENTITY_COLLISION, IDENTITY_REUSE,
+    IDENTITY_REUSE_MESSAGE, InstanceError, KeyComponent, PostCreateMutability, PropertyKind,
+    Unsupported, WriteAuthority, normalize_text,
 };
 pub use entity_lowering::{
     EntityForm, EntityObjectType, LoweredRelation, entity_object_type, entity_v1_deprecation,

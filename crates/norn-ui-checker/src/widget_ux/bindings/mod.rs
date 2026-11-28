@@ -485,7 +485,7 @@ impl UxChecker<'_, '_, '_> {
         let Some(property) = self.resolve_property(&sort.property, &property_path) else {
             return;
         };
-        if property.computed {
+        if property.is_computed() {
             self.error(
                 &property_path,
                 "computed sort properties have no stored column and cannot provide exact indexed order",

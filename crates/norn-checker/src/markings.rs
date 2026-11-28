@@ -816,8 +816,11 @@ mod tests {
                 "pii.shared_scope",
             ])
         );
-        assert!(!base.computed, "a generated key stays a stored property");
-        assert_eq!(base.computed_inputs.len(), 0, "no fake computed metadata");
+        assert!(
+            !base.is_computed(),
+            "a generated key stays a stored property"
+        );
+        assert_eq!(base.computed_inputs(), None, "no fake computed metadata");
 
         let child = effective
             .get(&1)

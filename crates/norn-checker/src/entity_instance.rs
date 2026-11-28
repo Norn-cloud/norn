@@ -48,9 +48,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{
     ArtifactEnvelope, ArtifactPayload, DefaultValue, InterfaceName, JsonValue, KeyName, KeySpec,
-    Lifecycle, LinkCardinality, LinkId, NamingSeriesIR, Normalization, ObjectTypeDef,
-    ObjectTypeName, OwnedChildCollection, PropertyConstraints, PropertyId, PropertyType,
-    PropertyTypeDef, PropertyTypeName, ResolutionPolicyName, RuntimeValue, TextFormat,
+    LinkCardinality, LinkId, NamingSeriesIR, Normalization, ObjectTypeDef, ObjectTypeName,
+    OwnedChildCollection, PropertyConstraints, PropertyId, PropertyType, PropertyTypeDef,
+    PropertyTypeName, ResolutionPolicyName, RuntimeValue, TextFormat,
 };
 use serde_json::Value;
 
@@ -62,6 +62,12 @@ use crate::entity_model::{EntityContext, EntityModel, effective_object_types};
 use crate::object_types::{Resolved, UUID_GRAMMAR, codes as object_codes};
 use crate::property_types::{Decimal, PATTERN_SIZE_LIMIT, TypeResolution, matches_grammar};
 use crate::{Diagnostic, DiagnosticSeverity};
+
+mod types;
+pub use types::{
+    ComputedInputs, EffectiveKind, EffectiveLifecycle, InstanceError, PostCreateMutability,
+    PropertyKind, Unsupported, WriteAuthority,
+};
 
 /// The effective view of one object type: what an object of the type must
 /// satisfy.
@@ -117,18 +123,6 @@ pub struct EffectiveLink {
     pub properties: Vec<EffectiveProperty>,
 }
 
-/// One effective lifecycle of an object type: the machine the checker
-/// enforces and the diagram renders (ruling 2026-09-25 §2, "this one list").
-#[derive(Debug, Clone, PartialEq)]
-pub struct EffectiveLifecycle {
-    /// The lifecycle property's effective enum values (the states), in
-    /// presentation order.
-    pub states: Vec<String>,
-    /// The effective machine as a lifecycle: inherited guards first, states
-    /// in presentation order.
-    pub lifecycle: Lifecycle,
-}
-
 impl EffectiveObjectType {
     /// The effective lifecycle of property `property`, if it has one.
     #[must_use]
@@ -137,17 +131,6 @@ impl EffectiveObjectType {
             .iter()
             .find(|lifecycle| lifecycle.lifecycle.property.as_str() == property)
     }
-}
-
-/// A feature of an object type whose instance semantics are not implemented,
-/// so writes of the type fail closed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Unsupported {
-    /// What the type uses, for a message (`links`, `property kind 'decimal'
-    /// on 'price'`).
-    pub feature: String,
-    /// Dotted path of the member in the artifact.
-    pub path: &'static str,
 }
 
 impl EffectiveObjectType {
@@ -266,7 +249,7 @@ impl EffectiveObjectType {
                 "unknown stored property {id:?}"
             )));
         };
-        if property.computed {
+        if property.is_computed() {
             return Err(InstanceError::ConstraintViolation(format!(
                 "computed property {id:?} is read-only"
             )));
@@ -310,29 +293,6 @@ impl EffectiveObjectType {
     }
 }
 
-/// What a property's type resolves to.
-#[derive(Debug, Clone, PartialEq)]
-pub enum EffectiveKind {
-    /// A local, non-`ref` type.
-    Base(PropertyType),
-    /// A registry value type, whose definition is not available (T8-STD-1).
-    Registry(PropertyTypeName),
-    /// A `ref` that does not resolve.
-    Unresolved,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum WriteAuthority {
-    RulesOnly,
-    CallersAndRules,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PostCreateMutability {
-    Mutable,
-    Immutable,
-}
-
 /// One effective property with every constraint set that applies to it.
 #[derive(Debug, Clone)]
 pub struct EffectiveProperty {
@@ -343,42 +303,21 @@ pub struct EffectiveProperty {
     pub id: PropertyId,
     /// The resolved type.
     pub kind: EffectiveKind,
+    /// Closed storage/derivation kind (stored default or computed inputs).
+    pub property_kind: PropertyKind,
     /// Effective markings from the property, its shared types, inherited
     /// overrides, interfaces, type-level declarations, and computed inputs.
     pub markings: Vec<norn_ir::MarkingId>,
-    /// Direct effective-property dependencies read by a computed expression.
-    /// Stored properties have an empty list.
-    pub computed_inputs: Vec<String>,
-    /// Whether the computed expression reads or passes through the whole
-    /// object root, so runtime metadata must union every property input.
-    pub computed_reads_all: bool,
     /// Every constraint set that applies: the property's own, each catalog
     /// definition's on its `ref` chain, and each one it narrows (an
     /// overridden property, an interface requirement). They conjoin.
     pub constraints: Vec<PropertyConstraints>,
     /// Whether a value may be absent.
     pub nullable: bool,
-    /// The effective literal default (IR encoding); `None` for a computed
-    /// property.
-    pub default: Option<DefaultValue>,
-    /// Whether the property is computed (derived and read-only).
-    pub computed: bool,
     /// Every `pattern` of `constraints` with its compiled form (`None`
     /// when it does not compile).
     patterns: Vec<(String, Option<regex_lite::Regex>)>,
     record_members: Vec<EffectiveProperty>,
-}
-
-/// Why an instance value is rejected.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InstanceError {
-    /// The property uses a feature whose instance semantics are not
-    /// implemented (see [`EffectiveObjectType::unsupported`]).
-    Unsupported(String),
-    /// The value is not of the property's type; holds the type's label.
-    TypeMismatch(&'static str),
-    /// The value is of the type but violates a constraint; holds why.
-    ConstraintViolation(String),
 }
 
 impl EffectiveProperty {
@@ -390,8 +329,39 @@ impl EffectiveProperty {
         self.post_create = PostCreateMutability::Immutable;
     }
 
-    pub(crate) fn set_origin(&mut self, origin: norn_ir::PropertyOrigin) {
-        self.origin = Some(origin);
+    pub(crate) fn set_origin(&mut self, value: norn_ir::PropertyOrigin) {
+        self.origin = Some(value);
+    }
+
+    pub(crate) fn set_computed_inputs(&mut self, value: ComputedInputs) {
+        if let PropertyKind::Computed { inputs } = &mut self.property_kind {
+            *inputs = value;
+        }
+    }
+
+    /// Whether the property is computed (derived and read-only).
+    #[must_use]
+    pub const fn is_computed(&self) -> bool {
+        matches!(self.property_kind, PropertyKind::Computed { .. })
+    }
+
+    /// Effective-property dependencies read by a computed expression;
+    /// `None` for stored properties.
+    #[must_use]
+    pub const fn computed_inputs(&self) -> Option<&ComputedInputs> {
+        match &self.property_kind {
+            PropertyKind::Stored { .. } => None,
+            PropertyKind::Computed { inputs } => Some(inputs),
+        }
+    }
+
+    /// The effective literal default (IR encoding); `None` when absent or computed.
+    #[must_use]
+    pub const fn default(&self) -> Option<&DefaultValue> {
+        match &self.property_kind {
+            PropertyKind::Stored { default } => default.as_ref(),
+            PropertyKind::Computed { .. } => None,
+        }
     }
 
     /// FA-PROTECT-1: only rule outputs or the ACTOR-STAMP-1 create stamp write it.
@@ -445,22 +415,17 @@ impl EffectiveProperty {
         constraints: Vec<PropertyConstraints>,
         nullable: bool,
     ) -> Self {
-        let computed = property.is_read_only();
+        let property_kind = if property.is_read_only() {
+            PropertyKind::Computed {
+                inputs: ComputedInputs::Named(Vec::new()),
+            }
+        } else {
+            PropertyKind::Stored {
+                default: property.default.clone(),
+            }
+        };
         let patterns = compile_patterns(&constraints);
         Self {
-            id: property.id.clone(),
-            kind,
-            markings: Vec::new(),
-            computed_inputs: Vec::new(),
-            computed_reads_all: false,
-            constraints,
-            nullable,
-            default: if computed {
-                None
-            } else {
-                property.default.clone()
-            },
-            computed,
             write_authority: if property.protected {
                 WriteAuthority::RulesOnly
             } else {
@@ -472,6 +437,12 @@ impl EffectiveProperty {
             } else {
                 PostCreateMutability::Mutable
             },
+            id: property.id.clone(),
+            kind,
+            property_kind,
+            markings: Vec::new(),
+            constraints,
+            nullable,
             patterns,
             record_members: Vec::new(),
         }
@@ -485,7 +456,9 @@ impl EffectiveProperty {
         let constraints = resolved.constraints().into_iter().cloned().collect();
         let mut property = Self::new(resolved.property, kind, constraints, resolved.nullable());
         // An override without its own default keeps the inherited one.
-        property.default = resolved.default.cloned();
+        if let PropertyKind::Stored { default } = &mut property.property_kind {
+            *default = resolved.default.cloned();
+        }
         property.markings = markings;
         property.prepare_record(resolved.catalog, 0);
         property
@@ -1159,7 +1132,7 @@ impl EffectiveProperty {
     /// property, or a default that does not check against the instance rules,
     /// which admission should have rejected).
     pub fn default_value(&self) -> Result<Option<Value>, InstanceError> {
-        let Some(default) = self.default.as_ref().filter(|_| !self.computed) else {
+        let Some(default) = self.default() else {
             return Ok(None);
         };
         if let Some(reason) = self.unsupported() {

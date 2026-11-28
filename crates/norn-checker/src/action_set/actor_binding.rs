@@ -175,7 +175,7 @@ fn parent_rows_origin_findings(
         for view in views {
             let kind = view.name.as_str();
             for prop in &view.properties {
-                if prop.computed {
+                if prop.is_computed() {
                     continue;
                 }
                 if prop.protected()
@@ -491,12 +491,12 @@ fn independent_actor_reason(
     let Some(property) = resolved else {
         return Some("names no stored property of the effect target");
     };
-    if property.computed {
+    if property.is_computed() {
         return Some(
             "names a computed property, which holds no recorded principal and would refuse every call",
         );
     }
-    if property.default.is_some() {
+    if property.default().is_some() {
         return Some(
             "names a property with a declared or inherited default, a value no principal stamped",
         );

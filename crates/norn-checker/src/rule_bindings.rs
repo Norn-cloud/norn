@@ -397,7 +397,7 @@ fn snapshot_values_schema_error(
     let expected: BTreeSet<&str> = effective
         .properties
         .iter()
-        .filter(|property| !property.computed)
+        .filter(|property| !property.is_computed())
         .map(|property| property.id.as_str())
         .collect();
     let declared: BTreeSet<&str> = values_properties.keys().map(String::as_str).collect();
@@ -421,7 +421,7 @@ fn snapshot_values_schema_error(
     for property in effective
         .properties
         .iter()
-        .filter(|property| !property.computed)
+        .filter(|property| !property.is_computed())
     {
         let Some(member) = values_properties.get(property.id.as_str()) else {
             return Some(format!(
@@ -770,7 +770,7 @@ fn check_trigger_binding_set(
                     effective
                         .properties
                         .iter()
-                        .any(|candidate| candidate.id == *property && !candidate.computed)
+                        .any(|candidate| candidate.id == *property && !candidate.is_computed())
                 });
                 if !declared {
                     findings.push(finding(

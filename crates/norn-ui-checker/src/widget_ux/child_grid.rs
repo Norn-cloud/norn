@@ -344,7 +344,7 @@ impl UxChecker<'_, '_, '_> {
         let ordering_property = child.property(collection.ordering_key.as_str());
         if ordering_property.is_none_or(|property| {
             property.nullable
-                || property.computed
+                || property.is_computed()
                 || !property_type(property).is_some_and(|type_| matches!(type_, Type::Integer))
         }) {
             self.error(
@@ -372,8 +372,8 @@ impl UxChecker<'_, '_, '_> {
         }
         for property in ctx.child.properties.iter().filter(|property| {
             !property.nullable
-                && !property.computed
-                && property.default.is_none()
+                && !property.is_computed()
+                && property.default().is_none()
                 && ctx.child.lifecycle(property.id.as_str()).is_none()
                 && property.id != ctx.collection.row_id_property
                 && property.id != ctx.collection.ordering_key
@@ -464,13 +464,13 @@ impl UxChecker<'_, '_, '_> {
         let lifecycle_managed = child.lifecycle(property_id.as_str()).is_some();
         let action_derived =
             derived_properties.is_some_and(|derived| derived.contains_key(&property.id));
-        if (reserved || property.computed || lifecycle_managed || action_derived)
+        if (reserved || property.is_computed() || lifecycle_managed || action_derived)
             && field.control != WidgetFieldControl::Display
         {
             self.error(field_path, "row id, ordering key, computed, lifecycle-managed child properties may only be displayed read-only; action-derived properties must also be display-only");
         }
         if !reserved
-            && !property.computed
+            && !property.is_computed()
             && !lifecycle_managed
             && !action_derived
             && field.control != WidgetFieldControl::Display

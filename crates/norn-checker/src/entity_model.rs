@@ -595,8 +595,18 @@ impl<'a, 'r> Checker<'a, 'r> {
                         |owner| self.owner_properties(owner),
                     );
                     if let Some(reads) = computed_reads.get(resolved.property.id.as_str()) {
-                        property.computed_inputs = reads.fields.iter().cloned().collect();
-                        property.computed_reads_all = reads.whole_root;
+                        property.set_computed_inputs(if reads.whole_root {
+                            crate::entity_instance::ComputedInputs::AllObjectProperties
+                        } else {
+                            crate::entity_instance::ComputedInputs::Named(
+                                reads
+                                    .fields
+                                    .iter()
+                                    .cloned()
+                                    .map(norn_ir::PropertyId)
+                                    .collect(),
+                            )
+                        });
                     }
                     property
                 })
@@ -1428,7 +1438,9 @@ impl<'a> Checker<'a, '_> {
                 .find(|link| link.id == collection.id)
                 .is_some_and(|link| {
                     link.properties.iter().any(|property| {
-                        !property.computed && !property.nullable && property.default.is_none()
+                        !property.is_computed()
+                            && !property.nullable
+                            && property.default().is_none()
                     })
                 })
             {

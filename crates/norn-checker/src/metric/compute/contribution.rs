@@ -415,7 +415,7 @@ fn value<'a>(
         .find(|p| p.id.as_str() == id)
         .ok_or(UNSUPPORTED_ENGINE)?;
     let value = row.get(id).ok_or(UNSUPPORTED_ENGINE)?;
-    if property.computed || property.check_runtime_value(value).is_err() {
+    if property.is_computed() || property.check_runtime_value(value).is_err() {
         return Err(UNSUPPORTED_ENGINE);
     }
     Ok(value)
@@ -435,7 +435,7 @@ fn instant_of(
     property: &crate::entity_instance::EffectiveProperty,
     value: &RuntimeValue,
 ) -> Result<(i64, u32), &'static str> {
-    if property.computed || property.check_runtime_value(value).is_err() {
+    if property.is_computed() || property.check_runtime_value(value).is_err() {
         return Err(UNSUPPORTED_ENGINE);
     }
     let text = value.as_str().ok_or(UNSUPPORTED_ENGINE)?;

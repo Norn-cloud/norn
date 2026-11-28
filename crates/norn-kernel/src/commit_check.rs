@@ -824,7 +824,7 @@ fn typed_properties<'c>(
         .into_iter()
         .flat_map(|object_type| &object_type.properties)
         .filter(|property| {
-            !property.computed
+            !property.is_computed()
                 && matches!(
                     &property.kind,
                     EffectiveKind::Base(

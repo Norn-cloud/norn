@@ -13,7 +13,7 @@ use norn_cell::{
     CellError, CellStore, CommitBatch, CommitOutcome, CommitPoint, Model, SqliteCell, StoreOptions,
 };
 use norn_ir::quantity_ledger::QuantityOperation;
-use norn_kernel::quantity::{QuantityError, QuantityKey};
+use norn_kernel::quantity::{QuantityError, QuantityKey, ReservationStatus};
 use norn_kernel::{CellCommit, FactKey, FactMutation, FactVersion, FactWrite, LogicalTime};
 use norn_testkit::proptest::prelude::*;
 use quantity_support::{define, parameters, post, request, reserve};
@@ -616,7 +616,7 @@ fn reserve_full_post_and_in_transit_loss_are_conserved() {
             .expect("reservation")
             .expect("record")
             .status,
-        "posted"
+        norn_kernel::quantity::ReservationStatus::Posted
     );
     refused(
         &mut cell,
@@ -1349,7 +1349,7 @@ fn persisted_reservation_vector_deadline_and_status_remain_pinned() {
                 }
             }
             Damage::Deadline => record.expires_at = 101,
-            Damage::Status => record.status = "posted".into(),
+            Damage::Status => record.status = ReservationStatus::Posted,
         }
         let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
         engine
@@ -1776,7 +1776,7 @@ fn conserving_partial_post_and_void_preserve_identity_deadline_and_retry() {
         .quantity_reservation("main", "stock", "partial")
         .expect("read")
         .expect("reservation");
-    assert_eq!(remaining.status, "open");
+    assert_eq!(remaining.status, ReservationStatus::Open);
     assert_eq!(remaining.expires_at, 100);
     assert_eq!(
         remaining
@@ -2086,7 +2086,7 @@ fn lazy_deadline_refuses_post_and_scheduled_expiry_consumes_timer_atomically() {
             .expect("read")
             .expect("reservation")
             .status,
-        "expired"
+        norn_kernel::quantity::ReservationStatus::Expired
     );
     let receipt = cell
         .store()
@@ -2756,4 +2756,47 @@ fn post_partition_plan_fences_absences_and_commits_all_effects_once() {
         .read()
         .verify_ledger()
         .expect("complete native journal");
+}
+
+#[test]
+fn sqlite_reader_rejects_externally_tagged_reservation_status_object() {
+    use norn_cell::engine::{NativeEngine, SqlEngine, SqlValue};
+
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
+    let mut cell: SqliteCell<String, String, String> =
+        SqliteCell::new(store, "tenant/dev", |_| "ok".into()).expect("host");
+    cell.commit_quantity_fenced(&define(), "define")
+        .expect("define");
+    cell.commit_quantity_fenced(&post(1, "fund", "fund", 20), "fund")
+        .expect("fund");
+    cell.commit_quantity_fenced(&reserve(2, "r", 10, 100), "reserve")
+        .expect("reserve");
+    let record = cell
+        .store()
+        .read()
+        .quantity_reservation("main", "stock", "r")
+        .expect("read")
+        .expect("reservation");
+    let mut raw: serde_json::Value = serde_json::to_value(&record).expect("encode reservation");
+    raw.as_object_mut()
+        .expect("reservation object")
+        .insert("status".to_owned(), serde_json::json!({"open": null}));
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
+    engine
+        .execute(
+            r#"UPDATE "_norn_quantity_reservation" SET "record"=?1 WHERE "id"='r'"#,
+            &[SqlValue::from(
+                serde_json::to_string(&raw).expect("serialize tagged status"),
+            )],
+        )
+        .expect("fault injection");
+    drop(engine);
+    assert!(matches!(
+        cell.store()
+            .read()
+            .quantity_reservation("main", "stock", "r"),
+        Err(CellError::Json(_))
+    ));
 }

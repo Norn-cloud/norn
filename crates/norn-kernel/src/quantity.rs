@@ -9,6 +9,9 @@ use norn_ir::quantity_ledger::{
 };
 use serde::{Deserialize, Serialize};
 
+mod status;
+pub use status::{OriginalPostingState, ReservationStatus};
+
 /// Bound on one pinned vector and its balance reads.
 pub const MAX_QUANTITY_LEGS: usize = 64;
 /// Maximum definitions of each unit, layer, template, parameter and affine term.
@@ -121,8 +124,8 @@ pub struct QuantityReservation {
     pub remaining: Vec<EvaluatedLedgerLeg>,
     /// Exclusive deadline supplied at reserve.
     pub expires_at: u64,
-    /// Open, posted, void or expired.
-    pub status: String,
+    /// Closed lifecycle status: open, posted, void or expired.
+    pub status: ReservationStatus,
 }
 
 /// Append-only posting and its optional exact-negation link.
@@ -162,10 +165,8 @@ pub struct QuantityState {
     pub balances: BTreeMap<QuantityKey, QuantityBalance>,
     /// Named reservation, when resolving.
     pub reservation: Option<QuantityReservation>,
-    /// Named original, when reversing.
-    pub original: Option<QuantityPosting>,
-    /// Whether the original already has a linked reversal.
-    pub original_reversed: bool,
+    /// Named original posting and its reversal state, when reversing.
+    pub original: OriginalPostingState,
     /// Whether the new reservation or posting identity already exists.
     pub identity_exists: bool,
 }
@@ -280,7 +281,7 @@ fn open_reservation(state: &QuantityState) -> Result<&QuantityReservation, Quant
     state
         .reservation
         .as_ref()
-        .filter(|reservation| reservation.status == "open")
+        .filter(|reservation| reservation.status.is_open())
         .ok_or(QuantityError::Terminal)
 }
 
@@ -361,11 +362,10 @@ pub fn quantity_legs(
         }
         QuantityOperation::Expire { .. } => Ok(open_reservation(state)?.remaining.clone()),
         QuantityOperation::Reverse { .. } => {
-            let original = state
-                .original
-                .as_ref()
-                .ok_or(QuantityError::InvalidReversal)?;
-            if original.reverses.is_some() || state.original_reversed {
+            let OriginalPostingState::Active(original) = &state.original else {
+                return Err(QuantityError::InvalidReversal);
+            };
+            if original.reverses.is_some() {
                 return Err(QuantityError::InvalidReversal);
             }
             original
@@ -738,7 +738,7 @@ pub fn prepare_quantity(
                     legs: legs.clone(),
                     remaining: legs.clone(),
                     expires_at: *expires_at,
-                    status: "open".into(),
+                    status: ReservationStatus::Open,
                 },
             ));
             (false, true, false)
@@ -753,14 +753,14 @@ pub fn prepare_quantity(
                     if !expired {
                         return Err(QuantityError::NotExpired);
                     }
-                    reservation.status = "expired".into();
+                    reservation.status = ReservationStatus::Expired;
                     false
                 }
                 QuantityOperation::Void { .. } => {
                     if expired {
                         return Err(QuantityError::Expired);
                     }
-                    reservation.status = "void".into();
+                    reservation.status = ReservationStatus::Void;
                     false
                 }
                 QuantityOperation::PostReservation { posting_id, .. } => {
@@ -770,7 +770,7 @@ pub fn prepare_quantity(
                     if !identity(posting_id) {
                         return Err(QuantityError::InvalidContract);
                     }
-                    reservation.status = "posted".into();
+                    reservation.status = ReservationStatus::Posted;
                     plan.posting = Some((
                         posting_id.clone(),
                         QuantityPosting {
@@ -787,7 +787,7 @@ pub fn prepare_quantity(
             };
             subtract_legs(&mut reservation, &legs)?;
             if !reservation.remaining.is_empty() {
-                reservation.status = "open".into();
+                reservation.status = ReservationStatus::Open;
             }
             plan.reservation = Some((reservation_id.clone(), reservation));
             (posting, false, true)

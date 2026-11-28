@@ -404,7 +404,7 @@ fn non_computed_property(
     };
     if base
         .property(property)
-        .is_none_or(|declared_prop| declared_prop.computed)
+        .is_none_or(norn_checker::EffectiveProperty::is_computed)
     {
         return false;
     }
@@ -413,7 +413,7 @@ fn non_computed_property(
             || catalog
                 .effective_type(ty)
                 .and_then(|effective| effective.property(property))
-                .is_some_and(|declared_prop| !declared_prop.computed)
+                .is_some_and(|declared_prop| !declared_prop.is_computed())
     })
 }
 

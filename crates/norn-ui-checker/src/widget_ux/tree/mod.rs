@@ -422,7 +422,7 @@ impl UxChecker<'_, '_, '_> {
                     && key.components.iter().any(|id| id.as_str() == property_id)
             })
         });
-        if (property.computed || lifecycle_managed || generated)
+        if (property.is_computed() || lifecycle_managed || generated)
             && field.control != WidgetFieldControl::Display
         {
             self.error(
@@ -515,7 +515,7 @@ impl UxChecker<'_, '_, '_> {
                         && declared.derive.contains_key(&property.id)
                 })
         );
-        if (reserved || property.computed || lifecycle_managed || action_derived)
+        if (reserved || property.is_computed() || lifecycle_managed || action_derived)
             && field.control != WidgetFieldControl::Display
         {
             self.error(&format!("{path}/control"), "row identity, ordering, computed, lifecycle-managed properties are read-only in a child grid; action-derived properties must also be display-only");

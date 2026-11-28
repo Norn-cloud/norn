@@ -399,8 +399,7 @@ fn is_default(
             .and_then(|mut values| values.remove(id))
     };
     property
-        .default
-        .as_ref()
+        .default()
         .and_then(|default| property.runtime_default_literal(&default.0).ok())
         .and_then(canonical)
         .is_some_and(|default| Some(default) == canonical(value.clone()))

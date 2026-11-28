@@ -159,23 +159,68 @@ fn property_and_computed_markings_accumulate_from_shared_types_and_interfaces() 
         person
             .property("email")
             .expect("stored property")
-            .computed_inputs
-            .len(),
-        0
+            .computed_inputs(),
+        None
     );
     assert_eq!(
         person
             .property("email_copy")
             .expect("computed property")
-            .computed_inputs,
-        vec!["email".to_owned()]
+            .computed_inputs(),
+        Some(&norn_checker::ComputedInputs::Named(vec![
+            norn_ir::PropertyId("email".to_owned())
+        ]))
     );
     assert_eq!(
         person
             .property("email_derived")
             .expect("transitively computed property")
-            .computed_inputs,
-        vec!["email_copy".to_owned()]
+            .computed_inputs(),
+        Some(&norn_checker::ComputedInputs::Named(vec![
+            norn_ir::PropertyId("email_copy".to_owned())
+        ]))
+    );
+}
+
+#[test]
+fn computed_property_preserves_protected_origin_and_immutable_after_create() {
+    let artifacts = envelopes(&[r#"{
+          "artifactId":"test.guarded","irVersion":"0.1","kind":"entity","lifecycle":"active",
+          "name":"Guarded","namespace":"test","scope":{},"version":"0.1.0","dependencies":[],
+          "provenance":{"source":"system"},
+          "payload":{"entityVersion":"2.0","objectType":{
+            "name":"test.Guarded","properties":[
+              {"id":"base","type":{"kind":"text"}},
+              {
+                "id":"derived_guarded",
+                "type":{"kind":"text"},
+                "computed":"self.base",
+                "protected":true,
+                "origin":"derived",
+                "immutableAfterCreate":true
+              }
+            ]
+          }}
+        }"#]);
+    let catalog =
+        ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new()).into_catalog();
+    let guarded = catalog
+        .object_type("test.guarded")
+        .expect("object type exists")
+        .expect("computed property with protected/origin/immutableAfterCreate is admitted");
+    let prop = guarded
+        .property("derived_guarded")
+        .expect("computed property");
+    assert!(prop.is_computed());
+    assert_eq!(prop.default(), None);
+    assert!(prop.protected());
+    assert_eq!(prop.origin(), Some(norn_ir::PropertyOrigin::Derived));
+    assert!(prop.immutable_after_create());
+    assert_eq!(
+        prop.computed_inputs(),
+        Some(&norn_checker::ComputedInputs::Named(vec![
+            norn_ir::PropertyId("base".to_owned())
+        ]))
     );
 }
 
@@ -652,7 +697,7 @@ fn record_member_refs_enforce_catalog_constraints_and_exact_defaults() {
         .expect("valid catalog");
     let property = object.property("point").expect("point");
     let default = property
-        .runtime_default_literal(&property.default.as_ref().expect("default").0)
+        .runtime_default_literal(&property.default().expect("default").0)
         .expect("exact default");
     property
         .check_runtime_value(&default)

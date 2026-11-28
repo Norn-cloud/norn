@@ -471,7 +471,7 @@ fn compatible_terms(object: &EffectiveObjectType, source: &ConservationSource) -
             let Some(property) = object.property(id.as_str()) else {
                 return false;
             };
-            if property.nullable || property.computed {
+            if property.nullable || property.is_computed() {
                 return false;
             }
             let EffectiveKind::Base(kind) = &property.kind else {
@@ -676,11 +676,9 @@ fn linked_times(object: &EffectiveObjectType, catalog: &EffectiveCatalog) -> Vec
         let Some(Ok(target)) = catalog.object_type_named(target) else {
             continue;
         };
-        for time in target
-            .properties
-            .iter()
-            .filter(|property| super::is_time(property) && !property.nullable && !property.computed)
-        {
+        for time in target.properties.iter().filter(|property| {
+            super::is_time(property) && !property.nullable && !property.is_computed()
+        }) {
             times.push(DimensionPath {
                 links: vec![link.id.clone()],
                 property: time.id.clone(),

@@ -394,11 +394,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         read: impl FnOnce(&SourceDisputeIndex) -> T,
     ) -> Result<T, CellError> {
-        let Some(cache) = self.source_disputes else {
+        let Some(cache) = self.source_disputes.as_ref() else {
             return Ok(read(&self.build_source_dispute_index()?));
         };
         let revision = self.conn.read_cache_revision()?;
-        if revision.is_none() && !self.source_disputes_transaction {
+        if revision.is_none() && !self.source_disputes.is_in_transaction() {
             return Ok(read(&self.build_source_dispute_index()?));
         }
         if !cache.borrow().initialized || cache.borrow().revision != revision {

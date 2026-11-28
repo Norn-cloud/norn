@@ -5,7 +5,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_checker::{
-    EffectiveLink, EffectiveObjectType, EntityContext, EntityModel, effective_object_types,
+    ComputedInputs, EffectiveLink, EffectiveObjectType, EntityContext, EntityModel,
+    effective_object_types,
 };
 use norn_ir::{
     ArtifactEnvelope, ArtifactKind, InterfaceDef, LawIR, Lifecycle, Link, ObjectTypeDef, Property,
@@ -761,15 +762,14 @@ impl Model {
         let mut dependencies = object
             .properties
             .iter()
-            .filter(|property| property.computed)
-            .map(|property| {
-                (
-                    property.id.as_str().to_owned(),
-                    (
-                        property.computed_inputs.iter().cloned().collect(),
-                        property.computed_reads_all,
-                    ),
-                )
+            .filter_map(|property| {
+                let entry = match property.computed_inputs()? {
+                    ComputedInputs::AllObjectProperties => (BTreeSet::new(), true),
+                    ComputedInputs::Named(fields) => {
+                        (fields.iter().map(|id| id.0.clone()).collect(), false)
+                    }
+                };
+                Some((property.id.0.clone(), entry))
             })
             .collect::<BTreeMap<String, (BTreeSet<String>, bool)>>();
         for key in &object.keys {

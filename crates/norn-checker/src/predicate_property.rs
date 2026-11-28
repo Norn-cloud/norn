@@ -95,7 +95,7 @@ pub(crate) fn indexed_scalar_property(
     let stored = effective
         .property(property)
         .ok_or(PredicatePropertyError::NotStored)?;
-    if stored.computed {
+    if stored.is_computed() {
         return Err(PredicatePropertyError::Computed);
     }
     let field = record
