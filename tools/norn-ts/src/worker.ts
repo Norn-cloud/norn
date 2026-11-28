@@ -56,14 +56,22 @@ function outside(what: string): ProjectError {
   return new ProjectError("cli.project.invalid_manifest", `${what} does not resolve inside the project; sources must stay inside it.`)
 }
 
+interface ResolvedSourceDir {
+  readonly logical: string
+  readonly real: string
+}
+
 /** The manifest's source directories that exist; one that resolves outside the project refuses. */
-function sourceDirs(root: string, manifest: Project, realRoot: string = realpathSync(root)): string[] {
-  return manifest.sources.map((source) => resolve(root, source)).filter((dir) => {
-    if (!existsSync(dir)) return false
-    const real = resolveInsideProject(realRoot, dir)
-    if (real === undefined) throw outside(`source ${posix(relative(root, dir))}`)
-    return statSync(real).isDirectory()
-  })
+function sourceDirs(root: string, manifest: Project, realRoot: string = realpathSync(root)): ResolvedSourceDir[] {
+  const dirs: ResolvedSourceDir[] = []
+  for (const source of manifest.sources) {
+    const logical = resolve(root, source)
+    if (!existsSync(logical)) continue
+    const real = resolveInsideProject(realRoot, logical)
+    if (real === undefined) throw outside(`source ${posix(relative(root, logical))}`)
+    if (statSync(real).isDirectory()) dirs.push({ logical, real })
+  }
+  return dirs
 }
 
 interface ResolvedProjectModule {
@@ -78,47 +86,53 @@ interface ResolvedProjectModule {
  * project, and every resolved target must be unique so two logical modules
  * never alias the same file.
  */
-function projectModules(root: string, dirs: readonly string[], realRoot: string): ResolvedProjectModule[] {
+function projectModules(root: string, dirs: readonly ResolvedSourceDir[], realRoot: string): ResolvedProjectModule[] {
   const seen = new Map<string, string>()
-  return dirs.flatMap((dir) => packModules(dir)).map((logical) => {
-    const logicalRel = posix(relative(root, logical))
-    const real = resolveInsideProject(realRoot, logical)
-    if (real === undefined) throw outside(`module ${logicalRel}`)
-    const prior = seen.get(real)
-    if (prior !== undefined) {
-      throw new ProjectError(
-        "cli.project.invalid_manifest",
-        `modules ${prior} and ${logicalRel} resolve to the same file (${posix(relative(realRoot, real))}); remove the duplicate alias.`,
-      )
+  const modules: ResolvedProjectModule[] = []
+  for (const dir of dirs) {
+    for (const candidate of packModules(dir.real)) {
+      const entry = relative(dir.real, candidate)
+      const logical = join(dir.logical, entry)
+      const logicalRel = posix(relative(root, logical))
+      const real = resolveInsideProject(realRoot, candidate)
+      if (real === undefined) throw outside(`module ${logicalRel}`)
+      const prior = seen.get(real)
+      if (prior !== undefined) {
+        throw new ProjectError(
+          "cli.project.invalid_manifest",
+          `modules ${prior} and ${logicalRel} resolve to the same file (${posix(relative(realRoot, real))}); remove the duplicate alias.`,
+        )
+      }
+      seen.set(real, logicalRel)
+      modules.push({ logical, logicalRel, real })
     }
-    seen.set(real, logicalRel)
-    return { logical, logicalRel, real }
-  })
+  }
+  return modules
 }
 
-function sourceFiles(root: string, dirs: readonly string[], realRoot: string): Map<string, string> {
+function sourceFiles(root: string, dirs: readonly ResolvedSourceDir[], realRoot: string): Map<string, string> {
   const files = new Map<string, string>()
   for (const module of projectModules(root, dirs, realRoot)) {
     files.set(module.logicalRel, module.real)
   }
   // Below the top level, symlinks are never followed (no cycle, nothing
-  // outside the project), and each real directory is read once.
+  // outside the project), and each validated canonical directory is read once.
   const visited = new Set<string>()
-  const walk = (dir: string) => {
-    const real = realpathSync(dir)
-    if (visited.has(real)) return
-    visited.add(real)
-    for (const entry of readdirSync(dir).sort()) {
-      const path = join(dir, entry)
-      const kind = lstatSync(path)
-      if (kind.isDirectory()) walk(path)
+  const walk = (realDir: string, logicalDir: string) => {
+    if (visited.has(realDir)) return
+    visited.add(realDir)
+    for (const entry of readdirSync(realDir).sort()) {
+      const realPath = join(realDir, entry)
+      const logicalPath = join(logicalDir, entry)
+      const kind = lstatSync(realPath)
+      if (kind.isDirectory()) walk(realPath, logicalPath)
       else if (kind.isFile() && (entry.endsWith(".ts") || entry.endsWith(".json"))) {
-        const rel = posix(relative(root, path))
-        if (!files.has(rel)) files.set(rel, path)
+        const rel = posix(relative(root, logicalPath))
+        if (!files.has(rel)) files.set(rel, realPath)
       }
     }
   }
-  for (const dir of dirs) walk(dir)
+  for (const dir of dirs) walk(dir.real, dir.logical)
   return files
 }
 
@@ -185,17 +199,17 @@ function exactNumbers(inexact: string[]): (key: string, value: unknown, context?
  */
 function projectJsonSources(
   root: string,
-  dirs: readonly string[],
+  dirs: readonly ResolvedSourceDir[],
   realRoot: string,
 ): { readonly artifacts: Json[]; readonly definitions: SourceDefinitionDoc[] } {
   const artifacts: Json[] = []
   const definitions: SourceDefinitionDoc[] = []
   const seen = new Set<string>()
   for (const dir of dirs) {
-    for (const entry of readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
-      const file = join(dir, entry)
-      const path = posix(relative(root, file))
-      const realFile = resolveInsideProject(realRoot, file)
+    for (const entry of readdirSync(dir.real).filter((f) => f.endsWith(".json")).sort()) {
+      const logicalFile = join(dir.logical, entry)
+      const path = posix(relative(root, logicalFile))
+      const realFile = resolveInsideProject(realRoot, join(dir.real, entry))
       if (realFile === undefined) throw outside(`artifact ${path}`)
       if (!statSync(realFile).isFile()) continue
       const inexact: string[] = []
@@ -418,11 +432,11 @@ export function main(args: readonly string[]): void {
     timer = setTimeout(compile, 50)
   }
   // A source that resolves outside the project is reported by each compile, never watched.
-  let dirs: string[] = []
+  let dirs: ResolvedSourceDir[] = []
   try { dirs = sourceDirs(root, manifest) } catch { /* reported by compile() above */ }
   const watchers: FSWatcher[] = []
   for (const dir of dirs) {
-    const watcher = watch(dir, { recursive: true }, changed)
+    const watcher = watch(dir.real, { recursive: true }, changed)
     watcher.on("error", () => { /* watched dir disappeared; next compile reports it */ })
     watchers.push(watcher)
   }
