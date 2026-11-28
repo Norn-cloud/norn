@@ -65,9 +65,54 @@ export function cliDiagnostic(error: ProjectError, extra: { readonly source?: So
   }
 }
 
-/** Render a CLI diagnostic with its registered code, message and guidance. */
+/** Format a structured counterexample witness (steps, table overlap/gap, chase, lifecycle, red-team) for CLI output. */
+export function formatWitnessLines(witness: unknown, indent = "  "): string[] {
+  if (witness === undefined || witness === null) return []
+  if (typeof witness !== "object" || Array.isArray(witness)) {
+    return [`${indent}witness: ${JSON.stringify(witness)}`]
+  }
+  const record = witness as Readonly<Record<string, unknown>>
+  if (Array.isArray(record.steps)) {
+    if (record.steps.length === 0) return [`${indent}witness: (initial state, 0 steps)`]
+    const trace = record.steps.map((step) => {
+      if (typeof step !== "object" || step === null) return String(step)
+      const s = step as Readonly<Record<string, unknown>>
+      const moves = Array.isArray(s.moves)
+        ? s.moves.map((mv) => {
+            if (typeof mv !== "object" || mv === null) return String(mv)
+            const m = mv as Readonly<Record<string, unknown>>
+            return `${String(m.side ?? "?")}:${String(m.label ?? "?")}`
+          }).join(", ")
+        : ""
+      return `edge ${String(s.edge ?? "?")} [${moves}]`
+    }).join(" -> ")
+    return [`${indent}witness: ${trace}`]
+  }
+  const parts: string[] = []
+  if (record.input !== undefined) parts.push(`input=${JSON.stringify(record.input)}`)
+  if (Array.isArray(record.matchingRows)) parts.push(`matchingRows=[${record.matchingRows.map(String).join(", ")}]`)
+  if (Array.isArray(record.selectedRows)) parts.push(`selectedRows=[${record.selectedRows.map(String).join(", ")}]`)
+  if (typeof record.state === "string") parts.push(`state=${record.state}`)
+  if (Array.isArray(record.run)) parts.push(`run=${record.run.map(String).join(" -> ")}`)
+  else if (Array.isArray(record.trace)) parts.push(`trace=${record.trace.map(String).join(" -> ")}`)
+  if (record.blocked !== undefined) parts.push(`blocked=${JSON.stringify(record.blocked)}`)
+  if (Array.isArray(record.rules)) parts.push(`rules=[${record.rules.map(String).join(", ")}]`)
+  if (Array.isArray(record.facts)) parts.push(`facts=${JSON.stringify(record.facts)}`)
+  if (typeof record.role === "string") parts.push(`role=${record.role}`)
+  if (typeof record.ruleId === "string") parts.push(`ruleId=${record.ruleId}`)
+  if (typeof record.actionId === "string") parts.push(`actionId=${record.actionId}`)
+  if (typeof record.objectType === "string") parts.push(`objectType=${record.objectType}`)
+  if (typeof record.transitionId === "string") parts.push(`transitionId=${record.transitionId}`)
+  if (typeof record.property === "string") parts.push(`property=${record.property}`)
+  if (typeof record.missingAttribute === "string") parts.push(`missingAttribute=${record.missingAttribute}`)
+  if (typeof record.reason === "string") parts.push(`reason=${record.reason}`)
+  if (parts.length > 0) return [`${indent}witness: ${parts.join("; ")}`]
+  return [`${indent}witness: ${JSON.stringify(witness)}`]
+}
+
+/** Render a CLI diagnostic with its registered code, message, witness (when present) and guidance. */
 export function formatCliDiagnostic(finding: Finding): string {
-  const lines = [`${finding.code}: ${finding.message}`]
+  const lines = [`${finding.code}: ${finding.message}`, ...formatWitnessLines(finding.witness)]
   if (finding.fix) lines.push(`  fix: ${finding.fix}`)
   else if (finding.no_fix) lines.push(`  no automatic fix: ${finding.no_fix}`)
   return lines.join("\n")
@@ -76,12 +121,13 @@ export function formatCliDiagnostic(finding: Finding): string {
 /** A `norn-checker/diagnostics@1` finding (what `norn check` reports) as `norn/diagnostic@2`. */
 export function checkerDiagnostic(finding: CheckerDiagnostic): Finding {
   const entry = registered(finding.code)
-  const { source, ...rest } = finding as CheckerDiagnostic & { readonly tier?: string | null; readonly remediation?: unknown }
+  const { source, witness, ...rest } = finding as CheckerDiagnostic & { readonly tier?: string | null; readonly remediation?: unknown }
   return {
     ...rest,
     code: entry.code, tier: entry.tier, severity: finding.severity, message: finding.message,
     span: finding.span ?? null, artifactId: finding.artifactId ?? null, remediation: rest.remediation ?? null,
     format: "norn/diagnostic@2", phase: entry.tier, retryable: false, fix: entry.fix, no_fix: entry.no_fix,
+    ...(witness !== undefined ? { witness } : {}),
     ...(source ? { source } : {}),
   }
 }

@@ -799,8 +799,74 @@ fn plan_summary(plan: &Value) -> String {
             text(plan, "checkedObjects")
         ),
     );
+    plan_ripples(&mut out, plan);
     diagnostics(&mut out, plan);
     out.trim_end().to_owned()
+}
+
+fn plan_ripples(out: &mut String, plan: &Value) {
+    if plan.get("rippleStatus").and_then(Value::as_str) == Some("unknown") {
+        let detail = plan
+            .pointer("/rippleBudgetExceeded/detail")
+            .and_then(Value::as_str)
+            .unwrap_or("graph budget exceeded");
+        line(out, &format!("  ripples: UNKNOWN ({detail})"));
+        return;
+    }
+    let Some(ripples) = plan.get("ripples").and_then(Value::as_array) else {
+        return;
+    };
+    if ripples.is_empty() {
+        return;
+    }
+    line(out, &format!("  transitive ripples ({}):", ripples.len()));
+    for ripple in ripples {
+        let via: Vec<&str> = ripple
+            .get("via")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        let chain = if via.is_empty() {
+            String::new()
+        } else {
+            format!(" via {}", via.join(" -> "))
+        };
+        line(
+            out,
+            &format!(
+                "    [{}] {} [{}]{chain}",
+                text(ripple, "impactKind"),
+                text(ripple, "artifactId"),
+                text(ripple, "kind")
+            ),
+        );
+    }
+}
+
+pub(super) fn format_witness(witness: &Value) -> String {
+    if let Some(steps) = witness.get("steps").and_then(Value::as_array) {
+        if steps.is_empty() {
+            return "(initial state, 0 steps)".to_owned();
+        }
+        return steps
+            .iter()
+            .map(|step| {
+                let edge = text(step, "edge");
+                let moves: Vec<String> = step
+                    .get("moves")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|mv| format!("{}:{}", text(mv, "side"), text(mv, "label")))
+                    .collect();
+                format!("edge {edge} [{}]", moves.join(", "))
+            })
+            .collect::<Vec<_>>()
+            .join(" -> ");
+    }
+    witness.to_string()
 }
 
 fn diagnostics(out: &mut String, document: &Value) {
@@ -823,6 +889,9 @@ fn diagnostics(out: &mut String, document: &Value) {
                 text(finding, "message")
             ),
         );
+        if let Some(witness) = finding.get("witness").filter(|value| !value.is_null()) {
+            line(out, &format!("    witness: {}", format_witness(witness)));
+        }
     }
 }
 

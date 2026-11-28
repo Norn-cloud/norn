@@ -66,6 +66,22 @@ pub fn analyze_red_team(artifacts_json: &str) -> Result<String, JsError> {
 }
 
 #[cfg(feature = "checker")]
+/// `rippleEffects(beforeJson, afterJson, changedIdsJson)`: see
+/// [`crate::ripple_effects_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = rippleEffects)]
+pub fn ripple_effects(
+    before_json: &str,
+    after_json: &str,
+    changed_ids_json: &str,
+) -> Result<String, JsError> {
+    crate::ripple_effects_json(before_json, after_json, changed_ids_json).map_err(JsError::from)
+}
+
+#[cfg(feature = "checker")]
 /// `rendererCapabilities(uxJson)`: see [`crate::renderer_capabilities_json`].
 ///
 /// # Errors

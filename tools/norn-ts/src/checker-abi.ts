@@ -15,12 +15,62 @@ import { pathToFileURL } from "node:url"
 import { TOOL_ROOT } from "./profile.ts"
 import { cachedCheckerWasmDir } from "./runtime-cache.ts"
 
+export interface WitnessMove {
+  readonly side: string
+  readonly label: string
+}
+
+export interface WitnessStep {
+  readonly edge: number
+  readonly moves: ReadonlyArray<WitnessMove>
+}
+
+export interface DiagnosticWitness {
+  readonly steps?: ReadonlyArray<WitnessStep>
+  readonly [key: string]: unknown
+}
+
+export type RippleStatus = "exact" | "unknown"
+
+export type RippleImpactKind =
+  | "direct_change"
+  | "specialization_affected"
+  | "writer_affected"
+  | "law_affected"
+  | "lifecycle_affected"
+  | "policy_affected"
+  | "projection_or_ui_affected"
+  | "removed_dependency_broken"
+
+export interface RippleEntry {
+  readonly artifactId: string
+  readonly kind: string
+  readonly triggeredBy: ReadonlyArray<string>
+  readonly via: ReadonlyArray<string>
+  readonly impactKind: RippleImpactKind
+}
+
+export interface RippleBudgetExceeded {
+  readonly resource: string
+  readonly limit: number
+  readonly detail: string
+}
+
+export interface RippleReport {
+  readonly format: "norn-checker/ripple@1"
+  readonly status: RippleStatus
+  readonly roots: ReadonlyArray<string>
+  readonly ripples: ReadonlyArray<RippleEntry>
+  readonly budgetExceeded?: RippleBudgetExceeded
+}
+
 export interface CheckerDiagnostic {
   readonly code: string
   readonly severity: string
   readonly message: string
   readonly artifactId?: string
   readonly span?: unknown
+  readonly witness?: DiagnosticWitness | null
   readonly source?: import("./builder/diagnostics.ts").SourceLocation
 }
 
@@ -49,6 +99,7 @@ export interface DiagnosticV2 {
   /** Exactly one of `fix` and `no_fix` is a string. */
   readonly fix: string | null
   readonly no_fix: string | null
+  readonly witness?: DiagnosticWitness | null
 }
 
 export interface ExplainResult {
@@ -71,6 +122,8 @@ export interface CheckerAbi {
   readonly checkArtifactSet: (artifacts: ReadonlyArray<unknown>, context?: unknown) => CheckResult
   /** `explainArtifactSet` (#517), absent from a package built before it existed. */
   readonly explainArtifactSet?: (artifacts: ReadonlyArray<unknown>, context: unknown, kind: string, id: string, options: unknown) => ExplainResult
+  /** `rippleEffects(before, after, changedIds)`, absent from a package built before it existed. */
+  readonly rippleEffects?: (before: ReadonlyArray<unknown>, after: ReadonlyArray<unknown>, changedIds: ReadonlyArray<string>) => RippleReport
   readonly version: () => Readonly<Record<string, string>>
 }
 
@@ -79,6 +132,7 @@ interface WasmModule {
   readonly checkArtifactSet: (artifactsJson: string, contextJson: string) => string
   readonly evaluateLaw?: (lawJson: string, subjectJson: string) => string
   readonly explainArtifactSet?: (artifactsJson: string, contextJson: string, kind: string, id: string, optionsJson: string) => string
+  readonly rippleEffects?: (beforeJson: string, afterJson: string, changedIdsJson: string) => string
   readonly version: () => string
 }
 
@@ -147,6 +201,7 @@ export async function loadChecker(dir: string | undefined = checkerPackageDir())
   abi.initSync({ module: readFileSync(wasm) })
   const explain = abi.explainArtifactSet?.bind(abi)
   const evaluateLaw = abi.evaluateLaw?.bind(abi)
+  const rippleEffects = abi.rippleEffects?.bind(abi)
   return {
     ...(evaluateLaw ? {
       evaluateLaw: (law: unknown, subject: unknown) => JSON.parse(evaluateLaw(JSON.stringify(law), JSON.stringify(subject))) as LawVerdict,
@@ -156,6 +211,10 @@ export async function loadChecker(dir: string | undefined = checkerPackageDir())
     ...(explain ? {
       explainArtifactSet: (artifacts: ReadonlyArray<unknown>, context: unknown, kind: string, id: string, options: unknown) =>
         JSON.parse(explain(JSON.stringify(artifacts), JSON.stringify(context ?? {}), kind, id, JSON.stringify(options))) as ExplainResult,
+    } : {}),
+    ...(rippleEffects ? {
+      rippleEffects: (before: ReadonlyArray<unknown>, after: ReadonlyArray<unknown>, changedIds: ReadonlyArray<string>) =>
+        JSON.parse(rippleEffects(JSON.stringify(before), JSON.stringify(after), JSON.stringify(changedIds))) as RippleReport,
     } : {}),
     version: () => JSON.parse(abi.version()) as Record<string, string>,
   }

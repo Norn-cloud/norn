@@ -21,6 +21,7 @@
 import { existsSync } from "node:fs"
 import type { RetainedDefinitionDoc } from "./native-compiler.ts"
 import { loadChecker } from "./checker-abi.ts"
+import { formatWitnessLines } from "./cli-diagnostic.ts"
 import { bindSourceSchemas, checkPack, pendingSourceSchemas, type PackResult } from "./pack.ts"
 import { isFetchableUrl, sanitizeUrlForDiagnostic, type FetchLike } from "./setup.ts"
 import { loadInputPack, omittedLines, type OmittedDefinition } from "./worker.ts"
@@ -358,7 +359,28 @@ export async function post(target: Target, path: string, body?: unknown): Promis
 }
 
 function diagnostics(document: Doc): string[] {
-  return (document.diagnostics ?? []).map((d: Doc) => `  ${d.severity} ${d.code}${d.span?.pointer ? ` at ${d.span.pointer}` : ""}: ${d.message}`)
+  const out: string[] = []
+  for (const d of document.diagnostics ?? []) {
+    out.push(`  ${d.severity} ${d.code}${d.span?.pointer ? ` at ${d.span.pointer}` : ""}: ${d.message}`)
+    out.push(...formatWitnessLines(d.witness, "    "))
+  }
+  return out
+}
+
+function rippleLines(plan: Doc): string[] {
+  if (plan.rippleStatus === "unknown") {
+    const detail = plan.rippleBudgetExceeded?.detail ?? "graph budget exceeded"
+    return [`  ripples: UNKNOWN (${detail})`]
+  }
+  const ripples = Array.isArray(plan.ripples) ? plan.ripples : []
+  if (ripples.length === 0) return []
+  return [
+    `  transitive ripples (${ripples.length}):`,
+    ...ripples.map((r: Doc) => {
+      const via = Array.isArray(r.via) && r.via.length > 0 ? ` via ${r.via.join(" -> ")}` : ""
+      return `    [${r.impactKind}] ${r.artifactId} [${r.kind}]${via}`
+    }),
+  ]
 }
 
 function planSummary(plan: Doc): string {
@@ -367,7 +389,7 @@ function planSummary(plan: Doc): string {
   for (const a of plan.changed ?? []) lines.push(`  ~ ${a.artifactId} (${a.kind} ${a.fromVersion} -> ${a.toVersion})`)
   for (const id of plan.same ?? []) lines.push(`  = ${id}`)
   if ((plan.newObjectTypes ?? []).length > 0) lines.push(`  new types: ${plan.newObjectTypes.join(", ")}`)
-  lines.push(`  checked ${plan.checkedObjects} stored object(s) under the new laws`, ...diagnostics(plan))
+  lines.push(`  checked ${plan.checkedObjects} stored object(s) under the new laws`, ...rippleLines(plan), ...diagnostics(plan))
   return lines.join("\n")
 }
 

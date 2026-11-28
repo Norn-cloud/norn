@@ -12,7 +12,35 @@
  * is reported, but it changes no behaviour.
  */
 import { type Json, canonicalJson } from "./canonical.ts"
+import type {
+  CheckerAbi,
+  RippleBudgetExceeded,
+  RippleEntry,
+  RippleImpactKind,
+  RippleStatus,
+} from "./checker-abi.ts"
 import { artifactId, isArtifact } from "./pack.ts"
+
+export type PlanRipple = RippleEntry
+
+export interface PlanRippleBudget {
+  readonly maxNodes: number
+  readonly maxEdges: number
+  readonly maxSteps: number
+}
+
+export interface PlanDiffOptions {
+  /** Authoritative Rust checker WASM ABI, when loaded. */
+  readonly checker?: Pick<CheckerAbi, "rippleEffects">
+  /** Explicit graph budget ceiling for offline/fallback ripple projection. */
+  readonly budget?: PlanRippleBudget
+}
+
+const DEFAULT_RIPPLE_BUDGET: PlanRippleBudget = {
+  maxNodes: 16_384,
+  maxEdges: 131_072,
+  maxSteps: 1_048_576,
+}
 
 export interface ArtifactChange {
   readonly artifactId: string
@@ -52,6 +80,12 @@ export interface Plan {
   readonly warnings: ReadonlyArray<LifecycleWarning>
   /** Structural removals and lifecycle narrowing, ready for install gating. */
   readonly narrowing: ReadonlyArray<PlanNarrowing>
+  /** Exact transitive ripple effects caused by added, changed, or removed artifacts. */
+  readonly ripples: ReadonlyArray<PlanRipple>
+  /** Completeness of `ripples`: `"exact"` within budget, or `"unknown"` on budget exhaustion. */
+  readonly rippleStatus: RippleStatus
+  /** Explicit budget exhaustion metadata when `rippleStatus === "unknown"`. */
+  readonly rippleBudgetExceeded?: RippleBudgetExceeded
 }
 
 type Obj = Readonly<Record<string, unknown>>
@@ -77,7 +111,7 @@ function differingMembers(a: Obj, b: Obj): string[] {
 }
 
 /** Diff the local (to install) set against the remote (installed) set. */
-export function planDiff(local: ReadonlyArray<Json>, remote: ReadonlyArray<Json>): Plan {
+export function planDiff(local: ReadonlyArray<Json>, remote: ReadonlyArray<Json>, options: PlanDiffOptions = {}): Plan {
   const next = index(local), prev = index(remote)
   const kind = (a: Obj): string => (typeof a.kind === "string" ? a.kind : "?")
   const added = [...next].filter(([id]) => !prev.has(id)).map(([id, a]) => ({ artifactId: id, kind: kind(a) }))
@@ -109,7 +143,29 @@ export function planDiff(local: ReadonlyArray<Json>, remote: ReadonlyArray<Json>
     `${left.artifactId}:${left.objectType ?? ""}:${left.property ?? ""}:${left.kind}:${left.ids.join(",")}`
       .localeCompare(`${right.artifactId}:${right.objectType ?? ""}:${right.property ?? ""}:${right.kind}:${right.ids.join(",")}`),
   )
-  return { added: added.sort(byId), removed: removed.sort(byId), changed: changed.sort(byId), provenanceOnly: provenanceOnly.sort(), unchanged: unchanged.sort(), warnings, narrowing }
+  const sortedAdded = added.sort(byId)
+  const sortedRemoved = removed.sort(byId)
+  const sortedChanged = changed.sort(byId)
+  const rootIds = [...new Set([
+    ...sortedAdded.map((a) => a.artifactId),
+    ...sortedRemoved.map((r) => r.artifactId),
+    ...sortedChanged.map((c) => c.artifactId),
+  ])].sort()
+  const rippleReport = options.checker?.rippleEffects
+    ? options.checker.rippleEffects(remote, local, rootIds)
+    : computeLocalRipples(remote, local, rootIds, options.budget ?? DEFAULT_RIPPLE_BUDGET)
+  return {
+    added: sortedAdded,
+    removed: sortedRemoved,
+    changed: sortedChanged,
+    provenanceOnly: provenanceOnly.sort(),
+    unchanged: unchanged.sort(),
+    warnings,
+    narrowing,
+    ripples: rippleReport.ripples,
+    rippleStatus: rippleReport.status,
+    ...(rippleReport.budgetExceeded ? { rippleBudgetExceeded: rippleReport.budgetExceeded } : {}),
+  }
 }
 
 interface TypeSnapshot {
@@ -426,6 +482,370 @@ export function lifecycleWarnings(id: string, before: Obj | undefined, after: Ob
   return out
 }
 
+interface LocalRippleResult {
+  readonly status: RippleStatus
+  readonly ripples: ReadonlyArray<PlanRipple>
+  readonly budgetExceeded?: RippleBudgetExceeded
+}
+
+function budgetExceeded(resource: "nodes" | "edges" | "steps", limit: number): LocalRippleResult {
+  return {
+    status: "unknown",
+    ripples: [],
+    budgetExceeded: { resource, limit, detail: `ripple graph ${resource} budget (${limit}) exceeded` },
+  }
+}
+
+function computeLocalRipples(
+  beforeArtifacts: ReadonlyArray<Json>,
+  afterArtifacts: ReadonlyArray<Json>,
+  changedIds: ReadonlyArray<string>,
+  budget: PlanRippleBudget,
+): LocalRippleResult {
+  const before = index(beforeArtifacts), after = index(afterArtifacts)
+  const allIds = new Set<string>([...before.keys(), ...after.keys()])
+  const removedIds = new Set<string>([...before.keys()].filter((id) => !after.has(id)))
+  const rootSet = new Set<string>(removedIds)
+  for (const id of changedIds) if (allIds.has(id)) rootSet.add(id)
+  if (allIds.size > budget.maxNodes) return budgetExceeded("nodes", budget.maxNodes)
+  if (rootSet.size === 0) return { status: "exact", ripples: [] }
+
+  const kinds = new Map<string, string>()
+  const typeOwners = new Map<string, string>()
+  const actionOwners = new Map<string, string>()
+  const ruleOwners = new Map<string, string>()
+  const lawOwners = new Map<string, string>()
+  const widgetOwners = new Map<string, string>()
+  const hasLifecycle = new Set<string>()
+  const typeParents = new Map<string, Set<string>>()
+  const typeWriters = new Map<string, Set<string>>()
+  const lawSubjects: Array<readonly [string, string]> = []
+  const edges = new Set<string>()
+  const specializationEdges = new Set<string>()
+
+  const addToSetMap = (map: Map<string, Set<string>>, key: string, value: string) => {
+    let bucket = map.get(key)
+    if (!bucket) { bucket = new Set(); map.set(key, bucket) }
+    bucket.add(value)
+  }
+
+  const indexArtifact = (id: string, art: Obj) => {
+    const k = typeof art.kind === "string" ? art.kind : "unknown"
+    kinds.set(id, k)
+    const payload = obj(art.payload)
+    if (!payload) return
+    if (k === "entity") {
+      const ot = obj(payload.objectType)
+      if (ot && typeof ot.name === "string") {
+        typeOwners.set(ot.name, id)
+        if (Array.isArray(ot.lifecycles) && ot.lifecycles.length > 0) hasLifecycle.add(id)
+      }
+      const iface = obj(payload.interface)
+      if (iface && typeof iface.name === "string") {
+        typeOwners.set(iface.name, id)
+        if (Array.isArray(iface.lifecycles) && iface.lifecycles.length > 0) hasLifecycle.add(id)
+      }
+      if (typeof payload.objectKind === "string") typeOwners.set(payload.objectKind, id)
+    } else if (k === "action" && typeof payload.actionId === "string") actionOwners.set(payload.actionId, id)
+    else if (k === "rule" && typeof payload.ruleId === "string") ruleOwners.set(payload.ruleId, id)
+    else if (k === "law" && typeof payload.id === "string") lawOwners.set(payload.id, id)
+    else if (k === "widget" && typeof payload.widgetId === "string") widgetOwners.set(payload.widgetId, id)
+  }
+
+  for (const [id, art] of before) indexArtifact(id, art)
+  for (const [id, art] of after) indexArtifact(id, art)
+
+  let steps = 0
+  const tick = (): LocalRippleResult | undefined => {
+    steps++
+    return steps > budget.maxSteps ? budgetExceeded("steps", budget.maxSteps) : undefined
+  }
+  const addEdge = (dependent: string, dependency: string): LocalRippleResult | undefined => {
+    const err = tick()
+    if (err) return err
+    if (dependent === dependency || !allIds.has(dependent) || !allIds.has(dependency)) return undefined
+    edges.add(`${dependent}\0${dependency}`)
+    return edges.size > budget.maxEdges ? budgetExceeded("edges", budget.maxEdges) : undefined
+  }
+  const addSpec = (dependent: string, dependency: string): LocalRippleResult | undefined => {
+    if (dependent !== dependency && allIds.has(dependent) && allIds.has(dependency)) {
+      specializationEdges.add(`${dependent}\0${dependency}`)
+    }
+    return addEdge(dependent, dependency)
+  }
+  const addType = (dependent: string, name: unknown): LocalRippleResult | undefined => {
+    if (typeof name !== "string") return undefined
+    const owner = typeOwners.get(name)
+    return owner ? addEdge(dependent, owner) : undefined
+  }
+  const addAction = (dependent: string, actionId: unknown): LocalRippleResult | undefined => {
+    if (typeof actionId !== "string") return undefined
+    return addEdge(dependent, actionOwners.get(actionId) ?? actionId)
+  }
+
+  for (const [id, art] of after) {
+    if (Array.isArray(art.dependencies)) {
+      for (const dep of art.dependencies) {
+        const d = obj(dep)
+        if (d && typeof d.artifactId === "string") {
+          const err = addEdge(id, d.artifactId)
+          if (err) return err
+        }
+      }
+    }
+    const k = kinds.get(id)
+    const payload = obj(art.payload)
+    if (!payload) continue
+    if (k === "entity") {
+      const ot = obj(payload.objectType)
+      if (ot && typeof ot.name === "string") {
+        const parents = [...(typeof ot.extends === "string" ? [ot.extends] : []), ...strings(ot.implements)]
+        for (const p of parents) {
+          addToSetMap(typeParents, ot.name, p)
+          const owner = typeOwners.get(p)
+          if (owner) { const err = addSpec(id, owner); if (err) return err }
+        }
+        for (const link of Array.isArray(ot.links) ? ot.links.map(obj) : []) {
+          const err = addType(id, link?.target); if (err) return err
+        }
+      }
+      const iface = obj(payload.interface)
+      if (iface && typeof iface.name === "string") {
+        for (const p of strings(iface.extends)) {
+          addToSetMap(typeParents, iface.name, p)
+          const owner = typeOwners.get(p)
+          if (owner) { const err = addSpec(id, owner); if (err) return err }
+        }
+        for (const link of Array.isArray(iface.links) ? iface.links.map(obj) : []) {
+          const err = addType(id, link?.target); if (err) return err
+        }
+      }
+      const ext = obj(payload.objectTypeExtension)
+      if (ext && typeof ext.target === "string") {
+        const owner = typeOwners.get(ext.target)
+        if (owner) { const err = addSpec(id, owner); if (err) return err }
+        for (const link of Array.isArray(ext.links) ? ext.links.map(obj) : []) {
+          const err = addType(id, link?.target); if (err) return err
+        }
+      }
+    } else if (k === "relation") {
+      const err1 = addType(id, payload.from); if (err1) return err1
+      const err2 = addType(id, payload.to); if (err2) return err2
+    } else if (k === "action") {
+      for (const write of Array.isArray(payload.writes) ? payload.writes.map(obj) : []) {
+        if (write && typeof write.entityKind === "string") {
+          const err = addType(id, write.entityKind); if (err) return err
+          addToSetMap(typeWriters, write.entityKind, id)
+        }
+      }
+      const prog = obj(payload.effectProgram)
+      if (prog) {
+        if (typeof prog.entityArtifactId === "string") {
+          const err = addEdge(id, prog.entityArtifactId); if (err) return err
+        }
+        if (typeof prog.objectKind === "string") {
+          const err = addType(id, prog.objectKind); if (err) return err
+          addToSetMap(typeWriters, prog.objectKind, id)
+        }
+      }
+      for (const s of Array.isArray(payload.slice) ? payload.slice.map(obj) : []) {
+        const err = addType(id, s?.objectType); if (err) return err
+      }
+      for (const a of Array.isArray(payload.aggregates) ? payload.aggregates.map(obj) : []) {
+        const err = addType(id, a?.objectType); if (err) return err
+      }
+      const syncRule = obj(payload.synchronousRule)
+      if (syncRule && typeof syncRule.artifactId === "string") { const err = addEdge(id, syncRule.artifactId); if (err) return err }
+      const access = obj(payload.access)
+      if (access && typeof access.artifactId === "string") { const err = addEdge(id, access.artifactId); if (err) return err }
+      const comp = obj(payload.compensation)
+      if (comp) { const err = addAction(id, comp.actionId); if (err) return err }
+    } else if (k === "rule") {
+      for (const s of Array.isArray(payload.slice) ? payload.slice.map(obj) : []) {
+        const err = addType(id, s?.objectType); if (err) return err
+      }
+      for (const cmd of Array.isArray(payload.sourceCommands) ? payload.sourceCommands.map(obj) : []) {
+        if (cmd && typeof cmd.connector === "string") { const err = addEdge(id, cmd.connector); if (err) return err }
+        if (cmd && typeof cmd.mapping === "string") { const err = addEdge(id, cmd.mapping); if (err) return err }
+      }
+    } else if (k === "policy") {
+      for (const r of Array.isArray(payload.rules) ? payload.rules.map(obj) : []) {
+        if (!r) continue
+        const err = addType(id, r.resourceType); if (err) return err
+        for (const act of strings(r.actions)) { const err2 = addAction(id, act); if (err2) return err2 }
+      }
+      if (typeof payload.appliesTo === "string") {
+        const err = addType(id, payload.appliesTo) ?? addAction(id, payload.appliesTo); if (err) return err
+      }
+    } else if (k === "law") {
+      if (typeof payload.subject === "string") {
+        const err = addType(id, payload.subject); if (err) return err
+        lawSubjects.push([id, payload.subject])
+      }
+      const scope = obj(payload.scope)
+      for (const ty of [...strings(scope?.objectTypes), ...strings(scope?.commitments)]) {
+        const err = addType(id, ty); if (err) return err
+      }
+      const resp = obj(payload.response)
+      if (resp) {
+        if (typeof resp.artifactId === "string") { const err = addEdge(id, resp.artifactId); if (err) return err }
+        const err = addType(id, resp.objectType) ?? addType(id, resp.targetType); if (err) return err
+      }
+    } else if (k === "derived") {
+      for (const inp of Array.isArray(payload.inputs) ? payload.inputs.map(obj) : []) {
+        if (inp && typeof inp.artifactId === "string") { const err = addEdge(id, inp.artifactId); if (err) return err }
+      }
+    } else if (k === "mapping") {
+      const src = obj(payload.source)
+      if (src && typeof src.schemaId === "string") { const err = addEdge(id, src.schemaId); if (err) return err }
+      for (const iface of strings(payload.interfaces)) { const err = addEdge(id, iface); if (err) return err }
+      for (const m of Array.isArray(payload.maps) ? payload.maps.map(obj) : []) {
+        const target = obj(m?.target)
+        if (target && typeof target.entity === "string") { const err = addEdge(id, target.entity); if (err) return err }
+      }
+    } else if (k === "defined_concept") {
+      const base = obj(payload.base)
+      if (base && typeof base.artifactId === "string") { const err = addSpec(id, base.artifactId); if (err) return err }
+      for (const dep of Array.isArray(payload.dependencies) ? payload.dependencies.map(obj) : []) {
+        if (dep && typeof dep.artifactId === "string") { const err = addEdge(id, dep.artifactId); if (err) return err }
+      }
+    } else if (k === "widget") {
+      for (const dd of Array.isArray(payload.dataDependencies) ? payload.dataDependencies.map(obj) : []) {
+        const err = addType(id, dd?.objectKind); if (err) return err
+      }
+      for (const ab of Array.isArray(payload.actionBindings) ? payload.actionBindings.map(obj) : []) {
+        const err = addAction(id, ab?.actionId); if (err) return err
+      }
+      const ux = obj(payload.ux)
+      if (ux) {
+        for (const db of Array.isArray(ux.dataBindings) ? ux.dataBindings.map(obj) : []) {
+          const objectRef = obj(db?.object)
+          const targetId = typeof objectRef?.id === "string" ? objectRef.id : typeof objectRef?.artifactId === "string" ? objectRef.artifactId : undefined
+          if (targetId) { const err = addEdge(id, targetId); if (err) return err }
+        }
+        for (const ab of Array.isArray(ux.actionBindings) ? ux.actionBindings.map(obj) : []) {
+          const actionRef = obj(ab?.action)
+          const targetId = typeof actionRef?.id === "string" ? actionRef.id : typeof actionRef?.artifactId === "string" ? actionRef.artifactId : undefined
+          if (targetId) { const err = addEdge(id, targetId); if (err) return err }
+        }
+      }
+    } else if (k === "model") {
+      const err1 = addType(id, obj(payload.input)?.objectType); if (err1) return err1
+      const err2 = addType(id, obj(payload.predictions)?.objectType); if (err2) return err2
+    } else if (k === "customization") {
+      const target = obj(payload.targetArtifact)
+      if (target && typeof target.artifactId === "string") { const err = addEdge(id, target.artifactId); if (err) return err }
+    } else if (k === "labels") {
+      for (const entry of Array.isArray(payload.entries) ? payload.entries.map(obj) : []) {
+        const target = obj(entry?.target)
+        if (!target) continue
+        if (typeof target.objectType === "string") { const err = addType(id, target.objectType); if (err) return err }
+        if (typeof target.actionId === "string") { const err = addAction(id, target.actionId); if (err) return err }
+        if (typeof target.ruleId === "string" && ruleOwners.has(target.ruleId)) { const err = addEdge(id, ruleOwners.get(target.ruleId)!); if (err) return err }
+        if (typeof target.lawId === "string" && lawOwners.has(target.lawId)) { const err = addEdge(id, lawOwners.get(target.lawId)!); if (err) return err }
+        if (typeof target.widgetId === "string" && widgetOwners.has(target.widgetId)) { const err = addEdge(id, widgetOwners.get(target.widgetId)!); if (err) return err }
+      }
+    } else if (k === "business_pack") {
+      for (const member of Array.isArray(payload.artifacts) ? payload.artifacts.map(obj) : []) {
+        if (member && typeof member.artifactId === "string") { const err = addEdge(id, member.artifactId); if (err) return err }
+      }
+    }
+  }
+
+  const childrenByParent = new Map<string, string[]>()
+  for (const [child, parents] of typeParents) {
+    for (const parent of parents) {
+      let list = childrenByParent.get(parent)
+      if (!list) { list = []; childrenByParent.set(parent, list) }
+      list.push(child)
+    }
+  }
+  for (const [lawId, subject] of lawSubjects) {
+    const covered = new Set<string>([subject])
+    const queue = [subject]
+    while (queue.length > 0) {
+      const err = tick(); if (err) return err
+      const cur = queue.shift()!
+      for (const child of childrenByParent.get(cur) ?? []) {
+        if (!covered.has(child)) { covered.add(child); queue.push(child) }
+      }
+    }
+    for (const ty of covered) {
+      for (const writerId of typeWriters.get(ty) ?? []) {
+        const err = addEdge(lawId, writerId); if (err) return err
+      }
+    }
+  }
+
+  const dependents = new Map<string, string[]>()
+  for (const edge of [...edges].sort()) {
+    const [dependent, dependency] = edge.split("\0") as [string, string]
+    let bucket = dependents.get(dependency)
+    if (!bucket) { bucket = []; dependents.set(dependency, bucket) }
+    bucket.push(dependent)
+  }
+
+  const triggeredBy = new Map<string, Set<string>>()
+  const bestVia = new Map<string, string[]>()
+  const sortedRoots = [...rootSet].sort()
+  for (const root of sortedRoots) {
+    const parent = new Map<string, string | null>([[root, null]])
+    const queue = [root]
+    while (queue.length > 0) {
+      const err = tick(); if (err) return err
+      const cur = queue.shift()!
+      addToSetMap(triggeredBy, cur, root)
+      const path: string[] = [cur]
+      let cursor = cur
+      while (parent.get(cursor) !== null && parent.get(cursor) !== undefined) {
+        cursor = parent.get(cursor)!
+        path.push(cursor)
+      }
+      path.reverse()
+      const existing = bestVia.get(cur)
+      if (!existing || path.length < existing.length || (path.length === existing.length && path.join("\0") < existing.join("\0"))) {
+        bestVia.set(cur, path)
+      }
+      for (const next of dependents.get(cur) ?? []) {
+        const err2 = tick(); if (err2) return err2
+        if (!parent.has(next)) { parent.set(next, cur); queue.push(next) }
+      }
+    }
+  }
+
+  const classify = (id: string, via: ReadonlyArray<string>): RippleImpactKind => {
+    if (rootSet.has(id)) return "direct_change"
+    for (const removed of removedIds) {
+      if (edges.has(`${id}\0${removed}`)) return "removed_dependency_broken"
+    }
+    const k = kinds.get(id)
+    if (k === "law") return "law_affected"
+    if (k === "policy") return "policy_affected"
+    if (k === "action" || k === "rule" || k === "connector" || k === "mapping") return "writer_affected"
+    if (k === "defined_concept") return "specialization_affected"
+    if (k === "relation") return "lifecycle_affected"
+    if (k === "entity") {
+      const prev = via.length >= 2 ? via[via.length - 2] : undefined
+      if (prev && specializationEdges.has(`${id}\0${prev}`)) return "specialization_affected"
+      return hasLifecycle.has(id) ? "lifecycle_affected" : "specialization_affected"
+    }
+    return "projection_or_ui_affected"
+  }
+
+  const ripples: PlanRipple[] = [...triggeredBy.keys()].map((id) => {
+    const via = bestVia.get(id) ?? [id]
+    return {
+      artifactId: id,
+      kind: kinds.get(id) ?? "unknown",
+      triggeredBy: [...(triggeredBy.get(id) ?? [])].sort(),
+      via,
+      impactKind: classify(id, via),
+    }
+  })
+  ripples.sort((left, right) => (left.via.length - right.via.length) || left.artifactId.localeCompare(right.artifactId))
+  return { status: "exact", ripples }
+}
+
 /** Human-readable plan. */
 export function renderPlan(plan: Plan): string {
   const lines: string[] = []
@@ -442,6 +862,14 @@ export function renderPlan(plan: Plan): string {
   section("provenance only", plan.provenanceOnly)
   section("warnings", plan.warnings.map((w) => `${w.kind.toUpperCase()} ${w.objectType}.${w.property}: ${w.detail}`))
   section("narrowing changes", plan.narrowing.map((change) => `${change.kind} ${change.objectType ?? change.artifactId}${change.property ? `.${change.property}` : ""}: ${change.detail}`))
+  if (plan.rippleStatus === "unknown") {
+    lines.push(`transitive ripples: UNKNOWN (${plan.rippleBudgetExceeded?.detail ?? "graph budget exceeded"})`)
+  } else {
+    section(
+      "transitive ripples",
+      plan.ripples.map((r) => `[${r.impactKind}] ${r.artifactId} [${r.kind}] (triggered by: ${r.triggeredBy.join(", ")}; via: ${r.via.join(" -> ")})`),
+    )
+  }
   lines.push(`unchanged: ${plan.unchanged.length}`)
   return lines.join("\n")
 }

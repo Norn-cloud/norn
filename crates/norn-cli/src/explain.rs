@@ -101,13 +101,19 @@ fn diagnostic_text(value: &serde_json::Value) -> String {
                 .pointer("/span/pointer")
                 .and_then(serde_json::Value::as_str)
                 .map_or_else(String::new, |pointer| format!("\n  at {pointer}"));
+            let witness = diagnostic
+                .get("witness")
+                .filter(|value| !value.is_null())
+                .map_or_else(String::new, |value| {
+                    format!("\n  witness: {}", crate::cell::format_witness(value))
+                });
             let advice = if text("fix").is_empty() {
                 format!("no automatic fix: {}", text("no_fix"))
             } else {
                 format!("fix: {}", text("fix"))
             };
             format!(
-                "{}: {}{location}\n  {advice}",
+                "{}: {}{location}{witness}\n  {advice}",
                 text("code"),
                 text("message")
             )
