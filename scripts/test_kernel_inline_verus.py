@@ -544,6 +544,17 @@ Thir {
             compare_artifact_ir(self.vir, self.thir, single_line, ["direct_artifact_write_allowed"]),
             counts,
         )
+        # Rustc's thir-tree may print Deref without `{ arg:` braces (indented child Expr directly).
+        bare_deref_thir = self.thir.replace(
+            "Deref {\n                                                        arg:\n                                                            Expr {",
+            "Deref\n                                                        Expr {",
+            1,
+        )
+        self.assertNotEqual(bare_deref_thir, self.thir)
+        self.assertEqual(
+            compare_artifact_ir(self.vir, bare_deref_thir, self.thir_flat, ["direct_artifact_write_allowed"]),
+            counts,
+        )
         # Line-streaming iterators (as used when reading rustc stdout) must match string input
         # and discard unrelated DefId sections.
         noise = "DefId(0:1 ~ norn_ir[abcd]::other::big_fn):\n    ignored\n"
