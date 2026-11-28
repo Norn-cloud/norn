@@ -246,7 +246,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             &format!(
                 "SELECT \"position\", \"observation_id\", \"observed\" \
                  FROM \"{}\" \
-                 WHERE \"observation_id\" LIKE 'mapping-conflict:%' \
+                 WHERE observation_id LIKE 'mapping-conflict:%' \
                  ORDER BY \"position\"",
                 crate::system::INBOX,
             ),

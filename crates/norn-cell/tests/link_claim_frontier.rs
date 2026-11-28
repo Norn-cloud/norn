@@ -1,13 +1,6 @@
 //! Lane B5 (#1028, #1549, #1931): durable indexed link-claim frontier,
 //! source `kind == "delete"` bundles, and governed `mapping.dispute.resolve`.
 #![cfg(feature = "native")]
-#![allow(
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic,
-    missing_docs,
-    reason = "integration suite for link-claim frontier, source deletes, and dispute resolution"
-)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -161,23 +154,6 @@ fn referring_parties(artifacts: &mut Vec<ArtifactEnvelope>) {
             "cardinality": { "from": "many", "to": "many" }
         }]);
     });
-    edit_artifact(artifacts, "erpnext.three.mapping", |a| {
-        let map = a["payload"]["maps"]
-            .as_array_mut()
-            .expect("maps")
-            .iter_mut()
-            .find(|m| m["id"] == "party")
-            .expect("party");
-        map["links"] = json!([{
-            "key": "input.refers_ref",
-            "link": "refers",
-            "targetMap": "party"
-        }]);
-    });
-}
-
-fn referring_parties_patch(artifacts: &mut Vec<ArtifactEnvelope>) {
-    referring_parties(artifacts);
     edit_artifact(artifacts, "erpnext.three.source", |a| {
         a["payload"]["fields"]
             .as_array_mut()
@@ -200,6 +176,23 @@ fn referring_parties_patch(artifacts: &mut Vec<ArtifactEnvelope>) {
         .sha256;
     edit_artifact(artifacts, "erpnext.three.mapping", |a| {
         a["payload"]["source"]["sha256"] = json!(source_sha);
+        let map = a["payload"]["maps"]
+            .as_array_mut()
+            .expect("maps")
+            .iter_mut()
+            .find(|m| m["id"] == "party")
+            .expect("party");
+        map["links"] = json!([{
+            "key": "input.refers_ref",
+            "link": "refers",
+            "targetMap": "party"
+        }]);
+    });
+}
+
+fn referring_parties_patch(artifacts: &mut Vec<ArtifactEnvelope>) {
+    referring_parties(artifacts);
+    edit_artifact(artifacts, "erpnext.three.mapping", |a| {
         a["payload"]["extensions"] = json!({
             "norn.feed/1": {
                 "feeds": {

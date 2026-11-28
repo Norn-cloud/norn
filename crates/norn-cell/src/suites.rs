@@ -66,6 +66,13 @@ mod kernel_quint;
 mod ledger_export;
 #[path = "../tests/lifecycle_correspondence.rs"]
 mod lifecycle_correspondence;
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    missing_docs,
+    reason = "integration suite for link-claim frontier, source deletes, and dispute resolution"
+)]
 #[path = "../tests/link_claim_frontier.rs"]
 mod link_claim_frontier;
 #[path = "../tests/link_read_page.rs"]
