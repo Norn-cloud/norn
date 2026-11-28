@@ -114,8 +114,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             index
                 .subjects
                 .get(root)
-                .map(|by_key| by_key.keys().cloned().collect())
-                .unwrap_or_default()
+                .map_or_default(|by_key| by_key.keys().cloned().collect())
         })
     }
 
@@ -851,13 +850,12 @@ pub(crate) fn bundle_superseded_by_newer<E: SqlEngine>(
         if lv.try_cmp(&q_ver) != Ok(std::cmp::Ordering::Greater) {
             continue;
         }
-        let matched = match *cached_match {
-            Some(matched) => matched,
-            None => {
-                let matched = landed_matches_connection(conn, obs_id, connection_id, frontier)?;
-                *cached_match = Some(matched);
-                matched
-            }
+        let matched = if let Some(matched) = *cached_match {
+            matched
+        } else {
+            let matched = landed_matches_connection(conn, obs_id, connection_id, frontier)?;
+            *cached_match = Some(matched);
+            matched
         };
         if matched {
             return Ok(true);
