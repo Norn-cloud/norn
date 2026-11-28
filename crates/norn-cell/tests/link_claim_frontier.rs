@@ -1683,3 +1683,107 @@ fn dispute_resolve_late_v2_delete_correction_preserves_newer_v3_edge() {
         .verify_frontier_equivalence()
         .expect("frontier equivalence after late v2 delete");
 }
+
+/// #1549 / OBS-LINK-CONTRIBUTION-1: Rejecting `v3 -> C` with surviving `v1 -> B`
+/// restores `B` without leaving a synthetic `v3` claim that would block a
+/// subsequent `v2 -> D` update from superseding `v1` and moving the edge to `D`.
+#[test]
+fn dispute_resolve_reject_v3_does_not_block_subsequent_v2_superseding_v1() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut cell = setup_with(
+        &dir.path().join("reject_v3_then_v2.sqlite"),
+        referring_parties,
+    );
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    let d = party_ref_row("P-D", "demo/party/d", "D", None);
+    for t in [&b, &c, &d] {
+        capture_kind(&mut cell, "erpnext", t, "et", "1", "upsert", "p1");
+    }
+
+    let a_v3 = party_ref_row("P-A", "demo/party/a", "A v3", Some("demo/party/c"));
+    let a_v3_bad = party_ref_row("P-A", "demo/party/a", "A v3 bad", Some("demo/party/c"));
+    let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", Some("demo/party/b"));
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", Some("demo/party/d"));
+
+    // v3 -> C lands, late v1 -> B lands (contested), conflict opens on v3 -> C.
+    capture_kind(&mut cell, "erpnext", &a_v3, "e3", "3", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &a_v1, "e1", "1", "upsert", "p1");
+    let (r3, i3) = raw_event(&cell, "erpnext", &a_v3_bad, "e3", "3", "upsert", "p1");
+    let (d3, _) = cell.inject_mapping_bundle(&r3, &i3).expect("d3");
+
+    // Reject v3 -> restores surviving v1 -> B (C removed, B added).
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: d3,
+        decision: DisputeDecision::Reject,
+        actor: "ops:mia".into(),
+        reason: "reject bogus v3".into(),
+    })
+    .expect("reject v3");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+
+    // Subsequent v2 -> D supersedes v1 AND the synthetic reject carry-forward,
+    // cleanly moving the edge from B to D!
+    capture_kind(&mut cell, "erpnext", &a_v2, "e2", "2", "upsert", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/d".to_owned()]),
+        "synthetic reject carry-forward must not pin version 3 and block v2 -> D"
+    );
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence after reject-v3 then v2");
+}
+
+/// #1549 / OBS-LINK-CONTRIBUTION-1: A lower-version `v2` conflict reusing a
+/// newer accepted `v3`'s `event_id` resolved with `accept-second-as-correction`
+/// must NOT supersede `v3`'s edge.
+#[test]
+fn dispute_resolve_lower_version_same_event_id_correction_preserves_v3() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut cell = setup_with(
+        &dir.path().join("same_event_lower_ver.sqlite"),
+        referring_parties,
+    );
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &c, "ec", "1", "upsert", "p1");
+
+    let a_v3 = party_ref_row("P-A", "demo/party/a", "A v3", Some("demo/party/b"));
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", Some("demo/party/c"));
+    capture_kind(&mut cell, "erpnext", &a_v3, "e_shared", "3", "upsert", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+
+    // Lower-version v2 reusing the exact same event_id `e_shared` opens conflict.
+    let (r2, i2) = raw_event(&cell, "erpnext", &a_v2, "e_shared", "2", "upsert", "p1");
+    let (conflict_id, inserted) = cell.inject_mapping_bundle(&r2, &i2).expect("conflict");
+    assert!(inserted && conflict_id.starts_with("mapping-conflict:"));
+
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: conflict_id,
+        decision: DisputeDecision::AcceptSecondAsCorrection,
+        actor: "ops:noah".into(),
+        reason: "lower-version same-event correction".into(),
+    })
+    .expect("resolve");
+
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()]),
+        "lower-version correction reusing v3's event_id must not supersede v3"
+    );
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence after lower-version same-event correction");
+}

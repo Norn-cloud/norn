@@ -35,6 +35,9 @@ use crate::mapping_identity::IdentityEvidence;
 use crate::read::{StoreReader, to_i64, to_u64};
 use crate::system::{FACT_VALUES, INBOX, LEDGER, RECEIPT};
 
+/// Storage version that introduced `_norn_link_claim_frontier` and
+/// `_norn_dispute_resolution` (#1028, #1549).
+pub(crate) const FRONTIER_STORAGE_VERSION: u32 = 13;
 /// Durable link-claim frontier table (storage version 13).
 pub(crate) const LINK_CLAIM_FRONTIER: &str = "_norn_link_claim_frontier";
 /// Durable dispute-resolution audit index (storage version 13).

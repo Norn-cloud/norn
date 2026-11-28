@@ -330,6 +330,21 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         }
     }
 
+    /// Whether `row` is a synthetic carry-forward claim written by a prior
+    /// `DisputeDecision::Reject`. Synthetic rejection claims hold no source
+    /// version authority of their own and are unconditionally superseded by
+    /// any subsequent real claim or subsequent rejection in that contribution.
+    pub(crate) fn is_reject_carry_claim(
+        &self,
+        row: &crate::link_claim_frontier::FrontierRow,
+    ) -> Result<bool, CellError> {
+        Ok((row.claim.observation_id.starts_with("mapping-conflict:")
+            || row.claim.observation_id.starts_with("mapping-identity:"))
+            && self
+                .dispute_resolution(&row.claim.observation_id)?
+                .is_some_and(|rec| rec.decision == "reject"))
+    }
+
     /// Compute the exact [`LinkPlan`] for resolving `dispute` with `decision`
     /// inside a commit whose object writes are already in `commit`.
     pub(crate) fn dispute_resolution_link_plan<E, C, T>(
@@ -388,12 +403,21 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     |contribution: &str| -> Result<BTreeSet<String>, CellError> {
                         let mut supersedes =
                             self.compute_claim_supersedes(contribution, &incoming_version, None)?;
-                        supersedes.extend(
-                            active_event_claims
-                                .iter()
-                                .filter(|r| r.contribution_id == contribution)
-                                .map(|r| r.claim_id.clone()),
-                        );
+                        // Only supersede a same-event active claim when its
+                        // source version is <= `incoming_version` (never let a
+                        // lower-version conflict reusing a newer event's id
+                        // supersede that newer claim).
+                        for row in &active_event_claims {
+                            if row.contribution_id != contribution {
+                                continue;
+                            }
+                            let is_newer = crate::mapping_links::parse_frontier_version(row)
+                                .and_then(|v| v.try_cmp(&incoming_version).ok())
+                                == Some(std::cmp::Ordering::Greater);
+                            if !is_newer {
+                                supersedes.insert(row.claim_id.clone());
+                            }
+                        }
                         Ok(supersedes)
                     };
                 let mut covered_contributions = BTreeSet::new();
@@ -482,13 +506,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                         if supersedes.contains(&r.claim_id) {
                             continue;
                         }
-                        let is_reject_carry =
-                            (r.claim.observation_id.starts_with("mapping-conflict:")
-                                || r.claim.observation_id.starts_with("mapping-identity:"))
-                                && self
-                                    .dispute_resolution(&r.claim.observation_id)?
-                                    .is_some_and(|rec| rec.decision == "reject");
-                        if is_reject_carry {
+                        if self.is_reject_carry_claim(&r)? {
                             reject_carry_ids.push(r.claim_id);
                         } else {
                             real_surviving.push(r);

@@ -3611,7 +3611,20 @@ impl<E: SqlEngine> CellStore<E> {
                 }
             }
             let receipt = writer.write_receipt(body)?;
-            if effective_batch.world == MAIN_WORLD {
+            // A replayed record keeps the storage version that first wrote it;
+            // pre-v13 retained records may carry generic application events whose
+            // `op` happened to be `"dispute_resolved"`, so only v13+ records
+            // populate `_norn_dispute_resolution`.
+            let record_storage_version = match origin {
+                CommitOrigin::Retained(record) => record.storage_version,
+                CommitOrigin::Host(_) | CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
+                    Some(crate::engine_release::STORAGE_VERSION)
+                }
+            };
+            if effective_batch.world == MAIN_WORLD
+                && record_storage_version
+                    .is_some_and(|v| v >= crate::link_claim_frontier::FRONTIER_STORAGE_VERSION)
+            {
                 crate::link_claim_frontier::record_dispute_resolutions_in_tx(
                     &self.conn,
                     commit_seq,
@@ -3630,13 +3643,7 @@ impl<E: SqlEngine> CellStore<E> {
                 &receipt,
                 consumed_input,
                 install_record,
-                // A replayed record keeps the version that first wrote it.
-                match origin {
-                    CommitOrigin::Retained(record) => record.storage_version,
-                    CommitOrigin::Host(_) | CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
-                        Some(crate::engine_release::STORAGE_VERSION)
-                    }
-                },
+                record_storage_version,
                 automation,
                 entries,
             )?;

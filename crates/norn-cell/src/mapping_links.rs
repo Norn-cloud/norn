@@ -95,7 +95,7 @@ pub(crate) fn parse_source_version(
         .map_err(|_err| CellError::MappingBundleMismatch)
 }
 
-fn parse_frontier_version(row: &FrontierRow) -> Option<norn_ir::SourceVersion> {
+pub(crate) fn parse_frontier_version(row: &FrontierRow) -> Option<norn_ir::SourceVersion> {
     if row.source_version.trim().is_empty() {
         return None;
     }
@@ -375,6 +375,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let mut supersedes = BTreeSet::new();
         let mut all_active_smaller = true;
         for row in &active {
+            if self.is_reject_carry_claim(row)? {
+                supersedes.insert(row.claim_id.clone());
+                continue;
+            }
             let Some(earlier) = parse_frontier_version(row) else {
                 continue;
             };
@@ -408,6 +412,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             let inactive = self.inactive_claims_for_contribution(contribution)?;
             let mut older = Vec::new();
             for row in inactive {
+                if self.is_reject_carry_claim(&row)? {
+                    continue;
+                }
                 let Some(earlier) = parse_frontier_version(&row) else {
                     continue;
                 };
