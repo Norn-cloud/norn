@@ -99,6 +99,7 @@ pub(crate) struct CommitOptions<'a> {
     pub(crate) stamp: Option<norn_kernel::CreatorStampProof>,
     pub(crate) settling: Option<crate::store::ParkedSettlement>,
     pub(crate) source_fence: crate::source_cursor::SourceReportFence<'a>,
+    pub(crate) dispute_resolve: Option<crate::mapping_dispute_resolve::DisputeResolveProof<'a>>,
 }
 
 /// The simulated outside world: maps a performed command to the kernel input
@@ -1735,6 +1736,7 @@ where
             stamp,
             settling,
             source_fence,
+            dispute_resolve,
         } = options;
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1846,9 +1848,8 @@ where
         let guard = |reader: &StoreReader<'_, S>| {
             crate::mapping_conflict::verify_source_fence_in_tx(reader, source_fence)
                 .map_err(CommitError::Host)?;
-            let authz = authorization.is_some();
             let mapping_proof =
-                crate::link_guard::verify_mapping_links(reader, &commit, mapped, authz)?;
+                crate::link_guard::verify_mapping_links(reader, &commit, mapped, dispute_resolve)?;
             if authorization.is_none() {
                 for key in commit
                     .reads

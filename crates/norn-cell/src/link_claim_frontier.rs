@@ -79,8 +79,6 @@ pub(crate) const DDL: &[&str] = &[
 pub(crate) struct FrontierRow {
     pub(crate) claim_id: String,
     pub(crate) contribution_id: String,
-    pub(crate) commit_seq: u64,
-    pub(crate) claim_ordinal: u64,
     pub(crate) source_version: String,
     pub(crate) version_kind: VersionKind,
     pub(crate) event_keys: [String; 5],
@@ -331,7 +329,10 @@ pub(crate) fn record_dispute_resolutions_in_tx<E: SqlEngine>(
             Some(crate::store::Consumption::Observation { observation_id }) => {
                 Some(observation_id.as_str())
             }
-            _ => None,
+            Some(
+                crate::store::Consumption::Timer { .. } | crate::store::Consumption::Result { .. },
+            )
+            | None => None,
         };
         if consumed_id != Some(dispute_id) {
             return Err(CellError::Encoding(format!(
@@ -412,92 +413,99 @@ pub(crate) fn migrate_v13_link_claim_frontier<E: SqlEngine>(engine: &E) -> Resul
     rebuild_inner(engine, None)
 }
 
-/// Verify `_norn_link_claim_frontier` and `_norn_dispute_resolution` against
-/// immutable `_norn_fact_values` and `_norn_ledger` on store open, rebuilding
-/// deterministically if `force_rebuild` is set (upgrade from `< 13`) or any
-/// missing, extra, or drifted row is detected.
+/// Verify `_norn_link_claim_frontier` and `_norn_dispute_resolution` field-for-field
+/// against immutable `_norn_fact_values`, `_norn_ledger`, and `_norn_receipt` on store
+/// open, rebuilding deterministically if `force_rebuild` is set (upgrade from `< 13`)
+/// or any missing, extra, or in-place modified row is detected.
 pub(crate) fn verify_or_rebuild_on_open<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     force_rebuild: bool,
 ) -> Result<(), CellError> {
-    if force_rebuild || frontier_has_drift(reader.conn)? {
+    if force_rebuild || frontier_has_drift(reader)? {
         rebuild_inner(reader.conn, Some(reader))?;
     }
     Ok(())
 }
 
-pub(crate) fn frontier_has_drift<E: SqlEngine>(conn: &E) -> Result<bool, CellError> {
-    let missing_claim: Option<i64> = conn.query_optional(
+/// Full field-for-field drift check comparing `_norn_link_claim_frontier` against
+/// immutable `_norn_fact_values` and `_norn_dispute_resolution` against `_norn_ledger`
+/// joined with `_norn_receipt`.
+pub(crate) fn frontier_has_drift<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+) -> Result<bool, CellError> {
+    let (expected_claims, expected_superseded) = decode_claims_from_fact_values(reader.conn)?;
+    let stored_claims = reader.conn.query(
         &format!(
-            "SELECT 1 FROM \"{FACT_VALUES}\" fv \
-             LEFT JOIN \"{LINK_CLAIM_FRONTIER}\" f \
-               ON f.\"claim_id\" = fv.\"id\" AND f.\"commit_seq\" = fv.\"commit_seq\" \
-             WHERE fv.\"world\" = ?1 AND fv.\"object_type\" = ?2 AND fv.\"version\" = 1 \
-               AND f.\"claim_id\" IS NULL LIMIT 1"
+            "SELECT \"claim_id\", \"contribution_id\", \"source_scope\", \"source_type\", \
+                    \"source_key\", \"role\", \"target_type\", \"target_key\", \"observation_id\", \
+                    \"commit_seq\", \"source_version\", \"version_kind\", \"event_keys_json\", \
+                    \"active\", \"claim_json\" \
+             FROM \"{LINK_CLAIM_FRONTIER}\" ORDER BY \"claim_id\""
         ),
-        params![
-            crate::MAIN_WORLD,
-            norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
-        ],
-        |row| row.get(0),
+        params![],
     )?;
-    if missing_claim.is_some() {
+    if stored_claims.len() != expected_claims.len() {
         return Ok(true);
     }
-    let extra_claim: Option<i64> = conn.query_optional(
-        &format!(
-            "SELECT 1 FROM \"{LINK_CLAIM_FRONTIER}\" f \
-             LEFT JOIN \"{FACT_VALUES}\" fv \
-               ON fv.\"world\" = ?1 AND fv.\"object_type\" = ?2 AND fv.\"version\" = 1 \
-               AND fv.\"id\" = f.\"claim_id\" AND fv.\"commit_seq\" = f.\"commit_seq\" \
-             WHERE fv.\"id\" IS NULL LIMIT 1"
-        ),
-        params![
-            crate::MAIN_WORLD,
-            norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
-        ],
-        |row| row.get(0),
-    )?;
-    if extra_claim.is_some() {
-        return Ok(true);
+    let mut expected_by_id = BTreeMap::new();
+    for (id, commit_seq, _, claim) in expected_claims {
+        expected_by_id.insert(id, (commit_seq, claim));
     }
-    let missing_resolution: Option<i64> = conn.query_optional(
-        &format!(
-            "SELECT 1 FROM \"{LEDGER}\" l \
-             LEFT JOIN \"{DISPUTE_RESOLUTION}\" r \
-               ON r.\"dispute_id\" = json_extract(l.\"event\", '$.disputeId') \
-               AND r.\"commit_seq\" = l.\"commit_seq\" \
-             WHERE l.\"world\" = ?1 AND json_extract(l.\"event\", '$.op') = 'dispute_resolved' \
-               AND r.\"dispute_id\" IS NULL LIMIT 1"
-        ),
-        params![crate::MAIN_WORLD],
-        |row| row.get(0),
-    )?;
-    if missing_resolution.is_some() {
-        return Ok(true);
+    let mut meta_cache: BTreeMap<String, ClaimSourceMeta> = BTreeMap::new();
+    for raw in stored_claims {
+        let row = SqlRow(raw);
+        let id: String = row.get(0)?;
+        let Some((exp_seq, exp_claim)) = expected_by_id.get(&id) else {
+            return Ok(true);
+        };
+        if !meta_cache.contains_key(&exp_claim.observation_id) {
+            let meta = claim_source_meta(reader.conn, Some(reader), &exp_claim.observation_id)?;
+            meta_cache.insert(exp_claim.observation_id.clone(), meta);
+        }
+        let exp_meta = meta_cache
+            .get(&exp_claim.observation_id)
+            .ok_or_else(|| CellError::Engine("missing cached claim metadata".to_owned()))?;
+        let exp_contrib = exp_claim.contribution_id()?;
+        let exp_active = i64::from(!expected_superseded.contains(&id));
+        let exp_event_keys_json = serde_json::to_string(&exp_meta.event_keys)?;
+        let exp_json = String::from_utf8(norn_ir::canonical::canonical_json_of(exp_claim)?)
+            .map_err(|e| {
+                CellError::Encoding(format!("observed link claim JSON is not UTF-8: {e}"))
+            })?;
+        let matches = row.get::<String>(1)? == exp_contrib
+            && row.get::<String>(2)? == exp_claim.source_scope
+            && row.get::<String>(3)? == exp_claim.source_type.as_str()
+            && row.get::<String>(4)? == exp_claim.source_key
+            && row.get::<String>(5)? == exp_claim.role.as_str()
+            && row.get::<Option<String>>(6)?.as_deref()
+                == exp_claim.target.as_ref().map(|t| t.object_type.as_str())
+            && row.get::<Option<String>>(7)?.as_deref()
+                == exp_claim.target.as_ref().map(|t| t.key.as_str())
+            && row.get::<String>(8)? == exp_claim.observation_id
+            && to_u64(row.get(9)?, "frontier commit_seq")? == *exp_seq
+            && row.get::<String>(10)? == exp_meta.source_version
+            && row.get::<String>(11)? == exp_meta.version_kind.as_str()
+            && row.get::<String>(12)? == exp_event_keys_json
+            && row.get::<i64>(13)? == exp_active
+            && row.get::<String>(14)? == exp_json;
+        if !matches {
+            return Ok(true);
+        }
     }
-    let extra_resolution: Option<i64> = conn.query_optional(
-        &format!(
-            "SELECT 1 FROM \"{DISPUTE_RESOLUTION}\" r \
-             LEFT JOIN \"{LEDGER}\" l \
-               ON l.\"world\" = ?1 AND l.\"commit_seq\" = r.\"commit_seq\" \
-               AND json_extract(l.\"event\", '$.op') = 'dispute_resolved' \
-               AND json_extract(l.\"event\", '$.disputeId') = r.\"dispute_id\" \
-             WHERE l.\"seq\" IS NULL LIMIT 1"
-        ),
-        params![crate::MAIN_WORLD],
-        |row| row.get(0),
-    )?;
-    Ok(extra_resolution.is_some())
+    let expected_resolutions = expected_dispute_resolutions(reader.conn)?;
+    let stored_resolutions = reader.dispute_resolutions()?;
+    Ok(stored_resolutions != expected_resolutions)
 }
 
-fn rebuild_inner<E: SqlEngine>(
+/// Decode every committed `norn.ObservedLinkClaim` from immutable
+/// `_norn_fact_values` along with the exact set of superseded claim ids.
+#[allow(
+    clippy::type_complexity,
+    reason = "internal frontier verification tuple"
+)]
+pub(crate) fn decode_claims_from_fact_values<E: SqlEngine>(
     conn: &E,
-    reader: Option<&StoreReader<'_, E>>,
-) -> Result<(), CellError> {
-    conn.execute(&format!("DELETE FROM \"{LINK_CLAIM_FRONTIER}\""), params![])?;
-    conn.execute(&format!("DELETE FROM \"{DISPUTE_RESOLUTION}\""), params![])?;
-
+) -> Result<(Vec<(String, u64, u64, ObservedLinkClaim)>, BTreeSet<String>), CellError> {
     let rows = conn.query(
         &format!(
             "SELECT \"id\", \"commit_seq\", \"snapshot\" FROM \"{FACT_VALUES}\" \
@@ -509,12 +517,10 @@ fn rebuild_inner<E: SqlEngine>(
             norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
         ],
     )?;
-
     let mut decoded = Vec::with_capacity(rows.len());
     let mut superseded_ids = BTreeSet::new();
     let mut last_commit_seq: Option<u64> = None;
     let mut ordinal: u64 = 0;
-
     for raw in rows {
         let row = SqlRow(raw);
         let id: String = row.get(0)?;
@@ -540,7 +546,89 @@ fn rebuild_inner<E: SqlEngine>(
         superseded_ids.extend(claim.supersedes.iter().cloned());
         decoded.push((id, commit_seq, ordinal, claim));
     }
+    Ok((decoded, superseded_ids))
+}
 
+fn expected_dispute_resolutions<E: SqlEngine>(
+    conn: &E,
+) -> Result<Vec<DisputeResolutionRecord>, CellError> {
+    let has_ledger = conn
+        .query_optional(
+            &format!("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '{LEDGER}'"),
+            params![],
+            |row| row.get::<i64>(0),
+        )?
+        .is_some();
+    if !has_ledger {
+        return Ok(Vec::new());
+    }
+    let rows = conn.query(
+        &format!(
+            "SELECT l.\"commit_seq\", l.\"event\", r.\"receipt_hash\", r.\"receipt\" \
+             FROM \"{LEDGER}\" l \
+             JOIN \"{RECEIPT}\" r ON r.\"commit_seq\" = l.\"commit_seq\" \
+             WHERE l.\"world\" = ?1 AND json_extract(l.\"event\", '$.op') = 'dispute_resolved' \
+             ORDER BY l.\"commit_seq\", json_extract(l.\"event\", '$.disputeId')"
+        ),
+        params![crate::MAIN_WORLD],
+    )?;
+    let mut out = Vec::with_capacity(rows.len());
+    for raw in rows {
+        let row = SqlRow(raw);
+        let commit_seq = to_u64(row.get(0)?, "dispute resolution commit_seq")?;
+        let event_text: String = row.get(1)?;
+        let receipt_hash: String = row.get(2)?;
+        let receipt_text: String = row.get(3)?;
+        let event = Value::from_json_text(&event_text).map_err(|error| {
+            CellError::Encoding(format!("invalid dispute_resolved ledger event: {error}"))
+        })?;
+        let body: crate::store::ReceiptBody = serde_json::from_str(&receipt_text)?;
+        let dispute_id = event
+            .get("disputeId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| CellError::Encoding("dispute_resolved missing disputeId".to_owned()))?;
+        let consumed_matches = matches!(
+            body.consumed.as_ref(),
+            Some(crate::store::Consumption::Observation { observation_id })
+                if observation_id == dispute_id
+        );
+        if !consumed_matches {
+            return Err(CellError::Encoding(format!(
+                "dispute_resolved ledger event for {dispute_id} disagrees with receipt consumption"
+            )));
+        }
+        out.push(DisputeResolutionRecord {
+            dispute_id: dispute_id.to_owned(),
+            decision: event
+                .get("decision")
+                .and_then(Value::as_str)
+                .ok_or_else(|| CellError::Encoding("dispute_resolved missing decision".to_owned()))?
+                .to_owned(),
+            actor: event
+                .get("actor")
+                .and_then(Value::as_str)
+                .ok_or_else(|| CellError::Encoding("dispute_resolved missing actor".to_owned()))?
+                .to_owned(),
+            reason: event
+                .get("reason")
+                .and_then(Value::as_str)
+                .ok_or_else(|| CellError::Encoding("dispute_resolved missing reason".to_owned()))?
+                .to_owned(),
+            commit_seq,
+            receipt_hash,
+        });
+    }
+    Ok(out)
+}
+
+fn rebuild_inner<E: SqlEngine>(
+    conn: &E,
+    reader: Option<&StoreReader<'_, E>>,
+) -> Result<(), CellError> {
+    conn.execute(&format!("DELETE FROM \"{LINK_CLAIM_FRONTIER}\""), params![])?;
+    conn.execute(&format!("DELETE FROM \"{DISPUTE_RESOLUTION}\""), params![])?;
+
+    let (decoded, superseded_ids) = decode_claims_from_fact_values(conn)?;
     let mut meta_cache: BTreeMap<String, ClaimSourceMeta> = BTreeMap::new();
     for (id, commit_seq, ord, claim) in &decoded {
         if !meta_cache.contains_key(&claim.observation_id) {
@@ -553,43 +641,22 @@ fn rebuild_inner<E: SqlEngine>(
         let active = !superseded_ids.contains(id);
         insert_claim_row(conn, *commit_seq, *ord, id, claim, meta, active)?;
     }
-
-    let has_ledger = conn
-        .query_optional(
-            &format!("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '{LEDGER}'"),
-            params![],
-            |row| row.get::<i64>(0),
-        )?
-        .is_some();
-    if has_ledger {
-        let res_rows = conn.query(
+    for rec in expected_dispute_resolutions(conn)? {
+        conn.execute(
             &format!(
-                "SELECT l.\"commit_seq\", l.\"event\", r.\"receipt_hash\", r.\"receipt\" \
-                 FROM \"{LEDGER}\" l \
-                 JOIN \"{RECEIPT}\" r ON r.\"commit_seq\" = l.\"commit_seq\" \
-                 WHERE l.\"world\" = ?1 AND json_extract(l.\"event\", '$.op') = 'dispute_resolved' \
-                 ORDER BY l.\"seq\""
+                "INSERT INTO \"{DISPUTE_RESOLUTION}\" \
+                 (\"dispute_id\", \"decision\", \"actor\", \"reason\", \"commit_seq\", \"receipt_hash\") \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
             ),
-            params![crate::MAIN_WORLD],
+            params![
+                rec.dispute_id,
+                rec.decision,
+                rec.actor,
+                rec.reason,
+                to_i64(rec.commit_seq, "dispute resolution commit_seq")?,
+                rec.receipt_hash,
+            ],
         )?;
-        for raw in res_rows {
-            let row = SqlRow(raw);
-            let commit_seq = to_u64(row.get(0)?, "dispute resolution commit_seq")?;
-            let event_text: String = row.get(1)?;
-            let receipt_hash: String = row.get(2)?;
-            let receipt_text: String = row.get(3)?;
-            let event = Value::from_json_text(&event_text).map_err(|error| {
-                CellError::Encoding(format!("invalid dispute_resolved ledger event: {error}"))
-            })?;
-            let body: crate::store::ReceiptBody = serde_json::from_str(&receipt_text)?;
-            record_dispute_resolutions_in_tx(
-                conn,
-                commit_seq,
-                &receipt_hash,
-                body.consumed.as_ref(),
-                &[event],
-            )?;
-        }
     }
     Ok(())
 }
@@ -598,16 +665,14 @@ fn decode_frontier_row(raw: Vec<crate::engine::SqlValue>) -> Result<FrontierRow,
     let row = SqlRow(raw);
     let claim_id: String = row.get(0)?;
     let contribution_id: String = row.get(1)?;
-    let commit_seq = to_u64(row.get(2)?, "frontier commit_seq")?;
-    let claim_ordinal = to_u64(row.get(3)?, "frontier claim_ordinal")?;
-    let source_version: String = row.get(4)?;
-    let version_kind_text: String = row.get(5)?;
+    let source_version: String = row.get(2)?;
+    let version_kind_text: String = row.get(3)?;
     let version_kind =
         VersionKind::parse_wire(&version_kind_text).unwrap_or(VersionKind::Lexicographical);
-    let event_keys_json: String = row.get(6)?;
+    let event_keys_json: String = row.get(4)?;
     let event_keys: [String; 5] = serde_json::from_str(&event_keys_json)?;
-    let active = row.get::<i64>(7)? != 0;
-    let claim_json: String = row.get(8)?;
+    let active = row.get::<i64>(5)? != 0;
+    let claim_json: String = row.get(6)?;
     let claim_val = Value::from_json_text(&claim_json).map_err(|error| {
         CellError::Encoding(format!("frontier claim JSON for {claim_id}: {error}"))
     })?;
@@ -617,8 +682,6 @@ fn decode_frontier_row(raw: Vec<crate::engine::SqlValue>) -> Result<FrontierRow,
     Ok(FrontierRow {
         claim_id,
         contribution_id,
-        commit_seq,
-        claim_ordinal,
         source_version,
         version_kind,
         event_keys,
@@ -627,7 +690,7 @@ fn decode_frontier_row(raw: Vec<crate::engine::SqlValue>) -> Result<FrontierRow,
     })
 }
 
-const SELECT_FRONTIER_COLS: &str = "\"claim_id\", \"contribution_id\", \"commit_seq\", \"claim_ordinal\", \
+const SELECT_FRONTIER_COLS: &str = "\"claim_id\", \"contribution_id\", \
      \"source_version\", \"version_kind\", \"event_keys_json\", \"active\", \"claim_json\"";
 
 impl<E: SqlEngine> StoreReader<'_, E> {

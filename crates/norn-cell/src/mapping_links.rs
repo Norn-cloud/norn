@@ -154,50 +154,56 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     }
 
     /// Differential check (#1028): verify that `_norn_link_claim_frontier`
-    /// matches immutable `_norn_fact_values` 1-to-1 and that its `active = 1`
-    /// subset agrees with a full-history fold over every committed claim.
+    /// matches immutable `_norn_fact_values` field-for-field and that its
+    /// `active = 1` subset agrees with a full-history fold directly over
+    /// immutable `_norn_fact_values`.
     ///
     /// # Errors
     /// Returns [`CellError::Encoding`] if the frontier diverges from immutable
-    /// `_norn_fact_values` or the full history fold.
+    /// `_norn_fact_values`, `_norn_ledger`, or the full history fold.
     pub fn verify_frontier_equivalence(&self) -> Result<(), CellError> {
         self.check_live()?;
-        if crate::link_claim_frontier::frontier_has_drift(self.conn)? {
+        if crate::link_claim_frontier::frontier_has_drift(self)? {
             return Err(CellError::Encoding(
                 "link-claim frontier drifted from immutable _norn_fact_values or _norn_ledger"
                     .to_owned(),
             ));
         }
-        let all = self.all_frontier_claims()?;
-        let mut all_superseded = BTreeSet::new();
-        for row in &all {
-            all_superseded.extend(row.claim.supersedes.iter().cloned());
-        }
-        for row in &all {
-            let expected_active = !all_superseded.contains(&row.claim_id);
-            if row.active != expected_active {
-                return Err(CellError::Encoding(format!(
-                    "frontier active flag mismatch for claim {}: stored={}, expected={expected_active}",
-                    row.claim_id, row.active
-                )));
-            }
-        }
+        let (immutable_claims, _) =
+            crate::link_claim_frontier::decode_claims_from_fact_values(self.conn)?;
+        let active_rows = self.all_frontier_claims()?;
         let catalog = TypeCatalog::new(self.model().object_types())
             .with_interfaces(self.model().interfaces());
         let model = CommitModel::new(&catalog);
         let fact = |object_type: &norn_ir::ObjectTypeName, key: &str| {
             model.canonical(&FactKey::new(object_type.as_str(), key))
         };
-        let to_entry = |row: &FrontierRow| Entry {
-            claim: row.claim.clone(),
-            id: row.claim_id.clone(),
-            contribution: row.contribution_id.clone(),
-            event_keys: row.event_keys.clone(),
-            fresh: false,
-            disputed: false,
-        };
-        let all_entries: Vec<Entry> = all.iter().map(to_entry).collect();
-        let active_entries: Vec<Entry> = all.iter().filter(|r| r.active).map(to_entry).collect();
+        let all_entries: Vec<Entry> = immutable_claims
+            .into_iter()
+            .map(|(id, _, _, claim)| {
+                let contribution = claim.contribution_id()?;
+                Ok(Entry {
+                    claim,
+                    id,
+                    contribution,
+                    event_keys: Default::default(),
+                    fresh: false,
+                    disputed: false,
+                })
+            })
+            .collect::<Result<_, CellError>>()?;
+        let active_entries: Vec<Entry> = active_rows
+            .into_iter()
+            .filter(|r| r.active)
+            .map(|row| Entry {
+                claim: row.claim,
+                id: row.claim_id,
+                contribution: row.contribution_id,
+                event_keys: row.event_keys,
+                fresh: false,
+                disputed: false,
+            })
+            .collect();
         let target = |e: &Entry| {
             e.claim
                 .target

@@ -104,6 +104,37 @@ pub struct DisputeResolutionOutcome {
     pub receipt_hash: String,
 }
 
+/// Unforgeable crate-private proof minted exclusively by
+/// [`SqliteCell::resolve_mapping_dispute`] and verified inside the commit
+/// transaction by `link_guard::verify_mapping_links`. Prevents generic
+/// `CellHost::commit` and `CellHost::commit_observed` callers from forging a
+/// dispute resolution.
+#[derive(Clone, Copy)]
+pub(crate) struct DisputeResolveProof<'a> {
+    dispute_id: &'a str,
+    decision: DisputeDecision,
+    actor: &'a str,
+    reason: &'a str,
+}
+
+impl<'a> DisputeResolveProof<'a> {
+    pub(crate) const fn dispute_id(&self) -> &'a str {
+        self.dispute_id
+    }
+
+    pub(crate) const fn decision(&self) -> DisputeDecision {
+        self.decision
+    }
+
+    pub(crate) const fn actor(&self) -> &'a str {
+        self.actor
+    }
+
+    pub(crate) const fn reason(&self) -> &'a str {
+        self.reason
+    }
+}
+
 /// Decoded, verified pending dispute evidence ready for planning or verification.
 pub(crate) enum VerifiedDispute {
     Conflict(Box<MappingConflict>),
@@ -223,29 +254,44 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .is_some())
     }
 
-    /// Whether `bundle` was the original capture of a `mapping-conflict:` row
-    /// that an operator subsequently resolved with `accept-second-as-correction`
-    /// or `reject` (so `bundle` must never land afterward).
+    /// Whether `bundle`'s canonical NFC source event `(connector, partition,
+    /// source, source_id, event_id)` was already resolved via
+    /// `accept-second-as-correction` or `reject` (so neither the original
+    /// capture nor a recapture under a newer definition pin can later land and
+    /// undo the resolution).
     pub(crate) fn bundle_superseded_by_dispute_resolution(
         &self,
         bundle: &MappingBundle,
     ) -> Result<bool, CellError> {
-        let bundle_id = format!("mapping-bundle:{}", bundle.digest);
-        let row: Option<i64> = self.conn.query_optional(
+        let target_keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
+            .map(|k| norn_ir::canonical::nfc(&k));
+        let rows = self.conn.query(
             &format!(
-                "SELECT 1 FROM \"{}\" i \
+                "SELECT i.\"observation_id\", i.\"observed\" FROM \"{}\" i \
                  JOIN \"{}\" r ON r.\"dispute_id\" = i.\"observation_id\" \
-                 WHERE substr(i.\"observation_id\", 1, 17) = 'mapping-conflict:' \
-                   AND json_extract(i.\"observed\", '$.input.acceptedBundleId') = ?1 \
-                   AND r.\"decision\" IN ('accept-second-as-correction', 'reject') \
-                 LIMIT 1",
+                 WHERE r.\"decision\" IN ('accept-second-as-correction', 'reject')",
                 crate::system::INBOX,
                 crate::link_claim_frontier::DISPUTE_RESOLUTION,
             ),
-            crate::engine::params![bundle_id],
-            |row| row.get(0),
+            crate::engine::params![],
         )?;
-        Ok(row.is_some())
+        for values in rows {
+            let row = crate::engine::SqlRow(values);
+            let id: String = row.get(0)?;
+            let encoded: String = row.get(1)?;
+            let Some((resolved_bundle, _)) =
+                crate::mapping_conflict::decode_evidence_with_identity(&id, &encoded)
+            else {
+                continue;
+            };
+            let resolved_keys =
+                crate::mapping_identity::keys(&resolved_bundle.raw, &resolved_bundle.input)?
+                    .map(|k| norn_ir::canonical::nfc(&k));
+            if resolved_keys == target_keys {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Load and cryptographically recheck a pending dispute row from `_norn_inbox`.
@@ -379,24 +425,61 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 }
             }
             DisputeDecision::Reject => {
-                let mut withdrawn = BTreeSet::new();
+                // Supersede ONLY the active claims belonging to the disputed
+                // source event (never an undisputed newer active claim in the
+                // same contribution, e.g. current v3 alongside a late contested
+                // disputed v2).
+                let mut by_contrib: std::collections::BTreeMap<
+                    String,
+                    Vec<&crate::link_claim_frontier::FrontierRow>,
+                > = std::collections::BTreeMap::new();
                 for row in &active_event_claims {
-                    if row.claim.target.is_none() || !withdrawn.insert(row.contribution_id.clone())
-                    {
-                        continue;
+                    if row.claim.target.is_some() {
+                        by_contrib
+                            .entry(row.contribution_id.clone())
+                            .or_default()
+                            .push(row);
                     }
-                    let active = self.active_claims_for_contribution(&row.contribution_id)?;
-                    let supersedes: BTreeSet<String> =
-                        active.into_iter().map(|r| r.claim_id).collect();
+                }
+                for (contribution_id, disputed_rows) in by_contrib {
+                    let Some(first) = disputed_rows.first() else {
+                        continue;
+                    };
+                    let disputed_ids: BTreeSet<String> =
+                        disputed_rows.iter().map(|r| r.claim_id.clone()).collect();
+                    let all_active = self.active_claims_for_contribution(&contribution_id)?;
+                    let surviving: Vec<_> = all_active
+                        .into_iter()
+                        .filter(|r| !disputed_ids.contains(&r.claim_id))
+                        .collect();
+                    // If an undisputed surviving active claim exists in this
+                    // contribution (all agreeing on one target), carry that
+                    // surviving target on the superseding claim so the
+                    // survivor stays `Standing::Current` instead of becoming
+                    // contested against a `target: None` withdrawal.
+                    let surviving_targets: BTreeSet<_> = surviving
+                        .iter()
+                        .map(|r| {
+                            r.claim
+                                .target
+                                .as_ref()
+                                .map(|t| (t.object_type.clone(), t.key.clone()))
+                        })
+                        .collect();
+                    let replacement_target = if surviving_targets.len() == 1 {
+                        surviving.first().and_then(|r| r.claim.target.clone())
+                    } else {
+                        None
+                    };
                     let withdrawal = ObservedLinkClaim {
                         observation_id: dispute_id.to_owned(),
-                        source_scope: row.claim.source_scope.clone(),
-                        source_type: row.claim.source_type.clone(),
-                        source_key: row.claim.source_key.clone(),
-                        role: row.claim.role.clone(),
-                        target: None,
-                        provenance: row.claim.provenance.clone(),
-                        supersedes,
+                        source_scope: first.claim.source_scope.clone(),
+                        source_type: first.claim.source_type.clone(),
+                        source_key: first.claim.source_key.clone(),
+                        role: first.claim.role.clone(),
+                        target: replacement_target,
+                        provenance: first.claim.provenance.clone(),
+                        supersedes: disputed_ids,
                     };
                     scope.sources.insert(withdrawal.source_key.clone());
                     fresh_claims.push((withdrawal, event_keys.clone()));
@@ -483,8 +566,29 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         authorization
             .seal_snapshot_event_chunks(&commit)
             .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
+        if !authorization.validates(&commit) {
+            return Err(CellError::ObservationCommit(Box::new(
+                norn_kernel::CommitError::ObservationAuthorization,
+            )));
+        }
+        let references = authorization.reference_reads(&commit).to_vec();
+        authorization.append_findings(&mut commit);
+        let proof = DisputeResolveProof {
+            dispute_id: &input.dispute_id,
+            decision: input.decision,
+            actor: &input.actor,
+            reason: &input.reason,
+        };
         let commit_receipt = self
-            .commit_observed_evidence(commit, &authorization, &[])
+            .commit_admitted(
+                commit,
+                crate::host::CommitOptions {
+                    authorization: Some(&authorization),
+                    references: &references,
+                    dispute_resolve: Some(proof),
+                    ..Default::default()
+                },
+            )
             .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
         let stored_receipt = self
             .store()

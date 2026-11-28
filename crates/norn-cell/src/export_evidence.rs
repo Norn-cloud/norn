@@ -685,8 +685,11 @@ pub(crate) fn restore_observation_input<E: SqlEngine>(
 ) -> Result<(), CellError> {
     let seq = record.receipt.body.commit_seq;
     let mismatch = || CellError::HistoricalValueUnproven(format!("consumed input at commit {seq}"));
-    let main_bundle_ok = !observation_id.starts_with("mapping-bundle:")
-        || valid_evidence_observation(reader, observation_id, observed);
+    let is_evidence_obs = observation_id.starts_with("mapping-bundle:")
+        || observation_id.starts_with("mapping-conflict:")
+        || observation_id.starts_with("mapping-identity:");
+    let main_bundle_ok =
+        !is_evidence_obs || valid_evidence_observation(reader, observation_id, observed);
     if position == 0
         || record.batch.consumes
             != Some(crate::Consumption::Observation {
@@ -703,7 +706,7 @@ pub(crate) fn restore_observation_input<E: SqlEngine>(
         position,
         observation_id,
         observed,
-        observation_id.starts_with("mapping-bundle:"),
+        is_evidence_obs,
         &mismatch,
     )? {
         pre_existing.insert(observation_id);

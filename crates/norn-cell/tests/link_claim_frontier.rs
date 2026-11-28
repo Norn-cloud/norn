@@ -1204,3 +1204,132 @@ fn obs_page_equiv_target_arrival_then_source_delete_and_frontier_heal_on_open() 
             .len(),
     );
 }
+
+/// #1549: Rejecting a late contested disputed v2 claim in a contribution that
+/// already has an undisputed current v3 claim must supersede ONLY v2 and keep
+/// v3's edge alive and Current.
+#[test]
+fn dispute_resolve_reject_preserves_undisputed_newer_claim_in_same_contribution() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut cell = setup_with(&dir.path().join("reject_late_v2.sqlite"), referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    let a_v3 = party_ref_row("P-A", "demo/party/a", "A v3", Some("demo/party/b"));
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", Some("demo/party/c"));
+    let a_v2_conflict = party_ref_row("P-A", "demo/party/a", "A v2 BAD", Some("demo/party/c"));
+
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &c, "ec", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &a_v3, "e3", "3", "upsert", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+    capture_kind(&mut cell, "erpnext", &a_v2, "e2", "2", "upsert", "p1");
+    let (raw_bad, input_bad) =
+        raw_event(&cell, "erpnext", &a_v2_conflict, "e2", "2", "upsert", "p1");
+    let (conflict_id, inserted) = cell
+        .inject_mapping_bundle(&raw_bad, &input_bad)
+        .expect("conflict v2");
+    assert!(inserted && conflict_id.starts_with("mapping-conflict:"));
+
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: conflict_id,
+        decision: DisputeDecision::Reject,
+        actor: "ops:frank".into(),
+        reason: "stale late event".into(),
+    })
+    .expect("reject v2");
+
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()]),
+        "rejecting late disputed v2 must not remove undisputed current v3 edge"
+    );
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence after late-v2 reject");
+}
+
+/// #1028 / #1549: In-place mutation of `_norn_link_claim_frontier.active` or
+/// `_norn_dispute_resolution.actor` is caught by `verify_frontier_equivalence()`
+/// and automatically healed from immutable `_norn_fact_values` and `_norn_ledger`
+/// on reopen; public `CellHost::commit_observed` cannot forge a resolution.
+#[test]
+fn in_place_frontier_and_audit_tamper_heals_on_open_and_commit_observed_cannot_forge() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("tamper_heal.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let a1 = party_ref_row("P-A", "demo/party/a", "A1", Some("demo/party/b"));
+    let a2 = party_ref_row("P-A", "demo/party/a", "A2", Some("demo/party/b"));
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &a1, "e1", "1", "upsert", "p1");
+    let (raw2, input2) = raw_event(&cell, "erpnext", &a2, "e1", "1", "upsert", "p1");
+    let (conflict_id, _) = cell
+        .inject_mapping_bundle(&raw2, &input2)
+        .expect("conflict");
+
+    // Public `CellHost::commit_observed` must fail closed on a forged dispute consumption.
+    let forged = norn_kernel::CellCommit::<ObservationEvent, RuntimeObject, RuntimeObject>::empty()
+        .consuming(norn_kernel::Consumed::Observation {
+            id: ObservationId(conflict_id.clone()),
+        })
+        .with_events(vec![ObservationEvent::DisputeResolved {
+            dispute_id: conflict_id.clone(),
+            decision: "accept-first".into(),
+            actor: "forger".into(),
+            reason: "forged".into(),
+        }]);
+    assert!(
+        norn_kernel::CellHost::commit_observed(
+            &mut cell,
+            forged,
+            norn_kernel::ObservationAuthorization::empty(),
+        )
+        .is_err(),
+        "public CellHost::commit_observed cannot forge dispute resolution"
+    );
+
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: conflict_id.clone(),
+        decision: DisputeDecision::AcceptFirst,
+        actor: "ops:grace".into(),
+        reason: "verified".into(),
+    })
+    .expect("resolve");
+    let model = cell.store().model().clone();
+    drop(cell);
+
+    {
+        let conn = rusqlite::Connection::open(&path).expect("sqlite");
+        conn.execute(
+            "UPDATE \"_norn_link_claim_frontier\" SET \"active\" = 0",
+            [],
+        )
+        .expect("corrupt active");
+        conn.execute(
+            "UPDATE \"_norn_dispute_resolution\" SET \"actor\" = 'tampered'",
+            [],
+        )
+        .expect("corrupt actor");
+    }
+
+    let reopened = CellStore::open(&path, model, StoreOptions::default()).expect("reopen heals");
+    reopened
+        .read()
+        .verify_frontier_equivalence()
+        .expect("healed frontier matches immutable fact values");
+    let res = reopened
+        .read()
+        .dispute_resolution(&conflict_id)
+        .expect("res")
+        .expect("present");
+    assert_eq!(
+        res.actor, "ops:grace",
+        "audit actor restored from immutable ledger"
+    );
+}

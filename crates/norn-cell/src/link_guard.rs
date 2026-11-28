@@ -96,10 +96,10 @@ pub(crate) fn verify_mapping_links<E: 'static, C, I, S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     commit: &CellCommit<E, C, I>,
     mapped: &[crate::mapping_bundle::MappingBundle],
-    allow_dispute_resolve: bool,
+    dispute_resolve: Option<crate::mapping_dispute_resolve::DisputeResolveProof<'_>>,
 ) -> Result<Option<VerifiedMappingProof>, CommitError<CellError>> {
     // Reject any attempt to emit `ObservationEvent::DisputeResolved` outside
-    // the governed `resolve_mapping_dispute` path.
+    // the governed `resolve_mapping_dispute` path (including public `CellHost::commit_observed`).
     let has_dispute_event = commit.events.iter().any(|event| {
         let any: &dyn std::any::Any = event;
         matches!(
@@ -107,7 +107,7 @@ pub(crate) fn verify_mapping_links<E: 'static, C, I, S: SqlEngine>(
             Some(norn_kernel::ObservationEvent::DisputeResolved { .. })
         )
     });
-    if has_dispute_event && !allow_dispute_resolve {
+    if has_dispute_event && dispute_resolve.is_none() {
         return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
     }
     // OBS-EVIDENCE-1: preparation cannot authorize a bundle disputed before BEGIN.
@@ -122,7 +122,7 @@ pub(crate) fn verify_mapping_links<E: 'static, C, I, S: SqlEngine>(
     {
         if (observation_id.starts_with("mapping-conflict:")
             || observation_id.starts_with("mapping-identity:"))
-            && !allow_dispute_resolve
+            && dispute_resolve.is_none()
         {
             return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
         }
@@ -145,43 +145,44 @@ pub(crate) fn verify_mapping_links<E: 'static, C, I, S: SqlEngine>(
         if applied != expected {
             return Err(CommitError::Host(CellError::SourceEvidenceChanged));
         }
-    } else if !mapped.is_empty() || has_dispute_event {
+    } else if !mapped.is_empty() || has_dispute_event || dispute_resolve.is_some() {
         return Err(CommitError::Host(CellError::MappingBundleMismatch));
     }
     if mapped.is_empty() {
-        if let Some(norn_kernel::Consumed::Observation {
-            id: norn_kernel::ObservationId(observation_id),
-        }) = &commit.consumes
-            && (observation_id.starts_with("mapping-conflict:")
-                || observation_id.starts_with("mapping-identity:"))
-        {
-            return verify_dispute_resolution_links(reader, commit, observation_id);
-        }
-        if has_dispute_event {
-            return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
+        if let Some(proof) = dispute_resolve {
+            return verify_dispute_resolution_links(reader, commit, proof);
         }
         return Ok(None);
+    }
+    if dispute_resolve.is_some() {
+        return Err(CommitError::Host(CellError::UnsupportedMappingProfile));
     }
     let plan = reader
         .mapping_link_plan(mapped, commit)
         .map_err(CommitError::Host)?;
-    if plan.links != commit.links || !fresh_claim_writes_match(&plan.fresh, commit)? {
+    if plan.links != commit.links || !fresh_claim_writes_match(reader, &plan.fresh, commit)? {
         return Err(CommitError::Host(CellError::SourceEvidenceChanged));
     }
     Ok(Some(VerifiedMappingProof(())))
 }
 
-fn fresh_claim_writes_match<E, C, I>(
+fn fresh_claim_writes_match<E, C, I, S: SqlEngine>(
+    reader: &StoreReader<'_, S>,
     expected_fresh: &[norn_ir::mapping::ObservedLinkClaim],
     commit: &CellCommit<E, C, I>,
 ) -> Result<bool, CommitError<CellError>> {
+    let catalog = reader.model().type_catalog();
+    let claim_type = ObjectTypeName(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE.to_owned());
     let mut expected = BTreeMap::new();
     for claim in expected_fresh {
         let id = claim
             .id()
             .map_err(|e| CommitError::Host(CellError::Encoding(e.to_string())))?;
-        let values = claim
+        let raw_values = claim
             .values()
+            .map_err(|e| CommitError::Host(CellError::Encoding(e.to_string())))?;
+        let values = catalog
+            .effective_object_values(&claim_type, &raw_values)
             .map_err(|e| CommitError::Host(CellError::Encoding(e.to_string())))?;
         expected.insert(id, values);
     }
@@ -201,34 +202,44 @@ fn fresh_claim_writes_match<E, C, I>(
 fn verify_dispute_resolution_links<E: 'static, C, I, S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     commit: &CellCommit<E, C, I>,
-    dispute_id: &str,
+    proof: crate::mapping_dispute_resolve::DisputeResolveProof<'_>,
 ) -> Result<Option<VerifiedMappingProof>, CommitError<CellError>> {
+    let dispute_id = proof.dispute_id();
+    let Some(norn_kernel::Consumed::Observation {
+        id: norn_kernel::ObservationId(consumed_id),
+    }) = &commit.consumes
+    else {
+        return Err(CommitError::Host(CellError::MappingBundleMismatch));
+    };
+    if consumed_id != dispute_id {
+        return Err(CommitError::Host(CellError::MappingBundleMismatch));
+    }
     let (_, dispute) = reader
         .load_verified_pending_dispute(dispute_id)
         .map_err(CommitError::Host)?;
-    let decision = commit
-        .events
-        .iter()
-        .find_map(|event| {
-            let any: &dyn std::any::Any = event;
-            let obs = any.downcast_ref::<norn_kernel::ObservationEvent>()?;
-            let norn_kernel::ObservationEvent::DisputeResolved {
-                dispute_id: id,
-                decision,
-                ..
-            } = obs
-            else {
-                return None;
-            };
-            (id == dispute_id)
-                .then(|| crate::mapping_dispute_resolve::DisputeDecision::parse_wire(decision))
-                .flatten()
-        })
-        .ok_or(CommitError::Host(CellError::MappingBundleMismatch))?;
+    let matches_event = commit.events.iter().any(|event| {
+        let any: &dyn std::any::Any = event;
+        let Some(norn_kernel::ObservationEvent::DisputeResolved {
+            dispute_id: id,
+            decision,
+            actor,
+            reason,
+        }) = any.downcast_ref::<norn_kernel::ObservationEvent>()
+        else {
+            return false;
+        };
+        id == dispute_id
+            && decision == proof.decision().as_str()
+            && actor == proof.actor()
+            && reason == proof.reason()
+    });
+    if !matches_event {
+        return Err(CommitError::Host(CellError::MappingBundleMismatch));
+    }
     let plan = reader
-        .dispute_resolution_link_plan(dispute_id, &dispute, decision, commit)
+        .dispute_resolution_link_plan(dispute_id, &dispute, proof.decision(), commit)
         .map_err(CommitError::Host)?;
-    if plan.links != commit.links || !fresh_claim_writes_match(&plan.fresh, commit)? {
+    if plan.links != commit.links || !fresh_claim_writes_match(reader, &plan.fresh, commit)? {
         return Err(CommitError::Host(CellError::SourceEvidenceChanged));
     }
     Ok(Some(VerifiedMappingProof(())))
