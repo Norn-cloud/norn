@@ -40,6 +40,22 @@ fn input_property_finding(
     diagnostic
 }
 
+fn descendant_views<'a>(
+    model: &'a Model<'_>,
+    kind: &str,
+) -> Vec<&'a crate::entity_instance::EffectiveObjectType> {
+    model
+        .by_name
+        .values()
+        .flatten()
+        .filter_map(|defined| defined.effective_object_type.as_ref()?.as_ref().ok())
+        .filter(|effective| {
+            effective.name.as_str() == kind
+                || effective.lineage.iter().any(|anc| anc.as_str() == kind)
+        })
+        .collect()
+}
+
 /// The per-action findings: caller-writable protected properties, a writer
 /// on a generated-key create, and each `independentOf` property.
 pub(super) fn actor_binding_findings(
@@ -51,10 +67,7 @@ pub(super) fn actor_binding_findings(
     let program = root.effect_program.as_ref();
     let kind = program.map(|program| program.target().object_kind);
     let view = kind.and_then(|kind| model.effective_object_type_named(kind));
-    let protected = |field: &str| {
-        view.and_then(|view| view.property(field))
-            .is_some_and(EffectiveProperty::protected)
-    };
+    let target_views = kind.map_or_default(|kind| descendant_views(model, kind));
     if let (Some(ActionEffectProgram::UpsertInputObject { write_mode, .. }), Some(kind)) =
         (program, kind)
     {
@@ -69,32 +82,58 @@ pub(super) fn actor_binding_findings(
                 "/payload/synchronousRule",
             ));
         }
-        if let Some(JsonValue::Object(properties)) = root.input_schema.get("properties") {
-            let stamped = root.actor_stamped_fields();
-            for field in properties.keys().filter(|field| protected(field.as_str())) {
-                let message = match (stamped.contains(field), write_mode) {
-                    (true, UpsertWriteMode::CreateOnly) => continue,
-                    (
-                        true,
-                        UpsertWriteMode::Upsert
-                        | UpsertWriteMode::DraftOnly { .. }
-                        | UpsertWriteMode::UpdateOnly,
-                    ) => format!(
-                        "the stamp of protected property {field:?} of {kind:?} requires writeMode create_only; an update would overwrite the recorded principal"
-                    ),
-                    (false, _) => format!(
-                        "the upsert writes input property {field:?}, a protected actor property of {kind:?}, from caller input; stamp it from the verified principal instead (derive {:?} with inputRequired false, `fromCaller`)",
-                        norn_ir::ACTOR_SUBJECT_STAMP
-                    ),
-                };
-                findings.push(input_property_finding(
-                    codes::TARGET_NOT_WRITABLE,
-                    message,
-                    artifact,
-                    field,
-                ));
-            }
+        upsert_origin_findings(artifact, root, write_mode, &target_views, &mut findings);
+    }
+    if let (
+        Some(ActionEffectProgram::FireTransition {
+            lifecycle,
+            transition,
+            accept_receipt,
+            set_fields,
+            ..
+        }),
+        Some(base_kind),
+    ) = (program, kind)
+    {
+        transition_origin_findings(
+            artifact,
+            root,
+            accept_receipt.as_ref(),
+            set_fields,
+            &target_views,
+            &mut findings,
+        );
+        let subtype_views: Vec<_> = target_views
+            .iter()
+            .copied()
+            .filter(|v| v.name.as_str() != base_kind)
+            .collect();
+        if !subtype_views.is_empty() {
+            findings.extend(super::set_fields::subtype_transition_guard_findings(
+                artifact,
+                root,
+                &subtype_views,
+                lifecycle,
+                transition,
+                set_fields,
+            ));
         }
+    }
+    if let (
+        Some(ActionEffectProgram::MutateParentWithRows {
+            parent_values_field,
+            ..
+        }),
+        Some(_),
+    ) = (program, kind)
+    {
+        parent_rows_origin_findings(
+            artifact,
+            root,
+            parent_values_field,
+            &target_views,
+            &mut findings,
+        );
     }
     let transition = matches!(program, Some(ActionEffectProgram::FireTransition { .. }));
     let mut seen = BTreeSet::new();
@@ -112,6 +151,323 @@ pub(super) fn actor_binding_findings(
         }
     }
     findings
+}
+
+fn parent_rows_origin_findings(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    parent_values_field: &str,
+    views: &[&crate::entity_instance::EffectiveObjectType],
+    findings: &mut Vec<Diagnostic>,
+) {
+    if views.is_empty() {
+        return;
+    }
+    let Some(parent_fields) = root
+        .input_schema
+        .get("properties")
+        .and_then(JsonValue::as_object)
+        .and_then(|props| props.get(parent_values_field))
+        .and_then(JsonValue::as_object)
+        .and_then(|schema| schema.get("properties"))
+        .and_then(JsonValue::as_object)
+    else {
+        for view in views {
+            let kind = view.name.as_str();
+            for prop in &view.properties {
+                if prop.computed {
+                    continue;
+                }
+                if prop.protected()
+                    || prop.immutable_after_create()
+                    || prop
+                        .origin()
+                        .is_some_and(|origin| origin != norn_ir::PropertyOrigin::Caller)
+                {
+                    findings.push(finding(
+                        codes::TARGET_NOT_WRITABLE,
+                        format!(
+                            "mutate_parent_with_rows with open {parent_values_field:?} schema cannot target {kind:?}, which declares restricted property {:?}",
+                            prop.id.as_str()
+                        ),
+                        artifact,
+                        &format!("/payload/inputSchema/properties/{parent_values_field}"),
+                    ));
+                }
+            }
+        }
+        return;
+    };
+    for view in views {
+        let kind = view.name.as_str();
+        for field in parent_fields.keys() {
+            let Some(prop) = view.property(field.as_str()) else {
+                continue;
+            };
+            if prop.protected() {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!(
+                        "property {field:?} of {kind:?} is protected and cannot be written by mutate_parent_with_rows"
+                    ),
+                    artifact,
+                    &format!("/payload/inputSchema/properties/{parent_values_field}/properties/{field}"),
+                ));
+            }
+            if prop.immutable_after_create() {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!(
+                        "property {field:?} of {kind:?} is immutableAfterCreate and cannot be written by mutate_parent_with_rows"
+                    ),
+                    artifact,
+                    &format!("/payload/inputSchema/properties/{parent_values_field}/properties/{field}"),
+                ));
+            }
+            if let Some(origin) = prop.origin()
+                && origin != norn_ir::PropertyOrigin::Caller
+            {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!(
+                        "property {field:?} of {kind:?} has non-caller origin `{origin:?}` and cannot be written from mutate_parent_with_rows parentValues"
+                    ),
+                    artifact,
+                    &format!("/payload/inputSchema/properties/{parent_values_field}/properties/{field}"),
+                ));
+            }
+        }
+    }
+}
+
+fn upsert_origin_findings(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    write_mode: &UpsertWriteMode,
+    views: &[&crate::entity_instance::EffectiveObjectType],
+    findings: &mut Vec<Diagnostic>,
+) {
+    let Some(JsonValue::Object(properties)) = root.input_schema.get("properties") else {
+        return;
+    };
+    let stamped = root.actor_stamped_fields();
+    let clock_stamped = root.clock_stamped_fields();
+    let server_derived = norn_expr::schema::trusted_server_derived_fields(root);
+    for view in views {
+        let kind = view.name.as_str();
+        for field in properties.keys() {
+            let Some(prop) = view.property(field.as_str()) else {
+                continue;
+            };
+            if prop.protected() {
+                let message = match (stamped.contains(field), write_mode) {
+                    (true, UpsertWriteMode::CreateOnly) => None,
+                    (
+                        true,
+                        UpsertWriteMode::Upsert
+                        | UpsertWriteMode::DraftOnly { .. }
+                        | UpsertWriteMode::UpdateOnly,
+                    ) => Some(format!(
+                        "the stamp of protected property {field:?} of {kind:?} requires writeMode create_only; an update would overwrite the recorded principal"
+                    )),
+                    (false, _) => Some(format!(
+                        "the upsert writes input property {field:?}, a protected actor property of {kind:?}, from caller input; stamp it from the verified principal instead (derive {:?} with inputRequired false, `fromCaller`)",
+                        norn_ir::ACTOR_SUBJECT_STAMP
+                    )),
+                };
+                if let Some(message) = message {
+                    findings.push(input_property_finding(
+                        codes::TARGET_NOT_WRITABLE,
+                        message,
+                        artifact,
+                        field,
+                    ));
+                }
+            }
+            if prop.immutable_after_create() && !matches!(write_mode, UpsertWriteMode::CreateOnly) {
+                findings.push(input_property_finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!(
+                        "property {field:?} of {kind:?} is immutableAfterCreate and may only be written by a create_only upsert"
+                    ),
+                    artifact,
+                    field,
+                ));
+            }
+            if let Some(origin) = prop.origin()
+                && let Some(message) = origin_write_violation(
+                    origin,
+                    field,
+                    field,
+                    kind,
+                    &stamped,
+                    &clock_stamped,
+                    &server_derived,
+                )
+            {
+                findings.push(input_property_finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    message,
+                    artifact,
+                    field,
+                ));
+            }
+        }
+    }
+}
+
+fn origin_write_violation(
+    origin: norn_ir::PropertyOrigin,
+    property_name: &str,
+    source_field: &str,
+    kind: &str,
+    stamped: &BTreeSet<String>,
+    clock_stamped: &BTreeSet<String>,
+    server_derived: &BTreeSet<String>,
+) -> Option<String> {
+    match origin {
+        norn_ir::PropertyOrigin::Caller => None,
+        norn_ir::PropertyOrigin::Actor => (!stamped.contains(source_field)).then(|| {
+            format!(
+                "property {property_name:?} of {kind:?} has origin `actor` and must be stamped from {:?} with inputRequired false",
+                norn_ir::ACTOR_SUBJECT_STAMP
+            )
+        }),
+        norn_ir::PropertyOrigin::Clock => (!clock_stamped.contains(source_field)).then(|| {
+            format!(
+                "property {property_name:?} of {kind:?} has origin `clock` and must be derived from `clock.nowIso` or `clock.nowMillis` with inputRequired false"
+            )
+        }),
+        norn_ir::PropertyOrigin::Derived => (!server_derived.contains(source_field)).then(|| {
+            format!(
+                "property {property_name:?} of {kind:?} has origin `derived` and must be written by a server derivation with inputRequired false"
+            )
+        }),
+        norn_ir::PropertyOrigin::Receipt => Some(format!(
+            "property {property_name:?} of {kind:?} has origin `receipt` and may only be written by a fire_transition acceptReceipt binding"
+        )),
+        norn_ir::PropertyOrigin::Default => Some(format!(
+            "property {property_name:?} of {kind:?} has origin `default` and cannot be written from action input"
+        )),
+    }
+}
+
+fn transition_origin_findings(
+    artifact: &ArtifactEnvelope,
+    root: &ActionRoot,
+    accept_receipt: Option<&norn_ir::ReceiptAcceptance>,
+    set_fields: &std::collections::BTreeMap<PropertyId, String>,
+    views: &[&crate::entity_instance::EffectiveObjectType],
+    findings: &mut Vec<Diagnostic>,
+) {
+    let stamped = root.actor_stamped_fields();
+    let clock_stamped = root.clock_stamped_fields();
+    let server_derived = norn_expr::schema::trusted_server_derived_fields(root);
+    for view in views {
+        let kind = view.name.as_str();
+        for (target_prop, source_field) in set_fields {
+            let Some(prop) = view.property(target_prop.as_str()) else {
+                continue;
+            };
+            if prop.protected() {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!(
+                        "fire_transition setFields cannot write protected property {:?} of {kind:?}",
+                        target_prop.as_str()
+                    ),
+                    artifact,
+                    "/payload/effectProgram/setFields",
+                ));
+            }
+            if prop.immutable_after_create() {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!(
+                        "fire_transition setFields cannot overwrite immutableAfterCreate property {:?} of {kind:?}",
+                        target_prop.as_str()
+                    ),
+                    artifact,
+                    "/payload/effectProgram/setFields",
+                ));
+            }
+            if let Some(origin) = prop.origin()
+                && let Some(message) = origin_write_violation(
+                    origin,
+                    target_prop.as_str(),
+                    source_field,
+                    kind,
+                    &stamped,
+                    &clock_stamped,
+                    &server_derived,
+                )
+            {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    message,
+                    artifact,
+                    "/payload/effectProgram/setFields",
+                ));
+            }
+        }
+        if let Some(binding) = accept_receipt {
+            accept_receipt_origin_findings(artifact, view, binding, findings);
+        }
+    }
+}
+
+fn accept_receipt_origin_findings(
+    artifact: &ArtifactEnvelope,
+    view: &crate::entity_instance::EffectiveObjectType,
+    binding: &norn_ir::ReceiptAcceptance,
+    findings: &mut Vec<Diagnostic>,
+) {
+    let kind = view.name.as_str();
+    for target_prop in
+        std::iter::once(&binding.digest_property).chain(binding.result_bindings.keys())
+    {
+        let Some(prop) = view.property(target_prop.as_str()) else {
+            continue;
+        };
+        if prop.protected() {
+            findings.push(finding(
+                codes::TARGET_NOT_WRITABLE,
+                format!(
+                    "acceptReceipt cannot write protected property {:?} of {kind:?}",
+                    target_prop.as_str()
+                ),
+                artifact,
+                "/payload/effectProgram/acceptReceipt",
+            ));
+        }
+        if prop.immutable_after_create() {
+            findings.push(finding(
+                codes::TARGET_NOT_WRITABLE,
+                format!(
+                    "acceptReceipt cannot overwrite immutableAfterCreate property {:?} of {kind:?}",
+                    target_prop.as_str()
+                ),
+                artifact,
+                "/payload/effectProgram/acceptReceipt",
+            ));
+        }
+        if let Some(origin) = prop.origin()
+            && !matches!(
+                origin,
+                norn_ir::PropertyOrigin::Caller | norn_ir::PropertyOrigin::Receipt
+            )
+        {
+            findings.push(finding(
+                codes::TARGET_NOT_WRITABLE,
+                format!(
+                    "acceptReceipt cannot write property {:?} of {kind:?} whose declared origin is not `receipt`",
+                    target_prop.as_str()
+                ),
+                artifact,
+                "/payload/effectProgram/acceptReceipt",
+            ));
+        }
+    }
 }
 
 /// ACTOR-INDEPENDENT-1: why one `independentOf` property cannot prove that
@@ -194,31 +550,58 @@ pub(super) fn writer_protected_findings(
         let Some(view) = model.effective_object_type_named(kind) else {
             continue;
         };
-        let protected = |name: &str| {
+        let restricted_always = |name: &str| {
+            view.property(name).is_some_and(|property| {
+                property.protected()
+                    || property
+                        .origin()
+                        .is_some_and(|origin| origin != norn_ir::PropertyOrigin::Caller)
+            })
+        };
+        let restricted_post_create = |name: &str| {
             view.property(name)
-                .is_some_and(EffectiveProperty::protected)
+                .is_some_and(EffectiveProperty::immutable_after_create)
         };
         let mut named: BTreeSet<String> = ["values", "patch"]
             .iter()
             .filter_map(|member| item.get(*member)?.get("properties")?.as_object())
             .flat_map(serde_json::Map::keys)
-            .filter(|name| protected(name.as_str()))
+            .filter(|name| restricted_always(name.as_str()))
             .cloned()
             .collect();
+        if operations.contains(&"patch")
+            && let Some(patch_props) = item
+                .get("patch")
+                .and_then(|member| member.get("properties"))
+                .and_then(serde_json::Value::as_object)
+        {
+            named.extend(
+                patch_props
+                    .keys()
+                    .filter(|name| restricted_post_create(name.as_str()))
+                    .cloned(),
+            );
+        }
         if operations.contains(&"set") {
             if let Some(names) = &set_properties {
                 named.extend(
                     names
                         .iter()
                         .copied()
-                        .filter(|name| protected(name))
+                        .filter(|name| restricted_always(name) || restricted_post_create(name))
                         .map(str::to_owned),
                 );
             } else {
                 named.extend(
                     view.properties
                         .iter()
-                        .filter(|property| property.protected())
+                        .filter(|property| {
+                            property.protected()
+                                || property
+                                    .origin()
+                                    .is_some_and(|origin| origin != norn_ir::PropertyOrigin::Caller)
+                                || property.immutable_after_create()
+                        })
                         .map(|property| property.id.as_str().to_owned()),
                 );
             }
@@ -227,7 +610,7 @@ pub(super) fn writer_protected_findings(
             findings.push(finding(
                 codes::TARGET_NOT_WRITABLE,
                 format!(
-                    "synchronousRule may write {name:?}, a protected property of {kind:?}; only the kernel's create stamp of the verified principal writes it"
+                    "synchronousRule may write {name:?}, a protected, non-caller-origin, or post-create-immutable property of {kind:?}"
                 ),
                 artifact,
                 "/payload/synchronousRule",

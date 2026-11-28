@@ -49,6 +49,7 @@ fn reference_action(
         // CREATE-WRITER-1: a writer reads complete slice values.
         || action.synchronous_rule.is_some()
         || !action.aggregates.is_empty()
+        || norn_expr::schema::first_slice_derivation_index(action).is_some()
         || action.slice.is_empty()
         // A patch reads the full target to preserve its other values. Only
         // caller-input assignments with a required direct target slice qualify.

@@ -87,6 +87,18 @@ pub use check::{
     validate_profile_constructs, validate_unary_evaluation_source,
 };
 pub use convert::rescale_decimal;
+/// Closed server commit clock operand (`ACTION-CLOCK-1`).
+pub const CLOCK_VARIABLE: &str = "clock";
+/// Record name of the server commit clock bound during action derivation (`ACTION-CLOCK-1`).
+pub const ACTION_CLOCK_RECORD: &str = "norn:ActionClock";
+
+pub(crate) fn action_clock_record_fields() -> std::collections::BTreeMap<String, Type> {
+    std::collections::BTreeMap::from([
+        ("nowMillis".to_owned(), Type::Integer),
+        ("nowIso".to_owned(), Type::text()),
+    ])
+}
+
 pub use env::{
     ACTOR_VARIABLE, EntityDefinitions, EnvError, EnvOptions, Field, FieldSource, INPUT_VARIABLE,
     RecordKind, RecordType, SELF_VARIABLE, TYPE_ENV_HASH_PROFILE, TYPE_ENV_ID, TYPE_ENV_VERSION,

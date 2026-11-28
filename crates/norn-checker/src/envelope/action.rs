@@ -634,7 +634,7 @@ fn validate_action_effect_program(
         TARGET_MEMBERS
             .into_iter()
             .chain(TRANSITION_MEMBERS)
-            .chain(["acceptReceipt"])
+            .chain(["acceptReceipt", "setFields"])
             .collect()
     } else if mutates_rows {
         TARGET_MEMBERS.into_iter().chain(ROW_MEMBERS).collect()
@@ -682,16 +682,43 @@ fn validate_action_effect_program(
                 ));
             }
         }
-        if program.contains_key("acceptReceipt")
-            && let Err(error) =
-                serde_json::to_value(value).and_then(serde_json::from_value::<ActionEffectProgram>)
-        {
-            diagnostics.push(invalid_diagnostic(
-                CODE,
-                format!("invalid acceptReceipt declaration: {error}"),
-                "payload.effectProgram.acceptReceipt",
-                artifact_id,
-            ));
+        if program.contains_key("acceptReceipt") || program.contains_key("setFields") {
+            let mut reported_member = false;
+            if let Some(receipt_value) = program.get("acceptReceipt")
+                && let Err(error) = serde_json::to_value(receipt_value)
+                    .and_then(serde_json::from_value::<norn_ir::ReceiptAcceptance>)
+            {
+                diagnostics.push(invalid_diagnostic(
+                    CODE,
+                    format!("invalid fire_transition acceptReceipt declaration: {error}"),
+                    "payload.effectProgram.acceptReceipt",
+                    artifact_id,
+                ));
+                reported_member = true;
+            }
+            if let Some(set_fields_value) = program.get("setFields")
+                && let Err(error) = serde_json::to_value(set_fields_value)
+                    .and_then(serde_json::from_value::<BTreeMap<norn_ir::PropertyId, String>>)
+            {
+                diagnostics.push(invalid_diagnostic(
+                    CODE,
+                    format!("invalid fire_transition setFields declaration: {error}"),
+                    "payload.effectProgram.setFields",
+                    artifact_id,
+                ));
+                reported_member = true;
+            }
+            if !reported_member
+                && let Err(error) = serde_json::to_value(value)
+                    .and_then(serde_json::from_value::<ActionEffectProgram>)
+            {
+                diagnostics.push(invalid_diagnostic(
+                    CODE,
+                    format!("invalid fire_transition declaration: {error}"),
+                    "payload.effectProgram",
+                    artifact_id,
+                ));
+            }
         }
     } else if mutates_rows {
         for member in ["parentValuesField", "rowOpsField", "parentVersionField"]

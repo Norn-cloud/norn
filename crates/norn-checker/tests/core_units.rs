@@ -46,6 +46,8 @@ fn property(name: &str) -> EffectiveProperty {
             markings: Vec::new(),
             computed: None,
             protected: false,
+            origin: None,
+            immutable_after_create: false,
         },
         &catalog(),
     )

@@ -370,8 +370,7 @@ fn validate_stored_patch<X>(
                 field: field.to_owned(),
             });
         };
-        if declared.computed
-            || declared.protected()
+        if super::post_slice::is_stored_patch_origin_restricted(declared)
             || type_series(catalog, object_type)
                 .is_some_and(|series| series.key_properties.contains(&declared.id))
         {
@@ -737,6 +736,11 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
+    if norn_expr::schema::first_slice_derivation_index(call.action).is_some() {
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: call.action.action_id.clone(),
+        });
+    }
     let EnvelopePolicy {
         limits,
         meter,
@@ -880,7 +884,7 @@ where
                             .properties
                             .iter()
                             .find(|candidate| candidate.id == *property)
-                            .is_none_or(|candidate| candidate.computed || candidate.protected())
+                            .is_none_or(super::post_slice::is_owned_row_property_restricted)
                 })
             })
         })

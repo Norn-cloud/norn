@@ -34,6 +34,7 @@ pub(crate) mod law_parity;
 pub(crate) mod seed;
 pub mod static_gaps;
 pub mod synth;
+mod witness_seed;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -380,6 +381,8 @@ pub fn function_command_object_type() -> ObjectTypeDef {
         implements: Vec::new(),
         properties: vec![Property {
             protected: false,
+            origin: None,
+            immutable_after_create: false,
             id: PropertyId("state".to_owned()),
             description: None,
             property_type: PropertyType::JsonExt { schema: None },
@@ -407,6 +410,8 @@ pub fn function_command_object_type() -> ObjectTypeDef {
 pub fn action_call_object_type() -> ObjectTypeDef {
     let text = |id: &str, nullable: bool| Property {
         protected: false,
+        origin: None,
+        immutable_after_create: false,
         id: PropertyId(id.to_owned()),
         description: None,
         property_type: PropertyType::Text { format: None },
@@ -420,6 +425,8 @@ pub fn action_call_object_type() -> ObjectTypeDef {
     };
     let json_ext = |id: &str| Property {
         protected: false,
+        origin: None,
+        immutable_after_create: false,
         id: PropertyId(id.to_owned()),
         description: None,
         property_type: PropertyType::JsonExt { schema: None },

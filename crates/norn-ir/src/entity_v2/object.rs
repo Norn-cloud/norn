@@ -238,6 +238,29 @@ pub struct OwnedChildCollection {
     pub max_rows: WholeNumber,
 }
 
+/// ORIGIN-DATAFLOW-1: declared write-origin provenance of a stored property.
+///
+/// Every non-`Caller` origin restricts which action mechanisms may write the
+/// property at admission time (and `immutableAfterCreate` is additionally
+/// enforced on every non-observation commit in `norn-kernel`), eliminating
+/// caller-spoofed timestamps, derived calculations, and external evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PropertyOrigin {
+    /// Any validated caller input (the default when omitted).
+    Caller,
+    /// Authenticated principal subject id (`actor.subjectId`, `inputRequired: false`).
+    Actor,
+    /// Host-authenticated Function receipt (`acceptReceipt` `digestProperty` or `resultBindings`).
+    Receipt,
+    /// Server-side deterministic derivation (`derive` with `inputRequired: false`).
+    Derived,
+    /// Server commit clock (`clock.nowIso` / `clock.nowMillis`, `inputRequired: false`).
+    Clock,
+    /// Entity default value only (never caller-supplied).
+    Default,
+}
+
 /// One property of an object type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -245,6 +268,17 @@ pub struct Property {
     /// FA-PROTECT-1: only sealed rule outputs may write this inherited field.
     #[serde(default, skip_serializing_if = "is_false")]
     pub protected: bool,
+    /// ORIGIN-DATAFLOW-1: declared write-origin constraint for this property.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "PropertyOrigin")]
+    pub origin: Option<PropertyOrigin>,
+    /// ORIGIN-DATAFLOW-1: once created, no update, patch, or transition may overwrite this property.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub immutable_after_create: bool,
     /// Unique id within the object type.
     pub id: PropertyId,
     #[serde(

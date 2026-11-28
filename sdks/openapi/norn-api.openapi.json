@@ -11621,11 +11621,25 @@
           "objectKind": {
             "type": "string"
           },
+          "setFields": {
+            "$ref": "#/components/schemas/NornIrActionEffectProgramOneOf1PropertySetFields"
+          },
           "transition": {
             "$ref": "#/components/schemas/NornIrTransitionId"
           }
         },
         "additionalProperties": false
+      },
+      "NornIrActionEffectProgramOneOf1PropertySetFields": {
+        "type": "object",
+        "description": "TRANSITION-PATCH-1: writable target properties patched from derived/validated\naction input fields atomically with the transition (e.g. `generation -> next_generation`).",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "propertyNames": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
       },
       "NornIrActionEffectProgramOneOf2": {
         "type": "object",
@@ -24518,12 +24532,36 @@
             "description": "Unique id within the object type.",
             "pattern": "^[a-z][a-z0-9_]*$"
           },
+          "immutableAfterCreate": {
+            "type": "boolean",
+            "description": "ORIGIN-DATAFLOW-1: once created, no update, patch, or transition may overwrite this property."
+          },
           "markings": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/NornIrMarkingId"
             },
             "description": "Classification markings declared on this property. Markings from\nproperty types, interfaces, supertypes, and computed inputs are unioned\nby the checker and cannot be removed by narrowing. Omitted when empty."
+          },
+          "origin": {
+            "type": "string",
+            "description": "ORIGIN-DATAFLOW-1: declared write-origin constraint for this property.",
+            "enum": [
+              "caller",
+              "actor",
+              "receipt",
+              "derived",
+              "clock",
+              "default"
+            ],
+            "x-enumDescriptions": [
+              "Any validated caller input (the default when omitted).",
+              "Authenticated principal subject id (`actor.subjectId`, `inputRequired: false`).",
+              "Host-authenticated Function receipt (`acceptReceipt` `digestProperty` or `resultBindings`).",
+              "Server-side deterministic derivation (`derive` with `inputRequired: false`).",
+              "Server commit clock (`clock.nowIso` / `clock.nowMillis`, `inputRequired: false`).",
+              "Entity default value only (never caller-supplied)."
+            ]
           },
           "protected": {
             "type": "boolean",
@@ -24715,6 +24753,26 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrPropertyOrigin": {
+        "type": "string",
+        "description": "ORIGIN-DATAFLOW-1: declared write-origin provenance of a stored property.\n\nEvery non-`Caller` origin restricts which action mechanisms may write the\nproperty at admission time (and `immutableAfterCreate` is additionally\nenforced on every non-observation commit in `norn-kernel`), eliminating\ncaller-spoofed timestamps, derived calculations, and external evidence.",
+        "enum": [
+          "caller",
+          "actor",
+          "receipt",
+          "derived",
+          "clock",
+          "default"
+        ],
+        "x-enumDescriptions": [
+          "Any validated caller input (the default when omitted).",
+          "Authenticated principal subject id (`actor.subjectId`, `inputRequired: false`).",
+          "Host-authenticated Function receipt (`acceptReceipt` `digestProperty` or `resultBindings`).",
+          "Server-side deterministic derivation (`derive` with `inputRequired: false`).",
+          "Server commit clock (`clock.nowIso` / `clock.nowMillis`, `inputRequired: false`).",
+          "Entity default value only (never caller-supplied)."
+        ]
       },
       "NornIrPropertyRef": {
         "type": "object",

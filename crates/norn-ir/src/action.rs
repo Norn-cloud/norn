@@ -184,6 +184,12 @@ fn is_true(value: &bool) -> bool {
 /// execution principal's id into an input field.
 pub const ACTOR_SUBJECT_STAMP: &str = "actor.subjectId";
 
+/// ACTION-CLOCK-1: canonical UTC ISO-8601 commit timestamp (`call.turn.now`).
+pub const CLOCK_NOW_ISO_STAMP: &str = "clock.nowIso";
+
+/// ACTION-CLOCK-1: canonical epoch-millisecond commit instant (`call.turn.now`).
+pub const CLOCK_NOW_MILLIS_STAMP: &str = "clock.nowMillis";
+
 impl ActionRoot {
     /// ACTOR-STAMP-1: input fields whose only derivation is the server stamp
     /// of the verified principal ([`ACTOR_SUBJECT_STAMP`], never
@@ -197,6 +203,31 @@ impl ActionRoot {
             .iter()
             .filter(|step| {
                 !step.input_required && step.expression.as_str().trim() == ACTOR_SUBJECT_STAMP
+            })
+            .filter(|step| {
+                self.derive
+                    .iter()
+                    .filter(|other| other.field == step.field)
+                    .count()
+                    == 1
+            })
+            .map(|step| step.field.clone())
+            .collect()
+    }
+
+    /// ACTION-CLOCK-1: input fields whose sole derivation is a server commit
+    /// clock stamp ([`CLOCK_NOW_ISO_STAMP`] or [`CLOCK_NOW_MILLIS_STAMP`],
+    /// never caller-supplied).
+    #[must_use]
+    pub fn clock_stamped_fields(&self) -> BTreeSet<String> {
+        self.derive
+            .iter()
+            .filter(|step| {
+                !step.input_required
+                    && matches!(
+                        step.expression.as_str().trim(),
+                        CLOCK_NOW_ISO_STAMP | CLOCK_NOW_MILLIS_STAMP
+                    )
             })
             .filter(|step| {
                 self.derive

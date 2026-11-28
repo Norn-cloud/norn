@@ -775,6 +775,7 @@ fn through_gate<E: SqlEngine>(
             Ok(Gated::Commit(approval))
         }
         Ok(Prepared::Commit(intent)) => {
+            refuse_clock_approval(host, cell, kernel_call, action_id, approval.as_deref())?;
             if approval.is_some() {
                 return Ok(Gated::Commit(approval));
             }
@@ -795,6 +796,26 @@ fn through_gate<E: SqlEngine>(
             ))
         }
     }
+}
+
+/// ACTION-CLOCK-1 / APPROVAL-1: once a gate actually applies (after any
+/// conditional `when` exclusion), refuse parking or releasing a `clock`-deriving
+/// action whose prepared intent digest would invalidate as the clock advances.
+fn refuse_clock_approval<E: SqlEngine>(
+    host: &DevHost<E>,
+    cell: &mut crate::host::ActionCell<E>,
+    kernel_call: &norn_kernel::ActionCall<'_>,
+    action_id: &str,
+    approval: Option<&str>,
+) -> Result<(), Refusal> {
+    if !norn_kernel::action_reads_clock(kernel_call.action) {
+        return Ok(());
+    }
+    let error = norn_kernel::ActionRefusal::<norn_cell::CellError>::UnsupportedEffect {
+        action_id: kernel_call.action.action_id.clone(),
+    };
+    let refusal = kernel_refusal(host, &kernel_call.actor, action_id, &error);
+    Err(crate::approvals::refused_under(cell, approval, refusal))
 }
 
 /// The call `kernel_call` parks as, past its gate: its requester's verified
