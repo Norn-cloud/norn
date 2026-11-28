@@ -289,6 +289,85 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(out)
     }
 
+    /// If `row` (or, for a synthetic carry-forward claim, any surviving real
+    /// predecessor it carries) currently has an open dispute other than
+    /// `excluding_dispute`, return the disputed `event_keys`.
+    pub(crate) fn row_disputed_event_keys(
+        &self,
+        row: &crate::link_claim_frontier::FrontierRow,
+        excluding_dispute: Option<&str>,
+    ) -> Result<Option<[String; 5]>, CellError> {
+        if self.is_reject_carry_claim(row)? {
+            let active = self.active_claims_for_contribution(&row.contribution_id)?;
+            for pred in self.surviving_predecessors_after_reject(
+                &row.contribution_id,
+                active,
+                &std::collections::BTreeSet::new(),
+            )? {
+                if self.event_keys_disputed(&pred.event_keys, excluding_dispute)? {
+                    return Ok(Some(pred.event_keys));
+                }
+            }
+            return Ok(None);
+        }
+        Ok(self
+            .event_keys_disputed(&row.event_keys, excluding_dispute)?
+            .then(|| row.event_keys.clone()))
+    }
+
+    /// Indexed counterpart of [`Self::row_disputed_event_keys`] for
+    /// `SourceDisputeIndex`-accelerated held-link scans.
+    pub(crate) fn row_disputed_event_keys_in_index(
+        &self,
+        row: &crate::link_claim_frontier::FrontierRow,
+        idx: &crate::mapping_conflict::SourceDisputeIndex,
+    ) -> Result<Option<[String; 5]>, CellError> {
+        if self.is_reject_carry_claim(row)? {
+            let active = self.active_claims_for_contribution(&row.contribution_id)?;
+            for pred in self.surviving_predecessors_after_reject(
+                &row.contribution_id,
+                active,
+                &std::collections::BTreeSet::new(),
+            )? {
+                if idx.events.contains_key(&pred.event_keys) {
+                    return Ok(Some(pred.event_keys));
+                }
+            }
+            return Ok(None);
+        }
+        Ok(idx
+            .events
+            .contains_key(&row.event_keys)
+            .then(|| row.event_keys.clone()))
+    }
+
+    /// Whether every surviving real predecessor of a carry-forward claim in
+    /// `contribution` has a verified source version strictly older than `version`.
+    pub(crate) fn carry_all_predecessors_older_than(
+        &self,
+        contribution: &str,
+        active: &[crate::link_claim_frontier::FrontierRow],
+        version: &norn_ir::SourceVersion,
+    ) -> Result<bool, CellError> {
+        for pred in self.surviving_predecessors_after_reject(
+            contribution,
+            active.to_vec(),
+            &std::collections::BTreeSet::new(),
+        )? {
+            let Some(earlier) =
+                crate::mapping_delete::parse_verified_frontier_version(self, &pred)?
+            else {
+                continue;
+            };
+            match earlier.try_cmp(version) {
+                Ok(std::cmp::Ordering::Less) => {}
+                Ok(_) => return Ok(false),
+                Err(_) => return Err(CellError::MappingBundleMismatch),
+            }
+        }
+        Ok(true)
+    }
+
     /// Whether `row` (or, for a `DisputeDecision::Reject` carry-forward claim,
     /// any surviving predecessor it carries) has a verified source version
     /// strictly greater than `incoming`.

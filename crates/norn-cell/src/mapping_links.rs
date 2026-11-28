@@ -310,25 +310,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let mut all_active_smaller = true;
         for row in &active {
             if self.is_reject_carry_claim(row)? {
-                let mut carries_newer = false;
-                for pred in self.surviving_predecessors_after_reject(
-                    contribution,
-                    active.clone(),
-                    &BTreeSet::new(),
-                )? {
-                    let Some(earlier) = parse_verified_frontier_version(self, &pred)? else {
-                        continue;
-                    };
-                    match earlier.try_cmp(version) {
-                        Ok(std::cmp::Ordering::Less) => {}
-                        Ok(_) => carries_newer = true,
-                        Err(_) => return Err(CellError::MappingBundleMismatch),
-                    }
-                }
-                if carries_newer {
-                    all_active_smaller = false;
-                } else {
+                if self.carry_all_predecessors_older_than(contribution, &active, version)? {
                     supersedes.insert(row.claim_id.clone());
+                } else {
+                    all_active_smaller = false;
                 }
                 continue;
             }
@@ -432,15 +417,19 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let entries = match index {
             Some(idx) => active_rows
                 .into_iter()
-                .map(|row| Entry {
-                    disputed: idx.events.contains_key(&row.event_keys),
-                    claim: row.claim,
-                    id: row.claim_id,
-                    contribution: row.contribution_id,
-                    event_keys: row.event_keys,
-                    fresh: false,
+                .map(|row| {
+                    let dk = self.row_disputed_event_keys_in_index(&row, idx)?;
+                    let disputed = dk.is_some();
+                    Ok(Entry {
+                        disputed,
+                        claim: row.claim,
+                        id: row.claim_id,
+                        contribution: row.contribution_id,
+                        event_keys: dk.unwrap_or(row.event_keys),
+                        fresh: false,
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, CellError>>()?,
             None => self.frontier_rows_to_entries(active_rows, None)?,
         };
         let fact =
@@ -673,12 +662,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let mut entries = Vec::with_capacity(rows.len());
         for row in rows {
             verify_frontier_row_meta(self, &row)?;
-            let disputed = self.event_keys_disputed(&row.event_keys, excluding_dispute)?;
+            let dk = self.row_disputed_event_keys(&row, excluding_dispute)?;
+            let disputed = dk.is_some();
             entries.push(Entry {
                 claim: row.claim,
                 id: row.claim_id,
                 contribution: row.contribution_id,
-                event_keys: row.event_keys,
+                event_keys: dk.unwrap_or(row.event_keys),
                 fresh: false,
                 disputed,
             });

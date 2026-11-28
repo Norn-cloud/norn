@@ -3591,6 +3591,7 @@ fn nfd_tampered_zero_write_delete_fails_closed_even_after_frontier_repair() {
     land_party(&mut cell, &b, "eb", "1", "p1");
     let del_nfc = party_ref_row("P-caf\u{00e9}", "demo/party/cafe", "Cafe del", None);
     let obs_del = capture_kind(&mut cell, "erpnext", &del_nfc, "ed3", "3", "delete", "p1");
+    let model = cell.store().model().clone();
     drop(cell);
 
     let raw = rusqlite::Connection::open(&path).expect("raw sqlite");
@@ -3608,16 +3609,117 @@ fn nfd_tampered_zero_write_delete_fails_closed_even_after_frontier_repair() {
         .expect("clear frontier");
     drop(raw);
 
-    let reopen_err = CellStore::open(
-        norn_cell::engine::NativeEngine::open(&path).expect("reopen engine"),
-        referring_parties(),
-        "tenant/dev",
-    )
-    .expect_err(
+    let reopen_err = CellStore::open(&path, model, StoreOptions::default()).expect_err(
         "reopen must fail closed on NFD-tampered zero-write delete even with frontier drift",
     );
     assert!(
         matches!(reopen_err, CellError::LedgerCorrupt { .. }),
         "expected LedgerCorrupt, got {reopen_err:?}"
+    );
+}
+
+/// #1549: Releasing a held v1 predecessor via `AcceptFirst` must NOT inherit
+/// the rejected conflicting candidate's higher version (v9), so a subsequent
+/// valid v3 cleanly supersedes the restored v1 link.
+#[test]
+fn accept_first_carry_release_does_not_inherit_rejected_candidate_version() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("accept_first_carry_version.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    let d = party_ref_row("P-D", "demo/party/d", "D", None);
+    land_party(&mut cell, &b, "eb", "1", "p1");
+    land_party(&mut cell, &c, "ec", "1", "p1");
+    land_party(&mut cell, &d, "ed", "1", "p1");
+
+    let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", Some("demo/party/b"));
+    let a_v1_bad_v9 = party_ref_row("P-A", "demo/party/a", "A v9 BAD", Some("demo/party/d"));
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", Some("demo/party/c"));
+    let a_v2_bad = party_ref_row("P-A", "demo/party/a", "A v2 BAD", Some("demo/party/c"));
+    let a_v3 = party_ref_row("P-A", "demo/party/a", "A v3", Some("demo/party/d"));
+    land_party(&mut cell, &a_v1, "e1", "1", "p1");
+    let conflict_v1 = inject_conflict(&mut cell, &a_v1_bad_v9, "e1", "9", "p1");
+    land_party(&mut cell, &a_v2, "e2", "2", "p1");
+    let conflict_v2 = inject_conflict(&mut cell, &a_v2_bad, "e2", "2", "p1");
+
+    // Rejecting v2 while v1 is disputed holds A -> B.
+    resolve_dispute(
+        &mut cell,
+        &conflict_v2,
+        DisputeDecision::Reject,
+        "ops:a",
+        "reject v2",
+    );
+    assert!(refers_targets(&cell, "demo/party/a").is_empty());
+
+    // Accepting v1 releases A -> B without inheriting the rejected v9 version.
+    resolve_dispute(
+        &mut cell,
+        &conflict_v1,
+        DisputeDecision::AcceptFirst,
+        "ops:a",
+        "keep v1",
+    );
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+
+    // A valid v3 must supersede the restored v1 link cleanly.
+    land_party(&mut cell, &a_v3, "e3", "3", "p1");
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/d".to_owned()])
+    );
+}
+
+/// #1549 (OBS-LINK-DISPUTE-1): A pending link restored by rejecting v2 must
+/// stay held when its target B arrives if predecessor v1 has since been disputed.
+#[test]
+fn restored_pending_claim_holds_edge_on_target_arrival_when_predecessor_disputed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("restored_pending_disputed.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    land_party(&mut cell, &c, "ec", "1", "p1");
+
+    let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", Some("demo/party/b"));
+    let a_v1_bad = party_ref_row("P-A", "demo/party/a", "A v1 BAD", Some("demo/party/c"));
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", Some("demo/party/c"));
+    let a_v2_bad = party_ref_row("P-A", "demo/party/a", "A v2 BAD", Some("demo/party/c"));
+    land_party(&mut cell, &a_v1, "e1", "1", "p1");
+    land_party(&mut cell, &a_v2, "e2", "2", "p1");
+    let conflict_v2 = inject_conflict(&mut cell, &a_v2_bad, "e2", "2", "p1");
+    resolve_dispute(
+        &mut cell,
+        &conflict_v2,
+        DisputeDecision::Reject,
+        "ops:a",
+        "reject v2",
+    );
+
+    // Dispute v1 before B arrives, then land B: A -> B must stay held.
+    let conflict_v1 = inject_conflict(&mut cell, &a_v1_bad, "e1", "1", "p1");
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    land_party(&mut cell, &b, "eb", "1", "p1");
+    assert!(
+        refers_targets(&cell, "demo/party/a").is_empty(),
+        "target arrival must hold A -> B while restored predecessor v1 is disputed"
+    );
+
+    // Accepting v1 releases the held A -> B edge.
+    resolve_dispute(
+        &mut cell,
+        &conflict_v1,
+        DisputeDecision::AcceptFirst,
+        "ops:a",
+        "keep v1",
+    );
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
     );
 }

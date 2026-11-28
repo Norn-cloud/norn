@@ -508,6 +508,19 @@ pub(crate) fn verify_zero_write_delete_inbox<E: SqlEngine>(
     Ok(())
 }
 
+/// Exact JSON pointer paths matched by `_norn_inbox/source_delete` so the
+/// zero-write delete audit enforces byte-for-byte UTF-8 equality on every
+/// indexed predicate (preventing canonically equivalent non-NFC tampering).
+const ZERO_WRITE_DELETE_INDEXED_POINTERS: [&str; 7] = [
+    "/input/input/connectorInstance",
+    "/input/input/partition",
+    "/input/raw/source",
+    "/input/raw/source_id",
+    "/input/raw/kind",
+    "/input/input/mapping",
+    "/input/input/dataset",
+];
+
 fn verify_zero_write_delete_candidate<E: SqlEngine>(
     conn: &E,
     commit_seq: u64,
@@ -545,19 +558,7 @@ fn verify_zero_write_delete_candidate<E: SqlEngine>(
         seq: commit_seq,
         reason: format!("corrupt inbox JSON for zero-write delete {obs_id}: {err}"),
     })?;
-    // Compare both canonical JSON and exact UTF-8 string bytes on every field
-    // matched by `_norn_inbox/source_delete` so canonically equivalent non-NFC
-    // tampering cannot hide a delete from byte-for-byte SQLite index lookups.
-    const INDEXED_POINTERS: [&str; 7] = [
-        "/input/input/connectorInstance",
-        "/input/input/partition",
-        "/input/raw/source",
-        "/input/raw/source_id",
-        "/input/raw/kind",
-        "/input/input/mapping",
-        "/input/input/dataset",
-    ];
-    let indexed_fields_match = INDEXED_POINTERS.iter().all(|ptr| {
+    let indexed_fields_match = ZERO_WRITE_DELETE_INDEXED_POINTERS.iter().all(|ptr| {
         inbox_val.pointer(ptr).and_then(Value::as_str)
             == auth_observed.pointer(ptr).and_then(Value::as_str)
     });

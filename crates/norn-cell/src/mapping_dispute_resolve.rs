@@ -492,9 +492,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
     }
 
     /// Whether `row` is a synthetic carry-forward claim written by a prior
-    /// `DisputeDecision::Reject`. Synthetic rejection claims hold no source
-    /// version authority of their own and are unconditionally superseded by
-    /// any subsequent real claim or subsequent rejection in that contribution.
+    /// `DisputeDecision::Reject` or `DisputeDecision::AcceptFirst` carry release.
+    /// Synthetic carry claims hold no source version authority of their own;
+    /// version and dispute checks delegate to their surviving real predecessors.
     pub(crate) fn is_reject_carry_claim(
         &self,
         row: &crate::link_claim_frontier::FrontierRow,
@@ -503,7 +503,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             || row.claim.observation_id.starts_with("mapping-identity:"))
             && self
                 .dispute_resolution(&row.claim.observation_id)?
-                .is_some_and(|rec| rec.decision == "reject"))
+                .is_some_and(|rec| rec.decision == "reject" || rec.decision == "accept-first"))
     }
 
     /// Compute the exact [`LinkPlan`] for resolving `dispute` with `decision`
