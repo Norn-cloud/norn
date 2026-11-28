@@ -1,0 +1,134 @@
+{
+  "artifactId": "data.snapshot_record.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record an immutable dataset snapshot produced by a pipeline run",
+  "namespace": "data",
+  "payload": {
+    "actionId": "data.snapshot_record.record",
+    "createLinks": [
+      {
+        "link": "dataset",
+        "targetIdField": "dataset_id",
+        "targetType": "data.CatalogDataset"
+      },
+      {
+        "link": "generated_by",
+        "targetIdField": "activity_id",
+        "targetType": "data.PipelineRun"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "data.SnapshotRecord.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "snapshot_id",
+      "objectKind": "data.SnapshotRecord",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "activity_id": {
+          "type": "string"
+        },
+        "byte_size": {
+          "type": "integer"
+        },
+        "content_sha256": {
+          "type": "string"
+        },
+        "dataset_id": {
+          "type": "string"
+        },
+        "effective_at": {
+          "type": "string"
+        },
+        "known_at": {
+          "type": "string"
+        },
+        "record_count": {
+          "type": "integer"
+        },
+        "schema_digest": {
+          "type": "string"
+        },
+        "snapshot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot_id",
+        "dataset_id",
+        "activity_id",
+        "content_sha256",
+        "schema_digest",
+        "record_count",
+        "byte_size",
+        "effective_at",
+        "known_at"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(timestamp(slice.activity.ends_at) <= timestamp(input.known_at)) and (timestamp(input.effective_at) <= timestamp(input.known_at))"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "dataset_id"
+          }
+        },
+        "name": "dataset",
+        "objectType": "data.CatalogDataset"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "activity_id"
+          }
+        },
+        "name": "activity",
+        "objectType": "data.PipelineRun"
+      }
+    ],
+    "title": "Record an immutable dataset snapshot produced by a pipeline run",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "data.SnapshotRecord"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.snapshot_record.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

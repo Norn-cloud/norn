@@ -1,0 +1,96 @@
+{
+  "artifactId": "data.pipeline_run.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a provenance pipeline run",
+  "namespace": "data",
+  "payload": {
+    "actionId": "data.pipeline_run.record",
+    "effectProgram": {
+      "entityArtifactId": "data.PipelineRun.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "run_id",
+      "objectKind": "data.PipelineRun",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "activity_kind": {
+          "enum": [
+            "sync",
+            "transform",
+            "training",
+            "evaluation",
+            "restatement",
+            "export"
+          ],
+          "type": "string"
+        },
+        "code_digest": {
+          "type": "string"
+        },
+        "ends_at": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "starts_at": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "run_id",
+        "starts_at",
+        "ends_at",
+        "timezone",
+        "activity_kind",
+        "code_digest"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Record a provenance pipeline run",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "data.PipelineRun"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.pipeline_run.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

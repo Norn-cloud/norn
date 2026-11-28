@@ -1,0 +1,167 @@
+{
+  "artifactId": "data.QualityCase.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Quality case",
+  "namespace": "data",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Reference quality-finding resolution case implementing data.QualityFinding with a LIFE-SOUND-1..8 resolution lifecycle.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "finding_id"
+          ]
+        }
+      ],
+      "implements": [
+        "data.QualityFinding"
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "completed",
+              "state": "resolved"
+            }
+          ],
+          "immutable": [
+            "resolved"
+          ],
+          "initial": [
+            "open"
+          ],
+          "property": "status",
+          "terminal": [
+            "resolved"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "open"
+              ],
+              "id": "acknowledge",
+              "to": "acknowledged"
+            },
+            {
+              "from": [
+                "open",
+                "acknowledged"
+              ],
+              "id": "quarantine",
+              "to": "quarantined"
+            },
+            {
+              "from": [
+                "open",
+                "acknowledged",
+                "quarantined"
+              ],
+              "id": "resolve",
+              "to": "resolved"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Snapshot record evaluated by this quality case.",
+          "id": "snapshot",
+          "target": "data.SnapshotRecord"
+        }
+      ],
+      "name": "data.QualityCase",
+      "properties": [
+        {
+          "id": "finding_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "dimension",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "accuracy"
+              },
+              {
+                "value": "completeness"
+              },
+              {
+                "value": "consistency"
+              },
+              {
+                "value": "credibility"
+              },
+              {
+                "value": "currentness"
+              }
+            ]
+          }
+        },
+        {
+          "id": "severity",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "info"
+              },
+              {
+                "value": "warning"
+              },
+              {
+                "value": "error"
+              }
+            ]
+          }
+        },
+        {
+          "id": "offending_path",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "open",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "open"
+              },
+              {
+                "value": "acknowledged"
+              },
+              {
+                "value": "quarantined"
+              },
+              {
+                "value": "resolved"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.QualityCase.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

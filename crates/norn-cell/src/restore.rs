@@ -114,6 +114,7 @@ impl CellStore<NativeEngine> {
         // it, inside its content address; one newer than this engine refuses
         // before anything is staged or compared.
         for record in &records {
+            crate::fork_evidence::verify_main_export_record(record)?;
             crate::engine_release::admit_export(
                 record.storage_version,
                 crate::engine_release::THIS_ENGINE,
