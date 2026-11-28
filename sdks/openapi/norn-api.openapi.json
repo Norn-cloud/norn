@@ -7323,6 +7323,10 @@
             "type": "string",
             "description": "The candidate set's admission receipt digest."
           },
+          "ripples": {
+            "$ref": "#/components/schemas/PlanRippleReport",
+            "description": "Exact transitive ripple effects of applying this change over the active set."
+          },
           "same": {
             "type": "array",
             "items": {
@@ -37092,6 +37096,129 @@
           }
         }
       },
+      "PlanRippleBudgetExceeded": {
+        "type": "object",
+        "description": "Explicit budget refusal metadata when [`PlanRippleReport::status`] is [`PlanRippleStatus::Unknown`].",
+        "required": [
+          "resource",
+          "limit",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "Human-readable explanation."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Caller-supplied ceiling that was exceeded.",
+            "minimum": 0
+          },
+          "resource": {
+            "type": "string",
+            "description": "Exhausted resource (`nodes`, `edges`, or `steps`)."
+          }
+        }
+      },
+      "PlanRippleEntry": {
+        "type": "object",
+        "description": "One artifact impacted directly or transitively by a planned definition change.",
+        "required": [
+          "artifactId",
+          "kind",
+          "triggeredBy",
+          "via",
+          "impactKind"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string",
+            "description": "Impacted artifact envelope id."
+          },
+          "impactKind": {
+            "$ref": "#/components/schemas/PlanRippleImpactKind",
+            "description": "Classification of the impact on `artifactId`."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Snake-case artifact kind (`entity`, `action`, `law`, `widget`, …)."
+          },
+          "triggeredBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Sorted, deduplicated root changed or removed artifact ids causing this ripple."
+          },
+          "via": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Shortest concrete dependency chain from a triggering root to `artifactId`."
+          }
+        }
+      },
+      "PlanRippleImpactKind": {
+        "type": "string",
+        "description": "Classification of how a planned root change ripples into an impacted artifact.",
+        "enum": [
+          "direct_change",
+          "specialization_affected",
+          "writer_affected",
+          "law_affected",
+          "lifecycle_affected",
+          "policy_affected",
+          "projection_or_ui_affected",
+          "removed_dependency_broken"
+        ]
+      },
+      "PlanRippleReport": {
+        "type": "object",
+        "description": "Deterministic transitive ripple-effect report attached to a [`crate::cell_definitions::DefinitionsPlan`].",
+        "required": [
+          "status",
+          "roots",
+          "ripples"
+        ],
+        "properties": {
+          "budgetExceeded": {
+            "$ref": "#/components/schemas/PlanRippleBudgetExceeded",
+            "description": "Explicit budget exhaustion metadata when [`PlanRippleStatus::Unknown`] due to a budget limit."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Explicit explanation when [`PlanRippleStatus::Unknown`] (projection error or budget exhaustion)."
+          },
+          "ripples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanRippleEntry"
+            },
+            "description": "Impacted artifacts in deterministic wave order (empty when [`PlanRippleStatus::Unknown`])."
+          },
+          "roots": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Sorted, deduplicated root changed or removed artifact ids evaluated."
+          },
+          "status": {
+            "$ref": "#/components/schemas/PlanRippleStatus",
+            "description": "[`PlanRippleStatus::Exact`] when traversal finished within budget; [`PlanRippleStatus::Unknown`] on refusal."
+          }
+        }
+      },
+      "PlanRippleStatus": {
+        "type": "string",
+        "description": "Completeness status of a planned ripple-effect report.",
+        "enum": [
+          "exact",
+          "unknown"
+        ]
+      },
       "PlannedApproval": {
         "type": "object",
         "description": "An approval the change installs with the set.",
@@ -37420,6 +37547,11 @@
                 "type": "null"
               }
             ]
+          },
+          "witness": {
+            "type": "object",
+            "description": "Structured counterexample witness showing the finding, when the check found one.",
+            "additionalProperties": true
           }
         }
       },

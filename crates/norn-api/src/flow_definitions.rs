@@ -631,6 +631,7 @@ pub fn rebuild(
                 message: detail,
                 law: None,
                 span: None,
+                witness: None,
             }],
         };
         crate::definition_routes::refused_with(diagnostics)

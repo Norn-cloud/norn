@@ -33,7 +33,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 import { loadChecker, sourceMappedDiagnostics, type CheckerAbi } from "./checker-abi.ts"
-import { checkerDiagnostic, cliDiagnostic, registeredCodes, type Finding } from "./cli-diagnostic.ts"
+import { checkerDiagnostic, cliDiagnostic, formatWitnessLines, registeredCodes, type Finding } from "./cli-diagnostic.ts"
 import { admit, type PackResult } from "./pack.ts"
 import { TOOL_ROOT } from "./profile.ts"
 import { ProjectError, readProject, type Project } from "./project.ts"
@@ -110,6 +110,7 @@ function frame(root: string, finding: Finding): string {
     lines.push(`  ${at.line} | ${text}`)
     if (at.column) lines.push(`  ${" ".repeat(String(at.line).length)} | ${" ".repeat(Math.max(0, at.column - 1))}^`)
   }
+  lines.push(...formatWitnessLines(finding.witness))
   if (finding.fix) lines.push(`  fix: ${finding.fix}`)
   else if (finding.no_fix) lines.push(`  no automatic fix: ${finding.no_fix}`)
   return lines.join("\n")

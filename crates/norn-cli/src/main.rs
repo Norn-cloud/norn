@@ -2,6 +2,7 @@
 use std::io::{BufRead as _, Read as _, Write as _};
 mod authoring;
 mod cell;
+mod cell_render;
 #[cfg(test)]
 mod cli_contract;
 mod eval;

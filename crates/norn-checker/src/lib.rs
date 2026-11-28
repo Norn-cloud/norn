@@ -101,6 +101,7 @@ pub mod property_types;
 pub mod quantity_ledger;
 pub mod receipt;
 pub mod red_team;
+pub mod ripple;
 pub mod rule_bindings;
 pub mod sealing;
 mod source_commands;
@@ -176,6 +177,10 @@ pub use receipt::{
     verify_admission_receipt,
 };
 
+pub use ripple::{
+    BudgetRefusal, DEFAULT_RIPPLE_BUDGET, ImpactKind, RIPPLE_FORMAT, RippleEntry, RippleReport,
+    RippleStatus, compute_ripple_effects, compute_ripple_effects_with_budget,
+};
 pub use sealing::{
     seal, validate_customization_overlay, validate_runtime_capability_backstop,
     validate_seal_upgrade,

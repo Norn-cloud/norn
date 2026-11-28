@@ -1664,6 +1664,8 @@ export interface components {
             nextVersion: number;
             /** @description The candidate set's admission receipt digest. */
             receiptSha256: string;
+            /** @description Exact transitive ripple effects of applying this change over the active set. */
+            ripples?: components["schemas"]["PlanRippleReport"];
             /** @description Submitted artifacts identical to the active ones. */
             same: string[];
             /** @description Whether the submission is already the active set (apply writes nothing). */
@@ -13345,6 +13347,54 @@ export interface components {
             /** @description The decision id (`POST /v1/decisions/{id}:decide`). */
             id: string;
         };
+        /** @description Explicit budget refusal metadata when [`PlanRippleReport::status`] is [`PlanRippleStatus::Unknown`]. */
+        PlanRippleBudgetExceeded: {
+            /** @description Human-readable explanation. */
+            detail: string;
+            /**
+             * Format: int64
+             * @description Caller-supplied ceiling that was exceeded.
+             */
+            limit: number;
+            /** @description Exhausted resource (`nodes`, `edges`, or `steps`). */
+            resource: string;
+        };
+        /** @description One artifact impacted directly or transitively by a planned definition change. */
+        PlanRippleEntry: {
+            /** @description Impacted artifact envelope id. */
+            artifactId: string;
+            /** @description Classification of the impact on `artifactId`. */
+            impactKind: components["schemas"]["PlanRippleImpactKind"];
+            /** @description Snake-case artifact kind (`entity`, `action`, `law`, `widget`, …). */
+            kind: string;
+            /** @description Sorted, deduplicated root changed or removed artifact ids causing this ripple. */
+            triggeredBy: string[];
+            /** @description Shortest concrete dependency chain from a triggering root to `artifactId`. */
+            via: string[];
+        };
+        /**
+         * @description Classification of how a planned root change ripples into an impacted artifact.
+         * @enum {string}
+         */
+        PlanRippleImpactKind: "direct_change" | "specialization_affected" | "writer_affected" | "law_affected" | "lifecycle_affected" | "policy_affected" | "projection_or_ui_affected" | "removed_dependency_broken";
+        /** @description Deterministic transitive ripple-effect report attached to a [`crate::cell_definitions::DefinitionsPlan`]. */
+        PlanRippleReport: {
+            /** @description Explicit budget exhaustion metadata when [`PlanRippleStatus::Unknown`] due to a budget limit. */
+            budgetExceeded?: components["schemas"]["PlanRippleBudgetExceeded"];
+            /** @description Explicit explanation when [`PlanRippleStatus::Unknown`] (projection error or budget exhaustion). */
+            reason?: string;
+            /** @description Impacted artifacts in deterministic wave order (empty when [`PlanRippleStatus::Unknown`]). */
+            ripples: components["schemas"]["PlanRippleEntry"][];
+            /** @description Sorted, deduplicated root changed or removed artifact ids evaluated. */
+            roots: string[];
+            /** @description [`PlanRippleStatus::Exact`] when traversal finished within budget; [`PlanRippleStatus::Unknown`] on refusal. */
+            status: components["schemas"]["PlanRippleStatus"];
+        };
+        /**
+         * @description Completeness status of a planned ripple-effect report.
+         * @enum {string}
+         */
+        PlanRippleStatus: "exact" | "unknown";
         /** @description An approval the change installs with the set. */
         PlannedApproval: {
             /**
@@ -13491,6 +13541,10 @@ export interface components {
             /** @description `error`, `warning` or `info`; any error refuses. */
             severity: string;
             span: components["schemas"]["RefusalSpan"] | null;
+            /** @description Structured counterexample witness showing the finding, when the check found one. */
+            witness?: {
+                [key: string]: unknown;
+            };
         };
         /**
          * @description Version of the public refusal projection, independent of stored receipt formats.

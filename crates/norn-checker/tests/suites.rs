@@ -154,6 +154,8 @@ mod ref_additivity;
 mod registry_packs;
 #[path = "restatement.rs"]
 mod restatement;
+#[path = "ripple.rs"]
+mod ripple;
 #[path = "shared_lifecycle_semantics.rs"]
 mod shared_lifecycle_semantics;
 #[path = "source_schema.rs"]
