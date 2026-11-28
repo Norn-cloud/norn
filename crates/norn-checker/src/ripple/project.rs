@@ -72,7 +72,7 @@ fn decode_error(
 }
 
 macro_rules! decode_payload {
-    ($id:expr, $kind:expr, $payload:expr) => {
+    ($id:expr, $kind:expr, $payload:expr $(,)?) => {
         serde_json::from_value($payload).map_err(|error| decode_error($id, $kind, &error))
     };
 }
