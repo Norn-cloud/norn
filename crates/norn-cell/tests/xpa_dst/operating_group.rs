@@ -4,29 +4,39 @@
 //! explicit, fail-closed reporting tiers:
 //! 1. `side_by_side` (native currencies, read-only, non-consolidated)
 //! 2. `fx_translated` (pinned as-of FX rate table required)
-//! 3. `inter_entity_netted` (bilateral matched `main` commit [`Receipt`]s
-//!    cryptographically verified via [`verify_main_receipt`])
+//! 3. `inter_entity_netted` (bilateral matched `main` commit [`ExportRecord`]s
+//!    cryptographically verified via [`verify_main_export_record`], bound to the
+//!    owning cell's `cell_id`, `scope`, ledger revision, committed transfer
+//!    object/event ID, and committed seller/buyer leg amounts)
 //! 4. `statutory_consolidated` (auditor close approval bound to the canonical
-//!    `Norn1` elimination journal pin over authenticated cuts and receipts)
+//!    `Norn1` elimination journal pin over authenticated cuts and transfer legs)
+//!
+//! Every entity revenue total is derived directly from its verified disclosed
+//! [`QueryResult`] inside [`EntityReportingSlice`] — caller-supplied arbitrary
+//! totals are never accepted.
 //!
 //! **Honest evidence note:** Production `OperatingGroup` consolidation kernel
 //! and pack seams are `unknown` / pending S4. This module is a `sampled`
 //! test-harness projection model over real `CellCutSnapshot`s and real `main`
-//! commit receipts.
+//! commit export records.
 
 use std::collections::BTreeMap;
 
+use norn_cell::cell_identity::FORMAT as CELL_ID_FORMAT;
 use norn_cell::combined_view::CellCutSnapshot;
-use norn_cell::{Receipt, verify_main_receipt};
+use norn_cell::compute::QueryResult;
+use norn_cell::export::ExportRecord;
+use norn_cell::{FactWriteRow, verify_main_export_record};
 use norn_checker::metric::compute::arithmetic::FACTOR;
-use norn_ir::Decimal;
 use norn_ir::canonical::HashProfile;
 use norn_ir::cell_id::CellId;
+use norn_ir::{Decimal, RuntimeValue};
 use norn_kernel::read_envelope::{Completeness, ReadSemantics, ReadToken};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::prng::{HALF_FACTOR, decimal_from_scaled, div_i128};
+use super::cuts::bucket_parts;
+use super::prng::{HALF_FACTOR, decimal_from_scaled, decimal_to_scaled, div_i128};
 
 /// Explicit 4-tier `OperatingGroup` reporting ladder (`sampled` test-harness
 /// model over real `READ-LOCAL-1` cell cuts; production seams pending S4).
@@ -54,18 +64,33 @@ pub struct FxRateEntry {
     pub rate_table_pin: String,
 }
 
+/// Cryptographically verifiable evidence for one leg of a bilateral
+/// inter-entity transfer: the owning cell's `main` [`ExportRecord`] plus the
+/// committed transfer object type and identifier (`supply.PosSale` on seller,
+/// `supply.StockLot` on buyer).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TransferLegEvidence {
+    pub export_record: ExportRecord,
+    pub object_type: String,
+    pub object_id: String,
+}
+
 /// One bilateral inter-entity flow matched by cryptographically verified `main`
-/// commit [`Receipt`]s from both legal-entity cells.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// commit [`ExportRecord`]s from both legal-entity cells. Transfer amounts are
+/// extracted directly from the verified committed object payloads (never
+/// accepted as unverified caller scalars).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InterEntityTransfer {
     pub transfer_id: String,
     pub seller_entity_id: String,
     pub buyer_entity_id: String,
     pub currency: String,
-    pub seller_amount_scaled: i128,
-    pub buyer_amount_scaled: i128,
-    pub seller_receipt: Option<Receipt>,
-    pub buyer_receipt: Option<Receipt>,
+    /// Optional pinned spot FX rate converting `seller_currency -> buyer_currency`
+    /// when the two legal entities keep books in different currencies. When
+    /// `None`, the reporting `fx_rates` table is consulted.
+    pub settlement_fx_rate: Option<FxRateEntry>,
+    pub seller_leg: Option<TransferLegEvidence>,
+    pub buyer_leg: Option<TransferLegEvidence>,
 }
 
 /// Statutory close sign-off required exclusively for Tier 4 (`statutory_consolidated`).
@@ -77,19 +102,19 @@ pub struct StatutoryCloseApproval {
     pub approved_at: String,
 }
 
-/// One entity's exact local revenue & margin slice extracted from a real pinned
-/// [`CellCutSnapshot`] carrying authentic `cell_id`, `query_pin`, `definition_pin`,
-/// and `read_token`.
+/// One entity's authenticated reporting slice carrying its disclosed
+/// [`QueryResult`] and pinned [`CellCutSnapshot`] metadata (`cell_id`,
+/// `query_pin`, `definition_pin`, and `read_token`). Revenue totals are always
+/// computed directly from `revenue_answer`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntityReportingSlice {
     pub entity_id: String,
     pub cell_id: CellId,
     pub currency: String,
-    pub revenue_scaled: i128,
-    pub gross_margin_scaled: i128,
     pub query_pin: String,
     pub definition_pin: String,
     pub read_token: ReadToken,
+    pub revenue_answer: QueryResult,
 }
 
 /// Result of projecting an `OperatingGroup` at a requested tier.
@@ -129,46 +154,58 @@ pub enum OperatingGroupRefusal {
 }
 
 /// Extract an authenticated [`EntityReportingSlice`] directly from a real
-/// complete [`CellCutSnapshot`] and its disclosed question answer.
+/// complete [`CellCutSnapshot`] and its disclosed revenue [`QueryResult`].
+///
+/// Never accepts caller-supplied arbitrary totals: revenue is always derived
+/// from `snap.answers[question_name]` and checked against `snap`'s cut pins.
 ///
 /// # Errors
-/// Returns an error if the snapshot is incomplete or lacks the requested question.
+/// Returns an error if the snapshot is incomplete, lacks the requested
+/// question, or carries inconsistent pins.
 pub fn slice_from_cut_snapshot(
     entity_id: &str,
     currency: &str,
     snap: &CellCutSnapshot,
     question_name: &str,
-    revenue_scaled: i128,
-    gross_margin_scaled: i128,
 ) -> Result<EntityReportingSlice, String> {
-    let answers = snap.answers.as_ref().ok_or_else(|| {
-        format!(
-            "{entity_id}: cut snapshot withheld answers (missing={:?} gates={:?} findings={})",
+    if !snap.complete {
+        return Err(format!(
+            "{entity_id}: cut snapshot incomplete (missing={:?} gates={:?} findings={})",
             snap.missing_feeds, snap.failed_coverage_gates, snap.open_findings
-        )
-    })?;
+        ));
+    }
+    let answers = snap
+        .answers
+        .as_ref()
+        .ok_or_else(|| format!("{entity_id}: cut snapshot withheld answers"))?;
     let answer = answers
         .get(question_name)
         .ok_or_else(|| format!("{entity_id}: missing question {question_name} in cut snapshot"))?;
+    if !answer.complete || answer.context.scope != snap.scope || answer.context.world != snap.world
+    {
+        return Err(format!(
+            "{entity_id}: disclosed answer {question_name} disagrees with cut snapshot scope/world"
+        ));
+    }
     Ok(EntityReportingSlice {
         entity_id: entity_id.to_owned(),
         cell_id: snap.cell_id.clone(),
         currency: currency.to_owned(),
-        revenue_scaled,
-        gross_margin_scaled,
         query_pin: answer.query_pin.clone(),
         definition_pin: snap.definition_pin.clone(),
         read_token: snap.read_token.clone(),
+        revenue_answer: answer.clone(),
     })
 }
 
 /// Compute the deterministic `Norn1` canonical elimination journal pin binding
 /// `period_week`, every entity slice's authenticated cut pins, and every
-/// bilateral transfer's verified receipt hashes.
+/// bilateral transfer's verified export hashes, committed object IDs, and
+/// verified committed amounts.
 ///
 /// # Errors
 /// Returns [`OperatingGroupRefusal::MissingStatutoryApproval`] if any transfer
-/// lacks verified receipt hashes or canonical hashing fails.
+/// lacks verified bilateral leg evidence or canonical hashing fails.
 pub fn compute_elimination_journal_pin(
     period_week: &str,
     slices: &[EntityReportingSlice],
@@ -176,13 +213,13 @@ pub fn compute_elimination_journal_pin(
 ) -> Result<String, OperatingGroupRefusal> {
     let mut slice_pins: Vec<serde_json::Value> = slices
         .iter()
-        .map(|s| {
+        .map(|slice| {
             json!({
-                "entityId": s.entity_id,
-                "cellId": s.cell_id.as_str(),
-                "queryPin": s.query_pin,
-                "definitionPin": s.definition_pin,
-                "revision": s.read_token.context.frontier.revision,
+                "entityId": slice.entity_id,
+                "cellId": slice.cell_id.as_str(),
+                "queryPin": slice.query_pin,
+                "definitionPin": slice.definition_pin,
+                "revision": slice.read_token.context.frontier.revision,
             })
         })
         .collect();
@@ -190,16 +227,27 @@ pub fn compute_elimination_journal_pin(
 
     let mut transfer_pins: Vec<serde_json::Value> = Vec::with_capacity(transfers.len());
     for xfer in transfers {
-        let (Some(seller), Some(buyer)) = (&xfer.seller_receipt, &xfer.buyer_receipt) else {
+        let (Some(seller_leg), Some(buyer_leg)) = (&xfer.seller_leg, &xfer.buyer_leg) else {
             return Err(OperatingGroupRefusal::MissingStatutoryApproval {
-                detail: format!("transfer {} missing bilateral receipts", xfer.transfer_id),
+                detail: format!(
+                    "transfer {} missing bilateral leg evidence",
+                    xfer.transfer_id
+                ),
             });
         };
+        let committed_seller =
+            extract_seller_sale_leg(&xfer.transfer_id, seller_leg).map_err(|err| {
+                OperatingGroupRefusal::MissingStatutoryApproval {
+                    detail: format!("seller leg invalid for {}: {err:?}", xfer.transfer_id),
+                }
+            })?;
         transfer_pins.push(json!({
             "transferId": xfer.transfer_id,
-            "sellerHash": seller.hash,
-            "buyerHash": buyer.hash,
-            "amountScaled": xfer.seller_amount_scaled.to_string(),
+            "sellerObjectId": seller_leg.object_id,
+            "buyerObjectId": buyer_leg.object_id,
+            "sellerHash": seller_leg.export_record.receipt.hash,
+            "buyerHash": buyer_leg.export_record.receipt.hash,
+            "amountScaled": committed_seller.amount_scaled.to_string(),
         }));
     }
     transfer_pins.sort_by_key(ToString::to_string);
@@ -219,9 +267,10 @@ pub fn compute_elimination_journal_pin(
 
 /// Project `slices` at `requested_tier` under fail-closed evidence rules.
 ///
-/// Refuses missing/inconsistent cell cut pins, missing FX tables, unverified or
-/// asymmetric bilateral transfer receipts, and unauthenticated statutory close
-/// approvals.
+/// Refuses missing/inconsistent cell cut pins, query_pin/read_token mismatches,
+/// missing FX tables, unverified or foreign-cell or unrelated-commit bilateral
+/// transfer evidence, mismatched seller vs buyer leg amounts, and
+/// unauthenticated statutory close approvals.
 ///
 /// # Errors
 /// Returns [`OperatingGroupRefusal`] whenever any tier prerequisite fails closed.
@@ -234,7 +283,7 @@ pub fn evaluate_operating_group_tier(
     statutory_approval: Option<&StatutoryCloseApproval>,
 ) -> Result<OperatingGroupProjection, OperatingGroupRefusal> {
     validate_slice_cut_pins(slices)?;
-    let (by_ccy_scaled, per_currency_revenue) = aggregate_by_currency(slices)?;
+    let (by_ccy_scaled, per_currency_revenue) = aggregate_verified_revenue_by_currency(slices)?;
     if requested_tier == OperatingGroupTier::SideBySide {
         return Ok(OperatingGroupProjection {
             tier: OperatingGroupTier::SideBySide,
@@ -314,32 +363,26 @@ fn validate_slice_cut_pins(slices: &[EntityReportingSlice]) -> Result<(), Operat
         });
     }
     for slice in slices {
+        let invalid = |reason: &str| OperatingGroupRefusal::InvalidCellCutPin {
+            entity_id: slice.entity_id.clone(),
+            reason: reason.to_owned(),
+        };
         if slice.query_pin.trim().is_empty() || slice.definition_pin.trim().is_empty() {
-            return Err(OperatingGroupRefusal::InvalidCellCutPin {
-                entity_id: slice.entity_id.clone(),
-                reason: "missing query_pin or definition_pin".to_owned(),
-            });
+            return Err(invalid("missing query_pin or definition_pin"));
         }
         let ctx = &slice.read_token.context;
         if ctx.frontier.cell != slice.cell_id {
-            return Err(OperatingGroupRefusal::InvalidCellCutPin {
-                entity_id: slice.entity_id.clone(),
-                reason: "read_token cell_id does not match slice cell_id".to_owned(),
-            });
+            return Err(invalid("read_token cell_id does not match slice cell_id"));
         }
         if ctx.authority_pin.resource_id != slice.entity_id {
-            return Err(OperatingGroupRefusal::InvalidCellCutPin {
-                entity_id: slice.entity_id.clone(),
-                reason: "read_token authority_pin resource_id does not match entity_id".to_owned(),
-            });
+            return Err(invalid(
+                "read_token authority_pin resource_id does not match entity_id",
+            ));
         }
         if slice.read_token.completeness != Completeness::Complete
             || slice.read_token.semantics != ReadSemantics::Exact
         {
-            return Err(OperatingGroupRefusal::InvalidCellCutPin {
-                entity_id: slice.entity_id.clone(),
-                reason: "read_token must be Complete and Exact".to_owned(),
-            });
+            return Err(invalid("read_token must be Complete and Exact"));
         }
         let expected_def = ctx
             .definition_pin
@@ -347,22 +390,77 @@ fn validate_slice_cut_pins(slices: &[EntityReportingSlice]) -> Result<(), Operat
             .as_deref()
             .unwrap_or(ctx.definition_pin.model_hash.as_str());
         if slice.definition_pin != expected_def {
-            return Err(OperatingGroupRefusal::InvalidCellCutPin {
-                entity_id: slice.entity_id.clone(),
-                reason: "definition_pin disagrees with read_token definition_pin".to_owned(),
-            });
+            return Err(invalid(
+                "definition_pin disagrees with read_token definition_pin",
+            ));
+        }
+        let answer = &slice.revenue_answer;
+        if answer.query_pin != slice.query_pin
+            || answer.definition_pin != slice.definition_pin
+            || !answer.complete
+            || answer.known_as_of != ctx.frontier.revision
+            || answer.revision.commits != ctx.frontier.revision
+            || answer.context.world != ctx.frontier.world
+        {
+            return Err(invalid(
+                "revenue QueryResult pins disagree with slice query_pin/read_token",
+            ));
         }
     }
     Ok(())
 }
 
-fn aggregate_by_currency(
+fn derive_slice_revenue_scaled(
+    slice: &EntityReportingSlice,
+) -> Result<i128, OperatingGroupRefusal> {
+    let invalid = |reason: String| OperatingGroupRefusal::InvalidCellCutPin {
+        entity_id: slice.entity_id.clone(),
+        reason,
+    };
+    if slice.revenue_answer.rows.is_empty() {
+        return Err(invalid(
+            "disclosed revenue QueryResult has zero rows".to_owned(),
+        ));
+    }
+    let mut total_scaled: i128 = 0;
+    for row in slice.revenue_answer.rows.values() {
+        if row.suppressed {
+            return Err(invalid(
+                "disclosed revenue bucket is suppressed under DATA-VALUES-1".to_owned(),
+            ));
+        }
+        let parts = bucket_parts(&row.bucket);
+        let row_ccy = parts
+            .first()
+            .map(String::as_str)
+            .ok_or_else(|| invalid("revenue bucket missing currency partition".to_owned()))?;
+        if row_ccy != slice.currency {
+            return Err(invalid(format!(
+                "revenue bucket currency `{row_ccy}` disagrees with entity book currency `{}`",
+                slice.currency
+            )));
+        }
+        let value = row
+            .value
+            .ok_or_else(|| invalid("revenue bucket missing exact numeric value".to_owned()))?;
+        let scaled_val = decimal_to_scaled(value).map_err(invalid)?;
+        total_scaled = total_scaled.checked_add(scaled_val).ok_or_else(|| {
+            OperatingGroupRefusal::ArithmeticOverflow {
+                detail: format!("revenue sum overflow for {}", slice.entity_id),
+            }
+        })?;
+    }
+    Ok(total_scaled)
+}
+
+fn aggregate_verified_revenue_by_currency(
     slices: &[EntityReportingSlice],
 ) -> Result<(BTreeMap<String, i128>, BTreeMap<String, Decimal>), OperatingGroupRefusal> {
     let mut by_ccy: BTreeMap<String, i128> = BTreeMap::new();
     for slice in slices {
+        let derived_rev = derive_slice_revenue_scaled(slice)?;
         let entry = by_ccy.entry(slice.currency.clone()).or_insert(0);
-        *entry = entry.checked_add(slice.revenue_scaled).ok_or_else(|| {
+        *entry = entry.checked_add(derived_rev).ok_or_else(|| {
             OperatingGroupRefusal::ArithmeticOverflow {
                 detail: format!("revenue sum overflow for {}", slice.currency),
             }
@@ -394,25 +492,26 @@ fn translate_currency_totals(
     Ok(total)
 }
 
+struct CommittedLegDetails {
+    currency: String,
+    qty_scaled: i128,
+    amount_scaled: i128,
+}
+
 fn sum_verified_eliminations(
     slices: &[EntityReportingSlice],
     transfers: &[InterEntityTransfer],
     target_ccy: &str,
     fx_rates: &[FxRateEntry],
 ) -> Result<i128, OperatingGroupRefusal> {
-    let slice_revs: BTreeMap<&str, u64> = slices
+    let slice_map: BTreeMap<&str, &EntityReportingSlice> = slices
         .iter()
-        .map(|s| (s.entity_id.as_str(), s.read_token.context.frontier.revision))
+        .map(|slice| (slice.entity_id.as_str(), slice))
         .collect();
     let mut eliminated: i128 = 0;
     for xfer in transfers {
-        verify_single_transfer(xfer, &slice_revs)?;
-        let converted = convert_scaled(
-            xfer.seller_amount_scaled,
-            &xfer.currency,
-            target_ccy,
-            fx_rates,
-        )?;
+        let seller_amount_scaled = verify_single_transfer(xfer, &slice_map, fx_rates)?;
+        let converted = convert_scaled(seller_amount_scaled, &xfer.currency, target_ccy, fx_rates)?;
         eliminated = eliminated.checked_add(converted).ok_or_else(|| {
             OperatingGroupRefusal::ArithmeticOverflow {
                 detail: "eliminated inter-entity sum overflow".to_owned(),
@@ -424,8 +523,9 @@ fn sum_verified_eliminations(
 
 fn verify_single_transfer(
     xfer: &InterEntityTransfer,
-    slice_revs: &BTreeMap<&str, u64>,
-) -> Result<(), OperatingGroupRefusal> {
+    slice_map: &BTreeMap<&str, &EntityReportingSlice>,
+    fx_rates: &[FxRateEntry],
+) -> Result<i128, OperatingGroupRefusal> {
     let unmatched = |reason: String| OperatingGroupRefusal::UnmatchedInterEntityTransfer {
         transfer_id: xfer.transfer_id.clone(),
         reason,
@@ -435,42 +535,258 @@ fn verify_single_transfer(
             "self-transfer cannot be an inter-entity elimination".to_owned(),
         ));
     }
-    let Some(&seller_rev) = slice_revs.get(xfer.seller_entity_id.as_str()) else {
+    let Some(seller_slice) = slice_map.get(xfer.seller_entity_id.as_str()).copied() else {
         return Err(unmatched(
             "seller entity absent from evaluated cell cuts".to_owned(),
         ));
     };
-    let Some(&buyer_rev) = slice_revs.get(xfer.buyer_entity_id.as_str()) else {
+    let Some(buyer_slice) = slice_map.get(xfer.buyer_entity_id.as_str()).copied() else {
         return Err(unmatched(
             "buyer entity absent from evaluated cell cuts".to_owned(),
         ));
     };
-    let (Some(seller_rcpt), Some(buyer_rcpt)) = (&xfer.seller_receipt, &xfer.buyer_receipt) else {
+    let (Some(seller_leg), Some(buyer_leg)) = (&xfer.seller_leg, &xfer.buyer_leg) else {
         return Err(unmatched(
-            "missing bilateral main receipt on seller or buyer side".to_owned(),
+            "missing bilateral main export record on seller or buyer side".to_owned(),
         ));
     };
-    verify_main_receipt(seller_rcpt)
-        .map_err(|e| unmatched(format!("seller receipt failed verification: {e}")))?;
-    verify_main_receipt(buyer_rcpt)
-        .map_err(|e| unmatched(format!("buyer receipt failed verification: {e}")))?;
-    if seller_rcpt.hash == buyer_rcpt.hash {
+    verify_leg_ledger_binding(&xfer.transfer_id, "seller", seller_leg, seller_slice)?;
+    verify_leg_ledger_binding(&xfer.transfer_id, "buyer", buyer_leg, buyer_slice)?;
+    if seller_leg.export_record.receipt.hash == buyer_leg.export_record.receipt.hash {
         return Err(unmatched(
-            "seller and buyer receipts cannot share the same commit hash".to_owned(),
+            "seller and buyer export records cannot share the same commit hash".to_owned(),
         ));
     }
-    if seller_rcpt.body.commit_seq > seller_rev || buyer_rcpt.body.commit_seq > buyer_rev {
-        return Err(unmatched(
-            "bilateral receipt commit_seq exceeds pinned cell cut revision".to_owned(),
-        ));
-    }
-    if xfer.seller_amount_scaled <= 0 || xfer.seller_amount_scaled != xfer.buyer_amount_scaled {
+
+    let seller_committed = extract_seller_sale_leg(&xfer.transfer_id, seller_leg)?;
+    let buyer_committed = extract_buyer_lot_leg(&xfer.transfer_id, buyer_leg)?;
+    verify_bilateral_amounts(
+        xfer,
+        seller_slice,
+        buyer_slice,
+        &seller_committed,
+        &buyer_committed,
+        fx_rates,
+    )?;
+    Ok(seller_committed.amount_scaled)
+}
+
+fn verify_bilateral_amounts(
+    xfer: &InterEntityTransfer,
+    seller_slice: &EntityReportingSlice,
+    buyer_slice: &EntityReportingSlice,
+    seller_committed: &CommittedLegDetails,
+    buyer_committed: &CommittedLegDetails,
+    fx_rates: &[FxRateEntry],
+) -> Result<(), OperatingGroupRefusal> {
+    let unmatched = |reason: String| OperatingGroupRefusal::UnmatchedInterEntityTransfer {
+        transfer_id: xfer.transfer_id.clone(),
+        reason,
+    };
+    if seller_committed.currency != xfer.currency
+        || seller_committed.currency != seller_slice.currency
+    {
         return Err(unmatched(format!(
-            "invalid/asymmetric bilateral amounts: seller={} buyer={}",
-            xfer.seller_amount_scaled, xfer.buyer_amount_scaled
+            "seller leg currency `{}` disagrees with transfer `{}` / book `{}`",
+            seller_committed.currency, xfer.currency, seller_slice.currency
+        )));
+    }
+    if buyer_committed.currency != buyer_slice.currency {
+        return Err(unmatched(format!(
+            "buyer leg currency `{}` disagrees with buyer book `{}`",
+            buyer_committed.currency, buyer_slice.currency
+        )));
+    }
+    if seller_committed.qty_scaled <= 0 || seller_committed.qty_scaled != buyer_committed.qty_scaled
+    {
+        return Err(unmatched(format!(
+            "bilateral transfer quantity mismatch: seller={} buyer={}",
+            seller_committed.qty_scaled, buyer_committed.qty_scaled
+        )));
+    }
+
+    let expected_buyer_amount = if seller_committed.currency == buyer_committed.currency {
+        seller_committed.amount_scaled
+    } else if let Some(spot_rate) = &xfer.settlement_fx_rate {
+        convert_scaled(
+            seller_committed.amount_scaled,
+            &seller_committed.currency,
+            &buyer_committed.currency,
+            std::slice::from_ref(spot_rate),
+        )?
+    } else {
+        convert_scaled(
+            seller_committed.amount_scaled,
+            &seller_committed.currency,
+            &buyer_committed.currency,
+            fx_rates,
+        )?
+    };
+    if expected_buyer_amount != buyer_committed.amount_scaled {
+        return Err(unmatched(format!(
+            "asymmetric bilateral amounts: seller_translated={expected_buyer_amount} buyer_committed={}",
+            buyer_committed.amount_scaled
         )));
     }
     Ok(())
+}
+
+fn verify_leg_ledger_binding(
+    transfer_id: &str,
+    role: &str,
+    leg: &TransferLegEvidence,
+    slice: &EntityReportingSlice,
+) -> Result<(), OperatingGroupRefusal> {
+    let unmatched = |reason: String| OperatingGroupRefusal::UnmatchedInterEntityTransfer {
+        transfer_id: transfer_id.to_owned(),
+        reason: format!("{role} leg: {reason}"),
+    };
+    verify_main_export_record(&leg.export_record).map_err(|e| {
+        unmatched(format!(
+            "export record failed cryptographic verification: {e}"
+        ))
+    })?;
+    let bindings = &leg.export_record.bindings;
+    if bindings.get("cell_identity_format").map(String::as_str) != Some(CELL_ID_FORMAT) {
+        return Err(unmatched(
+            "export record missing canonical cell_identity_format binding".to_owned(),
+        ));
+    }
+    if bindings.get("cell_id").map(String::as_str) != Some(slice.cell_id.as_str()) {
+        return Err(unmatched(format!(
+            "export record cell_id {:?} does not match owning cell {}",
+            bindings.get("cell_id"),
+            slice.cell_id
+        )));
+    }
+    if leg.export_record.batch.scope != slice.revenue_answer.context.scope {
+        return Err(unmatched(
+            "export record scope does not match owning cell cut scope".to_owned(),
+        ));
+    }
+    let cut_revision = slice.read_token.context.frontier.revision;
+    if leg.export_record.receipt.body.commit_seq > cut_revision {
+        return Err(unmatched(format!(
+            "commit_seq {} exceeds pinned cell cut revision {cut_revision}",
+            leg.export_record.receipt.body.commit_seq
+        )));
+    }
+    let written_present = leg
+        .export_record
+        .receipt
+        .body
+        .written
+        .iter()
+        .any(|row| row.object_type == leg.object_type && row.key == leg.object_id);
+    if !written_present {
+        return Err(unmatched(format!(
+            "receipt does not commit declared transfer object {}/{}",
+            leg.object_type, leg.object_id
+        )));
+    }
+    Ok(())
+}
+
+fn extract_seller_sale_leg(
+    transfer_id: &str,
+    leg: &TransferLegEvidence,
+) -> Result<CommittedLegDetails, OperatingGroupRefusal> {
+    if leg.object_type != "supply.PosSale" {
+        return Err(OperatingGroupRefusal::UnmatchedInterEntityTransfer {
+            transfer_id: transfer_id.to_owned(),
+            reason: format!(
+                "seller leg must commit supply.PosSale, got {}",
+                leg.object_type
+            ),
+        });
+    }
+    extract_committed_leg_fields(transfer_id, leg, "sold_qty", "net_revenue")
+}
+
+fn extract_buyer_lot_leg(
+    transfer_id: &str,
+    leg: &TransferLegEvidence,
+) -> Result<CommittedLegDetails, OperatingGroupRefusal> {
+    if leg.object_type != "supply.StockLot" {
+        return Err(OperatingGroupRefusal::UnmatchedInterEntityTransfer {
+            transfer_id: transfer_id.to_owned(),
+            reason: format!(
+                "buyer leg must commit supply.StockLot, got {}",
+                leg.object_type
+            ),
+        });
+    }
+    extract_committed_leg_fields(transfer_id, leg, "received_qty", "opening_stock_value")
+}
+
+fn extract_committed_leg_fields(
+    transfer_id: &str,
+    leg: &TransferLegEvidence,
+    qty_field: &str,
+    amount_field: &str,
+) -> Result<CommittedLegDetails, OperatingGroupRefusal> {
+    let unmatched = |reason: String| OperatingGroupRefusal::UnmatchedInterEntityTransfer {
+        transfer_id: transfer_id.to_owned(),
+        reason,
+    };
+    let values = leg
+        .export_record
+        .batch
+        .writes
+        .iter()
+        .find_map(|write| match write {
+            FactWriteRow::Put {
+                object_type,
+                key,
+                values,
+            } if object_type == &leg.object_type && key == &leg.object_id => Some(values),
+            FactWriteRow::Put { .. } | FactWriteRow::Delete { .. } => None,
+        })
+        .ok_or_else(|| {
+            unmatched(format!(
+                "commit batch does not contain Put for {}/{}",
+                leg.object_type, leg.object_id
+            ))
+        })?;
+    let currency = match values.get("currency") {
+        Some(RuntimeValue::String(code)) if !code.trim().is_empty() => code.clone(),
+        other => {
+            return Err(unmatched(format!(
+                "committed object {}/{} missing valid currency: {other:?}",
+                leg.object_type, leg.object_id
+            )));
+        }
+    };
+    let qty_dec = match values.get(qty_field) {
+        Some(RuntimeValue::Number(num)) => *num,
+        other => {
+            return Err(unmatched(format!(
+                "committed object {}/{} missing numeric `{qty_field}`: {other:?}",
+                leg.object_type, leg.object_id
+            )));
+        }
+    };
+    let amount_dec = match values.get(amount_field) {
+        Some(RuntimeValue::Number(num)) => *num,
+        other => {
+            return Err(unmatched(format!(
+                "committed object {}/{} missing numeric `{amount_field}`: {other:?}",
+                leg.object_type, leg.object_id
+            )));
+        }
+    };
+    let qty_scaled = decimal_to_scaled(qty_dec).map_err(unmatched)?;
+    let amount_scaled = decimal_to_scaled(amount_dec).map_err(unmatched)?;
+    if amount_scaled <= 0 {
+        return Err(unmatched(format!(
+            "committed transfer amount `{amount_field}` must be strictly positive, got {amount_scaled}"
+        )));
+    }
+    Ok(CommittedLegDetails {
+        currency,
+        qty_scaled,
+        amount_scaled,
+    })
 }
 
 fn validate_statutory_approval(
@@ -495,7 +811,7 @@ fn validate_statutory_approval(
     let expected_pin = compute_elimination_journal_pin(&signoff.period_week, slices, transfers)?;
     if signoff.elimination_journal_pin != expected_pin {
         return Err(OperatingGroupRefusal::MissingStatutoryApproval {
-            detail: "elimination_journal_pin does not match authenticated cuts and receipts"
+            detail: "elimination_journal_pin does not match authenticated cuts and transfer legs"
                 .to_owned(),
         });
     }
@@ -504,29 +820,29 @@ fn validate_statutory_approval(
 
 fn convert_scaled(
     amount_scaled: i128,
-    from_ccy: &str,
-    to_ccy: &str,
+    source_ccy: &str,
+    target_ccy: &str,
     fx_rates: &[FxRateEntry],
 ) -> Result<i128, OperatingGroupRefusal> {
-    if from_ccy == to_ccy {
+    if source_ccy == target_ccy {
         return Ok(amount_scaled);
     }
     let rate = fx_rates
         .iter()
-        .find(|r| {
-            r.from_currency == from_ccy
-                && r.to_currency == to_ccy
-                && !r.as_of.trim().is_empty()
-                && !r.rate_table_pin.trim().is_empty()
-                && r.rate_scaled > 0
+        .find(|entry| {
+            entry.from_currency == source_ccy
+                && entry.to_currency == target_ccy
+                && !entry.as_of.trim().is_empty()
+                && !entry.rate_table_pin.trim().is_empty()
+                && entry.rate_scaled > 0
         })
         .ok_or_else(|| OperatingGroupRefusal::MissingFxTable {
-            from_currency: from_ccy.to_owned(),
-            to_currency: to_ccy.to_owned(),
+            from_currency: source_ccy.to_owned(),
+            to_currency: target_ccy.to_owned(),
         })?;
     let product = amount_scaled.checked_mul(rate.rate_scaled).ok_or_else(|| {
         OperatingGroupRefusal::ArithmeticOverflow {
-            detail: format!("FX multiply overflow for {from_ccy}->{to_ccy}"),
+            detail: format!("FX multiply overflow for {source_ccy}->{target_ccy}"),
         }
     })?;
     let adjusted = if product >= 0 {

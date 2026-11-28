@@ -15,23 +15,24 @@
 //!    [`super::operating_group`].
 
 use norn_cell::combined_view::CombinedViewKind;
-use norn_cell::{CellError, KnowledgeCutoff, Receipt};
+use norn_cell::export::ExportRecord;
+use norn_cell::{CellError, KnowledgeCutoff};
 use norn_checker::metric::compute::arithmetic::ratio;
 use norn_ir::Decimal;
 use serde_json::json;
 
-use super::actions::StoreKpiInput;
+use super::actions::{StoreKpiInput, seed_two_book_cells};
 use super::cuts::{
     bucket_decimal_exact, cell_id_for_entity, dst_coverage_spec, evaluate_multi_cell_report,
 };
 use super::env::{DEFAULT_CLOCK_MS, EntityCell, retail_pack};
 use super::operating_group::{
     EntityReportingSlice, FxRateEntry, InterEntityTransfer, OperatingGroupRefusal,
-    OperatingGroupTier, StatutoryCloseApproval, compute_elimination_journal_pin,
-    evaluate_operating_group_tier, slice_from_cut_snapshot,
+    OperatingGroupTier, StatutoryCloseApproval, TransferLegEvidence,
+    compute_elimination_journal_pin, evaluate_operating_group_tier, slice_from_cut_snapshot,
 };
 use super::prng::{
-    PRIMARY_SEED, SECONDARY_SEED, SplitMix64, decimal_from_scaled, decimal_to_scaled, div_i128,
+    PRIMARY_SEED, SplitMix64, decimal_from_scaled, decimal_to_scaled, div_i128,
     exact_ratio_of_sums, independent_ratio_scaled, scaled, week_monday_iso,
 };
 
@@ -49,32 +50,28 @@ pub fn verify_decimal_and_unit_partition_laws() -> Result<(), String> {
 
 fn verify_unit_partition_checker_refusals() -> Result<(), String> {
     let pack = retail_pack()?;
-    let mut mixed_ccy_q = pack.retail_question_ir("supply.retail.store_revenue_weekly")?;
-    mixed_ccy_q
-        .dimensions
-        .retain(|dim| dim.path.property.as_str() != "currency");
-    let ccy_err = pack
-        .admit_question_ir(&mixed_ccy_q, 200)
-        .err()
-        .ok_or("unpartitioned currency question MUST refuse")?;
-    if !ccy_err.contains("metric.validation.mixed_currency") {
-        return Err(format!(
-            "expected metric.validation.mixed_currency, got: {ccy_err}"
-        ));
-    }
-
-    let mut mixed_unit_q = pack.retail_question_ir("supply.retail.store_sales_weekly")?;
-    mixed_unit_q
-        .dimensions
-        .retain(|dim| dim.path.property.as_str() != "unit");
-    let unit_err = pack
-        .admit_question_ir(&mixed_unit_q, 200)
-        .err()
-        .ok_or("unpartitioned unit question MUST refuse")?;
-    if !unit_err.contains("metric.validation.mixed_unit") {
-        return Err(format!(
-            "expected metric.validation.mixed_unit, got: {unit_err}"
-        ));
+    for (question, dim_prop, expected_code) in [
+        (
+            "supply.retail.store_revenue_weekly",
+            "currency",
+            "metric.validation.mixed_currency",
+        ),
+        (
+            "supply.retail.store_sales_weekly",
+            "unit",
+            "metric.validation.mixed_unit",
+        ),
+    ] {
+        let mut ir = pack.retail_question_ir(question)?;
+        ir.dimensions
+            .retain(|dim| dim.path.property.as_str() != dim_prop);
+        let err = pack
+            .admit_question_ir(&ir, 200)
+            .err()
+            .ok_or_else(|| format!("unpartitioned {dim_prop} question MUST refuse"))?;
+        if !err.contains(expected_code) {
+            return Err(format!("expected {expected_code}, got: {err}"));
+        }
     }
     Ok(())
 }
@@ -82,17 +79,24 @@ fn verify_unit_partition_checker_refusals() -> Result<(), String> {
 fn verify_checked_decimal_and_ratio_algebra() -> Result<(), String> {
     let mut rng = SplitMix64::new(PRIMARY_SEED);
     for _ in 0..64 {
-        let rev_a = scaled(i128::from(rng.range_u64(100, 10_000)));
-        let rev_b = scaled(i128::from(rng.range_u64(100, 10_000)));
-        let cogs_a = div_i128(rev_a, 4).saturating_mul(i128::from(rng.range_u64(1, 3)));
-        let cogs_b = div_i128(rev_b, 5).saturating_mul(i128::from(rng.range_u64(1, 4)));
-        let sum_gm = rev_a
-            .checked_sub(cogs_a)
-            .and_then(|ga| rev_b.checked_sub(cogs_b).and_then(|gb| ga.checked_add(gb)))
+        let primary_revenue = scaled(i128::from(rng.range_u64(100, 10_000)));
+        let secondary_revenue = scaled(i128::from(rng.range_u64(100, 10_000)));
+        let primary_cogs =
+            div_i128(primary_revenue, 4).saturating_mul(i128::from(rng.range_u64(1, 3)));
+        let secondary_cogs =
+            div_i128(secondary_revenue, 5).saturating_mul(i128::from(rng.range_u64(1, 4)));
+        let sum_gm = primary_revenue
+            .checked_sub(primary_cogs)
+            .and_then(|first_gm| {
+                secondary_revenue
+                    .checked_sub(secondary_cogs)
+                    .and_then(|second_gm| first_gm.checked_add(second_gm))
+            })
             .ok_or("checked margin overflow")?;
-        let sum_rev = rev_a.checked_add(rev_b).ok_or("checked revenue overflow")?;
-        let engine_scaled =
-            ratio(sum_gm, sum_rev).ok_or("engine ratio unexpectedly returned None")?;
+        let sum_rev = primary_revenue
+            .checked_add(secondary_revenue)
+            .ok_or("checked revenue overflow")?;
+        let engine_scaled = ratio(sum_gm, sum_rev).ok_or("engine ratio returned None")?;
         let oracle_scaled =
             independent_ratio_scaled(sum_gm, sum_rev).ok_or("independent oracle returned None")?;
         if engine_scaled != oracle_scaled {
@@ -102,12 +106,9 @@ fn verify_checked_decimal_and_ratio_algebra() -> Result<(), String> {
         }
         let exact_dec = exact_ratio_of_sums(sum_gm, sum_rev)?.ok_or("expected exact ratio")?;
         if exact_dec != decimal_from_scaled(oracle_scaled)? {
-            return Err(format!(
-                "exact_ratio_of_sums mismatch: {exact_dec:?} vs oracle {oracle_scaled}"
-            ));
+            return Err(format!("exact_ratio_of_sums mismatch: {exact_dec:?}"));
         }
-        let neg_gm = sum_gm.checked_neg().ok_or("checked_neg overflow")?;
-        if sum_gm.checked_add(neg_gm) != Some(0) {
+        if sum_gm.checked_neg().and_then(|neg| sum_gm.checked_add(neg)) != Some(0) {
             return Err("exact additive inverse failed".to_owned());
         }
         if exact_ratio_of_sums(sum_gm, 0)?.is_some() || ratio(sum_gm, 0).is_some() {
@@ -126,17 +127,18 @@ fn verify_checked_decimal_and_ratio_algebra() -> Result<(), String> {
         (1, 128, "0.007813", "half-away-from-zero +"),
         (-1, 128, "-0.007813", "half-away-from-zero -"),
     ];
-    for (num, den, want, label) in checks {
-        let got = exact_ratio_of_sums(num, den)?
+    for (numerator, denominator, expected_str, label) in checks {
+        let got = exact_ratio_of_sums(numerator, denominator)?
             .ok_or_else(|| format!("expected {label}"))?
             .canonical();
         let oracle_dec = decimal_from_scaled(
-            independent_ratio_scaled(num, den).ok_or_else(|| format!("oracle none for {label}"))?,
+            independent_ratio_scaled(numerator, denominator)
+                .ok_or_else(|| format!("oracle none for {label}"))?,
         )?
         .canonical();
-        if got != want || oracle_dec != want {
+        if got != expected_str || oracle_dec != expected_str {
             return Err(format!(
-                "{label}: expected {want}, got engine={got}, oracle={oracle_dec}"
+                "{label}: expected {expected_str}, got engine={got}, oracle={oracle_dec}"
             ));
         }
     }
@@ -228,8 +230,7 @@ fn seed_kpi_ratio_book() -> Result<EntityCell, String> {
 }
 
 fn seed_kpi_ratio_sales_and_rollup(book: &mut EntityCell) -> Result<(), String> {
-    // Unequal weights: sale 1 GM rate = 0.2; sale 2 GM rate = 0.6.
-    // Average-of-ratios would be 0.4; ratio-of-sums MUST be 2000/4000 = 0.5.
+    // Unequal weights: sale 1 GM rate = 0.2; sale 2 GM rate = 0.6 -> ratio-of-sums = 0.5.
     book.record_costed_sale(
         "SALE-KPI-1",
         "ST-KPI-1",
@@ -298,14 +299,14 @@ fn assert_cell_kpi_matches_oracle(
     book: &EntityCell,
     question: &str,
     bucket: &[&str],
-    num_scaled: i128,
-    den_scaled: i128,
+    numerator_scaled: i128,
+    denominator_scaled: i128,
     expected_text: &str,
 ) -> Result<(), String> {
     let actual = bucket_decimal_exact(&book.answer(question)?, bucket)
         .ok_or_else(|| format!("{question}: missing bucket {bucket:?}"))?;
-    let oracle_scaled =
-        independent_ratio_scaled(num_scaled, den_scaled).ok_or("independent oracle None")?;
+    let oracle_scaled = independent_ratio_scaled(numerator_scaled, denominator_scaled)
+        .ok_or("independent oracle None")?;
     let oracle_dec = decimal_from_scaled(oracle_scaled)?;
     if actual != oracle_dec || actual.canonical() != expected_text {
         return Err(format!(
@@ -325,7 +326,7 @@ fn assert_cell_kpi_matches_oracle(
 /// Returns an error if any temporal or bitemporal invariant fails.
 pub fn verify_temporal_grain_and_bitemporal_laws() -> Result<(), String> {
     let mut book = seed_temporal_book()?;
-    let k1 = KnowledgeCutoff {
+    let prior_cutoff = KnowledgeCutoff {
         recorded_at: book.now(),
         frontier: book.head()?.commits,
     };
@@ -341,7 +342,7 @@ pub fn verify_temporal_grain_and_bitemporal_laws() -> Result<(), String> {
         "CC-OH-1",
     )?;
     verify_rollup_temporal_and_cutoff_laws(&mut book)?;
-    verify_bitemporal_recount_preservation(&mut book, k1)
+    verify_bitemporal_recount_preservation(&mut book, prior_cutoff)
 }
 
 fn seed_temporal_book() -> Result<EntityCell, String> {
@@ -384,11 +385,6 @@ fn seed_temporal_book() -> Result<EntityCell, String> {
     if code != "core.laws.violated" || !msg.contains("sale_matches_cost_record") {
         return Err(format!("future-effective cost must refuse: {code} {msg}"));
     }
-    seed_temporal_positions(&mut book)?;
-    Ok(book)
-}
-
-fn seed_temporal_positions(book: &mut EntityCell) -> Result<(), String> {
     book.record_costed_lot(
         "LOT-T1",
         "ST-T1",
@@ -438,7 +434,8 @@ fn seed_temporal_positions(book: &mut EntityCell) -> Result<(), String> {
         "available",
         "2026-09-04T10:00:00Z",
         "CC-K1",
-    )
+    )?;
+    Ok(book)
 }
 
 fn verify_rollup_temporal_and_cutoff_laws(book: &mut EntityCell) -> Result<(), String> {
@@ -486,7 +483,7 @@ fn verify_rollup_temporal_and_cutoff_laws(book: &mut EntityCell) -> Result<(), S
 
 fn verify_bitemporal_recount_preservation(
     book: &mut EntityCell,
-    k1: KnowledgeCutoff,
+    prior_cutoff: KnowledgeCutoff,
 ) -> Result<(), String> {
     book.record_store_count(
         true,
@@ -499,7 +496,7 @@ fn verify_bitemporal_recount_preservation(
         "2026-09-05T12:00:00Z",
         "CC-K2",
     )?;
-    let k2 = KnowledgeCutoff {
+    let recounted_cutoff = KnowledgeCutoff {
         recorded_at: book.now(),
         frontier: book.head()?.commits,
     };
@@ -515,29 +512,31 @@ fn verify_bitemporal_recount_preservation(
         return Err(format!("expected live availability 35, got {live_val}"));
     }
 
-    let mut k1_ctx = book.query_context();
-    k1_ctx.now_ms = k1.recorded_at.as_millis();
+    let mut prior_ctx = book.query_context();
+    prior_ctx.now_ms = prior_cutoff.recorded_at.as_millis();
     let hist = book
         .cell()?
         .store()
-        .evaluate_question_known_at(&avail_plan, k1_ctx.clone(), k1, |_| Ok(true))
-        .map_err(|e| format!("evaluate_question_known_at K1: {e}"))?;
+        .evaluate_question_known_at(&avail_plan, prior_ctx.clone(), prior_cutoff, |_| Ok(true))
+        .map_err(|e| format!("evaluate_question_known_at prior_cutoff: {e}"))?;
     let hist_val = bucket_decimal_exact(&hist.result, &["each", "ST-T1", "2026-08-31"])
-        .ok_or("missing K1 historical availability")?;
+        .ok_or("missing prior historical availability")?;
     if hist_val.canonical() != "38" {
         return Err(format!(
-            "ASOF-KNOWLEDGE-1 violated: expected K1 availability 38, got {hist_val}"
+            "ASOF-KNOWLEDGE-1 violated: expected prior availability 38, got {hist_val}"
         ));
     }
 
     let leak_cutoff = KnowledgeCutoff {
-        recorded_at: k1.recorded_at,
-        frontier: k2.frontier,
+        recorded_at: prior_cutoff.recorded_at,
+        frontier: recounted_cutoff.frontier,
     };
-    let leak_res =
-        book.cell()?
-            .store()
-            .evaluate_question_known_at(&avail_plan, k1_ctx, leak_cutoff, |_| Ok(true));
+    let leak_res = book.cell()?.store().evaluate_question_known_at(
+        &avail_plan,
+        prior_ctx,
+        leak_cutoff,
+        |_| Ok(true),
+    );
     if !matches!(leak_res, Err(CellError::TemporalLeakage)) {
         return Err(format!(
             "expected CellError::TemporalLeakage on future frontier, got {leak_res:?}"
@@ -548,19 +547,21 @@ fn verify_bitemporal_recount_preservation(
 
 /// Layer 1C: Verify single-book-per-cell isolation (`READ-LOCAL-1`), read-only
 /// combined management views, and the fail-closed 4-tier `OperatingGroup`
-/// projection ladder bound to real cell cuts and verified `main` receipts.
+/// projection ladder bound to real cell cuts and leg-bound verified `main`
+/// export records.
 ///
 /// # Errors
 /// Returns an error if any isolation or ladder refusal rule fails.
 pub fn verify_single_book_and_operating_group_ladder() -> Result<(), String> {
-    let (egp_cell, usd_cell) = seed_two_book_cells()?;
+    let fixture = seed_two_book_cells()?;
     let spec = dst_coverage_spec();
-    let books = [&egp_cell, &usd_cell];
-    let report = evaluate_multi_cell_report(&books, &spec, |idx, _, plan, ctx| {
-        let book = books
+    let entity_books = [&fixture.sole_egp_book, &fixture.partner_usd_book];
+    let report = evaluate_multi_cell_report(&entity_books, &spec, |idx, _, plan, ctx| {
+        let current = entity_books
             .get(idx)
             .ok_or_else(|| CellError::Engine("missing cell".to_owned()))?;
-        book.cell()
+        current
+            .cell()
             .map_err(CellError::Engine)?
             .store()
             .evaluate_question(plan, ctx, |_| Ok(true))
@@ -572,123 +573,35 @@ pub fn verify_single_book_and_operating_group_ladder() -> Result<(), String> {
         return Err("combined management view violated read-only/non-consolidated rule".to_owned());
     }
 
-    let egp_snap = report.cells.first().ok_or("missing EGP snapshot")?;
-    let usd_snap = report.cells.get(1).ok_or("missing USD snapshot")?;
-    let egp_rev = bucket_decimal_exact(
-        egp_snap
-            .answers
-            .as_ref()
-            .and_then(|a| a.get("supply.retail.store_revenue_weekly"))
-            .ok_or("missing EGP revenue answer in cut")?,
-        &["EGP", "ST-EGP-1", "2026-08-31"],
-    )
-    .ok_or("missing EGP revenue")?;
-    let usd_rev = bucket_decimal_exact(
-        usd_snap
-            .answers
-            .as_ref()
-            .and_then(|a| a.get("supply.retail.store_revenue_weekly"))
-            .ok_or("missing USD revenue answer in cut")?,
-        &["USD", "ST-USD-1", "2026-08-31"],
-    )
-    .ok_or("missing USD revenue")?;
-
+    let sole_snapshot = report.cells.first().ok_or("missing EGP snapshot")?;
+    let partner_snapshot = report.cells.get(1).ok_or("missing USD snapshot")?;
     let slices = vec![
         slice_from_cut_snapshot(
             "LE-EGP",
             "EGP",
-            egp_snap,
+            sole_snapshot,
             "supply.retail.store_revenue_weekly",
-            decimal_to_scaled(egp_rev)?,
-            scaled(1_600),
         )?,
         slice_from_cut_snapshot(
             "LE-USD",
             "USD",
-            usd_snap,
+            partner_snapshot,
             "supply.retail.store_revenue_weekly",
-            decimal_to_scaled(usd_rev)?,
-            0,
         )?,
     ];
-    let seller_receipt = usd_cell.export_main_receipt(usd_cell.head()?.commits)?;
-    let buyer_receipt = egp_cell.export_main_receipt(egp_cell.head()?.commits)?;
-    verify_four_tier_ladder(&slices, &seller_receipt, &buyer_receipt)
-}
-
-fn seed_two_book_cells() -> Result<(EntityCell, EntityCell), String> {
-    let mut egp_cell = EntityCell::open(
-        &cell_id_for_entity(SECONDARY_SEED, 0),
-        "LE-EGP",
-        "EGP",
-        "org_group_egp",
-        "prod",
-        DEFAULT_CLOCK_MS,
-    )?;
-    let mut usd_cell = EntityCell::open(
-        &cell_id_for_entity(SECONDARY_SEED, 1),
-        "LE-USD",
-        "USD",
-        "org_group_usd",
-        "prod",
-        DEFAULT_CLOCK_MS,
-    )?;
-    egp_cell.register_book("Nile Sole Prop", "sole_proprietorship")?;
-    usd_cell.register_book("Delta Partnership", "partnership")?;
-
-    let (second_book_code, _) = egp_cell.refused(
-        "supply.legal_entity.register",
-        "eng:dina",
-        json!({
-            "entity_id": "LE-ROGUE", "legal_name": "Rogue Second Book",
-            "entity_kind": "corporation", "book_code": "BOOK-ROGUE-EGP",
-            "functional_currency": "EGP",
-        }),
-    )?;
-    if second_book_code != "action.precondition_failed" {
-        return Err(format!(
-            "second LegalEntity in one cell must refuse, got {second_book_code}"
-        ));
-    }
-
-    for (book, store, sku, cost, rev) in [
-        (&mut egp_cell, "ST-EGP-1", "SKU-DRESS", "100", "2000"),
-        (&mut usd_cell, "ST-USD-1", "SKU-RING", "250", "1000"),
-    ] {
-        book.register_sku(sku, "dry_goods", "each")?;
-        book.register_store(store, store, "CUST-CFC", "mall_store", Some("MALL-CFC"))?;
-        book.record_unit_cost(sku, "COST-1", "SUP-1", cost, "2026-07-01T00:00:00Z")?;
-        book.record_costed_lot(
-            "LOT-1",
-            store,
-            sku,
-            "CUST-CFC",
-            "20",
-            "each",
-            cost,
-            "2026-08-10T09:00:00Z",
-        )?;
-        book.record_costed_sale(
-            "SALE-1",
-            store,
-            sku,
-            "4",
-            "each",
-            rev,
-            cost,
-            "COST-1",
-            "2026-09-02T12:00:00Z",
-        )?;
-        book.ingest_baseline_feeds(store, sku, cost, "2026-09-02T12:00:00Z", store)?;
-        book.refresh_watermarks();
-    }
-    Ok((egp_cell, usd_cell))
+    verify_four_tier_ladder(
+        &slices,
+        &fixture.seller_transfer_export,
+        &fixture.buyer_transfer_export,
+        &fixture.unrelated_tip_export,
+    )
 }
 
 fn verify_four_tier_ladder(
     slices: &[EntityReportingSlice],
-    seller_receipt: &Receipt,
-    buyer_receipt: &Receipt,
+    seller_transfer_export: &ExportRecord,
+    buyer_transfer_export: &ExportRecord,
+    unrelated_tip_export: &ExportRecord,
 ) -> Result<(), String> {
     let fx_table = [FxRateEntry {
         from_currency: "USD".to_owned(),
@@ -698,7 +611,13 @@ fn verify_four_tier_ladder(
         rate_table_pin: "fx:cbe-2026-09-06".to_owned(),
     }];
     verify_tiers_one_and_two(slices, &fx_table)?;
-    let matched = verify_tier_three(slices, &fx_table, seller_receipt, buyer_receipt)?;
+    let matched = verify_tier_three(
+        slices,
+        &fx_table,
+        seller_transfer_export,
+        buyer_transfer_export,
+        unrelated_tip_export,
+    )?;
     verify_tier_four(slices, &fx_table, &matched)
 }
 
@@ -708,9 +627,9 @@ fn verify_tiers_one_and_two(
 ) -> Result<(), String> {
     let mut bad_slices = slices.to_vec();
     if let Some(first) = bad_slices.first_mut() {
-        first.query_pin.clear();
+        "forged-query-pin".clone_into(&mut first.query_pin);
     }
-    let bad_pin = evaluate_operating_group_tier(
+    let mismatched_pin = evaluate_operating_group_tier(
         OperatingGroupTier::SideBySide,
         &bad_slices,
         None,
@@ -719,30 +638,34 @@ fn verify_tiers_one_and_two(
         None,
     );
     if !matches!(
-        bad_pin,
+        mismatched_pin,
         Err(OperatingGroupRefusal::InvalidCellCutPin { .. })
     ) {
-        return Err(format!("empty query_pin must refuse, got {bad_pin:?}"));
+        return Err(format!(
+            "mismatched query_pin must refuse, got {mismatched_pin:?}"
+        ));
     }
 
-    let t1 =
+    let side_by_side_proj =
         evaluate_operating_group_tier(OperatingGroupTier::SideBySide, slices, None, &[], &[], None)
             .map_err(|e| format!("tier 1 failed: {e:?}"))?;
-    if t1.is_consolidated_financial_statement
-        || t1
+    if side_by_side_proj.is_consolidated_financial_statement
+        || side_by_side_proj
             .per_currency_revenue
             .get("EGP")
             .map(Decimal::canonical)
             .as_deref()
             != Some("2000")
-        || t1
+        || side_by_side_proj
             .per_currency_revenue
             .get("USD")
             .map(Decimal::canonical)
             .as_deref()
             != Some("1000")
     {
-        return Err(format!("unexpected tier 1 projection: {t1:?}"));
+        return Err(format!(
+            "unexpected tier 1 projection: {side_by_side_proj:?}"
+        ));
     }
 
     let missing_fx = evaluate_operating_group_tier(
@@ -761,7 +684,7 @@ fn verify_tiers_one_and_two(
             "expected MissingFxTable refusal, got {missing_fx:?}"
         ));
     }
-    let t2 = evaluate_operating_group_tier(
+    let fx_translated_proj = evaluate_operating_group_tier(
         OperatingGroupTier::FxTranslated,
         slices,
         Some("EGP"),
@@ -770,15 +693,17 @@ fn verify_tiers_one_and_two(
         None,
     )
     .map_err(|e| format!("tier 2 failed: {e:?}"))?;
-    if t2.is_consolidated_financial_statement
-        || t2
+    if fx_translated_proj.is_consolidated_financial_statement
+        || fx_translated_proj
             .translated_revenue
             .as_ref()
             .map(Decimal::canonical)
             .as_deref()
             != Some("52000")
     {
-        return Err(format!("unexpected tier 2 projection: {t2:?}"));
+        return Err(format!(
+            "unexpected tier 2 projection: {fx_translated_proj:?}"
+        ));
     }
     Ok(())
 }
@@ -786,49 +711,40 @@ fn verify_tiers_one_and_two(
 fn verify_tier_three(
     slices: &[EntityReportingSlice],
     fx_table: &[FxRateEntry],
-    seller_receipt: &Receipt,
-    buyer_receipt: &Receipt,
+    seller_export: &ExportRecord,
+    buyer_export: &ExportRecord,
+    unrelated_tip_export: &ExportRecord,
 ) -> Result<Vec<InterEntityTransfer>, String> {
-    let mut tampered = seller_receipt.clone();
-    "sha256:forged-pin".clone_into(&mut tampered.hash);
-    let forged = [InterEntityTransfer {
-        transfer_id: "IE-FORGED-1".to_owned(),
-        seller_entity_id: "LE-USD".to_owned(),
-        buyer_entity_id: "LE-EGP".to_owned(),
-        currency: "USD".to_owned(),
-        seller_amount_scaled: scaled(200),
-        buyer_amount_scaled: scaled(200),
-        seller_receipt: Some(tampered),
-        buyer_receipt: Some(buyer_receipt.clone()),
-    }];
-    let forged_res = evaluate_operating_group_tier(
-        OperatingGroupTier::InterEntityNetted,
+    let valid_seller_leg = TransferLegEvidence {
+        export_record: seller_export.clone(),
+        object_type: "supply.PosSale".to_owned(),
+        object_id: "SALE-USD-IE-1".to_owned(),
+    };
+    let valid_buyer_leg = TransferLegEvidence {
+        export_record: buyer_export.clone(),
+        object_type: "supply.StockLot".to_owned(),
+        object_id: "LOT-EGP-IE-1".to_owned(),
+    };
+    verify_tier_three_refusals(
         slices,
-        Some("EGP"),
         fx_table,
-        &forged,
-        None,
-    );
-    if !matches!(
-        forged_res,
-        Err(OperatingGroupRefusal::UnmatchedInterEntityTransfer { .. })
-    ) {
-        return Err(format!(
-            "tampered receipt hash must refuse, got {forged_res:?}"
-        ));
-    }
+        seller_export,
+        buyer_export,
+        unrelated_tip_export,
+        &valid_seller_leg,
+        &valid_buyer_leg,
+    )?;
 
     let matched = vec![InterEntityTransfer {
         transfer_id: "IE-OK-1".to_owned(),
         seller_entity_id: "LE-USD".to_owned(),
         buyer_entity_id: "LE-EGP".to_owned(),
         currency: "USD".to_owned(),
-        seller_amount_scaled: scaled(200),
-        buyer_amount_scaled: scaled(200),
-        seller_receipt: Some(seller_receipt.clone()),
-        buyer_receipt: Some(buyer_receipt.clone()),
+        settlement_fx_rate: None,
+        seller_leg: Some(valid_seller_leg),
+        buyer_leg: Some(valid_buyer_leg),
     }];
-    let t3 = evaluate_operating_group_tier(
+    let netted_proj = evaluate_operating_group_tier(
         OperatingGroupTier::InterEntityNetted,
         slices,
         Some("EGP"),
@@ -837,17 +753,127 @@ fn verify_tier_three(
         None,
     )
     .map_err(|e| format!("tier 3 failed: {e:?}"))?;
-    if t3.is_consolidated_financial_statement
-        || t3
+    if netted_proj.is_consolidated_financial_statement
+        || netted_proj
             .net_group_revenue
             .as_ref()
             .map(Decimal::canonical)
             .as_deref()
             != Some("42000")
     {
-        return Err(format!("unexpected tier 3 projection: {t3:?}"));
+        return Err(format!("unexpected tier 3 projection: {netted_proj:?}"));
     }
     Ok(matched)
+}
+
+fn verify_tier_three_refusals(
+    slices: &[EntityReportingSlice],
+    fx_table: &[FxRateEntry],
+    seller_export: &ExportRecord,
+    buyer_export: &ExportRecord,
+    unrelated_tip_export: &ExportRecord,
+    valid_seller_leg: &TransferLegEvidence,
+    valid_buyer_leg: &TransferLegEvidence,
+) -> Result<(), String> {
+    let make_xfer = |id: &str,
+                     rate: Option<FxRateEntry>,
+                     seller_leg: TransferLegEvidence,
+                     buyer_leg: TransferLegEvidence| InterEntityTransfer {
+        transfer_id: id.to_owned(),
+        seller_entity_id: "LE-USD".to_owned(),
+        buyer_entity_id: "LE-EGP".to_owned(),
+        currency: "USD".to_owned(),
+        settlement_fx_rate: rate,
+        seller_leg: Some(seller_leg),
+        buyer_leg: Some(buyer_leg),
+    };
+    let mut tampered = seller_export.clone();
+    "sha256:forged-pin".clone_into(&mut tampered.receipt.hash);
+    assert_transfer_refused(
+        "tampered receipt hash",
+        slices,
+        fx_table,
+        &make_xfer(
+            "IE-FORGED-1",
+            None,
+            TransferLegEvidence {
+                export_record: tampered,
+                object_type: "supply.PosSale".to_owned(),
+                object_id: "SALE-USD-IE-1".to_owned(),
+            },
+            valid_buyer_leg.clone(),
+        ),
+    )?;
+    assert_transfer_refused(
+        "unrelated ledger-tip export",
+        slices,
+        fx_table,
+        &make_xfer(
+            "IE-TIP-PLACEHOLDER",
+            None,
+            valid_seller_leg.clone(),
+            TransferLegEvidence {
+                export_record: unrelated_tip_export.clone(),
+                object_type: "supply.StockLot".to_owned(),
+                object_id: "LOT-EGP-IE-1".to_owned(),
+            },
+        ),
+    )?;
+    assert_transfer_refused(
+        "wrong-cell export record",
+        slices,
+        fx_table,
+        &make_xfer(
+            "IE-WRONG-CELL",
+            None,
+            TransferLegEvidence {
+                export_record: buyer_export.clone(),
+                object_type: "supply.PosSale".to_owned(),
+                object_id: "SALE-USD-IE-1".to_owned(),
+            },
+            valid_buyer_leg.clone(),
+        ),
+    )?;
+    assert_transfer_refused(
+        "mismatched bilateral amounts",
+        slices,
+        fx_table,
+        &make_xfer(
+            "IE-MISMATCH-AMT",
+            Some(FxRateEntry {
+                from_currency: "USD".to_owned(),
+                to_currency: "EGP".to_owned(),
+                rate_scaled: scaled(40),
+                as_of: "2026-09-02T12:30:00Z".to_owned(),
+                rate_table_pin: "fx:wrong-spot".to_owned(),
+            }),
+            valid_seller_leg.clone(),
+            valid_buyer_leg.clone(),
+        ),
+    )
+}
+
+fn assert_transfer_refused(
+    label: &str,
+    slices: &[EntityReportingSlice],
+    fx_table: &[FxRateEntry],
+    transfer: &InterEntityTransfer,
+) -> Result<(), String> {
+    let outcome = evaluate_operating_group_tier(
+        OperatingGroupTier::InterEntityNetted,
+        slices,
+        Some("EGP"),
+        fx_table,
+        std::slice::from_ref(transfer),
+        None,
+    );
+    if !matches!(
+        outcome,
+        Err(OperatingGroupRefusal::UnmatchedInterEntityTransfer { .. })
+    ) {
+        return Err(format!("{label} must refuse, got {outcome:?}"));
+    }
+    Ok(())
 }
 
 fn verify_tier_four(
@@ -886,7 +912,7 @@ fn verify_tier_four(
         elimination_journal_pin: authentic_pin,
         approved_at: "2026-09-07T09:00:00Z".to_owned(),
     };
-    let t4 = evaluate_operating_group_tier(
+    let statutory_proj = evaluate_operating_group_tier(
         OperatingGroupTier::StatutoryConsolidated,
         slices,
         Some("EGP"),
@@ -895,15 +921,15 @@ fn verify_tier_four(
         Some(&approval),
     )
     .map_err(|e| format!("tier 4 failed: {e:?}"))?;
-    if !t4.is_consolidated_financial_statement
-        || t4
+    if !statutory_proj.is_consolidated_financial_statement
+        || statutory_proj
             .net_group_revenue
             .as_ref()
             .map(Decimal::canonical)
             .as_deref()
             != Some("42000")
     {
-        return Err(format!("unexpected tier 4 projection: {t4:?}"));
+        return Err(format!("unexpected tier 4 projection: {statutory_proj:?}"));
     }
     Ok(())
 }

@@ -21,6 +21,10 @@ use super::env::{
     EVIDENCE_TYPES, EntityCell, FEED_MAPPINGS, FEED_MAX_AGE_MS, REQUIRED_FEEDS, RETAIL_QUESTIONS,
     RetailPack, TEST_HANDLE_KEY, Watermarks, repo_root, retail_pack,
 };
+use super::operating_group::{
+    EntityReportingSlice, FxRateEntry, InterEntityTransfer, OperatingGroupTier,
+    evaluate_operating_group_tier, slice_from_cut_snapshot,
+};
 use super::prng::{decimal_from_scaled, decimal_to_scaled, scaled};
 
 type SpecPlans = (
@@ -81,11 +85,17 @@ pub fn dst_coverage_spec() -> CellCoverageSpec {
     }
 }
 
-/// Load admitted transform and question plans needed by `spec`.
+/// Load admitted transform and question plans needed by `spec`, optionally
+/// widening question windows to cover `weeks` ISO weeks (`None` keeps the
+/// pack's declared window).
 ///
 /// # Errors
 /// Returns an error if any plan fails admission.
-pub fn load_spec_plans(pack: &RetailPack, spec: &CellCoverageSpec) -> Result<SpecPlans, String> {
+pub fn load_spec_plans_with_weeks(
+    pack: &RetailPack,
+    spec: &CellCoverageSpec,
+    weeks: Option<u32>,
+) -> Result<SpecPlans, String> {
     let mut tf_ids = BTreeSet::new();
     for g in &spec.coverage_transforms {
         tf_ids.insert(g.transform_id.as_str());
@@ -103,9 +113,21 @@ pub fn load_spec_plans(pack: &RetailPack, spec: &CellCoverageSpec) -> Result<Spe
     }
     let mut questions = BTreeMap::new();
     for q in &spec.questions {
-        questions.insert(q.clone(), pack.retail_question(q)?);
+        let plan = match weeks {
+            Some(horizon_weeks) => pack.retail_question_for_weeks(q, horizon_weeks, 5_000)?,
+            None => pack.retail_question(q)?,
+        };
+        questions.insert(q.clone(), plan);
     }
     Ok((transforms, questions))
+}
+
+/// Load admitted transform and question plans needed by `spec`.
+///
+/// # Errors
+/// Returns an error if any plan fails admission.
+pub fn load_spec_plans(pack: &RetailPack, spec: &CellCoverageSpec) -> Result<SpecPlans, String> {
+    load_spec_plans_with_weeks(pack, spec, None)
 }
 
 /// Evaluate one cell cut from `spec` using the exact cell evaluator.
@@ -153,10 +175,24 @@ pub fn evaluate_spec_cut(
 pub fn evaluate_multi_cell_report(
     books: &[&EntityCell],
     spec: &CellCoverageSpec,
+    eval_fn: impl FnMut(usize, &str, &QuestionPlan, QueryContext) -> Result<QueryResult, CellError>,
+) -> Result<CombinedViewReport, String> {
+    evaluate_multi_cell_report_for_weeks(books, spec, None, eval_fn)
+}
+
+/// Evaluate a multi-cell read-only `CombinedViewReport` across `books` with an
+/// optional widened ISO-week horizon (`weeks`).
+///
+/// # Errors
+/// Returns an error if any cell cut refuses or fails.
+pub fn evaluate_multi_cell_report_for_weeks(
+    books: &[&EntityCell],
+    spec: &CellCoverageSpec,
+    weeks: Option<u32>,
     mut eval_fn: impl FnMut(usize, &str, &QuestionPlan, QueryContext) -> Result<QueryResult, CellError>,
 ) -> Result<CombinedViewReport, String> {
     let pack = retail_pack()?;
-    let (transforms, questions) = load_spec_plans(pack, spec)?;
+    let (transforms, questions) = load_spec_plans_with_weeks(pack, spec, weeks)?;
     let allow_tf = |_: &TransformPlan| Ok(());
     let allow_all = |_: &ObjectRecord| Ok(RowAccess::Read);
     let authorities: Vec<(FactKey, CommitBinding)> =
@@ -450,6 +486,71 @@ fn verify_lot_conservation_transform(
             observed_lots.len(),
             expected_lots.len()
         ));
+    }
+    Ok(())
+}
+
+/// Evaluate a real multi-cell combined management view over `weeks` and verify
+/// both early-rate `FxTranslated` and bilateral `InterEntityNetted` reporting
+/// projections against the live cell cuts and verified inter-entity transfers.
+///
+/// # Errors
+/// Returns an error if combined-view evaluation or either tier projection fails.
+pub fn verify_multi_cell_combined_view_and_fx_shifts(
+    weeks: u32,
+    cells: &[EntityCell],
+    fx_history: &[FxRateEntry],
+    inter_entity_transfers: &[InterEntityTransfer],
+) -> Result<(), String> {
+    let spec = dst_coverage_spec();
+    let refs: Vec<&EntityCell> = cells.iter().collect();
+    let report =
+        evaluate_multi_cell_report_for_weeks(&refs, &spec, Some(weeks), |idx, _, plan, ctx| {
+            let current = refs
+                .get(idx)
+                .ok_or_else(|| CellError::Engine("missing cell".to_owned()))?;
+            current
+                .cell()
+                .map_err(CellError::Engine)?
+                .store()
+                .evaluate_question(plan, ctx, |_| Ok(true))
+        })?;
+    let mut slices: Vec<EntityReportingSlice> = Vec::with_capacity(cells.len());
+    for (cell, snap) in cells.iter().zip(&report.cells) {
+        slices.push(slice_from_cut_snapshot(
+            &cell.entity_id,
+            &cell.currency,
+            snap,
+            "supply.retail.store_revenue_weekly",
+        )?);
+    }
+    let first_rates: Vec<FxRateEntry> = fx_history.iter().take(2).cloned().collect();
+    let latest_rates: Vec<FxRateEntry> = fx_history.iter().rev().take(2).cloned().collect();
+    let early_fx = evaluate_operating_group_tier(
+        OperatingGroupTier::FxTranslated,
+        &slices,
+        Some("EGP"),
+        &first_rates,
+        &[],
+        None,
+    )
+    .map_err(|e| format!("early FxTranslated projection failed: {e:?}"))?;
+    let netted = evaluate_operating_group_tier(
+        OperatingGroupTier::InterEntityNetted,
+        &slices,
+        Some("EGP"),
+        &latest_rates,
+        inter_entity_transfers,
+        None,
+    )
+    .map_err(|e| format!("multi-cell InterEntityNetted projection failed: {e:?}"))?;
+    if early_fx.translated_revenue.is_none()
+        || netted.net_group_revenue.is_none()
+        || netted.eliminated_inter_entity_revenue.is_none()
+    {
+        return Err(
+            "FX/InterEntityNetted must produce exact translated and net revenue".to_owned(),
+        );
     }
     Ok(())
 }

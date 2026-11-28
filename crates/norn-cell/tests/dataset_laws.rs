@@ -1608,13 +1608,6 @@ fn retail_truth_slice_combined_view_duckdb_parity() {
 
 #[test]
 fn xpa_dst_layer3_duckdb_parity() {
-    crate::xpa_dst_harness::run_layer3_duckdb_parity()
+    super::xpa_dst_harness::run_layer3_duckdb_parity()
         .expect("xP&A Layer 3 Exact vs DuckDB differential parity");
-}
-
-#[cfg(feature = "datafusion")]
-#[test]
-fn xpa_dst_layer3_datafusion_parity() {
-    crate::xpa_dst_harness::run_layer3_datafusion_parity()
-        .expect("xP&A Layer 3 Exact vs DataFusion differential parity");
 }

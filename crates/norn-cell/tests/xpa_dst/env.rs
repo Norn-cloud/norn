@@ -14,11 +14,12 @@ use std::sync::OnceLock;
 use norn_cell::compute::transform::{RowAccess, TransformResult};
 use norn_cell::compute::{Frontier, QueryContext, QueryResult, Watermark};
 use norn_cell::engine::NativeEngine;
+use norn_cell::export::ExportRecord;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::source_cursor::CursorAdvanceSpec;
 use norn_cell::{
     AdmittedDefinitions, CellStore, InstalledDefinitionInput, LedgerHead, MappingOutcome, Model,
-    Receipt, SqliteCell, StoreOptions, verify_main_receipt,
+    Receipt, SqliteCell, StoreOptions, verify_main_export_record, verify_main_receipt,
 };
 use norn_checker::EntityArtifactSetContext;
 use norn_checker::entity_scopes::ScopedView;
@@ -68,6 +69,7 @@ pub const FEED_MAPPINGS: [(&str, &str); 4] = [
     (COSTS_FEED_ID, "supply.UnitCostEvidence"),
 ];
 
+/// The 7 retail questions listed in `retail.coverage.json` (used for combined-view cuts).
 pub const RETAIL_QUESTIONS: [&str; 7] = [
     "supply.retail.store_revenue_weekly",
     "supply.retail.store_gross_margin_weekly",
@@ -78,10 +80,34 @@ pub const RETAIL_QUESTIONS: [&str; 7] = [
     "supply.retail.pos_feed_revenue_weekly",
 ];
 
-pub const RETAIL_TRANSFORMS: [&str; 3] = [
-    "supply.retail.store_sales_performance",
-    "supply.retail.store_lot_aging",
+/// All 13 declared retail questions in `registry/packs/supply-lab/questions/retail.questions.json`.
+pub const ALL_RETAIL_QUESTIONS: [&str; 13] = [
+    "supply.retail.store_availability_weekly",
+    "supply.retail.store_on_hand_weekly",
+    "supply.retail.store_stock_value_weekly",
+    "supply.retail.lot_received_aging_weekly",
+    "supply.retail.store_sales_weekly",
+    "supply.retail.store_revenue_weekly",
+    "supply.retail.store_gross_margin_weekly",
+    "supply.retail.store_gross_margin_rate_weekly",
+    "supply.retail.store_opening_stock_value_weekly",
+    "supply.retail.store_sell_through_weekly",
+    "supply.retail.store_weeks_of_supply_weekly",
+    "supply.retail.store_gmroi_weekly",
+    "supply.retail.pos_feed_revenue_weekly",
+];
+
+/// All 9 declared retail derived transforms in `registry/packs/supply-lab/artifacts/`.
+pub const RETAIL_TRANSFORMS: [&str; 9] = [
     "supply.retail.entity_management_summary",
+    "supply.retail.store_active_positions",
+    "supply.retail.store_available_count_positions",
+    "supply.retail.store_closing_cut_positions",
+    "supply.retail.store_lot_aging",
+    "supply.retail.store_on_hand_count_positions",
+    "supply.retail.store_rollup_sales_operands",
+    "supply.retail.store_sales_performance",
+    "supply.retail.store_sales_weekly_operands",
 ];
 
 /// Fixed 32-byte keyed handle key for `DATA-VALUES-1` combined-view cuts.
@@ -136,14 +162,15 @@ fn read_envelopes(dir: &Path) -> Result<Vec<ArtifactEnvelope>, String> {
         .map_err(|e| format!("{}: {e}", dir.display()))?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .filter(|path| path.extension().is_some_and(|file_ext| file_ext == "json"))
         .collect();
     paths.sort();
     paths
         .iter()
         .map(|path| {
-            let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-            serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
+            let raw_json =
+                fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            serde_json::from_str(&raw_json).map_err(|e| format!("{}: {e}", path.display()))
         })
         .collect()
 }
@@ -293,6 +320,20 @@ impl RetailPack {
         let mut question = self.retail_question_ir(name)?;
         question.time_window.end = UtcTimestamp(week_timestamp_utc(weeks.max(1), 0, 0)?);
         self.admit_question_ir(&question, bound)
+    }
+
+    /// Load all declared question names from `retail.questions.json`.
+    ///
+    /// # Errors
+    /// Returns an error if the file cannot be read or decoded.
+    pub fn all_retail_question_names(&self) -> Result<Vec<String>, String> {
+        let text = fs::read_to_string(
+            repo_root().join("registry/packs/supply-lab/questions/retail.questions.json"),
+        )
+        .map_err(|e| format!("retail.questions.json: {e}"))?;
+        let questions: Vec<QuestionIR> =
+            serde_json::from_str(&text).map_err(|e| format!("decode retail questions: {e}"))?;
+        Ok(questions.into_iter().map(|q| q.name).collect())
     }
 
     /// Load a raw `QuestionIR` from `retail.questions.json`.
@@ -506,7 +547,7 @@ impl EntityCell {
         let input: JsonObject =
             serde_json::from_value(input).map_err(|e| format!("{action} input: {e}"))?;
         let catalog = pack.definitions.catalog();
-        let call = ActionCall {
+        let action_req = ActionCall {
             action: &admitted.root,
             action_artifact_id: &admitted.artifact_id,
             action_version: &admitted.version,
@@ -524,11 +565,13 @@ impl EntityCell {
             },
             trace: None,
         };
-        Ok(match commit_action(cell, &catalog, &call, &AllowAll) {
-            Ok(ActionOutcome::Committed { .. }) => Outcome::Committed,
-            Ok(ActionOutcome::Replayed { .. }) => Outcome::Replayed,
-            Err(refusal) => Outcome::Refused(refusal.code().to_owned(), refusal.to_string()),
-        })
+        Ok(
+            match commit_action(cell, &catalog, &action_req, &AllowAll) {
+                Ok(ActionOutcome::Committed { .. }) => Outcome::Committed,
+                Ok(ActionOutcome::Replayed { .. }) => Outcome::Replayed,
+                Err(refusal) => Outcome::Refused(refusal.code().to_owned(), refusal.to_string()),
+            },
+        )
     }
 
     /// Commit an action, failing if it was replayed or refused.
@@ -713,6 +756,22 @@ impl EntityCell {
             .store()
             .verified_head()
             .map_err(|e| format!("verified_head: {e}"))
+    }
+
+    /// Export and cryptographically verify the full `main` [`ExportRecord`] at `commit_seq`.
+    ///
+    /// # Errors
+    /// Returns an error if the export record is absent or verification fails.
+    pub fn export_main_record(&self, commit_seq: u64) -> Result<ExportRecord, String> {
+        let record = self
+            .cell()?
+            .store()
+            .export_record(commit_seq)
+            .map_err(|e| format!("export_record({commit_seq}): {e}"))?
+            .ok_or_else(|| format!("missing export record at commit {commit_seq}"))?;
+        verify_main_export_record(&record)
+            .map_err(|e| format!("verify_main_export_record({commit_seq}): {e}"))?;
+        Ok(record)
     }
 
     /// Export and cryptographically verify the `main` commit [`Receipt`] at `commit_seq`.

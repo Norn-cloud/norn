@@ -1,11 +1,12 @@
 //! Layer 3 — Differential Parity (Exact Cell Evaluator vs `DuckDB` / `DataFusion` OLAP).
 //!
 //! Feature-gated (`#[cfg(feature = "duckdb")]` and `#[cfg(feature = "datafusion")]`)
-//! differential parity suites evaluating all 7 declared retail questions (with
-//! nonempty seeded `StoreCommercialRollup` rows so WOS and GMROI never pass
-//! vacuously on empty results), the full pack-authored `retail.coverage.json`
-//! combined-view spec (`evaluate_combined_management_view_from_spec`), and
-//! declared retail transforms across identical pinned cuts.
+//! differential parity suites evaluating ALL 13 declared retail questions in
+//! `registry/packs/supply-lab/questions/retail.questions.json` (with nonempty
+//! seeded rows including `StoreCommercialRollup` so WOS and GMROI never pass
+//! vacuously), the full pack-authored `retail.coverage.json` combined-view spec
+//! (`evaluate_combined_management_view_from_spec`), and ALL 9 declared retail
+//! transforms (`VIEW-ENGINE-1`) across identical pinned cuts.
 //!
 //! Asserts complete envelope equality normalizing ONLY `engine` (verifying
 //! `query_pin`, `revision`, `definition_pin`, `authority_pin`, `read_token`,
@@ -15,6 +16,9 @@
 use norn_cell::combined_view::CombinedViewReport;
 use norn_cell::compute::transform::TransformResult;
 use norn_cell::compute::{Engine as ComputeEngine, QueryResult};
+
+#[cfg(any(feature = "duckdb", feature = "datafusion"))]
+use std::collections::BTreeSet;
 
 #[cfg(any(feature = "duckdb", feature = "datafusion"))]
 use norn_cell::CellError;
@@ -30,7 +34,9 @@ use super::actions::StoreKpiInput;
 #[cfg(any(feature = "duckdb", feature = "datafusion"))]
 use super::cuts::{cell_id_for_entity, evaluate_multi_cell_report, retail_coverage_spec};
 #[cfg(any(feature = "duckdb", feature = "datafusion"))]
-use super::env::{DEFAULT_CLOCK_MS, EntityCell, RETAIL_QUESTIONS, RETAIL_TRANSFORMS};
+use super::env::{
+    ALL_RETAIL_QUESTIONS, DEFAULT_CLOCK_MS, EntityCell, RETAIL_TRANSFORMS, RetailPack,
+};
 #[cfg(any(feature = "duckdb", feature = "datafusion"))]
 use super::prng::SplitMix64;
 
@@ -43,27 +49,27 @@ use super::prng::SplitMix64;
 /// Returns an error if the engine label is wrong or any envelope field differs.
 pub fn assert_query_result_parity(
     label: &str,
-    exact: &QueryResult,
-    olap: &QueryResult,
+    cell_result: &QueryResult,
+    olap_result: &QueryResult,
     expected_olap_engine: ComputeEngine,
 ) -> Result<(), String> {
-    if exact.engine != ComputeEngine::Exact {
+    if cell_result.engine != ComputeEngine::Cell {
         return Err(format!(
-            "{label}: expected Exact engine on baseline, got {:?}",
-            exact.engine
+            "{label}: expected ComputeEngine::Cell on baseline, got {:?}",
+            cell_result.engine
         ));
     }
-    if olap.engine != expected_olap_engine {
+    if olap_result.engine != expected_olap_engine {
         return Err(format!(
             "{label}: expected {expected_olap_engine:?} on OLAP answer, got {:?}",
-            olap.engine
+            olap_result.engine
         ));
     }
-    let mut normalized = olap.clone();
-    normalized.engine = exact.engine;
-    if normalized != *exact {
+    let mut normalized = olap_result.clone();
+    normalized.engine = cell_result.engine;
+    if normalized != *cell_result {
         return Err(format!(
-            "{label}: QueryResult envelope mismatch (normalized only `engine`):\n  exact={exact:?}\n  olap ={olap:?}"
+            "{label}: QueryResult envelope mismatch (normalized only `engine`):\n  cell={cell_result:?}\n  olap={olap_result:?}"
         ));
     }
     Ok(())
@@ -77,14 +83,14 @@ pub fn assert_query_result_parity(
 /// Returns an error if any cell snapshot is incomplete or any field differs.
 pub fn assert_combined_view_parity(
     label: &str,
-    exact: &CombinedViewReport,
-    olap: &CombinedViewReport,
+    cell_report: &CombinedViewReport,
+    olap_report: &CombinedViewReport,
     expected_olap_engine: ComputeEngine,
 ) -> Result<(), String> {
-    if exact.cells.is_empty() {
+    if cell_report.cells.is_empty() {
         return Err(format!("{label}: combined view report had zero cells"));
     }
-    for cell in &exact.cells {
+    for cell in &cell_report.cells {
         if !cell.complete || cell.answers.is_none() {
             return Err(format!(
                 "{label}/{}: exact combined-view snapshot must be complete (missing={:?}, gates={:?}, findings={}, pending={})",
@@ -96,7 +102,7 @@ pub fn assert_combined_view_parity(
             ));
         }
     }
-    let mut normalized = olap.clone();
+    let mut normalized = olap_report.clone();
     for cell in &mut normalized.cells {
         if let Some(answers) = &mut cell.answers {
             for (q_name, ans) in answers {
@@ -106,11 +112,11 @@ pub fn assert_combined_view_parity(
                         cell.scope, ans.engine
                     ));
                 }
-                ans.engine = ComputeEngine::Exact;
+                ans.engine = ComputeEngine::Cell;
             }
         }
     }
-    if normalized != *exact {
+    if normalized != *cell_report {
         return Err(format!(
             "{label}: CombinedViewReport mismatch (normalized only answer `engine`)"
         ));
@@ -125,29 +131,63 @@ pub fn assert_combined_view_parity(
 /// Returns an error if the engine label is wrong or any transform field differs.
 pub fn assert_transform_parity(
     label: &str,
-    exact: &TransformResult,
-    olap: &TransformResult,
+    cell_result: &TransformResult,
+    olap_result: &TransformResult,
     expected_olap_engine: ComputeEngine,
 ) -> Result<(), String> {
-    if exact.engine != ComputeEngine::Exact {
+    if cell_result.engine != ComputeEngine::Cell {
         return Err(format!(
-            "{label}: expected Exact transform engine, got {:?}",
-            exact.engine
+            "{label}: expected ComputeEngine::Cell transform engine, got {:?}",
+            cell_result.engine
         ));
     }
-    if olap.engine != expected_olap_engine {
+    if olap_result.engine != expected_olap_engine {
         return Err(format!(
             "{label}: expected {expected_olap_engine:?} transform engine, got {:?}",
-            olap.engine
+            olap_result.engine
         ));
     }
-    let mut normalized = olap.clone();
-    normalized.engine = exact.engine;
-    if normalized != *exact {
+    let mut normalized = olap_result.clone();
+    normalized.engine = cell_result.engine;
+    if normalized != *cell_result {
         return Err(format!(
-            "{label}: TransformResult parity mismatch (exact_rows={} olap_rows={})",
-            exact.rows.len(),
-            olap.rows.len()
+            "{label}: TransformResult parity mismatch (cell_rows={} olap_rows={})",
+            cell_result.rows.len(),
+            olap_result.rows.len()
+        ));
+    }
+    Ok(())
+}
+
+/// Verify that `ALL_RETAIL_QUESTIONS` (13) and `RETAIL_TRANSFORMS` (9) cover
+/// 100% of declared retail questions and retail transforms in `supply-lab`.
+#[cfg(any(feature = "duckdb", feature = "datafusion"))]
+fn assert_complete_retail_matrix(pack: &RetailPack) -> Result<(), String> {
+    let declared_questions: BTreeSet<String> =
+        pack.all_retail_question_names()?.into_iter().collect();
+    let tested_questions: BTreeSet<String> = ALL_RETAIL_QUESTIONS
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+    if declared_questions != tested_questions {
+        return Err(format!(
+            "Layer 3 question matrix drift: declared={declared_questions:?} tested={tested_questions:?}"
+        ));
+    }
+    let declared_transforms: BTreeSet<String> = pack
+        .candidate
+        .iter()
+        .filter(|art| {
+            art.kind == norn_ir::ArtifactKind::Derived
+                && art.artifact_id.as_str().starts_with("supply.retail.")
+        })
+        .map(|art| art.artifact_id.as_str().to_owned())
+        .collect();
+    let tested_transforms: BTreeSet<String> =
+        RETAIL_TRANSFORMS.iter().map(|s| (*s).to_owned()).collect();
+    if declared_transforms != tested_transforms {
+        return Err(format!(
+            "Layer 3 transform matrix drift: declared={declared_transforms:?} tested={tested_transforms:?}"
         ));
     }
     Ok(())
@@ -156,8 +196,9 @@ pub fn assert_transform_parity(
 /// Seed a 2-entity parity world containing nonempty costed sales, costed lots,
 /// verified `on_hand` & `available` counts, opening & closing valuation cuts,
 /// verified `StoreCommercialRollup` rows for `2026-08-31` (making WOS and GMROI
-/// nonempty), and fresh baseline rows across all 4 feeds so the full declared
-/// `retail.coverage.json` spec evaluates `complete == true`.
+/// nonempty), and fresh baseline rows across all 4 feeds so ALL 13 retail
+/// questions, ALL 9 retail transforms, and the full declared
+/// `retail.coverage.json` spec evaluate nonempty and `complete == true`.
 #[cfg(any(feature = "duckdb", feature = "datafusion"))]
 fn seed_parity_cells(seed: u64) -> Result<Vec<EntityCell>, String> {
     let mut rng = SplitMix64::new(seed).fork(0x1A3E_3001);
@@ -166,19 +207,19 @@ fn seed_parity_cells(seed: u64) -> Result<Vec<EntityCell>, String> {
         (1_usize, "LE-PARITY-USD", "USD", "partnership"),
     ];
     let mut cells = Vec::with_capacity(specs.len());
-    for (entity_idx, entity_id, ccy, kind) in specs {
+    for (entity_slot, entity_id, ccy, kind) in specs {
         let mut cell = EntityCell::open(
-            &cell_id_for_entity(seed, entity_idx.saturating_add(200)),
+            &cell_id_for_entity(seed, entity_slot.saturating_add(200)),
             entity_id,
             ccy,
-            &format!("org_parity_{entity_idx}"),
+            &format!("org_parity_{entity_slot}"),
             "prod",
             DEFAULT_CLOCK_MS,
         )?;
-        cell.register_book(&format!("Parity Book {entity_idx}"), kind)?;
-        for sku_idx in 0_usize..2 {
-            let sku_id = format!("SKU-P{entity_idx}-{sku_idx}");
-            let cost_ref = format!("COST-P{entity_idx}-{sku_idx}");
+        cell.register_book(&format!("Parity Book {entity_slot}"), kind)?;
+        for sku_ordinal in 0_usize..2 {
+            let sku_id = format!("SKU-P{entity_slot}-{sku_ordinal}");
+            let cost_ref = format!("COST-P{entity_slot}-{sku_ordinal}");
             let unit_cost = i64::try_from(rng.range_u64(60, 180)).unwrap_or(100);
             cell.register_sku(&sku_id, "dry_goods", "each")?;
             cell.record_unit_cost(
@@ -188,29 +229,36 @@ fn seed_parity_cells(seed: u64) -> Result<Vec<EntityCell>, String> {
                 &unit_cost.to_string(),
                 "2026-07-01T00:00:00Z",
             )?;
-            for store_idx in 0_usize..2 {
-                let store_id = format!("ST-P{entity_idx}-{store_idx}");
-                if sku_idx == 0 {
+            for store_ordinal in 0_usize..2 {
+                let store_id = format!("ST-P{entity_slot}-{store_ordinal}");
+                if sku_ordinal == 0 {
                     cell.register_store(
                         &store_id,
-                        &format!("Parity Store {entity_idx}-{store_idx}"),
+                        &format!("Parity Store {entity_slot}-{store_ordinal}"),
                         "CUST-MALL-CFC-OPS",
                         "mall_store",
                         Some("MALL-CFC"),
                     )?;
                 }
                 seed_parity_position(
-                    &mut cell, &mut rng, entity_idx, store_idx, sku_idx, &store_id, &sku_id,
-                    &cost_ref, unit_cost,
+                    &mut cell,
+                    &mut rng,
+                    entity_slot,
+                    store_ordinal,
+                    sku_ordinal,
+                    &store_id,
+                    &sku_id,
+                    &cost_ref,
+                    unit_cost,
                 )?;
             }
         }
         cell.ingest_baseline_feeds(
-            &format!("ST-P{entity_idx}-0"),
-            &format!("SKU-P{entity_idx}-0"),
+            &format!("ST-P{entity_slot}-0"),
+            &format!("SKU-P{entity_slot}-0"),
             "100",
             "2026-09-02T12:00:00Z",
-            &format!("parity-{entity_idx}"),
+            &format!("parity-{entity_slot}"),
         )?;
         cell.refresh_watermarks();
         cells.push(cell);
@@ -221,23 +269,23 @@ fn seed_parity_cells(seed: u64) -> Result<Vec<EntityCell>, String> {
 #[cfg(any(feature = "duckdb", feature = "datafusion"))]
 struct ParityPositionKey<'a> {
     entity_idx: usize,
-    store_idx: usize,
-    sku_idx: usize,
+    store_ordinal: usize,
+    sku_ordinal: usize,
     store_id: &'a str,
     sku_id: &'a str,
     cost_ref: &'a str,
     lot_id: &'a str,
-    open_cut_id: &'a str,
+    opening_cut_id: &'a str,
 }
 
 #[cfg(any(feature = "duckdb", feature = "datafusion"))]
 struct ParityPositionAmounts {
-    init_qty: i64,
-    w8_sold: i64,
-    w9_sold: i64,
+    initial_qty: i64,
+    prior_week_sold: i64,
+    current_week_sold: i64,
     unit_cost: i64,
     margin_per_unit: i64,
-    open_val: i64,
+    opening_value: i64,
 }
 
 #[cfg(any(feature = "duckdb", feature = "datafusion"))]
@@ -249,80 +297,80 @@ fn seed_parity_position(
     cell: &mut EntityCell,
     rng: &mut SplitMix64,
     entity_idx: usize,
-    store_idx: usize,
-    sku_idx: usize,
+    store_ordinal: usize,
+    sku_ordinal: usize,
     store_id: &str,
     sku_id: &str,
     cost_ref: &str,
     unit_cost: i64,
 ) -> Result<(), String> {
-    let init_qty = i64::try_from(rng.range_u64(80, 140)).unwrap_or(100);
-    let w8_sold = i64::try_from(rng.range_u64(4, 12)).unwrap_or(6);
-    let w9_sold = i64::try_from(rng.range_u64(6, 16)).unwrap_or(10);
+    let initial_qty = i64::try_from(rng.range_u64(80, 140)).unwrap_or(100);
+    let prior_week_sold = i64::try_from(rng.range_u64(4, 12)).unwrap_or(6);
+    let current_week_sold = i64::try_from(rng.range_u64(6, 16)).unwrap_or(10);
     let margin_per_unit = i64::try_from(rng.range_u64(30, 90)).unwrap_or(50);
 
-    let lot_id = format!("LOT-P{entity_idx}-{store_idx}-{sku_idx}");
+    let lot_id = format!("LOT-P{entity_idx}-{store_ordinal}-{sku_ordinal}");
     cell.record_costed_lot(
         &lot_id,
         store_id,
         sku_id,
         "CUST-MALL-CFC-OPS",
-        &init_qty.to_string(),
+        &initial_qty.to_string(),
         "each",
         &unit_cost.to_string(),
         "2026-08-03T09:00:00Z",
     )?;
-    let w8_rev = w8_sold.saturating_mul(unit_cost.saturating_add(margin_per_unit));
+    let prior_week_rev = prior_week_sold.saturating_mul(unit_cost.saturating_add(margin_per_unit));
     cell.record_costed_sale(
-        &format!("SALE-P{entity_idx}-{store_idx}-{sku_idx}-W8"),
+        &format!("SALE-P{entity_idx}-{store_ordinal}-{sku_ordinal}-W8"),
         store_id,
         sku_id,
-        &w8_sold.to_string(),
+        &prior_week_sold.to_string(),
         "each",
-        &w8_rev.to_string(),
+        &prior_week_rev.to_string(),
         &unit_cost.to_string(),
         cost_ref,
         "2026-08-26T12:00:00Z",
     )?;
-    let open_rem = init_qty.saturating_sub(w8_sold);
-    let open_val = open_rem.saturating_mul(unit_cost);
+    let opening_remaining = initial_qty.saturating_sub(prior_week_sold);
+    let opening_value = opening_remaining.saturating_mul(unit_cost);
     cell.update_lot_balance(
         &lot_id,
         store_id,
         sku_id,
-        &open_rem.to_string(),
-        &w8_sold.to_string(),
+        &opening_remaining.to_string(),
+        &prior_week_sold.to_string(),
         &unit_cost.to_string(),
         "2026-08-29T18:00:00Z",
     )?;
-    let open_cut_id = format!("CUT-OPEN-P{entity_idx}-{store_idx}-{sku_idx}");
+    let opening_cut_id = format!("CUT-OPEN-P{entity_idx}-{store_ordinal}-{sku_ordinal}");
     cell.record_stock_valuation_cut(
-        &open_cut_id,
+        &opening_cut_id,
         store_id,
         sku_id,
         "each",
         "2026-08-31T00:00:00Z",
-        &open_rem.to_string(),
-        &open_val.to_string(),
+        &opening_remaining.to_string(),
+        &opening_value.to_string(),
     )?;
 
     let key = ParityPositionKey {
         entity_idx,
-        store_idx,
-        sku_idx,
+        store_ordinal,
+        sku_ordinal,
         store_id,
         sku_id,
         cost_ref,
         lot_id: &lot_id,
-        open_cut_id: &open_cut_id,
+        opening_cut_id: &opening_cut_id,
     };
     let amounts = ParityPositionAmounts {
-        init_qty,
-        w8_sold,
-        w9_sold,
+        initial_qty,
+        prior_week_sold,
+        current_week_sold,
         unit_cost,
         margin_per_unit,
-        open_val,
+        opening_value,
     };
     seed_parity_w9_close_and_rollup(cell, &key, &amounts)
 }
@@ -333,30 +381,33 @@ fn seed_parity_w9_close_and_rollup(
     key: &ParityPositionKey<'_>,
     amt: &ParityPositionAmounts,
 ) -> Result<(), String> {
-    let tag = format!("P{}-{}-{}", key.entity_idx, key.store_idx, key.sku_idx);
-    let w9_rev = amt
-        .w9_sold
+    let tag = format!(
+        "P{}-{}-{}",
+        key.entity_idx, key.store_ordinal, key.sku_ordinal
+    );
+    let current_week_rev = amt
+        .current_week_sold
         .saturating_mul(amt.unit_cost.saturating_add(amt.margin_per_unit));
-    let w9_gm = amt.w9_sold.saturating_mul(amt.margin_per_unit);
+    let current_week_gm = amt.current_week_sold.saturating_mul(amt.margin_per_unit);
     cell.record_costed_sale(
         &format!("SALE-{tag}-W9"),
         key.store_id,
         key.sku_id,
-        &amt.w9_sold.to_string(),
+        &amt.current_week_sold.to_string(),
         "each",
-        &w9_rev.to_string(),
+        &current_week_rev.to_string(),
         &amt.unit_cost.to_string(),
         key.cost_ref,
         "2026-09-02T14:00:00Z",
     )?;
-    let total_depleted = amt.w8_sold.saturating_add(amt.w9_sold);
-    let close_rem = amt.init_qty.saturating_sub(total_depleted);
-    let close_val = close_rem.saturating_mul(amt.unit_cost);
+    let total_depleted = amt.prior_week_sold.saturating_add(amt.current_week_sold);
+    let closing_remaining = amt.initial_qty.saturating_sub(total_depleted);
+    let closing_value = closing_remaining.saturating_mul(amt.unit_cost);
     cell.update_lot_balance(
         key.lot_id,
         key.store_id,
         key.sku_id,
-        &close_rem.to_string(),
+        &closing_remaining.to_string(),
         &total_depleted.to_string(),
         &amt.unit_cost.to_string(),
         "2026-09-05T16:00:00Z",
@@ -368,7 +419,7 @@ fn seed_parity_w9_close_and_rollup(
         &on_hand_id,
         key.store_id,
         key.sku_id,
-        &close_rem.to_string(),
+        &closing_remaining.to_string(),
         "each",
         "on_hand",
         "2026-09-06T10:00:00Z",
@@ -379,7 +430,7 @@ fn seed_parity_w9_close_and_rollup(
         &format!("{}/{}/available", key.store_id, key.sku_id),
         key.store_id,
         key.sku_id,
-        &close_rem.saturating_sub(2).to_string(),
+        &closing_remaining.saturating_sub(2).to_string(),
         "each",
         "available",
         "2026-09-06T10:00:00Z",
@@ -391,8 +442,8 @@ fn seed_parity_w9_close_and_rollup(
         key.sku_id,
         "each",
         "2026-09-06T23:59:59.999999999Z",
-        &close_rem.to_string(),
-        &close_val.to_string(),
+        &closing_remaining.to_string(),
+        &closing_value.to_string(),
     )?;
     cell.record_store_kpi(&StoreKpiInput {
         rollup_id: &format!("KPI-{tag}-W9"),
@@ -401,18 +452,18 @@ fn seed_parity_w9_close_and_rollup(
         period_week: "2026-08-31",
         unit: "each",
         on_hand_count_id: &on_hand_id,
-        opening_cut_id: key.open_cut_id,
+        opening_cut_id: key.opening_cut_id,
         count_ref: &count_ref,
         count_as_of: "2026-09-06T10:00:00Z",
         costed_ref: key.cost_ref,
         period_start: "2026-08-31T00:00:00Z",
         period_end: "2026-09-06T23:59:59.999999999Z",
         sales_weeks: 1,
-        on_hand_qty: &close_rem.to_string(),
-        avg_weekly_sales_qty: &amt.w9_sold.to_string(),
-        period_gross_margin: &w9_gm.to_string(),
-        opening_stock_value: &amt.open_val.to_string(),
-        closing_stock_value: &close_val.to_string(),
+        on_hand_qty: &closing_remaining.to_string(),
+        avg_weekly_sales_qty: &amt.current_week_sold.to_string(),
+        period_gross_margin: &current_week_gm.to_string(),
+        opening_stock_value: &amt.opening_value.to_string(),
+        closing_stock_value: &closing_value.to_string(),
     })
 }
 
@@ -425,7 +476,7 @@ fn assert_combined_view_engine_parity(
 ) -> Result<(), String> {
     let spec = retail_coverage_spec()?;
     let refs: Vec<&EntityCell> = cells.iter().collect();
-    let exact_report = evaluate_multi_cell_report(&refs, &spec, |idx, _, plan, ctx| {
+    let cell_report = evaluate_multi_cell_report(&refs, &spec, |idx, _, plan, ctx| {
         let book = refs
             .get(idx)
             .ok_or_else(|| CellError::Engine("missing cell".to_owned()))?;
@@ -438,7 +489,7 @@ fn assert_combined_view_engine_parity(
     let olap_report = evaluate_multi_cell_report(&refs, &spec, |idx, _, plan, ctx| {
         olap_eval(idx, plan, ctx).map_err(CellError::Engine)
     })?;
-    assert_combined_view_parity(label, &exact_report, &olap_report, expected_olap_engine)
+    assert_combined_view_parity(label, &cell_report, &olap_report, expected_olap_engine)
 }
 
 #[cfg(any(feature = "duckdb", feature = "datafusion"))]
@@ -453,8 +504,8 @@ fn assert_nonempty_question(label: &str, result: &QueryResult) -> Result<(), Str
 }
 
 /// Layer 3A (`#[cfg(feature = "duckdb")]`): Full Exact-Cell vs `DuckDB` parity
-/// across all 7 declared retail questions (nonempty WOS & GMROI), full
-/// `retail.coverage.json` combined-view snapshots, and transforms.
+/// across ALL 13 declared retail questions, full `retail.coverage.json`
+/// combined-view snapshots, and ALL 9 declared retail transforms.
 ///
 /// # Errors
 /// Returns an error if `DuckDB` syncing, evaluation, or any parity assertion fails.
@@ -464,6 +515,9 @@ pub fn run_duckdb_parity_suite(seed: u64) -> Result<(), String> {
     use norn_cell::analytics::engine::{Engine as DuckEngine, Settings as DuckSettings};
 
     let cells = seed_parity_cells(seed)?;
+    if let Some(first) = cells.first() {
+        assert_complete_retail_matrix(first.pack)?;
+    }
     let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     let duck = DuckEngine::new(DuckSettings {
         root: dir.path().join("duckdb"),
@@ -481,37 +535,37 @@ pub fn run_duckdb_parity_suite(seed: u64) -> Result<(), String> {
             eval_duckdb_question(&duck, book, tenant, plan, ctx)
         };
     for (cell, tenant) in cells.iter().zip(&tenants) {
-        for q_name in RETAIL_QUESTIONS {
+        for q_name in ALL_RETAIL_QUESTIONS {
             let plan = cell.pack.retail_question(q_name)?;
             let ctx = cell.query_context();
-            let exact = cell
+            let cell_result = cell
                 .cell()?
                 .store()
                 .evaluate_question(&plan, ctx.clone(), |_| Ok(true))
                 .map_err(|e| format!("exact {q_name}: {e}"))?;
             let label = format!("duckdb/{}/{q_name}", cell.entity_id);
-            assert_nonempty_question(&label, &exact)?;
-            let olap = eval_one(cell, tenant, &plan, ctx)?;
-            assert_query_result_parity(&label, &exact, &olap, ComputeEngine::Duckdb)?;
+            assert_nonempty_question(&label, &cell_result)?;
+            let olap_result = eval_one(cell, tenant, &plan, ctx)?;
+            assert_query_result_parity(&label, &cell_result, &olap_result, ComputeEngine::Duckdb)?;
         }
         for tf_id in RETAIL_TRANSFORMS {
             let plan = cell.pack.transform_plan(tf_id)?;
-            let exact = cell.evaluate_transform(tf_id)?;
-            if exact.rows.is_empty() {
+            let cell_result = cell.evaluate_transform(tf_id)?;
+            if cell_result.rows.is_empty() {
                 return Err(format!(
                     "duckdb/{}/{tf_id}: empty transform rows",
                     cell.entity_id
                 ));
             }
-            let olap = cell
+            let olap_result = cell
                 .cell()?
                 .store()
                 .evaluate_transform_duckdb(&plan, "main", &cell.scope, |_| Ok(RowAccess::Read))
                 .map_err(|e| format!("duckdb transform {tf_id}: {e}"))?;
             assert_transform_parity(
                 &format!("duckdb/{}/{tf_id}", cell.entity_id),
-                &exact,
-                &olap,
+                &cell_result,
+                &olap_result,
                 ComputeEngine::Duckdb,
             )?;
         }
@@ -586,8 +640,9 @@ fn eval_duckdb_question(
 }
 
 /// Layer 3B (`#[cfg(feature = "datafusion")]`): Full Exact-Cell vs `DataFusion`
-/// parity across all 7 declared retail questions (nonempty WOS & GMROI), full
-/// `retail.coverage.json` combined-view snapshots, and transforms.
+/// parity across ALL 13 declared retail questions, full `retail.coverage.json`
+/// combined-view snapshots, and ALL 9 declared retail transforms. Compiles and
+/// qualifies independently of the `duckdb` feature.
 ///
 /// # Errors
 /// Returns an error if `DataFusion` syncing, evaluation, or any parity assertion fails.
@@ -597,6 +652,9 @@ pub fn run_datafusion_parity_suite(seed: u64) -> Result<(), String> {
     use norn_cell::analytics::datafusion::{Engine as DfEngine, Settings as DfSettings};
 
     let cells = seed_parity_cells(seed)?;
+    if let Some(first) = cells.first() {
+        assert_complete_retail_matrix(first.pack)?;
+    }
     let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     let df = DfEngine::new(DfSettings {
         root: dir.path().join("datafusion"),
@@ -614,37 +672,42 @@ pub fn run_datafusion_parity_suite(seed: u64) -> Result<(), String> {
             eval_datafusion_question(&df, book, tenant, plan, ctx)
         };
     for (cell, tenant) in cells.iter().zip(&tenants) {
-        for q_name in RETAIL_QUESTIONS {
+        for q_name in ALL_RETAIL_QUESTIONS {
             let plan = cell.pack.retail_question(q_name)?;
             let ctx = cell.query_context();
-            let exact = cell
+            let cell_result = cell
                 .cell()?
                 .store()
                 .evaluate_question(&plan, ctx.clone(), |_| Ok(true))
                 .map_err(|e| format!("exact {q_name}: {e}"))?;
             let label = format!("datafusion/{}/{q_name}", cell.entity_id);
-            assert_nonempty_question(&label, &exact)?;
-            let olap = eval_one(cell, tenant, &plan, ctx)?;
-            assert_query_result_parity(&label, &exact, &olap, ComputeEngine::DataFusion)?;
+            assert_nonempty_question(&label, &cell_result)?;
+            let olap_result = eval_one(cell, tenant, &plan, ctx)?;
+            assert_query_result_parity(
+                &label,
+                &cell_result,
+                &olap_result,
+                ComputeEngine::DataFusion,
+            )?;
         }
         for tf_id in RETAIL_TRANSFORMS {
             let plan = cell.pack.transform_plan(tf_id)?;
-            let exact = cell.evaluate_transform(tf_id)?;
-            if exact.rows.is_empty() {
+            let cell_result = cell.evaluate_transform(tf_id)?;
+            if cell_result.rows.is_empty() {
                 return Err(format!(
                     "datafusion/{}/{tf_id}: empty transform rows",
                     cell.entity_id
                 ));
             }
-            let olap = cell
+            let olap_result = cell
                 .cell()?
                 .store()
                 .evaluate_transform_datafusion(&plan, "main", &cell.scope, |_| Ok(RowAccess::Read))
                 .map_err(|e| format!("datafusion transform {tf_id}: {e}"))?;
             assert_transform_parity(
                 &format!("datafusion/{}/{tf_id}", cell.entity_id),
-                &exact,
-                &olap,
+                &cell_result,
+                &olap_result,
                 ComputeEngine::DataFusion,
             )?;
         }

@@ -12,9 +12,10 @@
 use std::collections::BTreeMap;
 
 use norn_cell::combined_view::{CellViewInput, evaluate_cell_cut};
+use norn_cell::compute::QueryContext;
 use norn_cell::compute::transform::RowAccess;
 use norn_cell::engine::NativeEngine;
-use norn_cell::{CellError, CellStore, ObjectRecord, StoreOptions};
+use norn_cell::{CellError, CellStore, KnowledgeCutoff, ObjectRecord, StoreOptions};
 use norn_kernel::authz::CommitBinding;
 use norn_kernel::{ActionCall, ActionOutcome, DecisionTurn, LogicalTime, commit_action};
 use serde_json::json;
@@ -372,15 +373,48 @@ fn verify_authority_plan_and_mid_read_commit_faults(cell: &mut EntityCell) -> Re
     verify_real_mid_read_commit_refusal(cell, &valid_input)
 }
 
-/// Commit a REAL governed action on the cell's `SQLite` database via a second
-/// handle inside the `evaluate_cell_cut` callback between read-cut capture and
-/// completion, proving `evaluate_cell_cut` refuses `core.compute.stale_input`.
+/// Exercise BOTH genuine capture-to-evaluation commit interleavings on a second
+/// `SQLite` handle against the same cell database, proving `evaluate_cell_cut`
+/// refuses `core.compute.stale_input`:
+/// 1. Capture read-cut -> concurrent `supply.pos_sale.record` commit BEFORE
+///    `evaluate_question` runs -> evaluation sees advanced head/data -> refuses
+///    `core.compute.stale_input`!
+/// 2. Capture read-cut -> `evaluate_question` finishes -> concurrent
+///    `supply.sku.register` commit BEFORE post-eval fence finishes -> refuses
+///    `core.compute.stale_input`!
 fn verify_real_mid_read_commit_refusal(
     cell: &EntityCell,
     valid_input: &CellViewInput<'_, NativeEngine>,
 ) -> Result<(), String> {
-    let head_before = cell.head()?;
-    let race_res = evaluate_cell_cut(valid_input, &mut |_, plan, ctx| {
+    // Interleaving 1: commit on second SQLite handle AFTER read-cut capture
+    // and BEFORE question evaluation executes.
+    let head_initial = cell.head()?;
+    let pre_eval_race = evaluate_cell_cut(valid_input, &mut |_, plan, ctx| {
+        commit_concurrent_w8_sale_on_same_db(cell).map_err(CellError::Engine)?;
+        cell.cell()
+            .map_err(CellError::Engine)?
+            .store()
+            .evaluate_question(plan, ctx, |_| Ok(true))
+    });
+    if !matches!(
+        pre_eval_race,
+        Err(CellError::ComputeRefused("core.compute.stale_input"))
+    ) {
+        return Err(format!(
+            "capture-then-commit-then-evaluate interleaving must refuse stale_input, got {pre_eval_race:?}"
+        ));
+    }
+    let head_after_first = cell.head()?;
+    if head_after_first.commits != head_initial.commits.saturating_add(1) {
+        return Err(format!(
+            "pre-eval concurrent commit did not advance ledger head: before={} after={}",
+            head_initial.commits, head_after_first.commits
+        ));
+    }
+
+    // Interleaving 2: commit on second SQLite handle AFTER question evaluation
+    // returns at the captured cut and BEFORE post-evaluation fence checks finish.
+    let post_eval_race = evaluate_cell_cut(valid_input, &mut |_, plan, ctx| {
         let answer = cell
             .cell()
             .map_err(CellError::Engine)?
@@ -390,47 +424,88 @@ fn verify_real_mid_read_commit_refusal(
         Ok(answer)
     });
     if !matches!(
-        race_res,
+        post_eval_race,
         Err(CellError::ComputeRefused("core.compute.stale_input"))
     ) {
         return Err(format!(
-            "real mid-read commit must refuse stale_input, got {race_res:?}"
+            "post-eval mid-read commit must refuse stale_input, got {post_eval_race:?}"
         ));
     }
-    let head_after = cell.head()?;
-    if head_after.commits != head_before.commits.saturating_add(1) {
+    let head_after_second = cell.head()?;
+    if head_after_second.commits != head_after_first.commits.saturating_add(1) {
         return Err(format!(
-            "mid-read concurrent commit did not advance ledger head: before={} after={}",
-            head_before.commits, head_after.commits
+            "post-eval concurrent commit did not advance ledger head: before={} after={}",
+            head_after_first.commits, head_after_second.commits
         ));
     }
     Ok(())
 }
 
+fn commit_concurrent_w8_sale_on_same_db(cell: &EntityCell) -> Result<(), String> {
+    commit_concurrent_action_on_same_db(
+        cell,
+        500,
+        "supply.pos_sale.record",
+        "clerk:hana",
+        "concurrent-mid-read-sale-w8",
+        json!({
+            "sale_id": "SALE-MID-READ-RACE-W8",
+            "store_id": "ST-CLEAN",
+            "sku_id": "SKU-CLEAN",
+            "sold_qty": "2",
+            "unit": "each",
+            "net_revenue": "400",
+            "applied_unit_cost": "100",
+            "cost_status": "costed",
+            "costed_ref": "COST-CLEAN-1",
+            "currency": "EGP",
+            "sold_at": "2026-08-26T12:00:00Z",
+        }),
+    )
+}
+
 fn commit_concurrent_sku_on_same_db(cell: &EntityCell) -> Result<(), String> {
+    commit_concurrent_action_on_same_db(
+        cell,
+        700,
+        "supply.sku.register",
+        "eng:dina",
+        "concurrent-mid-read-race-1",
+        json!({
+            "sku_id": "SKU-MID-READ-RACE",
+            "category": "dry_goods",
+            "unit_of_measure": "each",
+            "shelf_life_days": 365,
+        }),
+    )
+}
+
+fn commit_concurrent_action_on_same_db(
+    cell: &EntityCell,
+    tick_offset_ms: u64,
+    action_id: &str,
+    actor: &str,
+    idempotency_key: &str,
+    payload: serde_json::Value,
+) -> Result<(), String> {
     let engine = NativeEngine::open(&cell.db_path, StoreOptions::default())
         .map_err(|e| format!("open concurrent handle: {e}"))?;
     let store = CellStore::from_engine_bound(engine, cell.pack.model().clone(), &cell.cell_id)
         .map_err(|e| format!("bind concurrent store: {e}"))?;
     let mut writer = RetailCell::new(store, cell.scope.clone(), |c| c.payload.clone())
         .map_err(|e| format!("open concurrent cell: {e}"))?;
-    let next_ts = LogicalTime::from_millis(cell.now().as_millis().saturating_add(500));
+    let next_ts = LogicalTime::from_millis(cell.now().as_millis().saturating_add(tick_offset_ms));
     writer.advance_to(next_ts);
     let world = writer.store().world();
     let admitted = cell
         .pack
         .definitions
-        .action("supply.sku.register")
-        .ok_or("missing supply.sku.register")?;
-    let input: norn_kernel::cell_host::JsonObject = serde_json::from_value(json!({
-        "sku_id": "SKU-MID-READ-RACE",
-        "category": "dry_goods",
-        "unit_of_measure": "each",
-        "shelf_life_days": 365,
-    }))
-    .map_err(|e| format!("concurrent input: {e}"))?;
+        .action(action_id)
+        .ok_or_else(|| format!("missing {action_id}"))?;
+    let input: norn_kernel::cell_host::JsonObject =
+        serde_json::from_value(payload).map_err(|e| format!("concurrent input: {e}"))?;
     let catalog = cell.pack.definitions.catalog();
-    let call = ActionCall {
+    let action_req = ActionCall {
         action: &admitted.root,
         action_artifact_id: &admitted.artifact_id,
         action_version: &admitted.version,
@@ -438,20 +513,20 @@ fn commit_concurrent_sku_on_same_db(cell: &EntityCell) -> Result<(), String> {
             ("orgId".into(), cell.org_id.clone()),
             ("environmentId".into(), cell.env_id.clone()),
         ]),
-        actor: "eng:dina".to_owned(),
+        actor: actor.to_owned(),
         approved_intent: None,
         input,
-        idempotency_key: "concurrent-mid-read-race-1".to_owned(),
+        idempotency_key: idempotency_key.to_owned(),
         object_type: None,
         turn: DecisionTurn {
-            id: "concurrent-mid-read-race-1".to_owned(),
+            id: idempotency_key.to_owned(),
             now: next_ts,
             world,
             consumes: None,
         },
         trace: None,
     };
-    match commit_action(&mut writer, &catalog, &call, &AllowAll) {
+    match commit_action(&mut writer, &catalog, &action_req, &AllowAll) {
         Ok(ActionOutcome::Committed { .. }) => Ok(()),
         other => Err(format!("concurrent commit unexpected outcome: {other:?}")),
     }
@@ -525,4 +600,126 @@ fn verify_uncosted_mid_window_withholding(cell: &mut EntityCell) -> Result<(), S
         ));
     }
     Ok(())
+}
+
+/// Dedicated bitemporal check on an EXISTING, ALREADY-SOLD SKU (`SKU-LATE-0`)
+/// receiving a later-dated `UnitCostEvidence` + governed `supply.unit_cost.record`
+/// on that SAME existing SKU, asserting via `evaluate_question_known_at` that
+/// the prior knowledge cut preserves the original uncosted margin while the
+/// current cut reflects the newly costed margin.
+///
+/// # Errors
+/// Returns an error if bitemporal preservation or restated margin assertion fails.
+pub fn verify_late_arriving_unit_cost_on_existing_sku(seed: u64) -> Result<(), String> {
+    let (mut cell, prior_cutoff, prior_ctx) = seed_late_cost_cell(seed)?;
+    let cost_payload = json!({
+        "cost_id": "COST-LATE-0-V1", "sku_code": "SKU-LATE-0", "vendor_code": "ATELIER-01",
+        "unit_cost": 120, "ccy": "EGP", "effective_from": "2026-08-31T00:00:00Z",
+    })
+    .to_string();
+    let (_, clean) = cell.ingest_feed(&FeedRow {
+        feed_id: COSTS_FEED_ID,
+        mapping: COSTS_FEED_ID,
+        dataset: "unit_cost",
+        source: "synthetic-cost",
+        event: "ev-late-cost-0",
+        record: "COST-LATE-0-V1",
+        payload: &cost_payload,
+    })?;
+    if !clean {
+        return Err("late-arriving UnitCostEvidence quarantined unexpectedly".to_owned());
+    }
+    cell.record_unit_cost(
+        "SKU-LATE-0",
+        "COST-LATE-0-V1",
+        "SUP-ATELIER",
+        "120",
+        "2026-08-31T00:00:00Z",
+    )?;
+    cell.record_costed_lot(
+        "LOT-LATE-COSTED",
+        "ST-LATE-1",
+        "SKU-LATE-0",
+        "CUST-1",
+        "30",
+        "each",
+        "120",
+        "2026-09-01T09:00:00Z",
+    )?;
+    cell.record_costed_sale(
+        "SALE-LATE-W9",
+        "ST-LATE-1",
+        "SKU-LATE-0",
+        "4",
+        "each",
+        "1000",
+        "120",
+        "COST-LATE-0-V1",
+        "2026-09-02T12:00:00Z",
+    )?;
+
+    let gm_plan = cell
+        .pack
+        .retail_question("supply.retail.store_gross_margin_weekly")?;
+    let prior_gm = cell
+        .cell()?
+        .store()
+        .evaluate_question_known_at(&gm_plan, prior_ctx, prior_cutoff, |_| Ok(true))
+        .map_err(|e| format!("prior late-cost gm known_at: {e}"))?;
+    if resolve_costed_bucket(&prior_gm.result, "EGP", "ST-LATE-1", "2026-08-31").is_some() {
+        return Err("prior knowledge cut must not disclose W9 costed margin".to_owned());
+    }
+    let live_gm = cell.answer("supply.retail.store_gross_margin_weekly")?;
+    let w9_margin = resolve_costed_bucket(&live_gm, "EGP", "ST-LATE-1", "2026-08-31")
+        .ok_or("live cut after UnitCost arrival must disclose W9 costed margin")?;
+    if w9_margin.canonical() != "520" {
+        return Err(format!(
+            "late-cost W9 margin mismatch: expected 520, got {w9_margin}"
+        ));
+    }
+    Ok(())
+}
+
+fn seed_late_cost_cell(seed: u64) -> Result<(EntityCell, KnowledgeCutoff, QueryContext), String> {
+    let mut cell = EntityCell::open(
+        &cell_id_for_entity(seed, 88),
+        "LE-LATE-COST",
+        "EGP",
+        "org_xpa_late_cost",
+        "prod",
+        DEFAULT_CLOCK_MS,
+    )?;
+    cell.register_book("Late Cost Arrival Entity", "sole_proprietorship")?;
+    cell.register_sku("SKU-LATE-0", "dry_goods", "each")?;
+    cell.register_store(
+        "ST-LATE-1",
+        "Late Cost Store",
+        "CUST-1",
+        "mall_store",
+        Some("MALL-CFC"),
+    )?;
+    cell.record_uncosted_lot(
+        "LOT-LATE-INIT",
+        "ST-LATE-1",
+        "SKU-LATE-0",
+        "CUST-1",
+        "50",
+        "each",
+        "2026-08-24T09:00:00Z",
+    )?;
+    cell.record_uncosted_sale(
+        "SALE-LATE-W8",
+        "ST-LATE-1",
+        "SKU-LATE-0",
+        "5",
+        "each",
+        "1000",
+        "2026-08-25T12:00:00Z",
+    )?;
+    let cutoff = KnowledgeCutoff {
+        recorded_at: cell.now(),
+        frontier: cell.head()?.commits,
+    };
+    let ctx = cell.query_context();
+    Ok((cell, cutoff, ctx))
 }

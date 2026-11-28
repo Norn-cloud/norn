@@ -73,17 +73,17 @@ impl DriverTree {
         let mut dependents: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (name, formula) in &self.nodes {
             indegree.entry(name.clone()).or_insert(0);
-            for dep in formula_deps(formula) {
-                if !self.nodes.contains_key(dep) {
+            for dependency in formula_deps(formula) {
+                if !self.nodes.contains_key(dependency) {
                     return Err(DriverTreeError::MissingDependency {
                         node: name.clone(),
-                        dependency: dep.to_owned(),
+                        dependency: dependency.to_owned(),
                     });
                 }
-                let deg = indegree.entry(name.clone()).or_insert(0);
-                *deg = deg.saturating_add(1);
+                let in_degree_val = indegree.entry(name.clone()).or_insert(0);
+                *in_degree_val = in_degree_val.saturating_add(1);
                 dependents
-                    .entry(dep.to_owned())
+                    .entry(dependency.to_owned())
                     .or_default()
                     .push(name.clone());
             }
@@ -97,9 +97,9 @@ impl DriverTree {
             order.push(node.clone());
             if let Some(children) = dependents.get(&node) {
                 for child in children {
-                    if let Some(deg) = indegree.get_mut(child) {
-                        *deg = deg.saturating_sub(1);
-                        if *deg == 0 {
+                    if let Some(in_degree_val) = indegree.get_mut(child) {
+                        *in_degree_val = in_degree_val.saturating_sub(1);
+                        if *in_degree_val == 0 {
                             ready.push_back(child.clone());
                         }
                     }
@@ -191,17 +191,17 @@ pub fn run_driver_tree_ripple_and_cycle_check(seed: u64) -> Result<(), String> {
             cash_reserve,
             min_cash_floor,
         );
-        let base_a = base_tree
+        let first_baseline = base_tree
             .evaluate()
             .map_err(|e| format!("base tree eval: {e:?}"))?;
-        let base_b = base_tree
+        let repeat_baseline = base_tree
             .evaluate()
             .map_err(|e| format!("base tree repeat eval: {e:?}"))?;
-        if base_a != base_b {
+        if first_baseline != repeat_baseline {
             return Err("driver tree evaluation was non-deterministic".to_owned());
         }
 
-        let ot_tree = build_store_otb_tree(
+        let overtime_tree = build_store_otb_tree(
             headcount,
             shift_hours.saturating_add(scaled(4)),
             hourly_rate,
@@ -210,16 +210,16 @@ pub fn run_driver_tree_ripple_and_cycle_check(seed: u64) -> Result<(), String> {
             cash_reserve,
             min_cash_floor,
         );
-        let ot = ot_tree
+        let overtime_values = overtime_tree
             .evaluate()
             .map_err(|e| format!("overtime tree eval: {e:?}"))?;
         let expected_payroll_delta =
             div_i128(headcount.saturating_mul(4), FACTOR).saturating_mul(hourly_rate);
-        let actual_payroll_delta = ot
+        let actual_payroll_delta = overtime_values
             .get("payroll_cost")
             .copied()
             .unwrap_or(0)
-            .saturating_sub(base_a.get("payroll_cost").copied().unwrap_or(0));
+            .saturating_sub(first_baseline.get("payroll_cost").copied().unwrap_or(0));
         if actual_payroll_delta != expected_payroll_delta {
             return Err(format!(
                 "driver-tree ripple mismatch: actual={} expected={}",
@@ -227,16 +227,16 @@ pub fn run_driver_tree_ripple_and_cycle_check(seed: u64) -> Result<(), String> {
                 decimal_from_scaled(expected_payroll_delta)?
             ));
         }
-        let ebitda_delta = ot
+        let ebitda_delta = overtime_values
             .get("store_ebitda")
             .copied()
             .unwrap_or(0)
-            .saturating_sub(base_a.get("store_ebitda").copied().unwrap_or(0));
+            .saturating_sub(first_baseline.get("store_ebitda").copied().unwrap_or(0));
         if ebitda_delta != expected_payroll_delta.saturating_neg() {
             return Err("EBITDA did not reflect exact negative payroll ripple".to_owned());
         }
-        if ot.get("otb_budget").copied().unwrap_or(0)
-            > base_a.get("otb_budget").copied().unwrap_or(0)
+        if overtime_values.get("otb_budget").copied().unwrap_or(0)
+            > first_baseline.get("otb_budget").copied().unwrap_or(0)
         {
             return Err("OTB budget must tighten monotonically under higher payroll".to_owned());
         }

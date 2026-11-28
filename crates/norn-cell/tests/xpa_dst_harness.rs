@@ -131,8 +131,8 @@ pub(crate) fn run_layer3_duckdb_parity() -> Result<(), String> {
     layer3_parity::run_duckdb_parity_suite(seed).map_err(|e| format_replay_err(seed, None, &e))
 }
 
-/// Entrypoint also invoked by `dataset_laws::xpa_dst_layer3_datafusion_parity`
-/// when `datafusion` is enabled.
+/// Entrypoint invoked by `xpa_dst_harness::layer3_exact_vs_datafusion_olap_differential_parity`
+/// when `datafusion` is enabled (compiles and qualifies independently without `duckdb`).
 #[cfg(feature = "datafusion")]
 pub(crate) fn run_layer3_datafusion_parity() -> Result<(), String> {
     let seed = active_seeds()?.into_iter().next().unwrap_or(PRIMARY_SEED);
@@ -193,7 +193,7 @@ fn layer5_benchmark_generators_and_scorecard_smoke() -> Result<(), String> {
         || scorecard.cell_facts_loaded < 20
         || !scorecard.exactness_verified
         || !scorecard.lineage_verified
-        || scorecard.exact_query_latency.samples < 20
+        || scorecard.exact_query_timing.warm.samples < 20
         || scorecard.fork_branch_latency.samples < 10
     {
         return Err(format_replay_err(
@@ -209,6 +209,7 @@ fn layer5_benchmark_generators_and_scorecard_smoke() -> Result<(), String> {
         || !json_text.contains("\"cellFactsLoaded\":")
         || !json_text.contains("\"olapFactsLoaded\":")
         || !json_text.contains("\"syntheticFactsGenerated\":")
+        || !json_text.contains("\"coldQueryUs\":")
         || !markdown.contains("xP&A Layer 5 Benchmark Scorecard")
     {
         return Err(format_replay_err(
