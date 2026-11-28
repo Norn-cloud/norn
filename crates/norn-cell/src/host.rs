@@ -1952,6 +1952,29 @@ where
             Err(GuardedError::Store(error)) => Err(CommitError::Host(error)),
         }
     }
+
+    fn commit_action_with_proofs(
+        &mut self,
+        commit: CellCommit<E, C, I>,
+        stamp: Option<norn_kernel::CreatorStampProof>,
+        proof: Option<&norn_kernel::action_commit::ActionReferenceReads>,
+        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        if proof.is_some_and(|p| !p.validates(&commit)) {
+            return Err(CommitError::ObservationAuthorization);
+        }
+        let mut opts = CommitOptions {
+            quantity: quantity.map(|(r, k)| (std::slice::from_ref(r), k)),
+            stamp,
+            ..Default::default()
+        };
+        if let Some(p) =
+            proof.filter(|p| p.matches_governing_laws(self.store.model().law_artifacts()))
+        {
+            (opts.references, opts.property_reads) = (p.reference_reads(), p.property_reads());
+        }
+        self.commit_admitted(commit, opts)
+    }
 }
 
 impl<E, C, I, S: SqlEngine> CellHost for SqliteCell<E, C, I, S>
@@ -2226,26 +2249,7 @@ where
         proof: norn_kernel::action_commit::ActionReferenceReads,
         quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        if !proof.validates(&commit) {
-            return Err(CommitError::ObservationAuthorization);
-        }
-        // Drop to whole-object lineage if the kernel's catalog omitted or
-        // differed from the governing-law set this store enforces.
-        let (references, property_reads) =
-            if proof.matches_governing_laws(self.store.model().law_artifacts()) {
-                (proof.reference_reads(), proof.property_reads())
-            } else {
-                (&[][..], &[][..])
-            };
-        self.commit_admitted(
-            commit,
-            CommitOptions {
-                quantity: quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
-                references,
-                property_reads,
-                ..Default::default()
-            },
-        )
+        self.commit_action_with_proofs(commit, None, Some(&proof), quantity)
     }
 
     fn commit_action_quantity(
@@ -2261,16 +2265,10 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
         proof: norn_kernel::CreatorStampProof,
+        references: Option<norn_kernel::action_commit::ActionReferenceReads>,
         quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_admitted(
-            commit,
-            CommitOptions {
-                quantity: quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
-                stamp: Some(proof),
-                ..Default::default()
-            },
-        )
+        self.commit_action_with_proofs(commit, Some(proof), references.as_ref(), quantity)
     }
 
     fn commit_owned_rows(

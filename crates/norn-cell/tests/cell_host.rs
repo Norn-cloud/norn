@@ -6013,7 +6013,7 @@ fn create_ifc_fixture(
         .with_governing_laws(laws)
         .expect("governing laws");
     let store = CellStore::open_in_memory(model.clone()).expect("store");
-    let mut cell = SqliteCell::new(
+    let mut cell: SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject> = SqliteCell::new(
         store,
         "org_demo/dev",
         |cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone(),
@@ -6353,4 +6353,239 @@ fn create_only_field_level_ifc_closes_link_law_covert_channel_and_stays_fail_clo
         &ReferenceLineageAllowAll,
     )
     .expect("unmarked LAW-LINK-1 read must allow createLinks");
+}
+
+fn stamped_ifc_fixture(
+    laws: &[norn_ir::ArtifactEnvelope],
+) -> (
+    norn_cell::Model,
+    SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject>,
+) {
+    let mut defs: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([
+        {
+            "name": "hr.Employee",
+            "identity": [{"name": "primary", "properties": ["id"]}],
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "status", "type": {"kind": "text"}},
+                {"id": "national_id", "type": {"kind": "text"}, "markings": ["pii.ssn"]}
+            ]
+        },
+        {
+            "name": "hr.LeaveRequest",
+            "identity": [{"name": "primary", "properties": ["id"]}],
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "employee_id", "type": {"kind": "text"}},
+                {"id": "days", "type": {"kind": "integer"}},
+                {"id": "created_by", "type": {"kind": "text"}, "protected": true}
+            ],
+            "links": [{
+                "id": "employee",
+                "target": "hr.Employee",
+                "cardinality": {"to": "one", "from": "many"}
+            }]
+        }
+    ]))
+    .expect("stamped hr defs");
+    defs.push(r2_action_call_type());
+    let model = common::model_of(&defs)
+        .with_governing_laws(laws)
+        .expect("law model");
+    let store = CellStore::open_in_memory(model.clone()).expect("store");
+    let mut cell: SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject> = SqliteCell::new(
+        store,
+        "org_demo/dev",
+        |cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone(),
+    )
+    .expect("cell");
+    cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: FactKey::new("hr.Employee", "E1"),
+            expected: FactVersion(0),
+            mutation: FactMutation::Put {
+                values: serde_json::from_value(json!({
+                    "id": "E1",
+                    "status": "active",
+                    "national_id": "123-45-6789"
+                }))
+                .expect("employee values"),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .expect("seed employee");
+    (model, cell)
+}
+
+fn stamped_ifc_action(
+    id: &str,
+    slice: &serde_json::Value,
+    aggregates: &serde_json::Value,
+    preconditions: &serde_json::Value,
+) -> norn_ir::ActionRoot {
+    serde_json::from_value(json!({
+        "actionId": id,
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": true,
+        "ledgered": true,
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "id": {"type": "string"},
+                "employee_id": {"type": "string"},
+                "days": {"type": "integer"},
+                "created_by": {"type": "string"}
+            },
+            "required": ["id", "employee_id", "days", "created_by"]
+        },
+        "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+        "derive": [{"field": "created_by", "expression": "actor.subjectId", "inputRequired": false}],
+        "slice": slice,
+        "aggregates": aggregates,
+        "preconditions": preconditions,
+        "createLinks": [{"link": "employee", "targetType": "hr.Employee", "targetIdField": "employee_id"}],
+        "writes": [{"entityKind": "hr.LeaveRequest", "change": "created"}],
+        "effectProgram": {
+            "kind": "upsert_input_object",
+            "objectIdField": "id",
+            "objectKind": "hr.LeaveRequest",
+            "entityArtifactId": "hr.LeaveRequest.entity",
+            "entityArtifactVersion": "1.0.0",
+            "writeMode": {"kind": "create_only"}
+        }
+    }))
+    .expect("stamped action")
+}
+
+/// Regression test for #1981: `ACTOR-STAMP-1` (`fromCaller` / `protected`
+/// creator stamping via `commit_stamped`) preserves `ActionReferenceReads`
+/// AND `CreateOnly` actions combining point slices with unmarked predicate
+/// slices, collection closures, and aggregates keep field-level IFC while
+/// failing closed whenever a closure or predicate reads a classified field.
+#[test]
+fn create_only_stamped_and_predicate_slice_ifc_commits_cleanly_and_fails_closed() {
+    let (model, mut cell) = stamped_ifc_fixture(&[]);
+    let catalog = model.type_catalog();
+    let slices = json!([
+        {"name": "emp", "objectType": "hr.Employee", "key": {"property": {"from": "input", "property": "employee_id"}}},
+        {"name": "existing", "objectType": "hr.LeaveRequest", "key": {"predicate": {"filter": {"employee_id": "employee_id"}, "maxItems": 10}}}
+    ]);
+    let aggs = json!([{
+        "name": "used_days",
+        "objectType": "hr.LeaveRequest",
+        "filter": {"employee_id": "employee_id"},
+        "aggregate": {"kind": "sum", "property": "days"},
+        "maxItems": 10
+    }]);
+
+    // 1. Positive: stamped CreateOnly + unmarked point read + predicate closure + aggregate commits cleanly!
+    let clean = stamped_ifc_action(
+        "hr.stamped_leave",
+        &slices,
+        &aggs,
+        &json!([
+            "slice.emp.status == 'active' and (aggregates.used_days + input.days) <= 21",
+            "all(slice.existing as r, r.days <= 10)"
+        ]),
+    );
+    let ok_req = create_ifc_call(&clean, "L-STAMP-1", "stamp-ok-1");
+    norn_kernel::commit_action(&mut cell, &catalog, &ok_req, &ReferenceLineageAllowAll)
+        .expect("stamped CreateOnly with unmarked point + predicate + aggregate must commit");
+
+    // Verify creator stamp was actually applied.
+    let fact = cell
+        .load(&FactKey::new("hr.LeaveRequest", "L-STAMP-1"))
+        .expect("load stamped leave");
+    assert_eq!(
+        fact.values
+            .as_ref()
+            .and_then(|v| v.get("created_by"))
+            .and_then(norn_ir::RuntimeValue::as_str),
+        Some("employee-1")
+    );
+
+    // 2. Fail-closed: reading a classified field inside the collection closure MUST refuse `createLinks`!
+    let leaky = stamped_ifc_action(
+        "hr.stamped_leave_leaky",
+        &slices,
+        &aggs,
+        &json!(["all(slice.existing as r, r.days <= 10 and slice.emp.national_id != '000')"]),
+    );
+    let leak_req = create_ifc_call(&leaky, "L-STAMP-LEAK", "stamp-leak-1");
+    assert_marking_refusal(norn_kernel::commit_action(
+        &mut cell,
+        &catalog,
+        &leak_req,
+        &ReferenceLineageAllowAll,
+    ));
+}
+
+/// Regression test for #1981: point/predicate same-type overlap avoids false
+/// staleness in both declaration orders while keeping full lineage on marked
+/// types, and a stamped commit with a mismatched governing-law catalog drops
+/// back to whole-object lineage.
+#[test]
+fn create_only_stamped_overlap_and_mismatched_law_catalog_fail_closed() {
+    let (model, mut cell) = stamped_ifc_fixture(&[]);
+    let catalog = model.type_catalog();
+    for (order_id, slice_def) in [
+        (
+            "point_first",
+            json!([
+                {"name": "emp", "objectType": "hr.Employee", "key": {"property": {"from": "input", "property": "employee_id"}}},
+                {"name": "all_emps", "objectType": "hr.Employee", "key": {"predicate": {"filter": {"id": "employee_id"}, "maxItems": 10}}}
+            ]),
+        ),
+        (
+            "pred_first",
+            json!([
+                {"name": "all_emps", "objectType": "hr.Employee", "key": {"predicate": {"filter": {"id": "employee_id"}, "maxItems": 10}}},
+                {"name": "emp", "objectType": "hr.Employee", "key": {"property": {"from": "input", "property": "employee_id"}}}
+            ]),
+        ),
+    ] {
+        let overlap_action = stamped_ifc_action(
+            &format!("hr.overlap_{order_id}"),
+            &slice_def,
+            &json!([]),
+            &json!([
+                "slice.emp.status == 'active'",
+                "all(slice.all_emps as e, e.status == 'active')"
+            ]),
+        );
+        let overlap_req = create_ifc_call(
+            &overlap_action,
+            &format!("L-OV-{order_id}"),
+            &format!("ov-{order_id}"),
+        );
+        // Must NOT return StalePreconditionRead; must return MarkingDeclassificationInvalid because
+        // overlapping hr.Employee stays on full lineage!
+        assert_marking_refusal(norn_kernel::commit_action(
+            &mut cell,
+            &catalog,
+            &overlap_req,
+            &ReferenceLineageAllowAll,
+        ));
+    }
+
+    // Stamped commit with mismatched governing-law catalog drops back to whole-object lineage!
+    let pii_law = create_ifc_law("stamped_reads_nid", "self.employee.national_id != '000'");
+    let (law_model, mut law_cell) = stamped_ifc_fixture(&[pii_law]);
+    let stale_catalog = law_model.type_catalog();
+    let clean = stamped_ifc_action(
+        "hr.stamped_leave",
+        &json!([
+            {"name": "emp", "objectType": "hr.Employee", "key": {"property": {"from": "input", "property": "employee_id"}}}
+        ]),
+        &json!([]),
+        &json!(["slice.emp.status == 'active'"]),
+    );
+    assert_marking_refusal(norn_kernel::commit_action(
+        &mut law_cell,
+        &stale_catalog,
+        &create_ifc_call(&clean, "L-STAMP-STALE-LAW", "stamp-stale-law"),
+        &ReferenceLineageAllowAll,
+    ));
 }

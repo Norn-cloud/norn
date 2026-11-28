@@ -112,8 +112,8 @@ pub use expression::{
 pub use fuel::{TurnFuel, sort_cost};
 pub use literals::{FieldValue, ObjectLiteral, command_records, object_literals};
 pub use reads::{
-    ExpressionReads, expression_element_paths, expression_read_paths, expression_reads,
-    unary_test_reads,
+    ExpressionReads, expression_element_paths, expression_read_paths,
+    expression_read_paths_with_closures, expression_reads, unary_test_reads,
 };
 pub use row_tree::{RowArithmetic, RowComparison, RowExpr, row_expression};
 pub use value::{Number, Value};

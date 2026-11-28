@@ -114,6 +114,26 @@ pub fn expression_read_paths(source: &str, root: &str) -> Result<BTreeSet<Vec<St
     })
 }
 
+/// Like [`expression_read_paths`], but descends into closure bodies passed to
+/// collection builtins (`all`/`some`/`filter`/`map`/etc.) whose first argument
+/// is a literal path under `root` and whose alias does not shadow `root`.
+/// The collection path itself is recorded; any reference to `root` inside the
+/// closure body is also extracted; unresolvable closures still fail closed to
+/// the empty path.
+///
+/// # Errors
+/// Returns an expression error for malformed or over-budget source.
+pub fn expression_read_paths_with_closures(
+    source: &str,
+    root: &str,
+) -> Result<BTreeSet<Vec<String>>, ExprError> {
+    with_validated_ast(source, false, |ast| {
+        let mut paths = BTreeSet::new();
+        collect_paths_with_closures(ast, root, false, &mut paths);
+        paths
+    })
+}
+
 /// LAW-LINK-MANY-1: the member paths each closure builtin reads from the
 /// elements of a literal collection below `root`, by that collection's path
 /// below `root`: `map(self.lines, #.amount)` and
@@ -368,6 +388,95 @@ fn collect_paths(node: &Node<'_>, root: &str, output: &mut BTreeSet<Vec<String>>
             collect_paths(this, root, output);
             for argument in *arguments {
                 collect_paths(argument, root, output);
+            }
+        }
+    }
+}
+
+fn collect_paths_with_closures(
+    node: &Node<'_>,
+    root: &str,
+    pointer_allowed: bool,
+    output: &mut BTreeSet<Vec<String>>,
+) {
+    if let Some(mut path) = literal_path(node) {
+        if path.first().is_some_and(|name| name == root) {
+            path.remove(0);
+            output.insert(path);
+        }
+        return;
+    }
+    match node {
+        Node::Null | Node::Bool(_) | Node::Number(_) | Node::String(_) | Node::Identifier(_) => {}
+        Node::Pointer => {
+            if !pointer_allowed {
+                output.insert(Vec::new());
+            }
+        }
+        Node::Root | Node::Closure { .. } | Node::Assignments { .. } | Node::Error { .. } => {
+            output.insert(Vec::new());
+        }
+        Node::Parenthesized(inner) | Node::Unary { node: inner, .. } => {
+            collect_paths_with_closures(inner, root, pointer_allowed, output);
+        }
+        Node::Member { node, property } => {
+            collect_paths_with_closures(node, root, pointer_allowed, output);
+            collect_paths_with_closures(property, root, pointer_allowed, output);
+        }
+        Node::FunctionCall { arguments, .. } => {
+            if let [collection, Node::Closure { body, alias }, rest @ ..] = *arguments
+                && let Some(mut path) = literal_path(collection)
+                && path.first().is_some_and(|name| name == root)
+                && *alias != Some(root)
+            {
+                path.remove(0);
+                output.insert(path);
+                collect_paths_with_closures(body, root, true, output);
+                for argument in rest {
+                    collect_paths_with_closures(argument, root, pointer_allowed, output);
+                }
+                return;
+            }
+            for argument in *arguments {
+                collect_paths_with_closures(argument, root, pointer_allowed, output);
+            }
+        }
+        Node::TemplateString(parts) | Node::Array(parts) => {
+            for part in *parts {
+                collect_paths_with_closures(part, root, pointer_allowed, output);
+            }
+        }
+        Node::Object(entries) => {
+            for (key, value) in *entries {
+                collect_paths_with_closures(key, root, pointer_allowed, output);
+                collect_paths_with_closures(value, root, pointer_allowed, output);
+            }
+        }
+        Node::Slice { node, from, to } => {
+            collect_paths_with_closures(node, root, pointer_allowed, output);
+            for bound in [from, to].into_iter().flatten() {
+                collect_paths_with_closures(bound, root, pointer_allowed, output);
+            }
+        }
+        Node::Interval { left, right, .. } | Node::Binary { left, right, .. } => {
+            collect_paths_with_closures(left, root, pointer_allowed, output);
+            collect_paths_with_closures(right, root, pointer_allowed, output);
+        }
+        Node::Conditional {
+            condition,
+            on_true,
+            on_false,
+        } => {
+            for branch in [condition, on_true, on_false] {
+                collect_paths_with_closures(branch, root, pointer_allowed, output);
+            }
+        }
+        Node::MethodCall {
+            this, arguments, ..
+        } => {
+            collect_paths_with_closures(this, root, pointer_allowed, output);
+            for argument in *arguments {
+                collect_paths_with_closures(argument, root, pointer_allowed, output);
             }
         }
     }
@@ -763,5 +872,56 @@ mod tests {
                 .len(),
             0
         );
+    }
+
+    #[test]
+    fn closure_paths_extract_collection_and_inner_root_reads_and_fail_closed() {
+        let ok = super::expression_read_paths_with_closures(
+            "slice.emp.status == 'active' and all(slice.rules as r, r.active == false or input.end <= r.limit)",
+            "slice",
+        )
+        .expect("closure over slice collection");
+        assert_eq!(
+            ok,
+            BTreeSet::from([
+                vec!["emp".to_owned(), "status".to_owned()],
+                vec!["rules".to_owned()],
+            ])
+        );
+
+        let inner_root = super::expression_read_paths_with_closures(
+            "all(slice.rules as r, r.limit <= slice.emp.salary)",
+            "slice",
+        )
+        .expect("closure reading outer slice field");
+        assert_eq!(
+            inner_root,
+            BTreeSet::from([
+                vec!["emp".to_owned(), "salary".to_owned()],
+                vec!["rules".to_owned()],
+            ])
+        );
+
+        let pointer_ok = super::expression_read_paths_with_closures(
+            "all(slice.rules, #.active == true)",
+            "slice",
+        )
+        .expect("pointer closure over slice collection");
+        assert_eq!(pointer_ok, BTreeSet::from([vec!["rules".to_owned()]]));
+
+        for fail_closed in [
+            "all(slice.rules as slice, slice.active == true)",
+            "all([slice.emp] as r, r.status == 'active')",
+            "all(slice.rules as r, $root.secret == r.id)",
+            "all(slice.rules as r, some(r.nested as n, n.flag == true))",
+            "slice[input.key].status == 'active'",
+        ] {
+            assert!(
+                super::expression_read_paths_with_closures(fail_closed, "slice")
+                    .expect("bounded expression")
+                    .contains(&Vec::new()),
+                "expected fail-closed empty path for: {fail_closed}"
+            );
+        }
     }
 }
