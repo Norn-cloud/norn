@@ -81,6 +81,8 @@ mod outbox_generations;
 mod outbox_generations_restore;
 #[path = "parent_rows.rs"]
 mod parent_rows;
+#[path = "plan_otb_slice.rs"]
+mod plan_otb_slice;
 #[path = "principal_inputs.rs"]
 mod principal_inputs;
 #[path = "query_envelope.rs"]

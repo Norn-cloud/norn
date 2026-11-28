@@ -1,0 +1,83 @@
+{
+  "artifactId": "plan.otb_envelope.activate_planned.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Activate a planned OTB envelope",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.otb_envelope.activate_planned",
+    "effectProgram": {
+      "entityArtifactId": "plan.OtbEnvelope.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "envelope_id",
+      "objectKind": "plan.OtbEnvelope",
+      "transition": "activate_planned"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "envelope_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "envelope_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "envelope_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "envelope_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "slice.envelope.envelope_kind == 'planned'"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "envelope_id"
+          }
+        },
+        "name": "envelope",
+        "objectType": "plan.OtbEnvelope"
+      }
+    ],
+    "title": "Activate a planned OTB envelope",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "plan.OtbEnvelope"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.otb_envelope.activate_planned.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

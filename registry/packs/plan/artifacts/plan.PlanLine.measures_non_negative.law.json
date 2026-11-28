@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.PlanLine.measures_non_negative.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PlanLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A plan line carries non-negative planned sales, receipts, markdowns, fine-metal mass, and EOM stock at a canonical YYYY-MM month.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.PlanLine.measures_non_negative",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A plan line carries non-negative planned sales, receipts, markdowns, fine-metal mass, and EOM stock at a canonical YYYY-MM month.",
+    "response": {
+      "expression": "((((((((((((len(self.plan_month) == 7) and (self.planned_sales_retail >= 0)) and (self.planned_sales_cost >= 0)) and (self.planned_sales_qty >= 0)) and (self.planned_receipts_cost >= 0)) and (self.planned_receipts_retail >= 0)) and (self.planned_receipts_qty >= 0)) and (self.planned_markdowns_cost >= 0)) and (self.planned_markdowns_retail >= 0)) and (self.planned_fine_metal_g >= (self.planned_fine_metal_g - self.planned_fine_metal_g))) and (self.planned_eom_stock_cost >= 0)) and (self.planned_eom_stock_retail >= 0)) and (self.planned_eom_stock_qty >= 0)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PlanLine"
+      ],
+      "root": {
+        "id": "plan.PlanLine",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PlanLine"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanLine.measures_non_negative.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

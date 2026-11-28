@@ -1,0 +1,30 @@
+{
+  "artifactId": "plan.spread_target.create.action.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Create a top-down plan spread target labels",
+  "namespace": "plan",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "إنشاء هدف توزيع الخطة",
+          "en": "Create spread target"
+        },
+        "target": {
+          "actionId": "plan.spread_target.create",
+          "kind": "action"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.spread_target.create.action.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

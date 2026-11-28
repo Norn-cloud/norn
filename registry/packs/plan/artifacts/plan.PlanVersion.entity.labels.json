@@ -1,0 +1,192 @@
+{
+  "artifactId": "plan.PlanVersion.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Plan version labels",
+  "namespace": "plan",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "إصدار الخطة",
+          "en": "Plan version"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "plan.PlanVersion"
+        }
+      },
+      {
+        "label": {
+          "ar": "معرّف إصدار الخطة",
+          "en": "Plan version ID"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "plan.PlanVersion",
+          "property": "plan_version_id"
+        }
+      },
+      {
+        "label": {
+          "ar": "رمز الخطة",
+          "en": "Plan code"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "plan.PlanVersion",
+          "property": "plan_code"
+        }
+      },
+      {
+        "label": {
+          "ar": "المراجعة",
+          "en": "Revision"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "plan.PlanVersion",
+          "property": "revision_number"
+        }
+      },
+      {
+        "label": {
+          "ar": "ساري من",
+          "en": "Effective from"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "plan.PlanVersion",
+          "property": "effective_from"
+        }
+      },
+      {
+        "label": {
+          "ar": "ساري حتى",
+          "en": "Effective to"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "plan.PlanVersion",
+          "property": "effective_to"
+        }
+      },
+      {
+        "label": {
+          "ar": "وقت التسجيل",
+          "en": "Recorded at"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "plan.PlanVersion",
+          "property": "recorded_at"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة",
+          "en": "Draft"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PlanVersion",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُقدّم",
+          "en": "Submitted"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PlanVersion",
+          "property": "status",
+          "value": "submitted"
+        }
+      },
+      {
+        "label": {
+          "ar": "معتمد",
+          "en": "Approved"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PlanVersion",
+          "property": "status",
+          "value": "approved"
+        }
+      },
+      {
+        "label": {
+          "ar": "مقفل",
+          "en": "Locked"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PlanVersion",
+          "property": "status",
+          "value": "locked"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُستبدل",
+          "en": "Superseded"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "plan.PlanVersion",
+          "property": "status",
+          "value": "superseded"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanVersion.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

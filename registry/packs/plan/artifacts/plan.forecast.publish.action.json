@@ -1,0 +1,68 @@
+{
+  "artifactId": "plan.forecast.publish.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Publish a plan-grain forecast revision",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.forecast.publish",
+    "effectProgram": {
+      "entityArtifactId": "plan.PublishedForecast.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "forecast_id",
+      "objectKind": "plan.PublishedForecast",
+      "transition": "publish"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "forecast_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "forecast_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "forecast_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "forecast_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Publish a plan-grain forecast revision",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "plan.PublishedForecast"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.forecast.publish.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

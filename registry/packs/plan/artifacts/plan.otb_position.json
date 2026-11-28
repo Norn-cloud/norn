@@ -1,0 +1,185 @@
+{
+  "artifactId": "plan.otb_position",
+  "dependencies": [
+    {
+      "artifactId": "plan.OtbPoBinding.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "plan.OtbEnvelope.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Open-to-Buy remaining envelope position",
+  "namespace": "plan",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "binding": {
+          "input": "binding",
+          "op": "scan"
+        },
+        "envelope": {
+          "input": "envelope",
+          "op": "scan"
+        },
+        "joined": {
+          "kind": "inner",
+          "left": "per_envelope",
+          "on": {
+            "key": {
+              "left": [
+                "envelope_id"
+              ],
+              "right": "primary"
+            }
+          },
+          "op": "join",
+          "prefix": "env_",
+          "right": "envelope"
+        },
+        "per_envelope": {
+          "groupBy": [
+            {
+              "column": "envelope_id"
+            },
+            {
+              "column": "currency"
+            }
+          ],
+          "input": "binding",
+          "measures": [
+            {
+              "column": "recognized_receipt_cost",
+              "fn": "sum",
+              "label": "Recognized receipts at cost",
+              "name": "recognized_receipts_cost"
+            },
+            {
+              "column": "unreceived_authorized_cost",
+              "fn": "sum",
+              "label": "Unreceived authorized PO value",
+              "name": "unreceived_authorized_po_cost"
+            },
+            {
+              "column": "cancelled_released_cost",
+              "fn": "sum",
+              "label": "Cancelled released balance",
+              "name": "cancelled_released_cost"
+            },
+            {
+              "column": "otb_consumed_cost",
+              "fn": "sum",
+              "label": "Total OTB consumed",
+              "name": "otb_consumed_cost"
+            },
+            {
+              "fn": "count",
+              "name": "po_line_count"
+            }
+          ],
+          "op": "aggregate"
+        },
+        "position": {
+          "columns": [
+            {
+              "expression": "input.envelope_id",
+              "name": "envelope_id"
+            },
+            {
+              "expression": "input.env_plan_version_id",
+              "name": "plan_version_id"
+            },
+            {
+              "expression": "input.env_entity_id",
+              "name": "entity_id"
+            },
+            {
+              "expression": "input.env_store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.env_category",
+              "name": "category"
+            },
+            {
+              "expression": "input.env_brand",
+              "name": "brand"
+            },
+            {
+              "expression": "input.env_plan_month",
+              "name": "plan_month"
+            },
+            {
+              "expression": "input.env_envelope_kind",
+              "name": "envelope_kind"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.env_approved_budget_cost",
+              "name": "approved_budget_cost"
+            },
+            {
+              "expression": "input.recognized_receipts_cost",
+              "name": "recognized_receipts_cost"
+            },
+            {
+              "expression": "input.unreceived_authorized_po_cost",
+              "name": "unreceived_authorized_po_cost"
+            },
+            {
+              "expression": "input.cancelled_released_cost",
+              "name": "cancelled_released_cost"
+            },
+            {
+              "expression": "input.env_approved_budget_cost - input.recognized_receipts_cost - input.unreceived_authorized_po_cost",
+              "name": "remaining_otb_cost"
+            },
+            {
+              "expression": "input.po_line_count",
+              "name": "po_line_count"
+            }
+          ],
+          "input": "joined",
+          "op": "project"
+        }
+      },
+      "output": "position"
+    },
+    "inputs": [
+      {
+        "alias": "binding",
+        "artifactId": "plan.OtbPoBinding.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "envelope",
+        "artifactId": "plan.OtbEnvelope.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "plan.otb_position",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.otb_position.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

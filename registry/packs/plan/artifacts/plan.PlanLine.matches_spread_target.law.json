@@ -1,0 +1,51 @@
+{
+  "artifactId": "plan.PlanLine.matches_spread_target.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PlanLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A child plan line linked to a top-down spread target must match its version, entity, category, brand, month, and currency.",
+  "namespace": "plan",
+  "payload": {
+    "condition": "self.spread_target != null",
+    "id": "plan.PlanLine.matches_spread_target",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A child plan line linked to a top-down spread target must match its version, entity, category, brand, month, and currency.",
+    "response": {
+      "expression": "(((((((self.spread_target_id ?? '') == self.spread_target.spread_target_id) and (self.plan_version_id == self.spread_target.plan_version_id)) and (self.entity_id == self.spread_target.entity_id)) and (self.category == self.spread_target.category)) and (self.brand == self.spread_target.brand)) and (self.plan_month == self.spread_target.plan_month)) and (self.currency == self.spread_target.currency)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PlanLine"
+      ],
+      "root": {
+        "id": "plan.PlanLine",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PlanLine"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanLine.matches_spread_target.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,30 @@
+{
+  "artifactId": "plan.otb_envelope.submit_override.action.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Submit an unplanned OTB override for approval labels",
+  "namespace": "plan",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "تقديم استثناء الميزانية للاعتماد",
+          "en": "Submit unplanned OTB override"
+        },
+        "target": {
+          "actionId": "plan.otb_envelope.submit_override",
+          "kind": "action"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.otb_envelope.submit_override.action.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

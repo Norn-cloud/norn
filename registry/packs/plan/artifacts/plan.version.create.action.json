@@ -1,0 +1,135 @@
+{
+  "artifactId": "plan.version.create.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Create a draft plan version",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.version.create",
+    "createLinks": [
+      {
+        "link": "owner_entity",
+        "targetIdField": "entity_id",
+        "targetType": "supply.LegalEntity"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "actor.subjectId",
+        "field": "created_by",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.PlanVersion.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "plan_version_id",
+      "objectKind": "plan.PlanVersion",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "created_by": {
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "effective_from": {
+          "type": "string"
+        },
+        "effective_to": {
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "plan_code": {
+          "type": "string"
+        },
+        "plan_version_id": {
+          "type": "string"
+        },
+        "recorded_at": {
+          "type": "string"
+        },
+        "revision_number": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "plan_version_id",
+        "entity_id",
+        "plan_code",
+        "revision_number",
+        "currency",
+        "effective_from",
+        "effective_to",
+        "recorded_at",
+        "created_by"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_version_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.owner_entity.status == 'active') and (input.currency == slice.owner_entity.functional_currency)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      }
+    ],
+    "title": "Create a draft plan version",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "plan.PlanVersion"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.version.create.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

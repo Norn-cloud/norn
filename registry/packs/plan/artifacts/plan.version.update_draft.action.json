@@ -1,0 +1,81 @@
+{
+  "artifactId": "plan.version.update_draft.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Update a draft plan version",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.version.update_draft",
+    "effectProgram": {
+      "entityArtifactId": "plan.PlanVersion.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "plan_version_id",
+      "objectKind": "plan.PlanVersion",
+      "writeMode": {
+        "kind": "update_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "effective_from": {
+          "type": "string"
+        },
+        "effective_to": {
+          "type": "string"
+        },
+        "plan_version_id": {
+          "type": "string"
+        },
+        "recorded_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_version_id",
+        "effective_from",
+        "effective_to",
+        "recorded_at"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_version_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Update a draft plan version",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "plan.PlanVersion"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.version.update_draft.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

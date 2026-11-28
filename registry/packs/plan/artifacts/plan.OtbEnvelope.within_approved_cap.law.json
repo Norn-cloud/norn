@@ -1,0 +1,57 @@
+{
+  "artifactId": "plan.OtbEnvelope.within_approved_cap.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.OtbEnvelope.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "plan.OtbPoBinding.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Total OTB consumed across authorized PO lines bound to an active envelope must never exceed its approved purchase-at-cost budget.",
+  "namespace": "plan",
+  "payload": {
+    "condition": "(self.status == 'active') and (len(self.bindings) > 0)",
+    "id": "plan.OtbEnvelope.within_approved_cap",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "Total OTB consumed across authorized PO lines bound to an active envelope must never exceed its approved purchase-at-cost budget.",
+    "response": {
+      "expression": "sum(map(self.bindings as b0, b0.otb_consumed_cost)) <= self.approved_budget_cost",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.OtbEnvelope"
+      ],
+      "root": {
+        "id": "plan.OtbEnvelope",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.OtbEnvelope"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.OtbEnvelope.within_approved_cap.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

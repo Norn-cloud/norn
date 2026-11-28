@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.PublishedForecast.forecast_valid.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.PublishedForecast.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A published plan-grain forecast carries non-negative predicted sales, cost, quantity, and fine-metal grams.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.PublishedForecast.forecast_valid",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A published plan-grain forecast carries non-negative predicted sales, cost, quantity, and fine-metal grams.",
+    "response": {
+      "expression": "((((len(self.plan_month) == 7) and (self.forecast_sales_retail >= 0)) and (self.forecast_sales_cost >= 0)) and (self.forecast_sales_qty >= 0)) and (self.forecast_fine_metal_g >= (self.forecast_fine_metal_g - self.forecast_fine_metal_g))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.PublishedForecast"
+      ],
+      "root": {
+        "id": "plan.PublishedForecast",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.PublishedForecast"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PublishedForecast.forecast_valid.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

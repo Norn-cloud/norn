@@ -1,0 +1,306 @@
+{
+  "artifactId": "plan.line.record_spread.action",
+  "dependencies": [
+    {
+      "artifactId": "core.units",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a top-down spread plan line",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.line.record_spread",
+    "createLinks": [
+      {
+        "link": "plan_version",
+        "targetIdField": "plan_version_id",
+        "targetType": "plan.PlanVersion"
+      },
+      {
+        "link": "spread_target",
+        "targetIdField": "spread_target_id",
+        "targetType": "plan.PlanSpreadTarget"
+      },
+      {
+        "link": "owner_entity",
+        "targetIdField": "entity_id",
+        "targetType": "supply.LegalEntity"
+      },
+      {
+        "link": "store",
+        "targetIdField": "store_id",
+        "targetType": "supply.Store"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.PlanLine.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "plan_line_id",
+      "objectKind": "plan.PlanLine",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "brand": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "period_start": {
+          "type": "string"
+        },
+        "plan_line_id": {
+          "type": "string"
+        },
+        "plan_month": {
+          "type": "string"
+        },
+        "plan_version_id": {
+          "type": "string"
+        },
+        "planned_eom_stock_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_eom_stock_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_eom_stock_retail": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_fine_metal_g": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          },
+          "type": "number"
+        },
+        "planned_markdowns_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_markdowns_retail": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_receipts_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_receipts_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_receipts_retail": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_sales_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_sales_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "planned_sales_retail": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "spread_remainder_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "spread_target_id": {
+          "type": "string"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l",
+            "g"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_line_id",
+        "plan_version_id",
+        "spread_target_id",
+        "entity_id",
+        "store_id",
+        "category",
+        "brand",
+        "plan_month",
+        "period_start",
+        "as_of",
+        "currency",
+        "unit",
+        "planned_sales_retail",
+        "planned_sales_cost",
+        "planned_sales_qty",
+        "planned_receipts_cost",
+        "planned_receipts_retail",
+        "planned_receipts_qty",
+        "planned_markdowns_cost",
+        "planned_markdowns_retail",
+        "planned_fine_metal_g",
+        "spread_remainder_cost",
+        "planned_eom_stock_cost",
+        "planned_eom_stock_retail",
+        "planned_eom_stock_qty"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_line_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_line_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((((((((((slice.version.status == 'draft') and (slice.spread_target.status == 'open')) and (slice.owner_entity.status == 'active')) and (slice.store.status == 'active')) and (input.plan_version_id == slice.spread_target.plan_version_id)) and (input.entity_id == slice.spread_target.entity_id)) and (input.category == slice.spread_target.category)) and (input.brand == slice.spread_target.brand)) and (input.plan_month == slice.spread_target.plan_month)) and (input.currency == slice.spread_target.currency)) and (input.entity_id == slice.store.entity_id)) and (input.currency == slice.store.currency)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "plan_version_id"
+          }
+        },
+        "name": "version",
+        "objectType": "plan.PlanVersion"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "spread_target_id"
+          }
+        },
+        "name": "spread_target",
+        "objectType": "plan.PlanSpreadTarget"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      }
+    ],
+    "title": "Record a top-down spread plan line",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "plan.PlanLine"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.line.record_spread.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,58 @@
+{
+  "artifactId": "plan.PlanTarget.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Internal planning target",
+  "namespace": "plan",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "disjointWith": [
+        "core.Commitment",
+        "supply.CountEvidence",
+        "supply.ReceiptEvidence",
+        "supply.SaleEvidence"
+      ],
+      "name": "plan.PlanTarget",
+      "properties": [
+        {
+          "id": "entity_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        },
+        {
+          "id": "plan_month",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanTarget.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

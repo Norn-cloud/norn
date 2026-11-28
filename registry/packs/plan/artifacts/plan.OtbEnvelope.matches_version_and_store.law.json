@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.OtbEnvelope.matches_version_and_store.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.OtbEnvelope.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "An OTB envelope must align with its plan version and store legal entity and currency.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.OtbEnvelope.matches_version_and_store",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "An OTB envelope must align with its plan version and store legal entity and currency.",
+    "response": {
+      "expression": "(((self.entity_id == self.plan_version.entity_id) and (self.currency == self.plan_version.currency)) and (self.entity_id == self.store.entity_id)) and (self.currency == self.store.currency)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.OtbEnvelope"
+      ],
+      "root": {
+        "id": "plan.OtbEnvelope",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.OtbEnvelope"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.OtbEnvelope.matches_version_and_store.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

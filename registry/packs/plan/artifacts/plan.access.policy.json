@@ -1,0 +1,240 @@
+{
+  "artifactId": "plan.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Merchandise planning and OTB governance",
+  "namespace": "plan",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "plan.access",
+    "rules": [
+      {
+        "actions": [
+          "plan.version.create",
+          "plan.version.create_revision",
+          "plan.version.update_draft",
+          "plan.version.submit"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.PlanVersion",
+        "ruleId": "author_plan_version",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "plan.version.approve",
+          "plan.version.lock",
+          "plan.version.supersede"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "merch_director",
+                "ops_manager"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.PlanVersion",
+        "ruleId": "govern_plan_version",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "plan.spread_target.create",
+          "plan.spread_target.seal"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "merch_director"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.PlanSpreadTarget",
+        "ruleId": "spread_target",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "plan.line.record",
+          "plan.line.record_spread"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.PlanLine",
+        "ruleId": "plan_lines",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "plan.otb_envelope.create_planned",
+          "plan.otb_envelope.activate_planned",
+          "plan.otb_envelope.request_unplanned",
+          "plan.otb_envelope.submit_override"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.OtbEnvelope",
+        "ruleId": "request_envelope",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "plan.otb_envelope.approve_override",
+          "plan.otb_envelope.close"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "merch_director",
+                "ops_manager"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.OtbEnvelope",
+        "ruleId": "approve_envelope_override",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "plan.otb.authorize_po_line",
+          "plan.otb.release_cancelled_po"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "ops_manager",
+                "merch_director"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.OtbPoBinding",
+        "ruleId": "otb_authorize_and_cancel",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "plan.otb.record_partial_receipt",
+          "plan.otb.fulfil_po_line"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk",
+                "ops_manager"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.OtbPoBinding",
+        "ruleId": "otb_receive",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "plan.forecast.record",
+          "plan.forecast.publish",
+          "plan.forecast.supersede"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "data_engineer",
+                "planner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "plan.PublishedForecast",
+        "ruleId": "published_forecast",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

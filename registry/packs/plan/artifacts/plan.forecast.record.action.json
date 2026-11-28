@@ -1,0 +1,257 @@
+{
+  "artifactId": "plan.forecast.record.action",
+  "dependencies": [
+    {
+      "artifactId": "core.units",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a plan-grain forecast revision",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.forecast.record",
+    "createLinks": [
+      {
+        "link": "scored_by",
+        "targetIdField": "model_version",
+        "targetType": "ml.ModelVersion"
+      },
+      {
+        "link": "plan_version",
+        "targetIdField": "plan_version_id",
+        "targetType": "plan.PlanVersion"
+      },
+      {
+        "link": "plan_line",
+        "targetIdField": "plan_line_id",
+        "targetType": "plan.PlanLine"
+      },
+      {
+        "link": "owner_entity",
+        "targetIdField": "entity_id",
+        "targetType": "supply.LegalEntity"
+      },
+      {
+        "link": "store",
+        "targetIdField": "store_id",
+        "targetType": "supply.Store"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.PublishedForecast.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "forecast_id",
+      "objectKind": "plan.PublishedForecast",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "brand": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "forecast_fine_metal_g": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          },
+          "type": "number"
+        },
+        "forecast_id": {
+          "type": "string"
+        },
+        "forecast_revision": {
+          "type": "string"
+        },
+        "forecast_sales_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "forecast_sales_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "forecast_sales_retail": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "model_version": {
+          "type": "string"
+        },
+        "period_start": {
+          "type": "string"
+        },
+        "plan_line_id": {
+          "type": "string"
+        },
+        "plan_month": {
+          "type": "string"
+        },
+        "plan_version_id": {
+          "type": "string"
+        },
+        "published_at": {
+          "type": "string"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l",
+            "g"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "forecast_id",
+        "plan_version_id",
+        "plan_line_id",
+        "model_version",
+        "forecast_revision",
+        "entity_id",
+        "store_id",
+        "category",
+        "brand",
+        "plan_month",
+        "period_start",
+        "published_at",
+        "currency",
+        "unit",
+        "forecast_sales_retail",
+        "forecast_sales_cost",
+        "forecast_sales_qty",
+        "forecast_fine_metal_g"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "forecast_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "forecast_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((((((slice.model.status == 'production') and (input.plan_version_id == slice.plan_line.plan_version_id)) and (input.entity_id == slice.plan_line.entity_id)) and (input.store_id == slice.plan_line.store_id)) and (input.category == slice.plan_line.category)) and (input.brand == slice.plan_line.brand)) and (input.plan_month == slice.plan_line.plan_month)) and (input.currency == slice.plan_line.currency)) and (input.unit == slice.plan_line.unit)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "model_version"
+          }
+        },
+        "name": "model",
+        "objectType": "ml.ModelVersion"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "plan_version_id"
+          }
+        },
+        "name": "plan_version",
+        "objectType": "plan.PlanVersion"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "plan_line_id"
+          }
+        },
+        "name": "plan_line",
+        "objectType": "plan.PlanLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      }
+    ],
+    "title": "Record a plan-grain forecast revision",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "plan.PublishedForecast"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.forecast.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

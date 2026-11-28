@@ -1,0 +1,87 @@
+{
+  "artifactId": "plan.version.supersede.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Supersede a locked plan version",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.version.supersede",
+    "effectProgram": {
+      "entityArtifactId": "plan.PlanVersion.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "plan_version_id",
+      "objectKind": "plan.PlanVersion",
+      "transition": "supersede"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_version_id": {
+          "type": "string"
+        },
+        "successor_version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_version_id",
+        "successor_version_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_version_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((slice.successor.status == 'approved') or (slice.successor.status == 'locked')) and ((slice.successor.supersedes_version_id ?? '') == input.plan_version_id)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "successor_version_id"
+          }
+        },
+        "name": "successor",
+        "objectType": "plan.PlanVersion"
+      }
+    ],
+    "title": "Supersede a locked plan version",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "plan.PlanVersion"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.version.supersede.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,363 @@
+{
+  "artifactId": "plan.PlanLine.entity",
+  "dependencies": [
+    {
+      "artifactId": "core.units",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Merchandise plan line",
+  "namespace": "plan",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "plan_line_id"
+          ]
+        },
+        {
+          "name": "plan_grain",
+          "properties": [
+            "plan_version_id",
+            "entity_id",
+            "store_id",
+            "category",
+            "brand",
+            "plan_month"
+          ]
+        }
+      ],
+      "implements": [
+        "plan.PlanTarget"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "plan_version",
+          "inverse": "lines",
+          "target": "plan.PlanVersion"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "spread_target",
+          "inverse": "plan_lines",
+          "target": "plan.PlanSpreadTarget"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "owner_entity",
+          "target": "supply.LegalEntity"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "store",
+          "target": "supply.Store"
+        }
+      ],
+      "name": "plan.PlanLine",
+      "properties": [
+        {
+          "id": "plan_line_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "plan_version_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "spread_target_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "entity_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "store_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "category",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "brand",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "plan_month",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "period_start",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "as_of",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "each"
+              },
+              {
+                "value": "kg"
+              },
+              {
+                "value": "l"
+              },
+              {
+                "value": "g"
+              }
+            ]
+          }
+        },
+        {
+          "id": "planned_sales_retail",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "planned_sales_cost",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "planned_sales_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "planned_receipts_cost",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "planned_receipts_retail",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "planned_receipts_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "planned_markdowns_cost",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "planned_markdowns_retail",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "planned_fine_metal_g",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "spread_remainder_cost",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "planned_eom_stock_cost",
+          "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "planned_eom_stock_retail",
+          "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "planned_eom_stock_qty",
+          "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanLine.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

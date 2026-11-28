@@ -1,0 +1,492 @@
+[
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_706c616e2e506c616e4c696e65.planned_sales_retail.by_period_start"
+      }
+    ],
+    "calendar": "iso_utc",
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "plan_version_id"
+        }
+      },
+      {
+        "path": {
+          "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "property": "category"
+        }
+      },
+      {
+        "path": {
+          "property": "currency"
+        }
+      },
+      {
+        "grain": "month",
+        "path": {
+          "property": "period_start"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "plan.planned_sales_retail_monthly",
+    "objectSet": "plan.PlanLine",
+    "window": {
+      "end": "2027-01-01T00:00:00Z",
+      "start": "2026-07-01T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_706c616e2e506c616e4c696e65.planned_receipts_cost.by_period_start"
+      }
+    ],
+    "calendar": "iso_utc",
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "plan_version_id"
+        }
+      },
+      {
+        "path": {
+          "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "property": "category"
+        }
+      },
+      {
+        "path": {
+          "property": "currency"
+        }
+      },
+      {
+        "grain": "month",
+        "path": {
+          "property": "period_start"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "plan.planned_receipts_cost_monthly",
+    "objectSet": "plan.PlanLine",
+    "window": {
+      "end": "2027-01-01T00:00:00Z",
+      "start": "2026-07-01T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_706c616e2e506c616e4c696e65.planned_markdowns_cost.by_period_start"
+      }
+    ],
+    "calendar": "iso_utc",
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "plan_version_id"
+        }
+      },
+      {
+        "path": {
+          "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "property": "category"
+        }
+      },
+      {
+        "path": {
+          "property": "currency"
+        }
+      },
+      {
+        "grain": "month",
+        "path": {
+          "property": "period_start"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "plan.planned_markdowns_cost_monthly",
+    "objectSet": "plan.PlanLine",
+    "window": {
+      "end": "2027-01-01T00:00:00Z",
+      "start": "2026-07-01T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_706c616e2e506c616e4c696e65.planned_fine_metal_g.by_period_start"
+      }
+    ],
+    "calendar": "iso_utc",
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "plan_version_id"
+        }
+      },
+      {
+        "path": {
+          "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "property": "category"
+        }
+      },
+      {
+        "grain": "month",
+        "path": {
+          "property": "period_start"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "plan.planned_fine_metal_monthly",
+    "objectSet": "plan.PlanLine",
+    "window": {
+      "end": "2027-01-01T00:00:00Z",
+      "start": "2026-07-01T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_706c616e2e506c616e4c696e65.planned_eom_stock_cost.as_of_as_of"
+      }
+    ],
+    "calendar": "iso_utc",
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "plan_version_id"
+        }
+      },
+      {
+        "path": {
+          "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "property": "currency"
+        }
+      },
+      {
+        "grain": "month",
+        "path": {
+          "property": "as_of"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "plan.planned_eom_stock_cost_monthly",
+    "objectSet": "plan.PlanLine",
+    "window": {
+      "end": "2027-01-01T00:00:00Z",
+      "start": "2026-07-01T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_706c616e2e4f7462456e76656c6f7065.approved_budget_cost.by_period_start"
+      }
+    ],
+    "calendar": "iso_utc",
+    "filter": [
+      {
+        "operator": "eq",
+        "path": {
+          "property": "status"
+        },
+        "value": "active"
+      }
+    ],
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "plan_version_id"
+        }
+      },
+      {
+        "path": {
+          "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "property": "category"
+        }
+      },
+      {
+        "path": {
+          "property": "currency"
+        }
+      },
+      {
+        "grain": "month",
+        "path": {
+          "property": "period_start"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "plan.otb_approved_budget_monthly",
+    "objectSet": "plan.OtbEnvelope",
+    "window": {
+      "end": "2027-01-01T00:00:00Z",
+      "start": "2026-07-01T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_706c616e2e4f7462506f42696e64696e67.recognized_receipt_cost.by_as_of"
+      }
+    ],
+    "calendar": "iso_utc",
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "envelope_id"
+        }
+      },
+      {
+        "path": {
+          "property": "currency"
+        }
+      },
+      {
+        "grain": "month",
+        "path": {
+          "property": "as_of"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "plan.otb_recognized_receipts_monthly",
+    "objectSet": "plan.OtbPoBinding",
+    "window": {
+      "end": "2027-01-01T00:00:00Z",
+      "start": "2026-07-01T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_706c616e2e4f7462506f42696e64696e67.unreceived_authorized_cost.by_as_of"
+      }
+    ],
+    "calendar": "iso_utc",
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "envelope_id"
+        }
+      },
+      {
+        "path": {
+          "property": "currency"
+        }
+      },
+      {
+        "grain": "month",
+        "path": {
+          "property": "as_of"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "plan.otb_unreceived_po_monthly",
+    "objectSet": "plan.OtbPoBinding",
+    "window": {
+      "end": "2027-01-01T00:00:00Z",
+      "start": "2026-07-01T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_737570706c792e506f7353616c65.net_revenue.by_sold_at"
+      }
+    ],
+    "calendar": "iso_utc",
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "property": "currency"
+        }
+      },
+      {
+        "grain": "month",
+        "path": {
+          "property": "sold_at"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "plan.actual_pos_revenue_monthly",
+    "objectSet": "supply.PosSale",
+    "window": {
+      "end": "2027-01-01T00:00:00Z",
+      "start": "2026-07-01T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_737570706c792e506f7353616c65.sold_qty.by_sold_at"
+      }
+    ],
+    "calendar": "iso_utc",
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "property": "unit"
+        }
+      },
+      {
+        "grain": "month",
+        "path": {
+          "property": "sold_at"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "plan.actual_pos_units_monthly",
+    "objectSet": "supply.PosSale",
+    "window": {
+      "end": "2027-01-01T00:00:00Z",
+      "start": "2026-07-01T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_706c616e2e5075626c6973686564466f726563617374.forecast_sales_retail.by_period_start"
+      }
+    ],
+    "calendar": "iso_utc",
+    "filter": [
+      {
+        "operator": "eq",
+        "path": {
+          "property": "status"
+        },
+        "value": "published"
+      }
+    ],
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "plan_version_id"
+        }
+      },
+      {
+        "path": {
+          "property": "model_version"
+        }
+      },
+      {
+        "path": {
+          "property": "forecast_revision"
+        }
+      },
+      {
+        "path": {
+          "property": "store_id"
+        }
+      },
+      {
+        "path": {
+          "property": "currency"
+        }
+      },
+      {
+        "grain": "month",
+        "path": {
+          "property": "period_start"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "plan.published_forecast_sales_monthly",
+    "objectSet": "plan.PublishedForecast",
+    "window": {
+      "end": "2027-01-01T00:00:00Z",
+      "start": "2026-07-01T00:00:00Z"
+    }
+  }
+]

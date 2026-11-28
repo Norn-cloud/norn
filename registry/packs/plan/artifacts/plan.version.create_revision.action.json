@@ -1,0 +1,154 @@
+{
+  "artifactId": "plan.version.create_revision.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Create a superseding draft plan version",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.version.create_revision",
+    "createLinks": [
+      {
+        "link": "owner_entity",
+        "targetIdField": "entity_id",
+        "targetType": "supply.LegalEntity"
+      },
+      {
+        "link": "supersedes",
+        "targetIdField": "supersedes_version_id",
+        "targetType": "plan.PlanVersion"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "actor.subjectId",
+        "field": "created_by",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.PlanVersion.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "plan_version_id",
+      "objectKind": "plan.PlanVersion",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "created_by": {
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "effective_from": {
+          "type": "string"
+        },
+        "effective_to": {
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "plan_code": {
+          "type": "string"
+        },
+        "plan_version_id": {
+          "type": "string"
+        },
+        "recorded_at": {
+          "type": "string"
+        },
+        "revision_number": {
+          "type": "integer"
+        },
+        "supersedes_version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_version_id",
+        "entity_id",
+        "plan_code",
+        "revision_number",
+        "currency",
+        "effective_from",
+        "effective_to",
+        "recorded_at",
+        "supersedes_version_id",
+        "created_by"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_version_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((((slice.owner_entity.status == 'active') and (input.currency == slice.owner_entity.functional_currency)) and (slice.prior.status == 'locked')) and (input.entity_id == slice.prior.entity_id)) and (input.plan_code == slice.prior.plan_code)) and (input.currency == slice.prior.currency)) and (input.revision_number > slice.prior.revision_number)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "supersedes_version_id"
+          }
+        },
+        "name": "prior",
+        "objectType": "plan.PlanVersion"
+      }
+    ],
+    "title": "Create a superseding draft plan version",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "plan.PlanVersion"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.version.create_revision.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

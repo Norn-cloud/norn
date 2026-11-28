@@ -1,0 +1,33 @@
+{
+  "artifactId": "plan.PlanTarget.interface.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Internal planning target labels",
+  "namespace": "plan",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "هدف التخطيط",
+          "en": "Planning target"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "plan.PlanTarget"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanTarget.interface.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

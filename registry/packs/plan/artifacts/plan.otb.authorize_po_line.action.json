@@ -1,0 +1,367 @@
+{
+  "artifactId": "plan.otb.authorize_po_line.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Authorize a PO line against an OTB envelope",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.otb.authorize_po_line",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "otb_consumed_cost"
+        },
+        "filter": {
+          "envelope_id": "envelope_id"
+        },
+        "maxItems": 200,
+        "name": "consumed_otb_cost",
+        "objectType": "plan.OtbPoBinding"
+      }
+    ],
+    "createLinks": [
+      {
+        "link": "envelope",
+        "targetIdField": "envelope_id",
+        "targetType": "plan.OtbEnvelope"
+      },
+      {
+        "link": "order",
+        "targetIdField": "po_id",
+        "targetType": "supply.PurchaseOrder"
+      },
+      {
+        "link": "order_line",
+        "targetIdField": "line_id",
+        "targetType": "supply.OrderLine"
+      },
+      {
+        "link": "owner_entity",
+        "targetIdField": "entity_id",
+        "targetType": "supply.LegalEntity"
+      },
+      {
+        "link": "store",
+        "targetIdField": "store_id",
+        "targetType": "supply.Store"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "actor.subjectId",
+        "field": "authorized_by",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "received_qty",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "recognized_receipt_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "cancelled_released_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.order_line.ordered_qty",
+        "field": "ordered_qty",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.order_line.ordered_qty * input.unit_cost",
+        "field": "authorized_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.order_line.ordered_qty * input.unit_cost",
+        "field": "unreceived_authorized_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.order_line.ordered_qty * input.unit_cost",
+        "field": "otb_consumed_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.envelope.approved_budget_cost",
+        "field": "envelope_cap_snapshot",
+        "inputRequired": false
+      },
+      {
+        "expression": "aggregates.consumed_otb_cost",
+        "field": "prior_consumed_snapshot",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.OtbPoBinding.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "binding_id",
+      "objectKind": "plan.OtbPoBinding",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "authorized_by": {
+          "type": "string"
+        },
+        "authorized_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "binding_id": {
+          "type": "string"
+        },
+        "brand": {
+          "type": "string"
+        },
+        "cancelled_released_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "category": {
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "envelope_cap_snapshot": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "envelope_id": {
+          "type": "string"
+        },
+        "expected_payment_date": {
+          "type": "string"
+        },
+        "line_id": {
+          "type": "string"
+        },
+        "ordered_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "otb_consumed_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "payment_terms_days": {
+          "type": "integer"
+        },
+        "plan_month": {
+          "type": "string"
+        },
+        "plan_version_id": {
+          "type": "string"
+        },
+        "po_id": {
+          "type": "string"
+        },
+        "prior_consumed_snapshot": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "received_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "recognized_receipt_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        },
+        "unit_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 4
+          },
+          "type": "number"
+        },
+        "unreceived_authorized_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        }
+      },
+      "required": [
+        "binding_id",
+        "envelope_id",
+        "plan_version_id",
+        "entity_id",
+        "store_id",
+        "category",
+        "brand",
+        "plan_month",
+        "po_id",
+        "line_id",
+        "currency",
+        "unit",
+        "ordered_qty",
+        "received_qty",
+        "unit_cost",
+        "authorized_cost",
+        "recognized_receipt_cost",
+        "unreceived_authorized_cost",
+        "cancelled_released_cost",
+        "otb_consumed_cost",
+        "envelope_cap_snapshot",
+        "prior_consumed_snapshot",
+        "expected_payment_date",
+        "payment_terms_days",
+        "as_of",
+        "authorized_by"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((((((((((((slice.envelope.status == 'active') and ((slice.order.status == 'draft') or (slice.order.status == 'submitted'))) and (slice.order_line.po_id == input.po_id)) and (slice.order_line.received_qty == 0)) and (input.unit == slice.order_line.unit)) and (input.currency == slice.order_line.currency)) and (input.currency == slice.envelope.currency)) and (input.plan_version_id == slice.envelope.plan_version_id)) and (input.entity_id == slice.envelope.entity_id)) and (input.store_id == slice.envelope.store_id)) and (input.category == slice.envelope.category)) and (input.brand == slice.envelope.brand)) and (input.plan_month == slice.envelope.plan_month)) and ((aggregates.consumed_otb_cost + input.authorized_cost) <= slice.envelope.approved_budget_cost)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "envelope_id"
+          }
+        },
+        "name": "envelope",
+        "objectType": "plan.OtbEnvelope"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "po_id"
+          }
+        },
+        "name": "order",
+        "objectType": "supply.PurchaseOrder"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "line_id"
+          }
+        },
+        "name": "order_line",
+        "objectType": "supply.OrderLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      }
+    ],
+    "title": "Authorize a PO line against an OTB envelope",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "plan.OtbPoBinding"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.otb.authorize_po_line.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

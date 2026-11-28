@@ -1,0 +1,328 @@
+{
+  "artifactId": "norn.ontology-pack.plan",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "business_pack",
+  "lifecycle": "active",
+  "name": "Merchandise Planning and Open-to-Buy ontology pack",
+  "namespace": "norn.ontology",
+  "payload": {
+    "mappings": [
+      {
+        "confidenceBasisPoints": 10000,
+        "evidenceRefs": [
+          "registry/packs/plan/plan.ts"
+        ],
+        "externalIri": "https://norn.cloud/registry/packs/plan/0.1.0#plan.PlanVersion",
+        "justification": "Declares `plan.PlanVersion` in `registry/packs/plan/plan.ts`.",
+        "mappingId": "map.norn.plan.version",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-28T00:00:00Z",
+        "reviewedBy": "lane-a (agent, proposed)",
+        "sourceId": "source.plan",
+        "termId": "norn.plan.version"
+      },
+      {
+        "confidenceBasisPoints": 10000,
+        "evidenceRefs": [
+          "registry/packs/plan/plan.ts"
+        ],
+        "externalIri": "https://norn.cloud/registry/packs/plan/0.1.0#plan.PlanSpreadTarget",
+        "justification": "Declares `plan.PlanSpreadTarget` in `registry/packs/plan/plan.ts`.",
+        "mappingId": "map.norn.plan.spread.target",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-28T00:00:00Z",
+        "reviewedBy": "lane-a (agent, proposed)",
+        "sourceId": "source.plan",
+        "termId": "norn.plan.spread.target"
+      },
+      {
+        "confidenceBasisPoints": 10000,
+        "evidenceRefs": [
+          "registry/packs/plan/plan.ts"
+        ],
+        "externalIri": "https://norn.cloud/registry/packs/plan/0.1.0#plan.PlanLine",
+        "justification": "Declares `plan.PlanLine` in `registry/packs/plan/plan.ts`.",
+        "mappingId": "map.norn.plan.line",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-28T00:00:00Z",
+        "reviewedBy": "lane-a (agent, proposed)",
+        "sourceId": "source.plan",
+        "termId": "norn.plan.line"
+      },
+      {
+        "confidenceBasisPoints": 10000,
+        "evidenceRefs": [
+          "registry/packs/plan/plan.ts"
+        ],
+        "externalIri": "https://norn.cloud/registry/packs/plan/0.1.0#plan.OtbEnvelope",
+        "justification": "Declares `plan.OtbEnvelope` in `registry/packs/plan/plan.ts`.",
+        "mappingId": "map.norn.plan.otb.envelope",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-28T00:00:00Z",
+        "reviewedBy": "lane-a (agent, proposed)",
+        "sourceId": "source.plan",
+        "termId": "norn.plan.otb.envelope"
+      },
+      {
+        "confidenceBasisPoints": 10000,
+        "evidenceRefs": [
+          "registry/packs/plan/plan.ts"
+        ],
+        "externalIri": "https://norn.cloud/registry/packs/plan/0.1.0#plan.OtbPoBinding",
+        "justification": "Declares `plan.OtbPoBinding` in `registry/packs/plan/plan.ts`.",
+        "mappingId": "map.norn.plan.otb.po.binding",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-28T00:00:00Z",
+        "reviewedBy": "lane-a (agent, proposed)",
+        "sourceId": "source.plan",
+        "termId": "norn.plan.otb.po.binding"
+      },
+      {
+        "confidenceBasisPoints": 10000,
+        "evidenceRefs": [
+          "registry/packs/plan/plan.ts"
+        ],
+        "externalIri": "https://norn.cloud/registry/packs/plan/0.1.0#plan.PublishedForecast",
+        "justification": "Declares `plan.PublishedForecast` in `registry/packs/plan/plan.ts`.",
+        "mappingId": "map.norn.plan.published.forecast",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-28T00:00:00Z",
+        "reviewedBy": "lane-a (agent, proposed)",
+        "sourceId": "source.plan",
+        "termId": "norn.plan.published.forecast"
+      }
+    ],
+    "packId": "norn.ontology-pack.plan",
+    "packKind": "ontology",
+    "packVersion": "0.1",
+    "shapes": [
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "plan_version_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          },
+          {
+            "fieldId": "effective_from",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "date_time"
+          }
+        ],
+        "shapeId": "shape.norn.plan.version",
+        "termId": "norn.plan.version"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "spread_target_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          },
+          {
+            "fieldId": "target_receipts_cost",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          }
+        ],
+        "shapeId": "shape.norn.plan.spread.target",
+        "termId": "norn.plan.spread.target"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "plan_line_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          },
+          {
+            "fieldId": "planned_receipts_cost",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          }
+        ],
+        "shapeId": "shape.norn.plan.line",
+        "termId": "norn.plan.line"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "envelope_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          },
+          {
+            "fieldId": "approved_budget_cost",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          }
+        ],
+        "shapeId": "shape.norn.plan.otb.envelope",
+        "termId": "norn.plan.otb.envelope"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "binding_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          },
+          {
+            "fieldId": "otb_consumed_cost",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          }
+        ],
+        "shapeId": "shape.norn.plan.otb.po.binding",
+        "termId": "norn.plan.otb.po.binding"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "forecast_id",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          },
+          {
+            "fieldId": "forecast_sales_retail",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "decimal"
+          }
+        ],
+        "shapeId": "shape.norn.plan.published.forecast",
+        "termId": "norn.plan.published.forecast"
+      }
+    ],
+    "sources": [
+      {
+        "canonicalUrl": "https://norn.cloud/registry/packs/plan/0.1.0",
+        "files": [
+          {
+            "path": "registry/packs/plan/plan.ts",
+            "sha256": "328ba87e23b74f1da49fd9701af266466376aa604e45736ce3a10fd72e12b8c4"
+          },
+          {
+            "path": "registry/packs/plan/actions.ts",
+            "sha256": "2b41dc0bc0de17caf6d3d68dc332cd5956b23665efd085e5ef7e1e17393663ca"
+          }
+        ],
+        "importMode": "map_only",
+        "license": "Apache-2.0",
+        "redistribution": "vendored",
+        "releaseId": "0.1.0@328ba87e23b74f1da49fd9701af266466376aa604e45736ce3a10fd72e12b8c4",
+        "releasedAt": "2026-11-28",
+        "retrievedAt": "2026-11-28",
+        "sourceId": "source.plan"
+      }
+    ],
+    "terms": [
+      {
+        "definition": "A versioned, bitemporal merchandise plan container with lifecycle draft -> submitted -> approved -> locked -> superseded, immutable once locked.",
+        "label": "Plan version",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.version",
+        "termKind": "class"
+      },
+      {
+        "definition": "A top-down parent merchandise target at entity x category x brand x ISO month grain enforcing exact child spread conservation and explicit rounding remainder rules.",
+        "label": "Plan spread target",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.spread.target",
+        "termKind": "class"
+      },
+      {
+        "definition": "An atomic merchandise plan line at entity x store x category x brand x ISO month grain with additive flow targets and semi-additive EOM stock, disjoint from actuals.",
+        "label": "Plan line",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.line",
+        "termKind": "class"
+      },
+      {
+        "definition": "The additive purchase-at-cost budget target for one merchandise plan grain.",
+        "domainTermId": "norn.plan.line",
+        "label": "Planned receipts at cost (PlanLine)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.line.planned.receipts.cost",
+        "termKind": "property"
+      },
+      {
+        "definition": "The semi-additive end-of-month stock balance target; never summed across months.",
+        "domainTermId": "norn.plan.line",
+        "label": "Planned EOM stock at cost (PlanLine)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.line.planned.eom.stock.cost",
+        "termKind": "property"
+      },
+      {
+        "definition": "An approved purchase-at-cost budget ceiling (planned or unplanned with override approval); an internal planning target, never a core.Commitment.",
+        "label": "OTB envelope",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.otb.envelope",
+        "termKind": "class"
+      },
+      {
+        "definition": "A governed binding between an open supply.OrderLine commitment and an active OTB envelope conserving recognized receipts, unreceived authorized PO value, and cancelled releases.",
+        "label": "OTB PO binding",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.otb.po.binding",
+        "termKind": "class"
+      },
+      {
+        "definition": "A plan-grain forecast revision pinned to a production ml.ModelVersion and explicit forecast_revision for Forecast - Plan variance questions.",
+        "label": "Published plan forecast",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.published.forecast",
+        "termKind": "class"
+      },
+      {
+        "definition": "Authorizing a purchase order line would push total consumed OTB above the envelope's approved purchase-at-cost budget or target an unapproved/absent envelope.",
+        "label": "OTB budget ceiling guard",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.guard.otb.exceeded",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Child plan lines under a top-down spread target do not sum exactly to the parent target and explicit decimal rounding remainder.",
+        "label": "Top-down spread conservation guard",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.plan.guard.spread.drift",
+        "termKind": "predicate"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/norn.ontology-pack.plan.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

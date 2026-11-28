@@ -1,0 +1,162 @@
+{
+  "artifactId": "plan.otb.fulfil_po_line.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Fulfil an OTB PO binding on full receipt",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.otb.fulfil_po_line",
+    "derive": [
+      {
+        "expression": "slice.order_line.received_qty",
+        "field": "next_received_qty",
+        "inputRequired": false
+      },
+      {
+        "expression": "slice.binding.authorized_cost",
+        "field": "next_recognized_receipt_cost",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "next_unreceived_authorized_cost",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.OtbPoBinding.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "binding_id",
+      "objectKind": "plan.OtbPoBinding",
+      "setFields": {
+        "as_of": "as_of",
+        "received_qty": "next_received_qty",
+        "recognized_receipt_cost": "next_recognized_receipt_cost",
+        "unreceived_authorized_cost": "next_unreceived_authorized_cost"
+      },
+      "transition": "fulfil"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "binding_id": {
+          "type": "string"
+        },
+        "line_id": {
+          "type": "string"
+        },
+        "next_received_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "next_recognized_receipt_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "next_unreceived_authorized_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "receipt_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id",
+        "line_id",
+        "receipt_id",
+        "as_of",
+        "next_received_qty",
+        "next_recognized_receipt_cost",
+        "next_unreceived_authorized_cost"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((slice.binding.line_id == input.line_id) and ((slice.receipt.line_id ?? '') == input.line_id)) and (slice.order_line.received_qty == slice.binding.ordered_qty)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "binding_id"
+          }
+        },
+        "name": "binding",
+        "objectType": "plan.OtbPoBinding"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "line_id"
+          }
+        },
+        "name": "order_line",
+        "objectType": "supply.OrderLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "receipt_id"
+          }
+        },
+        "name": "receipt",
+        "objectType": "supply.ShipmentReceipt"
+      }
+    ],
+    "title": "Fulfil an OTB PO binding on full receipt",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "plan.OtbPoBinding"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.otb.fulfil_po_line.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

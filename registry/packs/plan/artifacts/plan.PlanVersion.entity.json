@@ -1,0 +1,215 @@
+{
+  "artifactId": "plan.PlanVersion.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Plan version",
+  "namespace": "plan",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "plan_version_id"
+          ]
+        },
+        {
+          "name": "entity_plan_revision",
+          "properties": [
+            "entity_id",
+            "plan_code",
+            "revision_number"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "resting",
+              "state": "locked"
+            },
+            {
+              "outcome": "completed",
+              "state": "superseded"
+            }
+          ],
+          "immutable": [
+            "locked",
+            "superseded"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "superseded"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "submit",
+              "to": "submitted"
+            },
+            {
+              "from": [
+                "submitted"
+              ],
+              "id": "approve",
+              "to": "approved"
+            },
+            {
+              "from": [
+                "approved"
+              ],
+              "id": "lock",
+              "to": "locked"
+            },
+            {
+              "from": [
+                "locked"
+              ],
+              "id": "supersede",
+              "to": "superseded"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "owner_entity",
+          "target": "supply.LegalEntity"
+        },
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "one"
+          },
+          "id": "supersedes",
+          "target": "plan.PlanVersion"
+        }
+      ],
+      "name": "plan.PlanVersion",
+      "properties": [
+        {
+          "id": "plan_version_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "entity_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "plan_code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "revision_number",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        },
+        {
+          "id": "effective_from",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "effective_to",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "recorded_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "supersedes_version_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "created_by",
+          "protected": true,
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "submitted"
+              },
+              {
+                "value": "approved"
+              },
+              {
+                "value": "locked"
+              },
+              {
+                "value": "superseded"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.PlanVersion.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

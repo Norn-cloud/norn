@@ -1,0 +1,211 @@
+{
+  "artifactId": "plan.spread_target.seal.action",
+  "dependencies": [
+    {
+      "artifactId": "core.units",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Seal a top-down plan spread target",
+  "namespace": "plan",
+  "payload": {
+    "access": {
+      "artifactId": "plan.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "plan.spread_target.seal",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "spread_target_id": "spread_target_id"
+        },
+        "maxItems": 50,
+        "name": "child_count",
+        "objectType": "plan.PlanLine"
+      },
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "planned_sales_retail"
+        },
+        "filter": {
+          "spread_target_id": "spread_target_id"
+        },
+        "maxItems": 50,
+        "name": "sum_sales_retail",
+        "objectType": "plan.PlanLine"
+      },
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "planned_sales_cost"
+        },
+        "filter": {
+          "spread_target_id": "spread_target_id"
+        },
+        "maxItems": 50,
+        "name": "sum_sales_cost",
+        "objectType": "plan.PlanLine"
+      },
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "planned_receipts_cost"
+        },
+        "filter": {
+          "spread_target_id": "spread_target_id"
+        },
+        "maxItems": 50,
+        "name": "sum_receipts_cost",
+        "objectType": "plan.PlanLine"
+      },
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "planned_receipts_retail"
+        },
+        "filter": {
+          "spread_target_id": "spread_target_id"
+        },
+        "maxItems": 50,
+        "name": "sum_receipts_retail",
+        "objectType": "plan.PlanLine"
+      },
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "planned_markdowns_cost"
+        },
+        "filter": {
+          "spread_target_id": "spread_target_id"
+        },
+        "maxItems": 50,
+        "name": "sum_markdowns_cost",
+        "objectType": "plan.PlanLine"
+      },
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "planned_markdowns_retail"
+        },
+        "filter": {
+          "spread_target_id": "spread_target_id"
+        },
+        "maxItems": 50,
+        "name": "sum_markdowns_retail",
+        "objectType": "plan.PlanLine"
+      },
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "planned_eom_stock_cost"
+        },
+        "filter": {
+          "spread_target_id": "spread_target_id"
+        },
+        "maxItems": 50,
+        "name": "sum_eom_stock_cost",
+        "objectType": "plan.PlanLine"
+      },
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "planned_fine_metal_g"
+        },
+        "filter": {
+          "spread_target_id": "spread_target_id"
+        },
+        "maxItems": 50,
+        "name": "sum_fine_metal_g",
+        "objectType": "plan.PlanLine"
+      },
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "spread_remainder_cost"
+        },
+        "filter": {
+          "spread_target_id": "spread_target_id"
+        },
+        "maxItems": 50,
+        "name": "sum_remainder_cost",
+        "objectType": "plan.PlanLine"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "plan.PlanSpreadTarget.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "spread_target_id",
+      "objectKind": "plan.PlanSpreadTarget",
+      "transition": "seal"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "spread_target_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "spread_target_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "spread_target_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "spread_target_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((((((((aggregates.child_count > 0) and (aggregates.sum_sales_retail == slice.target.target_sales_retail)) and (aggregates.sum_sales_cost == slice.target.target_sales_cost)) and (aggregates.sum_receipts_cost == slice.target.target_receipts_cost)) and (aggregates.sum_receipts_retail == slice.target.target_receipts_retail)) and (aggregates.sum_markdowns_cost == slice.target.target_markdowns_cost)) and (aggregates.sum_markdowns_retail == slice.target.target_markdowns_retail)) and (aggregates.sum_eom_stock_cost == slice.target.target_eom_stock_cost)) and (aggregates.sum_fine_metal_g == slice.target.target_fine_metal_g)) and (aggregates.sum_remainder_cost == slice.target.target_rounding_remainder_cost)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "spread_target_id"
+          }
+        },
+        "name": "target",
+        "objectType": "plan.PlanSpreadTarget"
+      }
+    ],
+    "title": "Seal a top-down plan spread target",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "plan.PlanSpreadTarget"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.spread_target.seal.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

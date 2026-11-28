@@ -1,0 +1,236 @@
+{
+  "artifactId": "plan.forecast_vs_plan_variance",
+  "dependencies": [
+    {
+      "artifactId": "plan.PublishedForecast.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "plan.PlanLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Forecast minus Plan variance",
+  "namespace": "plan",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "forecast": {
+          "input": "forecast",
+          "op": "scan"
+        },
+        "joined": {
+          "kind": "inner",
+          "left": "per_plan_line",
+          "on": {
+            "key": {
+              "left": [
+                "plan_line_id"
+              ],
+              "right": "primary"
+            }
+          },
+          "op": "join",
+          "prefix": "pl_",
+          "right": "plan_line"
+        },
+        "per_plan_line": {
+          "groupBy": [
+            {
+              "column": "plan_line_id"
+            },
+            {
+              "column": "model_version"
+            },
+            {
+              "column": "forecast_revision"
+            },
+            {
+              "column": "currency"
+            },
+            {
+              "column": "unit"
+            }
+          ],
+          "input": "published_only",
+          "measures": [
+            {
+              "column": "forecast_sales_retail",
+              "fn": "sum",
+              "label": "Forecast sales retail",
+              "name": "forecast_sales_retail"
+            },
+            {
+              "column": "forecast_sales_cost",
+              "fn": "sum",
+              "label": "Forecast sales cost",
+              "name": "forecast_sales_cost"
+            },
+            {
+              "column": "forecast_sales_qty",
+              "fn": "sum",
+              "label": "Forecast sales qty",
+              "name": "forecast_sales_qty"
+            },
+            {
+              "column": "forecast_fine_metal_g",
+              "fn": "sum",
+              "label": "Forecast fine metal (g)",
+              "name": "forecast_fine_metal_g"
+            },
+            {
+              "column": "published_at",
+              "fn": "max",
+              "name": "published_at"
+            }
+          ],
+          "op": "aggregate"
+        },
+        "plan_line": {
+          "input": "plan_line",
+          "op": "scan"
+        },
+        "published_only": {
+          "input": "forecast",
+          "op": "filter",
+          "predicate": "input.status == 'published'"
+        },
+        "variance": {
+          "columns": [
+            {
+              "expression": "input.plan_line_id",
+              "name": "plan_line_id"
+            },
+            {
+              "expression": "input.pl_plan_version_id",
+              "name": "plan_version_id"
+            },
+            {
+              "expression": "input.model_version",
+              "name": "model_version"
+            },
+            {
+              "expression": "input.forecast_revision",
+              "name": "forecast_revision"
+            },
+            {
+              "expression": "input.published_at",
+              "name": "published_at"
+            },
+            {
+              "expression": "input.pl_entity_id",
+              "name": "entity_id"
+            },
+            {
+              "expression": "input.pl_store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.pl_category",
+              "name": "category"
+            },
+            {
+              "expression": "input.pl_brand",
+              "name": "brand"
+            },
+            {
+              "expression": "input.pl_plan_month",
+              "name": "plan_month"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.unit",
+              "name": "unit"
+            },
+            {
+              "expression": "input.pl_planned_sales_retail",
+              "name": "planned_sales_retail"
+            },
+            {
+              "expression": "input.forecast_sales_retail",
+              "name": "forecast_sales_retail"
+            },
+            {
+              "expression": "input.forecast_sales_retail - input.pl_planned_sales_retail",
+              "name": "sales_retail_variance"
+            },
+            {
+              "expression": "input.pl_planned_sales_cost",
+              "name": "planned_sales_cost"
+            },
+            {
+              "expression": "input.forecast_sales_cost",
+              "name": "forecast_sales_cost"
+            },
+            {
+              "expression": "input.forecast_sales_cost - input.pl_planned_sales_cost",
+              "name": "sales_cost_variance"
+            },
+            {
+              "expression": "input.pl_planned_sales_qty",
+              "name": "planned_sales_qty"
+            },
+            {
+              "expression": "input.forecast_sales_qty",
+              "name": "forecast_sales_qty"
+            },
+            {
+              "expression": "input.forecast_sales_qty - input.pl_planned_sales_qty",
+              "name": "sales_qty_variance"
+            },
+            {
+              "expression": "input.pl_planned_fine_metal_g",
+              "name": "planned_fine_metal_g"
+            },
+            {
+              "expression": "input.forecast_fine_metal_g",
+              "name": "forecast_fine_metal_g"
+            },
+            {
+              "expression": "input.forecast_fine_metal_g - input.pl_planned_fine_metal_g",
+              "name": "fine_metal_g_variance"
+            }
+          ],
+          "input": "joined",
+          "op": "project"
+        }
+      },
+      "output": "variance"
+    },
+    "inputs": [
+      {
+        "alias": "forecast",
+        "artifactId": "plan.PublishedForecast.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "plan_line",
+        "artifactId": "plan.PlanLine.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "plan.forecast_vs_plan_variance",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.forecast_vs_plan_variance.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

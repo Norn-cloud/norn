@@ -1,0 +1,50 @@
+{
+  "artifactId": "plan.OtbEnvelope.envelope_valid.law",
+  "dependencies": [
+    {
+      "artifactId": "plan.OtbEnvelope.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A planned OTB envelope binds a plan line; an unplanned envelope carries null plan_line_id, an explicit override reason, and a positive override budget.",
+  "namespace": "plan",
+  "payload": {
+    "id": "plan.OtbEnvelope.envelope_valid",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "plan",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/plan/plan.ts"
+    },
+    "rationale": "A planned OTB envelope binds a plan line; an unplanned envelope carries null plan_line_id, an explicit override reason, and a positive override budget.",
+    "response": {
+      "expression": "((len(self.plan_month) == 7) and (self.approved_budget_cost >= 0)) and (((self.envelope_kind == 'planned') and (self.plan_line_id != null)) or ((((self.envelope_kind == 'unplanned') and (self.plan_line_id == null)) and (self.override_reason != null)) and (self.approved_budget_cost > 0)))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "plan.OtbEnvelope"
+      ],
+      "root": {
+        "id": "plan.OtbEnvelope",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "plan.OtbEnvelope"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/plan/artifacts/plan.OtbEnvelope.envelope_valid.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
