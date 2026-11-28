@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { readFileSync, readdirSync } from "node:fs"
 import { join, relative } from "node:path"
-import { compileDefinitionFiles } from "../src/compiler/definitions.ts"
+import { compileDefinitionFiles } from "../src/native-compiler.ts"
 import { runExamples, type CompiledExample } from "../src/examples.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { checker } from "./checker.ts"

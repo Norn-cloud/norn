@@ -8,12 +8,6 @@
       "version": "4.0.0-rc.117",
       "integrity": "sha512-UUyi9QiOW4nySFIBM3KnYbNMd9EZliOdKfBcyLD0mPMPheO2fkuXS5y0opjWc9oqzlJxPQICEGm8gGw3kh9j/w==",
       "license": "MIT"
-    },
-    "typescript": {
-      "version": "6.0.3",
-      "integrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==",
-      "license": "Apache-2.0",
-      "role": "Compiler API (ts.createProgram / TypeChecker). typescript@latest (7.x) ships no JS Compiler API; 6.0.3 is the newest release line that does."
     }
   },
   "intrinsicsModule": "@norn/authoring",

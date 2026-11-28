@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { SourceLocation } from "./builder/diagnostics.ts"
-import type { Position } from "./check.ts"
+import type { Position } from "./native-compiler.ts"
 import type { CheckerDiagnostic, DiagnosticV2 } from "./checker-abi.ts"
 import { TOOL_ROOT } from "./profile.ts"
 import type { ProjectError } from "./project.ts"

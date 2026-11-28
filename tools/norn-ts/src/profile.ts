@@ -14,12 +14,12 @@ import { fileURLToPath } from "node:url"
 export const TOOL_ROOT = realpathSync(join(dirname(fileURLToPath(import.meta.url)), ".."))
 
 /**
- * The directory of a pinned dependency (`effect`, `typescript`), wherever the
+ * The directory of a pinned dependency (`effect`), wherever the
  * package manager put it: nested under this package in a checkout, or hoisted
  * next to it when this package is installed into a project. Found the way
  * module resolution finds it, walking up from this package (`from`). The
  * result is the real path: isolated linkers (Bun's, pnpm's) install packages
- * as symlinks, and TypeScript reports the files it reads by their real paths.
+ * as symlinks.
  */
 export function dependencyDir(name: string, from: string = TOOL_ROOT): string {
   for (let dir = from; ; dir = dirname(dir)) {
@@ -70,7 +70,7 @@ export interface Pin {
 
 export interface Profile {
   readonly profile: string
-  readonly pins: { readonly effect: Pin; readonly typescript: Pin }
+  readonly pins: { readonly effect: Pin }
   readonly intrinsicsModule: string
   /** Package specifiers a definition may import (`x/*` = any subpath); plus the intrinsics module and relative source modules. */
   readonly allowedImports: { readonly packages: ReadonlyArray<string> }

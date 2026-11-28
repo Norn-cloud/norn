@@ -33,12 +33,24 @@ function trustedBase(): Artifact[] {
   return files.map((file) => JSON.parse(readFileSync(join(ROOT, file), "utf8")))
 }
 
-/** probe.ts compiled by the repository's own compiler. */
+/** probe.ts compiled by the native Rust `norn compile` binary (or committed probe.ir.json when the binary is not built in this CI phase). */
 function compiledProbe(): Artifact[] {
+  const irPath = join(ROOT, "apps/norn-cell-do/probe/probe.ir.json")
+  const committed = JSON.parse(readFileSync(irPath, "utf8")) as Artifact[]
+  const candidates = [
+    process.env.NORN_BIN,
+    process.env.CARGO_TARGET_DIR ? join(process.env.CARGO_TARGET_DIR, "debug/norn") : undefined,
+    join(ROOT, "target/debug/norn"),
+    join(ROOT, "target/release/norn"),
+  ].filter((candidate): candidate is string => Boolean(candidate))
+  const nornBin = candidates.find((candidate) => Bun.file(candidate).size > 0)
+  if (!nornBin) return committed
   const out = join(mkdtempSync(join(tmpdir(), "probe-compile-")), "artifacts.json")
-  const child = Bun.spawnSync(["bun", "tools/norn-ts/src/cli.ts", "compile", "apps/norn-cell-do/probe/probe.ts", "--org", "probe-org", "--env", "probe", "--out", out], { cwd: ROOT })
+  const child = Bun.spawnSync([nornBin, "compile", "apps/norn-cell-do/probe/probe.ts", "--org", "probe-org", "--env", "probe", "--out", out], { cwd: ROOT })
   if (child.exitCode !== 0) throw new Error(`norn compile failed: ${child.stdout.toString()}${child.stderr.toString()}`)
-  return JSON.parse(readFileSync(out, "utf8"))
+  const live = JSON.parse(readFileSync(out, "utf8")) as Artifact[]
+  expect(live).toEqual(committed)
+  return live
 }
 
 let BASE: Artifact[] = []

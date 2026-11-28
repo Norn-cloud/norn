@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test"
-import { compileModule } from "../src/compile-stdin.ts"
+import { compileModule } from "../src/native-compiler.ts"
 import * as E from "../src/builder/entity.ts"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { canonicalJson } from "../src/canonical.ts"
-import { compileDefinitions } from "../src/compiler/definitions.ts"
+import { compileDefinitions } from "../src/native-compiler.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 
 const source = (scale: string, currency = '"currency"') => `

@@ -1069,11 +1069,15 @@ class Claim(
             )
 
     def test_same_pack_ts_vs_python_canonical_json_and_sha256_parity(self) -> None:
-        """Paired entity+interface+lifecycle+invariant+marking pack compiled by tools/norn-ts vs tools/norn-py."""
+        """Paired entity+interface+lifecycle+invariant+marking pack compiled by native Rust `norn compile` vs tools/norn-py."""
         bun = shutil.which("bun")
-        ts_installed = (NORN_TS_ROOT / "node_modules" / "typescript").exists()
-        if bun is None or not ts_installed:
-            self.skipTest("tools/norn-ts/node_modules not installed in this checkout")
+        norn_bin = os.environ.get("NORN_BIN")
+        if not norn_bin or not Path(norn_bin).is_file():
+            candidate = REPO_ROOT / "target" / "debug" / "norn"
+            norn_bin = str(candidate) if candidate.is_file() else None
+        effect_installed = (NORN_TS_ROOT / "node_modules" / "effect").exists()
+        if bun is None or norn_bin is None or not effect_installed:
+            self.skipTest("native norn binary or tools/norn-ts/node_modules/effect unavailable")
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
@@ -1391,7 +1395,7 @@ class Booking(
             )
 
             proc = subprocess.run(
-                [bun, "src/cli.ts", "compile", str(ts_file), "--org", "org_demo", "--env", "dev", "--out", str(ts_out)],
+                [norn_bin, "compile", str(ts_file), "--org", "org_demo", "--env", "dev", "--tool-root", str(NORN_TS_ROOT), "--out", str(ts_out)],
                 cwd=NORN_TS_ROOT,
                 capture_output=True,
                 text=True,
@@ -1461,8 +1465,8 @@ process.stdout.write(JSON.stringify({
     def test_hr_pilot_admitted_by_rust_checker_wasm_when_available(self) -> None:
         """Run real `checker.checkArtifactSet` via Bun/WASM when norn-checker-wasm is installed."""
         bun = shutil.which("bun")
-        if bun is None or not (NORN_TS_ROOT / "node_modules" / "typescript").exists():
-            self.skipTest("bun or tools/norn-ts/node_modules unavailable")
+        if bun is None or not (NORN_TS_ROOT / "node_modules" / "effect").exists():
+            self.skipTest("bun or tools/norn-ts/node_modules/effect unavailable")
 
         candidate_dirs = [
             os.environ.get("NORN_CHECKER_WASM_PKG"),

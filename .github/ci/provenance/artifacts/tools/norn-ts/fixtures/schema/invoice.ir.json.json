@@ -8,7 +8,7 @@
   "parents": [
     "tools/norn-ts/fixtures/schema/invoice.builder.ts",
     "tools/norn-ts/fixtures/schema/invoice.source.ts",
-    "tools/norn-ts/src/compiler/definitions.ts"
+    "crates/norn-authoring/src/compiler/mod.rs"
   ],
   "rights_evidence": [
     {

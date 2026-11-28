@@ -5,6 +5,8 @@
 mod atomic_io;
 mod fmt;
 mod fs_io;
+mod pack_json;
+mod pack_manifest;
 mod py;
 mod retained;
 #[cfg(test)]
@@ -91,20 +93,51 @@ pub(crate) struct CompileArgs {
     /// `TypeScript` (`.ts`) or Python (`.py`) authoring file or directory.
     pub(crate) path: PathBuf,
     /// Explicit organization scope (`scope.orgId`).
-    #[arg(long)]
-    pub(crate) org: String,
+    #[arg(
+        long,
+        requires = "env",
+        conflicts_with = "registry",
+        required_unless_present = "pack_json"
+    )]
+    pub(crate) org: Option<String>,
     /// Explicit environment scope (`scope.environmentId`).
-    #[arg(long)]
-    pub(crate) env: String,
+    #[arg(
+        long,
+        requires = "org",
+        conflicts_with = "registry",
+        required_unless_present = "pack_json"
+    )]
+    pub(crate) env: Option<String>,
     /// Promote `NORN-AUTHORING-UNSAFE-ZEN` warnings to hard errors.
     #[arg(long)]
     pub(crate) forbid_unsafe_zen: bool,
     /// Write compiled canonical JSON artifacts to this file instead of stdout.
     #[arg(long)]
     pub(crate) out: Option<PathBuf>,
-    /// Optional path to `tools/norn-ts` containing pinned `node_modules/effect` and `node_modules/typescript`.
+    /// Optional path to `tools/norn-ts` containing pinned `node_modules/effect`.
     #[arg(long)]
     pub(crate) tool_root: Option<PathBuf>,
+    /// Emit full pack compilation metadata (`artifacts`, `sources`, `sourceMap`, `warnings`, `examples`, `retained`, `flows`, `flowSourceMap`, `modules`) as JSON.
+    #[arg(long)]
+    pub(crate) pack_json: bool,
+    /// Repo-relative registry package path (enables active/system envelopes with empty scope).
+    #[arg(long, requires = "pack_json")]
+    pub(crate) registry: Option<String>,
+    /// Provenance root directory for computing relative `sourcePath` and source-map paths.
+    #[arg(long, requires = "pack_json")]
+    pub(crate) root: Option<PathBuf>,
+    /// Explicit provenance `sourcePath` override for single-file compilation.
+    #[arg(long, requires = "pack_json")]
+    pub(crate) source_path: Option<String>,
+    /// Path to a JSON manifest listing explicit `TypeScript` modules to compile together.
+    #[arg(long, requires = "pack_json")]
+    pub(crate) modules: Option<PathBuf>,
+    /// Allow modules that declare no definitions or flows.
+    #[arg(long, requires = "pack_json")]
+    pub(crate) allow_empty: bool,
+    /// Optional per-module expansion work limit override (clamped to compiler ceilings).
+    #[arg(long, requires = "pack_json")]
+    pub(crate) max_expansion_work: Option<usize>,
 }
 
 /// Arguments for `norn fmt`.
@@ -122,7 +155,7 @@ pub(crate) struct FmtArgs {
 pub(crate) struct ProfileArgs {
     /// `TypeScript` authoring file (`.ts`) to check against the `norn-effect` profile.
     pub(crate) path: PathBuf,
-    /// Optional path to `tools/norn-ts` containing pinned `node_modules/effect` and `node_modules/typescript`.
+    /// Optional path to `tools/norn-ts` containing pinned `node_modules/effect`.
     #[arg(long)]
     pub(crate) tool_root: Option<PathBuf>,
 }
@@ -135,7 +168,7 @@ pub(crate) struct QuestionArgs {
     /// Write compiled JSON questions to this file instead of stdout.
     #[arg(long)]
     pub(crate) out: Option<PathBuf>,
-    /// Optional path to `tools/norn-ts` containing pinned `node_modules/effect` and `node_modules/typescript`.
+    /// Optional path to `tools/norn-ts` containing pinned `node_modules/effect`.
     #[arg(long)]
     pub(crate) tool_root: Option<PathBuf>,
 }
@@ -148,7 +181,7 @@ pub(crate) struct DashboardArgs {
     /// Write compiled JSON dashboards to this file instead of stdout.
     #[arg(long)]
     pub(crate) out: Option<PathBuf>,
-    /// Optional path to `tools/norn-ts` containing pinned `node_modules/effect` and `node_modules/typescript`.
+    /// Optional path to `tools/norn-ts` containing pinned `node_modules/effect`.
     #[arg(long)]
     pub(crate) tool_root: Option<PathBuf>,
 }
@@ -554,11 +587,17 @@ fn compile_path_to_json(
 
 /// Executes `norn compile`.
 pub(crate) fn execute_compile(args: &CompileArgs) -> CommandOutput {
+    if args.pack_json {
+        return pack_json::execute_compile_pack_json(args);
+    }
+    let (Some(org), Some(env)) = (args.org.as_deref(), args.env.as_deref()) else {
+        return CommandOutput::usage_or_io_error("--org and --env are required");
+    };
     let mut budget = InvocationBudget::new();
     match compile_path_to_json(
         &args.path,
-        &args.org,
-        &args.env,
+        org,
+        env,
         args.forbid_unsafe_zen,
         args.tool_root.as_deref(),
         &mut budget,

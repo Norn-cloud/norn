@@ -8,7 +8,7 @@
   "parents": [
     "tools/norn-ts/fixtures/questions/scrap-yield.ts",
     "tools/norn-ts/src/cli.ts",
-    "tools/norn-ts/src/compiler/definitions.ts",
+    "crates/norn-authoring/src/compiler/mod.rs",
     "tools/norn-ts/src/builder/question.ts",
     "tools/norn-ts/profile/norn-authoring.d.ts",
     "tools/norn-ts/profile/norn-effect-1.json"

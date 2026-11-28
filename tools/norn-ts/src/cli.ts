@@ -2,8 +2,7 @@
 /** Compile typed definitions and run the authoritative Rust checker ABI. */
 import { existsSync, statSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
-import { ProfileChecker } from "./check.ts"
-import { compileDashboards, compileQuestions } from "./compiler/definitions.ts"
+import { ProfileChecker, compileDashboards, compileQuestions } from "./native-compiler.ts"
 import { loadChecker, sourceMappedDiagnostics, staleCheckerWarning } from "./checker-abi.ts"
 import { admit } from "./pack.ts"
 
@@ -86,6 +85,7 @@ if (!existsSync(input)) {
   process.exit(2)
 }
 if (command === "profile") {
+  if (!statSync(input).isFile()) process.exit(1)
   const reports = new ProfileChecker().check([resolve(input)])
   process.stdout.write(`${JSON.stringify(reports)}\n`)
   process.exit(reports.every((report) => report.diagnostics.length === 0) ? 0 : 1)

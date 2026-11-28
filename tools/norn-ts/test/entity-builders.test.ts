@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { A, E, M, P, S } from "../src/builder/index.ts"
 import { type Json, canonicalJson } from "../src/canonical.ts"
-import { compileDefinitions } from "../src/compiler/definitions.ts"
+import { compileDefinitions } from "../src/native-compiler.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { CHECKER_PKG_ENV, checker } from "./checker.ts"
 

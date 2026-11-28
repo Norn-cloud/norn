@@ -11,8 +11,8 @@ use serde_json::json;
 
 use super::atomic_io::write_file_atomic_in_trusted_dir;
 use super::fs_io::{
-    InvocationBudget, SourceLang, classify_source_file, display_posix_path, is_formattable_file,
-    read_opened_file_budgeted,
+    InvocationBudget, SourceLang, classify_source_file, display_posix_path, is_declaration_file,
+    is_formattable_file, read_opened_file_budgeted,
 };
 use super::trusted_dir::{PinnedSourceTarget, TrustedDir, open_source_target_pinned};
 use super::{CommandOutput, FmtArgs};
@@ -69,6 +69,20 @@ fn format_one(file: &Path, lang: SourceLang, source: &str) -> Result<String, Str
     }
 }
 
+fn classify_fmt_single_file(path: &Path) -> Option<SourceLang> {
+    if let Some(lang) = classify_source_file(path) {
+        return Some(lang);
+    }
+    if path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(is_declaration_file)
+    {
+        return Some(SourceLang::TypeScript);
+    }
+    None
+}
+
 fn execute_fmt_single_file(
     args: &FmtArgs,
     parent_dir: &TrustedDir,
@@ -77,7 +91,7 @@ fn execute_fmt_single_file(
     opened: std::fs::File,
     budget: &mut InvocationBudget,
 ) -> CommandOutput {
-    let Some(lang) = classify_source_file(display_path) else {
+    let Some(lang) = classify_fmt_single_file(display_path) else {
         return CommandOutput::usage_or_io_error(&format!(
             "{}: expected a .ts, .tsx, or .py authoring file",
             display_path.display()
