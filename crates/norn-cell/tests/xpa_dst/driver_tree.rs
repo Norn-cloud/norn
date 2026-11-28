@@ -1,8 +1,15 @@
-//! Layer 4C — Deterministic xP&A driver-tree ripple & convergence evaluator.
+//! Layer 4C — Test-harness deterministic xP&A driver-tree ripple & convergence
+//! model (`sampled`, test-harness model).
 //!
 //! Propagates headcount & overtime shift cost -> store operating cost & EBITDA
 //! -> cash & Open-To-Buy (OTB) constraint in exact 6-decimal `i128` arithmetic
 //! via Kahn topological sorting, refusing circular dependency loops fail-closed.
+//!
+//! **Honest evidence note:** Production S2 OTB/Merchandising and S5
+//! Workforce/Payroll pack/kernel seams are not yet on `main` (`unknown` /
+//! pending S2–S5). This module provides `sampled` evidence for the test-harness
+//! exact topological ripple model only, never claiming `runtime-enforced`
+//! production S2/S5 enforcement.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -22,7 +29,7 @@ pub enum DriverFormula {
     ClampNonNegative(String),
 }
 
-/// Error returned by the deterministic driver-tree evaluator.
+/// Error returned by the test-harness deterministic driver-tree evaluator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DriverTreeError {
     CycleDetected { nodes: Vec<String> },
@@ -30,8 +37,8 @@ pub enum DriverTreeError {
     Overflow { node: String },
 }
 
-/// Deterministic topological driver-tree evaluator verifying ripple convergence
-/// and zero silent circular loops.
+/// Test-harness deterministic topological driver-tree evaluator verifying
+/// ripple convergence and zero silent circular loops (`sampled`).
 #[derive(Debug, Default, Clone)]
 pub struct DriverTree {
     nodes: BTreeMap<String, DriverFormula>,
@@ -158,8 +165,9 @@ fn formula_deps(formula: &DriverFormula) -> Vec<&str> {
     }
 }
 
-/// Verify deterministic driver-tree ripple & convergence across
-/// headcount/shift cost -> store margin -> cash/OTB constraint, plus cycle refusal.
+/// Verify test-harness deterministic driver-tree ripple & convergence across
+/// headcount/shift cost -> store margin -> cash/OTB constraint, plus cycle
+/// refusal (`sampled`, test-harness model; production S2/S5 seams pending).
 ///
 /// # Errors
 /// Returns an error if convergence, ripple delta, or cycle rejection fails.

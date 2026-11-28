@@ -7,29 +7,29 @@
 //!    `verify_main_receipt`, `verify_main_export_record`).
 //! 2. **Messy-entity Egyptian family-business multi-entity scenario:**
 //!    sole proprietorship (EGP) + partnership (USD) sharing `MALL-CFC` custodian
-//!    and suppliers, bilateral inter-entity matching, side-by-side vs FX-translated
-//!    vs inter-entity-eliminated views.
-//! 3. **Deterministic driver-tree ripple & convergence check:**
-//!    headcount/shift cost -> store margin -> cash/OTB constraint, verifying
-//!    topological convergence and fail-closed circular loop rejection.
+//!    and suppliers, real `CombinedViewReport` cuts (`READ-LOCAL-1`), real
+//!    verified `main` commit receipts for bilateral inter-entity elimination,
+//!    and fail-closed unilateral/tampered refusals.
 
 use std::collections::BTreeMap;
 
 use norn_cell::compute::{WorldCompareDelta, compare_forks, compare_main_and_fork};
 use norn_cell::{
-    CellError, ForkActionCall, ForkMergeRefusalReason, ForkScenario, SqliteCell,
-    execute_action_in_fork, promote_decision_fork, verify_fork_commit_evidence,
-    verify_main_export_record, verify_main_receipt,
+    CellError, ForkActionCall, ForkMergeRefusalReason, ForkScenario, execute_action_in_fork,
+    promote_decision_fork, verify_fork_commit_evidence, verify_main_export_record,
+    verify_main_receipt,
 };
-use norn_ir::{Decimal, RuntimeValue};
-use norn_kernel::{CellHost as _, Entropy, LogicalTime, ScenarioClock, World, WorldId};
+use norn_ir::{Decimal, RuntimeValue, UtcTimestamp};
+use norn_kernel::{Entropy, LogicalTime, ScenarioClock, World, WorldId};
 use serde_json::{Value, json};
 
-use super::cuts::{bucket_decimal_exact, cell_id_for_entity};
+use super::cuts::{
+    bucket_decimal_exact, cell_id_for_entity, dst_coverage_spec, evaluate_multi_cell_report,
+};
 use super::env::{AllowAll, DEFAULT_CLOCK_MS, EntityCell, RetailCell};
-use super::layer1_invariants::{
+use super::operating_group::{
     EntityReportingSlice, FxRateEntry, InterEntityTransfer, OperatingGroupRefusal,
-    OperatingGroupTier, evaluate_operating_group_tier,
+    OperatingGroupTier, evaluate_operating_group_tier, slice_from_cut_snapshot,
 };
 use super::prng::{DAY_MS, SplitMix64, decimal_to_scaled, scaled};
 
@@ -51,7 +51,7 @@ fn fork_entity_cell(parent: &EntityCell, world: &str) -> Result<RetailCell, Stri
         .store()
         .fork(world, &head)
         .map_err(|e| format!("fork {world}: {e}"))?;
-    let mut fork = SqliteCell::new(fork_store, parent.scope.clone(), |c| c.payload.clone())
+    let mut fork = RetailCell::new(fork_store, parent.scope.clone(), |c| c.payload.clone())
         .map_err(|e| format!("open fork {world}: {e}"))?;
     fork.advance_to(parent.now());
     Ok(fork)
@@ -296,7 +296,8 @@ fn run_overtime_scenario_fork(main_book: &EntityCell, rng: &mut SplitMix64) -> R
     let rev_plan = main_book
         .pack
         .retail_question("supply.retail.store_revenue_weekly")?;
-    let overtime_cell = fork_entity_cell(main_book, "whatif-overtime-shift")?;
+    let overtime_cell = seed_overtime_shift_fork(main_book)?;
+    let recorded_now = overtime_cell.now();
     let params = BTreeMap::from([
         ("overtime_multiplier".to_owned(), RuntimeValue::from("1.50")),
         ("shift_hours_added".to_owned(), RuntimeValue::from(24_i64)),
@@ -304,10 +305,7 @@ fn run_overtime_scenario_fork(main_book: &EntityCell, rng: &mut SplitMix64) -> R
     let mut scenario = ForkScenario::open(
         overtime_cell,
         params,
-        ScenarioClock::new(
-            LogicalTime::from_millis(DEFAULT_CLOCK_MS),
-            LogicalTime::from_millis(main_book.now().as_millis()),
-        ),
+        ScenarioClock::new(LogicalTime::from_millis(DEFAULT_CLOCK_MS), recorded_now),
         Entropy::from_bytes(rng.next_entropy_bytes()),
     )
     .map_err(|e| format!("open overtime ForkScenario: {e}"))?;
@@ -321,14 +319,88 @@ fn run_overtime_scenario_fork(main_book: &EntityCell, rng: &mut SplitMix64) -> R
     {
         return Err("overtime ForkScenario world pin mismatch".to_owned());
     }
+    verify_overtime_effective_clock_deltas(main_book, &mut scenario, &rev_plan, recorded_now)
+}
+
+fn seed_overtime_shift_fork(main_book: &EntityCell) -> Result<RetailCell, String> {
+    let mut overtime_cell = fork_entity_cell(main_book, "whatif-overtime-shift")?;
+    run_fork_action(
+        &mut overtime_cell,
+        main_book,
+        "supply.pos_sale.record",
+        "clerk:hana",
+        "fork-ot-sale-w9",
+        json!({
+            "sale_id": "SALE-OT-W9", "store_id": "ST-FLAG", "sku_id": "SKU-DRESS",
+            "sold_qty": "5", "unit": "each", "net_revenue": "900",
+            "applied_unit_cost": "100", "cost_status": "costed",
+            "costed_ref": "COST-BASE", "currency": "EGP", "sold_at": "2026-09-05T22:00:00Z",
+        }),
+    )?;
+    run_fork_action(
+        &mut overtime_cell,
+        main_book,
+        "supply.pos_sale.record",
+        "clerk:hana",
+        "fork-ot-sale-w10",
+        json!({
+            "sale_id": "SALE-OT-W10", "store_id": "ST-FLAG", "sku_id": "SKU-DRESS",
+            "sold_qty": "6", "unit": "each", "net_revenue": "1200",
+            "applied_unit_cost": "100", "cost_status": "costed",
+            "costed_ref": "COST-BASE", "currency": "EGP", "sold_at": "2026-09-10T21:00:00Z",
+        }),
+    )?;
+    Ok(overtime_cell)
+}
+
+type RetailScenario = ForkScenario<
+    norn_kernel::FactEvent,
+    norn_kernel::cell_host::JsonObject,
+    norn_kernel::cell_host::JsonObject,
+>;
+
+fn verify_overtime_effective_clock_deltas(
+    main_book: &EntityCell,
+    scenario: &mut RetailScenario,
+    rev_plan: &norn_checker::metric::compute::QuestionPlan,
+    recorded_now: LogicalTime,
+) -> Result<(), String> {
+    let mut base_ctx = main_book.query_context();
+    base_ctx.now_ms = recorded_now.as_millis();
+    let cut_plan = rev_plan
+        .with_effective_end(UtcTimestamp("2026-09-07T12:00:00Z".to_owned()))
+        .ok_or("narrow effective end for overtime baseline")?;
+    let main_at_cut = main_book
+        .cell()?
+        .store()
+        .evaluate_question(&cut_plan, base_ctx.clone(), |_| Ok(true))
+        .map_err(|e| format!("main rev at cut: {e}"))?;
+    let before_adv = scenario
+        .evaluate_question(rev_plan, base_ctx.clone(), |_| Ok(true))
+        .map_err(|e| format!("overtime eval before advance: {e}"))?;
+    if !before_adv.simulated {
+        return Err("overtime ForkScenario answer must be simulated".to_owned());
+    }
+    let w9_diff = compare_main_and_fork(&main_at_cut, &before_adv)
+        .map_err(|e| format!("compare main vs overtime fork: {e}"))?;
+    assert_delta_contains(&w9_diff.deltas, "900", "overtime W9 revenue delta")?;
+    if bucket_decimal_exact(&before_adv.result, &["EGP", "ST-FLAG", "2026-09-07"]).is_some() {
+        return Err("W10 overtime sale leaked before virtual effective clock advanced".to_owned());
+    }
+
     scenario
         .advance_effective_by(DAY_MS.saturating_mul(7))
         .map_err(|e| format!("advance effective clock: {e}"))?;
-    let answer = scenario
-        .evaluate_question(&rev_plan, main_book.query_context(), |_| Ok(true))
-        .map_err(|e| format!("overtime eval: {e}"))?;
-    if !answer.simulated {
-        return Err("overtime ForkScenario answer must be simulated".to_owned());
+    let after_adv = scenario
+        .evaluate_question(rev_plan, base_ctx, |_| Ok(true))
+        .map_err(|e| format!("overtime eval after advance: {e}"))?;
+    let w10_rev = bucket_decimal_exact(&after_adv.result, &["EGP", "ST-FLAG", "2026-09-07"])
+        .ok_or("W10 overtime revenue missing after advancing effective clock")?;
+    if w10_rev.canonical() != "1200" || after_adv.fork_query_pin == before_adv.fork_query_pin {
+        return Err(format!(
+            "overtime W10 shift delta mismatch: got {w10_rev}, pin unchanged={}",
+            after_adv.fork_query_pin == before_adv.fork_query_pin
+        ));
     }
     Ok(())
 }
@@ -416,7 +488,7 @@ fn verify_store_opening_promotion_and_nested_refusal(
         return Err("nested sub-fork failed to inherit main_horizon unchanged".to_owned());
     }
     let mut nested_cell =
-        SqliteCell::new(nested_store, main_book.scope.clone(), |c| c.payload.clone())
+        RetailCell::new(nested_store, main_book.scope.clone(), |c| c.payload.clone())
             .map_err(|e| format!("open nested cell: {e}"))?;
     nested_cell.advance_to(open_fork.now());
     let defs = &main_book.pack.definitions;
@@ -464,9 +536,9 @@ fn assert_delta_contains(
     expected_canonical: &str,
     label: &str,
 ) -> Result<(), String> {
-    let found = deltas
-        .values()
-        .any(|d| d.delta_value.map(Decimal::canonical).as_deref() == Some(expected_canonical));
+    let found = deltas.values().any(|d| {
+        d.delta_value.as_ref().map(Decimal::canonical).as_deref() == Some(expected_canonical)
+    });
     if !found {
         return Err(format!(
             "{label}: expected delta `{expected_canonical}` in {deltas:?}"
@@ -477,44 +549,69 @@ fn assert_delta_contains(
 
 /// Layer 4B: Messy-entity Egyptian family-business multi-entity scenario
 /// (sole proprietorship in EGP + partnership in USD sharing `MALL-CFC` custodian
-/// and suppliers).
+/// and suppliers), deriving real `CellCutSnapshot` pins and real verified
+/// `main` commit [`norn_cell::Receipt`]s for bilateral elimination.
 ///
 /// # Errors
 /// Returns an error if any entity book or multi-entity view invariant fails.
 pub fn run_egyptian_family_business_scenario(seed: u64) -> Result<(), String> {
     let sole = seed_egyptian_sole_prop(seed)?;
     let partner = seed_egyptian_partnership(seed)?;
-    let sole_rev = bucket_decimal_exact(
-        &sole.answer("supply.retail.store_revenue_weekly")?,
-        &["EGP", "ST-SOLE-CFC", "2026-08-31"],
-    )
-    .ok_or("missing sole revenue")?;
-    let partner_rev = bucket_decimal_exact(
-        &partner.answer("supply.retail.store_revenue_weekly")?,
-        &["USD", "ST-PART-CFC", "2026-08-31"],
-    )
-    .ok_or("missing partner revenue")?;
+    let spec = dst_coverage_spec();
+    let books = [&sole, &partner];
+    let report = evaluate_multi_cell_report(&books, &spec, |idx, _, plan, ctx| {
+        let book = books
+            .get(idx)
+            .ok_or_else(|| CellError::Engine("missing cell".to_owned()))?;
+        book.cell()
+            .map_err(CellError::Engine)?
+            .store()
+            .evaluate_question(plan, ctx, |_| Ok(true))
+    })?;
+    let sole_snap = report.cells.first().ok_or("missing sole cut snapshot")?;
+    let partner_snap = report.cells.get(1).ok_or("missing partner cut snapshot")?;
+
+    let sole_rev_q = sole_snap
+        .answers
+        .as_ref()
+        .and_then(|a| a.get("supply.retail.store_revenue_weekly"))
+        .ok_or("missing sole revenue answer")?;
+    let partner_rev_q = partner_snap
+        .answers
+        .as_ref()
+        .and_then(|a| a.get("supply.retail.store_revenue_weekly"))
+        .ok_or("missing partner revenue answer")?;
+    let sole_rev = bucket_decimal_exact(sole_rev_q, &["EGP", "ST-SOLE-CFC", "2026-08-31"])
+        .ok_or("missing sole revenue")?;
+    let partner_rev = bucket_decimal_exact(partner_rev_q, &["USD", "ST-PART-CFC", "2026-08-31"])
+        .ok_or("missing partner revenue")?;
     let slices = [
-        EntityReportingSlice {
-            entity_id: "LE-NILE-SOLE".to_owned(),
-            currency: "EGP".to_owned(),
-            revenue_scaled: decimal_to_scaled(sole_rev)?,
-            gross_margin_scaled: scaled(15_000),
-        },
-        EntityReportingSlice {
-            entity_id: "LE-CAIRO-PARTNER".to_owned(),
-            currency: "USD".to_owned(),
-            revenue_scaled: decimal_to_scaled(partner_rev)?,
-            gross_margin_scaled: scaled(700),
-        },
+        slice_from_cut_snapshot(
+            "LE-NILE-SOLE",
+            "EGP",
+            sole_snap,
+            "supply.retail.store_revenue_weekly",
+            decimal_to_scaled(sole_rev)?,
+            scaled(15_000),
+        )?,
+        slice_from_cut_snapshot(
+            "LE-CAIRO-PARTNER",
+            "USD",
+            partner_snap,
+            "supply.retail.store_revenue_weekly",
+            decimal_to_scaled(partner_rev)?,
+            scaled(700),
+        )?,
     ];
-    verify_egyptian_family_views(&slices, sole.head()?.commits, partner.head()?.commits)
+    let partner_receipt = partner.export_main_receipt(partner.head()?.commits)?;
+    let sole_receipt = sole.export_main_receipt(sole.head()?.commits)?;
+    verify_egyptian_family_views(&slices, &partner_receipt, &sole_receipt)
 }
 
 fn verify_egyptian_family_views(
     slices: &[EntityReportingSlice],
-    sole_commits: u64,
-    partner_commits: u64,
+    partner_receipt: &norn_cell::Receipt,
+    sole_receipt: &norn_cell::Receipt,
 ) -> Result<(), String> {
     let fx_rates = [FxRateEntry {
         from_currency: "USD".to_owned(),
@@ -523,6 +620,14 @@ fn verify_egyptian_family_views(
         as_of: "2026-09-06T23:59:59Z".to_owned(),
         rate_table_pin: "fx:cbe:2026-09-06".to_owned(),
     }];
+    verify_egyptian_sbs_and_fx(slices, &fx_rates)?;
+    verify_egyptian_bilateral_elimination(slices, &fx_rates, partner_receipt, sole_receipt)
+}
+
+fn verify_egyptian_sbs_and_fx(
+    slices: &[EntityReportingSlice],
+    fx_rates: &[FxRateEntry],
+) -> Result<(), String> {
     let sbs =
         evaluate_operating_group_tier(OperatingGroupTier::SideBySide, slices, None, &[], &[], None)
             .map_err(|e| format!("side_by_side: {e:?}"))?;
@@ -546,15 +651,29 @@ fn verify_egyptian_family_views(
         OperatingGroupTier::FxTranslated,
         slices,
         Some("EGP"),
-        &fx_rates,
+        fx_rates,
         &[],
         None,
     )
     .map_err(|e| format!("fx_translated: {e:?}"))?;
-    if fxt.translated_revenue.map(Decimal::canonical).as_deref() != Some("99750") {
+    if fxt
+        .translated_revenue
+        .as_ref()
+        .map(Decimal::canonical)
+        .as_deref()
+        != Some("99750")
+    {
         return Err(format!("unexpected fx_translated: {fxt:?}"));
     }
+    Ok(())
+}
 
+fn verify_egyptian_bilateral_elimination(
+    slices: &[EntityReportingSlice],
+    fx_rates: &[FxRateEntry],
+    partner_receipt: &norn_cell::Receipt,
+    sole_receipt: &norn_cell::Receipt,
+) -> Result<(), String> {
     let matched = InterEntityTransfer {
         transfer_id: "IE-CFC-TRIM-01".to_owned(),
         seller_entity_id: "LE-CAIRO-PARTNER".to_owned(),
@@ -562,21 +681,27 @@ fn verify_egyptian_family_views(
         currency: "USD".to_owned(),
         seller_amount_scaled: scaled(300),
         buyer_amount_scaled: scaled(300),
-        seller_receipt_pin: Some(format!("rcpt:partner:{partner_commits}")),
-        buyer_receipt_pin: Some(format!("rcpt:sole:{sole_commits}")),
+        seller_receipt: Some(partner_receipt.clone()),
+        buyer_receipt: Some(sole_receipt.clone()),
     };
     let netted = evaluate_operating_group_tier(
         OperatingGroupTier::InterEntityNetted,
         slices,
         Some("EGP"),
-        &fx_rates,
+        fx_rates,
         std::slice::from_ref(&matched),
         None,
     )
     .map_err(|e| format!("inter_entity_netted: {e:?}"))?;
-    if netted.net_group_revenue.map(Decimal::canonical).as_deref() != Some("85200")
+    if netted
+        .net_group_revenue
+        .as_ref()
+        .map(Decimal::canonical)
+        .as_deref()
+        != Some("85200")
         || netted
             .eliminated_inter_entity_revenue
+            .as_ref()
             .map(Decimal::canonical)
             .as_deref()
             != Some("14550")
@@ -585,14 +710,14 @@ fn verify_egyptian_family_views(
     }
 
     let unilateral = InterEntityTransfer {
-        buyer_receipt_pin: None,
+        buyer_receipt: None,
         ..matched
     };
     let uni_res = evaluate_operating_group_tier(
         OperatingGroupTier::InterEntityNetted,
         slices,
         Some("EGP"),
-        &fx_rates,
+        fx_rates,
         &[unilateral],
         None,
     );
@@ -651,6 +776,14 @@ fn seed_egyptian_sole_prop(seed: u64) -> Result<EntityCell, String> {
         "COST-ABAYA-1",
         "2026-09-02T14:00:00Z",
     )?;
+    sole.ingest_baseline_feeds(
+        "ST-SOLE-CFC",
+        "SKU-ABAYA",
+        "400",
+        "2026-09-02T14:00:00Z",
+        "egypt-sole",
+    )?;
+    sole.refresh_watermarks();
     Ok(sole)
 }
 
@@ -700,5 +833,13 @@ fn seed_egyptian_partnership(seed: u64) -> Result<EntityCell, String> {
         "COST-TRIM-1",
         "2026-09-02T15:00:00Z",
     )?;
+    partner.ingest_baseline_feeds(
+        "ST-PART-CFC",
+        "SKU-GOLD-TRIM",
+        "80",
+        "2026-09-02T15:00:00Z",
+        "egypt-partner",
+    )?;
+    partner.refresh_watermarks();
     Ok(partner)
 }

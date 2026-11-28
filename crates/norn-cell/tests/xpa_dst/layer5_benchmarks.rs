@@ -1,42 +1,52 @@
 //! Layer 5 — Scale & Latency Benchmark Suite (Boat/CI runnable, lightweight smoke
 //! in default unit tests).
 //!
-//! Pure-Rust, zero-GPL synthetic generators matching:
-//! 1. **M5 Forecasting (Walmart hierarchical retail) shape:** configurable
-//!    cardinality up to 3,049 SKUs × 10 stores × 5+ years (260+ weeks) of daily
-//!    POS volume, sell prices, and calendar events, emitting exact weekly
-//!    rollups, sell-through, WOS, GMROI, and safety stock.
-//! 2. **`FPABench`-style multidimensional P&L recalculation workload:** configurable
-//!    `smoke` / `medium` / `full` (`XPA_BENCH_SCALE`) scale profiles measuring
-//!    ingest throughput, incremental commit latency, fork-branching latency, and
-//!    exact-cell vs OLAP (`DuckDB` / `DataFusion`) query p50/p95/p99.
+//! Pure-Rust, zero-GPL synthetic generators and governed cell/OLAP timings:
+//! 1. **M5 Forecasting (Walmart hierarchical retail) stream generator**
+//!    (in-memory synthetic stream up to `3,049 SKUs x 10 stores x 260 weeks`,
+//!    reported separately from cell-loaded facts).
+//! 2. **`FPABench`-style multidimensional P&L synthetic stream** (reported
+//!    explicitly as `synthetic_facts_generated`, separate from cell-loaded facts).
+//! 3. **Governed Cell & OLAP benchmark over the EXACT SAME loaded population**
+//!    (`cell_facts_loaded` governed `PosSale` commits loaded into one `EntityCell`
+//!    and mirrored identically into `DuckDB` / `DataFusion` as `olap_facts_loaded`),
+//!    verifying exactness against an independent oracle, lineage completeness,
+//!    latency percentiles (p50/p95/p99), and best-effort process RSS (`VmRSS`).
 //!
 //! Evidence class: `sampled` (performance telemetry and bounded synthetic
 //! scalability). Never claims formal proof or unexecuted scale runs.
 
-use std::fmt::Write as _;
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use norn_cell::CellStore;
+use norn_cell::compute::QueryResult;
 use norn_ir::Decimal;
 use serde::{Deserialize, Serialize};
 
-use super::cuts::cell_id_for_entity;
+use super::cuts::{bucket_decimal_exact, cell_id_for_entity};
 use super::env::{DEFAULT_CLOCK_MS, EntityCell};
 use super::prng::{
     CENT_SCALE, LatencySummary, SplitMix64, decimal_from_scaled, div_i128, div_u64, div_usize,
-    exact_ratio_of_sums, rem_usize, scaled, week_timestamp_utc,
+    exact_ratio_of_sums, independent_ratio_scaled, rem_usize, scaled, week_monday_iso,
+    week_timestamp_utc,
 };
+
+#[cfg(any(feature = "duckdb", feature = "datafusion"))]
+use super::layer3_parity::assert_query_result_parity;
+#[cfg(any(feature = "duckdb", feature = "datafusion"))]
+use norn_cell::compute::Engine as ComputeEngine;
 
 /// Scale profile selected via `XPA_BENCH_SCALE=smoke|medium|full`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BenchScale {
-    /// Fast CI smoke profile (< 200ms).
+    /// Fast CI smoke profile (< 250ms) with enough samples for meaningful p50/p95/p99.
     Smoke,
-    /// Medium Boat profile (~10k generated facts).
+    /// Medium Boat profile (~10k synthetic stream facts; 200 governed cell/OLAP facts).
     Medium,
-    /// Full Boat/CI profile (M5 3,049 SKUs × 10 stores × 260 weeks; 100k–1M+ `FPABench` facts).
+    /// Full Boat/CI profile (M5 3,049 SKUs x 10 stores x 260 weeks synthetic stream;
+    /// 2,000 governed cell/OLAP facts unless scaled further on Boat).
     Full,
 }
 
@@ -79,7 +89,7 @@ pub struct M5ShapeConfig {
 }
 
 impl M5ShapeConfig {
-    /// Full Walmart M5 reference cardinality (`10 stores × 3,049 SKUs × 260 weeks` = 5 years).
+    /// Full Walmart M5 reference cardinality (`10 stores x 3,049 SKUs x 260 weeks` = 5 years).
     #[must_use]
     pub const fn full_m5() -> Self {
         Self {
@@ -107,7 +117,7 @@ impl M5ShapeConfig {
     }
 }
 
-/// Exact aggregated metrics emitted by one M5-shaped hierarchical retail run.
+/// Exact aggregated metrics emitted by one in-memory M5-shaped synthetic stream run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct M5WorkloadSummary {
@@ -139,8 +149,9 @@ struct M5Accum {
     total_safety_stock: u64,
 }
 
-/// Run the pure-Rust M5 hierarchical retail generator (daily POS + sell prices +
-/// calendar events -> exact weekly rollups, sell-through, WOS, GMROI, safety stock).
+/// Run the pure-Rust M5 hierarchical retail synthetic stream generator (daily POS
+/// + sell prices + calendar events -> exact weekly rollups, sell-through, WOS,
+/// GMROI, safety stock). Not loaded into a cell; reported separately in scorecard.
 ///
 /// # Errors
 /// Returns an error if exact decimal arithmetic overflows.
@@ -169,13 +180,16 @@ pub fn run_m5_synthetic_workload(
         scaled(i128::from(acc.total_units_sold)),
         scaled(i128::from(acc.total_received)),
     )?
+    .as_ref()
     .map(Decimal::canonical);
     let portfolio_wos = exact_ratio_of_sums(
         scaled(i128::from(acc.total_ending_on_hand)),
         avg_weekly_scaled,
     )?
+    .as_ref()
     .map(Decimal::canonical);
     let portfolio_gmroi = exact_ratio_of_sums(acc.total_margin_scaled, acc.total_avg_inv_scaled)?
+        .as_ref()
         .map(Decimal::canonical);
 
     let series_count = u64::try_from(cfg.stores.saturating_mul(cfg.skus)).unwrap_or(0);
@@ -266,7 +280,7 @@ fn accumulate_m5_series(
     Ok(())
 }
 
-/// `FPABench`-style multidimensional P&L recalculation profile.
+/// `FPABench`-style multidimensional P&L recalculation and governed cell/OLAP profile.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FpaBenchConfig {
@@ -286,17 +300,17 @@ impl FpaBenchConfig {
                 stores: 2,
                 skus: 4,
                 weeks: 8,
-                cell_sales_commits: 16,
-                fork_branches: 4,
-                query_iterations: 5,
+                cell_sales_commits: 24,
+                fork_branches: 10,
+                query_iterations: 20,
             },
             BenchScale::Medium => Self {
                 stores: 20,
                 skus: 50,
                 weeks: 12,
                 cell_sales_commits: 200,
-                fork_branches: 16,
-                query_iterations: 20,
+                fork_branches: 20,
+                query_iterations: 25,
             },
             BenchScale::Full => Self {
                 stores: 100,
@@ -311,6 +325,10 @@ impl FpaBenchConfig {
 }
 
 /// Structured Layer 5 benchmark scorecard (JSON & Markdown serializable).
+///
+/// Explicitly separates in-memory synthetic stream generation counts from the
+/// exact governed `PosSale` population loaded identically into the cell and
+/// synced into OLAP engines (`cell_facts_loaded` vs `olap_facts_loaded`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkScorecard {
@@ -318,9 +336,19 @@ pub struct BenchmarkScorecard {
     pub seed: u64,
     pub evidence_class: String,
     pub m5_summary: M5WorkloadSummary,
-    pub fpabench_generated_facts: u64,
+    /// Facts streamed by the in-memory pure-Rust `FPABench` P&L generator (not loaded into cell).
+    pub synthetic_facts_generated: u64,
     pub fpabench_total_net_income: String,
-    pub cell_commits_executed: usize,
+    /// Exact governed `PosSale` facts committed into `EntityCell` and queried by Exact Cell.
+    pub cell_facts_loaded: usize,
+    /// Exact governed `PosSale` facts mirrored from the same cell into OLAP engine(s) (`0` if OLAP disabled).
+    pub olap_facts_loaded: usize,
+    /// True only when Exact Cell (and every enabled OLAP engine) matched the exact arithmetic oracle.
+    pub exactness_verified: bool,
+    /// True only when `lineage_ref` is non-empty and bucket member totals equal `cell_facts_loaded`.
+    pub lineage_verified: bool,
+    /// Best-effort process resident set size (`VmRSS` in `KiB` on Linux; `None` elsewhere).
+    pub rss_kib: Option<u64>,
     pub ingest_facts_per_sec: u64,
     pub commit_latency: LatencySummary,
     pub fork_branch_latency: LatencySummary,
@@ -330,108 +358,139 @@ pub struct BenchmarkScorecard {
 }
 
 impl BenchmarkScorecard {
-    /// Render a concise GitHub-flavored Markdown scorecard table.
+    /// Render an honest Markdown scorecard table separating
+    /// in-memory synthetic stream sizes from exact cell/OLAP loaded populations.
     #[must_use]
     pub fn render_markdown(&self) -> String {
-        let mut out = String::new();
-        let _ = writeln!(
-            out,
-            "### xP&A Layer 5 Benchmark Scorecard (scale=`{}`, seed=`0x{:016x}`, evidence=`{}`)",
-            self.scale, self.seed, self.evidence_class
-        );
-        let _ = writeln!(out);
-        let _ = writeln!(out, "| Metric | Value |");
-        let _ = writeln!(out, "|---|---|");
-        let _ = writeln!(
-            out,
-            "| M5 Shape (`stores × skus × weeks`) | `{} × {} × {}` ({} daily POS events) |",
-            self.m5_summary.stores,
-            self.m5_summary.skus,
-            self.m5_summary.weeks,
-            self.m5_summary.daily_pos_events
-        );
-        let _ = writeln!(
-            out,
-            "| M5 Revenue / Margin / GMROI | `{}` / `{}` / `{}` |",
-            self.m5_summary.total_revenue,
-            self.m5_summary.total_gross_margin,
-            self.m5_summary.portfolio_gmroi.as_deref().unwrap_or("n/a")
-        );
-        let _ = writeln!(
-            out,
-            "| FPABench Facts / Net Income | `{}` facts / `{}` |",
-            self.fpabench_generated_facts, self.fpabench_total_net_income
-        );
-        let _ = writeln!(
-            out,
-            "| Governed Cell Ingest Throughput | `{} facts/s` ({} commits) |",
-            self.ingest_facts_per_sec, self.cell_commits_executed
-        );
-        let _ = writeln!(
-            out,
-            "| Incremental Commit Latency (p50 / p95 / p99) | `{} / {} / {} µs` |",
-            self.commit_latency.p50_us, self.commit_latency.p95_us, self.commit_latency.p99_us
-        );
-        let _ = writeln!(
-            out,
-            "| Fork Branching Latency (p50 / p95 / p99) | `{} / {} / {} µs` |",
-            self.fork_branch_latency.p50_us,
-            self.fork_branch_latency.p95_us,
-            self.fork_branch_latency.p99_us
-        );
-        let _ = writeln!(
-            out,
-            "| Exact Cell Query Latency (p50 / p95 / p99) | `{} / {} / {} µs` |",
-            self.exact_query_latency.p50_us,
-            self.exact_query_latency.p95_us,
-            self.exact_query_latency.p99_us
-        );
+        let mut lines = vec![
+            format!(
+                "### xP&A Layer 5 Benchmark Scorecard (scale=`{}`, seed=`0x{:016x}`, evidence=`{}`)",
+                self.scale, self.seed, self.evidence_class
+            ),
+            String::new(),
+            "| Metric | Value |".to_owned(),
+            "|---|---|".to_owned(),
+            format!(
+                "| M5 Synthetic Stream (`stores x skus x weeks`, in-memory) | `{} x {} x {}` ({} daily POS events) |",
+                self.m5_summary.stores,
+                self.m5_summary.skus,
+                self.m5_summary.weeks,
+                self.m5_summary.daily_pos_events
+            ),
+            format!(
+                "| M5 Stream Revenue / Margin / GMROI | `{}` / `{}` / `{}` |",
+                self.m5_summary.total_revenue,
+                self.m5_summary.total_gross_margin,
+                self.m5_summary.portfolio_gmroi.as_deref().unwrap_or("n/a")
+            ),
+            format!(
+                "| FPABench Synthetic Stream (in-memory, not cell-loaded) | `{}` facts / net income `{}` |",
+                self.synthetic_facts_generated, self.fpabench_total_net_income
+            ),
+            format!(
+                "| Loaded Population (`cell_facts_loaded` / `olap_facts_loaded`) | `{}` / `{}` governed `PosSale` facts |",
+                self.cell_facts_loaded, self.olap_facts_loaded
+            ),
+            format!(
+                "| Exactness & Lineage Verified | exact=`{}` / lineage=`{}` |",
+                self.exactness_verified, self.lineage_verified
+            ),
+            format!(
+                "| Process RSS (`VmRSS`) | `{}` |",
+                self.rss_kib
+                    .map_or_else(|| "n/a".to_owned(), |kib| format!("{kib} KiB"))
+            ),
+            format!(
+                "| Governed Cell Ingest Throughput | `{} facts/s` ({} loaded) |",
+                self.ingest_facts_per_sec, self.cell_facts_loaded
+            ),
+            format!(
+                "| Incremental Commit Latency (p50 / p95 / p99, n={}) | `{} / {} / {} us` |",
+                self.commit_latency.samples,
+                self.commit_latency.p50_us,
+                self.commit_latency.p95_us,
+                self.commit_latency.p99_us
+            ),
+            format!(
+                "| Fork Branching Latency (p50 / p95 / p99, n={}) | `{} / {} / {} us` |",
+                self.fork_branch_latency.samples,
+                self.fork_branch_latency.p50_us,
+                self.fork_branch_latency.p95_us,
+                self.fork_branch_latency.p99_us
+            ),
+            format!(
+                "| Exact Cell Query Latency (p50 / p95 / p99, n={}, {} facts) | `{} / {} / {} us` |",
+                self.exact_query_latency.samples,
+                self.cell_facts_loaded,
+                self.exact_query_latency.p50_us,
+                self.exact_query_latency.p95_us,
+                self.exact_query_latency.p99_us
+            ),
+        ];
         if let Some(duck) = &self.duckdb_query_latency {
-            let _ = writeln!(
-                out,
-                "| DuckDB OLAP Query Latency (p50 / p95 / p99) | `{} / {} / {} µs` |",
-                duck.p50_us, duck.p95_us, duck.p99_us
-            );
+            lines.push(format!(
+                "| DuckDB OLAP Query Latency (p50 / p95 / p99, n={}, {} facts) | `{} / {} / {} us` |",
+                duck.samples, self.olap_facts_loaded, duck.p50_us, duck.p95_us, duck.p99_us
+            ));
         }
         if let Some(df) = &self.datafusion_query_latency {
-            let _ = writeln!(
-                out,
-                "| DataFusion OLAP Query Latency (p50 / p95 / p99) | `{} / {} / {} µs` |",
-                df.p50_us, df.p95_us, df.p99_us
-            );
+            lines.push(format!(
+                "| DataFusion OLAP Query Latency (p50 / p95 / p99, n={}, {} facts) | `{} / {} / {} us` |",
+                df.samples, self.olap_facts_loaded, df.p50_us, df.p95_us, df.p99_us
+            ));
         }
-        out
+        lines.join("\n")
     }
 }
 
-/// Run the full Layer 5 benchmark harness at `scale` and `seed`, returning a
-/// structured [`BenchmarkScorecard`].
+/// Independent exact `(sum_gm, sum_rev)` oracle keyed by `(store_id, week_monday)`
+/// over the exact governed `PosSale` facts loaded into the benchmark cell.
+type LoadedSalesOracle = BTreeMap<(String, String), (i128, i128)>;
+
+/// Run the full Layer 5 benchmark harness at `scale` and `seed`, timing Exact
+/// Cell and enabled OLAP engines over the exact same loaded population.
 ///
 /// # Errors
-/// Returns an error if any workload generation, cell commit, fork, or query fails.
+/// Returns an error if any workload generation, cell commit, fork, query, or
+/// exactness/lineage verification fails.
 pub fn run_benchmark_scorecard(scale: BenchScale, seed: u64) -> Result<BenchmarkScorecard, String> {
     let m5_summary = run_m5_synthetic_workload(seed, M5ShapeConfig::for_scale(scale))?;
     let fpa_cfg = FpaBenchConfig::for_scale(scale);
-    let (fpabench_generated_facts, fpabench_net_scaled) = run_fpabench_pnl_stream(seed, fpa_cfg)?;
-    let (cell, ingest_facts_per_sec, commit_latency) = benchmark_cell_ingest(seed, fpa_cfg)?;
+    let (synthetic_facts_generated, fpabench_net_scaled) = run_fpabench_pnl_stream(seed, fpa_cfg)?;
+    let (cell, loaded_oracle, ingest_facts_per_sec, commit_latency) =
+        benchmark_cell_ingest(seed, fpa_cfg)?;
     let fork_branch_latency = benchmark_fork_branching(&cell, fpa_cfg.fork_branches)?;
 
     let plan = cell
         .pack
         .retail_question_with_bound("supply.retail.store_gross_margin_rate_weekly", 10_000)?;
-    let exact_query_latency = benchmark_exact_queries(&cell, &plan, fpa_cfg.query_iterations)?;
-    let duckdb_query_latency = benchmark_duckdb_queries(&cell, &plan, fpa_cfg.query_iterations)?;
+    let (exact_query_latency, exact_result) =
+        benchmark_exact_queries(&cell, &plan, fpa_cfg.query_iterations)?;
+    verify_loaded_exactness_and_lineage(&exact_result, &loaded_oracle, fpa_cfg.cell_sales_commits)?;
+
+    let duckdb_query_latency =
+        benchmark_duckdb_queries(&cell, &plan, fpa_cfg.query_iterations, &exact_result)?;
     let datafusion_query_latency =
-        benchmark_datafusion_queries(&cell, &plan, fpa_cfg.query_iterations)?;
+        benchmark_datafusion_queries(&cell, &plan, fpa_cfg.query_iterations, &exact_result)?;
+    let olap_facts_loaded = if duckdb_query_latency.is_some() || datafusion_query_latency.is_some()
+    {
+        fpa_cfg.cell_sales_commits
+    } else {
+        0
+    };
 
     Ok(BenchmarkScorecard {
         scale: scale.as_str().to_owned(),
         seed,
         evidence_class: "sampled".to_owned(),
         m5_summary,
-        fpabench_generated_facts,
+        synthetic_facts_generated,
         fpabench_total_net_income: decimal_from_scaled(fpabench_net_scaled)?.canonical(),
-        cell_commits_executed: fpa_cfg.cell_sales_commits,
+        cell_facts_loaded: fpa_cfg.cell_sales_commits,
+        olap_facts_loaded,
+        exactness_verified: true,
+        lineage_verified: true,
+        rss_kib: read_process_rss_kib(),
         ingest_facts_per_sec,
         commit_latency,
         fork_branch_latency,
@@ -441,10 +500,56 @@ pub fn run_benchmark_scorecard(scale: BenchScale, seed: u64) -> Result<Benchmark
     })
 }
 
+fn verify_loaded_exactness_and_lineage(
+    result: &QueryResult,
+    oracle: &LoadedSalesOracle,
+    expected_facts: usize,
+) -> Result<(), String> {
+    if result.lineage_ref.trim().is_empty() {
+        return Err("benchmark QueryResult missing lineage_ref".to_owned());
+    }
+    if result.rows.len() != oracle.len() {
+        return Err(format!(
+            "benchmark bucket count mismatch: actual={} oracle={}",
+            result.rows.len(),
+            oracle.len()
+        ));
+    }
+    for ((store_id, week), (sum_gm, sum_rev)) in oracle {
+        let actual = bucket_decimal_exact(result, &["EGP", store_id, "costed", week])
+            .ok_or_else(|| format!("missing benchmark bucket ({store_id}, {week})"))?;
+        let expected_scaled =
+            independent_ratio_scaled(*sum_gm, *sum_rev).ok_or("benchmark oracle ratio None")?;
+        let expected = decimal_from_scaled(expected_scaled)?;
+        if actual != expected {
+            return Err(format!(
+                "benchmark exactness mismatch on ({store_id},{week}): actual={} expected={}",
+                actual.canonical(),
+                expected.canonical()
+            ));
+        }
+    }
+    let total_members: usize = result
+        .rows
+        .values()
+        .map(|row| {
+            row.member_count
+                .and_then(|n| usize::try_from(n).ok())
+                .unwrap_or(row.members.len())
+        })
+        .sum();
+    if total_members != expected_facts {
+        return Err(format!(
+            "benchmark lineage member count mismatch: actual={total_members} expected={expected_facts}"
+        ));
+    }
+    Ok(())
+}
+
 fn benchmark_cell_ingest(
     seed: u64,
     cfg: FpaBenchConfig,
-) -> Result<(EntityCell, u64, LatencySummary), String> {
+) -> Result<(EntityCell, LoadedSalesOracle, u64, LatencySummary), String> {
     let mut cell = EntityCell::open(
         &cell_id_for_entity(seed, 500),
         "LE-BENCH",
@@ -456,46 +561,60 @@ fn benchmark_cell_ingest(
     cell.register_book("xP&A Benchmark Book", "corporation")?;
     let bench_stores = cfg.stores.clamp(1, 8);
     let bench_skus = cfg.skus.clamp(1, 8);
-    for s_idx in 0..bench_skus {
-        let sku = format!("SKU-B-{s_idx}");
+    for sku_idx in 0..bench_skus {
+        let sku = format!("SKU-B-{sku_idx}");
         cell.register_sku(&sku, "dry_goods", "each")?;
         cell.record_unit_cost(
             &sku,
-            &format!("COST-B-{s_idx}"),
+            &format!("COST-B-{sku_idx}"),
             "SUP-BENCH",
             "100",
             "2026-07-01T00:00:00Z",
         )?;
     }
-    for st_idx in 0..bench_stores {
-        let store = format!("ST-B-{st_idx}");
+    for store_idx in 0..bench_stores {
+        let store = format!("ST-B-{store_idx}");
         cell.register_store(&store, &store, "CUST-B", "mall_store", Some("MALL-CFC"))?;
     }
 
     let mut rng = SplitMix64::new(seed).fork(0xBE4C_0001);
     let mut latencies = Vec::with_capacity(cfg.cell_sales_commits);
+    let mut oracle: LoadedSalesOracle = BTreeMap::new();
     let ingest_start = Instant::now();
     for idx in 0..cfg.cell_sales_commits {
-        let st_idx = rem_usize(idx, bench_stores);
-        let s_idx = rem_usize(div_usize(idx, bench_stores), bench_skus);
+        let store_idx = rem_usize(idx, bench_stores);
+        let sku_idx = rem_usize(div_usize(idx, bench_stores), bench_skus);
         let week = u32::try_from(rem_usize(idx, 16)).unwrap_or(0);
         let day = u32::try_from(rem_usize(idx, 6)).unwrap_or(0);
         let qty = rng.range_u64(1, 10);
-        let rev = qty.saturating_mul(rng.range_u64(140, 240));
+        let price = rng.range_u64(140, 240);
+        let rev = qty.saturating_mul(price);
+        let gm = qty.saturating_mul(price.saturating_sub(100));
+        let store_id = format!("ST-B-{store_idx}");
+        let week_iso = week_monday_iso(week)?;
         let sold_at = week_timestamp_utc(week, day, 12)?;
         let t0 = Instant::now();
         cell.record_costed_sale(
             &format!("SALE-B-{idx}"),
-            &format!("ST-B-{st_idx}"),
-            &format!("SKU-B-{s_idx}"),
+            &store_id,
+            &format!("SKU-B-{sku_idx}"),
             &qty.to_string(),
             "each",
             &rev.to_string(),
             "100",
-            &format!("COST-B-{s_idx}"),
+            &format!("COST-B-{sku_idx}"),
             &sold_at,
         )?;
         latencies.push(t0.elapsed());
+        let entry = oracle.entry((store_id, week_iso)).or_insert((0, 0));
+        entry.0 = entry
+            .0
+            .checked_add(scaled(i128::from(gm)))
+            .ok_or("bench oracle gm overflow")?;
+        entry.1 = entry
+            .1
+            .checked_add(scaled(i128::from(rev)))
+            .ok_or("bench oracle rev overflow")?;
     }
     let elapsed_us = ingest_start
         .elapsed()
@@ -510,6 +629,7 @@ fn benchmark_cell_ingest(
     let ingest_facts_per_sec = u64::try_from(throughput).unwrap_or(u64::MAX);
     Ok((
         cell,
+        oracle,
         ingest_facts_per_sec,
         LatencySummary::from_durations(&latencies),
     ))
@@ -539,19 +659,22 @@ fn benchmark_exact_queries(
     cell: &EntityCell,
     plan: &norn_checker::metric::compute::QuestionPlan,
     iterations: usize,
-) -> Result<LatencySummary, String> {
+) -> Result<(LatencySummary, QueryResult), String> {
     let ctx = cell.query_context();
     let mut latencies = Vec::with_capacity(iterations);
+    let mut last_result = None;
     for _ in 0..iterations {
         let t0 = Instant::now();
-        let _ = cell
+        let res = cell
             .cell()?
             .store()
             .evaluate_question(plan, ctx.clone(), |_| Ok(true))
             .map_err(|e| format!("bench exact query: {e}"))?;
         latencies.push(t0.elapsed());
+        last_result = Some(res);
     }
-    Ok(LatencySummary::from_durations(&latencies))
+    let result = last_result.ok_or("zero exact query iterations")?;
+    Ok((LatencySummary::from_durations(&latencies), result))
 }
 
 fn run_fpabench_pnl_stream(seed: u64, cfg: FpaBenchConfig) -> Result<(u64, i128), String> {
@@ -584,11 +707,22 @@ fn run_fpabench_pnl_stream(seed: u64, cfg: FpaBenchConfig) -> Result<(u64, i128)
     Ok((facts, net_income_scaled))
 }
 
+fn read_process_rss_kib() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            return rest.split_whitespace().next()?.parse::<u64>().ok();
+        }
+    }
+    None
+}
+
 #[cfg(feature = "duckdb")]
 fn benchmark_duckdb_queries(
     cell: &EntityCell,
     plan: &norn_checker::metric::compute::QuestionPlan,
     iterations: usize,
+    exact_ref: &QueryResult,
 ) -> Result<Option<LatencySummary>, String> {
     use norn_cell::analytics::TenantId;
     use norn_cell::analytics::engine::{Engine as DuckEngine, Settings as DuckSettings};
@@ -624,6 +758,7 @@ fn benchmark_duckdb_queries(
     }
     let ctx = cell.query_context();
     let mut samples = Vec::with_capacity(iterations);
+    let mut last_olap = None;
     for _ in 0..iterations {
         let t0 = Instant::now();
         let prepared = store
@@ -632,19 +767,28 @@ fn benchmark_duckdb_queries(
         let response = duck
             .evaluate(prepared.request())
             .map_err(|e| format!("duck eval: {} {}", e.code, e.detail))?;
-        let _ = store
+        let ans = store
             .analytics_answer(prepared, response)
             .map_err(|e| format!("duck answer: {e}"))?;
         samples.push(t0.elapsed());
+        last_olap = Some(ans);
+    }
+    if let Some(olap) = last_olap {
+        assert_query_result_parity("bench/duckdb", exact_ref, &olap, ComputeEngine::Duckdb)?;
     }
     Ok(Some(LatencySummary::from_durations(&samples)))
 }
 
 #[cfg(not(feature = "duckdb"))]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "matches feature-enabled DuckDB benchmark signature"
+)]
 fn benchmark_duckdb_queries(
     _cell: &EntityCell,
     _plan: &norn_checker::metric::compute::QuestionPlan,
     _iterations: usize,
+    _exact_ref: &QueryResult,
 ) -> Result<Option<LatencySummary>, String> {
     Ok(None)
 }
@@ -654,6 +798,7 @@ fn benchmark_datafusion_queries(
     cell: &EntityCell,
     plan: &norn_checker::metric::compute::QuestionPlan,
     iterations: usize,
+    exact_ref: &QueryResult,
 ) -> Result<Option<LatencySummary>, String> {
     use norn_cell::analytics::TenantId;
     use norn_cell::analytics::datafusion::{Engine as DfEngine, Settings as DfSettings};
@@ -689,6 +834,7 @@ fn benchmark_datafusion_queries(
     }
     let ctx = cell.query_context();
     let mut samples = Vec::with_capacity(iterations);
+    let mut last_olap = None;
     for _ in 0..iterations {
         let t0 = Instant::now();
         let prepared = store
@@ -697,19 +843,33 @@ fn benchmark_datafusion_queries(
         let response = df
             .evaluate(prepared.request())
             .map_err(|e| format!("df eval: {} {}", e.code, e.detail))?;
-        let _ = store
+        let ans = store
             .analytics_answer(prepared, response)
             .map_err(|e| format!("df answer: {e}"))?;
         samples.push(t0.elapsed());
+        last_olap = Some(ans);
+    }
+    if let Some(olap) = last_olap {
+        assert_query_result_parity(
+            "bench/datafusion",
+            exact_ref,
+            &olap,
+            ComputeEngine::DataFusion,
+        )?;
     }
     Ok(Some(LatencySummary::from_durations(&samples)))
 }
 
 #[cfg(not(feature = "datafusion"))]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "matches feature-enabled DataFusion benchmark signature"
+)]
 fn benchmark_datafusion_queries(
     _cell: &EntityCell,
     _plan: &norn_checker::metric::compute::QuestionPlan,
     _iterations: usize,
+    _exact_ref: &QueryResult,
 ) -> Result<Option<LatencySummary>, String> {
     Ok(None)
 }

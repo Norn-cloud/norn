@@ -2,354 +2,49 @@
 //!
 //! 1. **Exact decimal & unit-partition algebra (`METRIC-UNIT-PARTITION-1`):**
 //!    checker refusals (`mixed_currency`, `mixed_unit`), checked 6-decimal `i128`
-//!    arithmetic, and ratio-of-sums exactness (`WOS`, `GMROI`, `gross_margin_rate`,
-//!    `sell_through_rate`).
+//!    arithmetic verified against an independent integer oracle, ratio-of-sums vs
+//!    average-of-ratios separation, and real governed cell KPI evaluation
+//!    (`gross_margin_rate`, `sell_through`, `WOS`, `GMROI`).
 //! 2. **Temporal & grain laws:** canonical UTC ISO-week Monday binding
 //!    (`period_week` <-> `period_end`), snapshot evidence cutoffs, and bitemporal
 //!    restatement preservation (`ASOF-KNOWLEDGE-1` + `CellError::TemporalLeakage`)
 //!    without freezing future recounts.
 //! 3. **Single-book & multi-entity isolation (`READ-LOCAL-1`):** single
 //!    `LegalEntity` book per cell, read-only combined management views, and the
-//!    explicit 4-tier `OperatingGroup` reporting ladder (`side_by_side` ->
-//!    `fx_translated` -> `inter_entity_netted` -> `statutory_consolidated`).
-
-use std::collections::BTreeMap;
+//!    fail-closed 4-tier `OperatingGroup` projection ladder in
+//!    [`super::operating_group`].
 
 use norn_cell::combined_view::CombinedViewKind;
-use norn_cell::{CellError, KnowledgeCutoff};
-use norn_checker::metric::compute::arithmetic::{FACTOR, ratio};
+use norn_cell::{CellError, KnowledgeCutoff, Receipt};
+use norn_checker::metric::compute::arithmetic::ratio;
 use norn_ir::Decimal;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use super::actions::StoreKpiInput;
 use super::cuts::{
     bucket_decimal_exact, cell_id_for_entity, dst_coverage_spec, evaluate_multi_cell_report,
 };
 use super::env::{DEFAULT_CLOCK_MS, EntityCell, retail_pack};
+use super::operating_group::{
+    EntityReportingSlice, FxRateEntry, InterEntityTransfer, OperatingGroupRefusal,
+    OperatingGroupTier, StatutoryCloseApproval, compute_elimination_journal_pin,
+    evaluate_operating_group_tier, slice_from_cut_snapshot,
+};
 use super::prng::{
-    HALF_FACTOR, PRIMARY_SEED, SECONDARY_SEED, SplitMix64, decimal_from_scaled, decimal_to_scaled,
-    div_i128, exact_ratio_of_sums, scaled, week_monday_iso,
+    PRIMARY_SEED, SECONDARY_SEED, SplitMix64, decimal_from_scaled, decimal_to_scaled, div_i128,
+    exact_ratio_of_sums, independent_ratio_scaled, scaled, week_monday_iso,
 };
 
-/// Explicit 4-tier `OperatingGroup` reporting ladder (`READ-LOCAL-1`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperatingGroupTier {
-    /// Tier 1: Read-only side-by-side per-entity figures in native currencies.
-    SideBySide,
-    /// Tier 2: Translated into one reporting currency via a pinned as-of FX table.
-    FxTranslated,
-    /// Tier 3: Translated + bilateral matched inter-entity flows eliminated.
-    InterEntityNetted,
-    /// Tier 4: Audited statutory consolidated financial statements with close sign-off.
-    StatutoryConsolidated,
-}
-
-/// Pinned FX rate converting `1 unit` of `from_currency` into `to_currency` at `as_of`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FxRateEntry {
-    pub from_currency: String,
-    pub to_currency: String,
-    /// 6-decimal scaled exact rate (e.g. `48_500_000` = `48.500000` EGP per USD).
-    pub rate_scaled: i128,
-    pub as_of: String,
-    pub rate_table_pin: String,
-}
-
-/// One bilateral inter-entity stock/sale flow matched between two legal entities.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InterEntityTransfer {
-    pub transfer_id: String,
-    pub seller_entity_id: String,
-    pub buyer_entity_id: String,
-    pub currency: String,
-    pub seller_amount_scaled: i128,
-    pub buyer_amount_scaled: i128,
-    pub seller_receipt_pin: Option<String>,
-    pub buyer_receipt_pin: Option<String>,
-}
-
-/// Statutory close sign-off required exclusively for Tier 4 (`statutory_consolidated`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StatutoryCloseApproval {
-    pub period_week: String,
-    pub auditor_principal: String,
-    pub elimination_journal_pin: String,
-    pub approved_at: String,
-}
-
-/// One entity's exact local revenue & margin slice extracted from a pinned cell cut.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EntityReportingSlice {
-    pub entity_id: String,
-    pub currency: String,
-    pub revenue_scaled: i128,
-    pub gross_margin_scaled: i128,
-}
-
-/// Result of projecting an `OperatingGroup` at a requested tier.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OperatingGroupProjection {
-    pub tier: OperatingGroupTier,
-    pub is_consolidated_financial_statement: bool,
-    pub read_only: bool,
-    pub reporting_currency: Option<String>,
-    pub per_currency_revenue: BTreeMap<String, Decimal>,
-    pub translated_revenue: Option<Decimal>,
-    pub eliminated_inter_entity_revenue: Option<Decimal>,
-    pub net_group_revenue: Option<Decimal>,
-}
-
-/// Deterministic refusal codes for the 4-tier `OperatingGroup` ladder.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OperatingGroupRefusal {
-    MissingFxTable {
-        from_currency: String,
-        to_currency: String,
-    },
-    UnmatchedInterEntityTransfer {
-        transfer_id: String,
-        reason: String,
-    },
-    MissingStatutoryApproval {
-        detail: String,
-    },
-    ArithmeticOverflow {
-        detail: String,
-    },
-}
-
-/// Project `slices` at `requested_tier` under fail-closed evidence rules.
-///
-/// # Errors
-/// Returns [`OperatingGroupRefusal`] whenever a higher tier lacks pinned FX,
-/// bilateral matched inter-entity receipts, or statutory close approval.
-pub fn evaluate_operating_group_tier(
-    requested_tier: OperatingGroupTier,
-    slices: &[EntityReportingSlice],
-    reporting_currency: Option<&str>,
-    fx_rates: &[FxRateEntry],
-    inter_entity_transfers: &[InterEntityTransfer],
-    statutory_approval: Option<&StatutoryCloseApproval>,
-) -> Result<OperatingGroupProjection, OperatingGroupRefusal> {
-    let (by_ccy_scaled, per_currency_revenue) = aggregate_by_currency(slices)?;
-    if requested_tier == OperatingGroupTier::SideBySide {
-        return Ok(OperatingGroupProjection {
-            tier: OperatingGroupTier::SideBySide,
-            is_consolidated_financial_statement: false,
-            read_only: true,
-            reporting_currency: None,
-            per_currency_revenue,
-            translated_revenue: None,
-            eliminated_inter_entity_revenue: None,
-            net_group_revenue: None,
-        });
-    }
-
-    let target_ccy = reporting_currency.ok_or_else(|| OperatingGroupRefusal::MissingFxTable {
-        from_currency: "*".to_owned(),
-        to_currency: "<unspecified>".to_owned(),
-    })?;
-    let translated_total = translate_currency_totals(&by_ccy_scaled, target_ccy, fx_rates)?;
-    let translated_dec = decimal_from_scaled(translated_total)
-        .map_err(|detail| OperatingGroupRefusal::ArithmeticOverflow { detail })?;
-    if requested_tier == OperatingGroupTier::FxTranslated {
-        return Ok(OperatingGroupProjection {
-            tier: OperatingGroupTier::FxTranslated,
-            is_consolidated_financial_statement: false,
-            read_only: true,
-            reporting_currency: Some(target_ccy.to_owned()),
-            per_currency_revenue,
-            translated_revenue: Some(translated_dec),
-            eliminated_inter_entity_revenue: None,
-            net_group_revenue: None,
-        });
-    }
-
-    let eliminated_scaled =
-        sum_verified_eliminations(inter_entity_transfers, target_ccy, fx_rates)?;
-    let net_scaled = translated_total
-        .checked_sub(eliminated_scaled)
-        .ok_or_else(|| OperatingGroupRefusal::ArithmeticOverflow {
-            detail: "net group revenue underflow".to_owned(),
-        })?;
-    let eliminated_dec = decimal_from_scaled(eliminated_scaled)
-        .map_err(|detail| OperatingGroupRefusal::ArithmeticOverflow { detail })?;
-    let net_dec = decimal_from_scaled(net_scaled)
-        .map_err(|detail| OperatingGroupRefusal::ArithmeticOverflow { detail })?;
-
-    if requested_tier == OperatingGroupTier::InterEntityNetted {
-        return Ok(OperatingGroupProjection {
-            tier: OperatingGroupTier::InterEntityNetted,
-            is_consolidated_financial_statement: false,
-            read_only: true,
-            reporting_currency: Some(target_ccy.to_owned()),
-            per_currency_revenue,
-            translated_revenue: Some(translated_dec),
-            eliminated_inter_entity_revenue: Some(eliminated_dec),
-            net_group_revenue: Some(net_dec),
-        });
-    }
-
-    validate_statutory_approval(statutory_approval)?;
-    Ok(OperatingGroupProjection {
-        tier: OperatingGroupTier::StatutoryConsolidated,
-        is_consolidated_financial_statement: true,
-        read_only: true,
-        reporting_currency: Some(target_ccy.to_owned()),
-        per_currency_revenue,
-        translated_revenue: Some(translated_dec),
-        eliminated_inter_entity_revenue: Some(eliminated_dec),
-        net_group_revenue: Some(net_dec),
-    })
-}
-
-fn aggregate_by_currency(
-    slices: &[EntityReportingSlice],
-) -> Result<(BTreeMap<String, i128>, BTreeMap<String, Decimal>), OperatingGroupRefusal> {
-    let mut by_ccy: BTreeMap<String, i128> = BTreeMap::new();
-    for slice in slices {
-        let entry = by_ccy.entry(slice.currency.clone()).or_insert(0);
-        *entry = entry.checked_add(slice.revenue_scaled).ok_or_else(|| {
-            OperatingGroupRefusal::ArithmeticOverflow {
-                detail: format!("revenue sum overflow for {}", slice.currency),
-            }
-        })?;
-    }
-    let mut formatted = BTreeMap::new();
-    for (ccy, val) in &by_ccy {
-        let dec = decimal_from_scaled(*val)
-            .map_err(|detail| OperatingGroupRefusal::ArithmeticOverflow { detail })?;
-        formatted.insert(ccy.clone(), dec);
-    }
-    Ok((by_ccy, formatted))
-}
-
-fn translate_currency_totals(
-    by_ccy: &BTreeMap<String, i128>,
-    target_ccy: &str,
-    fx_rates: &[FxRateEntry],
-) -> Result<i128, OperatingGroupRefusal> {
-    let mut total: i128 = 0;
-    for (ccy, val) in by_ccy {
-        let converted = convert_scaled(*val, ccy, target_ccy, fx_rates)?;
-        total = total.checked_add(converted).ok_or_else(|| {
-            OperatingGroupRefusal::ArithmeticOverflow {
-                detail: "translated revenue sum overflow".to_owned(),
-            }
-        })?;
-    }
-    Ok(total)
-}
-
-fn sum_verified_eliminations(
-    transfers: &[InterEntityTransfer],
-    target_ccy: &str,
-    fx_rates: &[FxRateEntry],
-) -> Result<i128, OperatingGroupRefusal> {
-    let mut eliminated: i128 = 0;
-    for xfer in transfers {
-        if xfer.seller_entity_id == xfer.buyer_entity_id {
-            return Err(OperatingGroupRefusal::UnmatchedInterEntityTransfer {
-                transfer_id: xfer.transfer_id.clone(),
-                reason: "self-transfer cannot be an inter-entity elimination".to_owned(),
-            });
-        }
-        if xfer.seller_receipt_pin.is_none() || xfer.buyer_receipt_pin.is_none() {
-            return Err(OperatingGroupRefusal::UnmatchedInterEntityTransfer {
-                transfer_id: xfer.transfer_id.clone(),
-                reason: "missing bilateral receipt pin on seller or buyer side".to_owned(),
-            });
-        }
-        if xfer.seller_amount_scaled != xfer.buyer_amount_scaled {
-            return Err(OperatingGroupRefusal::UnmatchedInterEntityTransfer {
-                transfer_id: xfer.transfer_id.clone(),
-                reason: format!(
-                    "asymmetric bilateral amounts: seller={} buyer={}",
-                    xfer.seller_amount_scaled, xfer.buyer_amount_scaled
-                ),
-            });
-        }
-        let converted = convert_scaled(
-            xfer.seller_amount_scaled,
-            &xfer.currency,
-            target_ccy,
-            fx_rates,
-        )?;
-        eliminated = eliminated.checked_add(converted).ok_or_else(|| {
-            OperatingGroupRefusal::ArithmeticOverflow {
-                detail: "eliminated inter-entity sum overflow".to_owned(),
-            }
-        })?;
-    }
-    Ok(eliminated)
-}
-
-fn validate_statutory_approval(
-    approval: Option<&StatutoryCloseApproval>,
-) -> Result<(), OperatingGroupRefusal> {
-    let Some(signoff) = approval else {
-        return Err(OperatingGroupRefusal::MissingStatutoryApproval {
-            detail: "statutory_consolidated requires auditor close approval and elimination pin"
-                .to_owned(),
-        });
-    };
-    if signoff.auditor_principal.trim().is_empty()
-        || signoff.elimination_journal_pin.trim().is_empty()
-    {
-        return Err(OperatingGroupRefusal::MissingStatutoryApproval {
-            detail: "auditor_principal and elimination_journal_pin must be non-empty".to_owned(),
-        });
-    }
-    Ok(())
-}
-
-fn convert_scaled(
-    amount_scaled: i128,
-    from_ccy: &str,
-    to_ccy: &str,
-    fx_rates: &[FxRateEntry],
-) -> Result<i128, OperatingGroupRefusal> {
-    if from_ccy == to_ccy {
-        return Ok(amount_scaled);
-    }
-    let rate = fx_rates
-        .iter()
-        .find(|r| {
-            r.from_currency == from_ccy
-                && r.to_currency == to_ccy
-                && !r.as_of.trim().is_empty()
-                && !r.rate_table_pin.trim().is_empty()
-                && r.rate_scaled > 0
-        })
-        .ok_or_else(|| OperatingGroupRefusal::MissingFxTable {
-            from_currency: from_ccy.to_owned(),
-            to_currency: to_ccy.to_owned(),
-        })?;
-    let product = amount_scaled.checked_mul(rate.rate_scaled).ok_or_else(|| {
-        OperatingGroupRefusal::ArithmeticOverflow {
-            detail: format!("FX multiply overflow for {from_ccy}->{to_ccy}"),
-        }
-    })?;
-    let adjusted = if product >= 0 {
-        product.checked_add(HALF_FACTOR)
-    } else {
-        product.checked_sub(HALF_FACTOR)
-    }
-    .ok_or_else(|| OperatingGroupRefusal::ArithmeticOverflow {
-        detail: "FX rounding overflow".to_owned(),
-    })?;
-    Ok(div_i128(adjusted, FACTOR))
-}
-
-/// Layer 1A: Verify `METRIC-UNIT-PARTITION-1`, checked exact decimal algebra,
-/// and ratio-of-sums exactness (never average-of-ratios).
+/// Layer 1A: Verify `METRIC-UNIT-PARTITION-1`, checked exact decimal algebra
+/// against an independent integer oracle, and real governed KPI ratio-of-sums
+/// evaluation inside a live cell.
 ///
 /// # Errors
 /// Returns an error if any structural invariant or refusal fails.
 pub fn verify_decimal_and_unit_partition_laws() -> Result<(), String> {
     verify_unit_partition_checker_refusals()?;
-    verify_checked_decimal_and_ratio_algebra()
+    verify_checked_decimal_and_ratio_algebra()?;
+    verify_governed_cell_kpi_ratio_of_sums()
 }
 
 fn verify_unit_partition_checker_refusals() -> Result<(), String> {
@@ -357,7 +52,7 @@ fn verify_unit_partition_checker_refusals() -> Result<(), String> {
     let mut mixed_ccy_q = pack.retail_question_ir("supply.retail.store_revenue_weekly")?;
     mixed_ccy_q
         .dimensions
-        .retain(|dim| dim.path.property != "currency");
+        .retain(|dim| dim.path.property.as_str() != "currency");
     let ccy_err = pack
         .admit_question_ir(&mixed_ccy_q, 200)
         .err()
@@ -371,7 +66,7 @@ fn verify_unit_partition_checker_refusals() -> Result<(), String> {
     let mut mixed_unit_q = pack.retail_question_ir("supply.retail.store_sales_weekly")?;
     mixed_unit_q
         .dimensions
-        .retain(|dim| dim.path.property != "unit");
+        .retain(|dim| dim.path.property.as_str() != "unit");
     let unit_err = pack
         .admit_question_ir(&mixed_unit_q, 200)
         .err()
@@ -396,22 +91,29 @@ fn verify_checked_decimal_and_ratio_algebra() -> Result<(), String> {
             .and_then(|ga| rev_b.checked_sub(cogs_b).and_then(|gb| ga.checked_add(gb)))
             .ok_or("checked margin overflow")?;
         let sum_rev = rev_a.checked_add(rev_b).ok_or("checked revenue overflow")?;
-        let exact_gmr = exact_ratio_of_sums(sum_gm, sum_rev)?.ok_or("expected exact ratio")?;
-        let direct = ratio(sum_gm, sum_rev)
-            .map_err(|e| format!("ratio: {e:?}"))?
-            .ok_or("direct ratio")?;
-        if exact_gmr != direct {
-            return Err(format!("ratio mismatch: {exact_gmr:?} vs {direct:?}"));
+        let engine_scaled =
+            ratio(sum_gm, sum_rev).ok_or("engine ratio unexpectedly returned None")?;
+        let oracle_scaled =
+            independent_ratio_scaled(sum_gm, sum_rev).ok_or("independent oracle returned None")?;
+        if engine_scaled != oracle_scaled {
+            return Err(format!(
+                "ratio oracle divergence: engine={engine_scaled} oracle={oracle_scaled}"
+            ));
+        }
+        let exact_dec = exact_ratio_of_sums(sum_gm, sum_rev)?.ok_or("expected exact ratio")?;
+        if exact_dec != decimal_from_scaled(oracle_scaled)? {
+            return Err(format!(
+                "exact_ratio_of_sums mismatch: {exact_dec:?} vs oracle {oracle_scaled}"
+            ));
         }
         let neg_gm = sum_gm.checked_neg().ok_or("checked_neg overflow")?;
         if sum_gm.checked_add(neg_gm) != Some(0) {
             return Err("exact additive inverse failed".to_owned());
         }
-        if exact_ratio_of_sums(sum_gm, 0)?.is_some() {
+        if exact_ratio_of_sums(sum_gm, 0)?.is_some() || ratio(sum_gm, 0).is_some() {
             return Err("zero denominator must return None".to_owned());
         }
-        let round_trip = decimal_to_scaled(decimal_from_scaled(sum_gm)?)?;
-        if round_trip != sum_gm {
+        if decimal_to_scaled(decimal_from_scaled(sum_gm)?)? != sum_gm {
             return Err("decimal_from_scaled round-trip mismatch".to_owned());
         }
     }
@@ -421,14 +123,196 @@ fn verify_checked_decimal_and_ratio_algebra() -> Result<(), String> {
         (scaled(60), scaled(10), "6", "WOS"),
         (scaled(5_000), scaled(8_000), "0.625", "GMROI"),
         (scaled(40), scaled(100), "0.4", "sell-through"),
+        (1, 128, "0.007813", "half-away-from-zero +"),
+        (-1, 128, "-0.007813", "half-away-from-zero -"),
     ];
     for (num, den, want, label) in checks {
         let got = exact_ratio_of_sums(num, den)?
             .ok_or_else(|| format!("expected {label}"))?
             .canonical();
-        if got != want {
-            return Err(format!("{label}: expected {want}, got {got}"));
+        let oracle_dec = decimal_from_scaled(
+            independent_ratio_scaled(num, den).ok_or_else(|| format!("oracle none for {label}"))?,
+        )?
+        .canonical();
+        if got != want || oracle_dec != want {
+            return Err(format!(
+                "{label}: expected {want}, got engine={got}, oracle={oracle_dec}"
+            ));
         }
+    }
+    Ok(())
+}
+
+fn verify_governed_cell_kpi_ratio_of_sums() -> Result<(), String> {
+    let book = seed_kpi_ratio_book()?;
+    assert_cell_kpi_matches_oracle(
+        &book,
+        "supply.retail.store_gross_margin_rate_weekly",
+        &["EGP", "ST-KPI-1", "costed", "2026-08-31"],
+        scaled(2_000),
+        scaled(4_000),
+        "0.5",
+    )?;
+    assert_cell_kpi_matches_oracle(
+        &book,
+        "supply.retail.store_sell_through_weekly",
+        &["each", "ST-KPI-1"],
+        scaled(20),
+        scaled(100),
+        "0.2",
+    )?;
+    assert_cell_kpi_matches_oracle(
+        &book,
+        "supply.retail.store_weeks_of_supply_weekly",
+        &["each", "ST-KPI-1", "SKU-KPI-1", "2026-08-31"],
+        scaled(80),
+        scaled(20),
+        "4",
+    )?;
+    assert_cell_kpi_matches_oracle(
+        &book,
+        "supply.retail.store_gmroi_weekly",
+        &["EGP", "ST-KPI-1", "SKU-KPI-1", "2026-08-31"],
+        scaled(2_000),
+        scaled(9_000),
+        "0.222222",
+    )
+}
+
+fn seed_kpi_ratio_book() -> Result<EntityCell, String> {
+    let mut book = EntityCell::open(
+        &cell_id_for_entity(PRIMARY_SEED, 7),
+        "LE-KPI-L1",
+        "EGP",
+        "org_xpa_kpi_l1",
+        "prod",
+        DEFAULT_CLOCK_MS,
+    )?;
+    book.register_book("KPI Ratio Law Entity", "sole_proprietorship")?;
+    book.register_sku("SKU-KPI-1", "dry_goods", "each")?;
+    book.register_store(
+        "ST-KPI-1",
+        "KPI Store",
+        "CUST-1",
+        "mall_store",
+        Some("MALL-CFC"),
+    )?;
+    book.record_unit_cost(
+        "SKU-KPI-1",
+        "COST-KPI-1",
+        "SUP-1",
+        "100",
+        "2026-07-01T00:00:00Z",
+    )?;
+    book.record_costed_lot(
+        "LOT-KPI-1",
+        "ST-KPI-1",
+        "SKU-KPI-1",
+        "CUST-1",
+        "100",
+        "each",
+        "100",
+        "2026-08-03T09:00:00Z",
+    )?;
+    book.record_stock_valuation_cut(
+        "CUT-KPI-OPEN",
+        "ST-KPI-1",
+        "SKU-KPI-1",
+        "each",
+        "2026-08-31T00:00:00Z",
+        "100",
+        "10000",
+    )?;
+    seed_kpi_ratio_sales_and_rollup(&mut book)?;
+    Ok(book)
+}
+
+fn seed_kpi_ratio_sales_and_rollup(book: &mut EntityCell) -> Result<(), String> {
+    // Unequal weights: sale 1 GM rate = 0.2; sale 2 GM rate = 0.6.
+    // Average-of-ratios would be 0.4; ratio-of-sums MUST be 2000/4000 = 0.5.
+    book.record_costed_sale(
+        "SALE-KPI-1",
+        "ST-KPI-1",
+        "SKU-KPI-1",
+        "8",
+        "each",
+        "1000",
+        "100",
+        "COST-KPI-1",
+        "2026-09-01T12:00:00Z",
+    )?;
+    book.record_costed_sale(
+        "SALE-KPI-2",
+        "ST-KPI-1",
+        "SKU-KPI-1",
+        "12",
+        "each",
+        "3000",
+        "100",
+        "COST-KPI-1",
+        "2026-09-03T12:00:00Z",
+    )?;
+    book.update_lot_balance(
+        "LOT-KPI-1",
+        "ST-KPI-1",
+        "SKU-KPI-1",
+        "80",
+        "20",
+        "100",
+        "2026-09-04T18:00:00Z",
+    )?;
+    book.record_store_count(
+        false,
+        "ST-KPI-1/SKU-KPI-1/on_hand",
+        "ST-KPI-1",
+        "SKU-KPI-1",
+        "80",
+        "each",
+        "on_hand",
+        "2026-09-05T10:00:00Z",
+        "CC-KPI-1",
+    )?;
+    book.record_store_kpi(&StoreKpiInput {
+        rollup_id: "KPI-L1-W9",
+        store_id: "ST-KPI-1",
+        sku_id: "SKU-KPI-1",
+        period_week: "2026-08-31",
+        unit: "each",
+        on_hand_count_id: "ST-KPI-1/SKU-KPI-1/on_hand",
+        opening_cut_id: "CUT-KPI-OPEN",
+        count_ref: "CC-KPI-1",
+        count_as_of: "2026-09-05T10:00:00Z",
+        costed_ref: "COST-KPI-1",
+        period_start: "2026-08-31T00:00:00Z",
+        period_end: "2026-09-06T23:59:59.999999999Z",
+        sales_weeks: 1,
+        on_hand_qty: "80",
+        avg_weekly_sales_qty: "20",
+        period_gross_margin: "2000",
+        opening_stock_value: "10000",
+        closing_stock_value: "8000",
+    })
+}
+
+fn assert_cell_kpi_matches_oracle(
+    book: &EntityCell,
+    question: &str,
+    bucket: &[&str],
+    num_scaled: i128,
+    den_scaled: i128,
+    expected_text: &str,
+) -> Result<(), String> {
+    let actual = bucket_decimal_exact(&book.answer(question)?, bucket)
+        .ok_or_else(|| format!("{question}: missing bucket {bucket:?}"))?;
+    let oracle_scaled =
+        independent_ratio_scaled(num_scaled, den_scaled).ok_or("independent oracle None")?;
+    let oracle_dec = decimal_from_scaled(oracle_scaled)?;
+    if actual != oracle_dec || actual.canonical() != expected_text {
+        return Err(format!(
+            "{question}: actual={} oracle={} expected={expected_text}",
+            actual.canonical(),
+            oracle_dec.canonical()
+        ));
     }
     Ok(())
 }
@@ -500,6 +384,11 @@ fn seed_temporal_book() -> Result<EntityCell, String> {
     if code != "core.laws.violated" || !msg.contains("sale_matches_cost_record") {
         return Err(format!("future-effective cost must refuse: {code} {msg}"));
     }
+    seed_temporal_positions(&mut book)?;
+    Ok(book)
+}
+
+fn seed_temporal_positions(book: &mut EntityCell) -> Result<(), String> {
     book.record_costed_lot(
         "LOT-T1",
         "ST-T1",
@@ -510,15 +399,14 @@ fn seed_temporal_book() -> Result<EntityCell, String> {
         "100",
         "2026-08-03T09:00:00Z",
     )?;
-    book.ok(
-        "supply.stock_valuation_cut.record",
-        "planner:omar",
-        json!({
-            "cut_id": "CUT-T1-W6", "store_id": "ST-T1", "sku_id": "SKU-A",
-            "unit": "each", "currency": "EGP", "cost_status": "costed",
-            "book_epoch": "1970-01-01T00:00:00Z", "cut_at": "2026-08-31T00:00:00Z",
-            "remaining_qty": "50", "stock_value": "5000",
-        }),
+    book.record_stock_valuation_cut(
+        "CUT-T1-W6",
+        "ST-T1",
+        "SKU-A",
+        "each",
+        "2026-08-31T00:00:00Z",
+        "50",
+        "5000",
     )?;
     book.update_lot_balance(
         "LOT-T1",
@@ -550,8 +438,7 @@ fn seed_temporal_book() -> Result<EntityCell, String> {
         "available",
         "2026-09-04T10:00:00Z",
         "CC-K1",
-    )?;
-    Ok(book)
+    )
 }
 
 fn verify_rollup_temporal_and_cutoff_laws(book: &mut EntityCell) -> Result<(), String> {
@@ -643,7 +530,6 @@ fn verify_bitemporal_recount_preservation(
         ));
     }
 
-    // Anti-leakage: naming K2's frontier under K1's earlier clock MUST refuse `TemporalLeakage`.
     let leak_cutoff = KnowledgeCutoff {
         recorded_at: k1.recorded_at,
         frontier: k2.frontier,
@@ -661,7 +547,8 @@ fn verify_bitemporal_recount_preservation(
 }
 
 /// Layer 1C: Verify single-book-per-cell isolation (`READ-LOCAL-1`), read-only
-/// combined management views, and the explicit 4-tier `OperatingGroup` ladder.
+/// combined management views, and the fail-closed 4-tier `OperatingGroup`
+/// projection ladder bound to real cell cuts and verified `main` receipts.
 ///
 /// # Errors
 /// Returns an error if any isolation or ladder refusal rule fails.
@@ -685,31 +572,48 @@ pub fn verify_single_book_and_operating_group_ladder() -> Result<(), String> {
         return Err("combined management view violated read-only/non-consolidated rule".to_owned());
     }
 
+    let egp_snap = report.cells.first().ok_or("missing EGP snapshot")?;
+    let usd_snap = report.cells.get(1).ok_or("missing USD snapshot")?;
     let egp_rev = bucket_decimal_exact(
-        &egp_cell.answer("supply.retail.store_revenue_weekly")?,
+        egp_snap
+            .answers
+            .as_ref()
+            .and_then(|a| a.get("supply.retail.store_revenue_weekly"))
+            .ok_or("missing EGP revenue answer in cut")?,
         &["EGP", "ST-EGP-1", "2026-08-31"],
     )
     .ok_or("missing EGP revenue")?;
     let usd_rev = bucket_decimal_exact(
-        &usd_cell.answer("supply.retail.store_revenue_weekly")?,
+        usd_snap
+            .answers
+            .as_ref()
+            .and_then(|a| a.get("supply.retail.store_revenue_weekly"))
+            .ok_or("missing USD revenue answer in cut")?,
         &["USD", "ST-USD-1", "2026-08-31"],
     )
     .ok_or("missing USD revenue")?;
+
     let slices = vec![
-        EntityReportingSlice {
-            entity_id: "LE-EGP".to_owned(),
-            currency: "EGP".to_owned(),
-            revenue_scaled: decimal_to_scaled(egp_rev)?,
-            gross_margin_scaled: scaled(1_600),
-        },
-        EntityReportingSlice {
-            entity_id: "LE-USD".to_owned(),
-            currency: "USD".to_owned(),
-            revenue_scaled: decimal_to_scaled(usd_rev)?,
-            gross_margin_scaled: 0,
-        },
+        slice_from_cut_snapshot(
+            "LE-EGP",
+            "EGP",
+            egp_snap,
+            "supply.retail.store_revenue_weekly",
+            decimal_to_scaled(egp_rev)?,
+            scaled(1_600),
+        )?,
+        slice_from_cut_snapshot(
+            "LE-USD",
+            "USD",
+            usd_snap,
+            "supply.retail.store_revenue_weekly",
+            decimal_to_scaled(usd_rev)?,
+            0,
+        )?,
     ];
-    verify_four_tier_ladder(&slices)
+    let seller_receipt = usd_cell.export_main_receipt(usd_cell.head()?.commits)?;
+    let buyer_receipt = egp_cell.export_main_receipt(egp_cell.head()?.commits)?;
+    verify_four_tier_ladder(&slices, &seller_receipt, &buyer_receipt)
 }
 
 fn seed_two_book_cells() -> Result<(EntityCell, EntityCell), String> {
@@ -776,11 +680,16 @@ fn seed_two_book_cells() -> Result<(EntityCell, EntityCell), String> {
             "2026-09-02T12:00:00Z",
         )?;
         book.ingest_baseline_feeds(store, sku, cost, "2026-09-02T12:00:00Z", store)?;
+        book.refresh_watermarks();
     }
     Ok((egp_cell, usd_cell))
 }
 
-fn verify_four_tier_ladder(slices: &[EntityReportingSlice]) -> Result<(), String> {
+fn verify_four_tier_ladder(
+    slices: &[EntityReportingSlice],
+    seller_receipt: &Receipt,
+    buyer_receipt: &Receipt,
+) -> Result<(), String> {
     let fx_table = [FxRateEntry {
         from_currency: "USD".to_owned(),
         to_currency: "EGP".to_owned(),
@@ -789,13 +698,33 @@ fn verify_four_tier_ladder(slices: &[EntityReportingSlice]) -> Result<(), String
         rate_table_pin: "fx:cbe-2026-09-06".to_owned(),
     }];
     verify_tiers_one_and_two(slices, &fx_table)?;
-    verify_tiers_three_and_four(slices, &fx_table)
+    let matched = verify_tier_three(slices, &fx_table, seller_receipt, buyer_receipt)?;
+    verify_tier_four(slices, &fx_table, &matched)
 }
 
 fn verify_tiers_one_and_two(
     slices: &[EntityReportingSlice],
     fx_table: &[FxRateEntry],
 ) -> Result<(), String> {
+    let mut bad_slices = slices.to_vec();
+    if let Some(first) = bad_slices.first_mut() {
+        first.query_pin.clear();
+    }
+    let bad_pin = evaluate_operating_group_tier(
+        OperatingGroupTier::SideBySide,
+        &bad_slices,
+        None,
+        &[],
+        &[],
+        None,
+    );
+    if !matches!(
+        bad_pin,
+        Err(OperatingGroupRefusal::InvalidCellCutPin { .. })
+    ) {
+        return Err(format!("empty query_pin must refuse, got {bad_pin:?}"));
+    }
+
     let t1 =
         evaluate_operating_group_tier(OperatingGroupTier::SideBySide, slices, None, &[], &[], None)
             .map_err(|e| format!("tier 1 failed: {e:?}"))?;
@@ -842,51 +771,62 @@ fn verify_tiers_one_and_two(
     )
     .map_err(|e| format!("tier 2 failed: {e:?}"))?;
     if t2.is_consolidated_financial_statement
-        || t2.translated_revenue.map(Decimal::canonical).as_deref() != Some("52000")
+        || t2
+            .translated_revenue
+            .as_ref()
+            .map(Decimal::canonical)
+            .as_deref()
+            != Some("52000")
     {
         return Err(format!("unexpected tier 2 projection: {t2:?}"));
     }
     Ok(())
 }
 
-fn verify_tiers_three_and_four(
+fn verify_tier_three(
     slices: &[EntityReportingSlice],
     fx_table: &[FxRateEntry],
-) -> Result<(), String> {
-    let unmatched = [InterEntityTransfer {
-        transfer_id: "IE-BAD-1".to_owned(),
+    seller_receipt: &Receipt,
+    buyer_receipt: &Receipt,
+) -> Result<Vec<InterEntityTransfer>, String> {
+    let mut tampered = seller_receipt.clone();
+    "sha256:forged-pin".clone_into(&mut tampered.hash);
+    let forged = [InterEntityTransfer {
+        transfer_id: "IE-FORGED-1".to_owned(),
         seller_entity_id: "LE-USD".to_owned(),
         buyer_entity_id: "LE-EGP".to_owned(),
         currency: "USD".to_owned(),
         seller_amount_scaled: scaled(200),
-        buyer_amount_scaled: scaled(180),
-        seller_receipt_pin: Some("rcpt:seller-1".to_owned()),
-        buyer_receipt_pin: Some("rcpt:buyer-1".to_owned()),
+        buyer_amount_scaled: scaled(200),
+        seller_receipt: Some(tampered),
+        buyer_receipt: Some(buyer_receipt.clone()),
     }];
-    let bad_ie = evaluate_operating_group_tier(
+    let forged_res = evaluate_operating_group_tier(
         OperatingGroupTier::InterEntityNetted,
         slices,
         Some("EGP"),
         fx_table,
-        &unmatched,
+        &forged,
         None,
     );
     if !matches!(
-        bad_ie,
+        forged_res,
         Err(OperatingGroupRefusal::UnmatchedInterEntityTransfer { .. })
     ) {
-        return Err(format!("asymmetric transfer must refuse, got {bad_ie:?}"));
+        return Err(format!(
+            "tampered receipt hash must refuse, got {forged_res:?}"
+        ));
     }
 
-    let matched = [InterEntityTransfer {
+    let matched = vec![InterEntityTransfer {
         transfer_id: "IE-OK-1".to_owned(),
         seller_entity_id: "LE-USD".to_owned(),
         buyer_entity_id: "LE-EGP".to_owned(),
         currency: "USD".to_owned(),
         seller_amount_scaled: scaled(200),
         buyer_amount_scaled: scaled(200),
-        seller_receipt_pin: Some("rcpt:seller-1".to_owned()),
-        buyer_receipt_pin: Some("rcpt:buyer-1".to_owned()),
+        seller_receipt: Some(seller_receipt.clone()),
+        buyer_receipt: Some(buyer_receipt.clone()),
     }];
     let t3 = evaluate_operating_group_tier(
         OperatingGroupTier::InterEntityNetted,
@@ -898,31 +838,52 @@ fn verify_tiers_three_and_four(
     )
     .map_err(|e| format!("tier 3 failed: {e:?}"))?;
     if t3.is_consolidated_financial_statement
-        || t3.net_group_revenue.map(Decimal::canonical).as_deref() != Some("42000")
+        || t3
+            .net_group_revenue
+            .as_ref()
+            .map(Decimal::canonical)
+            .as_deref()
+            != Some("42000")
     {
         return Err(format!("unexpected tier 3 projection: {t3:?}"));
     }
+    Ok(matched)
+}
 
-    let no_approval = evaluate_operating_group_tier(
+fn verify_tier_four(
+    slices: &[EntityReportingSlice],
+    fx_table: &[FxRateEntry],
+    matched: &[InterEntityTransfer],
+) -> Result<(), String> {
+    let bogus_approval = StatutoryCloseApproval {
+        period_week: "2026-08-31".to_owned(),
+        auditor_principal: "cpa:salma".to_owned(),
+        elimination_journal_pin: "elim:fabricated-string".to_owned(),
+        approved_at: "2026-09-07T09:00:00Z".to_owned(),
+    };
+    let bad_stat = evaluate_operating_group_tier(
         OperatingGroupTier::StatutoryConsolidated,
         slices,
         Some("EGP"),
         fx_table,
-        &matched,
-        None,
+        matched,
+        Some(&bogus_approval),
     );
     if !matches!(
-        no_approval,
+        bad_stat,
         Err(OperatingGroupRefusal::MissingStatutoryApproval { .. })
     ) {
         return Err(format!(
-            "Tier 4 without approval must refuse, got {no_approval:?}"
+            "fabricated elimination_journal_pin must refuse, got {bad_stat:?}"
         ));
     }
+
+    let authentic_pin = compute_elimination_journal_pin("2026-08-31", slices, matched)
+        .map_err(|e| format!("compute elimination pin: {e:?}"))?;
     let approval = StatutoryCloseApproval {
         period_week: "2026-08-31".to_owned(),
         auditor_principal: "cpa:salma".to_owned(),
-        elimination_journal_pin: "elim:2026-08-31:sha256:abc".to_owned(),
+        elimination_journal_pin: authentic_pin,
         approved_at: "2026-09-07T09:00:00Z".to_owned(),
     };
     let t4 = evaluate_operating_group_tier(
@@ -930,12 +891,17 @@ fn verify_tiers_three_and_four(
         slices,
         Some("EGP"),
         fx_table,
-        &matched,
+        matched,
         Some(&approval),
     )
     .map_err(|e| format!("tier 4 failed: {e:?}"))?;
     if !t4.is_consolidated_financial_statement
-        || t4.net_group_revenue.map(Decimal::canonical).as_deref() != Some("42000")
+        || t4
+            .net_group_revenue
+            .as_ref()
+            .map(Decimal::canonical)
+            .as_deref()
+            != Some("42000")
     {
         return Err(format!("unexpected tier 4 projection: {t4:?}"));
     }

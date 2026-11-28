@@ -18,7 +18,7 @@ use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::source_cursor::CursorAdvanceSpec;
 use norn_cell::{
     AdmittedDefinitions, CellStore, InstalledDefinitionInput, LedgerHead, MappingOutcome, Model,
-    SqliteCell, StoreOptions,
+    Receipt, SqliteCell, StoreOptions, verify_main_receipt,
 };
 use norn_checker::EntityArtifactSetContext;
 use norn_checker::entity_scopes::ScopedView;
@@ -38,6 +38,8 @@ use norn_kernel::{
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
+
+use super::prng::week_timestamp_utc;
 
 pub type RetailCell = SqliteCell<FactEvent, JsonObject, JsonObject>;
 pub type MapCell = SqliteCell<ObservationEvent, norn_ir::RuntimeObject, norn_ir::RuntimeObject>;
@@ -263,7 +265,7 @@ impl RetailPack {
     pub fn retail_question_with_bound(
         &self,
         name: &str,
-        bound: usize,
+        bound: u32,
     ) -> Result<QuestionPlan, String> {
         let question = self.retail_question_ir(name)?;
         self.admit_question_ir(&question, bound)
@@ -275,6 +277,22 @@ impl RetailPack {
     /// Returns an error if the question cannot be found or admitted.
     pub fn retail_question(&self, name: &str) -> Result<QuestionPlan, String> {
         self.retail_question_with_bound(name, 2_000)
+    }
+
+    /// Admit a declared retail question whose time window spans `weeks` ISO
+    /// weeks starting from `2026-07-06T00:00:00Z` (covering 16..=52+ week horizons).
+    ///
+    /// # Errors
+    /// Returns an error if date arithmetic or admission fails.
+    pub fn retail_question_for_weeks(
+        &self,
+        name: &str,
+        weeks: u32,
+        bound: u32,
+    ) -> Result<QuestionPlan, String> {
+        let mut question = self.retail_question_ir(name)?;
+        question.time_window.end = UtcTimestamp(week_timestamp_utc(weeks.max(1), 0, 0)?);
+        self.admit_question_ir(&question, bound)
     }
 
     /// Load a raw `QuestionIR` from `retail.questions.json`.
@@ -301,7 +319,7 @@ impl RetailPack {
     pub fn admit_question_ir(
         &self,
         question: &QuestionIR,
-        bound: usize,
+        bound: u32,
     ) -> Result<QuestionPlan, String> {
         let registry = BTreeSet::new();
         let space = derive_metric_space(
@@ -344,6 +362,7 @@ pub struct FeedRow<'a> {
 pub struct EntityCell {
     pub pack: &'static RetailPack,
     _dir: TempDir,
+    pub db_path: PathBuf,
     pub cell_id: CellId,
     pub entity_id: String,
     pub currency: String,
@@ -373,11 +392,11 @@ impl EntityCell {
     ) -> Result<Self, String> {
         let pack = retail_pack()?;
         let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
-        let path = dir.path().join(format!("{entity_id}.sqlite"));
+        let db_path = dir.path().join(format!("{entity_id}.sqlite"));
         let cell_id = CellId::try_from(cell_id_hex.to_owned())
             .map_err(|e| format!("cell id {cell_id_hex}: {e}"))?;
         let scope = format!("{org_id}/{env_id}");
-        let engine = NativeEngine::open(&path, StoreOptions::default())
+        let engine = NativeEngine::open(&db_path, StoreOptions::default())
             .map_err(|e| format!("open sqlite {entity_id}: {e}"))?;
         let mut store = CellStore::from_engine_bound(engine, pack.model().clone(), &cell_id)
             .map_err(|e| format!("bind store {entity_id}: {e}"))?;
@@ -392,6 +411,7 @@ impl EntityCell {
         Ok(Self {
             pack,
             _dir: dir,
+            db_path,
             cell_id,
             entity_id: entity_id.to_owned(),
             currency: currency.to_owned(),
@@ -660,6 +680,18 @@ impl EntityCell {
             .map_err(|e| format!("evaluate {name}: {e}"))
     }
 
+    /// Evaluate a declared retail question widened across `weeks` ISO weeks.
+    ///
+    /// # Errors
+    /// Returns an error if admission or evaluation fails.
+    pub fn answer_over_weeks(&self, name: &str, weeks: u32) -> Result<QueryResult, String> {
+        let plan = self.pack.retail_question_for_weeks(name, weeks, 5_000)?;
+        self.cell()?
+            .store()
+            .evaluate_question(&plan, self.query_context(), |_| Ok(true))
+            .map_err(|e| format!("evaluate {name} ({weeks}w): {e}"))
+    }
+
     /// Evaluate a declared retail transform via the exact in-cell interpreter.
     ///
     /// # Errors
@@ -681,6 +713,35 @@ impl EntityCell {
             .store()
             .verified_head()
             .map_err(|e| format!("verified_head: {e}"))
+    }
+
+    /// Export and cryptographically verify the `main` commit [`Receipt`] at `commit_seq`.
+    ///
+    /// # Errors
+    /// Returns an error if the export record is absent or receipt verification fails.
+    pub fn export_main_receipt(&self, commit_seq: u64) -> Result<Receipt, String> {
+        let record = self
+            .cell()?
+            .store()
+            .export_record(commit_seq)
+            .map_err(|e| format!("export_record({commit_seq}): {e}"))?
+            .ok_or_else(|| format!("missing export record at commit {commit_seq}"))?;
+        verify_main_receipt(&record.receipt)
+            .map_err(|e| format!("verify_main_receipt({commit_seq}): {e}"))?;
+        Ok(record.receipt)
+    }
+
+    /// Count materialized objects of `object_type` in `main`.
+    ///
+    /// # Errors
+    /// Returns an error if reading the store fails.
+    pub fn object_count(&self, object_type: &str) -> Result<usize, String> {
+        self.cell()?
+            .store()
+            .read()
+            .list("main", object_type, 10_000)
+            .map(|rows| rows.len())
+            .map_err(|e| format!("list {object_type}: {e}"))
     }
 
     /// Count open data-quality findings for a specific evidence record.

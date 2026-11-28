@@ -7,6 +7,28 @@ use super::env::{
     COSTS_FEED_ID, COUNTS_FEED_ID, EntityCell, FeedRow, POS_FEED_ID, RECEIPTS_FEED_ID,
 };
 
+/// Input parameters for recording a verified `supply.StoreCommercialRollup`.
+pub struct StoreKpiInput<'a> {
+    pub rollup_id: &'a str,
+    pub store_id: &'a str,
+    pub sku_id: &'a str,
+    pub period_week: &'a str,
+    pub unit: &'a str,
+    pub on_hand_count_id: &'a str,
+    pub opening_cut_id: &'a str,
+    pub count_ref: &'a str,
+    pub count_as_of: &'a str,
+    pub costed_ref: &'a str,
+    pub period_start: &'a str,
+    pub period_end: &'a str,
+    pub sales_weeks: i64,
+    pub on_hand_qty: &'a str,
+    pub avg_weekly_sales_qty: &'a str,
+    pub period_gross_margin: &'a str,
+    pub opening_stock_value: &'a str,
+    pub closing_stock_value: &'a str,
+}
+
 impl EntityCell {
     /// Register this cell's single `LegalEntity` book.
     ///
@@ -336,6 +358,79 @@ impl EntityCell {
         )
     }
 
+    /// Record an immutable `supply.StockValuationCut` for `(store_id, sku_id)`.
+    ///
+    /// # Errors
+    /// Returns an error if the action refuses.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit domain fields for immutable stock valuation cut"
+    )]
+    pub fn record_stock_valuation_cut(
+        &mut self,
+        cut_id: &str,
+        store_id: &str,
+        sku_id: &str,
+        unit: &str,
+        cut_at: &str,
+        remaining_qty: &str,
+        stock_value: &str,
+    ) -> Result<(), String> {
+        let currency = self.currency.clone();
+        self.ok(
+            "supply.stock_valuation_cut.record",
+            "planner:omar",
+            json!({
+                "cut_id": cut_id,
+                "store_id": store_id,
+                "sku_id": sku_id,
+                "unit": unit,
+                "currency": currency,
+                "cost_status": "costed",
+                "book_epoch": "1970-01-01T00:00:00Z",
+                "cut_at": cut_at,
+                "remaining_qty": remaining_qty,
+                "stock_value": stock_value,
+            }),
+        )
+    }
+
+    /// Record a verified `supply.StoreCommercialRollup` omitting kernel-derived fields.
+    ///
+    /// # Errors
+    /// Returns an error if the action refuses.
+    pub fn record_store_kpi(&mut self, kpi: &StoreKpiInput<'_>) -> Result<(), String> {
+        let currency = self.currency.clone();
+        self.ok(
+            "supply.store_kpi.record",
+            "planner:omar",
+            json!({
+                "rollup_id": kpi.rollup_id,
+                "store_id": kpi.store_id,
+                "sku_id": kpi.sku_id,
+                "period_week": kpi.period_week,
+                "unit": kpi.unit,
+                "currency": currency,
+                "cost_status": "costed",
+                "count_status": "verified",
+                "on_hand_count_id": kpi.on_hand_count_id,
+                "opening_cut_id": kpi.opening_cut_id,
+                "count_ref": kpi.count_ref,
+                "count_as_of": kpi.count_as_of,
+                "costed_ref": kpi.costed_ref,
+                "book_epoch": "1970-01-01T00:00:00Z",
+                "period_start": kpi.period_start,
+                "period_end": kpi.period_end,
+                "sales_weeks": kpi.sales_weeks,
+                "on_hand_qty": kpi.on_hand_qty,
+                "avg_weekly_sales_qty": kpi.avg_weekly_sales_qty,
+                "period_gross_margin": kpi.period_gross_margin,
+                "opening_stock_value": kpi.opening_stock_value,
+                "closing_stock_value": kpi.closing_stock_value,
+            }),
+        )
+    }
+
     /// Ingest one clean baseline row per required feed (`pos_sales`, `store_counts`,
     /// `retail_receipts`, `unit_costs`) so durable cursors and watermarks are initialized.
     ///
@@ -371,6 +466,15 @@ impl EntityCell {
     }
 }
 
+type BaselineFeedRow = (
+    &'static str,
+    &'static str,
+    &'static str,
+    String,
+    String,
+    String,
+);
+
 fn baseline_feed_payloads(
     ccy: &str,
     store_id: &str,
@@ -378,14 +482,7 @@ fn baseline_feed_payloads(
     unit_cost: &str,
     sold_at: &str,
     tag: &str,
-) -> [(
-    &'static str,
-    &'static str,
-    &'static str,
-    String,
-    String,
-    String,
-); 4] {
+) -> [BaselineFeedRow; 4] {
     [
         (
             POS_FEED_ID,
