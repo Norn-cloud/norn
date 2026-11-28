@@ -548,6 +548,26 @@
     "fix": "Restore the deleted identity explicitly, or use a new identity."
   },
   {
+    "code": "core.laws.constitutional_defeat",
+    "fix": "Keep the inherited core law intact without overriding, shadowing, excepting, or contradicting it; express any stricter downstream requirement as a separate conjunctive law."
+  },
+  {
+    "code": "core.laws.enrollment_gap",
+    "fix": "Ensure the specializing concept explicitly declares all required core interface members and links so every inherited core law binds and enrolls cleanly."
+  },
+  {
+    "code": "core.laws.missing_required_link_binding",
+    "fix": "Bind every required core interface link in the action's createLinks list (with its authorized target slice) or emit the link from the action's synchronous rule."
+  },
+  {
+    "code": "core.laws.preservation_unknown",
+    "fix": "Reduce the finite state or input combination space referenced by governing core laws, or constrain the action inputs with tighter schemas or preconditions so bounded preservation completes."
+  },
+  {
+    "code": "core.laws.preservation_violated",
+    "fix": "Update the action derivations, transition setFields, synchronous rule writes, lifecycle transitions, or preconditions so the witnessed counterexample satisfies every inherited core law."
+  },
+  {
     "code": "core.laws.stale_evidence",
     "fix": "Regenerate the goal from the current definitions and obtain checked evidence whose identity and independently retained result pin match it."
   },

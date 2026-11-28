@@ -83,8 +83,10 @@ pub use check::{
     StructuralLimits, check_expression, check_expression_in, check_expression_under,
     check_expression_under_in, check_expression_with, check_expression_with_in,
     check_expression_with_root_bounds, check_expression_with_root_bounds_in,
-    check_expression_with_sources, check_expression_with_sources_in, check_unary, check_unary_in,
-    check_unary_with, check_unary_with_in, condition_null_guards, validate_evaluation_source,
+    check_expression_with_sources, check_expression_with_sources_in, check_inherited_expression,
+    check_inherited_expression_in, check_inherited_expression_under,
+    check_inherited_expression_under_in, check_unary, check_unary_in, check_unary_with,
+    check_unary_with_in, condition_null_guards, validate_evaluation_source,
     validate_profile_constructs, validate_unary_evaluation_source,
 };
 pub use convert::rescale_decimal;
