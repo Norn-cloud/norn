@@ -98,23 +98,18 @@ pub(crate) fn verify_mapping_links<E: serde::Serialize + 'static, C, I, S: SqlEn
     mapped: &[crate::mapping_bundle::MappingBundle],
     dispute_resolve: Option<crate::mapping_dispute_resolve::DisputeResolveProof<'_>>,
 ) -> Result<Option<VerifiedMappingProof>, CommitError<CellError>> {
-    // Reject any attempt to emit a `dispute_resolved` event (whether typed
-    // `ObservationEvent::DisputeResolved` or any custom `E: Serialize` with
-    // `op == "dispute_resolved"`) outside `resolve_mapping_dispute`.
+    // Reject any `dispute_resolved` event outside `resolve_mapping_dispute`.
     let has_dispute_event = commit.events.iter().any(|event| {
         let any: &dyn std::any::Any = event;
-        if matches!(
+        matches!(
             any.downcast_ref::<norn_kernel::ObservationEvent>(),
             Some(norn_kernel::ObservationEvent::DisputeResolved { .. })
-        ) {
-            return true;
-        }
-        serde_json::to_value(event)
+        ) || serde_json::to_value(event)
             .ok()
             .and_then(|v| {
                 v.get("op")
                     .and_then(serde_json::Value::as_str)
-                    .map(|op| op == "dispute_resolved")
+                    .map(|s| s == "dispute_resolved")
             })
             .unwrap_or(false)
     });
@@ -126,6 +121,7 @@ pub(crate) fn verify_mapping_links<E: serde::Serialize + 'static, C, I, S: SqlEn
         reader
             .check_mapping_bundle(bundle)
             .map_err(CommitError::Host)?;
+        crate::mapping_delete::verify_delete_and_tombstone_eligibility(reader, bundle, commit)?;
     }
     if let Some(norn_kernel::Consumed::Observation {
         id: norn_kernel::ObservationId(observation_id),
@@ -246,6 +242,14 @@ fn verify_dispute_resolution_links<E: 'static, C, I, S: SqlEngine>(
     });
     if !matches_event {
         return Err(CommitError::Host(CellError::MappingBundleMismatch));
+    }
+    if proof.decision() == crate::mapping_dispute_resolve::DisputeDecision::AcceptSecondAsCorrection
+    {
+        crate::mapping_delete::verify_delete_and_tombstone_eligibility(
+            reader,
+            dispute.incoming_bundle(),
+            commit,
+        )?;
     }
     let plan = reader
         .dispute_resolution_link_plan(dispute_id, &dispute, proof.decision(), commit)

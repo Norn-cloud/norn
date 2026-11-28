@@ -1804,3 +1804,102 @@ fn dispute_resolve_lower_version_same_event_id_correction_preserves_v3() {
         .verify_frontier_equivalence()
         .expect("frontier equivalence after lower-version same-event correction");
 }
+
+/// #1549: Capturing a first bundle and its conflict without an intervening
+/// commit and resolving with `accept-first` produces an export whose
+/// `pending_observations` and `consumed_input` replay cleanly without duplicate
+/// inbox inserts.
+#[test]
+fn dispute_resolve_accept_first_with_pending_first_capture_replays_cleanly() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut cell = setup_with(
+        &dir.path().join("accept_first_pending.sqlite"),
+        referring_parties,
+    );
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    capture_kind(&mut cell, "erpnext", &b, "eb", "1", "upsert", "p1");
+
+    let a_first = party_ref_row("P-A", "demo/party/a", "First Pending", Some("demo/party/b"));
+    let a_second = party_ref_row("P-A", "demo/party/a", "Second Conflict", None);
+    let (raw1, input1) = raw_event(&cell, "erpnext", &a_first, "e1", "1", "upsert", "p1");
+    let (first_id, _) = cell
+        .inject_mapping_bundle(&raw1, &input1)
+        .expect("inject 1");
+    let (raw2, input2) = raw_event(&cell, "erpnext", &a_second, "e1", "1", "upsert", "p1");
+    let (conflict_id, inserted) = cell
+        .inject_mapping_bundle(&raw2, &input2)
+        .expect("inject 2");
+    assert!(inserted && conflict_id.starts_with("mapping-conflict:"));
+
+    cell.resolve_mapping_dispute(DisputeResolutionInput {
+        dispute_id: conflict_id,
+        decision: DisputeDecision::AcceptFirst,
+        actor: "ops:olivia".into(),
+        reason: "keep pending first bundle".into(),
+    })
+    .expect("resolve accept-first");
+
+    let (records, head) = export_records_and_head(&cell);
+    let rebuilt = CellStore::rebuild_export_history(
+        NativeEngine::open_in_memory().expect("mem"),
+        &records,
+        &head,
+    )
+    .expect("rebuild accept-first with pending first capture");
+    assert!(
+        rebuilt
+            .read()
+            .pending_observation(&first_id)
+            .expect("pending")
+            .is_some(),
+        "accept-first leaves the still-pending first capture pending in rebuilt cell"
+    );
+}
+
+/// #1028 / #1931: A late out-of-order `v2` upsert arriving after a newer `v3`
+/// delete must NOT lift the `v3` deletion's tombstone or emit `ObservedRecreated`.
+#[test]
+fn late_upsert_after_newer_delete_does_not_resurrect_tombstone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut cell = setup_with(
+        &dir.path().join("late_upsert_del.sqlite"),
+        referring_parties,
+    );
+
+    let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", None);
+    let a_v3 = party_ref_row("P-A", "demo/party/a", "A v3", None);
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2 late", None);
+
+    capture_kind(&mut cell, "erpnext", &a_v1, "e1", "1", "upsert", "p1");
+    capture_kind(&mut cell, "erpnext", &a_v3, "e3", "3", "delete", "p1");
+    let tombstone =
+        norn_kernel::snapshot_observe::tombstone_key(&FactKey::new("canon.Party", "demo/party/a"));
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, tombstone.object_type.as_str(), &tombstone.key)
+            .expect("tombstone")
+            .is_some()
+    );
+
+    capture_kind(&mut cell, "erpnext", &a_v2, "e2", "2", "upsert", "p1");
+    assert!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, tombstone.object_type.as_str(), &tombstone.key)
+            .expect("tombstone still present")
+            .is_some(),
+        "late v2 upsert must not lift newer v3 deletion tombstone"
+    );
+    assert!(
+        !cell
+            .store()
+            .read()
+            .ledger(0)
+            .expect("ledger")
+            .iter()
+            .any(|e| e.event.get("op").and_then(RuntimeValue::as_str) == Some("observed_recreated")),
+        "late v2 upsert must not emit ObservedRecreated"
+    );
+}

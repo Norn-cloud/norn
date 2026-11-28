@@ -70,7 +70,8 @@ pub(crate) fn prepare_mapping_deletes<E: SqlEngine>(
     commit: &mut CellCommit<ObservationEvent, RuntimeObject, RuntimeObject>,
     authorization: &mut ObservationAuthorization,
 ) -> Result<(), CellError> {
-    if bundle.deletes.is_empty() || has_newer_landed_source_version(reader, bundle)? {
+    if bundle.deletes.is_empty() || has_newer_or_incomparable_landed_source_version(reader, bundle)?
+    {
         return Ok(());
     }
     for delete in &bundle.deletes {
@@ -97,8 +98,9 @@ pub(crate) fn prepare_mapping_deletes<E: SqlEngine>(
 /// True when any already-landed bundle or accepted correction for `bundle`'s
 /// source record (same mapping, dataset, connector instance, partition, source,
 /// and `source_id`) or active non-reject frontier claim on its deleted subjects
-/// has a strictly newer `source_version` than `bundle`.
-fn has_newer_landed_source_version<E: SqlEngine>(
+/// has a strictly newer `source_version` than `bundle`, or when source ordering
+/// cannot be established (`IncompatibleKinds` / `UnorderableOpaque`, failing closed).
+pub(crate) fn has_newer_or_incomparable_landed_source_version<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     bundle: &crate::mapping_bundle::MappingBundle,
 ) -> Result<bool, CellError> {
@@ -114,11 +116,11 @@ fn has_newer_landed_source_version<E: SqlEngine>(
             if reader.is_reject_carry_claim(&row)? {
                 continue;
             }
-            if crate::mapping_links::parse_frontier_version(&row)
-                .and_then(|v| v.try_cmp(&incoming_version).ok())
-                == Some(std::cmp::Ordering::Greater)
-            {
-                return Ok(true);
+            if let Some(frontier_ver) = crate::mapping_links::parse_frontier_version(&row) {
+                match frontier_ver.try_cmp(&incoming_version) {
+                    Ok(std::cmp::Ordering::Greater) | Err(_) => return Ok(true),
+                    Ok(std::cmp::Ordering::Less | std::cmp::Ordering::Equal) => {}
+                }
             }
         }
     }
@@ -236,7 +238,8 @@ fn has_newer_landed_source_version<E: SqlEngine>(
 }
 
 /// Compare a landed bundle's source version parsed under its OWN declared
-/// `VersionKind` against `incoming_version`, refusing incomparable kinds.
+/// `VersionKind` against `incoming_version`; fails closed (`Ok(true)`) when
+/// source ordering cannot be established (`IncompatibleKinds` / `UnorderableOpaque`).
 fn landed_bundle_is_newer<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     landed: &crate::mapping_bundle::MappingBundle,
@@ -244,7 +247,60 @@ fn landed_bundle_is_newer<E: SqlEngine>(
 ) -> Result<bool, CellError> {
     let landed_kind = reader.bundle_version_kind(landed)?;
     let landed_version = crate::mapping_links::parse_source_version(landed, landed_kind)?;
-    Ok(landed_version.try_cmp(incoming_version).ok() == Some(std::cmp::Ordering::Greater))
+    Ok(match landed_version.try_cmp(incoming_version) {
+        Ok(std::cmp::Ordering::Greater) | Err(_) => true,
+        Ok(std::cmp::Ordering::Less | std::cmp::Ordering::Equal) => false,
+    })
+}
+
+/// Transaction-time guard rechecking delete and tombstone-lift eligibility
+/// inside the commit write transaction so a concurrent newer linkless commit
+/// cannot race past pre-transaction preparation.
+pub(crate) fn verify_delete_and_tombstone_eligibility<E: 'static, C, I, S: SqlEngine>(
+    reader: &StoreReader<'_, S>,
+    bundle: &crate::mapping_bundle::MappingBundle,
+    commit: &CellCommit<E, C, I>,
+) -> Result<(), norn_kernel::CommitError<CellError>> {
+    if bundle.deletes.is_empty() && bundle.records.is_empty() {
+        return Ok(());
+    }
+    let blocked = has_newer_or_incomparable_landed_source_version(reader, bundle)
+        .map_err(norn_kernel::CommitError::Host)?;
+    if !blocked {
+        return Ok(());
+    }
+    for delete in &bundle.deletes {
+        let target_key = FactKey::new(delete.object_type.as_str(), &delete.key);
+        let buried = tombstone_key(&target_key);
+        let writes_tombstone = commit.writes.iter().any(|w| {
+            w.key == buried && matches!(w.mutation, norn_kernel::FactMutation::Put { .. })
+        });
+        let emits_deleted = commit.events.iter().any(|event| {
+            let any: &dyn std::any::Any = event;
+            matches!(
+                any.downcast_ref::<ObservationEvent>(),
+                Some(ObservationEvent::ObservedDeleted { key, .. }) if *key == target_key
+            )
+        });
+        if writes_tombstone || emits_deleted {
+            return Err(norn_kernel::CommitError::Host(
+                CellError::SourceEvidenceChanged,
+            ));
+        }
+    }
+    for record in &bundle.records {
+        let buried = tombstone_key(&FactKey::new(record.object_type.as_str(), &record.key));
+        if commit
+            .writes
+            .iter()
+            .any(|w| w.key == buried && matches!(w.mutation, norn_kernel::FactMutation::Delete))
+        {
+            return Err(norn_kernel::CommitError::Host(
+                CellError::SourceEvidenceChanged,
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn delete_slice<E: SqlEngine>(
@@ -268,10 +324,13 @@ fn delete_slice<E: SqlEngine>(
 }
 
 /// Observation slice for a mapped upsert: includes `tombstone_key(key)` when
-/// a live tombstone exists so [`prepare_observed_snapshot`] can lift it and
-/// emit `ObservationEvent::ObservedRecreated` (#3013).
+/// a live tombstone exists AND no strictly newer (or incomparable) source
+/// version has already landed, so [`prepare_observed_snapshot`] lifts older
+/// tombstones (`ObservedRecreated`, #3013) without letting a late upsert
+/// resurrect a newer deletion.
 pub(crate) fn upsert_slice<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
+    bundle: &crate::mapping_bundle::MappingBundle,
     key: &FactKey,
 ) -> Result<FactSlice, CellError> {
     let mut slice = reader.mapping_observation_slice(key)?;
@@ -282,6 +341,7 @@ pub(crate) fn upsert_slice<E: SqlEngine>(
         let buried = tombstone_key(key);
         if let Some(record) =
             reader.object(crate::MAIN_WORLD, buried.object_type.as_str(), &buried.key)?
+            && !has_newer_or_incomparable_landed_source_version(reader, bundle)?
         {
             slice.insert(
                 buried,

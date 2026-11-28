@@ -1136,9 +1136,13 @@ mod tests {
             partition: "snapshot".into(),
             recorded_at: UtcTimestamp(recorded_at.into()),
         };
+        let dv = match derivation {
+            Derivation::V1 => 1,
+            Derivation::CURRENT => 2,
+        };
         let bundle = store
             .read()
-            .derived_mapping_bundle(&raw, &input, 1, derivation, reprocesses)
+            .derived_mapping_bundle_version(&raw, &input, 1, derivation, dv, reprocesses)
             .expect("derive bundle");
         Observed {
             id: ObservationId(format!("mapping-bundle:{}", bundle.digest)),

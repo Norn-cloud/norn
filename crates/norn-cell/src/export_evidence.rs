@@ -637,6 +637,70 @@ pub(crate) fn restore_source_evidence<E: SqlEngine>(
     Ok(true)
 }
 
+fn valid_evidence_with_pending<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    obs_id: &str,
+    observed: &Value,
+    pending_observations: &[crate::PendingObservation],
+) -> Result<bool, CellError> {
+    if valid_evidence_observation(reader, obs_id, observed) {
+        return Ok(true);
+    }
+    // Under `accept-first` or pre-v13 conflict consumption, the conflict's
+    // accepted first bundle is NOT consumed and may be carried in the same
+    // record's `pending_observations` (restored right after `restore_input`).
+    // Recheck inside a savepoint without leaving a duplicate inbox row behind.
+    if !obs_id.starts_with("mapping-conflict:") {
+        return Ok(false);
+    }
+    let Some(accepted_id) = conflict_accepted_bundle_id(observed) else {
+        return Ok(false);
+    };
+    let Some(pending) = pending_observations
+        .iter()
+        .find(|p| p.observation_id == accepted_id)
+    else {
+        return Ok(false);
+    };
+    if pending.position == 0
+        || !valid_bundle_observation(reader, &pending.observation_id, &pending.observed, None)
+    {
+        return Ok(false);
+    }
+    let inbox = crate::system::INBOX;
+    let already_in_inbox = reader
+        .conn
+        .query_optional(
+            &format!("SELECT 1 FROM \"{inbox}\" WHERE \"observation_id\" = ?1"),
+            params![accepted_id],
+            |_row| Ok(()),
+        )?
+        .is_some();
+    if already_in_inbox {
+        return Ok(false);
+    }
+    reader
+        .conn
+        .execute_batch("SAVEPOINT \"norn_conflict_recheck\"")?;
+    let inserted = reader.conn.execute(
+        &format!(
+            "INSERT INTO \"{inbox}\" (\"position\", \"observation_id\", \"observed\", \"consumed_commit_seq\") \
+             VALUES (?1, ?2, ?3, NULL)"
+        ),
+        params![
+            to_i64(pending.position, "position")?,
+            pending.observation_id.as_str(),
+            crate::codec::canonical_json(&pending.observed)?,
+        ],
+    );
+    let ok = inserted.is_ok() && valid_evidence_observation(reader, obs_id, observed);
+    reader.conn.execute_batch(
+        "ROLLBACK TO SAVEPOINT \"norn_conflict_recheck\"; \
+             RELEASE SAVEPOINT \"norn_conflict_recheck\"",
+    )?;
+    Ok(ok)
+}
+
 fn ensure_pending_inbox_row<E: SqlEngine>(
     conn: &E,
     position: u64,
@@ -712,7 +776,14 @@ pub(crate) fn restore_observation_input<E: SqlEngine>(
             pre_existing.insert(member.observation_id.as_str());
         }
     }
-    if is_evidence_obs && !valid_evidence_observation(reader, observation_id, observed) {
+    if is_evidence_obs
+        && !valid_evidence_with_pending(
+            reader,
+            observation_id,
+            observed,
+            &record.pending_observations,
+        )?
+    {
         return Err(mismatch());
     }
     if ensure_pending_inbox_row(

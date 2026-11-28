@@ -602,7 +602,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 return Err(CellError::UnsupportedMappingProfile);
             }
             let key = FactKey::new(record.object_type.as_str(), &record.key);
-            let slice = crate::mapping_delete::upsert_slice(self, &key)?;
+            let slice = crate::mapping_delete::upsert_slice(self, bundle, &key)?;
             let mut values = record
                 .invocations
                 .first()

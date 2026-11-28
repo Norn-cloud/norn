@@ -2342,8 +2342,16 @@ pub(crate) fn restore_input<E: SqlEngine>(
     }
     // This compares the kind, consumption reference, full payload, order and
     // run history using the same preimage codec as the normal commit journal.
-    let include_conflict_members =
-        record.storage_version.unwrap_or(1) >= crate::link_claim_frontier::FRONTIER_STORAGE_VERSION;
+    let include_conflict_members = record.storage_version.unwrap_or(1)
+        >= crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
+        && matches!(
+            record.batch.consumes.as_ref(),
+            Some(crate::store::Consumption::Observation { observation_id })
+                if crate::link_claim_frontier::dispute_supersedes_first(
+                    observation_id,
+                    &record.batch.events,
+                )
+        );
     if crate::export_journal::consumed_input(
         &store.read(),
         record.batch.consumes.as_ref(),

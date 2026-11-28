@@ -374,6 +374,21 @@ pub(crate) fn record_dispute_resolutions_in_tx<E: SqlEngine>(
     Ok(())
 }
 
+/// Whether `events` contains a governed `dispute_resolved` decision on
+/// `observation_id` that supersedes (and atomically consumes) the conflict's
+/// still-pending `acceptedBundleId` (`accept-second-as-correction` or `reject`).
+pub(crate) fn dispute_supersedes_first(observation_id: &str, events: &[Value]) -> bool {
+    observation_id.starts_with("mapping-conflict:")
+        && events.iter().any(|event| {
+            event.get("op").and_then(Value::as_str) == Some("dispute_resolved")
+                && event.get("disputeId").and_then(Value::as_str) == Some(observation_id)
+                && matches!(
+                    event.get("decision").and_then(Value::as_str),
+                    Some("accept-second-as-correction" | "reject")
+                )
+        })
+}
+
 /// When resolving a `mapping-conflict:` row with `accept-second-as-correction`
 /// or `reject`, atomically consume any still-pending first capture
 /// (`acceptedBundleId`) so it cannot later land and undo the resolution.
@@ -383,15 +398,7 @@ pub(crate) fn consume_superseded_conflict_bundle<E: SqlEngine>(
     observation_id: &str,
     events: &[Value],
 ) -> Result<(), CellError> {
-    let supersedes_first = events.iter().any(|event| {
-        event.get("op").and_then(Value::as_str) == Some("dispute_resolved")
-            && event.get("disputeId").and_then(Value::as_str) == Some(observation_id)
-            && matches!(
-                event.get("decision").and_then(Value::as_str),
-                Some("accept-second-as-correction" | "reject")
-            )
-    });
-    if supersedes_first {
+    if dispute_supersedes_first(observation_id, events) {
         conn.execute(
             &format!(
                 "UPDATE \"{INBOX}\" SET \"consumed_commit_seq\" = ?1 \

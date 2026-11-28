@@ -3411,10 +3411,19 @@ impl<E: SqlEngine> CellStore<E> {
                     if record.storage_version.unwrap_or(1)
                         < crate::link_claim_frontier::FRONTIER_STORAGE_VERSION
             );
+            let include_conflict_members = !legacy_dispute_resolution
+                && matches!(
+                    effective_batch.consumes.as_ref(),
+                    Some(Consumption::Observation { observation_id })
+                        if crate::link_claim_frontier::dispute_supersedes_first(
+                            observation_id,
+                            &effective_batch.events,
+                        )
+                );
             let consumed_input = export_journal::consumed_input(
                 &reader,
                 effective_batch.consumes.as_ref(),
-                !legacy_dispute_resolution,
+                include_conflict_members,
             )?;
             let commit_seq = reader.next_commit_seq()?;
             let commit_model = installation
