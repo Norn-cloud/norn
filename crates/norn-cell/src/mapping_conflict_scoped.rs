@@ -649,22 +649,25 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         readable: &[(String, String)],
         evidence_access: crate::combined_view::RowAccessDecider<'_>,
     ) -> Result<usize, CellError> {
-        // Range bounds (`:` = 0x3A, `;` = 0x3B) use the `UNIQUE(observation_id)` index.
+        // Case-insensitive range bounds (`:` = 0x3A, `;` = 0x3B) use `_norn_inbox/id_nocase`
+        // with bound parameters so no literal `;` appears in SQL (`WriteRevision::read_only`).
         let conflict_rows = self.conn.query(
             &format!(
                 "SELECT position, observation_id, observed FROM {INBOX} \
-                 WHERE observation_id >= 'mapping-conflict:' AND observation_id < 'mapping-conflict;' \
+                 WHERE observation_id COLLATE NOCASE >= ?1 \
+                   AND observation_id COLLATE NOCASE < ?2 \
                  ORDER BY position"
             ),
-            params![],
+            params!["mapping-conflict:", "mapping-conflict;"],
         )?;
         let identity_rows = self.conn.query(
             &format!(
                 "SELECT position, observation_id, observed FROM {INBOX} \
-                 WHERE observation_id >= 'mapping-identity:' AND observation_id < 'mapping-identity;' \
+                 WHERE observation_id COLLATE NOCASE >= ?1 \
+                   AND observation_id COLLATE NOCASE < ?2 \
                  ORDER BY position"
             ),
-            params![],
+            params!["mapping-identity:", "mapping-identity;"],
         )?;
         if conflict_rows.is_empty() && identity_rows.is_empty() {
             return Ok(0);

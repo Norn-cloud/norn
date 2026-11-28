@@ -288,14 +288,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<(), CellError> {
         // Case-insensitive range bounds (`:` = 0x3A, `;` = 0x3B) match `LIKE 'mapping-conflict:%'`
         // via `_norn_inbox/id_nocase` while still surfacing malformed mixed-case IDs for refusal.
+        // Bounds are bound as parameters so no literal `;` appears in SQL (`WriteRevision::read_only`).
         let rows = self.conn.query(
             &format!(
                 "SELECT position, observation_id, observed FROM {INBOX} \
-                 WHERE observation_id COLLATE NOCASE >= 'mapping-conflict:' \
-                   AND observation_id COLLATE NOCASE < 'mapping-conflict;' \
+                 WHERE observation_id COLLATE NOCASE >= ?1 \
+                   AND observation_id COLLATE NOCASE < ?2 \
                  ORDER BY position"
             ),
-            params![],
+            params!["mapping-conflict:", "mapping-conflict;"],
         )?;
         for values in rows {
             let row = crate::engine::SqlRow(values);
@@ -606,17 +607,28 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             None => "\"consumed_commit_seq\" IS NULL".to_owned(),
         };
-        // Case-insensitive range bounds (`:` = 0x3A, `;` = 0x3B) use `MULTI-INDEX OR`
-        // on `_norn_inbox/id_nocase`, matching `LIKE` exactly across ASCII case.
+        // Case-insensitive range bounds (`:` = 0x3A, `;` = 0x3B) via `UNION ALL` use
+        // two exact `_norn_inbox/id_nocase` seeks without literal `;` in SQL.
         let disputes_sql = format!(
             "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
              WHERE {unconsumed_pred} \
-               AND ((\"observation_id\" COLLATE NOCASE >= 'mapping-conflict:' \
-                     AND \"observation_id\" COLLATE NOCASE < 'mapping-conflict;') \
-                 OR (\"observation_id\" COLLATE NOCASE >= 'mapping-identity:' \
-                     AND \"observation_id\" COLLATE NOCASE < 'mapping-identity;'))"
+               AND \"observation_id\" COLLATE NOCASE >= ?1 \
+               AND \"observation_id\" COLLATE NOCASE < ?2 \
+             UNION ALL \
+             SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
+             WHERE {unconsumed_pred} \
+               AND \"observation_id\" COLLATE NOCASE >= ?3 \
+               AND \"observation_id\" COLLATE NOCASE < ?4"
         );
-        for values in self.conn.query(&disputes_sql, params![])? {
+        for values in self.conn.query(
+            &disputes_sql,
+            params![
+                "mapping-conflict:",
+                "mapping-conflict;",
+                "mapping-identity:",
+                "mapping-identity;"
+            ],
+        )? {
             let row = crate::engine::SqlRow(values);
             let pos: i64 = row.get(0)?;
             let id: String = row.get(1)?;
@@ -1664,11 +1676,11 @@ mod tests {
         let conflicts_plan = explain(
             &format!(
                 "SELECT position, observation_id, observed FROM {INBOX} \
-                 WHERE observation_id COLLATE NOCASE >= 'mapping-conflict:' \
-                   AND observation_id COLLATE NOCASE < 'mapping-conflict;' \
+                 WHERE observation_id COLLATE NOCASE >= ?1 \
+                   AND observation_id COLLATE NOCASE < ?2 \
                  ORDER BY position"
             ),
-            params![],
+            params!["mapping-conflict:", "mapping-conflict;"],
         );
         assert!(
             conflicts_plan
@@ -1679,11 +1691,11 @@ mod tests {
         let identity_plan = explain(
             &format!(
                 "SELECT position, observation_id, observed FROM {INBOX} \
-                 WHERE observation_id COLLATE NOCASE >= 'mapping-identity:' \
-                   AND observation_id COLLATE NOCASE < 'mapping-identity;' \
+                 WHERE observation_id COLLATE NOCASE >= ?1 \
+                   AND observation_id COLLATE NOCASE < ?2 \
                  ORDER BY position"
             ),
-            params![],
+            params!["mapping-identity:", "mapping-identity;"],
         );
         assert!(
             identity_plan
@@ -1695,12 +1707,20 @@ mod tests {
             &format!(
                 "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
                  WHERE \"consumed_commit_seq\" IS NULL \
-                   AND ((\"observation_id\" COLLATE NOCASE >= 'mapping-conflict:' \
-                         AND \"observation_id\" COLLATE NOCASE < 'mapping-conflict;') \
-                     OR (\"observation_id\" COLLATE NOCASE >= 'mapping-identity:' \
-                         AND \"observation_id\" COLLATE NOCASE < 'mapping-identity;'))"
+                   AND \"observation_id\" COLLATE NOCASE >= ?1 \
+                   AND \"observation_id\" COLLATE NOCASE < ?2 \
+                 UNION ALL \
+                 SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
+                 WHERE \"consumed_commit_seq\" IS NULL \
+                   AND \"observation_id\" COLLATE NOCASE >= ?3 \
+                   AND \"observation_id\" COLLATE NOCASE < ?4"
             ),
-            params![],
+            params![
+                "mapping-conflict:",
+                "mapping-conflict;",
+                "mapping-identity:",
+                "mapping-identity;"
+            ],
         );
         assert!(
             disputes_plan
