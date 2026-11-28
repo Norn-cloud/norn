@@ -1,4 +1,4 @@
-// The golden-path probe (apps/norn-cell-do/probe/golden-path.mjs) against a fake cell serving a
+// The golden-path probe (apps/norn-cell-rivet/probe/golden-path.mjs) against a fake cell serving a
 // real catalog: the host's trusted base (crates/norn-cell-do/src/base.rs, core.Agent.interface
 // included) plus probe.ts compiled by `norn compile`, shaped as `GET /v1/definitions` answers a
 // provisioned cell. Covers PROBE-SECRETS-1 (tokens and anything a response said never reach
@@ -14,7 +14,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 // @ts-expect-error: the probe is plain JavaScript without declarations.
-import { DEFINITIONS, ProbeError, TARGETS, dedicatedVersion, definitionDigest, run, target } from "../../../apps/norn-cell-do/probe/golden-path.mjs"
+import { DEFINITIONS, ProbeError, TARGETS, dedicatedVersion, definitionDigest, run, target } from "../../../apps/norn-cell-rivet/probe/golden-path.mjs"
 
 const ROOT = new URL("../../../", import.meta.url).pathname
 const TOKEN = `tok-${crypto.randomUUID()}`
@@ -35,7 +35,7 @@ function trustedBase(): Artifact[] {
 
 /** probe.ts compiled by the native Rust `norn compile` binary (or committed probe.ir.json when the binary is not built in this CI phase). */
 function compiledProbe(): Artifact[] {
-  const irPath = join(ROOT, "apps/norn-cell-do/probe/probe.ir.json")
+  const irPath = join(ROOT, "apps/norn-cell-rivet/probe/probe.ir.json")
   const committed = JSON.parse(readFileSync(irPath, "utf8")) as Artifact[]
   const candidates = [
     process.env.NORN_BIN,
@@ -46,7 +46,7 @@ function compiledProbe(): Artifact[] {
   const nornBin = candidates.find((candidate) => Bun.file(candidate).size > 0)
   if (!nornBin) return committed
   const out = join(mkdtempSync(join(tmpdir(), "probe-compile-")), "artifacts.json")
-  const child = Bun.spawnSync([nornBin, "compile", "apps/norn-cell-do/probe/probe.ts", "--org", "probe-org", "--env", "probe", "--out", out], { cwd: ROOT })
+  const child = Bun.spawnSync([nornBin, "compile", "apps/norn-cell-rivet/probe/probe.ts", "--org", "probe-org", "--env", "probe", "--out", out], { cwd: ROOT })
   if (child.exitCode !== 0) throw new Error(`norn compile failed: ${child.stdout.toString()}${child.stderr.toString()}`)
   const live = JSON.parse(readFileSync(out, "utf8")) as Artifact[]
   expect(live).toEqual(committed)
@@ -337,7 +337,7 @@ test("PROBE-SECRETS-1: a token with an embedded newline never reaches stdout or 
   const bad = `${TOKEN}\nsecond-line`
   await expect(run([], { ...HOSTED, NORN_PROBE_TOKEN: bad })).rejects.toMatchObject({ code: "probe.token_invalid" })
   // The CLI entry prints the code alone.
-  const child = Bun.spawnSync(["node", join(ROOT, "apps/norn-cell-do/probe/golden-path.mjs")], { env: { PATH: process.env.PATH ?? "", ...HOSTED, NORN_PROBE_TOKEN: bad } })
+  const child = Bun.spawnSync(["node", join(ROOT, "apps/norn-cell-rivet/probe/golden-path.mjs")], { env: { PATH: process.env.PATH ?? "", ...HOSTED, NORN_PROBE_TOKEN: bad } })
   const printed = child.stdout.toString() + child.stderr.toString()
   expect(child.exitCode).toBe(2)
   expect(printed.trim()).toBe("probe could not start: probe.token_invalid")

@@ -1,7 +1,7 @@
-import { cellRoute, methodOf, routeTable, statusClass, telemetry, type Telemetry } from "../../norn-cell-do/otlp.mjs"
+import { cellRoute, methodOf, routeTable, statusClass, telemetry, type Telemetry } from "./otlp.mjs"
 
 /**
- * Studio's request telemetry over OTLP (apps/norn-cell-do/otlp.mjs): latency and
+ * Studio's request telemetry over OTLP (worker/otlp.mjs): latency and
  * status per route, and auth, billing, spend-cap, quota, rate-limit and server errors. Off
  * unless OTEL_EXPORTER_OTLP_ENDPOINT is set (OTEL-OFF-1); when off the handler
  * is called directly. Attributes and span names come from fixed tables only

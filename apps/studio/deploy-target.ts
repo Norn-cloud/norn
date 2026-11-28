@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, type Dirent } from "node:fs"
 import { join } from "node:path"
-import { exportConfig } from "../norn-cell-do/otlp.mjs"
+import { exportConfig } from "./worker/otlp.mjs"
 
 // Enables client disconnect signals for the read requests the Studio Worker forwards.
 export const STUDIO_WORKER_COMPATIBILITY_FLAGS = ["nodejs_compat", "enable_request_signal"] as const
@@ -365,7 +365,6 @@ export function cellHostUrl(target: DeployTarget): string | undefined {
 export async function requireWorkerScript(script: string, credentials: CloudflareCredentials, fetcher: typeof fetch = fetch): Promise<void> {
   // The workers token for the Norn account only (cloudflareCredentials), checked before the request.
   // Bounded (30 s, cloudflare-api.ts call): a stalled connection fails the deploy instead of hanging it.
-  // Loaded here, not at the top: celld-deploy-cell imports this module without Studio's packages.
   const { workerSettingsStatus } = await import("./cloudflare-api.ts")
   // Decided from the status line alone, as before: a 2xx passes when its headers arrive.
   const status = await workerSettingsStatus({ credentials, fetch: fetcher }, script)

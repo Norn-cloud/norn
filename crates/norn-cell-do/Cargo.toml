@@ -4,14 +4,14 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "one tenant cell per Workers Durable Object over the shared read services (ring 1; see AGENTS.md)"
+description = "shared hosted cell server, dev host and analytics daemon over the shared read services (ring 1; see AGENTS.md)"
 # Every integration test is a module of tests/suites.rs, one binary
 # (scripts/codemods/fold_integration_tests.py).
 autotests = false
 
 [lib]
 path = "src/lib.rs"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [[bin]]
 name = "norn-dev-host"
@@ -46,9 +46,6 @@ http = "1.5.0"
 percent-encoding = "2.3.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "=0.2.129"
 
 # `norn-dev-host` (#207): the native developer loop over a project's SQLite cell.
 # Behind the default `native` feature: a host that brings its own SQLite (the

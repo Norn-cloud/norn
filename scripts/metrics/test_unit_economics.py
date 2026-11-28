@@ -473,11 +473,9 @@ class NewProbes(unittest.TestCase):
             cli_bytes = b"\x7fELF" + b"A" * 1000
             rivet_bytes = b"\x7fELF" + b"B" * 2000
             checker_bytes = b"\x00asm" + b"C" * 3000
-            cell_do_bytes = b"\x00asm" + b"D" * 4000
             (target / "release" / "norn").write_bytes(cli_bytes)
             (rivet / "release" / "norn-cell-rivet").write_bytes(rivet_bytes)
             (target / "wasm32-unknown-unknown" / "wasm-release" / "norn_checker_wasm.wasm").write_bytes(checker_bytes)
-            (target / "wasm32-unknown-unknown" / "wasm-release" / "norn_cell_do.wasm").write_bytes(cell_do_bytes)
 
             items = probe_binary.measure_artifacts(target, rivet)
             by_metric = {item["metric"]: item for item in items}
@@ -488,8 +486,6 @@ class NewProbes(unittest.TestCase):
                     "binary.norn_cell_rivet.bytes",
                     "binary.norn_checker_wasm.bytes",
                     "binary.norn_checker_wasm.gzip_bytes",
-                    "binary.norn_cell_do_wasm.bytes",
-                    "binary.norn_cell_do_wasm.gzip_bytes",
                 },
             )
             self.assertEqual(by_metric["binary.norn_cli.bytes"]["value"], len(cli_bytes))
@@ -498,11 +494,6 @@ class NewProbes(unittest.TestCase):
             self.assertEqual(
                 by_metric["binary.norn_checker_wasm.gzip_bytes"]["value"],
                 len(gzip.compress(checker_bytes, compresslevel=9, mtime=0)),
-            )
-            self.assertEqual(by_metric["binary.norn_cell_do_wasm.bytes"]["value"], len(cell_do_bytes))
-            self.assertEqual(
-                by_metric["binary.norn_cell_do_wasm.gzip_bytes"]["value"],
-                len(gzip.compress(cell_do_bytes, compresslevel=9, mtime=0)),
             )
             self._validate_metric_lines("binary-and-wasm-sizes", items)
 

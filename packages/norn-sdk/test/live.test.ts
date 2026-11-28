@@ -1,6 +1,4 @@
 import { expect, test } from "bun:test"
-// @ts-expect-error: the host module is plain JavaScript without declarations.
-import * as hostLive from "../../../apps/norn-cell-do/subscribe.mjs"
 import { LIVE_UNAVAILABLE, LiveClient, type LiveClientRefusal, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../src/live.ts"
 
 type Listener = (event: { code?: number; data?: unknown }) => void
@@ -164,63 +162,6 @@ test("refused frames notify per-subscription and client-level listeners, late su
   unsubGood()
 })
 
-test("protocol-faithful: a 6-clause filtered facets path past 512 bytes is refused by subscribe.mjs and delivered by LiveClient", async () => {
-  const filter = {
-    all: Array.from({ length: 6 }, (_, i) => ({ property: `field_${i}`, op: "eq", value: `val_${i}` })),
-  }
-  const query = new URLSearchParams({
-    filter: JSON.stringify(filter),
-    properties: "status",
-    orgId: "org_demo",
-    environmentId: "analytics",
-  })
-  const longPath = `/v1/objects/commerce.PurchaseOrder:facets?${query}`
-  expect(longPath.length).toBeGreaterThan(512)
-
-  // Wire LiveClient directly to the real cell live protocol handler (`apps/norn-cell-do/subscribe.mjs`).
-  let attachment: unknown = { scope: ["org_demo", "analytics"], authorization: "Bearer reader", subs: {}, role: "member" }
-  const clientListeners = new Map<string, Listener[]>()
-  const serverWs = {
-    serializeAttachment: (v: unknown) => { attachment = structuredClone(v) },
-    deserializeAttachment: () => structuredClone(attachment),
-    send: (data: string) => {
-      for (const listener of clientListeners.get("message") ?? []) listener({ data })
-    },
-    close: (code: number) => {
-      for (const listener of clientListeners.get("close") ?? []) listener({ code })
-    },
-  }
-  const bridgeSocket: SocketLike = {
-    readyState: 0,
-    send: (data: string) => {
-      void hostLive.message(serverWs, data, () => ({ status: 200, body: "{}" }))
-    },
-    close: () => {},
-    addEventListener: (type, listener) => {
-      clientListeners.set(type, [...(clientListeners.get(type) ?? []), listener])
-    },
-  }
-
-  const receivedSnapshots: LiveSnapshot[] = []
-  const receivedRefusals: LiveRefusal[] = []
-  const client = new LiveClient({
-    url: () => "wss://studio/api/host/v1/subscribe?orgId=org_demo&environmentId=analytics",
-    connect: () => bridgeSocket,
-  })
-  const unsub = client.subscribe(longPath, (s) => receivedSnapshots.push(s), { onRefused: (r) => receivedRefusals.push(r) })
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  ;(bridgeSocket as { readyState: number }).readyState = 1
-  for (const listener of clientListeners.get("open") ?? []) listener({})
-  await new Promise((resolve) => setTimeout(resolve, 0))
-
-  expect(receivedSnapshots).toEqual([])
-  expect(receivedRefusals).toEqual([
-    { code: "live.not_subscribable", message: "a subscription names one of this cell's GET routes" },
-  ])
-  expect(client.refusal(longPath)).toEqual(receivedRefusals[0])
-  unsub()
-})
-
 test("LiveClient guards against frames larger than 4096 bytes so an oversize subscription cannot close the shared socket with 1009", async () => {
   const { client, sockets, flush } = harness()
   const refused: LiveRefusal[] = []
@@ -376,38 +317,6 @@ test("a snapshot's body is also read exactly, and a failing one carries its refu
     frame(status, body)
     expect([status, body, seen.at(-1)!.status, seen.at(-1)!.refusal]).toEqual([status, body, status, undefined])
   }
-})
-
-test("the cell's live host sends the GET's own bytes, so a pushed decimal reaches `exact` with every digit", async () => {
-  const body = '{"version":2,"values":{"amount":1234567890123456.789012345678,"rate":100.000}}'
-  let attachment: unknown = { scope: ["org_demo", "analytics"], authorization: "Bearer reader", subs: {}, role: "member" }
-  const clientListeners = new Map<string, Listener[]>()
-  const frames: string[] = []
-  const serverWs = {
-    serializeAttachment: (v: unknown) => { attachment = structuredClone(v) },
-    deserializeAttachment: () => structuredClone(attachment),
-    send: (data: string) => {
-      frames.push(data)
-      for (const listener of clientListeners.get("message") ?? []) listener({ data })
-    },
-    close: () => {},
-  }
-  const bridgeSocket: SocketLike = {
-    readyState: 0,
-    send: (data: string) => { void hostLive.message(serverWs, data, () => ({ status: 200, body })) },
-    close: () => {},
-    addEventListener: (type, listener) => { clientListeners.set(type, [...(clientListeners.get(type) ?? []), listener]) },
-  }
-  const seen: LiveSnapshot[] = []
-  const client = new LiveClient({ url: () => "wss://studio/api/host/v1/subscribe", connect: () => bridgeSocket })
-  const stop = client.subscribe("/v1/objects/demo.Item/i1?orgId=org_demo&environmentId=analytics", (s) => seen.push(s))
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  ;(bridgeSocket as { readyState: number }).readyState = 1
-  for (const listener of clientListeners.get("open") ?? []) listener({})
-  for (let tick = 0; tick < 20 && seen.length === 0; tick += 1) await new Promise((resolve) => setTimeout(resolve, 1))
-  expect(frames[0]).toContain(`"body":${body}`)
-  expect(seen[0]!.exact).toEqual({ version: "2", values: { amount: "1234567890123456.789012345678", rate: "100.000" } })
-  stop()
 })
 
 test("repeated 4401 closes without a frame back off and cap at unavailable instead of spinning forever", async () => {

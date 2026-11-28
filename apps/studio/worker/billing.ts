@@ -102,7 +102,7 @@ export async function writeLimits(db: BillingDb, payerId: string, grant: Grant, 
 /**
  * The database's billing mode (migration 0011's billing_mode) is the one switch: its limit triggers and
  * every request read it, so the API and the database always apply the same policy. A deploy writes it
- * once, from that deployment's billing settings (alchemy.run.ts, scripts/celld-migrate.ts), in this one
+ * once, from that deployment's billing settings (alchemy.run.ts), in this one
  * statement; no request ever writes it, so isolates of two deployments serving at once cannot flip it.
  */
 export const billingModeStatement = (on: boolean) =>

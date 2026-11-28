@@ -1,14 +1,14 @@
 //! The host conformance suite's native reference (D122, #1130, #786).
 //!
-//! This test owns the request script that `apps/norn-cell-do/conformance`
-//! replays on every cell host (the native Rivet host, or a deployed Workers
+//! This test owns the request script that `apps/norn-cell-rivet/conformance`
+//! replays on every cell host (the native Rivet host, or any deployed cell
 //! host by URL): a sequence of governed definition installs, refusals,
 //! retirements and reads on the analytics cell, all at one fixed clock. It
-//! serves the script through the same tenant dispatch the Durable Object
-//! binding (`src/wasm.rs`) runs, over `NativeEngine`, and records each
-//! response's status and body and the verified ledger head after each
-//! step, the head as the exact JSON the cell serializes. A hosted run passes
-//! only when every one of those is byte-identical.
+//! serves the script through the same `Tenant` dispatch the hosted cell
+//! runner runs, over `NativeEngine`, and records each response's status and
+//! body and the verified ledger head after each step, the head as the exact
+//! JSON the cell serializes. A hosted run passes only when every one of
+//! those is byte-identical.
 //!
 //! The reference itself must be reproducible: two fresh runs, and a run whose
 //! cell is reopened from its file between every step, give the same record.

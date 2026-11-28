@@ -2272,7 +2272,6 @@ dependencies = [
  "sha2 0.10.9",
  "ureq",
  "url",
- "wasm-bindgen",
  "zeroize",
 ]
 

@@ -1,7 +1,6 @@
-//! Host conformance seams (`apps/norn-cell-do/conformance`), in `conformance`
+//! Host conformance seams (`apps/norn-cell-rivet/conformance`), in `conformance`
 //! builds only, served only when `NORN_STAGE=test` and
-//! `NORN_CONFORMANCE=synthetic`, and only for the synthetic scope. The native
-//! counterpart of `conformance/worker.mjs`:
+//! `NORN_CONFORMANCE=synthetic`, and only for the synthetic scope:
 //!
 //! - a fixed request clock (`x-norn-conformance-now`), so receipts and heads
 //!   are byte-comparable with the native reference;
@@ -780,9 +779,9 @@ async fn engine_upgrade(ctx: &Ctx<ProbeActor>, params: &HashMap<String, String>)
     }
 }
 
-/// `crates/norn-cell/examples/workers_sql.rs`'s adapter laws over the Rivet
-/// engine: commit, a typed refusal rolled back, nesting and SQL transaction
-/// control refused, exact values, blobs, duplicate columns.
+/// `SqlEngine` adapter laws over the Rivet engine: commit, a typed refusal
+/// rolled back, nesting and SQL transaction control refused, exact values,
+/// blobs, duplicate columns.
 fn exercise(engine: &RivetEngine) -> Result<String, CellError> {
     engine.execute_batch(
         "CREATE TABLE IF NOT EXISTS probe (id INTEGER PRIMARY KEY, exact TEXT, bytes BLOB)",

@@ -880,7 +880,6 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
         "integration-wasm": (
             "cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1",
             'node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"',
-            '(cd apps/norn-cell-do && NORN_CELL_DO_PKG="$upstream/norn-cell-do-pkg" bun test ./worker.wasm.test.mjs)',
             'node crates/norn-checker-wasm/tests/parity/engine-parity.mjs "$NORN_CHECKER_WASM_PKG" "${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/engine"',
         ),
         "integration-clients": (
