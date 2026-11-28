@@ -673,7 +673,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let Some(prior_receipt) = self.receipt_at(prev_seq)? else {
             return Err(corrupt("missing prior consuming receipt"));
         };
-        let expected_consumed = norn_kernel::Consumption::Observation {
+        let expected_consumed = crate::Consumption::Observation {
             observation_id: dispute_id.to_owned(),
         };
         if prior_receipt.body.world != crate::MAIN_WORLD
