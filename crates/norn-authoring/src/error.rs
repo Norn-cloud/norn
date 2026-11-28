@@ -53,4 +53,24 @@ pub enum AuthoringError {
         /// Byte end offset of the second edit.
         second_end: usize,
     },
+
+    /// Reading a host directory or declaration file into a virtual mount failed.
+    #[error("failed to read `{path}`: {reason}")]
+    Io {
+        /// Host filesystem path that failed to load.
+        path: String,
+        /// Underlying error description.
+        reason: String,
+    },
+
+    /// A mounted dependency package version did not match the pinned profile version.
+    #[error("pinned package `{package}` version mismatch: expected `{expected}`, got `{actual}`")]
+    PinMismatch {
+        /// Package name (for example `effect`).
+        package: String,
+        /// Version required by the profile.
+        expected: String,
+        /// Version found in the mounted `package.json`.
+        actual: String,
+    },
 }

@@ -65,6 +65,8 @@ async function standIn(page: Page, me: (route: Route, count: number) => Promise<
   return { reads, subscribed, frames, sockets }
 }
 
+const shots = process.env.SHOTS
+
 for (const scheme of ["light", "dark"] as const) {
   test(`cell query (${scheme}): a live push updates the record in place, exact decimals kept, without reading again`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme })
@@ -75,14 +77,14 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(view.getByTestId("record-value-amount")).toHaveText(FIRST)
     const { socket, id, path } = await cell.subscribed
     expect(path).toBe(PATH)
-    await page.screenshot({ path: `test-results/cell-query/read-${scheme}.png` })
+    if (shots) await page.screenshot({ path: `test-results/cell-query/read-${scheme}.png` })
 
     socket.send(`{"type":"snapshot","id":"${id}","status":200,"digest":"d2","body":${record(2, SECOND)}}`)
     await expect(view.getByTestId("record-version")).toHaveText("2")
     await expect(view.getByTestId("record-value-amount")).toHaveText(SECOND)
     await expect(view.getByTestId("record-source")).toHaveText("pushed")
     expect(cell.reads).toEqual([PATH])
-    await page.screenshot({ path: `test-results/cell-query/pushed-${scheme}.png` })
+    if (shots) await page.screenshot({ path: `test-results/cell-query/pushed-${scheme}.png` })
   })
 }
 
@@ -97,7 +99,7 @@ test("cell query: a pushed refusal shows the refusal state in place of the recor
   await expect(view.getByText("object.not_found")).toBeAttached()
   await expect(view.getByTestId("record-version")).toHaveCount(0)
   expect(cell.reads).toHaveLength(1)
-  await page.screenshot({ path: "test-results/cell-query/refused-light.png" })
+  if (shots) await page.screenshot({ path: "test-results/cell-query/refused-light.png" })
 })
 
 test("cell query: a read whose subscription the cell refuses says it is not followed, and reads again on request", async ({ page }) => {
@@ -114,7 +116,7 @@ test("cell query: a read whose subscription the cell refuses says it is not foll
   await expect(view.getByTestId("record-value-amount")).toHaveText(FIRST)
   await updates.getByRole("button", { name: "Read again" }).click()
   await expect.poll(() => cell.reads.length).toBe(2)
-  await page.screenshot({ path: "test-results/cell-query/stale-light.png" })
+  if (shots) await page.screenshot({ path: "test-results/cell-query/stale-light.png" })
 })
 
 test("cell query: a workspace with no data cell says so, and a failed scope discovery is Workspace unavailable with Retry", async ({ page }) => {
@@ -131,7 +133,7 @@ test("cell query: a workspace with no data cell says so, and a failed scope disc
   expect(cell.reads).toHaveLength(0)
   await unavailable.getByRole("button", { name: "Retry" }).click()
   await expect(view.getByTestId("record-version")).toHaveText("1")
-  await second.screenshot({ path: "test-results/cell-query/scope-retried-light.png" })
+  if (shots) await second.screenshot({ path: "test-results/cell-query/scope-retried-light.png" })
 })
 
 const NEXT = "/v1/objects/demo.Item/i2?orgId=org_demo&environmentId=analytics"
@@ -189,7 +191,7 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(unavailable.getByText("Workspace unavailable", { exact: true })).toBeVisible()
     await expect(view.locator('[data-load-state="not-served"]')).toHaveCount(0)
     expect(cell.reads).toEqual([PATH, PATH, PATH, PATH])
-    await page.screenshot({ path: `test-results/cell-query/unavailable-${scheme}.png` })
+    if (shots) await page.screenshot({ path: `test-results/cell-query/unavailable-${scheme}.png` })
 
     up = true
     await unavailable.getByRole("button", { name: "Retry" }).click()
@@ -199,6 +201,6 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(view.getByTestId("record-source")).toHaveText("read")
     await expect(unavailable).toHaveCount(0)
     expect(cell.reads).toHaveLength(5)
-    await page.screenshot({ path: `test-results/cell-query/unavailable-retried-${scheme}.png` })
+    if (shots) await page.screenshot({ path: `test-results/cell-query/unavailable-retried-${scheme}.png` })
   })
 }

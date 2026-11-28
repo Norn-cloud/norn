@@ -24,7 +24,10 @@ const settled = (page: Page) => page.evaluate(() => Promise.all(
     .map((animation) => animation.finished.catch(() => undefined)),
 ).then(() => undefined))
 
+const shots = process.env.SHOTS
+
 async function shoot(page: Page, name: string) {
+  if (!shots) return
   await settled(page)
   for (const state of ["facts", "message", "problems"]) {
     await page.locator(`[data-state="locale/${state}"]`).screenshot({ path: `test-results/locale/${state}-${name}.png` })
@@ -97,10 +100,12 @@ test("the Studio language switch mirrors the app and is kept for the next visit"
   await expect(hint).toHaveText("⌘K")
   await page.reload()
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl")
-  for (const scheme of ["light", "dark"] as const) {
-    await page.emulateMedia({ colorScheme: scheme })
-    await settled(page)
-    await page.screenshot({ path: `test-results/locale/app-ar-${scheme}.png` })
+  if (shots) {
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme })
+      await settled(page)
+      await page.screenshot({ path: `test-results/locale/app-ar-${scheme}.png` })
+    }
   }
   await chooseFromAccountMenu(page, "English")
   await expect(page.locator("html")).toHaveAttribute("dir", "ltr")
