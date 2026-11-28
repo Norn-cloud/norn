@@ -1073,7 +1073,8 @@ impl<'a> Checker<'a, '_> {
         };
         let actual = link_witness::format_link_contract(&decl.link.target, decl.link.cardinality);
         let override_failed_target = overridden_link.is_some_and(|inherited| {
-            self.target_narrows(&decl.link.target, &inherited.target) == Some(false)
+            inherited.target == requirement.target
+                && self.target_narrows(&decl.link.target, &inherited.target) == Some(false)
         });
         if !override_failed_target
             && self.target_narrows(&decl.link.target, &requirement.target) == Some(false)
@@ -1089,7 +1090,8 @@ impl<'a> Checker<'a, '_> {
             ));
         }
         let override_widened_cardinality = overridden_link.is_some_and(|inherited| {
-            !cardinality_narrows(decl.link.cardinality, inherited.cardinality)
+            inherited.cardinality == requirement.cardinality
+                && !cardinality_narrows(decl.link.cardinality, inherited.cardinality)
         });
         if !override_widened_cardinality
             && !cardinality_narrows(decl.link.cardinality, requirement.cardinality)
