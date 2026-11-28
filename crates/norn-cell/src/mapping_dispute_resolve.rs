@@ -173,23 +173,23 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         &self,
         pending_only: bool,
     ) -> Result<Vec<(u64, MappingConflict, Option<u64>)>, CellError> {
-        // Quarantine release requires a recorded governed resolution in
+        // Quarantine and resolution status are governed by
         // `_norn_dispute_resolution` (pre-v13 generic consumption without a
-        // governed resolution keeps the dispute active).
+        // governed resolution keeps the dispute active and reports `None`).
         let filter = if pending_only {
-            format!(
-                " AND NOT EXISTS (SELECT 1 FROM \"{}\" r WHERE r.\"dispute_id\" = \"{}\".\"observation_id\")",
-                crate::link_claim_frontier::DISPUTE_RESOLUTION,
-                crate::system::INBOX,
-            )
+            " AND r.\"dispute_id\" IS NULL"
         } else {
-            String::new()
+            ""
         };
         let rows = self.conn.query(
             &format!(
-                "SELECT position, observation_id, observed, consumed_commit_seq FROM {} \
-                 WHERE observation_id LIKE 'mapping-conflict:%'{filter} ORDER BY position",
-                crate::system::INBOX
+                "SELECT i.\"position\", i.\"observation_id\", i.\"observed\", r.\"commit_seq\" \
+                 FROM \"{inbox}\" i \
+                 LEFT JOIN \"{res}\" r ON r.\"dispute_id\" = i.\"observation_id\" \
+                 WHERE i.\"observation_id\" LIKE 'mapping-conflict:%'{filter} \
+                 ORDER BY i.\"position\"",
+                inbox = crate::system::INBOX,
+                res = crate::link_claim_frontier::DISPUTE_RESOLUTION,
             ),
             crate::engine::params![],
         )?;
@@ -201,7 +201,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             let encoded: String = row.get(2)?;
             let resolved_seq = row
                 .get::<Option<i64>>(3)?
-                .map(|seq| crate::read::to_u64(seq, "consumed_commit_seq"))
+                .map(|seq| crate::read::to_u64(seq, "dispute resolution commit_seq"))
                 .transpose()?;
             let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
             let conflict: MappingConflict =
@@ -301,23 +301,43 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         Ok(false)
     }
 
-    /// Load and cryptographically recheck a pending dispute row from `_norn_inbox`.
-    pub(crate) fn load_verified_pending_dispute(
+    /// Load and cryptographically recheck an unresolved dispute row from
+    /// `_norn_inbox`, returning `(observed, dispute, is_pending)`.
+    ///
+    /// Returns `NotPending` if the dispute does not exist or already has a
+    /// recorded governed resolution in `_norn_dispute_resolution`. Pre-v13
+    /// generically-consumed rows without a governed resolution are returned
+    /// with `is_pending == false` so operators can still resolve them through
+    /// `mapping.dispute.resolve` without double-consuming the inbox row.
+    pub(crate) fn load_verified_unresolved_dispute(
         &self,
         dispute_id: &str,
-    ) -> Result<(Observed<RuntimeValue>, VerifiedDispute), CellError> {
+    ) -> Result<(Observed<RuntimeValue>, VerifiedDispute, bool), CellError> {
         if !dispute_id.starts_with("mapping-conflict:")
             && !dispute_id.starts_with("mapping-identity:")
         {
             return Err(CellError::UnsupportedMappingProfile);
         }
-        let Some(pending) = self.pending_observation(dispute_id)? else {
-            return Err(CellError::NotPending(Consumption::Observation {
+        let not_pending = || {
+            CellError::NotPending(Consumption::Observation {
                 observation_id: dispute_id.to_owned(),
-            }));
+            })
         };
-        let observed: Observed<RuntimeValue> =
-            norn_ir::runtime::decode(&pending.observed).map_err(CellError::Encoding)?;
+        if self.dispute_resolution(dispute_id)?.is_some() {
+            return Err(not_pending());
+        }
+        let Some((encoded, consumed_seq)) = self.conn.query_optional(
+            &format!(
+                "SELECT \"observed\", \"consumed_commit_seq\" FROM \"{}\" WHERE \"observation_id\" = ?1",
+                crate::system::INBOX
+            ),
+            crate::engine::params![dispute_id],
+            |row| Ok((row.get::<String>(0)?, row.get::<Option<i64>>(1)?)),
+        )? else {
+            return Err(not_pending());
+        };
+        let is_pending = consumed_seq.is_none();
+        let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
         if observed.id.0 != dispute_id {
             return Err(CellError::MappingBundleMismatch);
         }
@@ -328,12 +348,20 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 return Err(CellError::MappingBundleMismatch);
             }
             self.recheck_mapping_conflict(&conflict)?;
-            Ok((observed, VerifiedDispute::Conflict(Box::new(conflict))))
+            Ok((
+                observed,
+                VerifiedDispute::Conflict(Box::new(conflict)),
+                is_pending,
+            ))
         } else {
             let identity: IdentityEvidence =
                 norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
             self.recheck_identity_evidence(&identity, dispute_id)?;
-            Ok((observed, VerifiedDispute::Identity(Box::new(identity))))
+            Ok((
+                observed,
+                VerifiedDispute::Identity(Box::new(identity)),
+                is_pending,
+            ))
         }
     }
 
@@ -705,10 +733,10 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                 "mapping.dispute.resolve requires non-empty actor and reason".to_owned(),
             ));
         }
-        let (observed, dispute) = self
+        let (observed, dispute, is_pending) = self
             .store()
             .read()
-            .load_verified_pending_dispute(&input.dispute_id)?;
+            .load_verified_unresolved_dispute(&input.dispute_id)?;
         let incoming = dispute.incoming_bundle();
         if input.decision == DisputeDecision::AcceptSecondAsCorrection {
             if self.store().read().active_definitions_version()?
@@ -726,13 +754,17 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             .with_interfaces(model.interfaces())
             .with_property_types(model.property_types())
             .with_governing_laws(model.law_artifacts());
+        let consumed = is_pending.then(|| observed.consumed());
         let turn = DecisionTurn {
             id: input.dispute_id.clone(),
             now: self.now(),
             world: self.store().world(),
-            consumes: Some(observed.consumed()),
+            consumes: consumed.clone(),
         };
-        let mut commit = CellCommit::empty().consuming(observed.consumed());
+        let mut commit = match consumed {
+            Some(c) => CellCommit::empty().consuming(c),
+            None => CellCommit::empty(),
+        };
         let mut authorization = ObservationAuthorization::empty();
         let reader = self.store().read();
         if input.decision == DisputeDecision::AcceptSecondAsCorrection {

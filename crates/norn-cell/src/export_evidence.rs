@@ -272,9 +272,6 @@ pub(crate) fn read_late_source_evidence<E: SqlEngine>(
         ),
         params![prev_seq, current_seq],
     )?;
-    if rows.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
-    }
     let mut pending = Vec::new();
     let mut seen_pending = BTreeSet::new();
     let mut out = Vec::with_capacity(rows.len());
@@ -303,6 +300,9 @@ pub(crate) fn read_late_source_evidence<E: SqlEngine>(
         }
     }
     append_conflict_dependencies(conn, prev_seq, current_seq, &mut pending, &mut seen_pending)?;
+    if pending.is_empty() && out.is_empty() {
+        return Ok((pending, out));
+    }
     pending.sort_by(|a, b| {
         a.position
             .cmp(&b.position)

@@ -152,7 +152,9 @@ pub(crate) fn verify_mapping_links<E: serde::Serialize + 'static, C, I, S: SqlEn
         if applied != expected {
             return Err(CommitError::Host(CellError::SourceEvidenceChanged));
         }
-    } else if !mapped.is_empty() || has_dispute_event || dispute_resolve.is_some() {
+    } else if !mapped.is_empty()
+        || (commit.consumes.is_some() && (has_dispute_event || dispute_resolve.is_some()))
+    {
         return Err(CommitError::Host(CellError::MappingBundleMismatch));
     }
     if mapped.is_empty() {
@@ -212,18 +214,17 @@ fn verify_dispute_resolution_links<E: 'static, C, I, S: SqlEngine>(
     proof: crate::mapping_dispute_resolve::DisputeResolveProof<'_>,
 ) -> Result<Option<VerifiedMappingProof>, CommitError<CellError>> {
     let dispute_id = proof.dispute_id();
-    let Some(norn_kernel::Consumed::Observation {
-        id: norn_kernel::ObservationId(consumed_id),
-    }) = &commit.consumes
-    else {
-        return Err(CommitError::Host(CellError::MappingBundleMismatch));
+    let (_, dispute, is_pending) = reader
+        .load_verified_unresolved_dispute(dispute_id)
+        .map_err(CommitError::Host)?;
+    let consumes_ok = match &commit.consumes {
+        Some(norn_kernel::Consumed::Observation { id }) => is_pending && id.0 == dispute_id,
+        None => !is_pending,
+        _ => false,
     };
-    if consumed_id != dispute_id {
+    if !consumes_ok {
         return Err(CommitError::Host(CellError::MappingBundleMismatch));
     }
-    let (_, dispute) = reader
-        .load_verified_pending_dispute(dispute_id)
-        .map_err(CommitError::Host)?;
     let matches_event = commit.events.iter().any(|event| {
         let any: &dyn std::any::Any = event;
         let Some(norn_kernel::ObservationEvent::DisputeResolved {

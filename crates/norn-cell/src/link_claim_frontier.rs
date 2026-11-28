@@ -336,18 +336,9 @@ pub(crate) fn record_dispute_resolutions_in_tx<E: SqlEngine>(
                 "dispute_resolved requires a mapping dispute id, got {dispute_id}"
             )));
         }
-        let consumed_id = match consumed {
-            Some(crate::store::Consumption::Observation { observation_id }) => {
-                Some(observation_id.as_str())
-            }
-            Some(
-                crate::store::Consumption::Timer { .. } | crate::store::Consumption::Result { .. },
-            )
-            | None => None,
-        };
-        if consumed_id != Some(dispute_id) {
+        if !dispute_consumption_valid(conn, commit_seq, dispute_id, consumed)? {
             return Err(CellError::Encoding(format!(
-                "dispute_resolved event for {dispute_id} requires consuming that dispute"
+                "dispute_resolved event for {dispute_id} requires consuming that dispute (or resolving a previously consumed legacy dispute)"
             )));
         }
         let decision = event
@@ -372,6 +363,41 @@ pub(crate) fn record_dispute_resolutions_in_tx<E: SqlEngine>(
         )?;
     }
     Ok(())
+}
+
+/// A governed `dispute_resolved` commit either consumes `dispute_id` directly
+/// (normal pending dispute) or consumes nothing when resolving a pre-v13
+/// legacy dispute row that was already generically consumed at an earlier
+/// commit sequence (`consumed_commit_seq < commit_seq`).
+fn dispute_consumption_valid<E: SqlEngine>(
+    conn: &E,
+    commit_seq: u64,
+    dispute_id: &str,
+    consumed: Option<&crate::store::Consumption>,
+) -> Result<bool, CellError> {
+    match consumed {
+        Some(crate::store::Consumption::Observation { observation_id }) => {
+            Ok(observation_id == dispute_id)
+        }
+        None => {
+            let seq_i64 = to_i64(commit_seq, "dispute resolution commit_seq")?;
+            Ok(conn
+                .query_optional(
+                    &format!(
+                        "SELECT 1 FROM \"{INBOX}\" \
+                         WHERE \"observation_id\" = ?1 \
+                           AND \"consumed_commit_seq\" IS NOT NULL \
+                           AND \"consumed_commit_seq\" < ?2"
+                    ),
+                    params![dispute_id, seq_i64],
+                    |_row| Ok(()),
+                )?
+                .is_some())
+        }
+        Some(
+            crate::store::Consumption::Timer { .. } | crate::store::Consumption::Result { .. },
+        ) => Ok(false),
+    }
 }
 
 /// Whether `events` contains a governed `dispute_resolved` decision on
@@ -632,12 +658,7 @@ fn expected_dispute_resolutions<E: SqlEngine>(
         {
             continue;
         }
-        let consumed_matches = matches!(
-            body.consumed.as_ref(),
-            Some(crate::store::Consumption::Observation { observation_id })
-                if observation_id == dispute_id
-        );
-        if !consumed_matches {
+        if !dispute_consumption_valid(conn, commit_seq, dispute_id, body.consumed.as_ref())? {
             continue;
         }
         let Some(decision) = event.get("decision").and_then(Value::as_str).filter(|d| {
