@@ -79,12 +79,11 @@ pub(crate) fn assert_golden(relative: &str, actual: &str) {
         return;
     }
     let expected = std::fs::read_to_string(&path).unwrap_or_default();
-    if expected != actual {
-        panic!(
-            "golden {relative} is stale; rerun with {UPDATE_ENV}=1 and review the diff\n\
-             ----- BEGIN ACTUAL {relative} -----\n{actual}----- END ACTUAL {relative} -----"
-        );
-    }
+    assert!(
+        expected == actual,
+        "golden {relative} is stale; rerun with {UPDATE_ENV}=1 and review the diff\n\
+         ----- BEGIN ACTUAL {relative} -----\n{actual}----- END ACTUAL {relative} -----"
+    );
 }
 
 /// The loss report as JSON Lines: one compact, key-sorted entry per line
