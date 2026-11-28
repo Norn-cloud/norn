@@ -60,6 +60,7 @@ pub(super) struct MountedTsContext {
     pub(super) vfs: BoundedVfs,
     pub(super) effect_dist_prefix: Option<&'static str>,
     pub(super) root_vpaths: Vec<String>,
+    pub(super) root_rels: BTreeMap<String, PathBuf>,
     pub(super) source_paths: BTreeMap<String, String>,
 }
 
@@ -100,7 +101,7 @@ pub(super) fn is_ts_support_file(_name: &str, path: &Path) -> bool {
     classify_source_file(path) == Some(SourceLang::TypeScript) || is_json_file(path)
 }
 
-fn normalize_lexical_relative(path: &Path) -> PathBuf {
+pub(super) fn normalize_lexical_relative(path: &Path) -> PathBuf {
     let mut up_count: usize = 0;
     let mut normals: Vec<&std::ffi::OsStr> = Vec::new();
     for component in path.components() {
@@ -218,23 +219,27 @@ struct SeededClosure {
     loaded: Vec<LoadedFile>,
 }
 
-fn seed_closure_inputs(inputs: TsClosureInputs<'_>) -> SeededClosure {
+fn seed_closure_inputs(inputs: TsClosureInputs<'_>) -> Result<SeededClosure, AuthoringFailure> {
     let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
     let mut queue: VecDeque<(LoadedFile, usize)> = VecDeque::new();
     let mut root_rels: Vec<PathBuf> = Vec::with_capacity(inputs.root_files.len());
     for file in inputs.root_files {
         let norm_rel = normalize_lexical_relative(&file.rel_path);
-        if visited.insert(norm_rel.clone()) {
-            root_rels.push(norm_rel.clone());
-            queue.push_back((
-                LoadedFile {
-                    display_path: file.display_path,
-                    rel_path: norm_rel,
-                    content: file.content,
-                },
-                0,
-            ));
+        if !visited.insert(norm_rel.clone()) {
+            return Err(AuthoringFailure::Io(format!(
+                "{}: duplicate module root",
+                file.display_path.display()
+            )));
         }
+        root_rels.push(norm_rel.clone());
+        queue.push_back((
+            LoadedFile {
+                display_path: file.display_path,
+                rel_path: norm_rel,
+                content: file.content,
+            },
+            0,
+        ));
     }
 
     let capacity = queue
@@ -267,12 +272,12 @@ fn seed_closure_inputs(inputs: TsClosureInputs<'_>) -> SeededClosure {
             }
         }
     }
-    SeededClosure {
+    Ok(SeededClosure {
         visited,
         root_rels,
         queue,
         loaded,
-    }
+    })
 }
 
 fn collect_ts_import_closure(
@@ -286,7 +291,7 @@ fn collect_ts_import_closure(
         root_rels,
         mut queue,
         mut loaded,
-    } = seed_closure_inputs(inputs);
+    } = seed_closure_inputs(inputs)?;
     let mut imported_count: usize = 0;
     while let Some((current, depth)) = queue.pop_front() {
         if depth < MAX_LOCAL_IMPORT_DEPTH && !is_json_file(&current.display_path) {
@@ -361,6 +366,7 @@ pub(super) fn mount_ts_closure(
     }
 
     let mut root_vpaths = Vec::with_capacity(root_rels.len());
+    let mut root_rels_by_vpath = BTreeMap::new();
     for root_rel in root_rels {
         let vpath = rel_to_vpath.remove(&root_rel).ok_or_else(|| {
             AuthoringFailure::Io(format!(
@@ -368,6 +374,7 @@ pub(super) fn mount_ts_closure(
                 root_rel.display()
             ))
         })?;
+        root_rels_by_vpath.insert(vpath.clone(), root_rel);
         root_vpaths.push(vpath);
     }
 
@@ -376,6 +383,7 @@ pub(super) fn mount_ts_closure(
         vfs,
         effect_dist_prefix,
         root_vpaths,
+        root_rels: root_rels_by_vpath,
         source_paths,
     })
 }

@@ -452,21 +452,10 @@ fn compile_rejects_file_source_and_unsupported_json_in_manifest() -> TestResult 
         })
         .to_string(),
     )?;
-    let file_source_out = execute_compile(&CompileArgs {
-        path: bad_file_source.path().to_path_buf(),
-        org: Some("local".to_owned()),
-        env: Some("dev".to_owned()),
-        forbid_unsafe_zen: false,
-        out: None,
-        tool_root: Some(ts_root.clone()),
-        pack_json: false,
-        registry: None,
-        root: None,
-        source_path: None,
-        modules: None,
-        allow_empty: false,
-        max_expansion_work: None,
-    });
+    let file_source_out = execute_compile(&legacy_compile_args(
+        bad_file_source.path().to_path_buf(),
+        Some(ts_root.clone()),
+    ));
     assert_eq!(file_source_out.exit_code, 2);
     assert!(
         file_source_out.stderr.contains("not a directory"),
@@ -487,21 +476,10 @@ fn compile_rejects_file_source_and_unsupported_json_in_manifest() -> TestResult 
         })
         .to_string(),
     )?;
-    let bad_json_out = execute_compile(&CompileArgs {
-        path: bad_json.path().to_path_buf(),
-        org: Some("local".to_owned()),
-        env: Some("dev".to_owned()),
-        forbid_unsafe_zen: false,
-        out: None,
-        tool_root: Some(ts_root),
-        pack_json: false,
-        registry: None,
-        root: None,
-        source_path: None,
-        modules: None,
-        allow_empty: false,
-        max_expansion_work: None,
-    });
+    let bad_json_out = execute_compile(&legacy_compile_args(
+        bad_json.path().to_path_buf(),
+        Some(ts_root),
+    ));
     assert_eq!(bad_json_out.exit_code, 2);
     assert!(
         bad_json_out.stderr.contains("unsupported JSON source"),
@@ -509,6 +487,24 @@ fn compile_rejects_file_source_and_unsupported_json_in_manifest() -> TestResult 
         bad_json_out.stderr
     );
     Ok(())
+}
+
+fn legacy_compile_args(path: PathBuf, tool_root: Option<PathBuf>) -> CompileArgs {
+    CompileArgs {
+        path,
+        org: Some("local".to_owned()),
+        env: Some("dev".to_owned()),
+        forbid_unsafe_zen: false,
+        out: None,
+        tool_root,
+        pack_json: false,
+        registry: None,
+        root: None,
+        source_path: None,
+        modules: None,
+        allow_empty: false,
+        max_expansion_work: None,
+    }
 }
 
 #[cfg(unix)]
@@ -531,21 +527,7 @@ fn norn_json_sources_refuse_symlink_and_parent_escape() -> TestResult {
         .to_string(),
     )?;
 
-    let refused = execute_compile(&CompileArgs {
-        path: scratch.path().to_path_buf(),
-        org: Some("local".to_owned()),
-        env: Some("dev".to_owned()),
-        forbid_unsafe_zen: false,
-        out: None,
-        tool_root: None,
-        pack_json: false,
-        registry: None,
-        root: None,
-        source_path: None,
-        modules: None,
-        allow_empty: false,
-        max_expansion_work: None,
-    });
+    let refused = execute_compile(&legacy_compile_args(scratch.path().to_path_buf(), None));
     assert_eq!(refused.exit_code, 2);
     assert!(
         refused.stderr.contains("symlink"),
@@ -579,21 +561,7 @@ fn retained_definitions_refuse_empty_payload_for_all_kinds() -> TestResult {
             .to_string(),
         )?;
 
-        let refused = execute_compile(&CompileArgs {
-            path: scratch.path().to_path_buf(),
-            org: Some("local".to_owned()),
-            env: Some("dev".to_owned()),
-            forbid_unsafe_zen: false,
-            out: None,
-            tool_root: None,
-            pack_json: false,
-            registry: None,
-            root: None,
-            source_path: None,
-            modules: None,
-            allow_empty: false,
-            max_expansion_work: None,
-        });
+        let refused = execute_compile(&legacy_compile_args(scratch.path().to_path_buf(), None));
         assert_eq!(
             refused.exit_code, 2,
             "expected empty {kind} payload refusal, got stdout={} stderr={}",
@@ -631,21 +599,7 @@ fn manifest_source_dir_refuses_hidden_symlink_and_hidden_unsupported_file() -> T
         })
         .to_string(),
     )?;
-    let sym_out = execute_compile(&CompileArgs {
-        path: sym_ws.path().to_path_buf(),
-        org: Some("local".to_owned()),
-        env: Some("dev".to_owned()),
-        forbid_unsafe_zen: false,
-        out: None,
-        tool_root: None,
-        pack_json: false,
-        registry: None,
-        root: None,
-        source_path: None,
-        modules: None,
-        allow_empty: false,
-        max_expansion_work: None,
-    });
+    let sym_out = execute_compile(&legacy_compile_args(sym_ws.path().to_path_buf(), None));
     assert_eq!(sym_out.exit_code, 2);
     assert!(
         sym_out.stderr.contains("symlink"),
@@ -666,21 +620,7 @@ fn manifest_source_dir_refuses_hidden_symlink_and_hidden_unsupported_file() -> T
         })
         .to_string(),
     )?;
-    let junk_out = execute_compile(&CompileArgs {
-        path: junk_ws.path().to_path_buf(),
-        org: Some("local".to_owned()),
-        env: Some("dev".to_owned()),
-        forbid_unsafe_zen: false,
-        out: None,
-        tool_root: None,
-        pack_json: false,
-        registry: None,
-        root: None,
-        source_path: None,
-        modules: None,
-        allow_empty: false,
-        max_expansion_work: None,
-    });
+    let junk_out = execute_compile(&legacy_compile_args(junk_ws.path().to_path_buf(), None));
     assert_eq!(junk_out.exit_code, 2);
     assert!(
         junk_out.stderr.contains("unsupported file"),

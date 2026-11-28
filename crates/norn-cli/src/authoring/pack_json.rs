@@ -5,7 +5,7 @@
 //! outcomes) from a single in-process `norn-authoring` [`AuthoringProgram`].
 
 use std::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use norn_authoring::{
     AuthoringProgram, CompiledExample, CompilerLimits, DefinitionSource, DefinitionsCompileOptions,
@@ -13,13 +13,16 @@ use norn_authoring::{
     FlowCompileOutcome, FlowSourceMapFlow, ProfileChecker, ProfileDiagnostic,
     RetainedDefinitionDoc, compile_definitions_program, compile_flow_program,
 };
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::atomic_io::write_file_atomic;
 use super::fs_io::{
-    InvocationBudget, LoadedFile, SourceLang, classify_source_file, display_posix_path,
-    is_declaration_file, is_json_file, read_opened_file_budgeted,
+    InvocationBudget, LoadedFile, SourceLang, classify_source_file, is_declaration_file,
+    is_json_file, read_opened_file_budgeted,
+};
+use super::pack_manifest::{
+    MAX_MODULES_MANIFEST_BYTES, display_relative, parse_module_specs,
+    resolve_module_rel_inside_base,
 };
 use super::trusted_dir::{
     PinnedSourceTarget, TrustedDir, open_regular_file_pinned, open_source_target_pinned,
@@ -27,23 +30,9 @@ use super::trusted_dir::{
 };
 use super::ts::{
     MountedTsContext, TsClosureInputs, is_ts_support_file, mount_single_file_closure,
-    mount_ts_closure,
+    mount_ts_closure, normalize_lexical_relative,
 };
 use super::{AuthoringFailure, CommandOutput, CompileArgs};
-
-const MAX_MODULES_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ModuleSpec {
-    path: PathBuf,
-    #[serde(default)]
-    scope: Option<BTreeMap<String, String>>,
-    #[serde(default)]
-    source_path: Option<String>,
-    #[serde(default)]
-    registry_package_path: Option<String>,
-}
 
 struct ModuleEnvelope {
     file: String,
@@ -129,63 +118,13 @@ fn synthetic_failure(file: &str, code: &str, construct: &str, message: &str) -> 
     })
 }
 
-fn normalize_abs(path: &Path) -> PathBuf {
-    let joined = if path.is_absolute() {
-        path.to_path_buf()
-    } else if let Ok(cwd) = std::env::current_dir() {
-        cwd.join(path)
-    } else {
-        path.to_path_buf()
-    };
-    let mut out = PathBuf::new();
-    for comp in joined.components() {
-        match comp {
-            Component::Prefix(prefix) => out.push(prefix.as_os_str()),
-            Component::RootDir => out.push(Path::new("/")),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                let _ = out.pop();
-            }
-            Component::Normal(part) => out.push(part),
-        }
-    }
-    out
-}
-
-fn relative_pathbuf(base: &Path, target: &Path) -> PathBuf {
-    let abs_base = normalize_abs(base);
-    let abs_target = normalize_abs(target);
-    let base_parts: Vec<Component<'_>> = abs_base.components().collect();
-    let target_parts: Vec<Component<'_>> = abs_target.components().collect();
-    let common = base_parts
-        .iter()
-        .zip(target_parts.iter())
-        .take_while(|(left, right)| left == right)
-        .count();
-    let mut out = PathBuf::new();
-    for _step in common..base_parts.len() {
-        out.push("..");
-    }
-    if let Some(rest) = target_parts.get(common..) {
-        for comp in rest {
-            out.push(comp.as_os_str());
-        }
-    }
-    if out.as_os_str().is_empty() {
-        out.push(".");
-    }
-    out
-}
-
-fn display_relative(root: Option<&Path>, target: &Path) -> String {
-    root.map_or_else(
-        || display_posix_path(target),
-        |base| display_posix_path(&relative_pathbuf(base, target)),
-    )
-}
-
 fn default_scope(args: &CompileArgs) -> Result<BTreeMap<String, String>, AuthoringFailure> {
     if args.registry.is_some() {
+        if args.org.is_some() || args.env.is_some() {
+            return Err(AuthoringFailure::Io(
+                "--registry cannot be combined with --org or --env".to_owned(),
+            ));
+        }
         return Ok(BTreeMap::new());
     }
     match (&args.org, &args.env) {
@@ -209,28 +148,66 @@ fn build_limits(args: &CompileArgs) -> CompilerLimits {
     limits
 }
 
+fn bind_envelopes_by_vpath(
+    mounted: &MountedTsContext,
+    mut envelopes_by_rel: BTreeMap<PathBuf, ModuleEnvelope>,
+) -> Result<BTreeMap<String, ModuleEnvelope>, AuthoringFailure> {
+    let mut bound = BTreeMap::new();
+    for vpath in &mounted.root_vpaths {
+        let rel = mounted.root_rels.get(vpath).ok_or_else(|| {
+            AuthoringFailure::Io(format!("{vpath}: missing mounted root mapping"))
+        })?;
+        let env = envelopes_by_rel.remove(rel).ok_or_else(|| {
+            AuthoringFailure::Io(format!("{}: missing module envelope", rel.display()))
+        })?;
+        bound.insert(vpath.clone(), env);
+    }
+    Ok(bound)
+}
+
 fn mount_explicit_modules(
     args: &CompileArgs,
     modules_path: &Path,
     base_scope: &BTreeMap<String, String>,
     budget: &mut InvocationBudget,
-) -> Result<(MountedTsContext, Vec<ModuleEnvelope>), AuthoringFailure> {
-    let raw = crate::cell::read_regular_file_bounded(
-        modules_path,
-        MAX_MODULES_MANIFEST_BYTES,
-        "4 MiB modules manifest limit",
-    )
-    .map_err(AuthoringFailure::Io)?;
-    let specs: Vec<ModuleSpec> = serde_json::from_str(&raw)
-        .map_err(|err| AuthoringFailure::Io(format!("invalid --modules manifest: {err}")))?;
+) -> Result<(MountedTsContext, BTreeMap<String, ModuleEnvelope>), AuthoringFailure> {
+    let (_, _, raw) =
+        open_regular_file_pinned(modules_path, budget).map_err(AuthoringFailure::Io)?;
+    if raw.len() > MAX_MODULES_MANIFEST_BYTES {
+        return Err(AuthoringFailure::Io(format!(
+            "{}: exceeds 4 MiB modules manifest limit",
+            modules_path.display()
+        )));
+    }
+    let specs = parse_module_specs(&raw)?;
     let base_dir = TrustedDir::open(&args.path).map_err(AuthoringFailure::Io)?;
     let mut root_files = Vec::with_capacity(specs.len());
-    let mut envelopes = Vec::with_capacity(specs.len());
+    let mut envelopes_by_rel = BTreeMap::new();
     for spec in specs {
-        let (_, _, content) =
-            open_regular_file_pinned(&spec.path, budget).map_err(AuthoringFailure::Io)?;
-        let rel_path = relative_pathbuf(base_dir.display_path(), &spec.path);
-        let file = display_relative(args.root.as_deref(), &spec.path);
+        let norm_rel = resolve_module_rel_inside_base(base_dir.display_path(), &spec.path)?;
+        let display_path = base_dir.display_path().join(&norm_rel);
+        if classify_source_file(&display_path) != Some(SourceLang::TypeScript) {
+            return Err(AuthoringFailure::Io(format!(
+                "{}: --pack-json expects TypeScript (.ts) sources",
+                display_path.display()
+            )));
+        }
+        if envelopes_by_rel.contains_key(&norm_rel) {
+            return Err(AuthoringFailure::Io(format!(
+                "{}: duplicate module root",
+                display_path.display()
+            )));
+        }
+        let Some(content) = base_dir
+            .try_read_regular_file_rel(&norm_rel, budget)
+            .map_err(AuthoringFailure::Io)?
+        else {
+            return Err(AuthoringFailure::Io(format!(
+                "{}: module file not found",
+                display_path.display()
+            )));
+        };
+        let file = display_relative(args.root.as_deref(), &display_path);
         let registry_package_path = spec.registry_package_path.or_else(|| args.registry.clone());
         let scope = if registry_package_path.is_some() {
             BTreeMap::new()
@@ -239,16 +216,19 @@ fn mount_explicit_modules(
         };
         let source_path = spec.source_path.unwrap_or_else(|| file.clone());
         root_files.push(LoadedFile {
-            display_path: spec.path,
-            rel_path,
+            display_path,
+            rel_path: norm_rel.clone(),
             content,
         });
-        envelopes.push(ModuleEnvelope {
-            file,
-            scope,
-            source_path,
-            registry_package_path,
-        });
+        envelopes_by_rel.insert(
+            norm_rel,
+            ModuleEnvelope {
+                file,
+                scope,
+                source_path,
+                registry_package_path,
+            },
+        );
     }
     let inputs = TsClosureInputs {
         root_files,
@@ -257,6 +237,7 @@ fn mount_explicit_modules(
         package_hint_path: base_dir.display_path(),
     };
     let mounted = mount_ts_closure(&base_dir, inputs, args.tool_root.as_deref(), budget)?;
+    let envelopes = bind_envelopes_by_vpath(&mounted, envelopes_by_rel)?;
     Ok((mounted, envelopes))
 }
 
@@ -265,7 +246,7 @@ fn mount_directory_target(
     args: &CompileArgs,
     base_scope: &BTreeMap<String, String>,
     budget: &mut InvocationBudget,
-) -> Result<(MountedTsContext, Vec<ModuleEnvelope>), AuthoringFailure> {
+) -> Result<(MountedTsContext, BTreeMap<String, ModuleEnvelope>), AuthoringFailure> {
     let top_scan = root_dir
         .scan_top_level(budget)
         .map_err(AuthoringFailure::Io)?;
@@ -286,18 +267,26 @@ fn mount_directory_target(
             ts_files.push(loaded);
         }
     }
-    let envelopes: Vec<ModuleEnvelope> = ts_files
-        .iter()
-        .map(|loaded| {
-            let file = display_relative(args.root.as_deref(), &loaded.display_path);
+    let mut envelopes_by_rel = BTreeMap::new();
+    for loaded in &ts_files {
+        let norm_rel = normalize_lexical_relative(&loaded.rel_path);
+        if envelopes_by_rel.contains_key(&norm_rel) {
+            return Err(AuthoringFailure::Io(format!(
+                "{}: duplicate module root",
+                loaded.display_path.display()
+            )));
+        }
+        let file = display_relative(args.root.as_deref(), &loaded.display_path);
+        envelopes_by_rel.insert(
+            norm_rel,
             ModuleEnvelope {
                 file: file.clone(),
                 scope: base_scope.clone(),
                 source_path: file,
                 registry_package_path: args.registry.clone(),
-            }
-        })
-        .collect();
+            },
+        );
+    }
     let subdir_files = read_files_in_pinned_subdirs(&top_scan.subdirs, is_ts_support_file, budget)
         .map_err(AuthoringFailure::Io)?;
     let inputs = TsClosureInputs {
@@ -307,6 +296,7 @@ fn mount_directory_target(
         package_hint_path: root_dir.display_path(),
     };
     let mounted = mount_ts_closure(root_dir, inputs, args.tool_root.as_deref(), budget)?;
+    let envelopes = bind_envelopes_by_vpath(&mounted, envelopes_by_rel)?;
     Ok((mounted, envelopes))
 }
 
@@ -314,7 +304,7 @@ fn mount_target_context(
     args: &CompileArgs,
     base_scope: &BTreeMap<String, String>,
     budget: &mut InvocationBudget,
-) -> Result<(MountedTsContext, Vec<ModuleEnvelope>), AuthoringFailure> {
+) -> Result<(MountedTsContext, BTreeMap<String, ModuleEnvelope>), AuthoringFailure> {
     if let Some(modules_path) = &args.modules {
         return mount_explicit_modules(args, modules_path, base_scope, budget);
     }
@@ -346,13 +336,18 @@ fn mount_target_context(
                 args.tool_root.as_deref(),
                 budget,
             )?;
-            let envelope = ModuleEnvelope {
-                file,
-                scope: base_scope.clone(),
-                source_path,
-                registry_package_path: args.registry.clone(),
-            };
-            Ok((mounted, vec![envelope]))
+            let norm_rel = normalize_lexical_relative(Path::new(&file_name));
+            let envelopes_by_rel = BTreeMap::from([(
+                norm_rel,
+                ModuleEnvelope {
+                    file,
+                    scope: base_scope.clone(),
+                    source_path,
+                    registry_package_path: args.registry.clone(),
+                },
+            )]);
+            let envelopes = bind_envelopes_by_vpath(&mounted, envelopes_by_rel)?;
+            Ok((mounted, envelopes))
         }
         PinnedSourceTarget::Directory(root_dir) => {
             mount_directory_target(&root_dir, args, base_scope, budget)
@@ -631,14 +626,8 @@ fn compile_pack_json_inner(args: &CompileArgs) -> Result<(String, bool), Authori
         program = program.with_effect_dist_prefix(prefix);
     }
 
-    let env_by_vpath: BTreeMap<&str, &ModuleEnvelope> = mounted
-        .root_vpaths
-        .iter()
-        .map(String::as_str)
-        .zip(envelopes.iter())
-        .collect();
     let outcomes = compile_definitions_program(&checker, &program, &root_slices, |vpath| {
-        let env_opt = env_by_vpath.get(vpath).copied();
+        let env_opt = envelopes.get(vpath);
         let (scope, source_path, registry_package_path) = env_opt.map_or_else(
             || {
                 (
@@ -678,12 +667,10 @@ fn compile_pack_json_inner(args: &CompileArgs) -> Result<(String, bool), Authori
         limits,
     };
     let mut collector = PackCollector::new();
-    for ((vpath, env), outcome) in mounted
-        .root_vpaths
-        .iter()
-        .zip(envelopes.iter())
-        .zip(outcomes)
-    {
+    for (vpath, outcome) in mounted.root_vpaths.iter().zip(outcomes) {
+        let env = envelopes
+            .get(vpath)
+            .ok_or_else(|| AuthoringFailure::Io(format!("{vpath}: missing module envelope")))?;
         process_module_outcome(&ctx, vpath, env, outcome, args.allow_empty, &mut collector)?;
     }
 

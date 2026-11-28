@@ -6,6 +6,7 @@ mod atomic_io;
 mod fmt;
 mod fs_io;
 mod pack_json;
+mod pack_manifest;
 mod py;
 mod retained;
 #[cfg(test)]
@@ -92,10 +93,20 @@ pub(crate) struct CompileArgs {
     /// `TypeScript` (`.ts`) or Python (`.py`) authoring file or directory.
     pub(crate) path: PathBuf,
     /// Explicit organization scope (`scope.orgId`).
-    #[arg(long)]
+    #[arg(
+        long,
+        requires = "env",
+        conflicts_with = "registry",
+        required_unless_present = "pack_json"
+    )]
     pub(crate) org: Option<String>,
     /// Explicit environment scope (`scope.environmentId`).
-    #[arg(long)]
+    #[arg(
+        long,
+        requires = "org",
+        conflicts_with = "registry",
+        required_unless_present = "pack_json"
+    )]
     pub(crate) env: Option<String>,
     /// Promote `NORN-AUTHORING-UNSAFE-ZEN` warnings to hard errors.
     #[arg(long)]
@@ -110,22 +121,22 @@ pub(crate) struct CompileArgs {
     #[arg(long)]
     pub(crate) pack_json: bool,
     /// Repo-relative registry package path (enables active/system envelopes with empty scope).
-    #[arg(long)]
+    #[arg(long, requires = "pack_json")]
     pub(crate) registry: Option<String>,
     /// Provenance root directory for computing relative `sourcePath` and source-map paths.
-    #[arg(long)]
+    #[arg(long, requires = "pack_json")]
     pub(crate) root: Option<PathBuf>,
     /// Explicit provenance `sourcePath` override for single-file compilation.
-    #[arg(long)]
+    #[arg(long, requires = "pack_json")]
     pub(crate) source_path: Option<String>,
     /// Path to a JSON manifest listing explicit `TypeScript` modules to compile together.
-    #[arg(long)]
+    #[arg(long, requires = "pack_json")]
     pub(crate) modules: Option<PathBuf>,
     /// Allow modules that declare no definitions or flows.
-    #[arg(long)]
+    #[arg(long, requires = "pack_json")]
     pub(crate) allow_empty: bool,
     /// Optional per-module expansion work limit override (clamped to compiler ceilings).
-    #[arg(long)]
+    #[arg(long, requires = "pack_json")]
     pub(crate) max_expansion_work: Option<usize>,
 }
 
