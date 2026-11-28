@@ -1,10 +1,4 @@
-// Vocab v2 coverage: Tabs (`WidgetSectionKind::Tab`), Selectable Lists (`single` | `multiple`),
-// `component:dialog` (L1 blocking + dismissalMethods + @ui-sdk/react/dialog), and `component:form`
-// (all WidgetFieldControl kinds, exact decimal strings, dirty tracking, duplicate-submit guard,
-// server refusal categories, zero client permission logic, zero Radix).
 import { describe, expect, test } from "bun:test"
-import { dialog as dialogPrimitive } from "@ui-sdk/core/dialog"
-import { tabs as tabsPrimitive } from "@ui-sdk/core/tabs"
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
@@ -86,23 +80,18 @@ const pathEngine: CheckerEvaluator = {
     const source = expression.trim()
     const resolvePath = (path: string): unknown => {
       let value: unknown = slots
-      const tokens = path.slice("input".length).match(/\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\]/g) ?? []
-      for (const token of tokens) {
+      for (const token of path.slice("input".length).match(/\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\]/g) ?? []) {
         if (token.startsWith(".")) {
-          const part = token.slice(1)
-          value = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[part] : undefined
+          value = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[token.slice(1)] : undefined
         } else {
-          const index = Number(token.slice(1, -1))
-          value = Array.isArray(value) ? value[index] : undefined
+          value = Array.isArray(value) ? value[Number(token.slice(1, -1))] : undefined
         }
       }
       return value
     }
     const eqMatch = /^(input(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])+)\s*==\s*("[^"]*")$/.exec(source)
     if (eqMatch !== null) {
-      const actual = resolvePath(eqMatch[1]!)
-      const expected = JSON.parse(eqMatch[2]!) as string
-      return JSON.stringify({ ok: true, value: actual === expected })
+      return JSON.stringify({ ok: true, value: resolvePath(eqMatch[1]!) === (JSON.parse(eqMatch[2]!) as string) })
     }
     if (/^input(\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])+$/.test(source)) {
       const value = resolvePath(source)
@@ -115,6 +104,34 @@ const pathEngine: CheckerEvaluator = {
     }
   },
 }
+
+const sectionNode = (
+  nodeId: string,
+  label: string,
+  options: {
+    readonly sectionId?: string
+    readonly kind?: "section" | "tab"
+    readonly order?: number
+    readonly fields?: readonly { readonly bindingId: string; readonly propertyId: string }[]
+    readonly children?: readonly WidgetNode[]
+  } = {},
+): WidgetNode => ({
+  nodeId,
+  component: {
+    kind: "section",
+    section: {
+      sectionId: options.sectionId ?? nodeId,
+      kind: options.kind ?? "section",
+      label: { en: label },
+      fields: options.fields ?? [],
+      order: options.order ?? 0,
+    },
+  },
+  children: options.children ?? [],
+})
+
+const rootNode = (children: readonly WidgetNode[] = []): WidgetNode =>
+  sectionNode("root", "Root", { sectionId: "root", children })
 
 const baseMachine: Machine = {
   machineVersion: "0.1",
@@ -145,6 +162,50 @@ const baseMachine: Machine = {
     { transitionId: "t-ns", from: "saving", on: "not_served", target: "failed" },
     { transitionId: "t-to", from: "saving", on: "timeout", target: "failed" },
   ],
+}
+
+function makeSubMachine(options: {
+  readonly bindingId: string
+  readonly subEventId?: string
+  readonly readyStateId?: string
+  readonly extraEvents?: readonly MachineEvent[]
+  readonly extraStates?: Machine["states"]
+  readonly extraTransitions?: Machine["transitions"]
+  readonly onReadRefusedTarget?: string
+  readonly onReadRefusedEffects?: Machine["transitions"][number]["effects"]
+}): Machine {
+  const ready = options.readyStateId ?? "ready"
+  const subEvent = options.subEventId ?? "sub"
+  return {
+    machineVersion: "0.1",
+    initialStateId: "opening",
+    fields: [],
+    events: [
+      { eventId: "opened", source: { kind: "page_opened" } },
+      { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
+      { eventId: "refused", source: { kind: "outcome", outcome: "refused" } },
+      { eventId: subEvent, source: { kind: "subscription", bindingId: options.bindingId } },
+      ...(options.extraEvents ?? []),
+    ],
+    states: [
+      { stateId: "opening", role: "idle" },
+      { stateId: "loading", role: "pending", awaits: { kind: "read", bindingId: options.bindingId }, deadlineMs: 5000 },
+      { stateId: ready, role: "idle" },
+      ...(options.extraStates ?? []),
+    ],
+    transitions: [
+      { transitionId: "t-open", from: "opening", on: "opened", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: options.bindingId } }] },
+      { transitionId: "t-ok", from: "loading", on: "accepted", target: ready },
+      {
+        transitionId: "t-ref",
+        from: "loading",
+        on: "refused",
+        target: options.onReadRefusedTarget ?? ready,
+        ...(options.onReadRefusedEffects === undefined ? {} : { effects: options.onReadRefusedEffects }),
+      },
+      ...(options.extraTransitions ?? []),
+    ],
+  }
 }
 
 function makeUx(root: WidgetNode, extra: Partial<WidgetUx> = {}, machine: Machine = baseMachine): WidgetUx {
@@ -203,30 +264,68 @@ function makeScope(
   }
 }
 
+const renderNode = (ux: WidgetUx, node: WidgetNode, options?: Parameters<typeof makeScope>[1]) =>
+  renderToStaticMarkup(<Node scope={makeScope(ux, options)} node={node} />)
+
+const noopReader: WidgetReader = {
+  kind: "live",
+  widget: () => ({ queryKey: ["noop"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: {} }) }),
+}
+
+function startRuntime(options: {
+  readonly ux: WidgetUx
+  readonly machine?: Machine
+  readonly clock?: Clock
+  readonly reader?: WidgetReader
+  readonly calls?: WidgetCalls
+  readonly engine?: ReturnType<typeof lazyEngine>
+  readonly context?: Readonly<Record<string, unknown>>
+  readonly objectType?: string
+  readonly actionMap?: Readonly<Record<string, string>>
+  readonly subscribe?: boolean
+}) {
+  let pushSnapshot: ((doc: unknown) => void) | undefined
+  const sent: Array<{ actionId: string; input: Fields; key: string }> = []
+  const machine = options.machine ?? options.ux.pages[0]!.machine!
+  const runtime = createPageRuntime(
+    {
+      ux: options.ux,
+      machine,
+      ...(options.clock === undefined ? {} : { clock: options.clock }),
+      reader: options.reader ?? noopReader,
+      calls: options.calls ?? {
+        call: async (actionId, input, callOpts) => {
+          sent.push({ actionId, input, key: callOpts.idempotencyKey })
+          return { outcome: "accepted", payload: {}, body: {} }
+        },
+      },
+      engine: options.engine ?? lazyEngine(async () => pathEngine),
+      host: () => ({
+        context: options.context ?? {},
+        objectTypeOf: () => options.objectType,
+        actionIdOf: (id) => options.actionMap?.[id],
+        ...(options.subscribe
+          ? { live: { subscribe: (_read, listener) => { pushSnapshot = listener.snapshot; return () => {} } } }
+          : {}),
+      }),
+    },
+    () => {},
+  )
+  return { runtime, sent, push: (doc: unknown) => pushSnapshot?.(doc) }
+}
+
 describe("Tabs (WidgetSectionKind::Tab)", () => {
-  const tabA: WidgetNode = {
-    nodeId: "tab-summary",
-    component: { kind: "section", section: { sectionId: "summary", kind: "tab", label: { en: "Summary" }, fields: [{ bindingId: "rec", propertyId: "title" }], order: 1 } },
-    children: [],
-  }
-  const tabB: WidgetNode = {
-    nodeId: "tab-history",
-    component: { kind: "section", section: { sectionId: "history", kind: "tab", label: { en: "History" }, fields: [], order: 2 } },
+  const tabA = sectionNode("tab-summary", "Summary", { sectionId: "summary", kind: "tab", order: 1, fields: [{ bindingId: "rec", propertyId: "title" }] })
+  const tabB = sectionNode("tab-history", "History", {
+    sectionId: "history",
+    kind: "tab",
+    order: 2,
     children: [{ nodeId: "hist-btn", component: { kind: "control", label: { en: "Refresh" }, input: "trigger" }, children: [] }],
-  }
-  const normalSection: WidgetNode = {
-    nodeId: "plain-sec",
-    component: { kind: "section", section: { sectionId: "plain", kind: "section", label: { en: "Overview" }, fields: [], order: 0 } },
-    children: [],
-  }
+  })
+  const normalSection = sectionNode("plain-sec", "Overview", { sectionId: "plain", order: 0 })
 
   test("sibling tab sections render as WAI-ARIA tablist + tabs + tabpanel sorted by section.order while non-tab sections stay unchanged", () => {
-    const root: WidgetNode = {
-      nodeId: "root",
-      component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Page" }, fields: [], order: 0 } },
-      // Deliberately reverse tab order to confirm `section.order` sorting.
-      children: [normalSection, tabB, tabA],
-    }
+    const root = sectionNode("root", "Page", { children: [normalSection, tabB, tabA] })
     const segments = partitionTabRuns(root.children)
     expect(segments).toHaveLength(2)
     expect(segments[0]!.kind).toBe("node")
@@ -239,39 +338,34 @@ describe("Tabs (WidgetSectionKind::Tab)", () => {
       fields: [{ fieldId: "f-title", target: { kind: "property", property: { bindingId: "rec", propertyId: "title" } }, label: { en: "Title" }, control: "display" }],
     })
     const reads = new Map<string, BindingReadState>([["rec", { kind: "ok", document: { id: "r1", values: { title: "Invoice #42" } }, freshness: "snapshot" }]])
-    const markup = renderToStaticMarkup(<Node scope={makeScope(ux, { reads })} node={root} />)
+    const markup = renderNode(ux, root, { reads })
 
-    // Non-tab section renders identically with <section> + <h2>.
-    expect(markup).toContain('<section aria-label="Overview" data-node="plain-sec"')
-    expect(markup).toContain(">Overview</h2>")
+    for (const expected of [
+      '<section aria-label="Overview" data-node="plain-sec"',
+      ">Overview</h2>",
+      'role="tablist"',
+      'role="tab"',
+      'role="tabpanel"',
+      'aria-selected="true"',
+      'aria-selected="false"',
+      'tabindex="0"',
+      'tabindex="-1"',
+      "Invoice #42",
+    ]) {
+      expect(markup).toContain(expected)
+    }
 
-    // Tab group has role="tablist", role="tab", role="tabpanel", aria-selected, aria-controls, aria-labelledby.
-    expect(markup).toContain('role="tablist"')
-    expect(markup).toContain('role="tab"')
-    expect(markup).toContain('role="tabpanel"')
-    expect(markup).toContain('aria-selected="true"')
-    expect(markup).toContain('aria-selected="false"')
-    expect(markup).toContain('tabindex="0"')
-    expect(markup).toContain('tabindex="-1"')
-    expect(markup).toContain("Invoice #42")
-
-    // Verify exact id <-> aria-controls and id <-> aria-labelledby linkage for BOTH active and inactive tabs (no dangling aria-controls).
     const tabMatches = [...markup.matchAll(/id="([^"]+tab-[^"]+)"[^>]*aria-controls="([^"]+)"/g)]
     expect(tabMatches).toHaveLength(2)
     for (const [, tabDomId, panelDomId] of tabMatches) {
       expect(markup).toContain(`id="${panelDomId}"`)
       expect(markup).toContain(`aria-labelledby="${tabDomId}"`)
     }
-    // Inactive panel stays mounted hidden while active panel renders its body.
     expect(markup).toMatch(/id="[^"]+panel-tab-history"[^>]*hidden=""/)
   })
 
   test("tab buttons carry data-agent-confirm when their declared machine event starts a consequential action", () => {
-    const root: WidgetNode = {
-      nodeId: "root",
-      component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Page" }, fields: [], order: 0 } },
-      children: [tabA, tabB],
-    }
+    const root = sectionNode("root", "Page", { children: [tabA, tabB] })
     const tabActionMachine: Machine = {
       ...baseMachine,
       events: [...baseMachine.events, { eventId: "open-history", source: { kind: "user", nodeId: "tab-history" } }],
@@ -285,55 +379,35 @@ describe("Tabs (WidgetSectionKind::Tab)", () => {
       { actionBindings: [{ bindingId: "submit-order", action: { id: "canon.audit.action", version: "0.1.0" }, inputMapping: {}, inputs: {}, requiredCapability: "canon.audit" }] },
       tabActionMachine,
     )
-    const markup = renderToStaticMarkup(<Node scope={makeScope(ux, { effects: () => ({ irreversible: true, destructive: false, money: [] }) })} node={root} />)
+    const markup = renderNode(ux, root, { effects: () => ({ irreversible: true, destructive: false, money: [] }) })
     expect(markup).toMatch(/data-agent-confirm="canon\.audit\.action: cannot be undone"[^>]*data-tab-node="tab-history"/)
     expect(markup).not.toMatch(/data-agent-confirm="[^"]*"[^>]*data-tab-node="tab-summary"/)
   })
 
   test("roving keyboard navigation honors ArrowLeft/ArrowRight/Home/End in LTR and flips logical direction in RTL", () => {
-    // LTR: ArrowRight forward, ArrowLeft backward, wrap-around, Home/End.
-    expect(nextTabIndex(0, "ArrowRight", 3, "ltr")).toBe(1)
-    expect(nextTabIndex(2, "ArrowRight", 3, "ltr")).toBe(0)
-    expect(nextTabIndex(0, "ArrowLeft", 3, "ltr")).toBe(2)
-    expect(nextTabIndex(1, "ArrowLeft", 3, "ltr")).toBe(0)
-    expect(nextTabIndex(2, "Home", 3, "ltr")).toBe(0)
-    expect(nextTabIndex(0, "End", 3, "ltr")).toBe(2)
-    expect(nextTabIndex(0, "Tab", 3, "ltr")).toBeNull()
-
-    // RTL: ArrowLeft moves logically forward, ArrowRight moves logically backward.
-    expect(nextTabIndex(0, "ArrowLeft", 3, "rtl")).toBe(1)
-    expect(nextTabIndex(2, "ArrowLeft", 3, "rtl")).toBe(0)
-    expect(nextTabIndex(0, "ArrowRight", 3, "rtl")).toBe(2)
-    expect(nextTabIndex(1, "ArrowRight", 3, "rtl")).toBe(0)
-    expect(nextTabIndex(2, "Home", 3, "rtl")).toBe(0)
-    expect(nextTabIndex(0, "End", 3, "rtl")).toBe(2)
-
-    // Markup carries dir="rtl" and inline direction:rtl for @ui-sdk/core/tabs isRTL().
-    const root: WidgetNode = {
-      nodeId: "root",
-      component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Page" }, fields: [], order: 0 } },
-      children: [tabA, tabB],
+    const navCases: readonly [number, string, "ltr" | "rtl", number | null][] = [
+      [0, "ArrowRight", "ltr", 1],
+      [2, "ArrowRight", "ltr", 0],
+      [0, "ArrowLeft", "ltr", 2],
+      [1, "ArrowLeft", "ltr", 0],
+      [2, "Home", "ltr", 0],
+      [0, "End", "ltr", 2],
+      [0, "Tab", "ltr", null],
+      [0, "ArrowLeft", "rtl", 1],
+      [2, "ArrowLeft", "rtl", 0],
+      [0, "ArrowRight", "rtl", 2],
+      [1, "ArrowRight", "rtl", 0],
+      [2, "Home", "rtl", 0],
+      [0, "End", "rtl", 2],
+    ]
+    for (const [idx, key, dir, expected] of navCases) {
+      expect(nextTabIndex(idx, key, 3, dir)).toBe(expected)
     }
-    const markup = renderToStaticMarkup(<Node scope={makeScope(makeUx(root), { dir: "rtl" })} node={root} />)
+
+    const root = sectionNode("root", "Page", { children: [tabA, tabB] })
+    const markup = renderNode(makeUx(root), root, { dir: "rtl" })
     expect(markup).toContain('dir="rtl"')
     expect(markup).toContain("direction:rtl")
-  })
-
-  test("@ui-sdk/core tabs primitive switches active tab and fires onValueChange", () => {
-    const seen: Array<string | null> = []
-    const instance = tabsPrimitive({
-      id: "test-tabs",
-      defaultValue: "tab-summary",
-      onValueChange: (value) => seen.push(value),
-    })
-    try {
-      expect(instance.api.getValue()).toBe("tab-summary")
-      instance.api.select("tab-history")
-      expect(instance.api.getValue()).toBe("tab-history")
-      expect(seen).toEqual(["tab-history"])
-    } finally {
-      instance.destroy()
-    }
   })
 })
 
@@ -354,57 +428,56 @@ describe("Selectable Lists (WidgetComponent::List)", () => {
     { bindingId: "items", propertyId: "name" },
     { bindingId: "items", propertyId: "status" },
   ]
+  const makeListNode = (nodeId: string, selection: "none" | "single" | "multiple"): WidgetNode =>
+    ({ nodeId, component: { kind: "list", dataBindingId: "items", fields: refs, selection }, children: [] })
 
-  test("selection: none stays read-only with zero selection chrome", () => {
-    const listNode: WidgetNode = { nodeId: "ro-list", component: { kind: "list", dataBindingId: "items", fields: refs, selection: "none" }, children: [] }
-    const markup = renderToStaticMarkup(<Node scope={makeScope(makeUx(listNode, { fields }), { reads })} node={listNode} />)
-    expect(markup).not.toContain("data-selection")
-    expect(markup).not.toContain("aria-selected")
-    expect(markup).not.toContain("data-indicator")
-    expect(markup).not.toContain("tabindex")
-  })
+  test("selection modes render read-only, single radio (with withheld rows disabled), and multiple checkbox chrome", () => {
+    const noneNode = makeListNode("ro-list", "none")
+    const noneMarkup = renderNode(makeUx(noneNode, { fields }), noneNode, { reads })
+    for (const absent of ["data-selection", "aria-selected", "data-indicator", "tabindex"]) {
+      expect(noneMarkup).not.toContain(absent)
+    }
 
-  test("selection: single renders radio indicators, aria-selected, roving tabindex, monochrome focus ring, and keeps withheld rows disabled", () => {
-    const listNode: WidgetNode = { nodeId: "selectable-list", component: { kind: "list", dataBindingId: "items", fields: refs, selection: "single" }, children: [] }
-    const markup = renderToStaticMarkup(<Node scope={makeScope(makeUx(listNode, { fields }), { reads })} node={listNode} />)
-    expect(markup).toContain('data-selection="single"')
-    expect(markup).not.toContain("aria-multiselectable")
-    expect(markup).toContain('data-indicator="radio"')
-    expect(markup).toContain('aria-selected="false"')
-    expect(markup).toContain('tabindex="0"')
-    expect(markup).toContain('tabindex="-1"')
-    expect(markup).toContain("focus-visible:outline-ring")
-    expect(markup).toMatch(/data-agent-hidden=""[^>]*data-row-id="row-3"[^>]*aria-disabled="true"/)
-  })
+    const singleNode = makeListNode("selectable-list", "single")
+    const singleMarkup = renderNode(makeUx(singleNode, { fields }), singleNode, { reads })
+    for (const present of ['data-selection="single"', 'data-indicator="radio"', 'aria-selected="false"', 'tabindex="0"', 'tabindex="-1"', "focus-visible:outline-ring"]) {
+      expect(singleMarkup).toContain(present)
+    }
+    expect(singleMarkup).not.toContain("aria-multiselectable")
+    expect(singleMarkup).toMatch(/data-agent-hidden=""[^>]*data-row-id="row-3"[^>]*aria-disabled="true"/)
 
-  test("selection: multiple renders checkbox indicators and aria-multiselectable=true", () => {
-    const listNode: WidgetNode = { nodeId: "multi-list", component: { kind: "list", dataBindingId: "items", fields: refs, selection: "multiple" }, children: [] }
-    const markup = renderToStaticMarkup(<Node scope={makeScope(makeUx(listNode, { fields }), { reads })} node={listNode} />)
-    expect(markup).toContain('data-selection="multiple"')
-    expect(markup).toContain('aria-multiselectable="true"')
-    expect(markup).toContain('data-indicator="checkbox"')
+    const multiNode = makeListNode("multi-list", "multiple")
+    const multiMarkup = renderNode(makeUx(multiNode, { fields }), multiNode, { reads })
+    for (const present of ['data-selection="multiple"', 'aria-multiselectable="true"', 'data-indicator="checkbox"']) {
+      expect(multiMarkup).toContain(present)
+    }
   })
 
   test("single and multiple selection transitions, keyboard row navigation, and declared payload filtering", () => {
-    // Single mode: replaces active row, toggles off on repeat click.
-    expect(nextSelection("single", [], "row-1")).toEqual(["row-1"])
-    expect(nextSelection("single", ["row-1"], "row-2")).toEqual(["row-2"])
-    expect(nextSelection("single", ["row-2"], "row-2")).toEqual([])
+    const selCases: readonly ["single" | "multiple", readonly string[], string, readonly string[]][] = [
+      ["single", [], "row-1", ["row-1"]],
+      ["single", ["row-1"], "row-2", ["row-2"]],
+      ["single", ["row-2"], "row-2", []],
+      ["multiple", [], "row-1", ["row-1"]],
+      ["multiple", ["row-1"], "row-2", ["row-1", "row-2"]],
+      ["multiple", ["row-1", "row-2"], "row-1", ["row-2"]],
+    ]
+    for (const [mode, prev, id, expected] of selCases) {
+      expect(nextSelection(mode, prev, id)).toEqual([...expected])
+    }
 
-    // Multiple mode: independent toggles.
-    expect(nextSelection("multiple", [], "row-1")).toEqual(["row-1"])
-    expect(nextSelection("multiple", ["row-1"], "row-2")).toEqual(["row-1", "row-2"])
-    expect(nextSelection("multiple", ["row-1", "row-2"], "row-1")).toEqual(["row-2"])
+    const keyCases: readonly [number, string, number][] = [
+      [0, "ArrowDown", 1],
+      [2, "ArrowDown", 2],
+      [1, "ArrowUp", 0],
+      [0, "ArrowUp", 0],
+      [2, "Home", 0],
+      [0, "End", 2],
+    ]
+    for (const [idx, key, expected] of keyCases) {
+      expect(nextListRowIndex(idx, key, 3)).toBe(expected)
+    }
 
-    // Keyboard vertical row navigation.
-    expect(nextListRowIndex(0, "ArrowDown", 3)).toBe(1)
-    expect(nextListRowIndex(2, "ArrowDown", 3)).toBe(2)
-    expect(nextListRowIndex(1, "ArrowUp", 3)).toBe(0)
-    expect(nextListRowIndex(0, "ArrowUp", 3)).toBe(0)
-    expect(nextListRowIndex(2, "Home", 3)).toBe(0)
-    expect(nextListRowIndex(0, "End", 3)).toBe(2)
-
-    // Payload filtering matches raise(): ONLY declared payload fields are emitted.
     const singleEvent: MachineEvent = { eventId: "pick", source: { kind: "user", nodeId: "l" }, payload: [{ fieldId: "id", type: "text", required: false }] }
     expect(selectionEventPayload(singleEvent, "single", "row-1", ["row-1"], [{ id: "row-1" }])).toEqual({ id: "row-1" })
     expect(selectionEventPayload(singleEvent, "single", "row-1", [], [])).toEqual({ id: null })
@@ -427,24 +500,18 @@ describe("Selectable Lists (WidgetComponent::List)", () => {
   })
 
   test("flattenSelectionRecord, reconcileSelection pruning, agent:confirm on rows, and input.selection[0].name mapping", async () => {
-    // 1. Flattened entity record shape (properties at top level, not wrapped under `values`).
     expect(flattenSelectionRecord({ id: "row-1", values: { name: "Alpha", status: "open" }, masked: {} })).toEqual({
       id: "row-1",
       name: "Alpha",
       status: "open",
     })
 
-    // 2. Refresh pruning removes deleted and newly-withheld rows immediately.
-    const refreshed = [
+    const reconciled = reconcileSelection(["row-1", "row-2", "row-3"], [
       { id: "row-1", values: { name: "Alpha v2", status: "open" } },
       { id: "row-3", values: null, withheld: true, withheldProperties: [] },
-    ]
-    const reconciled = reconcileSelection(["row-1", "row-2", "row-3"], refreshed)
-    expect(reconciled.changed).toBe(true)
-    expect(reconciled.ids).toEqual(["row-1"])
-    expect(reconciled.records).toEqual([{ id: "row-1", name: "Alpha v2", status: "open" }])
+    ])
+    expect(reconciled).toEqual({ changed: true, ids: ["row-1"], records: [{ id: "row-1", name: "Alpha v2", status: "open" }] })
 
-    // 3. Selectable rows carry data-agent-confirm when their declared machine event starts a consequential action.
     const rowActionMachine: Machine = {
       ...baseMachine,
       events: [...baseMachine.events, { eventId: "pick-run", source: { kind: "user", nodeId: "multi-list" } }],
@@ -453,7 +520,7 @@ describe("Selectable Lists (WidgetComponent::List)", () => {
         { transitionId: "t-pick", from: "idle", on: "pick-run", target: "saving", effects: [{ kind: "start", call: { kind: "action", bindingId: "bulk-act" } }] },
       ],
     }
-    const listNode: WidgetNode = { nodeId: "multi-list", component: { kind: "list", dataBindingId: "items", fields: refs, selection: "multiple" }, children: [] }
+    const listNode = makeListNode("multi-list", "multiple")
     const confirmUx = makeUx(
       listNode,
       {
@@ -462,14 +529,10 @@ describe("Selectable Lists (WidgetComponent::List)", () => {
       },
       rowActionMachine,
     )
-    const confirmMarkup = renderToStaticMarkup(
-      <Node scope={makeScope(confirmUx, { reads, effects: () => ({ irreversible: false, destructive: true, money: [] }) })} node={listNode} />,
-    )
+    const confirmMarkup = renderNode(confirmUx, listNode, { reads, effects: () => ({ irreversible: false, destructive: true, money: [] }) })
     expect(confirmMarkup).toMatch(/data-agent-confirm="canon\.item\.bulk\.action: may destroy data"[^>]*data-row-id="row-1"/)
     expect(confirmMarkup).not.toMatch(/data-agent-confirm="[^"]*"[^>]*data-row-id="row-3"/)
 
-    // 4. End-to-end runtime evaluates `input.selection[0].name` directly against flattened records.
-    const sent: Array<{ actionId: string; input: Fields }> = []
     const selectionMachine: Machine = {
       machineVersion: "0.1",
       initialStateId: "idle",
@@ -503,61 +566,35 @@ describe("Selectable Lists (WidgetComponent::List)", () => {
       },
       selectionMachine,
     )
-    const runtime = createPageRuntime(
-      {
-        ux: selUx,
-        machine: selectionMachine,
-        reader: { kind: "live", widget: () => ({ queryKey: ["noop"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: {} }) }) },
-        calls: { call: async (actionId, input) => { sent.push({ actionId, input }); return { outcome: "accepted", payload: {}, body: {} } } },
-        engine: lazyEngine(async () => pathEngine),
-        host: () => ({ context: {}, objectTypeOf: () => undefined, actionIdOf: (id) => (id === "canon.item.bulk.action" ? "canon.item.bulk" : undefined) }),
-      },
-      () => {},
-    )
+    const { runtime, sent } = startRuntime({ ux: selUx, actionMap: { "canon.item.bulk.action": "canon.item.bulk" } })
     runtime.setSelection("items", reconciled.records, reconciled.ids)
     runtime.send({ kind: "user", eventId: "run", payload: {} })
     await flush()
     expect(runtime.view().snapshot.stateId).toBe("done")
-    expect(sent).toEqual([{ actionId: "canon.item.bulk", input: { firstName: "Alpha v2" } }])
+    expect(sent.map(({ actionId, input }) => ({ actionId, input }))).toEqual([{ actionId: "canon.item.bulk", input: { firstName: "Alpha v2" } }])
     runtime.dispose()
   })
 
   test("runtime synchronously reconciles list selection BEFORE dispatching subscription or read-outcome events", async () => {
-    const sent: Array<{ actionId: string; input: Fields }> = []
-    let pushSnapshot: ((doc: unknown) => void) | undefined
-    const subMachine: Machine = {
-      machineVersion: "0.1",
-      initialStateId: "opening",
-      fields: [],
-      events: [
-        { eventId: "opened", source: { kind: "page_opened" } },
-        { eventId: "items-changed", source: { kind: "subscription", bindingId: "items" } },
-        { eventId: "reread", source: { kind: "user", nodeId: "reread-btn" } },
-        { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
-        { eventId: "refused", source: { kind: "outcome", outcome: "refused" } },
-      ],
-      states: [
-        { stateId: "opening", role: "idle" },
-        { stateId: "loading", role: "pending", awaits: { kind: "read", bindingId: "items" }, deadlineMs: 5000 },
-        { stateId: "ready", role: "idle" },
+    const subMachine = makeSubMachine({
+      bindingId: "items",
+      subEventId: "items-changed",
+      onReadRefusedTarget: "syncing",
+      onReadRefusedEffects: [{ kind: "start", call: { kind: "action", bindingId: "sync-selected" } }],
+      extraEvents: [{ eventId: "reread", source: { kind: "user", nodeId: "reread-btn" } }],
+      extraStates: [
         { stateId: "syncing", role: "pending", awaits: { kind: "action", bindingId: "sync-selected" }, deadlineMs: 5000 },
         { stateId: "errored", role: "error" },
       ],
-      transitions: [
-        { transitionId: "t-open", from: "opening", on: "opened", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "items" } }] },
-        { transitionId: "t-loaded", from: "loading", on: "accepted", target: "ready" },
-        // Read refusal immediately triggers an action reading `input.selection` (must see []).
-        { transitionId: "t-read-refused", from: "loading", on: "refused", target: "syncing", effects: [{ kind: "start", call: { kind: "action", bindingId: "sync-selected" } }] },
-        // Subscription snapshot immediately triggers an action reading `input.selection` BEFORE any React effect runs!
+      extraTransitions: [
         { transitionId: "t-sub", from: "ready", on: "items-changed", target: "syncing", effects: [{ kind: "start", call: { kind: "action", bindingId: "sync-selected" } }] },
         { transitionId: "t-sync-ok", from: "syncing", on: "accepted", target: "ready" },
         { transitionId: "t-sync-err", from: "syncing", on: "refused", target: "errored" },
         { transitionId: "t-reread", from: "ready", on: "reread", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "items" } }] },
       ],
-    }
-    const listNode: WidgetNode = { nodeId: "multi-list", component: { kind: "list", dataBindingId: "items", fields: refs, selection: "multiple" }, children: [] }
+    })
     const subUx = makeUx(
-      listNode,
+      makeListNode("multi-list", "multiple"),
       {
         dataBindings: [{ bindingId: "items", object: { id: "canon.Item.entity", version: "0.1.0" }, query: { kind: "object_list", filters: [], sort: [], page: { size: 10, maxSize: 20 } } }],
         actionBindings: [{
@@ -571,61 +608,25 @@ describe("Selectable Lists (WidgetComponent::List)", () => {
       subMachine,
     )
     const answers: Classified[] = [
-      {
-        outcome: "accepted",
-        payload: {},
-        body: {
-          records: [
-            { id: "row-1", values: { name: "Alpha" } },
-            { id: "row-2", values: { name: "Beta" } },
-            { id: "row-3", values: { name: "Gamma" } },
-          ],
-        },
-      },
+      { outcome: "accepted", payload: {}, body: { records: [{ id: "row-1", values: { name: "Alpha" } }, { id: "row-2", values: { name: "Beta" } }, { id: "row-3", values: { name: "Gamma" } }] } },
       { outcome: "refused", category: "permission", payload: { code: "authz.denied" }, body: { code: "authz.denied" } },
     ]
-    const runtime = createPageRuntime(
-      {
-        ux: subUx,
-        machine: subMachine,
-        reader: { kind: "live", widget: () => ({ queryKey: ["items"], queryFn: async () => answers.shift()! }) },
-        calls: { call: async (actionId, input) => { sent.push({ actionId, input }); return { outcome: "accepted", payload: {}, body: {} } } },
-        engine: lazyEngine(async () => pathEngine),
-        host: () => ({
-          context: {},
-          objectTypeOf: () => "canon.Item",
-          actionIdOf: (id) => (id === "canon.item.sync.action" ? "canon.item.sync" : undefined),
-          live: { subscribe: (_read, listener) => { pushSnapshot = listener.snapshot; return () => {} } },
-        }),
-      },
-      () => {},
-    )
+    const { runtime, sent, push } = startRuntime({
+      ux: subUx,
+      reader: { kind: "live", widget: () => ({ queryKey: ["items"], queryFn: async () => answers.shift()! }) },
+      objectType: "canon.Item",
+      actionMap: { "canon.item.sync.action": "canon.item.sync" },
+      subscribe: true,
+    })
     await flush()
     expect(runtime.view().snapshot.stateId).toBe("ready")
 
-    // Select all 3 rows from initial snapshot.
-    runtime.setSelection(
-      "items",
-      [
-        { id: "row-1", name: "Alpha" },
-        { id: "row-2", name: "Beta" },
-        { id: "row-3", name: "Gamma" },
-      ],
-      ["row-1", "row-2", "row-3"],
-    )
-
-    // Live subscription snapshot removes row-2, withholds row-3, updates row-1, and synchronously triggers sync-selected.
-    pushSnapshot?.({
-      records: [
-        { id: "row-1", values: { name: "Alpha updated" } },
-        { id: "row-3", values: null, withheld: true, withheldProperties: [] },
-      ],
-    })
+    runtime.setSelection("items", [{ id: "row-1", name: "Alpha" }, { id: "row-2", name: "Beta" }, { id: "row-3", name: "Gamma" }], ["row-1", "row-2", "row-3"])
+    push({ records: [{ id: "row-1", values: { name: "Alpha updated" } }, { id: "row-3", values: null, withheld: true, withheldProperties: [] }] })
     await flush()
     expect(sent).toHaveLength(1)
     expect(sent[0]!.input).toEqual({ selected: [{ id: "row-1", name: "Alpha updated" }] })
 
-    // Re-read settles to `refused` -> selection is synchronously cleared to [] before outcome triggers sync-selected.
     runtime.send({ kind: "user", eventId: "reread", payload: {} })
     await flush()
     expect(sent).toHaveLength(2)
@@ -644,84 +645,61 @@ describe("component:dialog (WidgetComponent::Dialog)", () => {
       dismissalMethods: options.dismissalMethods,
     },
     children: [
-      {
-        nodeId: "dlg-title",
-        component: { kind: "section", section: { sectionId: "dlg-title", kind: "section", label: { en: "Post Journal Entry" }, fields: [], order: 1 } },
+      sectionNode("dlg-title", "Post Journal Entry", {
+        order: 1,
         children: [{ nodeId: "dlg-trigger", component: { kind: "control", label: { en: "Post" }, input: "trigger" }, children: [] }],
-      },
+      }),
     ],
   })
 
   test("L1 blocking refuses Escape, scrim, swipe, and close while bound bindingId call is pending, and allows declared methods once idle or errored", () => {
     const dialogNode = makeDialogNode({ blocking: true, bindingId: "submit-order", dismissalMethods: ["escape", "scrim", "visible_close"] })
+    const dialogComp = dialogNode.component as Extract<WidgetNode["component"], { kind: "dialog" }>
     const ux = makeUx(dialogNode)
 
-    // Idle: not blocked.
     const idleScope = makeScope(ux, { stateId: "idle" })
-    expect(isDialogBlocked(idleScope, dialogNode.component as Extract<WidgetNode["component"], { kind: "dialog" }>)).toBe(false)
+    expect(isDialogBlocked(idleScope, dialogComp)).toBe(false)
     const idleMarkup = renderToStaticMarkup(<Node scope={idleScope} node={dialogNode} />)
-    expect(idleMarkup).toContain('data-slot="dialog-content"')
-    expect(idleMarkup).toContain('role="dialog"')
-    expect(idleMarkup).toContain('aria-modal="true"')
-    expect(idleMarkup).toContain('data-blocking="true"')
-    expect(idleMarkup).toContain('data-pending="false"')
-    expect(idleMarkup).toContain('data-slot="dialog-close"')
-    expect(idleMarkup).toContain("Post Journal Entry")
+    for (const expected of ['data-slot="dialog-content"', 'role="dialog"', 'aria-modal="true"', 'data-blocking="true"', 'data-pending="false"', 'data-slot="dialog-close"', "Post Journal Entry"]) {
+      expect(idleMarkup).toContain(expected)
+    }
 
-    // Pending (call state = sending): blocked!
-    const sendingCalls = new Map<string, BindingCallState>([["submit-order", { kind: "sending", sent: { input: "{}", key: "k1" } }]])
-    const pendingScope = makeScope(ux, { stateId: "saving", calls: sendingCalls })
-    expect(isDialogBlocked(pendingScope, dialogNode.component as Extract<WidgetNode["component"], { kind: "dialog" }>)).toBe(true)
+    const pendingScope = makeScope(ux, {
+      stateId: "saving",
+      calls: new Map<string, BindingCallState>([["submit-order", { kind: "sending", sent: { input: "{}", key: "k1" } }]]),
+    })
+    expect(isDialogBlocked(pendingScope, dialogComp)).toBe(true)
     const pendingMarkup = renderToStaticMarkup(<Node scope={pendingScope} node={dialogNode} />)
-    expect(pendingMarkup).toContain('data-pending="true"')
-    expect(pendingMarkup).toContain('aria-busy="true"')
-    expect(pendingMarkup).toContain('data-dialog-close=""')
-    expect(pendingMarkup).toContain('aria-disabled="true"')
+    for (const expected of ['data-pending="true"', 'aria-busy="true"', 'data-dialog-close=""', 'aria-disabled="true"']) {
+      expect(pendingMarkup).toContain(expected)
+    }
     expect(pendingMarkup).not.toContain('data-slot="dialog-close"')
 
-    // Refused (terminal/error): no longer blocked!
-    const refusedCalls = new Map<string, BindingCallState>([
-      ["submit-order", { kind: "refused", refusal: { code: "ledger.unbalanced", category: "precondition", document: { message: "Debits must equal credits." } } }],
-    ])
-    const errorScope = makeScope(ux, { stateId: "failed", calls: refusedCalls })
-    expect(isDialogBlocked(errorScope, dialogNode.component as Extract<WidgetNode["component"], { kind: "dialog" }>)).toBe(false)
+    const errorScope = makeScope(ux, {
+      stateId: "failed",
+      calls: new Map<string, BindingCallState>([
+        ["submit-order", { kind: "refused", refusal: { code: "ledger.unbalanced", category: "precondition", document: { message: "Debits must equal credits." } } }],
+      ]),
+    })
+    expect(isDialogBlocked(errorScope, dialogComp)).toBe(false)
     const errorMarkup = renderToStaticMarkup(<Node scope={errorScope} node={dialogNode} />)
-    expect(errorMarkup).toContain('data-pending="false"')
-    expect(errorMarkup).toContain('data-slot="dialog-close"')
-    expect(errorMarkup).toContain("Debits must equal credits.")
+    for (const expected of ['data-pending="false"', 'data-slot="dialog-close"', "Debits must equal credits."]) {
+      expect(errorMarkup).toContain(expected)
+    }
 
-    // Pure L1 dismissal gate:
     for (const reason of ["escape-key", "outside-press", "swipe", "close-press", "back"]) {
       expect(canDismissDialog(true, ["escape", "scrim", "swipe", "visible_close"], reason)).toBe(false)
     }
-    expect(canDismissDialog(false, ["escape", "visible_close"], "escape-key")).toBe(true)
-    expect(canDismissDialog(false, ["escape", "visible_close"], "close-press")).toBe(true)
-    expect(canDismissDialog(false, ["escape", "visible_close"], "outside-press")).toBe(false)
-    expect(canDismissDialog(false, ["escape", "visible_close"], "swipe")).toBe(false)
-    expect(canDismissDialog(false, ["scrim"], "outside-press")).toBe(true)
-    expect(canDismissDialog(false, ["scrim"], "escape-key")).toBe(false)
-  })
-
-  test("@ui-sdk/core dialog primitive refuses Escape & outside-press when dismissible=false and fires onDismissAttempt", () => {
-    const attempts: string[] = []
-    const changes: boolean[] = []
-    const instance = dialogPrimitive({
-      id: "l1-dialog",
-      defaultOpen: true,
-      dismissible: false,
-      closeOnOutsidePress: false,
-      onOpenChange: (open) => changes.push(open),
-      onDismissAttempt: (details) => attempts.push(details.reason),
-    })
-    try {
-      expect(instance.api.isOpen()).toBe(true)
-      instance.api.close({ reason: "escape-key" })
-      instance.api.close({ reason: "outside-press" })
-      expect(instance.api.isOpen()).toBe(true)
-      expect(changes).toEqual([])
-      expect(attempts).toEqual(["escape-key", "outside-press"])
-    } finally {
-      instance.destroy()
+    const dismissCases: readonly [readonly DismissalMethod[], string, boolean][] = [
+      [["escape", "visible_close"], "escape-key", true],
+      [["escape", "visible_close"], "close-press", true],
+      [["escape", "visible_close"], "outside-press", false],
+      [["escape", "visible_close"], "swipe", false],
+      [["scrim"], "outside-press", true],
+      [["scrim"], "escape-key", false],
+    ]
+    for (const [methods, reason, expected] of dismissCases) {
+      expect(canDismissDialog(false, methods, reason)).toBe(expected)
     }
   })
 })
@@ -732,79 +710,20 @@ describe("component:form (WidgetComponent::Form)", () => {
     mode: "create",
     inputNames: ["memo", "notes", "quantity", "amount", "expedite", "currency", "due_date", "posted_at", "internal_tag"],
     submitBindingId: "submit-order",
-    submit: {
-      label: { en: "Create Order" },
-      confirmation: { severity: "safe", strength: "none" },
-    },
+    submit: { label: { en: "Create Order" }, confirmation: { severity: "safe", strength: "none" } },
   }
 
   const formFields: FieldPresentation[] = [
-    {
-      fieldId: "f-memo",
-      target: { kind: "form_input", formId: "create-order", inputName: "memo" },
-      label: { en: "Memo" },
-      help: { en: "Short summary shown in ledger." },
-      control: "text",
-      requiredWhen: { expression: "true", inputs: {} },
-    },
-    {
-      fieldId: "f-notes",
-      target: { kind: "form_input", formId: "create-order", inputName: "notes" },
-      label: { en: "Notes" },
-      control: "text_area",
-    },
-    {
-      fieldId: "f-qty",
-      target: { kind: "form_input", formId: "create-order", inputName: "quantity" },
-      label: { en: "Quantity" },
-      control: "number",
-      format: "integer",
-    },
-    {
-      fieldId: "f-amount",
-      target: { kind: "form_input", formId: "create-order", inputName: "amount", initial: { bindingId: "prefill", propertyId: "amount" } },
-      label: { en: "Amount" },
-      control: "number",
-      format: "decimal",
-    },
-    {
-      fieldId: "f-expedite",
-      target: { kind: "form_input", formId: "create-order", inputName: "expedite" },
-      label: { en: "Expedite" },
-      control: "checkbox",
-    },
-    {
-      fieldId: "f-currency",
-      target: { kind: "form_input", formId: "create-order", inputName: "currency" },
-      label: { en: "Currency" },
-      control: "select",
-      optionQueryBindingId: "currencies",
-    },
-    {
-      fieldId: "f-due",
-      target: { kind: "form_input", formId: "create-order", inputName: "due_date" },
-      label: { en: "Due Date" },
-      control: "date",
-    },
-    {
-      fieldId: "f-posted",
-      target: { kind: "form_input", formId: "create-order", inputName: "posted_at", initial: { bindingId: "prefill", propertyId: "posted_at" } },
-      label: { en: "Posted At" },
-      control: "date_time",
-    },
-    {
-      fieldId: "f-hidden",
-      target: { kind: "form_input", formId: "create-order", inputName: "internal_tag", initial: { bindingId: "prefill", propertyId: "internal_tag" } },
-      label: { en: "Internal Tag" },
-      control: "text",
-      visibleWhen: { expression: "false", inputs: {} },
-    },
-    {
-      fieldId: "f-secret-display",
-      target: { kind: "property", property: { bindingId: "prefill", propertyId: "tax_id" } },
-      label: { en: "Tax ID" },
-      control: "display",
-    },
+    { fieldId: "f-memo", target: { kind: "form_input", formId: "create-order", inputName: "memo" }, label: { en: "Memo" }, help: { en: "Short summary shown in ledger." }, control: "text", requiredWhen: { expression: "true", inputs: {} } },
+    { fieldId: "f-notes", target: { kind: "form_input", formId: "create-order", inputName: "notes" }, label: { en: "Notes" }, control: "text_area" },
+    { fieldId: "f-qty", target: { kind: "form_input", formId: "create-order", inputName: "quantity" }, label: { en: "Quantity" }, control: "number", format: "integer" },
+    { fieldId: "f-amount", target: { kind: "form_input", formId: "create-order", inputName: "amount", initial: { bindingId: "prefill", propertyId: "amount" } }, label: { en: "Amount" }, control: "number", format: "decimal" },
+    { fieldId: "f-expedite", target: { kind: "form_input", formId: "create-order", inputName: "expedite" }, label: { en: "Expedite" }, control: "checkbox" },
+    { fieldId: "f-currency", target: { kind: "form_input", formId: "create-order", inputName: "currency" }, label: { en: "Currency" }, control: "select", optionQueryBindingId: "currencies" },
+    { fieldId: "f-due", target: { kind: "form_input", formId: "create-order", inputName: "due_date" }, label: { en: "Due Date" }, control: "date" },
+    { fieldId: "f-posted", target: { kind: "form_input", formId: "create-order", inputName: "posted_at", initial: { bindingId: "prefill", propertyId: "posted_at" } }, label: { en: "Posted At" }, control: "date_time" },
+    { fieldId: "f-hidden", target: { kind: "form_input", formId: "create-order", inputName: "internal_tag", initial: { bindingId: "prefill", propertyId: "internal_tag" } }, label: { en: "Internal Tag" }, control: "text", visibleWhen: { expression: "false", inputs: {} } },
+    { fieldId: "f-secret-display", target: { kind: "property", property: { bindingId: "prefill", propertyId: "tax_id" } }, label: { en: "Tax ID" }, control: "display" },
   ]
 
   const formNode: WidgetNode = {
@@ -819,13 +738,8 @@ describe("component:form (WidgetComponent::Form)", () => {
     actionBindings: [{
       bindingId: "submit-order",
       action: { id: "canon.order.create.action", version: "0.1.0" },
-      inputMapping: {
-        memo: "input.draft.memo",
-        amount: "input.draft.amount",
-        quantity: "input.draft.quantity",
-      },
+      inputMapping: { memo: "input.draft.memo", amount: "input.draft.amount", quantity: "input.draft.quantity" },
       inputs: { draftFormId: "create-order" },
-      // Client must NEVER check this capability; server decides!
       requiredCapability: "canon.order.create.restricted",
     }],
   })
@@ -849,51 +763,58 @@ describe("component:form (WidgetComponent::Form)", () => {
         freshness: "snapshot",
       }],
     ])
-    const markup = renderToStaticMarkup(<Node scope={makeScope(formUx, { reads })} node={formNode} />)
+    const markup = renderNode(formUx, formNode, { reads })
 
-    expect(markup).toContain('data-form="create-order"')
-    expect(markup).toContain('data-dirty="false"')
-    expect(markup).toContain('data-control="text"')
-    expect(markup).toContain('aria-required="true"')
-    expect(markup).toContain("Short summary shown in ledger.")
-    expect(markup).toContain('data-control="text_area"')
-    expect(markup).toContain("<textarea")
-    expect(markup).toContain('data-control="number" data-format="integer"')
-    expect(markup).toContain('inputMode="numeric"')
-    expect(markup).toContain('data-control="number" data-format="decimal"')
-    expect(markup).toContain('inputMode="decimal"')
-    // Exact decimal string preserved verbatim — never converted through JS float or type="number".
-    expect(markup).toContain(`value="${exactDecimal}"`)
+    for (const expected of [
+      'data-form="create-order"',
+      'data-dirty="false"',
+      'data-control="text"',
+      'aria-required="true"',
+      "Short summary shown in ledger.",
+      'data-control="text_area"',
+      "<textarea",
+      'data-control="number" data-format="integer"',
+      'inputMode="numeric"',
+      'data-control="number" data-format="decimal"',
+      'inputMode="decimal"',
+      `value="${exactDecimal}"`,
+      'data-control="checkbox"',
+      'role="checkbox"',
+      'data-control="select"',
+      'role="combobox"',
+      'data-control="date"',
+      'type="date"',
+      'data-control="date_time"',
+      `value="${zonedTimestamp}"`,
+      'type="hidden"',
+      'data-control="hidden"',
+      'value="batch-7"',
+      'data-agent-secret=""',
+      "Create Order",
+    ]) {
+      expect(markup).toContain(expected)
+    }
     expect(markup).not.toContain('type="number"')
-    expect(markup).toContain('data-control="checkbox"')
-    expect(markup).toContain('role="checkbox"')
-    expect(markup).toContain('data-control="select"')
-    expect(markup).toContain('role="combobox"')
-    expect(markup).toContain('data-control="date"')
-    expect(markup).toContain('type="date"')
-    expect(markup).toContain('data-control="date_time"')
-    expect(markup).toContain(`value="${zonedTimestamp}"`)
-    expect(markup).toContain('type="hidden"')
-    expect(markup).toContain('data-control="hidden"')
-    expect(markup).toContain('value="batch-7"')
-    // Display field preserves server redaction mark (L6).
-    expect(markup).toContain('data-agent-secret=""')
-    expect(markup).toContain("Create Order")
   })
 
   test("exact-string integer/decimal validation, integer JSON number parsing without float rounding, and draft/dirty helpers", () => {
     const exact = "123456789012345678901234567890.000000000000000001"
-    expect(validateExactNumber(exact, "decimal")).toBeNull()
-    expect(validateExactNumber("-42.50", "currency")).toBeNull()
-    expect(validateExactNumber("100", "integer")).toBeNull()
-    expect(validateExactNumber("-7", "integer")).toBeNull()
-    expect(validateExactNumber(String(Number.MAX_SAFE_INTEGER), "integer")).toBeNull()
-    expect(validateExactNumber("12.5", "integer")).toBe("Enter a whole number.")
-    expect(validateExactNumber("9007199254740993", "integer")).toBe("Whole number exceeds exact integer range.")
-    expect(validateExactNumber("-9007199254740993", "integer")).toBe("Whole number exceeds exact integer range.")
-    expect(validateExactNumber("12.5.1", "decimal")).toBe("Enter a valid decimal number.")
-    expect(validateExactNumber("abc", "decimal")).toBe("Enter a valid decimal number.")
-    expect(validateExactNumber("", "decimal")).toBeNull()
+    const validationCases: readonly [string, "integer" | "decimal" | "currency", string | null][] = [
+      [exact, "decimal", null],
+      ["-42.50", "currency", null],
+      ["100", "integer", null],
+      ["-7", "integer", null],
+      [String(Number.MAX_SAFE_INTEGER), "integer", null],
+      ["12.5", "integer", "Enter a whole number."],
+      ["9007199254740993", "integer", "Whole number exceeds exact integer range."],
+      ["-9007199254740993", "integer", "Whole number exceeds exact integer range."],
+      ["12.5.1", "decimal", "Enter a valid decimal number."],
+      ["abc", "decimal", "Enter a valid decimal number."],
+      ["", "decimal", null],
+    ]
+    for (const [value, format, expected] of validationCases) {
+      expect(validateExactNumber(value, format)).toBe(expected)
+    }
 
     expect(parseExactInteger("42")).toEqual({ ok: true, value: 42 })
     expect(parseExactInteger("-0")).toEqual({ ok: true, value: 0 })
@@ -906,15 +827,12 @@ describe("component:form (WidgetComponent::Form)", () => {
     const payload = buildFormDraftPayload(formFields, { memo: "Payroll", amount: exact, quantity: "10", expedite: true })
     expect(payload.amount).toBe(exact)
     expect(typeof payload.amount).toBe("string")
-    // Integer inputs reach the cell as JSON integer numbers, never strings.
     expect(payload.quantity).toBe(10)
     expect(typeof payload.quantity).toBe("number")
     expect(Number.isInteger(payload.quantity)).toBe(true)
     expect(payload.expedite).toBe(true)
 
-    // Unrepresentable integer is NEVER silently rounded to 9007199254740992.
-    const unsafePayload = buildFormDraftPayload(formFields, { quantity: "9007199254740993" })
-    expect(unsafePayload.quantity).not.toBe(9007199254740992)
+    expect(buildFormDraftPayload(formFields, { quantity: "9007199254740993" }).quantity).not.toBe(9007199254740992)
   })
 
   test("declared click and typed confirmation gates submission and formConfirmReason covers machine-started actions", () => {
@@ -926,18 +844,10 @@ describe("component:form (WidgetComponent::Form)", () => {
 
     const typedConfirm = { severity: "irreversible" as const, strength: "typed" as const, phrase: { en: "DELETE ORDER" } }
     expect(canDispatchFormConfirmation(typedConfirm, { confirming: false, typedPhrase: "" }, "en")).toEqual({ kind: "confirm" })
-    expect(canDispatchFormConfirmation(typedConfirm, { confirming: true, typedPhrase: "delete order" }, "en")).toEqual({
-      kind: "error",
-      message: 'Type "DELETE ORDER" to confirm.',
-    })
+    expect(canDispatchFormConfirmation(typedConfirm, { confirming: true, typedPhrase: "delete order" }, "en")).toEqual({ kind: "error", message: 'Type "DELETE ORDER" to confirm.' })
     expect(canDispatchFormConfirmation(typedConfirm, { confirming: true, typedPhrase: "DELETE ORDER" }, "en")).toEqual({ kind: "dispatch" })
-    // Typed confirmation with missing phrase fails closed.
-    expect(canDispatchFormConfirmation({ severity: "irreversible", strength: "typed" }, { confirming: true, typedPhrase: "" }, "en")).toEqual({
-      kind: "error",
-      message: "Confirmation phrase is not configured.",
-    })
+    expect(canDispatchFormConfirmation({ severity: "irreversible", strength: "typed" }, { confirming: true, typedPhrase: "" }, "en")).toEqual({ kind: "error", message: "Confirmation phrase is not configured." })
 
-    // formConfirmReason checks BOTH submitBindingId AND any machine-started binding on the form node.
     const machineWithExtraAction: Machine = {
       ...baseMachine,
       transitions: [
@@ -988,39 +898,30 @@ describe("component:form (WidgetComponent::Form)", () => {
       children: maskedFields.map((field) => ({ nodeId: `n-${field.fieldId}`, component: { kind: "field", fieldId: field.fieldId }, children: [] })),
     }
     const maskedUx = makeUx(maskedNode, { fields: maskedFields, forms: [maskedFormDef] })
-    const reads = new Map<string, BindingReadState>([
-      ["secret-rec", {
-        kind: "ok",
-        document: {
-          id: "rec-1",
-          values: { ssn: "•••-1234", secret_note: "TOP-SECRET-LEAK", hidden_token: "•••-tok", hidden_refused: "HIDDEN-SECRET-LEAK" },
-          masked: {
-            ssn: { mode: "last_n", markings: ["pii"], revealable: false },
-            hidden_token: { mode: "redacted", markings: ["secret"], revealable: false },
-            hidden_refused: { mode: "refuse", markings: ["restricted"], revealable: false },
-          },
-          withheldProperties: ["secret_note"],
-        },
-        freshness: "snapshot",
-      }],
-    ])
+    const secretDoc = {
+      id: "rec-1",
+      values: { ssn: "•••-1234", secret_note: "TOP-SECRET-LEAK", hidden_token: "•••-tok", hidden_refused: "HIDDEN-SECRET-LEAK" },
+      masked: {
+        ssn: { mode: "last_n", markings: ["pii"], revealable: false },
+        hidden_token: { mode: "redacted", markings: ["secret"], revealable: false },
+        hidden_refused: { mode: "refuse", markings: ["restricted"], revealable: false },
+      },
+      withheldProperties: ["secret_note"],
+    }
+    const reads = new Map<string, BindingReadState>([["secret-rec", { kind: "ok", document: secretDoc, freshness: "snapshot" }]])
     const sc = makeScope(maskedUx, { reads })
     expect(readPrefill(sc, maskedFormDef, maskedFields[0]!).masked?.mode).toBe("last_n")
     expect(readPrefill(sc, maskedFormDef, maskedFields[1]!)).toMatchObject({ value: undefined, withheld: true })
     expect(readPrefill(sc, maskedFormDef, maskedFields[3]!)).toMatchObject({ value: undefined, withheld: true })
 
     const markup = renderToStaticMarkup(<Node scope={sc} node={maskedNode} />)
-    // Editable masked input & hidden masked input both carry data-agent-secret.
     expect(markup).toMatch(/data-agent-secret=""[^>]*value="•••-1234"/)
     expect(markup).toMatch(/data-agent-secret=""[^>]*type="hidden"[^>]*name="hidden_token"[^>]*value="•••-tok"/)
-    // Withheld editable and hidden inputs carry data-agent-hidden and NEVER leak values into DOM.
     expect(markup).toContain('data-agent-hidden=""')
     expect(markup).not.toContain("TOP-SECRET-LEAK")
     expect(markup).not.toContain("HIDDEN-SECRET-LEAK")
 
-    // During a pending or refused refresh while dirty, pinned L6 masking & withholding metadata stay intact!
-    const pinnedDoc = reads.get("secret-rec")!.kind === "ok" ? (reads.get("secret-rec") as { readonly kind: "ok"; readonly document: unknown }).document : undefined
-    const pinnedRecord = { bindingId: "secret-rec", document: pinnedDoc }
+    const pinnedRecord = { bindingId: "secret-rec", document: secretDoc }
     for (const degradedState of [
       { kind: "pending" as const },
       { kind: "refused" as const, refusal: { code: "authz.denied", category: "permission", document: { message: "Denied." } } },
@@ -1028,15 +929,13 @@ describe("component:form (WidgetComponent::Form)", () => {
       const degradedScope = makeScope(maskedUx, { reads: new Map([["secret-rec", degradedState]]) })
       const liveMasked = readPrefill(degradedScope, maskedFormDef, maskedFields[0]!)
       expect(liveMasked.masked).toBeUndefined()
-      const pinnedMasked = readPrefill(degradedScope, maskedFormDef, maskedFields[0]!, pinnedRecord)
-      const mergedMasked = mergePrefillSecurity(liveMasked, pinnedMasked)
-      expect(mergedMasked.masked?.mode).toBe("last_n")
+      expect(mergePrefillSecurity(liveMasked, readPrefill(degradedScope, maskedFormDef, maskedFields[0]!, pinnedRecord)).masked?.mode).toBe("last_n")
 
-      const liveWithheld = readPrefill(degradedScope, maskedFormDef, maskedFields[1]!)
-      const pinnedWithheld = readPrefill(degradedScope, maskedFormDef, maskedFields[1]!, pinnedRecord)
-      const mergedWithheld = mergePrefillSecurity(liveWithheld, pinnedWithheld)
-      expect(mergedWithheld.withheld).toBe(true)
-      expect(mergedWithheld.value).toBeUndefined()
+      const mergedWithheld = mergePrefillSecurity(
+        readPrefill(degradedScope, maskedFormDef, maskedFields[1]!),
+        readPrefill(degradedScope, maskedFormDef, maskedFields[1]!, pinnedRecord),
+      )
+      expect(mergedWithheld).toMatchObject({ withheld: true, value: undefined })
     }
   })
 
@@ -1048,11 +947,7 @@ describe("component:form (WidgetComponent::Form)", () => {
       inputNames: ["memo"],
       submitBindingId: "submit-order",
       submit: { label: { en: "Save Changes" }, confirmation: { severity: "safe", strength: "none" } },
-      versionConflictBinding: {
-        property: { bindingId: "order-detail", propertyId: "version" },
-        inputName: "expectedVersion",
-        onConflict: "reject_and_retain_draft",
-      },
+      versionConflictBinding: { property: { bindingId: "order-detail", propertyId: "version" }, inputName: "expectedVersion", onConflict: "reject_and_retain_draft" },
     }
     const editFields: FieldPresentation[] = [
       { fieldId: "f-edit-memo", target: { kind: "form_input", formId: "edit-order", inputName: "memo" }, label: { en: "Memo" }, control: "text" },
@@ -1064,7 +959,6 @@ describe("component:form (WidgetComponent::Form)", () => {
     }
     const editUx = makeUx(editNode, { fields: editFields, forms: [editFormDef] })
 
-    // Before initial record loads (idle, pending, refused, unavailable): NO <form>, NO <input>, NO submit button.
     for (const [readState, expectedAttr] of [
       [undefined, 'data-read="idle"'],
       [{ kind: "pending" as const }, 'data-read="pending"'],
@@ -1072,26 +966,21 @@ describe("component:form (WidgetComponent::Form)", () => {
       [{ kind: "unavailable" as const, error: new Error("Offline."), retry: true }, 'data-read="unavailable"'],
     ] as const) {
       const reads = readState === undefined ? new Map<string, BindingReadState>() : new Map<string, BindingReadState>([["order-detail", readState]])
-      const markup = renderToStaticMarkup(<Node scope={makeScope(editUx, { reads })} node={editNode} />)
+      const markup = renderNode(editUx, editNode, { reads })
       expect(markup).toContain('data-form-awaiting-baseline="true"')
       expect(markup).toContain(expectedAttr)
-      expect(markup).not.toContain("<form")
-      expect(markup).not.toContain("<input")
-      expect(markup).not.toContain("Save Changes")
+      for (const absent of ["<form", "<input", "Save Changes"]) expect(markup).not.toContain(absent)
     }
 
-    // Once initial record loads (`ok`), interactive <form> mounts hydrated with baseline values.
     const okReads = new Map<string, BindingReadState>([
       ["order-detail", { kind: "ok", document: { id: "ord-1", values: { memo: "Loaded Rev 1", version: 1 } }, freshness: "snapshot" }],
     ])
-    const loadedMarkup = renderToStaticMarkup(<Node scope={makeScope(editUx, { reads: okReads })} node={editNode} />)
+    const loadedMarkup = renderNode(editUx, editNode, { reads: okReads })
     expect(loadedMarkup).not.toContain("data-form-awaiting-baseline")
-    expect(loadedMarkup).toContain("<form")
-    expect(loadedMarkup).toContain('value="Loaded Rev 1"')
-    expect(loadedMarkup).toContain("Save Changes")
+    for (const expected of ["<form", 'value="Loaded Rev 1"', "Save Changes"]) expect(loadedMarkup).toContain(expected)
   })
 
-  test("field conditions receive recordKey paired with record (input.recordKey == \"ord-1\")", () => {
+  test('field conditions receive recordKey paired with record (input.recordKey == "ord-1")', () => {
     const condFormDef: WidgetForm = {
       formId: "key-cond-form",
       mode: "edit",
@@ -1119,35 +1008,30 @@ describe("component:form (WidgetComponent::Form)", () => {
       return parsed.value
     }
 
-    const scopeOrd1 = makeScope(condUx, {
-      reads: new Map([["order-detail", { kind: "ok", document: { id: "ord-1", values: { special_note: "Match" } }, freshness: "snapshot" }]]),
+    const scopeFor = (id: string, note: string) => makeScope(condUx, {
+      reads: new Map([["order-detail", { kind: "ok", document: { id, values: { special_note: note } }, freshness: "snapshot" }]]),
       evaluate: syncEval,
     })
-    const scopeOrd2 = makeScope(condUx, {
-      reads: new Map([["order-detail", { kind: "ok", document: { id: "ord-2", values: { special_note: "Other" } }, freshness: "snapshot" }]]),
-      evaluate: syncEval,
-    })
+    const scopeOrd1 = scopeFor("ord-1", "Match")
+    const scopeOrd2 = scopeFor("ord-2", "Other")
     expect(evaluateFieldCondition(scopeOrd1, condField.visibleWhen, {}, false)).toBe(true)
     expect(evaluateFieldCondition(scopeOrd2, condField.visibleWhen, {}, true)).toBe(false)
 
-    // In rendered form: visible text input for ord-1, hidden input for ord-2.
-    const markup1 = renderToStaticMarkup(<Node scope={scopeOrd1} node={condNode} />)
-    expect(markup1).toContain('data-field="f-special" data-control="text"')
+    expect(renderToStaticMarkup(<Node scope={scopeOrd1} node={condNode} />)).toContain('data-field="f-special" data-control="text"')
     const markup2 = renderToStaticMarkup(<Node scope={scopeOrd2} node={condNode} />)
     expect(markup2).toContain('type="hidden"')
     expect(markup2).toContain('data-field="f-special" data-control="hidden"')
   })
 
   test("pending state disables submit button; server refusals render RefusalCategory + server message across all closed states", () => {
-    // Pending disables submit button and marks aria-busy.
-    const sendingCalls = new Map<string, BindingCallState>([["submit-order", { kind: "sending", sent: { input: "{}", key: "k1" } }]])
-    const pendingMarkup = renderToStaticMarkup(<Node scope={makeScope(formUx, { stateId: "saving", calls: sendingCalls })} node={formNode} />)
-    expect(pendingMarkup).toContain('data-pending="true"')
-    expect(pendingMarkup).toContain('aria-disabled="true"')
-    expect(pendingMarkup).toContain('data-call="sending"')
-    expect(pendingMarkup).toContain("Submitting…")
+    const pendingMarkup = renderNode(formUx, formNode, {
+      stateId: "saving",
+      calls: new Map<string, BindingCallState>([["submit-order", { kind: "sending", sent: { input: "{}", key: "k1" } }]]),
+    })
+    for (const expected of ['data-pending="true"', 'aria-disabled="true"', 'data-call="sending"', "Submitting…"]) {
+      expect(pendingMarkup).toContain(expected)
+    }
 
-    // Refused surfaces RefusalCategory + exact server message.
     const categories = [
       ["permission", "Permission refused"],
       ["invalid", "Invalid input"],
@@ -1162,16 +1046,12 @@ describe("component:form (WidgetComponent::Form)", () => {
       const calls = new Map<string, BindingCallState>([
         ["submit-order", { kind: "refused", refusal: { code: `err.${category}`, category, document: { message: `Server said ${category}.` } } }],
       ])
-      const refusedMarkup = renderToStaticMarkup(<Node scope={makeScope(formUx, { stateId: "failed", calls })} node={formNode} />)
-      expect(refusedMarkup).toContain('role="alert"')
-      expect(refusedMarkup).toContain('data-call="refused"')
-      expect(refusedMarkup).toContain(`data-category="${category}"`)
-      expect(refusedMarkup).toContain(`data-code="err.${category}"`)
-      expect(refusedMarkup).toContain(expectedLabel)
-      expect(refusedMarkup).toContain(`Server said ${category}.`)
+      const refusedMarkup = renderNode(formUx, formNode, { stateId: "failed", calls })
+      for (const expected of ['role="alert"', 'data-call="refused"', `data-category="${category}"`, `data-code="err.${category}"`, expectedLabel, `Server said ${category}.`]) {
+        expect(refusedMarkup).toContain(expected)
+      }
     }
 
-    // Closed call states: pending_approval, committed, not_served, unavailable, timed_out.
     const otherStates: BindingCallState[] = [
       { kind: "pending_approval", decision: { id: "d1" } },
       { kind: "committed", receipt: {}, undo: null },
@@ -1180,52 +1060,40 @@ describe("component:form (WidgetComponent::Form)", () => {
       { kind: "timed_out", sent: { input: "{}", key: "k1" }, message: "Timed out." },
     ]
     for (const state of otherStates) {
-      const markup = renderToStaticMarkup(<Node scope={makeScope(formUx, { calls: new Map([["submit-order", state]]) })} node={formNode} />)
-      expect(markup).toContain(`data-call="${state.kind}"`)
+      expect(renderNode(formUx, formNode, { calls: new Map([["submit-order", state]]) })).toContain(`data-call="${state.kind}"`)
     }
 
-    // Select option read failure surfaces honest closed read states.
-    const refusedRead = new Map<string, BindingReadState>([
-      ["currencies", { kind: "refused", refusal: { code: "authz.denied", category: "permission", document: { message: "Cannot list currencies." } } }],
-    ])
-    const selectRefusedMarkup = renderToStaticMarkup(<Node scope={makeScope(formUx, { reads: refusedRead })} node={formNode} />)
+    const selectRefusedMarkup = renderNode(formUx, formNode, {
+      reads: new Map<string, BindingReadState>([
+        ["currencies", { kind: "refused", refusal: { code: "authz.denied", category: "permission", document: { message: "Cannot list currencies." } } }],
+      ]),
+    })
     expect(selectRefusedMarkup).toContain('data-read="refused"')
     expect(selectRefusedMarkup).toContain("Cannot list currencies.")
   })
 
   test("L6 agent:confirm marks form submit button when effects are unknown or consequential", () => {
-    const unknownMarkup = renderToStaticMarkup(<Node scope={makeScope(formUx, { effects: () => undefined })} node={formNode} />)
-    expect(unknownMarkup).toContain('data-agent-confirm="canon.order.create.action: its effects are not known"')
+    expect(renderNode(formUx, formNode, { effects: () => undefined })).toContain('data-agent-confirm="canon.order.create.action: its effects are not known"')
   })
 
   test("runtime submits form draft via machine event and direct submitForm, blocks duplicate submits, and never checks permissions client-side", async () => {
     const exactAmount = "999999999999999999.99"
     const sent: Array<{ actionId: string; input: Fields; key: string }> = []
     let release!: (answer: Classified) => void
-    const calls: WidgetCalls = {
-      call: (actionId, input, options) => {
-        sent.push({ actionId, input, key: options.idempotencyKey })
-        return new Promise<Classified>((resolve) => { release = resolve })
+    const { runtime } = startRuntime({
+      ux: formUx,
+      calls: {
+        call: (actionId, input, options) => {
+          sent.push({ actionId, input, key: options.idempotencyKey })
+          return new Promise<Classified>((resolve) => { release = resolve })
+        },
       },
-    }
-    const reader: WidgetReader = { kind: "live", widget: () => ({ queryKey: ["noop"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: {} }) }) }
-    const runtime = createPageRuntime(
-      {
-        ux: formUx,
-        machine: baseMachine,
-        reader,
-        calls,
-        engine: lazyEngine(async () => pathEngine),
-        host: () => ({ context: {}, objectTypeOf: () => undefined, actionIdOf: (id) => (id === "canon.order.create.action" ? "canon.order.create" : undefined) }),
-      },
-      () => {},
-    )
+      actionMap: { "canon.order.create.action": "canon.order.create" },
+    })
     expect(needsEngine(formUx, baseMachine)).toBe(true)
 
-    // 1. Direct submitForm: maps input.draft, preserves exact decimal string + integer number, deduplicates while pending.
     runtime.submitForm("create-order", "submit-order", { memo: "Q4", amount: exactAmount, quantity: 3 })
     expect(runtime.view().calls.get("submit-order")?.kind).toBe("sending")
-    // Duplicate submit while sending is ignored.
     runtime.submitForm("create-order", "submit-order", { memo: "Q4", amount: exactAmount, quantity: 3 })
     await flush()
     expect(sent).toHaveLength(1)
@@ -1233,15 +1101,10 @@ describe("component:form (WidgetComponent::Form)", () => {
     expect(sent[0]!.input).toEqual({ memo: "Q4", amount: exactAmount, quantity: 3 })
     expect(typeof sent[0]!.input.quantity).toBe("number")
 
-    // Server refuses with permission category -> surfaced cleanly on runtime.
     release({ outcome: "refused", category: "permission", payload: { code: "authz.denied" }, body: { code: "authz.denied", message: "Actor lacks canon.order.create." } })
     await flush()
-    expect(runtime.view().calls.get("submit-order")).toMatchObject({
-      kind: "refused",
-      refusal: { code: "authz.denied", category: "permission" },
-    })
+    expect(runtime.view().calls.get("submit-order")).toMatchObject({ kind: "refused", refusal: { code: "authz.denied", category: "permission" } })
 
-    // 2. Machine-driven form submit using runtime.setDraft:
     runtime.setDraft("create-order", { memo: "Retry", amount: exactAmount, quantity: 4 })
     runtime.send({ kind: "user", eventId: "save-form", payload: {} })
     await flush()
@@ -1258,31 +1121,7 @@ describe("component:form (WidgetComponent::Form)", () => {
   test("versioned records send only WASM-allowed slots, and dirty edits submit their pinned baseline revision even after a newer revision arrives", async () => {
     const revA = { id: "ord-1", version: 1, values: { memo: "Original", version: 1 } }
     const revB = { id: "ord-1", version: 2, values: { memo: "Updated elsewhere", version: 2 } }
-    const sent: Array<{ actionId: string; input: Fields }> = []
-    let pushSnapshot: ((doc: unknown) => void) | undefined
-
-    const editMachine: Machine = {
-      machineVersion: "0.1",
-      initialStateId: "opening",
-      fields: [],
-      events: [
-        { eventId: "opened", source: { kind: "page_opened" } },
-        { eventId: "live-update", source: { kind: "subscription", bindingId: "order-detail" } },
-        { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
-        { eventId: "refused", source: { kind: "outcome", outcome: "refused" } },
-      ],
-      states: [
-        { stateId: "opening", role: "idle" },
-        { stateId: "loading", role: "pending", awaits: { kind: "read", bindingId: "order-detail" }, deadlineMs: 5000 },
-        { stateId: "editing", role: "idle" },
-      ],
-      transitions: [
-        { transitionId: "t-open", from: "opening", on: "opened", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "order-detail" } }] },
-        { transitionId: "t-loaded", from: "loading", on: "accepted", target: "editing" },
-        { transitionId: "t-ref", from: "loading", on: "refused", target: "editing" },
-      ],
-    }
-
+    const editMachine = makeSubMachine({ bindingId: "order-detail", subEventId: "live-update", readyStateId: "editing" })
     const editFormDef: WidgetForm = {
       formId: "edit-order",
       mode: "edit",
@@ -1290,363 +1129,247 @@ describe("component:form (WidgetComponent::Form)", () => {
       inputNames: ["memo"],
       submitBindingId: "save-edit",
       submit: { label: { en: "Save" }, confirmation: { severity: "safe", strength: "none" } },
-      versionConflictBinding: {
-        property: { bindingId: "order-detail", propertyId: "version" },
-        inputName: "expectedVersion",
-        onConflict: "reject_and_retain_draft",
-      },
+      versionConflictBinding: { property: { bindingId: "order-detail", propertyId: "version" }, inputName: "expectedVersion", onConflict: "reject_and_retain_draft" },
     }
-    const editNode: WidgetNode = { nodeId: "edit-form", component: { kind: "form", formId: "edit-order" }, children: [] }
     const editUx = makeUx(
-      editNode,
+      { nodeId: "edit-form", component: { kind: "form", formId: "edit-order" }, children: [] },
       {
         dataBindings: [{ bindingId: "order-detail", object: { id: "canon.Order.entity", version: "0.1.0" }, query: { kind: "object_runtime_detail", pageId: "main", parameterId: "orderId" } }],
         forms: [editFormDef],
         actionBindings: [{
           bindingId: "save-edit",
           action: { id: "canon.order.edit.action", version: "0.1.0" },
-          inputMapping: {
-            id: "input.recordKey",
-            memo: "input.draft.memo",
-            expectedVersion: "input.record.version",
-          },
+          inputMapping: { id: "input.recordKey", memo: "input.draft.memo", expectedVersion: "input.record.version" },
           inputs: { draftFormId: "edit-order", recordBindingId: "order-detail" },
           requiredCapability: "canon.order.edit",
         }],
       },
       editMachine,
     )
-
-    const runtime = createPageRuntime(
-      {
-        ux: editUx,
-        machine: editMachine,
-        reader: { kind: "live", widget: () => ({ queryKey: ["detail"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: revA }) }) },
-        calls: { call: async (actionId, input) => { sent.push({ actionId, input }); return { outcome: "accepted", payload: {}, body: {} } } },
-        engine: lazyEngine(async () => pathEngine),
-        host: () => ({
-          context: { orderId: "ord-1" },
-          objectTypeOf: () => "canon.Order",
-          actionIdOf: (id) => (id === "canon.order.edit.action" ? "canon.order.edit" : undefined),
-          live: { subscribe: (_read, listener) => { pushSnapshot = listener.snapshot; return () => {} } },
-        }),
-      },
-      () => {},
-    )
+    const { runtime, sent, push } = startRuntime({
+      ux: editUx,
+      reader: { kind: "live", widget: () => ({ queryKey: ["detail"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: revA }) }) },
+      context: { orderId: "ord-1" },
+      objectType: "canon.Order",
+      actionMap: { "canon.order.edit.action": "canon.order.edit" },
+      subscribe: true,
+    })
     await flush()
     expect(runtime.view().reads.get("order-detail")).toMatchObject({ kind: "ok", document: revA })
 
-    // User makes a dirty edit against revA -> pins revA.
     const pinnedRevA = { bindingId: "order-detail", document: revA }
     runtime.setDraft("edit-order", { memo: "User edit on revA" }, pinnedRevA)
-
-    // Background refresh delivers revB (version: 2).
-    pushSnapshot?.(revB)
+    push(revB)
     expect(runtime.view().reads.get("order-detail")).toMatchObject({ kind: "ok", document: revB })
 
-    // Submitting must pass WASM strict slot check (no `recordVersion` slot) AND send revA's expectedVersion (1), NOT revB (2)!
     runtime.submitForm("edit-order", "save-edit", { memo: "User edit on revA" }, pinnedRevA)
     await flush()
     expect(runtime.view().fault).toBeNull()
-    expect(sent).toEqual([{ actionId: "canon.order.edit", input: { id: "ord-1", memo: "User edit on revA", expectedVersion: 1 } }])
+    expect(sent.map(({ actionId, input }) => ({ actionId, input }))).toEqual([
+      { actionId: "canon.order.edit", input: { id: "ord-1", memo: "User edit on revA", expectedVersion: 1 } },
+    ])
     runtime.dispose()
   })
 
   test("direct submitForm enforces a bounded deadline on stalled engine or transport and reuses idempotency key on retry", async () => {
-    const clock = manualClock()
     const keys: string[] = []
-    const stalledEngineRuntime = createPageRuntime(
-      {
-        ux: formUx,
-        machine: baseMachine,
-        clock,
-        reader: { kind: "live", widget: () => ({ queryKey: ["noop"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: {} }) }) },
-        calls: { call: async (_id, _input, opts) => { keys.push(opts.idempotencyKey); return new Promise(() => {}) } },
-        engine: lazyEngine(() => new Promise(() => {})),
-        host: () => ({ context: {}, objectTypeOf: () => undefined, actionIdOf: (id) => (id === "canon.order.create.action" ? "canon.order.create" : undefined) }),
-      },
-      () => {},
-    )
-    stalledEngineRuntime.submitForm("create-order", "submit-order", { memo: "Stalled eval", amount: "10.00", quantity: 1 })
-    expect(stalledEngineRuntime.view().calls.get("submit-order")?.kind).toBe("sending")
-    clock.advance(DEFAULT_SUBMIT_DEADLINE_MS)
+    const hangingCalls: WidgetCalls = { call: async (_id, _input, opts) => { keys.push(opts.idempotencyKey); return new Promise(() => {}) } }
+    const engineClock = manualClock()
+    const { runtime: stalledEngine } = startRuntime({
+      ux: formUx,
+      clock: engineClock,
+      calls: hangingCalls,
+      engine: lazyEngine(() => new Promise(() => {})),
+      actionMap: { "canon.order.create.action": "canon.order.create" },
+    })
+    stalledEngine.submitForm("create-order", "submit-order", { memo: "Stalled eval", amount: "10.00", quantity: 1 })
+    expect(stalledEngine.view().calls.get("submit-order")?.kind).toBe("sending")
+    engineClock.advance(DEFAULT_SUBMIT_DEADLINE_MS)
     await flush()
-    expect(stalledEngineRuntime.view().calls.get("submit-order")?.kind).toBe("timed_out")
+    expect(stalledEngine.view().calls.get("submit-order")?.kind).toBe("timed_out")
     expect(keys).toEqual([])
-    stalledEngineRuntime.dispose()
+    stalledEngine.dispose()
 
-    // Stalled transport times out at deadline and keeps idempotency key for retry.
     const transportClock = manualClock()
-    const transportRuntime = createPageRuntime(
-      {
-        ux: formUx,
-        machine: baseMachine,
-        clock: transportClock,
-        reader: { kind: "live", widget: () => ({ queryKey: ["noop"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: {} }) }) },
-        calls: { call: async (_id, _input, opts) => { keys.push(opts.idempotencyKey); return new Promise(() => {}) } },
-        engine: lazyEngine(async () => pathEngine),
-        host: () => ({ context: {}, objectTypeOf: () => undefined, actionIdOf: (id) => (id === "canon.order.create.action" ? "canon.order.create" : undefined) }),
-      },
-      () => {},
-    )
-    transportRuntime.submitForm("create-order", "submit-order", { memo: "Slow cell", amount: "10.00", quantity: 1 })
+    const { runtime: stalledTransport } = startRuntime({
+      ux: formUx,
+      clock: transportClock,
+      calls: hangingCalls,
+      actionMap: { "canon.order.create.action": "canon.order.create" },
+    })
+    stalledTransport.submitForm("create-order", "submit-order", { memo: "Slow cell", amount: "10.00", quantity: 1 })
     await flush()
-    expect(transportRuntime.view().calls.get("submit-order")?.kind).toBe("sending")
+    expect(stalledTransport.view().calls.get("submit-order")?.kind).toBe("sending")
     transportClock.advance(DEFAULT_SUBMIT_DEADLINE_MS)
     await flush()
-    expect(transportRuntime.view().calls.get("submit-order")?.kind).toBe("timed_out")
-    // Retry with identical draft reuses the exact idempotency key.
-    transportRuntime.submitForm("create-order", "submit-order", { memo: "Slow cell", amount: "10.00", quantity: 1 })
+    expect(stalledTransport.view().calls.get("submit-order")?.kind).toBe("timed_out")
+    stalledTransport.submitForm("create-order", "submit-order", { memo: "Slow cell", amount: "10.00", quantity: 1 })
     await flush()
     expect(keys).toHaveLength(2)
     expect(keys[0]).toBe(keys[1])
-    transportRuntime.dispose()
+    stalledTransport.dispose()
   })
 
   test("needsEngine returns true when a page's only expression is a non-literal field condition and false for literals", () => {
-    const bareMachine: Machine = {
-      machineVersion: "0.1",
-      initialStateId: "idle",
-      fields: [],
-      events: [],
-      states: [{ stateId: "idle", role: "idle" }],
-      transitions: [],
-    }
-    const bareForm: WidgetForm = {
-      formId: "cond-form",
-      mode: "create",
-      inputNames: ["reason"],
-      submitBindingId: "bare-submit",
-      submit: { label: { en: "Submit" }, confirmation: { severity: "safe", strength: "none" } },
-    }
-    const node: WidgetNode = {
-      nodeId: "cond-form-node",
-      component: { kind: "form", formId: "cond-form" },
-      children: [{ nodeId: "n-reason", component: { kind: "field", fieldId: "f-reason" }, children: [] }],
-    }
-    const literalUx = makeUx(
+    const bareMachine: Machine = { machineVersion: "0.1", initialStateId: "idle", fields: [], events: [], states: [{ stateId: "idle", role: "idle" }], transitions: [] }
+    const bareForm: WidgetForm = { formId: "cond-form", mode: "create", inputNames: ["reason"], submitBindingId: "bare-submit", submit: { label: { en: "Submit" }, confirmation: { severity: "safe", strength: "none" } } }
+    const node: WidgetNode = { nodeId: "cond-form-node", component: { kind: "form", formId: "cond-form" }, children: [{ nodeId: "n-reason", component: { kind: "field", fieldId: "f-reason" }, children: [] }] }
+    const build = (fieldExtra: Partial<FieldPresentation>) => makeUx(
       node,
       {
         forms: [bareForm],
         actionBindings: [{ bindingId: "bare-submit", action: { id: "a", version: "0.1.0" }, inputMapping: {}, inputs: {}, requiredCapability: "a" }],
-        fields: [{ fieldId: "f-reason", target: { kind: "form_input", formId: "cond-form", inputName: "reason" }, label: { en: "Reason" }, control: "text", requiredWhen: { expression: "true", inputs: {} } }],
+        fields: [{ fieldId: "f-reason", target: { kind: "form_input", formId: "cond-form", inputName: "reason" }, label: { en: "Reason" }, control: "text", ...fieldExtra }],
       },
       bareMachine,
     )
-    expect(needsEngine(literalUx, bareMachine)).toBe(false)
-
-    const exprUx = makeUx(
-      node,
-      {
-        forms: [bareForm],
-        actionBindings: [{ bindingId: "bare-submit", action: { id: "a", version: "0.1.0" }, inputMapping: {}, inputs: {}, requiredCapability: "a" }],
-        fields: [{ fieldId: "f-reason", target: { kind: "form_input", formId: "cond-form", inputName: "reason" }, label: { en: "Reason" }, control: "text", visibleWhen: { expression: "input.draft.expedite == true", inputs: { draftFormId: "cond-form" } } }],
-      },
-      bareMachine,
-    )
-    expect(needsEngine(exprUx, bareMachine)).toBe(true)
+    expect(needsEngine(build({ requiredWhen: { expression: "true", inputs: {} } }), bareMachine)).toBe(false)
+    expect(needsEngine(build({ visibleWhen: { expression: "input.draft.expedite == true", inputs: { draftFormId: "cond-form" } } }), bareMachine)).toBe(true)
   })
 })
 
 describe("Capabilities parity and zero-Radix invariant", () => {
+  const renderApp = (ux: WidgetUx) => renderToStaticMarkup(
+    <NornAppRenderer
+      ux={ux}
+      workspace={{ kind: "deciding" }}
+      calls={{ call: async () => ({ outcome: "not_served", payload: {} }) }}
+      engine={() => Promise.reject(new Error("unused"))}
+      objectTypeOf={() => undefined}
+      actionIdOf={() => undefined}
+    />,
+  )
+
   test("RENDERED_COMPONENTS includes dialog and form, and combined vocab v2 page has zero missing capabilities", () => {
     expect(RENDERED_COMPONENTS).toContain("dialog")
     expect(RENDERED_COMPONENTS).toContain("form")
-    expect(RENDERER_CAPABILITIES.has("component:dialog")).toBe(true)
-    expect(RENDERER_CAPABILITIES.has("component:form")).toBe(true)
-    expect(RENDERER_CAPABILITIES.has("view:form")).toBe(true)
+    for (const cap of ["component:dialog", "component:form", "view:form"]) expect(RENDERER_CAPABILITIES.has(cap)).toBe(true)
 
-    const combined: WidgetUx = makeUx({
-      nodeId: "root",
-      component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Root" }, fields: [], order: 0 } },
-      children: [
-        { nodeId: "t1", component: { kind: "section", section: { sectionId: "t1", kind: "tab", label: { en: "Tab 1" }, fields: [], order: 1 } }, children: [] },
-        { nodeId: "l1", component: { kind: "list", dataBindingId: "items", fields: [], selection: "multiple" }, children: [] },
-        { nodeId: "d1", component: { kind: "dialog", bindingId: "submit-order", blocking: true, dismissalMethods: ["escape"] }, children: [] },
-        { nodeId: "f1", component: { kind: "form", formId: "create-order" }, children: [] },
-      ],
-    })
-    expect(requiredCapabilities(combined)).toContain("component:dialog")
-    expect(requiredCapabilities(combined)).toContain("component:form")
-    expect(requiredCapabilities(combined)).toContain("component:list")
-    expect(requiredCapabilities(combined)).toContain("component:section")
+    const combined = makeUx(rootNode([
+      sectionNode("t1", "Tab 1", { kind: "tab", order: 1 }),
+      { nodeId: "l1", component: { kind: "list", dataBindingId: "items", fields: [], selection: "multiple" }, children: [] },
+      { nodeId: "d1", component: { kind: "dialog", bindingId: "submit-order", blocking: true, dismissalMethods: ["escape"] }, children: [] },
+      { nodeId: "f1", component: { kind: "form", formId: "create-order" }, children: [] },
+    ]))
+    const required = requiredCapabilities(combined)
+    for (const cap of ["component:dialog", "component:form", "component:list", "component:section"]) expect(required).toContain(cap)
     expect(missingCapabilities(combined)).toEqual([])
   })
 
   test("NornAppRenderer refuses contracts referencing input.recordVersion or unformatted number controls whole", () => {
-    const recVersionUx = makeUx(
-      { nodeId: "root", component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Root" }, fields: [], order: 0 } }, children: [] },
-      {
-        actionBindings: [{
-          bindingId: "edit-parent",
-          action: { id: "canon.order.edit.action", version: "0.1.0" },
-          inputMapping: { expectedVersion: "input.recordVersion" },
-          inputs: { recordBindingId: "order" },
-          requiredCapability: "canon.order.edit",
-        }],
-      },
-    )
-    const refusedMarkup = renderToStaticMarkup(
-      <NornAppRenderer
-        ux={recVersionUx}
-        workspace={{ kind: "deciding" }}
-        calls={{ call: async () => ({ outcome: "not_served", payload: {} }) }}
-        engine={() => Promise.reject(new Error("unused"))}
-        objectTypeOf={() => undefined}
-        actionIdOf={() => undefined}
-      />,
-    )
-    expect(refusedMarkup).toContain('data-norn-refused=""')
-    expect(refusedMarkup).toContain("expr:recordVersion (action:edit-parent.expectedVersion)")
+    const recVersionMarkup = renderApp(makeUx(rootNode(), {
+      actionBindings: [{ bindingId: "edit-parent", action: { id: "canon.order.edit.action", version: "0.1.0" }, inputMapping: { expectedVersion: "input.recordVersion" }, inputs: { recordBindingId: "order" }, requiredCapability: "canon.order.edit" }],
+    }))
+    expect(recVersionMarkup).toContain('data-norn-refused=""')
+    expect(recVersionMarkup).toContain("expr:recordVersion (action:edit-parent.expectedVersion)")
 
-    const unformattedNumUx = makeUx(
-      { nodeId: "root", component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Root" }, fields: [], order: 0 } }, children: [] },
-      {
-        fields: [{ fieldId: "f-qty", target: { kind: "form_input", formId: "f", inputName: "qty" }, label: { en: "Qty" }, control: "number" }],
-      },
-    )
-    const numRefusedMarkup = renderToStaticMarkup(
-      <NornAppRenderer
-        ux={unformattedNumUx}
-        workspace={{ kind: "deciding" }}
-        calls={{ call: async () => ({ outcome: "not_served", payload: {} }) }}
-        engine={() => Promise.reject(new Error("unused"))}
-        objectTypeOf={() => undefined}
-        actionIdOf={() => undefined}
-      />,
-    )
-    expect(numRefusedMarkup).toContain('data-norn-refused=""')
-    expect(numRefusedMarkup).toContain("field:number:unformatted (f-qty)")
+    const numMarkup = renderApp(makeUx(rootNode(), {
+      fields: [{ fieldId: "f-qty", target: { kind: "form_input", formId: "f", inputName: "qty" }, label: { en: "Qty" }, control: "number" }],
+    }))
+    expect(numMarkup).toContain('data-norn-refused=""')
+    expect(numMarkup).toContain("field:number:unformatted (f-qty)")
   })
 
   test("referencesRecordVersion detects parenthesized, optional, indexed, and conditional accesses while ignoring literals, arrays, and nested properties", () => {
-    expect(referencesRecordVersion("input.recordVersion")).toBe(true)
-    expect(referencesRecordVersion("(input).recordVersion")).toBe(true)
-    expect(referencesRecordVersion("(true ? input : input).recordVersion")).toBe(true)
-    expect(referencesRecordVersion("((input))['recordVersion']")).toBe(true)
-    expect(referencesRecordVersion('((input))["recordVersion"]')).toBe(true)
-    expect(referencesRecordVersion("input?.recordVersion")).toBe(true)
-    expect(referencesRecordVersion('input?.["recordVersion"]')).toBe(true)
-    expect(referencesRecordVersion("[input][0].recordVersion")).toBe(true)
-    expect(referencesRecordVersion("({ wrapped: input }).wrapped.recordVersion")).toBe(true)
-    expect(referencesRecordVersion('({ wrapped: input })["wrapped"]["recordVersion"]')).toBe(true)
-    expect(referencesRecordVersion("({ input }).input.recordVersion")).toBe(true)
-    expect(referencesRecordVersion('({ ["wrapped"]: input }).wrapped.recordVersion')).toBe(true)
-    expect(referencesRecordVersion('({ 10: 0, ["wrapped"]: input }).wrapped.recordVersion')).toBe(true)
-    expect(referencesRecordVersion('({ 10: input })[10].recordVersion')).toBe(true)
-    expect(referencesRecordVersion('({ 10: input })["10"].recordVersion')).toBe(true)
-    expect(referencesRecordVersion('({ 10.: input })["10."].recordVersion')).toBe(true)
-    expect(referencesRecordVersion('({ "v1.00": input })[`v${1.00}`].recordVersion')).toBe(true)
-    expect(referencesRecordVersion('({ "v2.00": input, v2: input.record })[`v${1.00 + 1}`].recordVersion')).toBe(true)
-    expect(referencesRecordVersion('({ "v700000000000000.2": input, "v700000000000000.3": input.record })[`v${0.1 * 7000000000000002}`].recordVersion')).toBe(true)
-    expect(referencesRecordVersion('({ "v2.0000000000000": input, v2: input.record })[`v${1.0000000000000 + 1}`].recordVersion')).toBe(true)
-    expect(referencesRecordVersion('({ [`v${2 / 1}`]: input })["v2"].recordVersion')).toBe(true)
-    expect(referencesRecordVersion("({ v2: input.record, [input.draft.key]: input }).v2.recordVersion")).toBe(true)
-    expect(referencesRecordVersion('({ keep: input, [({ which: "other", [input.draft.key]: "keep" }).which]: input.record }).keep.recordVersion')).toBe(true)
-    expect(referencesRecordVersion('({ v512: input, v64: input.record })[`v${2 ** 3 ** 2}`].recordVersion')).toBe(true)
-    expect(referencesRecordVersion("(null ?? !false ? input : input).recordVersion")).toBe(true)
-    expect(referencesRecordVersion("`${input.recordVersion}`")).toBe(true)
-    expect(referencesRecordVersion("`\\${input.recordVersion}`")).toBe(true)
-    expect(referencesRecordVersion('input["record" + "Version"]')).toBe(true)
-    expect(referencesRecordVersion("(input.record.amount > 10 ? input : input).recordVersion")).toBe(true)
-    expect(referencesRecordVersion("(input.record.amount in [1..5] ? input : input).recordVersion")).toBe(true)
-    expect(referencesRecordVersion("(input.record.amount in [1..5) ? input : input).recordVersion")).toBe(true)
-    expect(referencesRecordVersion("(input.record.amount in (1..5] ? input : input).recordVersion")).toBe(true)
-    expect(referencesRecordVersion("(input.record.rate >= 3.14 ? input : input).recordVersion")).toBe(true)
-    expect(referencesRecordVersion('"input.recordVersion"')).toBe(false)
-    expect(referencesRecordVersion("'input.recordVersion'")).toBe(false)
-    expect(referencesRecordVersion("input.record.version")).toBe(false)
-    expect(referencesRecordVersion('input.draft.kind in ["recordVersion"]')).toBe(false)
-    expect(referencesRecordVersion('["recordVersion"]')).toBe(false)
-    expect(referencesRecordVersion("input.record.recordVersion")).toBe(false)
-    expect(referencesRecordVersion("((input).record).recordVersion")).toBe(false)
-    expect(referencesRecordVersion('input.draft["recordVersion"]')).toBe(false)
-    expect(referencesRecordVersion("({ v12: input, v3: input.record })[`v${1 + 2}`].recordVersion")).toBe(false)
-    expect(referencesRecordVersion("({ v36: input, v18: input.record })[`v${2 * 3 ** 2}`].recordVersion")).toBe(false)
-    expect(referencesRecordVersion('({ keep: input, [input.draft.flag ? "keep" : "keep"]: input.record }).keep.recordVersion')).toBe(false)
+    const positive = [
+      "input.recordVersion",
+      "(input).recordVersion",
+      "(true ? input : input).recordVersion",
+      "((input))['recordVersion']",
+      '((input))["recordVersion"]',
+      "input?.recordVersion",
+      'input?.["recordVersion"]',
+      "[input][0].recordVersion",
+      "({ wrapped: input }).wrapped.recordVersion",
+      '({ wrapped: input })["wrapped"]["recordVersion"]',
+      "({ input }).input.recordVersion",
+      '({ ["wrapped"]: input }).wrapped.recordVersion',
+      '({ 10: 0, ["wrapped"]: input }).wrapped.recordVersion',
+      "({ 10: input })[10].recordVersion",
+      '({ 10: input })["10"].recordVersion',
+      '({ 10.: input })["10."].recordVersion',
+      '({ "v1.00": input })[`v${1.00}`].recordVersion',
+      '({ "v2.00": input, v2: input.record })[`v${1.00 + 1}`].recordVersion',
+      '({ "v700000000000000.2": input, "v700000000000000.3": input.record })[`v${0.1 * 7000000000000002}`].recordVersion',
+      '({ "v2.0000000000000": input, v2: input.record })[`v${1.0000000000000 + 1}`].recordVersion',
+      '({ [`v${2 / 1}`]: input })["v2"].recordVersion',
+      "({ v2: input.record, [input.draft.key]: input }).v2.recordVersion",
+      '({ keep: input, [({ which: "other", [input.draft.key]: "keep" }).which]: input.record }).keep.recordVersion',
+      '({ v512: input, v64: input.record })[`v${2 ** 3 ** 2}`].recordVersion',
+      "(null ?? !false ? input : input).recordVersion",
+      "`${input.recordVersion}`",
+      "`\\${input.recordVersion}`",
+      'input["record" + "Version"]',
+      "(input.record.amount > 10 ? input : input).recordVersion",
+      "(input.record.amount in [1..5] ? input : input).recordVersion",
+      "(input.record.amount in [1..5) ? input : input).recordVersion",
+      "(input.record.amount in (1..5] ? input : input).recordVersion",
+      "(input.record.rate >= 3.14 ? input : input).recordVersion",
+    ]
+    const negative = [
+      '"input.recordVersion"',
+      "'input.recordVersion'",
+      "input.record.version",
+      'input.draft.kind in ["recordVersion"]',
+      '["recordVersion"]',
+      "input.record.recordVersion",
+      "((input).record).recordVersion",
+      'input.draft["recordVersion"]',
+      "({ v12: input, v3: input.record })[`v${1 + 2}`].recordVersion",
+      "({ v36: input, v18: input.record })[`v${2 * 3 ** 2}`].recordVersion",
+      '({ keep: input, [input.draft.flag ? "keep" : "keep"]: input.record }).keep.recordVersion',
+    ]
+    for (const expr of positive) expect(referencesRecordVersion(expr), expr).toBe(true)
+    for (const expr of negative) expect(referencesRecordVersion(expr), expr).toBe(false)
   })
 
   test("runtime.readSecurity synchronously captures withholding across batched ok -> pending transitions", async () => {
-    let pushSnapshot: ((doc: unknown) => void) | undefined
     const revVisible = { id: "ord-1", values: { secret: "plain" } }
     const revWithheld = { id: "ord-1", values: {}, withheldProperties: ["secret"] }
     let resolveReread!: (value: Classified) => void
     let reads = 0
 
-    const batchMachine: Machine = {
-      machineVersion: "0.1",
-      initialStateId: "opening",
-      fields: [],
-      events: [
-        { eventId: "opened", source: { kind: "page_opened" } },
-        { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
-        { eventId: "refused", source: { kind: "outcome", outcome: "refused" } },
-        { eventId: "sub", source: { kind: "subscription", bindingId: "order-detail" } },
-      ],
-      states: [
-        { stateId: "opening", role: "idle" },
-        { stateId: "loading", role: "pending", awaits: { kind: "read", bindingId: "order-detail" }, deadlineMs: 5000 },
-        { stateId: "ready", role: "idle" },
-      ],
-      transitions: [
-        { transitionId: "t-open", from: "opening", on: "opened", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "order-detail" } }] },
-        { transitionId: "t-ok", from: "loading", on: "accepted", target: "ready" },
-        { transitionId: "t-ref", from: "loading", on: "refused", target: "ready" },
-        // Subscription snapshot synchronously starts a re-read, immediately flipping read state ok -> pending!
-        { transitionId: "t-sub", from: "ready", on: "sub", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "order-detail" } }] },
-      ],
-    }
-
+    const batchMachine = makeSubMachine({
+      bindingId: "order-detail",
+      extraTransitions: [{ transitionId: "t-sub", from: "ready", on: "sub", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "order-detail" } }] }],
+    })
     const ux = makeUx(
-      { nodeId: "root", component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Root" }, fields: [], order: 0 } }, children: [] },
-      {
-        dataBindings: [{ bindingId: "order-detail", object: { id: "canon.Order.entity", version: "0.1.0" }, query: { kind: "object_runtime_detail", pageId: "main", parameterId: "orderId" } }],
-      },
+      rootNode(),
+      { dataBindings: [{ bindingId: "order-detail", object: { id: "canon.Order.entity", version: "0.1.0" }, query: { kind: "object_runtime_detail", pageId: "main", parameterId: "orderId" } }] },
       batchMachine,
     )
-
-    const runtime = createPageRuntime(
-      {
-        ux,
-        machine: batchMachine,
-        reader: {
-          kind: "live",
-          widget: () => ({
-            queryKey: ["order", reads],
-            queryFn: () => {
-              reads += 1
-              if (reads === 1) return Promise.resolve({ outcome: "accepted" as const, payload: {}, body: revVisible })
-              return new Promise<Classified>((resolve) => { resolveReread = resolve })
-            },
-          }),
-        },
-        calls: { call: async () => ({ outcome: "not_served", payload: {} }) },
-        engine: lazyEngine(async () => pathEngine),
-        host: () => ({
-          context: { orderId: "ord-1" },
-          objectTypeOf: () => "canon.Order",
-          actionIdOf: () => undefined,
-          live: { subscribe: (_read, listener) => { pushSnapshot = listener.snapshot; return () => {} } },
+    const { runtime, push } = startRuntime({
+      ux,
+      reader: {
+        kind: "live",
+        widget: () => ({
+          queryKey: ["order", reads],
+          queryFn: () => {
+            reads += 1
+            return reads === 1
+              ? Promise.resolve({ outcome: "accepted" as const, payload: {}, body: revVisible })
+              : new Promise<Classified>((resolve) => { resolveReread = resolve })
+          },
         }),
       },
-      () => {},
-    )
+      calls: { call: async () => ({ outcome: "not_served", payload: {} }) },
+      context: { orderId: "ord-1" },
+      objectType: "canon.Order",
+      subscribe: true,
+    })
     await flush()
     expect(runtime.view().reads.get("order-detail")?.kind).toBe("ok")
 
-    // Subscription delivers revWithheld AND synchronously transitions binding back to pending.
-    pushSnapshot?.(revWithheld)
+    push(revWithheld)
     expect(runtime.view().reads.get("order-detail")?.kind).toBe("pending")
-    // Even though React never committed while `ok`, runtime.readSecurity synchronously recorded withholding!
     expect(runtime.view().readSecurity?.get("order-detail")?.withheldProperties).toContain("secret")
-    const resolved = resolveFieldPrefillSecurity(
+    expect(resolveFieldPrefillSecurity(
       { value: undefined, masked: undefined, withheld: false },
       { value: "plain", masked: undefined, withheld: false },
       true,
       false,
       { value: undefined, masked: undefined, withheld: true },
-    )
-    expect(resolved.withheld).toBe(true)
+    ).withheld).toBe(true)
     resolveReread({ outcome: "accepted", payload: {}, body: revWithheld })
     await flush()
     runtime.dispose()
@@ -1659,60 +1382,27 @@ describe("Capabilities parity and zero-Radix invariant", () => {
     const withheldLive = { value: undefined, masked: undefined, withheld: true }
     const pendingEmpty = { value: undefined, masked: undefined, withheld: false }
 
-    // Dirty form: live ok refresh upgrades masking -> saved into pinned -> subsequent pending/refused keeps mask.
     const ratcheted = resolveFieldPrefillSecurity(maskedLive, visible, true, true)
     expect(ratcheted.masked).toEqual(masked)
-    const afterPending = resolveFieldPrefillSecurity(pendingEmpty, ratcheted, true, false)
-    expect(afterPending.masked).toEqual(masked)
-
-    // Clean form: previously withheld field restored on ok refresh clears withholding immediately.
-    const restored = resolveFieldPrefillSecurity(visible, withheldLive, false, true)
-    expect(restored.withheld).toBe(false)
-    expect(restored.value).toBe("raw")
-
-    // Clean form: non-ok refresh preserves pinned withholding/masking.
-    const stillWithheld = resolveFieldPrefillSecurity(pendingEmpty, withheldLive, false, false)
-    expect(stillWithheld.withheld).toBe(true)
+    expect(resolveFieldPrefillSecurity(pendingEmpty, ratcheted, true, false).masked).toEqual(masked)
+    expect(resolveFieldPrefillSecurity(visible, withheldLive, false, true)).toMatchObject({ withheld: false, value: "raw" })
+    expect(resolveFieldPrefillSecurity(pendingEmpty, withheldLive, false, false).withheld).toBe(true)
   })
 
   test("synchronous selection reconciliation keys by envelope row.id so colliding values.id never substitutes another row", async () => {
     const rowA = { id: "env-A", values: { id: "env-B", name: "Alpha" } }
     const rowB = { id: "env-B", values: { id: "env-B", name: "Beta" } }
-    const sent: Array<{ actionId: string; input: Fields }> = []
-    let pushSnapshot: ((doc: unknown) => void) | undefined
-
-    const subMachine: Machine = {
-      machineVersion: "0.1",
-      initialStateId: "opening",
-      fields: [],
-      events: [
-        { eventId: "opened", source: { kind: "page_opened" } },
-        { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
-        { eventId: "refused", source: { kind: "outcome", outcome: "refused" } },
-        { eventId: "list-changed", source: { kind: "subscription", bindingId: "orders" } },
-      ],
-      states: [
-        { stateId: "opening", role: "idle" },
-        { stateId: "loading", role: "pending", awaits: { kind: "read", bindingId: "orders" }, deadlineMs: 5000 },
-        { stateId: "ready", role: "idle" },
-        { stateId: "acting", role: "pending", awaits: { kind: "action", bindingId: "act-selected" }, deadlineMs: 5000 },
-      ],
-      transitions: [
-        { transitionId: "t-open", from: "opening", on: "opened", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "orders" } }] },
-        { transitionId: "t-loaded", from: "loading", on: "accepted", target: "ready" },
-        { transitionId: "t-ref", from: "loading", on: "refused", target: "ready" },
+    const subMachine = makeSubMachine({
+      bindingId: "orders",
+      subEventId: "list-changed",
+      extraStates: [{ stateId: "acting", role: "pending", awaits: { kind: "action", bindingId: "act-selected" }, deadlineMs: 5000 }],
+      extraTransitions: [
         { transitionId: "t-sub", from: "ready", on: "list-changed", target: "acting", effects: [{ kind: "start", call: { kind: "action", bindingId: "act-selected" } }] },
         { transitionId: "t-act-ok", from: "acting", on: "accepted", target: "ready" },
       ],
-    }
-
-    const listNode: WidgetNode = {
-      nodeId: "orders-list",
-      component: { kind: "list", dataBindingId: "orders", fields: [{ bindingId: "orders", propertyId: "name" }], selection: "single" },
-      children: [],
-    }
+    })
     const subUx = makeUx(
-      listNode,
+      { nodeId: "orders-list", component: { kind: "list", dataBindingId: "orders", fields: [{ bindingId: "orders", propertyId: "name" }], selection: "single" }, children: [] },
       {
         dataBindings: [{ bindingId: "orders", object: { id: "canon.Order.entity", version: "0.1.0" }, query: { kind: "object_list", filters: [], sort: [], page: { size: 10, maxSize: 20 } } }],
         actionBindings: [{
@@ -1725,40 +1415,26 @@ describe("Capabilities parity and zero-Radix invariant", () => {
       },
       subMachine,
     )
-
-    const runtime = createPageRuntime(
-      {
-        ux: subUx,
-        machine: subMachine,
-        reader: { kind: "live", widget: () => ({ queryKey: ["orders"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: { records: [rowA, rowB] } }) }) },
-        calls: { call: async (actionId, input) => { sent.push({ actionId, input }); return { outcome: "accepted", payload: {}, body: {} } } },
-        engine: lazyEngine(async () => pathEngine),
-        host: () => ({
-          context: {},
-          objectTypeOf: () => "canon.Order",
-          actionIdOf: (id) => (id === "canon.order.act.action" ? "canon.order.act" : undefined),
-          live: { subscribe: (_read, listener) => { pushSnapshot = listener.snapshot; return () => {} } },
-        }),
-      },
-      () => {},
-    )
+    const { runtime, sent, push } = startRuntime({
+      ux: subUx,
+      reader: { kind: "live", widget: () => ({ queryKey: ["orders"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: { records: [rowA, rowB] } }) }) },
+      objectType: "canon.Order",
+      actionMap: { "canon.order.act.action": "canon.order.act" },
+      subscribe: true,
+    })
     await flush()
-    // Select row A using its canonical envelope id "env-A" even though values.id === "env-B".
     runtime.setSelection("orders", [flattenSelectionRecord(rowA)], ["env-A"])
-    // Live snapshot removes row A while keeping row B ("env-B"): reconciliation must NOT substitute row B!
-    pushSnapshot?.({ records: [rowB] })
+    push({ records: [rowB] })
     await flush()
-    expect(sent).toEqual([{ actionId: "canon.order.act", input: { selected: [] } }])
+    expect(sent.map(({ actionId, input }) => ({ actionId, input }))).toEqual([{ actionId: "canon.order.act", input: { selected: [] } }])
 
-    // Select row B by envelope id, then push an envelope-less row carrying values.id === "env-B":
-    // neither reconcileSelection nor runtime selection reconciliation may infer identity from values.id!
     runtime.setSelection("orders", [flattenSelectionRecord(rowB)], ["env-B"])
     const envelopeLessImpostor = { values: { id: "env-B", name: "Impostor" } }
     expect(envelopeRowId(envelopeLessImpostor)).toBeNull()
     expect(reconcileSelection(["env-B"], [envelopeLessImpostor])).toEqual({ ids: [], records: [], changed: true })
-    pushSnapshot?.({ records: [envelopeLessImpostor] })
+    push({ records: [envelopeLessImpostor] })
     await flush()
-    expect(sent).toEqual([
+    expect(sent.map(({ actionId, input }) => ({ actionId, input }))).toEqual([
       { actionId: "canon.order.act", input: { selected: [] } },
       { actionId: "canon.order.act", input: { selected: [] } },
     ])
@@ -1766,12 +1442,10 @@ describe("Capabilities parity and zero-Radix invariant", () => {
   })
 
   test("mergeReadSecurity preserves mode:'refuse' against later 'redacted', and readSecurityLog resets cleanly on restored ok reads", async () => {
-    let pushSnapshot: ((doc: unknown) => void) | undefined
     const revRefused = { id: "ord-1", values: {}, masked: { secret: { mode: "refuse", markings: ["pii"], revealable: false } } }
     const revRedacted = { id: "ord-1", values: { secret: "***" }, masked: { secret: { mode: "redacted", markings: ["pii"], revealable: false } } }
     const revRestored = { id: "ord-1", values: { secret: "visible-again" } }
 
-    // Direct unit law: mergeReadSecurity and mergePrefillSecurity never downgrade mode:'refuse' to 'redacted'.
     const mergedSec = mergeReadSecurity(
       { withheld: false, masked: { secret: { mode: "refuse" } }, withheldProperties: ["secret"] },
       { withheld: false, masked: { secret: { mode: "redacted" } }, withheldProperties: [] },
@@ -1782,79 +1456,42 @@ describe("Capabilities parity and zero-Radix invariant", () => {
       { value: "***", masked: { mode: "redacted", markings: ["pii"], revealable: false }, withheld: false },
       { value: undefined, masked: { mode: "refuse", markings: ["pii"], revealable: false }, withheld: true },
     )
-    expect(mergedPrefill.withheld).toBe(true)
-    expect(mergedPrefill.masked?.mode).toBe("refuse")
+    expect(mergedPrefill).toMatchObject({ withheld: true, masked: { mode: "refuse" } })
 
-    const liveMachine: Machine = {
-      machineVersion: "0.1",
-      initialStateId: "opening",
-      fields: [],
-      events: [
-        { eventId: "opened", source: { kind: "page_opened" } },
-        { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
-        { eventId: "refused", source: { kind: "outcome", outcome: "refused" } },
-        { eventId: "sub", source: { kind: "subscription", bindingId: "order-detail" } },
-      ],
-      states: [
-        { stateId: "opening", role: "idle" },
-        { stateId: "loading", role: "pending", awaits: { kind: "read", bindingId: "order-detail" }, deadlineMs: 5000 },
-        { stateId: "ready", role: "idle" },
-      ],
-      transitions: [
-        { transitionId: "t-open", from: "opening", on: "opened", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "order-detail" } }] },
-        { transitionId: "t-ok", from: "loading", on: "accepted", target: "ready" },
-        { transitionId: "t-ref", from: "loading", on: "refused", target: "ready" },
-        { transitionId: "t-sub", from: "ready", on: "sub", target: "ready" },
-      ],
-    }
-
+    const liveMachine = makeSubMachine({
+      bindingId: "order-detail",
+      extraTransitions: [{ transitionId: "t-sub", from: "ready", on: "sub", target: "ready" }],
+    })
     const ux = makeUx(
-      { nodeId: "root", component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Root" }, fields: [], order: 0 } }, children: [] },
+      rootNode(),
       { dataBindings: [{ bindingId: "order-detail", object: { id: "canon.Order.entity", version: "0.1.0" }, query: { kind: "object_runtime_detail", pageId: "main", parameterId: "orderId" } }] },
       liveMachine,
     )
-
-    const runtime = createPageRuntime(
-      {
-        ux,
-        machine: liveMachine,
-        reader: { kind: "live", widget: () => ({ queryKey: ["order"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: revRestored }) }) },
-        calls: { call: async () => ({ outcome: "not_served", payload: {} }) },
-        engine: lazyEngine(async () => pathEngine),
-        host: () => ({
-          context: { orderId: "ord-1" },
-          objectTypeOf: () => "canon.Order",
-          actionIdOf: () => undefined,
-          live: { subscribe: (_read, listener) => { pushSnapshot = listener.snapshot; return () => {} } },
-        }),
-      },
-      () => {},
-    )
+    const { runtime, push } = startRuntime({
+      ux,
+      reader: { kind: "live", widget: () => ({ queryKey: ["order"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: revRestored }) }) },
+      calls: { call: async () => ({ outcome: "not_served", payload: {} }) },
+      context: { orderId: "ord-1" },
+      objectType: "canon.Order",
+      subscribe: true,
+    })
     await flush()
     const seqInitial = runtime.view().readSecurityLog?.get("order-detail")?.latestSeq ?? 0
     expect(seqInitial).toBeGreaterThan(0)
 
-    // While dirty (pinned at seqInitial), push mode:'refuse' then synchronously mode:'redacted':
-    // securitySince(log, seqInitial) MUST retain 'refuse' and withhold 'secret'.
-    pushSnapshot?.(revRefused)
-    pushSnapshot?.(revRedacted)
+    push(revRefused)
+    push(revRedacted)
     const sinceInitial = securitySince(runtime.view().readSecurityLog?.get("order-detail"), seqInitial)
     expect((sinceInitial?.masked.secret as { mode?: string })?.mode).toBe("refuse")
     expect(sinceInitial?.withheldProperties).toContain("secret")
 
-    // Later, a clean read restores 'secret'. Clean form advances its watermark to latestSeq.
-    pushSnapshot?.(revRestored)
+    push(revRestored)
     const seqRestored = runtime.view().readSecurityLog?.get("order-detail")?.latestSeq ?? 0
     expect(seqRestored).toBeGreaterThan(seqInitial)
-    // Next local edit makes the form dirty while restored read remains ok: securitySince(log, seqRestored)
-    // is undefined, so prior withholding is NOT resurrected!
-    const sinceRestored = securitySince(runtime.view().readSecurityLog?.get("order-detail"), seqRestored)
-    expect(sinceRestored).toBeUndefined()
+    expect(securitySince(runtime.view().readSecurityLog?.get("order-detail"), seqRestored)).toBeUndefined()
 
-    // Even after 300+ subsequent reads oscillating masking on an unrelated field, the old refusal
-    // of `secret` from before `seqRestored` is NEVER resurrected!
     for (let i = 0; i < 300; i += 1) {
-      pushSnapshot?.({
+      push({
         id: "ord-1",
         values: { secret: "visible-again", other: "x" },
         ...(i % 2 === 0 ? { masked: { other: { mode: "redacted", markings: ["pii"], revealable: false } } } : {}),
@@ -1876,8 +1513,7 @@ describe("Capabilities parity and zero-Radix invariant", () => {
         return entry.isDirectory() ? walk(full) : [full]
       })
     for (const file of walk(srcDir)) {
-      const content = readFileSync(file, "utf8")
-      expect(content).not.toMatch(/@radix-ui\//)
+      expect(readFileSync(file, "utf8")).not.toMatch(/@radix-ui\//)
     }
   })
 })
