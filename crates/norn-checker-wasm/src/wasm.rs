@@ -66,6 +66,19 @@ pub fn analyze_red_team(artifacts_json: &str) -> Result<String, JsError> {
 }
 
 #[cfg(feature = "checker")]
+/// `analyzeObligations(artifactsJson, contextJson)`: see
+/// [`crate::analyze_obligations_json`].
+///
+/// # Errors
+///
+/// Throws on invalid input.
+#[wasm_bindgen(js_name = analyzeObligations)]
+pub fn analyze_obligations(artifacts_json: &str, context_json: &str) -> Result<String, JsError> {
+    crate::analyze_obligations_json(artifacts_json, context_json)
+        .map_err(|error| JsError::new(&error))
+}
+
+#[cfg(feature = "checker")]
 /// `rippleEffects(beforeJson, afterJson, changedIdsJson)`: see
 /// [`crate::ripple_effects_json`].
 ///

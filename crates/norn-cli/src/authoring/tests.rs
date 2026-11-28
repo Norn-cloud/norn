@@ -110,6 +110,7 @@ fn py_compile_and_check_source_admits_hr_pilot_and_standalone_module() -> TestRe
     let checked = execute_check_source(&CheckSourceRequest {
         source: &hr_pilot,
         context: Some(&ctx_path),
+        base: &[],
         org: Some("org_demo"),
         env: Some("dev"),
         forbid_unsafe_zen: false,
@@ -145,6 +146,7 @@ class Item(
     let standalone_check = execute_check_source(&CheckSourceRequest {
         source: &standalone,
         context: None,
+        base: &[],
         org: Some("org_demo"),
         env: Some("dev"),
         forbid_unsafe_zen: false,
@@ -209,6 +211,7 @@ fn ts_compile_check_profile_on_crm_fixture() -> TestResult {
     let checked = execute_check_source(&CheckSourceRequest {
         source: &crm,
         context: None,
+        base: &[],
         org: Some("org_demo"),
         env: Some("dev"),
         forbid_unsafe_zen: false,
@@ -470,6 +473,7 @@ class Note(
         let refused = execute_check_source(&CheckSourceRequest {
             source: target,
             context: None,
+            base: &[],
             org: Some("local"),
             env: Some("dev"),
             forbid_unsafe_zen: false,
@@ -508,6 +512,7 @@ class Note(
     let admitted = execute_check_source(&CheckSourceRequest {
         source: scratch.path(),
         context: None,
+        base: &[],
         org: None,
         env: None,
         forbid_unsafe_zen: false,
@@ -573,6 +578,7 @@ fn check_args_validation_preserves_backward_compat_and_usage_exit_codes() {
     let empty = run_check_args(&CheckArgs {
         artifacts: None,
         context: None,
+        base: Vec::new(),
         source: None,
         org: None,
         env: None,
@@ -584,6 +590,7 @@ fn check_args_validation_preserves_backward_compat_and_usage_exit_codes() {
     let missing_context = run_check_args(&CheckArgs {
         artifacts: Some(PathBuf::from("artifacts.json")),
         context: None,
+        base: Vec::new(),
         source: None,
         org: None,
         env: None,
@@ -595,6 +602,7 @@ fn check_args_validation_preserves_backward_compat_and_usage_exit_codes() {
     let half_scope = run_check_args(&CheckArgs {
         artifacts: None,
         context: None,
+        base: Vec::new(),
         source: Some(PathBuf::from("app")),
         org: Some("org_demo".to_owned()),
         env: None,
@@ -606,6 +614,7 @@ fn check_args_validation_preserves_backward_compat_and_usage_exit_codes() {
     let extra_source_flag = run_check_args(&CheckArgs {
         artifacts: Some(PathBuf::from("artifacts.json")),
         context: Some(PathBuf::from("context.json")),
+        base: Vec::new(),
         source: None,
         org: Some("org_demo".to_owned()),
         env: None,

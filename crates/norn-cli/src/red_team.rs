@@ -1,18 +1,22 @@
-//! Auto-wired `RED-TEAM-1` advisory analysis for `norn check`.
+//! Auto-wired `RED-TEAM-1` advisory analysis and read-only obligation summary
+//! for `norn check`.
 //!
-//! Runs `norn_checker_wasm::analyze_red_team_json` on every admitted artifact
-//! set checked via `norn check` (`--artifacts` and `--source`) and attaches the
-//! deterministic report under the additive `"redTeam"` field without altering
-//! `admitted`, `receipt`, `receiptSha256`, or the command exit code.
+//! Runs `norn_checker_wasm::analyze_red_team_json` and
+//! `norn_checker_wasm::analyze_obligations_json` on every admitted artifact
+//! set checked via `norn check` (`--artifacts`, `--source`, and MCP
+//! `norn.check`) and attaches the deterministic reports under the additive
+//! `"redTeam"` and `"obligations"` fields without altering `admitted`,
+//! `receipt`, `receiptSha256`, or the command exit code.
 
 use serde_json::Value;
 
 /// Check `artifacts_json` against `context_json` through the shared checker
 /// ABI and, when admitted, attach the `RED-TEAM-1` advisory report under
-/// `"redTeam"`.
+/// `"redTeam"` and the read-only obligation summary under `"obligations"`.
 ///
-/// Refused artifact sets are returned verbatim without running red-team
-/// analysis so invalid envelopes and zero-CI refusals keep their exact shape.
+/// Refused artifact sets are returned verbatim without running red-team or
+/// obligation analysis so invalid envelopes and zero-CI refusals keep their
+/// exact shape.
 pub(crate) fn check_with_red_team(
     artifacts_json: &str,
     context_json: &str,
@@ -34,8 +38,24 @@ pub(crate) fn check_with_red_team(
             "error": error,
         }),
     };
+    let obligations =
+        match norn_checker_wasm::analyze_obligations_json(artifacts_json, context_json).and_then(
+            |json| serde_json::from_str::<Value>(&json).map_err(|error| error.to_string()),
+        ) {
+            Ok(summary) => summary,
+            Err(error) => serde_json::json!({
+                "format": norn_checker_wasm::OBLIGATIONS_SUMMARY_FORMAT,
+                "status": "unavailable",
+                "reason": error,
+                "totalGoals": 0,
+                "byKind": {},
+                "goals": [],
+                "truncated": false,
+            }),
+        };
     if let Some(object) = value.as_object_mut() {
         object.insert("redTeam".to_owned(), red_team);
+        object.insert("obligations".to_owned(), obligations);
     }
     let enriched = serde_json::to_string(&value).map_err(|error| error.to_string())?;
     Ok((enriched, true))
@@ -154,6 +174,25 @@ mod tests {
             })),
             "expected crm.Contact.email unconstrained write finding, got: {red_team:?}"
         );
+        let obligations = report
+            .get("obligations")
+            .and_then(Value::as_object)
+            .ok_or("admitted norn check --artifacts output must include obligations")?;
+        assert_eq!(
+            obligations.get("format").and_then(Value::as_str),
+            Some(norn_checker_wasm::OBLIGATIONS_SUMMARY_FORMAT)
+        );
+        assert_eq!(
+            obligations.get("status").and_then(Value::as_str),
+            Some("generated_unproved")
+        );
+        assert!(
+            obligations
+                .get("totalGoals")
+                .and_then(Value::as_u64)
+                .is_some_and(|n| n > 0),
+            "expected lifecycle obligations for crm.ir.json, got: {obligations:?}"
+        );
         Ok(())
     }
 
@@ -165,6 +204,7 @@ mod tests {
         let checked = execute_check_source(&CheckSourceRequest {
             source: &crm_source,
             context: None,
+            base: &[],
             org: Some("org_demo"),
             env: Some("dev"),
             forbid_unsafe_zen: false,
@@ -191,6 +231,12 @@ mod tests {
                 "property": "email",
             })),
             "expected crm.Contact.email unconstrained write finding, got: {report}"
+        );
+        assert_eq!(
+            report
+                .pointer("/obligations/status")
+                .and_then(Value::as_str),
+            Some("generated_unproved")
         );
         Ok(())
     }
@@ -219,6 +265,7 @@ class Item(
         let checked = execute_check_source(&CheckSourceRequest {
             source: &module,
             context: None,
+            base: &[],
             org: Some("org_demo"),
             env: Some("dev"),
             forbid_unsafe_zen: false,
@@ -245,13 +292,20 @@ class Item(
                 .get(key)
                 .and_then(Value::as_array)
                 .ok_or("expected redTeam finding array")?;
-            assert!(
-                findings.is_empty(),
+            assert_eq!(
+                findings,
+                &Vec::<Value>::new(),
                 "expected empty {key} on clean concept, got: {findings:?}"
             );
         }
         assert!(red_team.get("evaluationErrors").is_none());
         assert!(red_team.get("decodeErrors").is_none());
+        assert_eq!(
+            report
+                .pointer("/obligations/status")
+                .and_then(Value::as_str),
+            Some("generated_unproved")
+        );
         Ok(())
     }
 
@@ -264,6 +318,10 @@ class Item(
         assert!(
             report.get("redTeam").is_none(),
             "refused check must not attach redTeam: {report}"
+        );
+        assert!(
+            report.get("obligations").is_none(),
+            "refused check must not attach obligations: {report}"
         );
         Ok(())
     }
