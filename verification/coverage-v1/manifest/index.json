@@ -106,7 +106,6 @@
     "scripts/verification_attestation.py",
     "scripts/coverage_manifest.py",
     "scripts/quint_apalache.py",
-    "scripts/verify-artifact-governance-extraction.sh",
     "scripts/verify-promoted-subsystems.sh",
     "scripts/write-verification-result.py",
     "verification/kernel-v2",
@@ -130,6 +129,18 @@
         "mutant": "zero",
         "statementDigest": "4ebd1d99570a6f88d71954d7fa3143473d975152f60988bd4449c9fbda0b0269",
         "secondLensGate": "kernel-version-kani"
+      }
+    },
+    "artifact_governance": {
+      "direct_artifact_write_allowed": {
+        "postcondition": "direct_artifact_write_truth_table",
+        "mutants": [
+          "allow_approved_law",
+          "reject_source_schema",
+          "allow_active_write"
+        ],
+        "statementDigest": "1c1c1e3ca40f83224f9e9b03e539ff05f003ba7d51f7e410ea08f589341b4706",
+        "secondLensGate": "artifact-direct-write-predicate-runtime"
       }
     }
   }

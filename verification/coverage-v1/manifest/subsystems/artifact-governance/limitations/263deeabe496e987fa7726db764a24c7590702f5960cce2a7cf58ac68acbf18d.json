@@ -1,0 +1,4 @@
+{
+  "order": 0,
+  "value": "The exact direct lifecycle predicate is proved directly on production Rust with inline Verus (including D107 VIR/THIR agreement and seeded negative mutants), but this does not prove the surrounding HTTP/BAC/storage composition; the Lean active-pointer and checker-receipt theorems remain independent references."
+}

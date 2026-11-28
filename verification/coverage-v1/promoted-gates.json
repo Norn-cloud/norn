@@ -36,10 +36,14 @@
       "profile": "fast",
       "command": "bash scripts/verify-kernel-inline-verus.sh all",
       "evidenceKind": "command",
-      "role": "supporting-check",
+      "role": "claim-evidence",
       "classifications": [
         {
           "subsystem": "transition-authority",
+          "layer": "proof"
+        },
+        {
+          "subsystem": "artifact-governance",
           "layer": "proof"
         }
       ],
@@ -438,23 +442,6 @@
       ],
       "resultArtifacts": [],
       "generatedArtifacts": []
-    },
-    {
-      "id": "artifact-governance-rust-extraction",
-      "profile": "full",
-      "command": "scripts/verify-artifact-governance-extraction.sh",
-      "evidenceKind": "command",
-      "role": "claim-evidence",
-      "classifications": [
-        {
-          "subsystem": "artifact-governance",
-          "layer": "proof"
-        }
-      ],
-      "resultArtifacts": [],
-      "generatedArtifacts": [
-        "target/verification-results/artifact-governance-hax/Norn_ir.fst"
-      ]
     },
     {
       "id": "authorization-lean",

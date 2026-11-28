@@ -1,0 +1,10 @@
+{
+  "order": 0,
+  "value": {
+    "artifact": "crates/norn-ir/src/artifact_governance.rs",
+    "command": "bash scripts/verify-kernel-inline-verus.sh all",
+    "selectors": {
+      "$entries": "obligationClaims.entryeeba1bef93e44774464efef79c36d2aac191fbfc1c5ab4f90b5c537d4c58c767.evidence.proof.entry37f9e65faee8b2fc03d6040047cdc0b66ee5beb2caea1aa59d807805e8d36d94.selectors"
+    }
+  }
+}

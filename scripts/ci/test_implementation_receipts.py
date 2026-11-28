@@ -277,10 +277,11 @@ class ReceiptTest(unittest.TestCase):
         errors, _ = receipts.verify(self.root, self.out, self.expected, None)
         self.assertTrue(any(e.startswith("INV-EXTRACT") and "no independent F*" in e for e in errors), errors)
 
-    def test_verifier_fstar_pin_matches_the_bootstrap(self) -> None:
+    def test_extraction_bootstrap_retired_hax_and_fstar_but_keeps_aeneas(self) -> None:
         bootstrap = (receipts.TRUSTED / "scripts/bootstrap-rust-extraction-tools.sh").read_text()
-        self.assertIn(f'FSTAR_VERSION="{receipts.FSTAR_VERSION}"', bootstrap)
-        self.assertIn(f'"{receipts.FSTAR_SHA256}"', bootstrap)
+        self.assertNotIn("FSTAR_VERSION", bootstrap)
+        self.assertNotIn("HAX_COMMIT", bootstrap)
+        self.assertIn("AENEAS_COMMIT=", bootstrap)
 
     def test_scope_follows_claims_and_their_inputs(self) -> None:
         workspace = {"Cargo.toml": '[workspace]\nmembers = ["lib"]\n',

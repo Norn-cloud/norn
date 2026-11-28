@@ -1,0 +1,4 @@
+{
+  "order": 3,
+  "value": "bash scripts/verify-kernel-inline-verus.sh all"
+}
