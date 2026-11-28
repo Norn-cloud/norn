@@ -3653,7 +3653,7 @@ fn accept_first_carry_release_does_not_inherit_rejected_candidate_version() {
         "reject v2",
     );
     assert!(refers_targets(&cell, "demo/party/a").is_empty());
-    let held_after_reject = held_link_findings(&cell, "canon.Party", "demo/party/a");
+    let held_after_reject = held_findings_for(&cell, "canon.Party", "demo/party/a");
     assert_eq!(held_after_reject.len(), 1);
     assert!(
         held_after_reject[0]
@@ -3674,7 +3674,7 @@ fn accept_first_carry_release_does_not_inherit_rejected_candidate_version() {
         refers_targets(&cell, "demo/party/a"),
         BTreeSet::from(["demo/party/b".to_owned()])
     );
-    assert!(held_link_findings(&cell, "canon.Party", "demo/party/a").is_empty());
+    assert!(held_findings_for(&cell, "canon.Party", "demo/party/a").is_empty());
 
     // A valid v3 must supersede the restored v1 link cleanly.
     land_party(&mut cell, &a_v3, "e3", "3", "p1");
@@ -3719,7 +3719,7 @@ fn restored_pending_claim_holds_edge_on_target_arrival_when_predecessor_disputed
         refers_targets(&cell, "demo/party/a").is_empty(),
         "target arrival must hold A -> B while restored predecessor v1 is disputed"
     );
-    let held_after_b = held_link_findings(&cell, "canon.Party", "demo/party/a");
+    let held_after_b = held_findings_for(&cell, "canon.Party", "demo/party/a");
     assert_eq!(held_after_b.len(), 1);
     assert!(
         held_after_b[0]
@@ -3740,13 +3740,12 @@ fn restored_pending_claim_holds_edge_on_target_arrival_when_predecessor_disputed
         refers_targets(&cell, "demo/party/a"),
         BTreeSet::from(["demo/party/b".to_owned()])
     );
-    assert!(held_link_findings(&cell, "canon.Party", "demo/party/a").is_empty());
+    assert!(held_findings_for(&cell, "canon.Party", "demo/party/a").is_empty());
 }
 
 /// #1549 (OBS-LINK-DISPUTE-1): When a reject-carry restores two surviving
-/// predecessors that both target B and are both disputed, BOTH unindexed and
-/// indexed `core.boundary.link_held` findings include both disputes in lineage
-/// and agree on evidence_digest.
+/// predecessors that both target B and are both disputed, `core.boundary.link_held`
+/// retains BOTH disputes in lineage and only releases A -> B once both resolve.
 #[test]
 fn held_link_finding_retains_all_disputed_surviving_predecessors() {
     let dir = tempfile::tempdir().expect("dir");
@@ -3779,21 +3778,45 @@ fn held_link_finding_retains_all_disputed_surviving_predecessors() {
     );
 
     assert!(refers_targets(&cell, "demo/party/a").is_empty());
-    let unindexed = held_link_findings(&cell, "canon.Party", "demo/party/a");
-    let reader = cell.store().read();
-    let indexed = reader
-        .with_source_dispute_index(|idx| {
-            reader.held_link_findings_in_index("canon.Party", "demo/party/a", idx)
-        })
-        .expect("index")
-        .expect("indexed findings");
-    assert_eq!(unindexed.len(), 1);
-    assert_eq!(unindexed, indexed);
-    let obs_ids: BTreeSet<&str> = unindexed[0]
+    let held = held_findings_for(&cell, "canon.Party", "demo/party/a");
+    assert_eq!(held.len(), 1);
+    let obs_ids: BTreeSet<&str> = held[0]
         .provenance
         .iter()
         .flat_map(|p| p.observation_ids.iter().map(String::as_str))
         .collect();
     assert!(obs_ids.contains(conflict_1a.as_str()));
     assert!(obs_ids.contains(conflict_1b.as_str()));
+
+    // Resolving only conflict_1a keeps A -> B held by conflict_1b.
+    resolve_dispute(
+        &mut cell,
+        &conflict_1a,
+        DisputeDecision::AcceptFirst,
+        "ops:a",
+        "keep v1a",
+    );
+    assert!(refers_targets(&cell, "demo/party/a").is_empty());
+    let held_after_1a = held_findings_for(&cell, "canon.Party", "demo/party/a");
+    assert_eq!(held_after_1a.len(), 1);
+    assert!(
+        held_after_1a[0]
+            .provenance
+            .iter()
+            .any(|p| p.observation_ids.contains(&conflict_1b))
+    );
+
+    // Resolving conflict_1b releases A -> B and clears the finding.
+    resolve_dispute(
+        &mut cell,
+        &conflict_1b,
+        DisputeDecision::AcceptFirst,
+        "ops:a",
+        "keep v1b",
+    );
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+    assert!(held_findings_for(&cell, "canon.Party", "demo/party/a").is_empty());
 }
