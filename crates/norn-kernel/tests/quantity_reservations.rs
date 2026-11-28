@@ -352,6 +352,27 @@ fn reservation_status_wire_encoding_is_closed_and_fails_closed() {
         Err(QuantityError::Corrupt)
     );
     assert!(serde_json::from_str::<ReservationStatus>("\"cancelled\"").is_err());
+    for invalid in [
+        r#"{"open":null}"#,
+        r#"{"posted":null}"#,
+        r#"{"void":null}"#,
+        r#"{"expired":null}"#,
+        "0",
+        "null",
+        "[]",
+    ] {
+        assert!(
+            serde_json::from_str::<ReservationStatus>(invalid).is_err(),
+            "non-string reservation status must be rejected: {invalid}"
+        );
+    }
+    assert!(
+        serde_json::from_str::<norn_kernel::quantity::QuantityReservation>(
+            r#"{"legs":[],"remaining":[],"expiresAt":10,"status":{"open":null}}"#
+        )
+        .is_err(),
+        "externally tagged reservation status object must be rejected inside QuantityReservation"
+    );
 }
 
 fn prepare_quantity(

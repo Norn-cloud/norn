@@ -183,6 +183,48 @@ fn property_and_computed_markings_accumulate_from_shared_types_and_interfaces() 
 }
 
 #[test]
+fn computed_property_preserves_protected_origin_and_immutable_after_create() {
+    let artifacts = envelopes(&[r#"{
+          "artifactId":"test.guarded","irVersion":"0.1","kind":"entity","lifecycle":"active",
+          "name":"Guarded","namespace":"test","scope":{},"version":"0.1.0",
+          "provenance":{"source":"system"},
+          "payload":{"entityVersion":"2.0","objectType":{
+            "name":"test.Guarded","properties":[
+              {"id":"base","type":{"kind":"text"}},
+              {
+                "id":"derived_guarded",
+                "type":{"kind":"text"},
+                "computed":"self.base",
+                "protected":true,
+                "origin":"derived",
+                "immutableAfterCreate":true
+              }
+            ]
+          }}
+        }"#]);
+    let catalog =
+        ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new()).into_catalog();
+    let guarded = catalog
+        .object_type("test.guarded")
+        .expect("object type exists")
+        .expect("computed property with protected/origin/immutableAfterCreate is admitted");
+    let prop = guarded
+        .property("derived_guarded")
+        .expect("computed property");
+    assert!(prop.is_computed());
+    assert_eq!(prop.default(), None);
+    assert!(prop.protected());
+    assert_eq!(prop.origin(), Some(norn_ir::PropertyOrigin::Derived));
+    assert!(prop.immutable_after_create());
+    assert_eq!(
+        prop.computed_inputs(),
+        Some(&norn_checker::ComputedInputs::Named(vec![
+            norn_ir::PropertyId("base".to_owned())
+        ]))
+    );
+}
+
+#[test]
 fn extension_members_and_links_are_part_of_the_effective_type() {
     let set = envelopes(&[CATALOG, INTERFACE, SUPPLIER, SKU, EXTENSION]);
     let catalog =

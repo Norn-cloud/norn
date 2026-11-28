@@ -289,7 +289,12 @@ fn terminal_retries_duplicates_clock_and_live_invalid_subsets_keep_precedence() 
 #[test]
 fn forged_reservation_status_and_remainder_refuse_before_terminal_or_duplicate() {
     use norn_cell::engine::{NativeEngine, SqlEngine};
-    for status in ["open", "posted", "void", "expired"] {
+    for status in [
+        ReservationStatus::Open,
+        ReservationStatus::Posted,
+        ReservationStatus::Void,
+        ReservationStatus::Expired,
+    ] {
         let dir = tempfile::tempdir().expect("directory");
         let path = dir.path().join("cell.sqlite");
         let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
@@ -303,7 +308,7 @@ fn forged_reservation_status_and_remainder_refuse_before_terminal_or_duplicate()
             .quantity_reservation("main", "stock", "r")
             .expect("read")
             .expect("record");
-        reservation.status = status.into();
+        reservation.status = status;
         reservation.remaining.clear();
         let record = String::from_utf8(
             norn_ir::canonical::canonical_json_of(&reservation).expect("canonical"),

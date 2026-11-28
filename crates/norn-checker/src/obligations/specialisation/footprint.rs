@@ -127,6 +127,9 @@ fn effective_property_unchanged(left: &EffectiveProperty, right: &EffectivePrope
         && left.constraints == right.constraints
         && left.nullable == right.nullable
         && left.property_kind == right.property_kind
+        && left.protected() == right.protected()
+        && left.immutable_after_create() == right.immutable_after_create()
+        && left.origin() == right.origin()
         && left.markings == right.markings
         && left.record_members().len() == right.record_members().len()
         && left

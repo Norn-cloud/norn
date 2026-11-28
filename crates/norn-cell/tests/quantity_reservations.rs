@@ -2757,3 +2757,46 @@ fn post_partition_plan_fences_absences_and_commits_all_effects_once() {
         .verify_ledger()
         .expect("complete native journal");
 }
+
+#[test]
+fn sqlite_reader_rejects_externally_tagged_reservation_status_object() {
+    use norn_cell::engine::{NativeEngine, SqlEngine, SqlValue};
+
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let store = CellStore::open(&path, model(), StoreOptions::default()).expect("store");
+    let mut cell: SqliteCell<String, String, String> =
+        SqliteCell::new(store, "tenant/dev", |_| "ok".into()).expect("host");
+    cell.commit_quantity_fenced(&define(), "define")
+        .expect("define");
+    cell.commit_quantity_fenced(&post(1, "fund", "fund", 20), "fund")
+        .expect("fund");
+    cell.commit_quantity_fenced(&reserve(2, "r", 10, 100), "reserve")
+        .expect("reserve");
+    let record = cell
+        .store()
+        .read()
+        .quantity_reservation("main", "stock", "r")
+        .expect("read")
+        .expect("reservation");
+    let mut raw: serde_json::Value = serde_json::to_value(&record).expect("encode reservation");
+    raw.as_object_mut()
+        .expect("reservation object")
+        .insert("status".to_owned(), serde_json::json!({"open": null}));
+    let engine = NativeEngine::open(&path, StoreOptions::default()).expect("engine");
+    engine
+        .execute(
+            r#"UPDATE "_norn_quantity_reservation" SET "record"=?1 WHERE "id"='r'"#,
+            &[SqlValue::from(
+                serde_json::to_string(&raw).expect("serialize tagged status"),
+            )],
+        )
+        .expect("fault injection");
+    drop(engine);
+    assert!(matches!(
+        cell.store()
+            .read()
+            .quantity_reservation("main", "stock", "r"),
+        Err(CellError::Quantity(QuantityError::Corrupt))
+    ));
+}

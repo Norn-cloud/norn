@@ -823,18 +823,9 @@ fn state<S: SqlEngine>(
             posting_id,
         } => {
             let original = posting(engine, world, &request.ledger_id, original_id)?;
-            if let Some(original) = original
-                .as_ref()
-                .filter(|original| original.reverses.is_none())
-            {
-                verify_original(
-                    engine,
-                    world,
-                    &request.ledger_id,
-                    original_id,
-                    state.version,
-                    original,
-                )?;
+            if let Some(orig) = original.as_ref().filter(|p| p.reverses.is_none()) {
+                let ver = state.version;
+                verify_original(engine, world, &request.ledger_id, original_id, ver, orig)?;
             }
             state.identity_exists =
                 posting(engine, world, &request.ledger_id, posting_id)?.is_some();
@@ -1237,28 +1228,18 @@ fn verify_original<S: SqlEngine>(
         params![world, ledger, id], |row| Ok((row.get::<i64>(0)?, to_u64(row.get(1)?, "quantity posting version")?)),
     )?;
     let request = transition_request(engine, world, commit_seq, ledger)?;
-    if request.ledger_id != ledger
-        || receipt_evidence(
-            engine,
-            world,
-            to_u64(commit_seq, "quantity posting commit")?,
-        )?
-        .quantity_result(ledger)
-        .map(|result| result.version)
-            != Some(recorded_version)
-        || recorded_version > ledger_version
-    {
+    if request.ledger_id != ledger {
         return Err(QuantityError::Corrupt.into());
     }
-    let receipt = receipt_evidence(
-        engine,
-        world,
-        to_u64(commit_seq, "quantity posting commit")?,
-    )?;
-    if original.reverses.is_some()
-        || receipt.quantity_result(ledger).is_none_or(|result| {
-            result.posting.as_ref() != Some(&(id.to_owned(), original.clone()))
-        })
+    let commit = to_u64(commit_seq, "quantity posting commit")?;
+    let receipt = receipt_evidence(engine, world, commit)?;
+    let Some(result) = receipt.quantity_result(ledger) else {
+        return Err(QuantityError::Corrupt.into());
+    };
+    if result.version != recorded_version
+        || recorded_version > ledger_version
+        || original.reverses.is_some()
+        || result.posting.as_ref() != Some(&(id.to_owned(), original.clone()))
     {
         return Err(QuantityError::Corrupt.into());
     }

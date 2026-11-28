@@ -9,6 +9,9 @@ use norn_ir::quantity_ledger::{
 };
 use serde::{Deserialize, Serialize};
 
+mod status;
+pub use status::{OriginalPostingState, ReservationStatus};
+
 /// Bound on one pinned vector and its balance reads.
 pub const MAX_QUANTITY_LEGS: usize = 64;
 /// Maximum definitions of each unit, layer, template, parameter and affine term.
@@ -111,67 +114,6 @@ impl Default for QuantityBalance {
     }
 }
 
-/// Closed lifecycle status of a quantity reservation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReservationStatus {
-    /// Reservation holds quantity and may still be posted, voided, or expired.
-    Open,
-    /// Reservation was completely posted (terminal).
-    Posted,
-    /// Reservation was completely voided (terminal).
-    Void,
-    /// Reservation reached its deadline and expired (terminal).
-    Expired,
-}
-
-impl ReservationStatus {
-    /// Canonical wire and storage name of this reservation status.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Posted => "posted",
-            Self::Void => "void",
-            Self::Expired => "expired",
-        }
-    }
-
-    /// Whether this reservation is still open and resolvable.
-    #[must_use]
-    pub const fn is_open(self) -> bool {
-        matches!(self, Self::Open)
-    }
-}
-
-impl std::fmt::Display for ReservationStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl TryFrom<&str> for ReservationStatus {
-    type Error = QuantityError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "open" => Ok(Self::Open),
-            "posted" => Ok(Self::Posted),
-            "void" => Ok(Self::Void),
-            "expired" => Ok(Self::Expired),
-            _ => Err(QuantityError::Corrupt),
-        }
-    }
-}
-
-impl std::str::FromStr for ReservationStatus {
-    type Err = QuantityError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::try_from(s)
-    }
-}
-
 /// Persisted complete reservation vector.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -194,21 +136,6 @@ pub struct QuantityPosting {
     pub legs: Vec<EvaluatedLedgerLeg>,
     /// Original transaction identity for a reversal.
     pub reverses: Option<String>,
-}
-
-/// Reversal-target state of an original posting.
-///
-/// Eliminates the impossible state where an original posting is absent yet
-/// marked already reversed.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum OriginalPostingState {
-    /// No original posting loaded (or none exists).
-    #[default]
-    Absent,
-    /// Original posting exists and has not yet been reversed.
-    Active(QuantityPosting),
-    /// Original posting exists and already has a linked reversal.
-    AlreadyReversed(QuantityPosting),
 }
 
 /// Receipt-bound result of one quantity admission.
