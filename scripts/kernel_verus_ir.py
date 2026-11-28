@@ -416,22 +416,34 @@ def _artifact_vir_functions(text, names):
 def _artifact_thir_flat_function(body):
     check_thir_record(body)
     expressions = set()
+    derefs = set()
     bool_literals = Counter()
     operators = Counter()
+    expr_types = []
     for expr in entries(body, "exprs", "Expr"):
         kind = one(r"^            kind: (\w+) \{$", expr)
-        if kind == "Scope":
-            continue
         if kind == "ZstLiteral":
             require(re.search(r"^            ty: FnDef\(", expr, re.M) is not None,
                     "unexpected THIR ZstLiteral")
+            expr_types.append(None)
+            continue
+        ty = _artifact_thir_type(one(r"^            ty: ([^\n]+),$", expr))
+        expr_types.append(ty)
+        if kind == "Scope":
             continue
         require(kind != "Cast", "unexpected THIR cast")
         require(kind not in {"NonHirLiteral", "NamedConst", "ConstParam", "ConstBlock"},
                 f"unsupported THIR constant expression: {kind}")
         location = one(r"^            span: ([^\n]+),$", expr)
-        ty = _artifact_thir_type(one(r"^            ty: ([^\n]+),$", expr))
         span = _artifact_span(location)
+        if kind == "Deref":
+            # Verus erases built-in shared-reference (`&T -> T`) derefs in VIR;
+            # admit them only when the operand is strictly `&T` and verify tree/flat parity.
+            arg = int(one(r"^                arg: e(\d+),$", expr))
+            require(arg < len(expr_types) and expr_types[arg] == "&" + ty,
+                    f"unsupported THIR Deref operand type {expr_types[arg] if arg < len(expr_types) else None!r} -> {ty!r}")
+            derefs.add((span, ty))
+            continue
         expressions.add((span, ty))
         if kind == "Literal":
             require(ty == "bool", f"unsupported THIR literal type {ty!r}")
@@ -442,13 +454,14 @@ def _artifact_thir_flat_function(body):
         elif kind in ("Unary", "LogicalOp", "Binary"):
             op = one(r"^                op: (\w+),$", expr)
             operators[span, ty, op] += 1
-    return {"expressions": expressions, "bool_literals": bool_literals, "operators": operators}
+    return {"expressions": expressions, "derefs": derefs, "bool_literals": bool_literals, "operators": operators}
 
 
 def _artifact_thir_function(tree_body, flat_body):
     out = _artifact_inventory()
     expressions = list(TREE_EXPR_HEADER.finditer(tree_body))
     require(len(expressions) == len(re.findall(r"^ *Expr \{$", tree_body, re.M)), "unparsed THIR expression")
+    tree_derefs = set()
     tree_literals = 0
     tree_operators = 0
     for expr in expressions:
@@ -456,7 +469,14 @@ def _artifact_thir_function(tree_body, flat_body):
         if kind == "Scope" or (kind == "ZstLiteral" and ty.startswith("FnDef(")):
             continue
         require(kind != "Cast", "unexpected THIR cast")
-        out["expressions"].add((_artifact_span(location), _artifact_thir_type(ty)))
+        norm_ty = _artifact_thir_type(ty)
+        if kind == "Deref":
+            arg_match = re.match(r"\s*\{\s*arg:\s*Expr \{\s*ty: ([^\n]+)", tree_body[expr.end():])
+            require(arg_match is not None and _artifact_thir_type(arg_match[1]) == "&" + norm_ty,
+                    f"unsupported THIR tree Deref operand for {norm_ty!r}")
+            tree_derefs.add((_artifact_span(location), norm_ty))
+            continue
+        out["expressions"].add((_artifact_span(location), norm_ty))
         if kind == "Literal":
             tree_literals += 1
         elif kind in ("Unary", "LogicalOp", "Binary"):
@@ -478,6 +498,9 @@ def _artifact_thir_function(tree_body, flat_body):
     require(flat["expressions"] == out["expressions"],
             f"THIR tree/flat expression mismatch: tree only {out['expressions'] - flat['expressions']}, "
             f"flat only {flat['expressions'] - out['expressions']}")
+    require(flat["derefs"] == tree_derefs,
+            f"THIR tree/flat deref mismatch: tree only {tree_derefs - flat['derefs']}, "
+            f"flat only {flat['derefs'] - tree_derefs}")
     require(tree_literals == flat["bool_literals"].total(),
             f"THIR tree/flat literal count mismatch: tree {tree_literals} vs flat {flat['bool_literals'].total()}")
     require(tree_operators == flat["operators"].total(),

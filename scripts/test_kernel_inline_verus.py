@@ -256,13 +256,10 @@ class ArtifactGovernanceCompilerAgreement(unittest.TestCase):
     (Typ Bool))
    (@@ "crates/norn-ir/src/artifact_governance.rs:191:29: 209:6 (#0)"
     (> Match
-     (@@ "crates/norn-ir/src/artifact_governance.rs:191:35: 191:40 (#0)"
-      (Place Deref
-       (@@ "crates/norn-ir/src/artifact_governance.rs:191:36: 191:40 (#0)"
-        (Place Local (VarIdent "kind" (VarIdentDisambiguate RustcId 2)))
-        (Typ Decorate (TypDecoration Ref) None
-         (Typ Datatype (Dt Path norn_ir_artifact_governance::t%ArtifactKind) () ()))))
-      (Typ Datatype (Dt Path norn_ir_artifact_governance::t%ArtifactKind) () ()))
+     (@@ "crates/norn-ir/src/artifact_governance.rs:191:36: 191:40 (#0)"
+      (Place Local (VarIdent "kind" (VarIdentDisambiguate RustcId 2)))
+      (Typ Decorate (TypDecoration Ref) None
+       (Typ Datatype (Dt Path norn_ir_artifact_governance::t%ArtifactKind) () ())))
      ((Arm
        :pattern ()
        :guard (@@ "crates/norn-ir/src/artifact_governance.rs:191:29: 209:6 (#0)"
@@ -532,7 +529,7 @@ Thir {
         self.assertEqual(
             counts["direct_artifact_write_allowed"],
             {
-                "expressions": 9,
+                "expressions": 8,
                 "locals": 3,
                 "calls": 0,
                 "literal_patterns": 0,
@@ -588,6 +585,22 @@ Thir {
             "flipped_unary_op": (self.thir, self.thir_flat.replace("op: Not,", "op: Neg,", 1)),
             "flipped_logical_op": (self.thir, self.thir_flat.replace("op: And,", "op: Or,", 1)),
             "negative_literal": (self.thir, self.thir_flat.replace("neg: false,", "neg: true,", 1)),
+            "mismatched_tree_deref": (
+                self.thir.replace(
+                    "ty: artifact_governance::ArtifactKind\n                                                temp_scope_id: 3",
+                    "ty: artifact_governance::ArtifactLifecycle\n                                                temp_scope_id: 3",
+                    1,
+                ),
+                self.thir_flat,
+            ),
+            "mismatched_flat_deref": (
+                self.thir,
+                self.thir_flat.replace(
+                    "ty: artifact_governance::ArtifactKind,\n            temp_scope_id: Node(3),",
+                    "ty: artifact_governance::ArtifactLifecycle,\n            temp_scope_id: Node(3),",
+                    1,
+                ),
+            ),
             "non_bool_thir_literal": (
                 self.thir,
                 self.thir_flat.replace(
