@@ -21,6 +21,7 @@ use norn_api::{
     scope::{CellScope, ScopeQuery},
 };
 // #1485 S6: fixtures write through the kernel path, never the raw door.
+use super::query_support;
 use super::query_support::governed::GovernedCommit as _;
 use super::query_support::*;
 use norn_cell::{

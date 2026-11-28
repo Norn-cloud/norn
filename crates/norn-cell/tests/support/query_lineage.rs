@@ -7,7 +7,7 @@
     missing_docs,
     reason = "source lineage conformance"
 )]
-use crate::query_support::*;
+use super::query_support::*;
 use norn_cell::compute::QueryContext;
 use norn_cell::{CellStore, InstalledDefinitionInput, MAIN_WORLD, Model, SqliteCell};
 use norn_ir::{ArtifactEnvelope, RuntimeValue as V};
