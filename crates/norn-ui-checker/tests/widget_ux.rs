@@ -771,7 +771,6 @@ fn ordered_rows_lifecycle_controls_and_defaults() {
 
 #[test]
 fn ordered_rows_coverage_and_condition_refusals() {
-    type SupportRefusalCase = (fn(&mut Value, &mut Vec<Value>), &'static str, &'static str);
     let cases: &[SupportRefusalCase] = &[
         (
             |w, _| {
@@ -835,7 +834,6 @@ fn ordered_rows_coverage_and_condition_refusals() {
 
 #[test]
 fn ordered_rows_bounds_and_computed_child_refusals() {
-    type SupportRefusalCase = (fn(&mut Value, &mut Vec<Value>), &'static str, &'static str);
     let cases: &[SupportRefusalCase] = &[
         (
             |w, _| {
@@ -1324,12 +1322,6 @@ fn record_query_dependency_cycles_and_acyclicity() {
     add_customer_detail_from_record(&mut acyclic, "related-customer-copy", "related-customer");
     assert_clean(&widget_findings(acyclic));
 
-    type WidgetCodeCase = (
-        fn(&mut Value),
-        &'static str,
-        &'static [&'static str],
-        &'static [&'static str],
-    );
     let cases: &[WidgetCodeCase] = &[
         (
             |v| {
@@ -1637,6 +1629,13 @@ fn filters_require_direct_stored_columns_for_binding_indexes() {
     );
 }
 
+type SupportRefusalCase = (fn(&mut Value, &mut Vec<Value>), &'static str, &'static str);
+type WidgetCodeCase = (
+    fn(&mut Value),
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+);
 type IntegerProofCase = (
     &'static str,
     Option<(&'static str, &'static str)>,
