@@ -559,6 +559,30 @@ impl Scrub {
         Some(run)
     }
 
+    /// Restore `run` back to [`ScrubState::Running`] if a step unwinds before
+    /// completion so the scrub handle is never left stuck in [`ScrubState::Stepping`].
+    pub(super) fn restore_aborted_step(&mut self, run: Box<Run>) {
+        if !matches!(self.state, ScrubState::Stepping(_)) {
+            return;
+        }
+        let ScrubState::Stepping(stepping) =
+            std::mem::replace(&mut self.state, ScrubState::Idle { validated: None })
+        else {
+            return;
+        };
+        let SteppingScrub {
+            coverage,
+            validated,
+            transient,
+        } = *stepping;
+        self.state = ScrubState::Running(Box::new(ActiveScrub {
+            run,
+            coverage,
+            validated,
+            transient,
+        }));
+    }
+
     /// Reinstall `run` after a step committed cleanly and has more work.
     pub(super) fn finish_step_continue(&mut self, run: Box<Run>) {
         if !matches!(self.state, ScrubState::Stepping(_)) {
@@ -791,6 +815,23 @@ mod tests {
         assert!(matches!(clean_fork.advancement(), Advance::Hold));
         clean_fork.catch_up(head(500, 900), None);
         assert_eq!(clean_fork.status(), ScrubStatus::Idle);
+        Ok(())
+    }
+
+    #[test]
+    fn aborted_step_restores_running_state_instead_of_staying_stuck() -> Result<(), CellError> {
+        let mut scrub = Scrub::default();
+        scrub.catch_up(head(100, 200), None);
+        let run = scrub
+            .begin_step()
+            .ok_or_else(|| CellError::Encoding("expected initial run".to_owned()))?;
+        assert_eq!(scrub.status(), ScrubStatus::Idle);
+        scrub.restore_aborted_step(run);
+        assert!(matches!(
+            scrub.status(),
+            ScrubStatus::Verifying { target: 100, .. }
+        ));
+        assert!(scrub.begin_step().is_some());
         Ok(())
     }
 }

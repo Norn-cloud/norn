@@ -287,17 +287,8 @@ impl<'a> ReconciliationRequest<'a> {
             (
                 ReconciliationDecision::AuthorizeReissue { .. }
                 | ReconciliationDecision::RequireCompensation,
-                None,
+                _,
             ) => Ok(Self::Control),
-            (
-                ReconciliationDecision::AuthorizeReissue { .. }
-                | ReconciliationDecision::RequireCompensation,
-                Some(_),
-            ) => Err(CellError::OutboxLedgerRefused {
-                command_id: command_id.to_owned(),
-                generation,
-                refusal: OutboxLedgerRefusal::NotPending,
-            }),
         }
     }
 }
@@ -1021,7 +1012,8 @@ mod tests {
             })
         ));
 
-        // Control decisions cannot carry a confirmed outcome payload.
+        // Control decisions ignore any carried outcome payload so previously
+        // accepted exports that recorded one still restore identically.
         for control in [
             ReconciliationDecision::AuthorizeReissue { next_generation: 1 },
             ReconciliationDecision::RequireCompensation,
@@ -1030,15 +1022,10 @@ mod tests {
                 ReconciliationRequest::validate("cmd-1", 0, control, None)?,
                 ReconciliationRequest::Control
             );
-            let contradictory =
-                ReconciliationRequest::validate("cmd-1", 0, control, Some(&ok_payload));
-            assert!(matches!(
-                contradictory,
-                Err(CellError::OutboxLedgerRefused {
-                    refusal: OutboxLedgerRefusal::NotPending,
-                    ..
-                })
-            ));
+            assert_eq!(
+                ReconciliationRequest::validate("cmd-1", 0, control, Some(&ok_payload))?,
+                ReconciliationRequest::Control
+            );
         }
         Ok(())
     }

@@ -343,15 +343,44 @@ impl<E: SqlEngine> CellStore<E> {
     /// transaction commits (S11). A defect fences the cell durably (S12); the
     /// returned status says so and carries the finding.
     pub fn scrub_step(&self) -> ScrubStatus {
+        struct StepGuard<'a> {
+            scrub: &'a std::cell::RefCell<Scrub>,
+            run: Option<Box<Run>>,
+        }
+        impl Drop for StepGuard<'_> {
+            fn drop(&mut self) {
+                if let Some(run) = self.run.take()
+                    && let Ok(mut scrub) = self.scrub.try_borrow_mut()
+                {
+                    scrub.restore_aborted_step(run);
+                }
+            }
+        }
         self.persist_pending_fence();
         self.sync_durable_fence();
-        let Some(mut run) = self.scrub.borrow_mut().begin_step() else {
+        let Some(run) = self.scrub.borrow_mut().begin_step() else {
             return self.scrub.borrow().status();
         };
+        let mut guard = StepGuard {
+            scrub: &self.scrub,
+            run: Some(run),
+        };
         // S11: `scrub_run_step` borrows `&run` immutably; `run` is only
-        // mutated after the transaction commits cleanly.
-        let outcome = self.conn.transaction(|| self.scrub_run_step(&run));
-        let applied = outcome.and_then(|step| apply_step(&mut run, &self.transparency, step));
+        // mutated after the transaction commits cleanly. If the engine unwinds,
+        // `StepGuard::drop` restores `run` so the handle never gets stuck in `Stepping`.
+        let outcome = match guard.run.as_deref() {
+            Some(run) => self.conn.transaction(|| self.scrub_run_step(run)),
+            None => return self.scrub.borrow().status(),
+        };
+        let applied = outcome.and_then(|step| match guard.run.as_deref_mut() {
+            Some(run) => apply_step(run, &self.transparency, step),
+            None => Err(CellError::Engine(
+                "history scrub step missing active run".to_owned(),
+            )),
+        });
+        let Some(run) = guard.run.take() else {
+            return self.scrub.borrow().status();
+        };
         match applied {
             Ok(StepProgress::Continue) => {
                 self.scrub.borrow_mut().finish_step_continue(run);
