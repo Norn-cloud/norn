@@ -93,7 +93,7 @@ fn plan_and_model() -> Result<(Model, QuestionPlan), Box<dyn std::error::Error>>
         "../../../fixtures/ir/metrics/net-sales.definition.json"
     ))?;
     metric.name = "demo.recovered_total".into();
-    metric.label = "Sum of recovered".to_owned();
+    "Sum of recovered".clone_into(&mut metric.label);
     metric.type_params.expr = Some("recovered".into());
     if let Some(aggregate) = metric.type_params.metric_aggregation_params.as_mut() {
         aggregate.semantic_model = norn_ir::ObjectTypeName(query_support::TYPE.into());
@@ -106,7 +106,7 @@ fn plan_and_model() -> Result<(Model, QuestionPlan), Box<dyn std::error::Error>>
     let mut question: QuestionIR = serde_json::from_str(include_str!(
         "../../../fixtures/ir/metrics/sales-by-store-day.question.json"
     ))?;
-    question.name = "demo_recovered_weekly".to_owned();
+    "demo_recovered_weekly".clone_into(&mut question.name);
     question.object_set = norn_ir::ObjectTypeName(query_support::TYPE.into());
     question.comparison = None;
     question.metrics = serde_json::from_value(json!([{"metric": "demo.recovered_total"}]))?;
