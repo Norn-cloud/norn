@@ -30,13 +30,13 @@ const AMBIENT_ROOTS: &[&str] = &[
 ];
 
 #[derive(Clone, Debug)]
-pub(super) struct ResolvedSymbol {
+pub(crate) struct ResolvedSymbol {
     /// Profile identity (`effect/Effect#gen`, `@norn/authoring#Norn.flow`) if
     /// declared in a pinned profile module.
-    pub(super) id: Option<String>,
+    pub(crate) id: Option<String>,
     pub(super) namespace: bool,
-    pub(super) target: Option<P<Symbol>>,
-    pub(super) declaration: Option<P<Node>>,
+    pub(crate) target: Option<P<Symbol>>,
+    pub(crate) declaration: Option<P<Node>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,7 +45,7 @@ enum TemporalKind {
     Timestamp,
 }
 
-pub(super) fn resolve_symbol(
+pub(crate) fn resolve_symbol(
     checker: &mut Checker,
     intrinsics_module: &str,
     effect_dist_prefix: Option<&str>,
@@ -108,25 +108,33 @@ pub(super) fn resolve_symbol(
     }
 }
 
-pub(super) fn node_start(sf: P<SourceFile>, node: P<Node>) -> u32 {
+pub(crate) fn node_start(sf: P<SourceFile>, node: P<Node>) -> u32 {
     get_token_pos_of_node(node, sf, false)
 }
 
-pub(super) fn node_end(node: P<Node>) -> u32 {
+pub(crate) fn node_end(node: P<Node>) -> u32 {
     node.end().source_offset().unwrap_or(0)
 }
 
-pub(super) fn slice_text(sf: P<SourceFile>, start: u32, end: u32) -> String {
+pub(crate) fn slice_text_static(sf: P<SourceFile>, start: u32, end: u32) -> &'static str {
     let start_idx = usize::try_from(start).unwrap_or(usize::MAX);
     let end_idx = usize::try_from(end).unwrap_or(usize::MAX);
-    sf.text().get(start_idx..end_idx).unwrap_or("").to_owned()
+    sf.get().text().get(start_idx..end_idx).unwrap_or("")
 }
 
-pub(super) fn node_text(sf: P<SourceFile>, node: P<Node>) -> String {
+pub(crate) fn slice_text(sf: P<SourceFile>, start: u32, end: u32) -> String {
+    slice_text_static(sf, start, end).to_owned()
+}
+
+pub(crate) fn node_text_static(sf: P<SourceFile>, node: P<Node>) -> &'static str {
+    slice_text_static(sf, node_start(sf, node), node_end(node))
+}
+
+pub(crate) fn node_text(sf: P<SourceFile>, node: P<Node>) -> String {
     slice_text(sf, node_start(sf, node), node_end(node))
 }
 
-pub(super) fn pos_of(sf: P<SourceFile>, offset: u32) -> Position {
+pub(crate) fn pos_of(sf: P<SourceFile>, offset: u32) -> Position {
     let (zero_line, zero_col) = get_ecma_line_and_utf16_character_of_position(sf.get(), offset);
     let line = u32::try_from(zero_line)
         .unwrap_or(u32::MAX)
@@ -135,7 +143,7 @@ pub(super) fn pos_of(sf: P<SourceFile>, offset: u32) -> Position {
     Position { line, column }
 }
 
-pub(super) fn format_construct(raw: &str) -> String {
+pub(crate) fn format_construct(raw: &str) -> String {
     let mut collapsed = String::with_capacity(raw.len().min(96));
     let mut in_ws = false;
     for ch in raw.trim().chars() {
@@ -174,7 +182,7 @@ pub(super) fn display_file_path(file_name: &str) -> String {
     file_name.strip_prefix('/').unwrap_or(file_name).to_owned()
 }
 
-pub(super) fn parse_js_number(text: &str) -> f64 {
+pub(crate) fn parse_js_number(text: &str) -> f64 {
     let cleaned: String = text.chars().filter(|&ch| ch != '_').collect();
     if let Some(hex) = cleaned
         .strip_prefix("0x")
@@ -233,7 +241,7 @@ fn root_identifier(mut expr: P<Node>) -> Option<P<Node>> {
     (expr.kind() == Kind::Identifier).then_some(expr)
 }
 
-pub(super) fn list_nodes(list: Option<P<tsrs_ast::NodeList>>) -> &'static [P<Node>] {
+pub(crate) fn list_nodes(list: Option<P<tsrs_ast::NodeList>>) -> &'static [P<Node>] {
     list.map_or(&[], |items| items.nodes())
 }
 

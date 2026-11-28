@@ -1,0 +1,287 @@
+{
+  "artifactId": "supply.stock_lot.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a costed store stock lot",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.retail.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.stock_lot.record",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "sku_id": "sku_id",
+          "store_id": "store_id"
+        },
+        "maxItems": 100,
+        "name": "sealed_cuts_at_or_after_as_of",
+        "objectType": "supply.StockValuationCut",
+        "window": {
+          "end": "cut_horizon",
+          "endInclusive": true,
+          "property": "cut_at",
+          "start": "as_of",
+          "startInclusive": true
+        }
+      }
+    ],
+    "createLinks": [
+      {
+        "link": "store",
+        "targetIdField": "store_id",
+        "targetType": "supply.Store"
+      },
+      {
+        "link": "sku",
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "'9999-12-31T23:59:59Z'",
+        "field": "cut_horizon",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.received_qty - input.remaining_qty",
+        "field": "depleted_qty",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "sell_through_rate",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.received_qty * input.unit_cost",
+        "field": "opening_stock_value",
+        "inputRequired": false
+      },
+      {
+        "expression": "(input.received_qty - input.remaining_qty) * input.unit_cost",
+        "field": "depleted_stock_value",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.remaining_qty * input.unit_cost",
+        "field": "stock_value",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.StockLot.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "lot_id",
+      "objectKind": "supply.StockLot",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "cost_status": {
+          "enum": [
+            "costed",
+            "missing_cost"
+          ],
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "custodian_id": {
+          "type": "string"
+        },
+        "cut_horizon": {
+          "type": "string"
+        },
+        "depleted_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "depleted_stock_value": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "lot_id": {
+          "type": "string"
+        },
+        "opening_stock_value": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "owner_entity_id": {
+          "type": "string"
+        },
+        "received_at": {
+          "type": "string"
+        },
+        "received_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "remaining_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sell_through_rate": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "stock_value": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        },
+        "unit_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 4
+          },
+          "type": "number"
+        }
+      },
+      "required": [
+        "lot_id",
+        "store_id",
+        "sku_id",
+        "owner_entity_id",
+        "custodian_id",
+        "received_qty",
+        "remaining_qty",
+        "depleted_qty",
+        "sell_through_rate",
+        "unit",
+        "received_at",
+        "as_of",
+        "cut_horizon",
+        "cost_status",
+        "unit_cost",
+        "opening_stock_value",
+        "depleted_stock_value",
+        "stock_value",
+        "currency"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "lot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "lot_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((((((slice.store.status == 'active') and (slice.owner_entity.status == 'active')) and (input.cost_status == 'costed')) and (input.owner_entity_id == slice.store.entity_id)) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.currency == slice.owner_entity.functional_currency)) and (aggregates.sealed_cuts_at_or_after_as_of == 0)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "store",
+            "property": "entity_id"
+          }
+        },
+        "name": "owner_entity",
+        "objectType": "supply.LegalEntity"
+      }
+    ],
+    "title": "Record a costed store stock lot",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.StockLot"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.stock_lot.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,130 @@
+{
+  "artifactId": "supply.retail.store_sales_weekly_operands",
+  "dependencies": [
+    {
+      "artifactId": "supply.PosSale.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Weekly store sales operands",
+  "namespace": "supply",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "operands": {
+          "columns": [
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.sku_id",
+              "name": "sku_id"
+            },
+            {
+              "expression": "input.unit",
+              "name": "unit"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.sold_at",
+              "name": "sold_at"
+            },
+            {
+              "expression": "input.sold_qty",
+              "name": "sold_qty"
+            },
+            {
+              "expression": "input.costed_lines == input.sale_lines",
+              "name": "cost_complete"
+            },
+            {
+              "expression": "input.costed_lines == input.sale_lines ? input.gross_margin : null",
+              "name": "effective_gross_margin"
+            }
+          ],
+          "input": "per_week",
+          "op": "project"
+        },
+        "per_week": {
+          "groupBy": [
+            {
+              "column": "store_id"
+            },
+            {
+              "column": "sku_id"
+            },
+            {
+              "column": "unit"
+            },
+            {
+              "column": "currency"
+            },
+            {
+              "column": "sold_at",
+              "grain": "week",
+              "label": "Sale week"
+            }
+          ],
+          "input": "sale",
+          "measures": [
+            {
+              "column": "sold_qty",
+              "fn": "sum",
+              "label": "Weekly units sold",
+              "name": "sold_qty"
+            },
+            {
+              "column": "gross_margin",
+              "fn": "sum",
+              "label": "Weekly gross margin",
+              "name": "gross_margin"
+            },
+            {
+              "fn": "count",
+              "name": "sale_lines"
+            },
+            {
+              "column": "costed_ref",
+              "fn": "count",
+              "name": "costed_lines"
+            }
+          ],
+          "op": "aggregate"
+        },
+        "sale": {
+          "input": "sale",
+          "op": "scan"
+        }
+      },
+      "output": "operands"
+    },
+    "inputs": [
+      {
+        "alias": "sale",
+        "artifactId": "supply.PosSale.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "supply.retail.store_sales_weekly_operands",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.retail.store_sales_weekly_operands.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

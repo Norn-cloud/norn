@@ -1,0 +1,271 @@
+{
+  "artifactId": "supply.store_kpi.record_withheld.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record withheld store commercial KPI rollup",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.retail.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.store_kpi.record_withheld",
+    "createLinks": [
+      {
+        "link": "store",
+        "targetIdField": "store_id",
+        "targetType": "supply.Store"
+      },
+      {
+        "link": "sku",
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      }
+    ],
+    "derive": [
+      {
+        "expression": "0",
+        "field": "on_hand_qty",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "avg_weekly_sales_qty",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "weeks_of_supply",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "period_gross_margin",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "opening_stock_value",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "closing_stock_value",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "average_inventory_value",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "gmroi",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.StoreCommercialRollup.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "rollup_id",
+      "objectKind": "supply.StoreCommercialRollup",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "average_inventory_value": {
+          "nornType": {
+            "kind": "decimal",
+            "rounding": "half_even",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "avg_weekly_sales_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "closing_stock_value": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "cost_status": {
+          "enum": [
+            "costed",
+            "missing_cost"
+          ],
+          "type": "string"
+        },
+        "count_status": {
+          "enum": [
+            "verified",
+            "unverified"
+          ],
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "gmroi": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "on_hand_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "opening_stock_value": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "period_end": {
+          "type": "string"
+        },
+        "period_gross_margin": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "period_start": {
+          "type": "string"
+        },
+        "period_week": {
+          "type": "string"
+        },
+        "rollup_id": {
+          "type": "string"
+        },
+        "sales_weeks": {
+          "type": "integer"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        },
+        "weeks_of_supply": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        }
+      },
+      "required": [
+        "rollup_id",
+        "store_id",
+        "sku_id",
+        "period_week",
+        "unit",
+        "currency",
+        "cost_status",
+        "count_status",
+        "period_start",
+        "period_end",
+        "sales_weeks",
+        "on_hand_qty",
+        "avg_weekly_sales_qty",
+        "weeks_of_supply",
+        "period_gross_margin",
+        "opening_stock_value",
+        "closing_stock_value",
+        "average_inventory_value",
+        "gmroi"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "rollup_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rollup_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((slice.store.status == 'active') and (input.count_status == 'unverified')) and (input.cost_status == 'missing_cost')) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      }
+    ],
+    "title": "Record withheld store commercial KPI rollup",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.StoreCommercialRollup"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.store_kpi.record_withheld.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

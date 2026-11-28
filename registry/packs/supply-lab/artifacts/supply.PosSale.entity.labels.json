@@ -1,0 +1,108 @@
+{
+  "artifactId": "supply.PosSale.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "POS sale line labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "مبيعات نقطة البيع",
+          "en": "POS sale"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.PosSale"
+        }
+      },
+      {
+        "label": {
+          "ar": "قطعة",
+          "en": "Each"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.PosSale",
+          "property": "unit",
+          "value": "each"
+        }
+      },
+      {
+        "label": {
+          "ar": "كيلوغرام",
+          "en": "Kilogram"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.PosSale",
+          "property": "unit",
+          "value": "kg"
+        }
+      },
+      {
+        "label": {
+          "ar": "لتر",
+          "en": "Litre"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.PosSale",
+          "property": "unit",
+          "value": "l"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسعّر بالتكلفة",
+          "en": "Costed"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.PosSale",
+          "property": "cost_status",
+          "value": "costed"
+        }
+      },
+      {
+        "label": {
+          "ar": "تكلفة مفقودة",
+          "en": "Missing cost"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.PosSale",
+          "property": "cost_status",
+          "value": "missing_cost"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.PosSale.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

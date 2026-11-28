@@ -1,0 +1,33 @@
+{
+  "artifactId": "supply.SaleEvidence.interface.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "POS sale evidence labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "بيانات مبيعات نقطة البيع",
+          "en": "POS sale evidence"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.SaleEvidence"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.SaleEvidence.interface.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

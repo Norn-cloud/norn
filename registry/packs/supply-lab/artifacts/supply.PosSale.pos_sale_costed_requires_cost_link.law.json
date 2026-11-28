@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.PosSale.pos_sale_costed_requires_cost_link.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.PosSale.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Every costed POS sale must link a governed UnitCost record, and an uncosted sale must carry no UnitCost link.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.PosSale.pos_sale_costed_requires_cost_link",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "Every costed POS sale must link a governed UnitCost record, and an uncosted sale must carry no UnitCost link.",
+    "response": {
+      "expression": "((self.cost_status == 'costed') and (self.cost_record != null)) or ((self.cost_status == 'missing_cost') and (self.cost_record == null))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.PosSale"
+      ],
+      "root": {
+        "id": "supply.PosSale",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.PosSale"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.PosSale.pos_sale_costed_requires_cost_link.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

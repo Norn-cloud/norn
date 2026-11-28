@@ -1,0 +1,94 @@
+{
+  "artifactId": "supply.store_counts.mapping",
+  "dependencies": [
+    {
+      "artifactId": "supply.store_counts.source",
+      "kind": "source_schema",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.CountEvidence.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.StoreCountEvidence.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "active",
+  "name": "Store counts into count evidence",
+  "namespace": "supply",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "supply.CountEvidence.interface"
+    ],
+    "maps": [
+      {
+        "id": "store_count",
+        "properties": [
+          {
+            "property": "count_id",
+            "value": "input.count_id"
+          },
+          {
+            "property": "store_code",
+            "value": "input.store_code"
+          },
+          {
+            "property": "sku_code",
+            "value": "input.sku_code"
+          },
+          {
+            "property": "on_hand_qty",
+            "value": "input.counted_qty"
+          },
+          {
+            "property": "unit",
+            "value": "({'PCS': 'each', 'EA': 'each', 'KG': 'kg', 'L': 'l'})[input.uom] ?? input.uom"
+          },
+          {
+            "property": "quantity_basis",
+            "value": "input.basis"
+          },
+          {
+            "property": "as_of",
+            "value": "timestamp(input.counted_at)"
+          }
+        ],
+        "source": {
+          "dataset": "store_count"
+        },
+        "sourceRecord": "input.store_code + '/' + input.count_id",
+        "subject": "input.count_id",
+        "target": {
+          "entity": "supply.StoreCountEvidence.entity",
+          "interface": "supply.CountEvidence.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "supply.store_counts.source",
+      "sha256": "ac837224592841d84c07948fecc42769c2b2197f7b769f2562cfd81ce8f28a6b",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.store_counts.mapping.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

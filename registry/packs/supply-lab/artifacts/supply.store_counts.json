@@ -1,0 +1,64 @@
+{
+  "artifactId": "supply.store_counts",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "connector",
+  "lifecycle": "active",
+  "name": "Store physical count feed",
+  "namespace": "supply",
+  "payload": {
+    "auth": {
+      "authId": "counts",
+      "kind": "api_key",
+      "name": "X-Count-Key",
+      "placement": "header",
+      "secretRef": "SUPPLY_COUNT_READ_KEY"
+    },
+    "connectorVersion": "0.1",
+    "cursor": {
+      "cursorId": "store_counts",
+      "resourceId": "store_counts",
+      "storageKey": "supply.store.counts"
+    },
+    "deadLetterPolicy": {
+      "maxFailures": 5,
+      "route": "ledger"
+    },
+    "extensions": {
+      "norn.poll/1": {
+        "feeds": [
+          {
+            "recordKeyPath": "/count_id",
+            "resourceId": "store_counts"
+          }
+        ]
+      }
+    },
+    "mappings": [
+      {
+        "externalSource": "synthetic-store-count",
+        "kind": "external_id",
+        "resourceId": "store_counts",
+        "sourcePath": "/count_id",
+        "targetObjectKind": "supply.StoreCountEvidence"
+      }
+    ],
+    "resources": [
+      {
+        "cursorParam": "after",
+        "endpoint": "/v1/store-counts",
+        "itemsPath": "/counts",
+        "kind": "cursor",
+        "missingItemsIsEmpty": true,
+        "nextCursorPath": "/next",
+        "resourceId": "store_counts"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.store_counts.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

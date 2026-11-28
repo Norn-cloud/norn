@@ -1,0 +1,162 @@
+{
+  "artifactId": "supply.retail_receipts.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "Synthetic retail supplier receipt feed",
+  "namespace": "supply",
+  "payload": {
+    "adapter": {
+      "name": "synthetic-feed-replay",
+      "version": "0.1.0"
+    },
+    "constraints": [
+      {
+        "dataset": "retail_receipt",
+        "fields": [
+          "receipt_line_id"
+        ],
+        "id": "retail_receipt_identity",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "retail_receipt",
+        "kind": "child_document",
+        "nativeName": "Store supplier receipt line"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "retail_receipt",
+        "name": "receipt_line_id",
+        "nativeType": "VARCHAR",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "retail_receipt",
+        "name": "store_code",
+        "nativeType": "VARCHAR",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "retail_receipt",
+        "name": "sku_code",
+        "nativeType": "VARCHAR",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "retail_receipt",
+        "name": "vendor_code",
+        "nativeType": "VARCHAR",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "retail_receipt",
+        "name": "received_qty",
+        "nativeType": "NUMERIC",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "retail_receipt",
+        "name": "damaged_qty",
+        "nativeType": "NUMERIC",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "retail_receipt",
+        "name": "uom",
+        "nativeType": "VARCHAR",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "retail_receipt",
+        "name": "unit_cost",
+        "nativeType": "NUMERIC",
+        "ordinal": 7,
+        "required": false,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "retail_receipt",
+        "name": "ccy",
+        "nativeType": "VARCHAR",
+        "ordinal": 8,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "retail_receipt",
+        "name": "received_at",
+        "nativeType": "TIMESTAMP",
+        "ordinal": 9,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-10-26T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c",
+      "uri": "evidence://supply-lab/retail-receipts-v1"
+    },
+    "source": {
+      "instance": "retail-lab",
+      "system": "synthetic-retail-receipt",
+      "version": "retail-receipts-v1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.retail_receipts.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

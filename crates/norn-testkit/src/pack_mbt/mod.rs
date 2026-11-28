@@ -32,6 +32,7 @@ pub mod driver;
 pub mod dst;
 pub(crate) mod law_parity;
 pub(crate) mod seed;
+mod seed_precond;
 pub mod static_gaps;
 pub mod synth;
 mod witness_seed;

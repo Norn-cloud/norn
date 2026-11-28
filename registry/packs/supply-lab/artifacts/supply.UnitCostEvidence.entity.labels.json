@@ -1,0 +1,33 @@
+{
+  "artifactId": "supply.UnitCostEvidence.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Unit cost feed row labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "سطر تكلفة الوحدة",
+          "en": "Unit cost row"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.UnitCostEvidence"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.UnitCostEvidence.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

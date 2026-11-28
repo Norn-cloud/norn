@@ -1,0 +1,106 @@
+{
+  "artifactId": "supply.retail_receipts.mapping",
+  "dependencies": [
+    {
+      "artifactId": "supply.retail_receipts.source",
+      "kind": "source_schema",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.ReceiptEvidence.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.RetailReceiptEvidence.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "active",
+  "name": "Retail receipts into receipt evidence",
+  "namespace": "supply",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "supply.ReceiptEvidence.interface"
+    ],
+    "maps": [
+      {
+        "id": "retail_receipt",
+        "properties": [
+          {
+            "property": "receipt_line_id",
+            "value": "input.receipt_line_id"
+          },
+          {
+            "property": "store_code",
+            "value": "input.store_code"
+          },
+          {
+            "property": "sku_code",
+            "value": "input.sku_code"
+          },
+          {
+            "property": "supplier_id",
+            "value": "({'ATELIER-01': 'SUP-ATELIER', 'GOLD-09': 'SUP-GOLD'})[input.vendor_code] ?? input.vendor_code"
+          },
+          {
+            "property": "received_qty",
+            "value": "input.received_qty"
+          },
+          {
+            "property": "damaged_qty",
+            "value": "input.damaged_qty"
+          },
+          {
+            "property": "unit",
+            "value": "({'PCS': 'each', 'EA': 'each', 'KG': 'kg', 'L': 'l'})[input.uom] ?? input.uom"
+          },
+          {
+            "property": "unit_cost",
+            "value": "input.unit_cost"
+          },
+          {
+            "property": "currency",
+            "value": "({'EGP': 'EGP', 'USD': 'USD', 'EUR': 'EUR', 'LE': 'EGP'})[input.ccy] ?? input.ccy"
+          },
+          {
+            "property": "received_at",
+            "value": "timestamp(input.received_at)"
+          }
+        ],
+        "source": {
+          "dataset": "retail_receipt"
+        },
+        "sourceRecord": "input.store_code + '/' + input.receipt_line_id",
+        "subject": "input.receipt_line_id",
+        "target": {
+          "entity": "supply.RetailReceiptEvidence.entity",
+          "interface": "supply.ReceiptEvidence.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "supply.retail_receipts.source",
+      "sha256": "2462e8c7dca38db86d84db5fc949020c5ec3457eb590ad2a0c1414343df4bc84",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.retail_receipts.mapping.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

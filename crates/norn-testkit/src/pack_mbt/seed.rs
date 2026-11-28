@@ -15,7 +15,7 @@ use norn_kernel::cell_host::{
     FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue,
 };
 use norn_kernel::pack_mbt_support::{
-    ActionEffectProgram, IrJsonValue, ObjectTypeDef, SliceKey, UpsertWriteMode, ZenExpression,
+    ActionEffectProgram, IrJsonValue, ObjectTypeDef, SliceKey, UpsertWriteMode,
 };
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
@@ -45,7 +45,7 @@ pub(crate) struct StampedSeedOutcome<X> {
 const SEED_PRINCIPAL: &str = "mbt-seed-creator";
 
 /// Seeding is not an authorization test: every seeded call is allowed.
-struct Seeder;
+pub(super) struct Seeder;
 
 impl ActionAuthorizer for Seeder {
     fn authorize_read(&self, _: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
@@ -139,8 +139,9 @@ pub(crate) fn seed_stamped<H: PackHost>(
     fill_missing_action_input_fields(&creator.root.input_schema, &mut input, id, seq);
     seed_create_links_and_slice_targets(pack, catalog, creator, &mut input, host, seq)?;
     encode_action_wire_input(&creator.root.input_schema, &mut input);
-    // ACTION-ACTOR-1: the stamped fields come from the principal, never the input.
-    for field in creator.root.actor_stamped_fields() {
+    // ACTION-ACTOR-1 / ACTION-CLOCK-1 / ORIGIN-DATAFLOW-1: server-derived
+    // fields come from the kernel, never caller input.
+    for field in norn_kernel::pack_mbt_support::server_derived_input_fields(&creator.root) {
         input.remove(&field);
     }
     let before_commit = host.ledger_len();
@@ -467,308 +468,173 @@ pub(crate) fn seed_create_links_and_slice_targets<H: PackHost>(
     host: &mut H,
     seq: u64,
 ) -> Result<(), String> {
+    super::seed_precond::prebind_input_literals_and_aggregates(admitted, input);
     let mut seeded_keys: BTreeSet<(String, String)> = BTreeSet::new();
     let mut seeded_slices: BTreeMap<String, FactKey> = BTreeMap::new();
-    let desired_states = parse_slice_precondition_states(&admitted.root.preconditions);
+    let desired_states =
+        super::seed_precond::parse_slice_precondition_states(&admitted.root.preconditions);
+    let overrides = super::seed_precond::slice_input_overrides(&admitted.root.preconditions, input);
+    let self_slice = super::seed_precond::update_self_slice(admitted);
+    let deferred_self = self_slice.and_then(|(idx, can_defer)| can_defer.then_some(idx));
 
-    for slice_spec in &admitted.root.slice {
-        let resolved_id = match &slice_spec.key {
-            SliceKey::Property { from, property } if from == "input" => input
-                .get(property.as_str())
-                .and_then(JsonValue::as_str)
-                .map(str::to_owned),
-            SliceKey::Property { from, property } => seeded_slices
-                .get(from.as_str())
-                .map(|parent| {
-                    host.load(parent)
-                        .map_err(|err| format!("load {parent}: {err}"))
-                        .map(|loaded| {
-                            loaded
-                                .values
-                                .as_ref()
-                                .and_then(|values| values.get(property.as_str()))
-                                .and_then(JsonValue::as_str)
-                                .map(str::to_owned)
-                        })
-                })
-                .transpose()?
-                .flatten(),
-            SliceKey::Parameter { .. }
-            | SliceKey::TriggerObject
-            | SliceKey::TriggerBefore
-            | SliceKey::TriggerAfter
-            | SliceKey::TriggerChanges
-            | SliceKey::Link { .. }
-            | SliceKey::Predicate { .. } => None,
-        };
-        if let Some(target_id) = resolved_id {
-            let target_ty_name = slice_spec.object_type.as_str();
-            if seeded_keys.insert((target_ty_name.to_owned(), target_id.clone())) {
-                seed_related_target(
-                    (pack, catalog),
-                    host,
-                    target_ty_name,
-                    &target_id,
-                    desired_states.get(&slice_spec.name),
-                    seq,
-                )?;
-            }
-            seeded_slices.insert(
-                slice_spec.name.clone(),
-                FactKey::new(target_ty_name, &target_id),
-            );
+    for idx in 0..admitted.root.slice.len() {
+        if deferred_self == Some(idx) {
+            continue;
         }
+        let allow_creator_fallback = self_slice.is_some_and(|(self_idx, _)| self_idx == idx);
+        seed_slice_entry(
+            &SliceSeedCtx {
+                pack,
+                catalog,
+                admitted,
+                desired_states: &desired_states,
+                overrides: &overrides,
+                idx,
+                seq,
+                allow_creator_fallback,
+            },
+            host,
+            input,
+            &mut seeded_keys,
+            &mut seeded_slices,
+        )?;
     }
     for link in &admitted.root.create_links {
         if let Some(JsonValue::String(target_id)) = input.get(&link.target_id_field) {
             let target_ty_name = link.target_type.as_str();
             if seeded_keys.insert((target_ty_name.to_owned(), target_id.clone())) {
-                seed_related_target((pack, catalog), host, target_ty_name, target_id, None, seq)?;
+                seed_related_target_with_overrides(
+                    (pack, catalog),
+                    host,
+                    target_ty_name,
+                    target_id,
+                    None,
+                    &[],
+                    seq,
+                )?;
             }
         }
     }
-    bind_input_to_preconditions(admitted, input, &seeded_slices, host)
+    bind_input_to_preconditions(admitted, input, &seeded_slices, host)?;
+    if let Some(idx) = deferred_self {
+        seed_slice_entry(
+            &SliceSeedCtx {
+                pack,
+                catalog,
+                admitted,
+                desired_states: &desired_states,
+                overrides: &overrides,
+                idx,
+                seq,
+                allow_creator_fallback: true,
+            },
+            host,
+            input,
+            &mut seeded_keys,
+            &mut seeded_slices,
+        )?;
+        bind_input_to_preconditions(admitted, input, &seeded_slices, host)?;
+    }
+    Ok(())
 }
 
-/// Strips balanced outer parentheses around `text`, respecting string literals.
-fn strip_outer_parens(mut text: &str) -> &str {
-    loop {
-        let trimmed = text.trim();
-        if !(trimmed.starts_with('(') && trimmed.ends_with(')')) {
-            return trimmed;
-        }
-        let mut depth = 0_usize;
-        let mut in_quote: Option<char> = None;
-        let mut escaped = false;
-        let mut wraps_whole = true;
-        let last_idx = trimmed.len().saturating_sub(1);
-        for (idx, ch) in trimmed.char_indices() {
-            if let Some(q) = in_quote {
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if ch == q {
-                    in_quote = None;
-                }
-                continue;
-            }
-            match ch {
-                '\'' | '"' => in_quote = Some(ch),
-                '(' => depth = depth.saturating_add(1),
-                ')' => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 && idx < last_idx {
-                        wraps_whole = false;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        if wraps_whole && depth == 0 && in_quote.is_none() {
-            let Some(inner) = trimmed.get(1..last_idx) else {
-                return trimmed;
-            };
-            text = inner;
-        } else {
-            return trimmed;
-        }
-    }
+struct SliceSeedCtx<'a> {
+    pack: &'a AdmittedPack,
+    catalog: &'a TypeCatalog<'a>,
+    admitted: &'a AdmittedAction,
+    desired_states: &'a BTreeMap<String, (String, String)>,
+    overrides: &'a BTreeMap<String, Vec<(String, JsonValue)>>,
+    idx: usize,
+    seq: u64,
+    allow_creator_fallback: bool,
 }
 
-fn is_ident_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_'
-}
-
-/// Splits `text` on a top-level logical operator (`symbol` like `&&` or word
-/// `word` like `and`) outside quotes and nested parentheses.
-fn split_top_level_logic<'a>(text: &'a str, symbol: &str, word: &str) -> Vec<&'a str> {
-    let mut parts = Vec::new();
-    let mut start = 0_usize;
-    let mut skip_until = 0_usize;
-    let mut depth = 0_usize;
-    let mut in_quote: Option<char> = None;
-    let mut escaped = false;
-    for (idx, ch) in text.char_indices() {
-        if idx < skip_until {
-            continue;
-        }
-        if let Some(q) = in_quote {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == q {
-                in_quote = None;
-            }
-            continue;
-        }
-        match ch {
-            '\'' | '"' => {
-                in_quote = Some(ch);
-                continue;
-            }
-            '(' => {
-                depth = depth.saturating_add(1);
-                continue;
-            }
-            ')' => {
-                depth = depth.saturating_sub(1);
-                continue;
-            }
-            _ => {}
-        }
-        if depth != 0 {
-            continue;
-        }
-        let rest = text.get(idx..).unwrap_or("");
-        let matched = if rest.starts_with(symbol) {
-            Some(symbol.len())
-        } else if rest.starts_with(word) {
-            let prev_ok = text
-                .get(..idx)
-                .and_then(|before| before.chars().next_back())
-                .is_some_and(|prev| !is_ident_char(prev));
-            let next_ok = rest
-                .get(word.len()..)
-                .and_then(|after| after.chars().next())
-                .is_some_and(|next| !is_ident_char(next));
-            (prev_ok && next_ok).then_some(word.len())
-        } else {
-            None
-        };
-        if let Some(len) = matched {
-            if let Some(part) = text.get(start..idx) {
-                parts.push(part);
-            }
-            start = idx.saturating_add(len);
-            skip_until = start;
-        }
-    }
-    if let Some(tail) = text.get(start..) {
-        parts.push(tail);
-    }
-    parts
-}
-
-/// Splits `text` on a single top-level `==` (ignoring `!=`, `<=`, `>=`, `===`,
-/// quoted strings, and parenthesized sub-expressions).
-fn split_top_level_eq(text: &str) -> Option<(&str, &str)> {
-    let mut depth = 0_usize;
-    let mut in_quote: Option<char> = None;
-    let mut escaped = false;
-    for (idx, ch) in text.char_indices() {
-        if let Some(q) = in_quote {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == q {
-                in_quote = None;
-            }
-            continue;
-        }
-        match ch {
-            '\'' | '"' => in_quote = Some(ch),
-            '(' => depth = depth.saturating_add(1),
-            ')' => depth = depth.saturating_sub(1),
-            '=' if depth == 0 => {
-                let rest = text.get(idx..).unwrap_or("");
-                let prev = text
-                    .get(..idx)
-                    .and_then(|before| before.chars().next_back());
-                let after = rest.get(2..).and_then(|tail| tail.chars().next());
-                if rest.starts_with("==")
-                    && !matches!(prev, Some('!' | '=' | '<' | '>'))
-                    && after != Some('=')
-                {
-                    let lhs = text.get(..idx)?;
-                    let rhs = rest.get(2..)?;
-                    return Some((lhs, rhs));
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn collect_top_level_conjuncts<'a>(text: &'a str, depth: usize, out: &mut Vec<&'a str>) {
-    let stripped = strip_outer_parens(text);
-    if depth >= 16 {
-        out.push(stripped);
-        return;
-    }
-    let parts = split_top_level_logic(stripped, "&&", "and");
-    if parts.len() <= 1 {
-        out.push(stripped);
-        return;
-    }
-    for part in parts {
-        collect_top_level_conjuncts(part, depth.saturating_add(1), out);
-    }
-}
-
-/// Each `==` conjunct of `preconditions` as its two sides, grouping trimmed;
-/// of a disjunction, its first alternative (one way to satisfy it).
-fn precondition_equalities(preconditions: &[ZenExpression]) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for expr in preconditions {
-        let mut conjuncts = Vec::new();
-        collect_top_level_conjuncts(expr.as_str(), 0, &mut conjuncts);
-        for conj in conjuncts {
-            let first = split_top_level_logic(conj, "||", "or")
-                .into_iter()
-                .next()
-                .unwrap_or(conj);
-            let first = strip_outer_parens(first);
-            if let Some((lhs, rhs)) = split_top_level_eq(first) {
-                out.push((
-                    strip_outer_parens(lhs).to_owned(),
-                    strip_outer_parens(rhs).to_owned(),
-                ));
-            }
-        }
-    }
-    out
-}
-
-/// A precondition literal as a value: quoted text, `null`, a boolean or an integer.
-fn literal(text: &str) -> Option<JsonValue> {
-    let quoted = (text.starts_with('\'') && text.ends_with('\''))
-        || (text.starts_with('"') && text.ends_with('"'));
-    if quoted && text.len() >= 2 {
-        return text
-            .get(1..text.len().saturating_sub(1))
-            .map(|inner| JsonValue::String(inner.to_owned()));
-    }
-    match text {
-        "null" => Some(JsonValue::Null),
-        "true" => Some(JsonValue::Bool(true)),
-        "false" => Some(JsonValue::Bool(false)),
-        _ => text.parse::<i64>().ok().map(JsonValue::from),
-    }
-}
-
-/// The slice targets' states each precondition asks for: `slice.S.P == 'state'`.
-fn parse_slice_precondition_states(
-    preconditions: &[ZenExpression],
-) -> BTreeMap<String, (String, String)> {
-    let mut out = BTreeMap::new();
-    for (lhs, rhs) in precondition_equalities(preconditions) {
-        let Some(rest) = lhs.strip_prefix("slice.") else {
-            continue;
-        };
-        let mut parts = rest.split('.');
-        if let (Some(slice_name), Some(prop_name), Some(JsonValue::String(desired))) =
-            (parts.next(), parts.next(), literal(&rhs))
-            && !desired.is_empty()
+fn seed_slice_entry<H: PackHost>(
+    ctx: &SliceSeedCtx<'_>,
+    host: &mut H,
+    input: &JsonObject,
+    seeded_keys: &mut BTreeSet<(String, String)>,
+    seeded_slices: &mut BTreeMap<String, FactKey>,
+) -> Result<(), String> {
+    let Some(slice_spec) = ctx.admitted.root.slice.get(ctx.idx) else {
+        return Ok(());
+    };
+    let Some(target_id) = resolve_slice_target_id(&slice_spec.key, input, seeded_slices, host)?
+    else {
+        return Ok(());
+    };
+    let target_ty_name = slice_spec.object_type.as_str();
+    if seeded_keys.insert((target_ty_name.to_owned(), target_id.clone())) {
+        let slice_overrides = ctx
+            .overrides
+            .get(&slice_spec.name)
+            .map_or(&[][..], Vec::as_slice);
+        let direct = seed_related_target_with_overrides(
+            (ctx.pack, ctx.catalog),
+            host,
+            target_ty_name,
+            &target_id,
+            ctx.desired_states.get(&slice_spec.name),
+            slice_overrides,
+            ctx.seq,
+        );
+        if let Err(err) = direct
+            && (!ctx.allow_creator_fallback
+                || !super::seed_precond::seed_update_target_via_creator(
+                    ctx.pack,
+                    ctx.catalog,
+                    host,
+                    target_ty_name,
+                    &target_id,
+                    input,
+                    ctx.seq,
+                ))
         {
-            out.insert(slice_name.to_owned(), (prop_name.to_owned(), desired));
+            return Err(err);
         }
     }
-    out
+    seeded_slices.insert(
+        slice_spec.name.clone(),
+        FactKey::new(target_ty_name, &target_id),
+    );
+    Ok(())
+}
+
+fn resolve_slice_target_id<H: PackHost>(
+    key: &SliceKey,
+    input: &JsonObject,
+    seeded_slices: &BTreeMap<String, FactKey>,
+    host: &H,
+) -> Result<Option<String>, String> {
+    match key {
+        SliceKey::Property { from, property } if from == "input" => Ok(input
+            .get(property.as_str())
+            .and_then(JsonValue::as_str)
+            .map(str::to_owned)),
+        SliceKey::Property { from, property } => seeded_slices
+            .get(from.as_str())
+            .map(|parent| {
+                host.load(parent)
+                    .map_err(|err| format!("load {parent}: {err}"))
+                    .map(|loaded| {
+                        loaded
+                            .values
+                            .as_ref()
+                            .and_then(|values| values.get(property.as_str()))
+                            .and_then(JsonValue::as_str)
+                            .map(str::to_owned)
+                    })
+            })
+            .transpose()
+            .map(Option::flatten),
+        SliceKey::Parameter { .. }
+        | SliceKey::TriggerObject
+        | SliceKey::TriggerBefore
+        | SliceKey::TriggerAfter
+        | SliceKey::TriggerChanges
+        | SliceKey::Link { .. }
+        | SliceKey::Predicate { .. } => Ok(None),
+    }
 }
 
 /// Bind the input to what the preconditions compare it with, once the slice
@@ -781,19 +647,30 @@ fn bind_input_to_preconditions<H: PackHost>(
     seeded_slices: &BTreeMap<String, FactKey>,
     host: &H,
 ) -> Result<(), String> {
-    for (lhs, rhs) in precondition_equalities(&admitted.root.preconditions) {
+    for (raw_lhs, raw_rhs) in
+        super::seed_precond::precondition_equalities(&admitted.root.preconditions)
+    {
+        let lhs = super::seed_precond::unwrap_operand(&raw_lhs);
+        let rhs = super::seed_precond::unwrap_operand(&raw_rhs);
         // A precondition rooted at the input names its fields bare (`line_id == null`).
         let bare = |side: &str| {
             !side.is_empty()
                 && side
                     .chars()
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-                && literal(side).is_none()
+                && super::seed_precond::literal(side).is_none()
         };
-        let (field, other) = match (lhs.strip_prefix("input."), rhs.strip_prefix("input.")) {
+        let (field, other) = match (
+            lhs.strip_prefix("input.")
+                .filter(|f| super::seed_precond::is_plain_field(f)),
+            rhs.strip_prefix("input.")
+                .filter(|f| super::seed_precond::is_plain_field(f)),
+        ) {
             (Some(field), _) => (field.to_owned(), rhs),
             (None, Some(field)) => (field.to_owned(), lhs),
-            (None, None) if bare(&lhs) && literal(&rhs).is_some() => (lhs, rhs),
+            (None, None) if bare(lhs) && super::seed_precond::literal(rhs).is_some() => {
+                (lhs.to_owned(), rhs)
+            }
             (None, None) => continue,
         };
         let value = if let Some(rest) = other.strip_prefix("slice.") {
@@ -809,7 +686,7 @@ fn bind_input_to_preconditions<H: PackHost>(
                 .values
                 .and_then(|values| values.get(prop_name).cloned())
         } else {
-            literal(&other)
+            super::seed_precond::literal(other)
         };
         if let Some(value) = value {
             input.insert(field, value);
@@ -818,12 +695,13 @@ fn bind_input_to_preconditions<H: PackHost>(
     Ok(())
 }
 
-fn seed_related_target<H: PackHost>(
+fn seed_related_target_with_overrides<H: PackHost>(
     (pack, catalog): (&AdmittedPack, &TypeCatalog<'_>),
     host: &mut H,
     target_ty_name: &str,
     target_id: &str,
     desired_state: Option<&(String, String)>,
+    overrides: &[(String, JsonValue)],
     seq: u64,
 ) -> Result<(), String> {
     // A target an earlier step already seeded is reused, never created twice.
@@ -849,6 +727,7 @@ fn seed_related_target<H: PackHost>(
                 let mut vals =
                     synthesize_guard_satisfying(pack, target_ty, lc, &guards, target_id, seq);
                 vals.insert(lc_prop.clone(), JsonValue::String(init_state.clone()));
+                super::seed_precond::apply_safe_overrides(pack, target_ty, &mut vals, overrides);
                 return seed_and_walk_object(
                     host,
                     SeedWalkSpec {
@@ -864,7 +743,8 @@ fn seed_related_target<H: PackHost>(
             }
         }
     }
-    let vals = synthesize_object(pack, target_ty, target_id, seq);
+    let mut vals = synthesize_object(pack, target_ty, target_id, seq);
+    super::seed_precond::apply_safe_overrides(pack, target_ty, &mut vals, overrides);
     if let Some(created) = seed_stamped(host, pack, catalog, target_ty, target_id, &vals, seq)? {
         return created
             .result
@@ -949,7 +829,7 @@ pub(crate) fn stamp_link_targets<H: PackHost>(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_slice_precondition_states, precondition_equalities};
+    use super::super::seed_precond::{parse_slice_precondition_states, precondition_equalities};
     use norn_kernel::pack_mbt_support::ZenExpression;
 
     #[test]
