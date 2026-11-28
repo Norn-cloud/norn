@@ -72,12 +72,11 @@ pub(crate) fn admit_fixture(fixture: &Json) -> Result<AdmittedDecision, Admissio
     let subs: BTreeMap<String, RuleRoot> = fixture
         .get("subDecisions")
         .and_then(Json::as_object)
-        .map(|subs| {
+        .map_or_default(|subs| {
             subs.iter()
                 .map(|(key, sub)| (key.clone(), rule(sub)))
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     AdmittedDecision::admit(&root, &subs, binding())
 }
 
@@ -164,7 +163,7 @@ pub(crate) fn check_fixture(path: &Path, failures: &mut Vec<String>) -> usize {
         match admitted {
             Err(error) if admission_kind(&error) == expected => {}
             Err(error) => {
-                failures.push(format!("{name}: refused as {error:?}, expected {expected}"))
+                failures.push(format!("{name}: refused as {error:?}, expected {expected}"));
             }
             Ok(_) => failures.push(format!("{name}: admitted, expected {expected}")),
         }
@@ -225,7 +224,7 @@ pub(crate) fn check_fixture(path: &Path, failures: &mut Vec<String>) -> usize {
     cases.len()
 }
 
-/// Compiler-generated RuleIR; the authoring tests check source/golden drift.
+/// Compiler-generated `RuleIR`; the authoring tests check source/golden drift.
 pub(crate) fn generated_rules(fixture: &str) -> BTreeMap<String, RuleRoot> {
     let artifacts = read_json(&repo_root().join(fixture));
     artifacts
