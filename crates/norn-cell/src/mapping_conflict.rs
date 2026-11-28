@@ -1664,56 +1664,54 @@ mod tests {
     fn inbox_lookup_queries_use_indexes() {
         let artifacts = pack_artifacts();
         let store = open_installed_store(&artifacts);
-        let explain = |sql: &str, args: &[crate::engine::SqlValue]| -> Vec<String> {
-            store
+        let assert_uses = |label: &str,
+                           sql: &str,
+                           args: &[crate::engine::SqlValue],
+                           index: &str,
+                           min_hits: usize| {
+            let plan: Vec<String> = store
                 .conn
                 .query(&format!("EXPLAIN QUERY PLAN {sql}"), args)
                 .expect("explain query plan")
                 .into_iter()
                 .map(|row| crate::engine::SqlRow(row).get::<String>(3).expect("detail"))
-                .collect()
+                .collect();
+            let needle = format!("USING INDEX {index}");
+            let hits = plan.iter().filter(|line| line.contains(&needle)).count();
+            assert!(
+                hits >= min_hits,
+                "expected >= {min_hits} {index} hits for {label}, got {plan:?}"
+            );
         };
-        let conflicts_plan = explain(
-            &format!(
-                "SELECT position, observation_id, observed FROM {INBOX} \
-                 WHERE observation_id COLLATE NOCASE >= ?1 \
-                   AND observation_id COLLATE NOCASE < ?2 \
-                 ORDER BY position"
-            ),
+        let range_sql = format!(
+            "SELECT position, observation_id, observed FROM {INBOX} \
+             WHERE observation_id COLLATE NOCASE >= ?1 AND observation_id COLLATE NOCASE < ?2 \
+             ORDER BY position"
+        );
+        assert_uses(
+            "conflicts",
+            &range_sql,
             params!["mapping-conflict:", "mapping-conflict;"],
+            "_norn_inbox/id_nocase",
+            1,
         );
-        assert!(
-            conflicts_plan
-                .iter()
-                .any(|line| line.contains("USING INDEX _norn_inbox/id_nocase")),
-            "expected _norn_inbox/id_nocase index for conflicts, got {conflicts_plan:?}"
-        );
-        let identity_plan = explain(
-            &format!(
-                "SELECT position, observation_id, observed FROM {INBOX} \
-                 WHERE observation_id COLLATE NOCASE >= ?1 \
-                   AND observation_id COLLATE NOCASE < ?2 \
-                 ORDER BY position"
-            ),
+        assert_uses(
+            "identity evidence",
+            &range_sql,
             params!["mapping-identity:", "mapping-identity;"],
+            "_norn_inbox/id_nocase",
+            1,
         );
-        assert!(
-            identity_plan
-                .iter()
-                .any(|line| line.contains("USING INDEX _norn_inbox/id_nocase")),
-            "expected _norn_inbox/id_nocase index for identity evidence, got {identity_plan:?}"
-        );
-        let disputes_plan = explain(
+        assert_uses(
+            "disputes",
             &format!(
                 "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
                  WHERE \"consumed_commit_seq\" IS NULL \
-                   AND \"observation_id\" COLLATE NOCASE >= ?1 \
-                   AND \"observation_id\" COLLATE NOCASE < ?2 \
+                   AND \"observation_id\" COLLATE NOCASE >= ?1 AND \"observation_id\" COLLATE NOCASE < ?2 \
                  UNION ALL \
                  SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
                  WHERE \"consumed_commit_seq\" IS NULL \
-                   AND \"observation_id\" COLLATE NOCASE >= ?3 \
-                   AND \"observation_id\" COLLATE NOCASE < ?4"
+                   AND \"observation_id\" COLLATE NOCASE >= ?3 AND \"observation_id\" COLLATE NOCASE < ?4"
             ),
             params![
                 "mapping-conflict:",
@@ -1721,14 +1719,11 @@ mod tests {
                 "mapping-identity:",
                 "mapping-identity;"
             ],
+            "_norn_inbox/id_nocase",
+            2,
         );
-        assert!(
-            disputes_plan
-                .iter()
-                .any(|line| line.contains("USING INDEX _norn_inbox/id_nocase")),
-            "expected _norn_inbox/id_nocase index for disputes, got {disputes_plan:?}"
-        );
-        let pending_live_plan = explain(
+        assert_uses(
+            "live pending",
             &format!(
                 "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
                  WHERE \"consumed_commit_seq\" IS NULL \
@@ -1736,14 +1731,11 @@ mod tests {
                    AND json_extract(\"observed\", '$.input.input.mapping') = ?1"
             ),
             params![MAPPING_ID],
+            "_norn_inbox/bundle_mapping_consumed",
+            1,
         );
-        assert!(
-            pending_live_plan
-                .iter()
-                .any(|line| line.contains("USING INDEX _norn_inbox/bundle_mapping_consumed")),
-            "expected _norn_inbox/bundle_mapping_consumed for live pending, got {pending_live_plan:?}"
-        );
-        let pending_pinned_plan = explain(
+        assert_uses(
+            "pinned pending",
             &format!(
                 "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" \
                  WHERE \"consumed_commit_seq\" IS NULL \
@@ -1756,14 +1748,8 @@ mod tests {
                    AND json_extract(\"observed\", '$.input.input.mapping') = ?1"
             ),
             params![MAPPING_ID, 5_i64],
-        );
-        let index_hits = pending_pinned_plan
-            .iter()
-            .filter(|line| line.contains("USING INDEX _norn_inbox/bundle_mapping_consumed"))
-            .count();
-        assert_eq!(
-            index_hits, 2,
-            "expected both UNION ALL branches to use _norn_inbox/bundle_mapping_consumed, got {pending_pinned_plan:?}"
+            "_norn_inbox/bundle_mapping_consumed",
+            2,
         );
     }
 
