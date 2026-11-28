@@ -361,7 +361,7 @@ mod tests {
         let conn = setup_conn(&table);
         let request = sample_request(&table, 2, Vec::new());
         in_transaction(&conn, |conn| settle_rows(conn, &table, &request)).expect("empty settle");
-        assert!(read_quarantine(&conn, &table).is_empty());
+        assert_eq!(read_quarantine(&conn, &table), Vec::new());
         let remaining: u64 = conn
             .query_row(
                 &format!("SELECT count(*) FROM {}", residue_table(&table.name)),
@@ -419,7 +419,7 @@ mod tests {
             let err = in_transaction(&conn, |conn| settle_rows(conn, &table, &request))
                 .expect_err("invalid finding must refuse");
             assert_eq!(err.code, "bulk.invalid_finding");
-            assert!(read_quarantine(&conn, &table).is_empty());
+            assert_eq!(read_quarantine(&conn, &table), Vec::new());
             let remaining: u64 = conn
                 .query_row(
                     &format!("SELECT count(*) FROM {}", residue_table(&table.name)),
