@@ -197,6 +197,29 @@ pub(crate) struct MappingPlanCache {
     /// definitions, the export journal or receipts inside such a scope, so the
     /// install a plan was proven from is the one every later read in it sees.
     pinned: Option<BTreeMap<(u64, String), Arc<MappingPlan>>>,
+    /// When set (one-pass legacy backfill), skip cloning derived bundles into
+    /// `derived` so peak memory stays bounded across large histories.
+    skip_derived: bool,
+}
+
+/// Maximum compiled mapping plans retained in the one-pass backfill cache.
+const MAX_BACKFILL_PINNED_PLANS: usize = 64;
+
+impl MappingPlanCache {
+    pub(crate) const fn enable_one_pass_backfill(&mut self) {
+        self.skip_derived = true;
+    }
+
+    pub(crate) fn trim_backfill_plans(&mut self) {
+        if let Some(pinned) = self.pinned.as_mut()
+            && pinned.len() > MAX_BACKFILL_PINNED_PLANS
+        {
+            pinned.clear();
+        }
+        if self.plans.len() > MAX_BACKFILL_PINNED_PLANS {
+            self.plans.clear();
+        }
+    }
 }
 
 /// Most bundles [`MappingPlanCache`] keeps as derived: two full pages, so a
@@ -541,12 +564,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let bundle = Self::compute_under(&plan, raw, input, version, derivation, reprocesses)?;
         if let Some(cache) = self.mapping_plans {
             let mut cache = cache.borrow_mut();
-            if cache.derived.len() >= MAX_DERIVED_BUNDLES {
-                cache.derived.clear();
+            if !cache.skip_derived {
+                if cache.derived.len() >= MAX_DERIVED_BUNDLES {
+                    cache.derived.clear();
+                }
+                cache
+                    .derived
+                    .insert(bundle.digest.clone(), (plan, bundle.clone()));
             }
-            cache
-                .derived
-                .insert(bundle.digest.clone(), (plan, bundle.clone()));
         }
         Ok(bundle)
     }

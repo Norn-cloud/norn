@@ -2497,6 +2497,7 @@ impl<E: SqlEngine> CellStore<E> {
         let table = crate::system::CLAIM_ENDPOINT;
         let plans = RefCell::default();
         let _pinned = crate::mapping_bundle::PinnedPlans::open(&plans);
+        plans.borrow_mut().enable_one_pass_backfill();
         let reader = StoreReader::new(conn, model).with_mapping_plans(&plans);
         let mut after: Option<String> = None;
         loop {
@@ -2539,6 +2540,7 @@ impl<E: SqlEngine> CellStore<E> {
                     return Err(CellError::MappingBundleMismatch);
                 }
                 reader.recheck_mapping_bundle(&bundle)?;
+                plans.borrow_mut().trim_backfill_plans();
                 let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?;
                 if keys.iter().any(|k| norn_ir::canonical::nfc(k) != *k) {
                     return Err(CellError::MappingBundleMismatch);
