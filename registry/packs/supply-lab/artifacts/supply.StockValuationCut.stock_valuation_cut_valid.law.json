@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.StockValuationCut.stock_valuation_cut_valid.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.StockValuationCut.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A stock valuation cut must be costed, non-negative in quantity and value, and match its SKU unit and store functional currency.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.StockValuationCut.stock_valuation_cut_valid",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "A stock valuation cut must be costed, non-negative in quantity and value, and match its SKU unit and store functional currency.",
+    "response": {
+      "expression": "((((self.cost_status == 'costed') and (self.remaining_qty >= 0)) and (self.stock_value >= 0)) and (self.unit == self.sku.unit_of_measure)) and (self.currency == self.store.currency)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.StockValuationCut"
+      ],
+      "root": {
+        "id": "supply.StockValuationCut",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.StockValuationCut"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StockValuationCut.stock_valuation_cut_valid.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

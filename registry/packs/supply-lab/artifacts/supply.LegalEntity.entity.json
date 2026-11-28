@@ -1,0 +1,131 @@
+{
+  "artifactId": "supply.LegalEntity.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Legal entity",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "entity_id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "resting",
+              "state": "active"
+            },
+            {
+              "outcome": "completed",
+              "state": "closed"
+            }
+          ],
+          "immutable": [
+            "closed"
+          ],
+          "initial": [
+            "active"
+          ],
+          "property": "status",
+          "terminal": [
+            "closed"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "active"
+              ],
+              "id": "close",
+              "to": "closed"
+            }
+          ]
+        }
+      ],
+      "name": "supply.LegalEntity",
+      "properties": [
+        {
+          "id": "entity_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "legal_name",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "entity_kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "sole_proprietorship"
+              },
+              {
+                "value": "partnership"
+              },
+              {
+                "value": "corporation"
+              }
+            ]
+          }
+        },
+        {
+          "id": "book_code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "functional_currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        },
+        {
+          "default": "active",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "active"
+              },
+              {
+                "value": "closed"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.LegalEntity.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

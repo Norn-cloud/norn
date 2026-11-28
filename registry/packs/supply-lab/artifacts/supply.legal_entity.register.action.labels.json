@@ -1,0 +1,30 @@
+{
+  "artifactId": "supply.legal_entity.register.action.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Register a legal entity labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "تسجيل كيان قانوني",
+          "en": "Register legal entity"
+        },
+        "target": {
+          "actionId": "supply.legal_entity.register",
+          "kind": "action"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.legal_entity.register.action.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

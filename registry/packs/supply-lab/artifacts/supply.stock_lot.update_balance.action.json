@@ -1,0 +1,188 @@
+{
+  "artifactId": "supply.stock_lot.update_balance.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Update a stock lot balance",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.retail.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.stock_lot.update_balance",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "count"
+        },
+        "filter": {
+          "sku_id": "sku_id",
+          "store_id": "store_id"
+        },
+        "maxItems": 100,
+        "name": "sealed_cuts_at_or_after_as_of",
+        "objectType": "supply.StockValuationCut",
+        "window": {
+          "end": "cut_horizon",
+          "endInclusive": true,
+          "property": "cut_at",
+          "start": "as_of",
+          "startInclusive": true
+        }
+      }
+    ],
+    "derive": [
+      {
+        "expression": "'9999-12-31T23:59:59Z'",
+        "field": "cut_horizon",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.depleted_qty * input.unit_cost",
+        "field": "depleted_stock_value",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.remaining_qty * input.unit_cost",
+        "field": "stock_value",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.StockLot.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "lot_id",
+      "objectKind": "supply.StockLot",
+      "writeMode": {
+        "kind": "update_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "cut_horizon": {
+          "type": "string"
+        },
+        "depleted_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "depleted_stock_value": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "lot_id": {
+          "type": "string"
+        },
+        "remaining_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "stock_value": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "store_id": {
+          "type": "string"
+        },
+        "unit_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 4
+          },
+          "type": "number"
+        }
+      },
+      "required": [
+        "lot_id",
+        "store_id",
+        "sku_id",
+        "remaining_qty",
+        "depleted_qty",
+        "as_of",
+        "cut_horizon",
+        "unit_cost",
+        "depleted_stock_value",
+        "stock_value"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "lot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "lot_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((((((((slice.store.status == 'active') and (input.store_id == slice.lot.store_id)) and (input.sku_id == slice.lot.sku_id)) and (slice.lot.cost_status == 'costed')) and (slice.lot.unit_cost != null)) and (input.unit_cost == (slice.lot.unit_cost ?? -1))) and (timestamp(input.as_of) >= timestamp(slice.lot.as_of))) and (input.depleted_qty >= slice.lot.depleted_qty)) and ((input.depleted_qty + input.remaining_qty) == slice.lot.received_qty)) and (aggregates.sealed_cuts_at_or_after_as_of == 0)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "lot_id"
+          }
+        },
+        "name": "lot",
+        "objectType": "supply.StockLot"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "lot",
+            "property": "store_id"
+          }
+        },
+        "name": "store",
+        "objectType": "supply.Store"
+      }
+    ],
+    "title": "Update a stock lot balance",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "supply.StockLot"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.stock_lot.update_balance.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

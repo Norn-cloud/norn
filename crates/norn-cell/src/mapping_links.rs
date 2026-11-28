@@ -5,7 +5,7 @@ use crate::{
     engine::{SqlEngine, params},
     host::GuardView,
     mapping_bundle::MappingBundle,
-    mapping_conflict::EventDispute,
+    mapping_conflict::{EventDispute, SourceDisputeIndex},
     system::INBOX,
 };
 use norn_ir::{RuntimeObject, RuntimeValue, mapping::ObservedLinkClaim};
@@ -284,9 +284,26 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         for bundle in current {
             bundles.push((bundle.clone(), true, false));
         }
+        let mut entries = self.claim_journal_entries(&bundles)?;
+        if let Some(scope) = scope {
+            let groups: BTreeSet<_> = entries
+                .iter()
+                .filter(|e| touches(&e.claim, scope))
+                .map(|e| (e.claim.source_key.clone(), e.claim.role.clone()))
+                .collect();
+            entries
+                .retain(|e| groups.contains(&(e.claim.source_key.clone(), e.claim.role.clone())));
+        }
+        Ok(entries)
+    }
+
+    fn claim_journal_entries(
+        &self,
+        bundles: &[(MappingBundle, bool, bool)],
+    ) -> Result<Vec<Entry>, CellError> {
         let mut history = BTreeMap::<String, Vec<(norn_ir::SourceVersion, String)>>::new();
         let mut entries = Vec::new();
-        for (bundle, fresh, disputed) in &bundles {
+        for (bundle, fresh, disputed) in bundles {
             let kind = self.bundle_version_kind(bundle)?;
             let version = parse_source_version(bundle, kind)?;
             let mut recorded = Vec::new();
@@ -325,16 +342,53 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         if entries.len() > MAX_CLAIMS {
             return Err(CellError::OutOfRange("observed link claims"));
         }
-        if let Some(scope) = scope {
-            let groups: BTreeSet<_> = entries
-                .iter()
-                .filter(|e| touches(&e.claim, scope))
-                .map(|e| (e.claim.source_key.clone(), e.claim.role.clone()))
-                .collect();
-            entries
-                .retain(|e| groups.contains(&(e.claim.source_key.clone(), e.claim.role.clone())));
-        }
         Ok(entries)
+    }
+
+    fn claim_bundles_for_source(
+        &self,
+        subject: &FactKey,
+        model: CommitModel<'_, '_>,
+        limit: usize,
+    ) -> Result<Vec<String>, CellError> {
+        let mut sides = BTreeSet::from([format!("source:{}", subject.object_type.as_str())]);
+        for def in self.model().object_types() {
+            if model
+                .canonical(&FactKey::new(def.name.as_str(), ""))
+                .object_type
+                == subject.object_type
+            {
+                sides.insert(format!("source:{}", def.name.as_str()));
+            }
+        }
+        let table = crate::system::CLAIM_ENDPOINT;
+        let rows = self.conn.query(
+            &format!(
+                "SELECT \"commit_seq\", \"observation_id\", \"bytes\" \
+                 FROM \"{table}\" \
+                 WHERE \"key\" = ?1 AND \"side\" IN (SELECT value FROM json_each(?2))"
+            ),
+            params![&subject.key, serde_json::to_string(&sides)?],
+        )?;
+        let mut selected = BTreeMap::new();
+        for values in rows {
+            let row = crate::engine::SqlRow(values);
+            let seq = crate::read::to_u64(row.get(0)?, "claim sequence")?;
+            let id: String = row.get(1)?;
+            let bytes = crate::read::to_u64(row.get(2)?, "claim bytes")?;
+            selected.insert((seq, id), bytes);
+        }
+        if selected.len() > limit {
+            return Err(CellError::OutOfRange("link claim bundles"));
+        }
+        if selected
+            .values()
+            .fold(0u64, |sum, length| sum.saturating_add(*length))
+            > MAX_CLAIM_BYTES
+        {
+            return Err(CellError::OutOfRange("link claim evidence bytes"));
+        }
+        Ok(selected.into_keys().map(|(_, id)| id).collect())
     }
 
     /// OBS-LINK-DISPUTE-1: one open finding per edge a dispute holds back
@@ -367,6 +421,44 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             targets: BTreeSet::new(),
         };
         let entries = self.claim_journal(&[], Some(&scope))?;
+        self.held_link_findings_from_entries(model, &subject, &entries, |bundle| {
+            self.mapping_event_dispute(bundle)
+        })
+    }
+
+    pub(crate) fn held_link_findings_in_index(
+        &self,
+        object_type: &str,
+        key: &str,
+        index: &SourceDisputeIndex,
+    ) -> Result<Vec<norn_ir::DataQualityFinding>, CellError> {
+        let roots = self.source_dispute_roots(MAIN_WORLD, object_type, key)?;
+        if !index.has_subject(roots.as_deref(), key) {
+            return Ok(Vec::new());
+        }
+        let catalog = TypeCatalog::new(self.model().object_types())
+            .with_interfaces(self.model().interfaces());
+        let model = CommitModel::new(&catalog);
+        let subject = model.canonical(&FactKey::new(object_type, key));
+        let mut bundles = Vec::new();
+        for id in self.claim_bundles_for_source(&subject, model, MAX_CLAIM_BUNDLES)? {
+            let bundle = self.claim_bundle(&id)?;
+            let disputed = index.event_dispute(&bundle)?.is_some();
+            bundles.push((bundle, false, disputed));
+        }
+        let entries = self.claim_journal_entries(&bundles)?;
+        self.held_link_findings_from_entries(model, &subject, &entries, |bundle| {
+            index.event_dispute(bundle)
+        })
+    }
+
+    fn held_link_findings_from_entries(
+        &self,
+        model: CommitModel<'_, '_>,
+        subject: &FactKey,
+        entries: &[Entry],
+        mut event_dispute: impl FnMut(&MappingBundle) -> Result<Option<EventDispute>, CellError>,
+    ) -> Result<Vec<norn_ir::DataQualityFinding>, CellError> {
         let fact = |object_type: &norn_ir::ObjectTypeName, key: &str| {
             model.canonical(&FactKey::new(object_type.as_str(), key))
         };
@@ -382,9 +474,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .is_some_and(|concrete| model.is_a(&concrete, &key.object_type)))
         };
         let mut groups = BTreeMap::<_, Vec<&Entry>>::new();
-        for entry in &entries {
+        for entry in entries {
             let source = fact(&entry.claim.source_type, &entry.claim.source_key);
-            if source == subject {
+            if source == *subject {
                 groups
                     .entry((source, entry.claim.role.clone()))
                     .or_default()
@@ -408,7 +500,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     continue;
                 }
                 let bundle = self.claim_bundle(&entry.claim.observation_id)?;
-                let Some(dispute) = self.mapping_event_dispute(&bundle)? else {
+                let Some(dispute) = event_dispute(&bundle)? else {
                     continue;
                 };
                 held.entry(model.canonical_link(&link))

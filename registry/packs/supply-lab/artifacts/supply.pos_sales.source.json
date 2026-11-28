@@ -1,0 +1,140 @@
+{
+  "artifactId": "supply.pos_sales.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "Synthetic retail POS sales feed",
+  "namespace": "supply",
+  "payload": {
+    "adapter": {
+      "name": "synthetic-feed-replay",
+      "version": "0.1.0"
+    },
+    "constraints": [
+      {
+        "dataset": "pos_sale_line",
+        "fields": [
+          "pos_line_id"
+        ],
+        "id": "pos_line_identity",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "pos_sale_line",
+        "kind": "table",
+        "nativeName": "POS ticket line export"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "pos_sale_line",
+        "name": "pos_line_id",
+        "nativeType": "VARCHAR",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "pos_sale_line",
+        "name": "branch_code",
+        "nativeType": "VARCHAR",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "pos_sale_line",
+        "name": "barcode_sku",
+        "nativeType": "VARCHAR",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "pos_sale_line",
+        "name": "qty",
+        "nativeType": "NUMERIC",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "pos_sale_line",
+        "name": "uom",
+        "nativeType": "VARCHAR",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "pos_sale_line",
+        "name": "net_amount",
+        "nativeType": "NUMERIC",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "pos_sale_line",
+        "name": "ccy",
+        "nativeType": "VARCHAR",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "pos_sale_line",
+        "name": "sold_at",
+        "nativeType": "TIMESTAMP",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-10-26T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a",
+      "uri": "evidence://supply-lab/pos-sales-v1"
+    },
+    "source": {
+      "instance": "retail-lab",
+      "system": "synthetic-pos",
+      "version": "pos-sales-v1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.pos_sales.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,30 @@
+{
+  "artifactId": "supply.store_kpi.record_withheld.action.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Record withheld store commercial KPI rollup labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "تسجيل ملخص مؤشرات محجوب",
+          "en": "Record withheld KPI rollup"
+        },
+        "target": {
+          "actionId": "supply.store_kpi.record_withheld",
+          "kind": "action"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.store_kpi.record_withheld.action.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

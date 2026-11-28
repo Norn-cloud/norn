@@ -1,0 +1,33 @@
+{
+  "artifactId": "supply.CostEvidence.interface.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Unit cost evidence labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "بيانات تكلفة الوحدة",
+          "en": "Unit cost evidence"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.CostEvidence"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.CostEvidence.interface.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

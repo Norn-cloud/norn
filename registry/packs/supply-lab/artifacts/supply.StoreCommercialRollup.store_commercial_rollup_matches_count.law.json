@@ -1,0 +1,51 @@
+{
+  "artifactId": "supply.StoreCommercialRollup.store_commercial_rollup_matches_count.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.StoreCommercialRollup.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A verified commercial KPI rollup must bind to an on-hand StoreCount for the same store, SKU, and unit while allowing subsequent period recounts.",
+  "namespace": "supply",
+  "payload": {
+    "condition": "self.on_hand_count != null",
+    "id": "supply.StoreCommercialRollup.store_commercial_rollup_matches_count",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "A verified commercial KPI rollup must bind to an on-hand StoreCount for the same store, SKU, and unit while allowing subsequent period recounts.",
+    "response": {
+      "expression": "(((((self.on_hand_count_id ?? '') == self.on_hand_count.store_count_id) and (self.store_id == self.on_hand_count.store_id)) and (self.sku_id == self.on_hand_count.sku_id)) and (self.unit == self.on_hand_count.unit)) and (self.on_hand_count.quantity_basis == 'on_hand')",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.StoreCommercialRollup"
+      ],
+      "root": {
+        "id": "supply.StoreCommercialRollup",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.StoreCommercialRollup"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StoreCommercialRollup.store_commercial_rollup_matches_count.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

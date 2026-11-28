@@ -1,0 +1,51 @@
+{
+  "artifactId": "supply.StoreCommercialRollup.store_commercial_rollup_count_not_future.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.StoreCommercialRollup.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A verified commercial KPI rollup must cite a fresh physical count dated at or before period_end and within the 7-day freshness window.",
+  "namespace": "supply",
+  "payload": {
+    "condition": "self.count_as_of != null",
+    "id": "supply.StoreCommercialRollup.store_commercial_rollup_count_not_future",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "A verified commercial KPI rollup must cite a fresh physical count dated at or before period_end and within the 7-day freshness window.",
+    "response": {
+      "expression": "(timestamp(self.count_as_of ?? self.period_start) <= timestamp(self.period_end)) and (seconds_between(timestamp(self.count_as_of ?? self.period_start), timestamp(self.period_end)) <= 604800)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.StoreCommercialRollup"
+      ],
+      "root": {
+        "id": "supply.StoreCommercialRollup",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.StoreCommercialRollup"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StoreCommercialRollup.store_commercial_rollup_count_not_future.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
