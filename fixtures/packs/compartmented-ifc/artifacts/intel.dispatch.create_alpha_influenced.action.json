@@ -1,0 +1,123 @@
+{
+  "artifactId": "intel.dispatch.create_alpha_influenced.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "draft",
+  "name": "Create dispatch conditioned on Compartment Alpha brief",
+  "namespace": "intel",
+  "payload": {
+    "access": {
+      "artifactId": "intel.compartment.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "intel.dispatch.create_alpha_influenced",
+    "createLinks": [
+      {
+        "link": "dossier",
+        "targetIdField": "dossier_id",
+        "targetType": "intel.Dossier"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "intel.Dispatch.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "intel.Dispatch",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha_note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "beta_note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dossier_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "joint_note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "dossier_id",
+        "summary",
+        "alpha_note",
+        "beta_note",
+        "joint_note"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.dossier.code != '') and (slice.dossier.alpha_brief != '')"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "dossier_id"
+          }
+        },
+        "name": "dossier",
+        "objectType": "intel.Dossier"
+      }
+    ],
+    "title": "Create dispatch conditioned on Compartment Alpha brief",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "intel.Dispatch"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/packs/compartmented-ifc/compartmented.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_bench"
+  },
+  "version": "0.1.0"
+}

@@ -1,0 +1,41 @@
+{
+  "artifactId": "intel.compartment.markings.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "draft",
+  "name": "Compartmented need-to-know markings",
+  "namespace": "intel",
+  "payload": {
+    "entityVersion": "2.0",
+    "markings": [
+      {
+        "category": "confidential.alpha",
+        "id": "compartment.alpha",
+        "label": "Compartment Alpha",
+        "mask": {
+          "kind": "redacted"
+        },
+        "severity": "high"
+      },
+      {
+        "category": "confidential.beta",
+        "id": "compartment.beta",
+        "label": "Compartment Beta",
+        "mask": {
+          "kind": "redacted"
+        },
+        "severity": "high"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/packs/compartmented-ifc/compartmented.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_bench"
+  },
+  "version": "0.1.0"
+}

@@ -1,0 +1,54 @@
+{
+  "artifactId": "intel.dossier.code_non_empty.law",
+  "dependencies": [
+    {
+      "artifactId": "intel.Dossier.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "draft",
+  "name": "Every dossier carries a non-empty code",
+  "namespace": "intel",
+  "payload": {
+    "condition": "true",
+    "id": "intel.dossier.code_non_empty",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "intel",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/packs/compartmented-ifc/compartmented.ts"
+    },
+    "rationale": "Every compartmented dossier requires a non-empty reference code.",
+    "response": {
+      "expression": "self.code != ''",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "intel.Dossier"
+      ],
+      "root": {
+        "id": "intel.Dossier",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "intel.Dossier"
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "fixtures/packs/compartmented-ifc/compartmented.ts"
+  },
+  "scope": {
+    "environmentId": "dev",
+    "orgId": "org_bench"
+  },
+  "version": "0.1.0"
+}
