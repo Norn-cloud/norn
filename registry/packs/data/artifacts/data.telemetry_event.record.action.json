@@ -1,0 +1,85 @@
+{
+  "artifactId": "data.telemetry_event.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record an append-only telemetry observation",
+  "namespace": "data",
+  "payload": {
+    "actionId": "data.telemetry_event.record",
+    "effectProgram": {
+      "entityArtifactId": "data.TelemetryEvent.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "observation_id",
+      "objectKind": "data.TelemetryEvent",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "observable_property": {
+          "type": "string"
+        },
+        "observation_id": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "occurred_at": {
+          "type": "string"
+        },
+        "payload_digest": {
+          "type": "string"
+        },
+        "source_system": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation_id",
+        "occurred_at",
+        "observed_at",
+        "source_system",
+        "observable_property",
+        "payload_digest"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "observation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Record an append-only telemetry observation",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "data.TelemetryEvent"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/data/artifacts/data.telemetry_event.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
