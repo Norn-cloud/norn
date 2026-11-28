@@ -27,7 +27,7 @@ use super::{DEFAULT_LOCAL_CLOCK_MS, LocalActor, LocalCell, LocalCellPacks};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
-fn refusal_err(refusal: Refusal) -> String {
+fn refusal_err(refusal: &Refusal) -> String {
     format!(
         "{}: {} ({})",
         refusal.code, refusal.message, refusal.explanation
@@ -158,7 +158,8 @@ fn build_policy_from_rule(
     let action_val = sample_action_json(Some("demo.item.access.policy"));
     let policy_val = policy_artifact_json(&access_ir)?;
     let canonical = serde_json::to_string(&json!([sample_entity_json(), action_val, policy_val]))?;
-    let snapshot = PolicySnapshot::from_canonical_set(&canonical).map_err(refusal_err)?;
+    let snapshot =
+        PolicySnapshot::from_canonical_set(&canonical).map_err(|err| refusal_err(&err))?;
     let action_root: norn_ir::ActionRoot = serde_json::from_value(action_val["payload"].clone())?;
     let local_policy = LocalPolicy {
         scope: demo_scope(),
@@ -379,8 +380,8 @@ fn policy_fails_closed_on_unverifiable_predicates() -> TestResult {
     let input = RuntimeObject::new();
     let target = FactKey::new("demo.Item", "i-1");
     for (label, extra_cond) in unverifiable {
-        let rule = base_rule(vec![role.clone(), extra_cond]);
-        let (policy, action) = build_policy_from_rule(rule)?;
+        let access_rule = base_rule(vec![role.clone(), extra_cond]);
+        let (policy, action) = build_policy_from_rule(access_rule)?;
         let pre = with_actor(Some(&actor), || {
             policy.authorize(&AccessRequest {
                 scope: &demo_scope(),
@@ -420,7 +421,7 @@ fn apply_definitions_refreshes_policy_atomically_for_newly_governed_action() -> 
             app_artifacts: &initial_app,
         },
     )
-    .map_err(refusal_err)?;
+    .map_err(|err| refusal_err(&err))?;
     let member = LocalActor::new("m1", vec!["member".to_owned()]);
     let admin = LocalActor::new("a1", vec!["admin".to_owned()]);
     let query = ActionQuery {
@@ -446,7 +447,7 @@ fn apply_definitions_refreshes_policy_atomically_for_newly_governed_action() -> 
     );
     let expected = cell
         .active_definitions_version()
-        .map_err(refusal_err)?
+        .map_err(|err| refusal_err(&err))?
         .unwrap_or(1);
     let apply_body = json!({
         "artifacts": [
@@ -463,7 +464,7 @@ fn apply_definitions_refreshes_policy_atomically_for_newly_governed_action() -> 
     };
     let _applied = cell
         .apply_definitions(&scope_query, Some(&admin), &apply_body)
-        .map_err(refusal_err)?;
+        .map_err(|err| refusal_err(&err))?;
 
     let body_2 = json!({
         "input": { "item_id": "i-2", "tier": "gold", "priority": 5 },
