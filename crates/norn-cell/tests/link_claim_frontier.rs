@@ -3521,3 +3521,103 @@ fn dispute_resolve_reject_restores_undisputed_predecessor_link() {
         .verify_frontier_equivalence()
         .expect("rebuilt frontier equivalence after predecessor restore");
 }
+
+/// #1549: Rejecting v2 restores v1 (`A -> B`), and subsequently disputing and
+/// rejecting v1 must withdraw the carried-forward `A -> B` link as well.
+#[test]
+fn dispute_resolve_reject_restored_predecessor_removes_link() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("reject_restored_predecessor.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    let c = party_ref_row("P-C", "demo/party/c", "C", None);
+    let a_v1 = party_ref_row("P-A", "demo/party/a", "A v1", Some("demo/party/b"));
+    let a_v1_conflict = party_ref_row("P-A", "demo/party/a", "A v1 BAD", Some("demo/party/b"));
+    let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", Some("demo/party/c"));
+    let a_v2_conflict = party_ref_row("P-A", "demo/party/a", "A v2 BAD", Some("demo/party/c"));
+    land_party(&mut cell, &b, "eb", "1", "p1");
+    land_party(&mut cell, &c, "ec", "1", "p1");
+    land_party(&mut cell, &a_v1, "e1", "1", "p1");
+    land_party(&mut cell, &a_v2, "e2", "2", "p1");
+
+    let conflict_v2 = inject_conflict(&mut cell, &a_v2_conflict, "e2", "2", "p1");
+    resolve_dispute(
+        &mut cell,
+        &conflict_v2,
+        DisputeDecision::Reject,
+        "ops:a",
+        "reject v2",
+    );
+    assert_eq!(
+        refers_targets(&cell, "demo/party/a"),
+        BTreeSet::from(["demo/party/b".to_owned()])
+    );
+
+    let conflict_v1 = inject_conflict(&mut cell, &a_v1_conflict, "e1", "1", "p1");
+    resolve_dispute(
+        &mut cell,
+        &conflict_v1,
+        DisputeDecision::Reject,
+        "ops:a",
+        "reject v1",
+    );
+    assert!(
+        refers_targets(&cell, "demo/party/a").is_empty(),
+        "rejecting restored predecessor v1 must remove A -> B"
+    );
+    cell.store()
+        .read()
+        .verify_frontier_equivalence()
+        .expect("frontier equivalence after rejecting restored predecessor");
+    let (records, head) = export_records_and_head(&cell);
+    let rebuilt = rebuild_in_memory(&records, &head);
+    rebuilt
+        .read()
+        .verify_frontier_equivalence()
+        .expect("rebuilt frontier equivalence after rejecting restored predecessor");
+}
+
+/// Tampering a zero-write delete's `_norn_inbox.observed` to canonically
+/// equivalent NFD must fail closed on open even when `_norn_link_claim_frontier`
+/// also requires repair.
+#[test]
+fn nfd_tampered_zero_write_delete_fails_closed_even_after_frontier_repair() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("nfd_zero_write_delete.sqlite");
+    let mut cell = setup_with(&path, referring_parties);
+
+    let b = party_ref_row("P-B", "demo/party/b", "B", None);
+    land_party(&mut cell, &b, "eb", "1", "p1");
+    let del_nfc = party_ref_row("P-caf\u{00e9}", "demo/party/cafe", "Cafe del", None);
+    let obs_del = capture_kind(&mut cell, "erpnext", &del_nfc, "ed3", "3", "delete", "p1");
+    drop(cell);
+
+    let raw = rusqlite::Connection::open(&path).expect("raw sqlite");
+    let changed = raw
+        .execute(
+            "UPDATE \"_norn_inbox\" \
+             SET \"observed\" = replace(\"observed\", 'P-caf\u{00e9}', 'P-cafe\u{0301}') \
+             WHERE \"observation_id\" = ?1",
+            [&obs_del],
+        )
+        .expect("nfd tamper inbox");
+    assert_eq!(changed, 1);
+    // Also remove frontier rows so open hits the repair branch too.
+    raw.execute("DELETE FROM \"_norn_link_claim_frontier\"", [])
+        .expect("clear frontier");
+    drop(raw);
+
+    let reopen_err = CellStore::open(
+        norn_cell::engine::NativeEngine::open(&path).expect("reopen engine"),
+        referring_parties(),
+        "tenant/dev",
+    )
+    .expect_err(
+        "reopen must fail closed on NFD-tampered zero-write delete even with frontier drift",
+    );
+    assert!(
+        matches!(reopen_err, CellError::LedgerCorrupt { .. }),
+        "expected LedgerCorrupt, got {reopen_err:?}"
+    );
+}

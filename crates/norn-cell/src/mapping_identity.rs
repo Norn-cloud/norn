@@ -228,9 +228,186 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.indexed_source_findings(object_type, key, true)
     }
 
+    /// Active frontier claims associated with `event_keys`, including active
+    /// `DisputeDecision::Reject` carry-forward claims whose surviving
+    /// predecessor set currently restores a claim from `event_keys` (along with
+    /// those carried predecessor rows so a subsequent `Reject` excludes them).
+    pub(crate) fn disputed_event_claims(
+        &self,
+        event_keys: &[String; 5],
+    ) -> Result<Vec<crate::link_claim_frontier::FrontierRow>, CellError> {
+        let keys_json = serde_json::to_string(event_keys)?;
+        let all_event_claims =
+            self.query_frontier("WHERE \"event_keys_json\" = ?1", params![keys_json])?;
+        let mut out = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut inactive_contribs = std::collections::BTreeSet::new();
+        for row in all_event_claims {
+            if row.active {
+                if seen.insert(row.claim_id.clone()) {
+                    out.push(row);
+                }
+            } else if !self.is_reject_carry_claim(&row)? {
+                inactive_contribs.insert(row.contribution_id);
+            }
+        }
+        for contribution_id in inactive_contribs {
+            let active = self.active_claims_for_contribution(&contribution_id)?;
+            let mut has_carry = false;
+            for r in &active {
+                if self.is_reject_carry_claim(r)? {
+                    has_carry = true;
+                    break;
+                }
+            }
+            if !has_carry {
+                continue;
+            }
+            let surviving = self.surviving_predecessors_after_reject(
+                &contribution_id,
+                active.clone(),
+                &std::collections::BTreeSet::new(),
+            )?;
+            let carried: Vec<_> = surviving
+                .into_iter()
+                .filter(|r| &r.event_keys == event_keys)
+                .collect();
+            if carried.is_empty() {
+                continue;
+            }
+            for r in active {
+                if self.is_reject_carry_claim(&r)? && seen.insert(r.claim_id.clone()) {
+                    out.push(r);
+                }
+            }
+            for r in carried {
+                if seen.insert(r.claim_id.clone()) {
+                    out.push(r);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Whether `row` (or, for a `DisputeDecision::Reject` carry-forward claim,
+    /// any surviving predecessor it carries) has a verified source version
+    /// strictly greater than `incoming`.
+    pub(crate) fn claim_is_newer_than(
+        &self,
+        row: &crate::link_claim_frontier::FrontierRow,
+        incoming: &norn_ir::SourceVersion,
+    ) -> Result<bool, CellError> {
+        if self.is_reject_carry_claim(row)? {
+            let active = self.active_claims_for_contribution(&row.contribution_id)?;
+            for pred in self.surviving_predecessors_after_reject(
+                &row.contribution_id,
+                active,
+                &std::collections::BTreeSet::new(),
+            )? {
+                if crate::mapping_delete::parse_verified_frontier_version(self, &pred)?
+                    .and_then(|v| v.try_cmp(incoming).ok())
+                    == Some(std::cmp::Ordering::Greater)
+                {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+        Ok(
+            crate::mapping_delete::parse_verified_frontier_version(self, row)?
+                .and_then(|v| v.try_cmp(incoming).ok())
+                == Some(std::cmp::Ordering::Greater),
+        )
+    }
+
+    /// Release any held `target: None` reject-carry claim whose surviving
+    /// predecessor belongs to `dispute_id`'s event once `AcceptFirst` resolves
+    /// that dispute. Returns empty for ordinary `AcceptFirst` resolutions.
+    pub(crate) fn accept_first_carry_release_claims(
+        &self,
+        dispute_id: &str,
+        event_keys: &[String; 5],
+        active_event_claims: &[crate::link_claim_frontier::FrontierRow],
+        model: norn_kernel::CommitModel<'_, '_>,
+        scope: &mut crate::mapping_links::ClaimScope,
+    ) -> Result<Vec<(norn_ir::mapping::ObservedLinkClaim, [String; 5])>, CellError> {
+        let mut by_contrib: std::collections::BTreeMap<
+            String,
+            Vec<&crate::link_claim_frontier::FrontierRow>,
+        > = std::collections::BTreeMap::new();
+        for row in active_event_claims {
+            if row.active && row.claim.target.is_none() && self.is_reject_carry_claim(row)? {
+                by_contrib
+                    .entry(row.contribution_id.clone())
+                    .or_default()
+                    .push(row);
+            }
+        }
+        let mut fresh = Vec::new();
+        for (contribution_id, carries) in by_contrib {
+            let Some(first) = carries.first() else {
+                continue;
+            };
+            let active = self.active_claims_for_contribution(&contribution_id)?;
+            let surviving = self.surviving_predecessors_after_reject(
+                &contribution_id,
+                active,
+                &std::collections::BTreeSet::new(),
+            )?;
+            let mut any_disputed = false;
+            for r in &surviving {
+                if self
+                    .event_dispute_for_keys(&r.event_keys, Some(dispute_id))?
+                    .is_some()
+                {
+                    any_disputed = true;
+                    break;
+                }
+            }
+            let targets: std::collections::BTreeSet<_> = surviving
+                .iter()
+                .map(|r| {
+                    r.claim
+                        .target
+                        .as_ref()
+                        .map(|t| (t.object_type.clone(), t.key.clone()))
+                })
+                .collect();
+            let Some(target) = (!any_disputed && targets.len() == 1)
+                .then(|| surviving.first().and_then(|r| r.claim.target.clone()))
+                .flatten()
+            else {
+                continue;
+            };
+            let exclusive = model
+                .link(&first.claim.source_type, first.claim.role.as_str())
+                .is_none_or(|link| link.cardinality.from == norn_ir::Multiplicity::One);
+            if exclusive {
+                scope.targets.insert(target.key.clone());
+            }
+            scope.sources.insert(first.claim.source_key.clone());
+            fresh.push((
+                norn_ir::mapping::ObservedLinkClaim {
+                    observation_id: dispute_id.to_owned(),
+                    source_scope: first.claim.source_scope.clone(),
+                    source_type: first.claim.source_type.clone(),
+                    source_key: first.claim.source_key.clone(),
+                    role: first.claim.role.clone(),
+                    target: Some(target),
+                    provenance: first.claim.provenance.clone(),
+                    supersedes: carries.iter().map(|r| r.claim_id.clone()).collect(),
+                },
+                event_keys.clone(),
+            ));
+        }
+        Ok(fresh)
+    }
+
     /// Recompute the surviving non-rejected real link claims of `contribution_id`
-    /// after excluding `newly_rejected` and all claims superseded by prior
-    /// `DisputeDecision::Reject` carry-forward claims.
+    /// after excluding `newly_rejected`, all claims superseded by prior
+    /// `DisputeDecision::Reject` carry-forward claims, and any claim whose
+    /// `event_keys` already carries a verified `DisputeDecision::Reject` at or
+    /// after that claim's commit.
     pub(crate) fn surviving_predecessors_after_reject(
         &self,
         contribution_id: &str,
@@ -253,9 +430,33 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 real_claims.push(r);
             }
         }
+        let mut rejected_event_commits: std::collections::BTreeMap<[String; 5], u64> =
+            std::collections::BTreeMap::new();
+        for rec in self.dispute_resolutions()? {
+            if rec.decision != "reject" {
+                continue;
+            }
+            let meta = crate::link_claim_frontier::claim_source_meta(
+                self.conn,
+                Some(self),
+                rec.commit_seq,
+                None,
+                &rec.dispute_id,
+                true,
+            )?;
+            rejected_event_commits
+                .entry(meta.event_keys)
+                .and_modify(|seq| *seq = (*seq).max(rec.commit_seq))
+                .or_insert(rec.commit_seq);
+        }
         let remaining: Vec<_> = real_claims
             .into_iter()
-            .filter(|r| !rejected_ids.contains(&r.claim_id))
+            .filter(|r| {
+                !rejected_ids.contains(&r.claim_id)
+                    && !rejected_event_commits
+                        .get(&r.event_keys)
+                        .is_some_and(|&rej_seq| rej_seq >= r.commit_seq)
+            })
             .collect();
         let mut superseded_by_survivor = std::collections::BTreeSet::new();
         let mut stack: Vec<String> = remaining

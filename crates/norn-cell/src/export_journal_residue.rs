@@ -545,7 +545,24 @@ fn verify_zero_write_delete_candidate<E: SqlEngine>(
         seq: commit_seq,
         reason: format!("corrupt inbox JSON for zero-write delete {obs_id}: {err}"),
     })?;
+    // Compare both canonical JSON and exact UTF-8 string bytes on every field
+    // matched by `_norn_inbox/source_delete` so canonically equivalent non-NFC
+    // tampering cannot hide a delete from byte-for-byte SQLite index lookups.
+    const INDEXED_POINTERS: [&str; 7] = [
+        "/input/input/connectorInstance",
+        "/input/input/partition",
+        "/input/raw/source",
+        "/input/raw/source_id",
+        "/input/raw/kind",
+        "/input/input/mapping",
+        "/input/input/dataset",
+    ];
+    let indexed_fields_match = INDEXED_POINTERS.iter().all(|ptr| {
+        inbox_val.pointer(ptr).and_then(Value::as_str)
+            == auth_observed.pointer(ptr).and_then(Value::as_str)
+    });
     if consumed_seq != Some(commit_seq_i64)
+        || !indexed_fields_match
         || canonical_json(&inbox_val)? != canonical_json(auth_observed)?
     {
         return Err(CellError::LedgerCorrupt {

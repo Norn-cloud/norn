@@ -468,6 +468,7 @@ pub(crate) fn verify_or_rebuild_on_open<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     force_rebuild: bool,
 ) -> Result<(), CellError> {
+    crate::export_journal_residue::verify_zero_write_delete_inbox(reader)?;
     if force_rebuild || frontier_has_drift(reader)? {
         rebuild_inner(reader.conn, Some(reader))?;
     }
@@ -480,6 +481,7 @@ pub(crate) fn verify_or_rebuild_on_open<E: SqlEngine>(
 pub(crate) fn frontier_has_drift<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
 ) -> Result<bool, CellError> {
+    crate::export_journal_residue::verify_zero_write_delete_inbox(reader)?;
     let (expected_claims, expected_superseded) =
         decode_claims_from_fact_values(reader.conn, Some(reader))?;
     let stored_claims = reader.conn.query(
@@ -538,7 +540,6 @@ pub(crate) fn frontier_has_drift<E: SqlEngine>(
             return Ok(true);
         }
     }
-    crate::export_journal_residue::verify_zero_write_delete_inbox(reader)?;
     let expected_resolutions = expected_dispute_resolutions(reader.conn)?;
     let Ok(stored_resolutions) = reader.dispute_resolutions() else {
         return Ok(true);
@@ -850,7 +851,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         rows.into_iter().map(decode_frontier_row).collect()
     }
 
-    fn query_frontier(
+    pub(crate) fn query_frontier(
         &self,
         where_clause: &str,
         bound: &[crate::engine::SqlValue],
@@ -957,17 +958,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                AND \"source_scope\" = ?2 AND \"source_type\" = ?3 \
                AND \"target_key\" IS NOT NULL",
             params![source_key, source_scope, source_type],
-        )
-    }
-
-    pub(crate) fn active_claims_for_event_keys(
-        &self,
-        event_keys: &[String; 5],
-    ) -> Result<Vec<FrontierRow>, CellError> {
-        let keys_json = serde_json::to_string(event_keys)?;
-        self.query_frontier(
-            "WHERE \"active\" = 1 AND \"event_keys_json\" = ?1",
-            params![keys_json],
         )
     }
 

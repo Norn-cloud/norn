@@ -523,7 +523,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let incoming = dispute.incoming_bundle();
 
         let mut scope = ClaimScope::default();
-        let active_event_claims = self.active_claims_for_event_keys(&event_keys)?;
+        let active_event_claims = self.disputed_event_claims(&event_keys)?;
         for row in &active_event_claims {
             scope.sources.insert(row.claim.source_key.clone());
         }
@@ -549,7 +549,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         }
 
         let fresh_claims = match decision {
-            DisputeDecision::AcceptFirst => Vec::new(),
+            DisputeDecision::AcceptFirst => self.accept_first_carry_release_claims(
+                dispute_id,
+                &event_keys,
+                &active_event_claims,
+                model,
+                &mut scope,
+            )?,
             DisputeDecision::AcceptSecondAsCorrection => self.correction_fresh_claims(
                 dispute_id,
                 incoming,
@@ -593,10 +599,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 if row.contribution_id != contribution {
                     continue;
                 }
-                let is_newer = crate::mapping_delete::parse_verified_frontier_version(self, row)?
-                    .and_then(|v| v.try_cmp(&incoming_version).ok())
-                    == Some(std::cmp::Ordering::Greater);
-                if !is_newer {
+                if !self.claim_is_newer_than(row, &incoming_version)? {
                     supersedes.insert(row.claim_id.clone());
                 }
             }

@@ -235,9 +235,9 @@ fn has_newer_or_incomparable_landed<E: SqlEngine>(
         bundle.input.dataset.as_str(),
     ];
     let rows = if deletes_only {
-        reader.read_frontier_consistent(|| reader.conn.query(&inbox_sql, &inbox_params))?
+        reader.read_frontier_consistent(|| reader.conn.query(&inbox_sql, inbox_params))?
     } else {
-        reader.conn.query(&inbox_sql, &inbox_params)?
+        reader.conn.query(&inbox_sql, inbox_params)?
     };
     for raw in rows {
         let row = crate::engine::SqlRow(raw);
