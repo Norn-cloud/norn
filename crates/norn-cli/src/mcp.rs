@@ -1,11 +1,11 @@
 //! Stdio adapter over the human command catalog; unavailable backends are absent.
-use super::{Cli, Command, run_check};
-use clap::{CommandFactory as _, Parser as _};
+use super::Cli;
+use clap::CommandFactory as _;
 use norn_api::{
     mcp::{Backend, CallOutput, Session},
     refusal::Refusal,
 };
-use norn_ir::{McpTool, McpToolAnnotations, RuntimeObject, RuntimeValue};
+use norn_ir::{McpTool, RuntimeObject, RuntimeValue};
 use std::io::{BufRead as _, Read as _};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -17,76 +17,40 @@ fn platform_tools() -> Result<Vec<McpTool>, String> {
     static TOOLS: OnceLock<Result<Vec<McpTool>, String>> = OnceLock::new();
     TOOLS
         .get_or_init(|| {
-            let command = Cli::command();
-            ["capabilities", "check"]
-                .into_iter()
+            let mut command = Cli::command();
+            command.build();
+            crate::mcp_tools::PLATFORM_TOOLS
+                .iter()
                 .map(|name| {
                     let operation = command
                         .find_subcommand(name)
                         .ok_or_else(|| format!("missing {name} command"))?;
-                    command_tool(operation)
+                    crate::mcp_tools::command_tool(operation)
                 })
                 .collect()
         })
         .clone()
 }
-fn command_tool(operation: &clap::Command) -> Result<McpTool, String> {
-    // The platform catalog is generated from the human command's argument IR.
-    let mut properties = serde_json::Map::new();
-    let mut required = Vec::new();
-    for arg in operation
-        .get_arguments()
-        .filter(|arg| arg.get_long().is_some() && arg.get_action().takes_values())
-    {
-        let name = arg.get_id().as_str();
-        properties.insert(name.into(), serde_json::json!({"type":"string", "description":arg.get_help().map_or_default(ToString::to_string)}));
-        if arg.is_required_set() {
-            required.push(name);
+
+struct Human {
+    workspace_root: Option<PathBuf>,
+}
+
+impl Human {
+    const fn current_dir() -> Self {
+        Self {
+            workspace_root: None,
         }
     }
-    serde_json::from_value(serde_json::json!({
-        "name":format!("norn.{}",operation.get_name()),
-        "title":operation.get_about().map(ToString::to_string),
-        "description":operation.get_long_about().or_else(|| operation.get_about()).map(ToString::to_string),
-        "inputSchema":{"type":"object","additionalProperties":false,"properties":properties,"required":required},
-        "annotations":McpToolAnnotations { title:None, read_only_hint:Some(true), destructive_hint:Some(false), idempotent_hint:Some(true), open_world_hint:Some(false) }
-    })).map_err(|e|e.to_string())
-}
-fn is_valid_flag_key(key: &str) -> bool {
-    !key.is_empty()
-        && !key.starts_with('-')
-        && key
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+
+    #[cfg(test)]
+    const fn with_workspace(root: PathBuf) -> Self {
+        Self {
+            workspace_root: Some(root),
+        }
+    }
 }
 
-fn confine_check_path(path: &Path, workspace_root: &Path) -> Result<PathBuf, Refusal> {
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        workspace_root.join(path)
-    };
-    let meta = std::fs::symlink_metadata(&candidate).map_err(|_error| {
-        Refusal::invalid("check path is unreadable or outside the current working directory")
-    })?;
-    if meta.file_type().is_symlink() || !meta.is_file() {
-        return Err(Refusal::invalid(
-            "check paths must be regular files within the current working directory",
-        ));
-    }
-    let canonical_root = std::fs::canonicalize(workspace_root).map_err(Refusal::host)?;
-    let canonical_path = std::fs::canonicalize(&candidate).map_err(|_error| {
-        Refusal::invalid("check path is unreadable or outside the current working directory")
-    })?;
-    if !canonical_path.starts_with(&canonical_root) {
-        return Err(Refusal::invalid(
-            "check paths must stay within the current working directory",
-        ));
-    }
-    Ok(canonical_path)
-}
-
-struct Human;
 impl Backend for Human {
     fn call(
         &mut self,
@@ -94,86 +58,31 @@ impl Backend for Human {
         arguments: RuntimeObject,
         _metadata: RuntimeObject,
     ) -> Result<CallOutput, Refusal> {
-        let operation = name
-            .strip_prefix("norn.")
-            .ok_or_else(|| Refusal::invalid("unknown command"))?;
-        let mut argv = vec!["norn".to_owned(), operation.to_owned()];
-        for (key, value) in arguments {
-            if !is_valid_flag_key(&key) {
-                return Err(Refusal::invalid(
-                    "command argument names must match the advertised input schema",
-                ));
-            }
-            let RuntimeValue::String(value) = value else {
-                return Err(Refusal::invalid(
-                    "command arguments must be strings; use the advertised input schema",
-                ));
-            };
-            argv.push(format!("--{key}={value}"));
-        }
-        let parsed =
-            Cli::try_parse_from(argv).map_err(|error| Refusal::invalid(error.to_string()))?;
-        let (artifacts, context) = match parsed.command {
-            Command::Capabilities { cursor } => {
-                return capabilities_catalog(cursor.as_deref()).map(|value| CallOutput {
-                    value,
-                    is_error: false,
-                });
-            }
-            Command::Check(check_args) => {
-                match (
-                    check_args.artifacts,
-                    check_args.context,
-                    check_args.source,
-                    check_args.base.is_empty(),
-                ) {
-                    (Some(artifacts), Some(context), None, true) => (artifacts, context),
-                    _ => {
-                        return Err(Refusal::invalid(
-                            "MCP norn.check requires --artifacts and --context without --source or --base",
-                        ));
-                    }
-                }
-            }
-            Command::Mcp
-            | Command::Remote(_)
-            | Command::Cell(_)
-            | Command::Source(_)
-            | Command::Compile(_)
-            | Command::Fmt(_)
-            | Command::Profile(_)
-            | Command::Question(_)
-            | Command::Dashboard(_)
-            | Command::Eval { .. }
-            | Command::Openapi
-            | Command::SourceDigest { .. }
-            | Command::Explain(_)
-            | Command::Test(_)
-            | Command::Dev(_) => {
-                return Err(Refusal::invalid("backend unavailable"));
-            }
+        let workspace_root = match &self.workspace_root {
+            Some(root) => root.clone(),
+            None => std::env::current_dir().map_err(Refusal::host)?,
         };
-        let workspace_root = std::env::current_dir().map_err(Refusal::host)?;
-        let artifacts = confine_check_path(&artifacts, &workspace_root)?;
-        let context = confine_check_path(&context, &workspace_root)?;
-        let (value, accepted) = run_check(&artifacts, &context).map_err(|error| {
-            Refusal::invalid(format!(
-                "norn {operation} failed: {error}. Repair the named arguments or files and retry."
-            ))
-        })?;
-        Ok(CallOutput {
-            value: RuntimeValue::from_json_text(&value).map_err(Refusal::host)?,
-            is_error: !accepted,
-        })
+        crate::mcp_tools::call_tool(name, arguments, &workspace_root)
     }
 }
-fn catalog_session() -> Result<Session, Refusal> {
-    let binding = std::env::current_dir()
-        .map_err(Refusal::host)?
-        .to_string_lossy()
-        .into_owned();
+
+pub(crate) fn catalog_session_for(workspace_root: &Path) -> Result<Session, Refusal> {
+    let binding = workspace_root.to_string_lossy().into_owned();
     Session::new(platform_tools().map_err(Refusal::host)?, &binding)
 }
+
+fn catalog_session() -> Result<Session, Refusal> {
+    let cwd = std::env::current_dir().map_err(Refusal::host)?;
+    catalog_session_for(&cwd)
+}
+
+pub(crate) fn capabilities_catalog_for(
+    cursor: Option<&str>,
+    workspace_root: &Path,
+) -> Result<RuntimeValue, Refusal> {
+    catalog_session_for(workspace_root)?.catalog(cursor, None)
+}
+
 fn capabilities_catalog(cursor: Option<&str>) -> Result<RuntimeValue, Refusal> {
     catalog_session()?.catalog(cursor, None)
 }
@@ -257,7 +166,7 @@ fn serve_io(
 
 pub(super) fn serve() -> Result<(String, bool), String> {
     let mut session = catalog_session().map_err(|e| e.explanation)?;
-    let mut backend = Human;
+    let mut backend = Human::current_dir();
     let mut input = std::io::stdin().lock();
     let mut output = std::io::stdout().lock();
     serve_io(&mut session, &mut backend, &mut input, &mut output)?;
@@ -267,9 +176,41 @@ pub(super) fn serve() -> Result<(String, bool), String> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, reason = "human/MCP correspondence assertions")]
 mod tests {
-    use super::{Human, capabilities, capabilities_catalog, catalog_session};
+    use super::{Human, capabilities, capabilities_catalog, catalog_session, catalog_session_for};
     use norn_api::mcp::Backend as _;
     use norn_ir::{RuntimeObject, RuntimeValue};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static MCP_TEST_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    struct ScratchWorkspace(PathBuf);
+
+    impl ScratchWorkspace {
+        fn new(label: &str) -> Self {
+            let seq = MCP_TEST_SEQ.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir()
+                .join(format!("norn-cli-mcp-{label}-{}-{seq}", std::process::id()));
+            let _stale = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            Self(std::fs::canonicalize(&root).unwrap())
+        }
+
+        fn write(&self, rel: &str, content: &str) -> PathBuf {
+            let path = self.0.join(rel);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&path, content).unwrap();
+            path
+        }
+    }
+
+    impl Drop for ScratchWorkspace {
+        fn drop(&mut self) {
+            let _cleanup = std::fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn capabilities_human_and_mcp_keep_catalog_identity_and_cursor() {
@@ -287,7 +228,7 @@ mod tests {
             let arguments = cursor.map_or_else(RuntimeObject::new, |cursor| {
                 RuntimeObject::from([("cursor".into(), RuntimeValue::String(cursor.into()))])
             });
-            let output = Human
+            let output = Human::current_dir()
                 .call("norn.capabilities", arguments, RuntimeObject::new())
                 .unwrap();
             assert!(!output.is_error);
@@ -300,7 +241,7 @@ mod tests {
         let refusal = capabilities_catalog(Some("obsolete")).unwrap_err();
         let arguments =
             RuntimeObject::from([("cursor".into(), RuntimeValue::String("obsolete".into()))]);
-        let projected = Human
+        let projected = Human::current_dir()
             .call("norn.capabilities", arguments, RuntimeObject::new())
             .map(|_| ())
             .unwrap_err();
@@ -314,7 +255,7 @@ mod tests {
 
     #[test]
     fn clap_flag_injection_and_outside_check_paths_are_refused() {
-        let injected = Human
+        let injected = Human::current_dir()
             .call(
                 "norn.capabilities",
                 RuntimeObject::from([("cursor".into(), RuntimeValue::String("--help".into()))]),
@@ -324,7 +265,7 @@ mod tests {
             .unwrap_err();
         assert!(injected.explanation.contains("restart"));
 
-        let escaped = Human
+        let escaped = Human::current_dir()
             .call(
                 "norn.check",
                 RuntimeObject::from([
@@ -344,7 +285,7 @@ mod tests {
     #[test]
     fn serve_recovers_after_oversized_and_invalid_utf8_lines() {
         let mut session = catalog_session().unwrap().stateless();
-        let mut backend = Human;
+        let mut backend = Human::current_dir();
         let mut raw = vec![b'a'; super::MAX_MCP_LINE_BYTES.saturating_add(16)];
         raw.push(b'\n');
         raw.extend_from_slice(&[0xff, 0xfe, b'\n']);
@@ -369,5 +310,409 @@ mod tests {
         let third: serde_json::Value = serde_json::from_str(lines.get(2).unwrap()).unwrap();
         assert_eq!(third.get("id"), Some(&serde_json::json!(7)));
         assert!(third.get("result").is_some());
+    }
+
+    fn mcp_call(
+        session: &mut norn_api::mcp::Session,
+        backend: &mut Human,
+        id: u64,
+        name: &str,
+        arguments: &serde_json::Value,
+    ) -> serde_json::Value {
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        });
+        let reply = session.handle(&req.to_string(), backend).unwrap().unwrap();
+        serde_json::from_str(&reply).unwrap()
+    }
+
+    #[test]
+    fn mcp_tools_list_advertises_expanded_read_only_tools_and_typed_schemas() {
+        let ws = ScratchWorkspace::new("tools-list");
+        let mut session = catalog_session_for(&ws.0).unwrap().stateless();
+        let mut backend = Human::with_workspace(ws.0.clone());
+
+        let list_reply = session
+            .handle(
+                r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+                &mut backend,
+            )
+            .unwrap()
+            .unwrap();
+        let list_json: serde_json::Value = serde_json::from_str(&list_reply).unwrap();
+        let tools = list_json
+            .pointer("/result/tools")
+            .and_then(serde_json::Value::as_array)
+            .unwrap();
+        let names: Vec<&str> = tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
+            .collect();
+        for expected in [
+            "norn.capabilities",
+            "norn.check",
+            "norn.compile",
+            "norn.explain",
+            "norn.fmt",
+        ] {
+            assert!(
+                names.contains(&expected),
+                "missing tool {expected} in {names:?}"
+            );
+        }
+        let find_tool = |tool_name: &str| {
+            tools
+                .iter()
+                .find(|tool| {
+                    tool.get("name").and_then(serde_json::Value::as_str) == Some(tool_name)
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            find_tool("norn.check").pointer("/inputSchema/properties/forbid_unsafe_zen/type"),
+            Some(&serde_json::json!("boolean"))
+        );
+        assert!(
+            find_tool("norn.compile")
+                .pointer("/inputSchema/properties/out")
+                .is_none()
+        );
+        assert_eq!(
+            find_tool("norn.compile").pointer("/inputSchema/properties/path/type"),
+            Some(&serde_json::json!("string"))
+        );
+        assert_eq!(
+            find_tool("norn.explain").pointer("/inputSchema/properties/kind/type"),
+            Some(&serde_json::json!("string"))
+        );
+        assert_eq!(
+            find_tool("norn.explain").pointer("/inputSchema/properties/base/type"),
+            Some(&serde_json::json!("array"))
+        );
+        assert_eq!(
+            find_tool("norn.fmt").pointer("/inputSchema/properties/check/type"),
+            Some(&serde_json::json!("boolean"))
+        );
+    }
+
+    #[test]
+    fn mcp_check_source_admits_temp_ts_file_and_confined_directory() {
+        let ws = ScratchWorkspace::new("check-source");
+        ws.write(
+            "src/model.ts",
+            r#"import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+export const Ticket = Norn.type({
+  name: "ops.Ticket",
+  title: "Ticket",
+  version: "0.1.0",
+  properties: Schema.Struct({
+    ticket_id: Schema.String,
+    status: Schema.Literals(["open", "closed"]),
+  }),
+  identity: [{ name: "primary", properties: ["ticket_id"] }],
+})
+"#,
+        );
+        ws.write(
+            "app/norn.json",
+            r#"{"format":"norn-project/1","name":"ops","sources":["defs"],"scope":{"orgId":"org_ops","environmentId":"dev"}}"#,
+        );
+        ws.write(
+            "app/defs/ticket.ts",
+            r#"import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+export const Ticket = Norn.type({
+  name: "ops.Ticket",
+  title: "Ticket",
+  version: "0.1.0",
+  properties: Schema.Struct({ ticket_id: Schema.String }),
+  identity: [{ name: "primary", properties: ["ticket_id"] }],
+})
+"#,
+        );
+        let mut session = catalog_session_for(&ws.0).unwrap().stateless();
+        let mut backend = Human::with_workspace(ws.0.clone());
+
+        let file_res = mcp_call(
+            &mut session,
+            &mut backend,
+            2,
+            "norn.check",
+            &serde_json::json!({
+                "source": "src/model.ts",
+                "org": "org_ops",
+                "env": "dev",
+                "forbid_unsafe_zen": true
+            }),
+        );
+        assert_eq!(
+            file_res.pointer("/result/isError"),
+            Some(&serde_json::json!(false)),
+            "norn.check --source failed: {file_res}"
+        );
+        assert_eq!(
+            file_res.pointer("/result/structuredContent/admitted"),
+            Some(&serde_json::json!(true))
+        );
+
+        let dir_res = mcp_call(
+            &mut session,
+            &mut backend,
+            3,
+            "norn.check",
+            &serde_json::json!({ "source": "app" }),
+        );
+        assert_eq!(
+            dir_res.pointer("/result/structuredContent/admitted"),
+            Some(&serde_json::json!(true)),
+            "norn.check directory failed: {dir_res}"
+        );
+    }
+
+    #[test]
+    fn mcp_explain_compile_and_readonly_fmt_execute_cleanly() {
+        let ws = ScratchWorkspace::new("explain-compile-fmt");
+        ws.write(
+            "src/model.ts",
+            r#"import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+export const Ticket = Norn.type({
+  name: "ops.Ticket",
+  title: "Ticket",
+  version: "0.1.0",
+  properties: Schema.Struct({ ticket_id: Schema.String }),
+  identity: [{ name: "primary", properties: ["ticket_id"] }],
+})
+"#,
+        );
+        ws.write("src/unformatted.ts", "export const item={a:1,b:2};\n");
+
+        let mut session = catalog_session_for(&ws.0).unwrap().stateless();
+        let mut backend = Human::with_workspace(ws.0.clone());
+
+        let explain_res = mcp_call(
+            &mut session,
+            &mut backend,
+            4,
+            "norn.explain",
+            &serde_json::json!({
+                "kind": "diagnostic",
+                "id": "core.laws.preservation_violated",
+                "format": "json"
+            }),
+        );
+        assert_eq!(
+            explain_res.pointer("/result/isError"),
+            Some(&serde_json::json!(false)),
+            "norn.explain diagnostic failed: {explain_res}"
+        );
+        assert_eq!(
+            explain_res.pointer("/result/structuredContent/found"),
+            Some(&serde_json::json!(true))
+        );
+
+        let compile_res = mcp_call(
+            &mut session,
+            &mut backend,
+            5,
+            "norn.compile",
+            &serde_json::json!({
+                "path": "src/model.ts",
+                "org": "org_ops",
+                "env": "dev"
+            }),
+        );
+        assert_eq!(
+            compile_res.pointer("/result/isError"),
+            Some(&serde_json::json!(false)),
+            "norn.compile failed: {compile_res}"
+        );
+        assert!(
+            compile_res
+                .pointer("/result/structuredContent/artifacts")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|items| !items.is_empty())
+        );
+
+        let fmt_res = mcp_call(
+            &mut session,
+            &mut backend,
+            6,
+            "norn.fmt",
+            &serde_json::json!({ "path": "src/unformatted.ts", "check": true }),
+        );
+        assert_eq!(
+            fmt_res.pointer("/result/isError"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            std::fs::read_to_string(ws.0.join("src/unformatted.ts")).unwrap(),
+            "export const item={a:1,b:2};\n",
+            "MCP norn.fmt must remain read-only"
+        );
+    }
+
+    #[test]
+    fn mcp_refuses_parent_traversal_and_escaping_symlink_paths() {
+        let ws = ScratchWorkspace::new("escape-refusal");
+        let mut session = catalog_session_for(&ws.0).unwrap().stateless();
+        let mut backend = Human::with_workspace(ws.0.clone());
+
+        let escape_res = mcp_call(
+            &mut session,
+            &mut backend,
+            7,
+            "norn.check",
+            &serde_json::json!({
+                "source": "../escape.ts",
+                "org": "org_ops",
+                "env": "dev"
+            }),
+        );
+        assert_eq!(
+            escape_res.pointer("/result/isError"),
+            Some(&serde_json::json!(true))
+        );
+        assert!(
+            escape_res
+                .pointer("/result/structuredContent/explanation")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|text| text.contains("working directory"))
+        );
+
+        #[cfg(unix)]
+        {
+            let outside = ScratchWorkspace::new("outside-symlink");
+            let secret = outside.write("secret.ts", "export const x = 1\n");
+            std::fs::create_dir_all(ws.0.join("src")).unwrap();
+            let link = ws.0.join("src/escape_link.ts");
+            std::os::unix::fs::symlink(&secret, &link).unwrap();
+            let sym_res = mcp_call(
+                &mut session,
+                &mut backend,
+                8,
+                "norn.check",
+                &serde_json::json!({
+                    "source": "src/escape_link.ts",
+                    "org": "org_ops",
+                    "env": "dev"
+                }),
+            );
+            assert_eq!(
+                sym_res.pointer("/result/isError"),
+                Some(&serde_json::json!(true))
+            );
+            assert!(
+                sym_res
+                    .pointer("/result/structuredContent/explanation")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|text| text.contains("working directory"))
+            );
+        }
+    }
+
+    #[test]
+    fn mcp_explain_preserves_positional_order_for_kind_and_id() {
+        let input = RuntimeObject::from([
+            (
+                "id".into(),
+                RuntimeValue::String("core.laws.preservation_violated".into()),
+            ),
+            ("kind".into(), RuntimeValue::String("diagnostic".into())),
+        ]);
+        let argv = crate::mcp_tools::build_argv("explain", input.clone()).unwrap();
+        assert_eq!(
+            argv,
+            vec![
+                "norn".to_owned(),
+                "explain".to_owned(),
+                "--".to_owned(),
+                "diagnostic".to_owned(),
+                "core.laws.preservation_violated".to_owned(),
+            ]
+        );
+
+        let ws = ScratchWorkspace::new("explain-positional-order");
+        let output = crate::mcp_tools::call_tool("norn.explain", input, &ws.0).unwrap();
+        assert!(!output.is_error, "norn.explain failed: {:?}", output.value);
+        let text = output
+            .value
+            .as_object()
+            .and_then(|obj| obj.get("text"))
+            .and_then(RuntimeValue::as_str)
+            .unwrap();
+        assert!(
+            text.contains("Diagnostic core.laws.preservation_violated"),
+            "expected diagnostic text output, got: {text}"
+        );
+    }
+
+    #[test]
+    fn mcp_check_source_stops_norn_json_walk_at_workspace_root() {
+        let parent = ScratchWorkspace::new("confinement-parent");
+        parent.write(
+            "norn.json",
+            r#"{"format":"norn-project/1","name":"outside","sources":["workspace/src"],"scope":{"orgId":"org_outside","environmentId":"prod"}}"#,
+        );
+        parent.write(".github/workflows/ci.yml", "name: outside-ci\non: push\n");
+        let workspace_root = parent.0.join("workspace");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        parent.write(
+            "workspace/src/model.ts",
+            r#"import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+export const Ticket = Norn.type({
+  name: "ops.Ticket",
+  title: "Ticket",
+  version: "0.1.0",
+  properties: Schema.Struct({ ticket_id: Schema.String }),
+  identity: [{ name: "primary", properties: ["ticket_id"] }],
+})
+"#,
+        );
+
+        // Without --org/--env, confined MCP must NOT read parent/norn.json above workspace_root.
+        let without_scope = crate::mcp_tools::call_tool(
+            "norn.check",
+            RuntimeObject::from([("source".into(), RuntimeValue::String("src/model.ts".into()))]),
+            &workspace_root,
+        );
+        let refusal = without_scope.map(|_| ()).unwrap_err();
+        assert!(
+            refusal.explanation.contains("--org") && refusal.explanation.contains("--env"),
+            "expected missing-scope refusal without reading parent norn.json, got: {refusal:?}"
+        );
+
+        // With explicit --org/--env, confined MCP admits without tripping parent zero-CI or outside tool_root.
+        let with_scope = crate::mcp_tools::call_tool(
+            "norn.check",
+            RuntimeObject::from([
+                ("source".into(), RuntimeValue::String("src/model.ts".into())),
+                ("org".into(), RuntimeValue::String("org_ws".into())),
+                ("env".into(), RuntimeValue::String("dev".into())),
+            ]),
+            &workspace_root,
+        )
+        .unwrap();
+        assert!(
+            !with_scope.is_error,
+            "confined check with explicit scope failed: {:?}",
+            with_scope.value
+        );
+        assert_eq!(
+            with_scope
+                .value
+                .as_object()
+                .and_then(|obj| obj.get("admitted")),
+            Some(&RuntimeValue::Bool(true))
+        );
     }
 }

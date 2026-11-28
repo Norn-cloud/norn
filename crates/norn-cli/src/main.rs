@@ -8,8 +8,10 @@ mod cell_source;
 mod cli_contract;
 mod eval;
 mod explain;
+mod explain_support;
 mod local;
 mod mcp;
+mod mcp_tools;
 mod red_team;
 mod remote;
 mod source;
@@ -26,9 +28,9 @@ const MAX_TREE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Parser)]
 #[command(name = "norn", version, about = "Norn core checker")]
-struct Cli {
+pub(crate) struct Cli {
     #[command(subcommand)]
-    command: Command,
+    pub(crate) command: Command,
 }
 
 #[derive(Debug, Args)]
@@ -69,7 +71,7 @@ pub(crate) struct CheckArgs {
 }
 
 #[derive(Debug, Subcommand)]
-enum Command {
+pub(crate) enum Command {
     /// Explain an action, law or concept through the shared checker.
     Explain(explain::ExplainArgs),
     /// Serve available human operations over bounded MCP stdio.
@@ -137,6 +139,12 @@ enum Command {
         /// The source tree's root directory (for a built-in, its crate directory).
         dir: PathBuf,
     },
+    /// Print Norn CLI and checker ABI version metadata.
+    Version {
+        /// Print machine-readable checker ABI version JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub(crate) fn run_check(artifacts: &Path, context: &Path) -> Result<(String, bool), String> {
@@ -151,6 +159,7 @@ fn run_check_with_base(
     artifacts: &Path,
     context: &Path,
     base: &[PathBuf],
+    boundary_root: Option<&Path>,
 ) -> authoring::CommandOutput {
     if base.is_empty() {
         return legacy_to_output(run_check(artifacts, context));
@@ -175,6 +184,7 @@ fn run_check_with_base(
         env: None,
         forbid_unsafe_zen: false,
         tool_root: None,
+        boundary_root,
     };
     let merged_context = match authoring::base_packs::merge_base_packs_into_context(
         &context_text,
@@ -284,6 +294,20 @@ fn run_eval(
 }
 
 pub(crate) fn run_check_args(args: &CheckArgs) -> authoring::CommandOutput {
+    run_check_args_with_boundary(args, None)
+}
+
+pub(crate) fn run_check_args_confined(
+    args: &CheckArgs,
+    boundary_root: &Path,
+) -> authoring::CommandOutput {
+    run_check_args_with_boundary(args, Some(boundary_root))
+}
+
+fn run_check_args_with_boundary(
+    args: &CheckArgs,
+    boundary_root: Option<&Path>,
+) -> authoring::CommandOutput {
     if let Some(source_path) = &args.source {
         if args.artifacts.is_some() {
             return authoring::CommandOutput::usage_or_io_error(
@@ -303,6 +327,7 @@ pub(crate) fn run_check_args(args: &CheckArgs) -> authoring::CommandOutput {
             env: args.env.as_deref(),
             forbid_unsafe_zen: args.forbid_unsafe_zen,
             tool_root: args.tool_root.as_deref(),
+            boundary_root,
         });
     }
     let Some(artifacts_path) = &args.artifacts else {
@@ -324,7 +349,7 @@ pub(crate) fn run_check_args(args: &CheckArgs) -> authoring::CommandOutput {
             "--context is required with --artifacts",
         );
     };
-    run_check_with_base(artifacts_path, context_path, &args.base)
+    run_check_with_base(artifacts_path, context_path, &args.base, boundary_root)
 }
 
 fn legacy_to_output(result: Result<(String, bool), String>) -> authoring::CommandOutput {
@@ -339,7 +364,7 @@ fn legacy_to_output(result: Result<(String, bool), String>) -> authoring::Comman
     }
 }
 
-fn run(command: Command) -> authoring::CommandOutput {
+pub(crate) fn run(command: Command) -> authoring::CommandOutput {
     match command {
         Command::Explain(args) => legacy_to_output(explain::execute(&args)),
         Command::Mcp => legacy_to_output(mcp::serve()),
@@ -368,6 +393,13 @@ fn run(command: Command) -> authoring::CommandOutput {
         } => legacy_to_output(run_eval(&defs, &org, &env, &rule, units)),
         Command::SourceDigest { dir } => {
             legacy_to_output(source_digest(&dir).map(|document| (document, true)))
+        }
+        Command::Version { json } => {
+            if json {
+                authoring::CommandOutput::ok(norn_checker_wasm::version_json())
+            } else {
+                authoring::CommandOutput::ok(format!("norn {}", env!("CARGO_PKG_VERSION")))
+            }
         }
         Command::Check(args) => run_check_args(&args),
     }

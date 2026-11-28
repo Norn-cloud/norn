@@ -30,7 +30,9 @@
 #[cfg(feature = "checker")]
 mod analysis;
 #[cfg(feature = "checker")]
-pub use analysis::{analyze_red_team_json, law_honesty_json, ripple_effects_json};
+pub use analysis::{
+    analyze_red_team_json, explain_code_json, law_honesty_json, ripple_effects_json,
+};
 #[cfg(feature = "checker")]
 mod checker;
 #[cfg(feature = "checker")]

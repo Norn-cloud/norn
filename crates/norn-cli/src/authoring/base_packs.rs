@@ -31,6 +31,7 @@ pub(crate) struct BasePackScope<'a> {
     pub(crate) env: Option<&'a str>,
     pub(crate) forbid_unsafe_zen: bool,
     pub(crate) tool_root: Option<&'a Path>,
+    pub(crate) boundary_root: Option<&'a Path>,
 }
 
 /// Parses the optional `"basePacks"` array from a `norn.json` object, validating
@@ -133,6 +134,7 @@ fn load_pinned_base_pack(
                     env,
                     forbid_unsafe_zen: scope.forbid_unsafe_zen,
                     tool_root: scope.tool_root,
+                    boundary_root: scope.boundary_root,
                     allow_empty: false,
                 };
                 let compiled = compile_single_file_pinned(
@@ -172,6 +174,7 @@ fn load_base_directory(
             env,
             forbid_unsafe_zen: scope.forbid_unsafe_zen,
             tool_root: scope.tool_root,
+            boundary_root: scope.boundary_root,
             allow_empty: false,
         };
         let compiled = compile_directory_pinned(root_dir, Some(&app_manifest), &opts, budget)?;
@@ -201,6 +204,7 @@ fn load_base_directory(
             env,
             forbid_unsafe_zen: scope.forbid_unsafe_zen,
             tool_root: scope.tool_root,
+            boundary_root: scope.boundary_root,
             allow_empty: false,
         };
         let compiled = compile_directory_pinned(root_dir, None, &opts, budget)?;
@@ -678,6 +682,7 @@ class Item(
             env: Some("dev"),
             forbid_unsafe_zen: false,
             tool_root: Some(&ts_root),
+            boundary_root: None,
         });
         assert_eq!(
             refused.exit_code, 1,
@@ -715,6 +720,7 @@ class Item(
             env: Some("dev"),
             forbid_unsafe_zen: false,
             tool_root: Some(&ts_root),
+            boundary_root: None,
         });
         assert_eq!(
             refused.exit_code, 1,
@@ -763,6 +769,7 @@ class Item(
             env: None,
             forbid_unsafe_zen: false,
             tool_root: None,
+            boundary_root: None,
         });
         assert_eq!(
             admitted.exit_code, 0,
@@ -789,6 +796,7 @@ class Item(
             env: None,
             forbid_unsafe_zen: false,
             tool_root: None,
+            boundary_root: None,
         });
         assert_eq!(refused.exit_code, 2);
         assert!(

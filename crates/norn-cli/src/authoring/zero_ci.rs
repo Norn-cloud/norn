@@ -209,21 +209,52 @@ fn check_norn_json_in_dir_unix(
 
 /// Climbs from an already-pinned [`TrustedDir`] using FD-relative `..` opens to locate
 /// the nearest enclosing downstream Norn app directory containing a regular `norn.json`.
+///
+/// When `boundary_root` is `Some(root)`, traversal never inspects any directory outside `root`.
 pub(crate) fn find_norn_app_root_from_dir(
     start_dir: &TrustedDir,
+    boundary_root: Option<&Path>,
 ) -> Result<Option<AppRootMatch>, String> {
-    find_norn_app_root_from_dir_with_limit(start_dir, MAX_ANCESTOR_DEPTH)
+    find_norn_app_root_from_dir_with_limit(start_dir, MAX_ANCESTOR_DEPTH, boundary_root)
+}
+
+#[cfg(unix)]
+fn resolve_boundary_stat(
+    start_dir: &TrustedDir,
+    boundary_root: &Path,
+) -> Result<rustix::fs::Stat, String> {
+    use rustix::fs::fstat;
+
+    let canonical_bound = std::fs::canonicalize(boundary_root)
+        .map_err(|err| format!("{}: {err}", boundary_root.display()))?;
+    let canonical_start = std::fs::canonicalize(start_dir.display_path())
+        .map_err(|err| format!("{}: {err}", start_dir.display_path().display()))?;
+    if !canonical_start.starts_with(&canonical_bound) {
+        return Err(format!(
+            "{}: path is outside workspace boundary {}",
+            start_dir.display_path().display(),
+            canonical_bound.display()
+        ));
+    }
+    let boundary_dir = TrustedDir::open(&canonical_bound)?;
+    fstat(boundary_dir.as_fd()).map_err(|err| format!("{}: {err}", canonical_bound.display()))
 }
 
 /// Bounded ancestor `norn.json` discovery failing closed on every OS error, non-regular
-/// `norn.json`, or depth-limit exhaustion (returns `Ok(None)` only on reaching filesystem root).
+/// `norn.json`, or depth-limit exhaustion (returns `Ok(None)` only on reaching filesystem root
+/// or `boundary_root`).
 #[cfg(unix)]
 pub(crate) fn find_norn_app_root_from_dir_with_limit(
     start_dir: &TrustedDir,
     max_depth: usize,
+    boundary_root: Option<&Path>,
 ) -> Result<Option<AppRootMatch>, String> {
     use rustix::fs::{Mode, fstat, openat};
     use std::os::fd::AsFd as _;
+
+    let boundary_stat = boundary_root
+        .map(|root| resolve_boundary_stat(start_dir, root))
+        .transpose()?;
 
     if check_norn_json_in_dir_unix(start_dir.as_fd(), start_dir.display_path())? {
         return Ok(Some(AppRootMatch::SameAsStart));
@@ -234,6 +265,12 @@ pub(crate) fn find_norn_app_root_from_dir_with_limit(
         let current = ancestor.as_ref().unwrap_or(start_dir);
         let cur_stat = fstat(current.as_fd())
             .map_err(|err| format!("{}: {err}", current.display_path().display()))?;
+        if let Some(bound) = boundary_stat.as_ref()
+            && cur_stat.st_dev == bound.st_dev
+            && cur_stat.st_ino == bound.st_ino
+        {
+            return Ok(None);
+        }
         let parent_fd = openat(current.as_fd(), "..", final_dir_flags(), Mode::empty())
             .map_err(|err| format!("{}: {err}", current.display_path().display()))?;
         let parent_stat = fstat(parent_fd.as_fd())
@@ -264,6 +301,7 @@ pub(crate) fn find_norn_app_root_from_dir_with_limit(
 pub(crate) fn find_norn_app_root_from_dir_with_limit(
     start_dir: &TrustedDir,
     max_depth: usize,
+    boundary_root: Option<&Path>,
 ) -> Result<Option<AppRootMatch>, String> {
     let start_path = start_dir.display_path();
     let resolved = if start_path.is_absolute() {
@@ -273,7 +311,29 @@ pub(crate) fn find_norn_app_root_from_dir_with_limit(
             std::env::current_dir().map_err(|err| format!("{}: {err}", start_path.display()))?;
         cwd.join(start_path)
     };
-    for (step, ancestor) in resolved.ancestors().enumerate() {
+    let canonical_bound = boundary_root
+        .map(|root| std::fs::canonicalize(root).map_err(|err| format!("{}: {err}", root.display())))
+        .transpose()?;
+    let search_start = if let Some(bound) = canonical_bound.as_deref() {
+        let canonical_start = std::fs::canonicalize(&resolved)
+            .map_err(|err| format!("{}: {err}", start_path.display()))?;
+        if !canonical_start.starts_with(bound) {
+            return Err(format!(
+                "{}: path is outside workspace boundary {}",
+                start_path.display(),
+                bound.display()
+            ));
+        }
+        canonical_start
+    } else {
+        resolved
+    };
+    for (step, ancestor) in search_start.ancestors().enumerate() {
+        if let Some(bound) = canonical_bound.as_deref()
+            && !ancestor.starts_with(bound)
+        {
+            return Ok(None);
+        }
         if step > max_depth {
             return Err(format!(
                 "{}: ancestor norn.json search exceeded {max_depth} levels",

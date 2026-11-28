@@ -209,6 +209,7 @@ mod tests {
             env: Some("dev"),
             forbid_unsafe_zen: false,
             tool_root: Some(&ts_root),
+            boundary_root: None,
         });
         assert_eq!(
             checked.exit_code, 0,
@@ -270,6 +271,7 @@ class Item(
             env: Some("dev"),
             forbid_unsafe_zen: false,
             tool_root: None,
+            boundary_root: None,
         });
         assert_eq!(
             checked.exit_code, 0,

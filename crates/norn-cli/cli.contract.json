@@ -758,6 +758,17 @@
     },
     "explain": {
       "args": {
+        "base": {
+          "long": "base",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": true,
+          "multiple": true,
+          "required": false,
+          "default": [],
+          "values": []
+        },
         "context": {
           "long": "context",
           "short": null,
@@ -776,7 +787,7 @@
           "positional": false,
           "takes_value": true,
           "multiple": false,
-          "required": true,
+          "required": false,
           "default": [],
           "values": []
         },
@@ -803,7 +814,7 @@
           "positional": true,
           "takes_value": true,
           "multiple": false,
-          "required": true,
+          "required": false,
           "default": [],
           "values": []
         },
@@ -816,11 +827,7 @@
           "multiple": false,
           "required": true,
           "default": [],
-          "values": [
-            "action",
-            "law",
-            "concept"
-          ]
+          "values": []
         },
         "locale": {
           "long": "locale",
@@ -1215,6 +1222,25 @@
           "required": false,
           "default": [],
           "values": []
+        }
+      },
+      "subcommands": {}
+    },
+    "version": {
+      "args": {
+        "json": {
+          "long": "json",
+          "short": null,
+          "aliases": [],
+          "positional": false,
+          "takes_value": false,
+          "multiple": false,
+          "required": false,
+          "default": [],
+          "values": [
+            "true",
+            "false"
+          ]
         }
       },
       "subcommands": {}
