@@ -129,7 +129,9 @@ impl FileWalk<'_> {
         };
         let file = target_sf.file_name();
         let in_node_modules = file.split(['/', '\\']).any(|seg| seg == "node_modules");
-        let is_ts_source = file.ends_with(".ts") || file.ends_with(".mts");
+        let is_ts_source = std::path::Path::new(file)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ts") || ext.eq_ignore_ascii_case("mts"));
         if target_sf.is_declaration_file()
             || self.program.is_source_file_from_external_library(target_sf)
             || in_node_modules

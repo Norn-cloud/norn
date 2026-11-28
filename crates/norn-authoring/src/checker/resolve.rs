@@ -274,7 +274,7 @@ impl FileWalk<'_> {
         self.program.is_source_file_default_library(sf.path())
     }
 
-    pub(super) fn where_declared(&self, declaration: Option<P<Node>>) -> String {
+    pub(super) fn where_declared(declaration: Option<P<Node>>) -> String {
         let Some(decl) = declaration else {
             return "an unknown declaration".to_owned();
         };

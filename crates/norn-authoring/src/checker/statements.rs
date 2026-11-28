@@ -383,13 +383,13 @@ impl FileWalk<'_> {
             if clause.kind() == Kind::DefaultClause {
                 has_default = true;
             } else if let Some(case_expr) = clause.as_case_or_default_clause().expression() {
-                if !is_switch_literal_expr(case_expr) {
-                    self.report(case_expr, "NORN-FLOW-ROUTE", "case labels must be literals");
-                } else {
+                if is_switch_literal_expr(case_expr) {
                     let label = regular_literal_type(self.type_of(case_expr));
                     if !covered.insert(label) {
                         self.report(case_expr, "NORN-FLOW-ROUTE", "duplicate switch label");
                     }
+                } else {
+                    self.report(case_expr, "NORN-FLOW-ROUTE", "case labels must be literals");
                 }
             }
             let stmts = clause.as_case_or_default_clause().statements.nodes();

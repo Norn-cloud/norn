@@ -58,15 +58,15 @@ impl FileWalk<'_> {
     }
 
     fn decision_call(&mut self, call: P<Node>, args: &[P<Node>], ctx: Ctx) {
-        if let Some(&arg0) = args.first() {
-            self.expr(arg0, ctx);
+        if let Some(&first_arg) = args.first() {
+            self.expr(first_arg, ctx);
         }
-        let Some(&arg1) = args.get(1) else {
+        let Some(&second_arg) = args.get(1) else {
             return;
         };
-        let rows = unwrap_expr(arg1);
+        let rows = unwrap_expr(second_arg);
         if rows.kind() != Kind::ArrayLiteralExpression {
-            self.callback(Some(arg1), call, ctx, true);
+            self.callback(Some(second_arg), call, ctx, true);
             return;
         }
         for &row in rows.as_array_literal_expression().elements.nodes() {
@@ -149,20 +149,20 @@ impl FileWalk<'_> {
 
     fn law_call(&mut self, call: P<Node>, ctx: Ctx) {
         let args = call.as_call_expression().arguments().nodes();
-        let Some(&arg0) = args.first() else {
+        let Some(&first_arg) = args.first() else {
             self.args(call, ctx);
             return;
         };
-        let Some(&arg1) = args.get(1) else {
+        let Some(&second_arg) = args.get(1) else {
             self.args(call, ctx);
             return;
         };
-        let spec = unwrap_expr(arg1);
+        let spec = unwrap_expr(second_arg);
         if spec.kind() != Kind::ObjectLiteralExpression {
             self.args(call, ctx);
             return;
         }
-        self.expr(arg0, ctx);
+        self.expr(first_arg, ctx);
         for &prop in spec.as_object_literal_expression().properties.nodes() {
             self.law_spec_property(prop, call, ctx);
         }

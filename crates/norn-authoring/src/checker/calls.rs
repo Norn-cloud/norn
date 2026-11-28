@@ -117,7 +117,7 @@ impl FileWalk<'_> {
             .owner
             .spelled_like_admitted(&text, callee.kind() == Kind::Identifier)
         {
-            let where_decl = self.where_declared(declaration);
+            let where_decl = Self::where_declared(declaration);
             self.report(
                 callee,
                 "NORN-FLOW-SYMBOL",
@@ -529,9 +529,9 @@ pub(super) fn unwrap_expr(mut expr: P<Node>) -> P<Node> {
     }
 }
 
-fn extract_callback_parts(
-    fn_node: P<Node>,
-) -> Option<(bool, bool, &'static [P<Node>], Option<P<Node>>)> {
+type CallbackParts = (bool, bool, &'static [P<Node>], Option<P<Node>>);
+
+fn extract_callback_parts(fn_node: P<Node>) -> Option<CallbackParts> {
     if fn_node.kind() == Kind::ArrowFunction {
         let arrow = fn_node.as_arrow_function();
         return Some((
