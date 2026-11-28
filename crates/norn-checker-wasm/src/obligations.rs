@@ -113,19 +113,19 @@ fn unavailable_summary(reason: &str) -> String {
 }
 
 fn summarize_challenge_body(body: &Value) -> String {
-    let laws = body
+    let laws: &[Value] = body
         .get("lawStatements")
         .and_then(Value::as_array)
         .map_or(&[], Vec::as_slice);
-    let writers = body
+    let writers: &[Value] = body
         .get("writerStatements")
         .and_then(Value::as_array)
         .map_or(&[], Vec::as_slice);
-    let boundaries = body
+    let boundaries: &[Value] = body
         .get("openBoundaries")
         .and_then(Value::as_array)
         .map_or(&[], Vec::as_slice);
-    let raw_goals = body
+    let raw_goals: &[Value] = body
         .get("obligations")
         .and_then(Value::as_array)
         .map_or(&[], Vec::as_slice);
