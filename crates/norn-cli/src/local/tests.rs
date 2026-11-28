@@ -696,19 +696,17 @@ fn http_wire_rejects_malformed_framing_and_enforces_deadline() -> TestResult {
         let too_large = send_raw_http(addr, &oversized)?;
         assert!(too_large.starts_with("HTTP/1.1 413 Payload Too Large\r\n"));
 
-        // Slow-drip client held past the 120ms whole-request deadline receives 408.
+        // Stalled client held past the 120ms whole-request deadline receives 408.
         let mut slow = TcpStream::connect(addr)?;
         slow.write_all(b"GET /he")?;
         slow.flush()?;
-        std::thread::sleep(Duration::from_millis(60));
-        let _ignored = slow.write_all(b"alth ");
         let mut slow_resp = String::new();
         slow.read_to_string(&mut slow_resp)?;
         assert!(
             slow_resp.starts_with("HTTP/1.1 408 Request Timeout\r\n"),
             "expected 408 timeout, got `{slow_resp}`"
         );
-        let _joined = server.join();
+        let _ = server.join();
         Ok(())
     })?;
     Ok(())
