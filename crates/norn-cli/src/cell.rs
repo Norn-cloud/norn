@@ -21,31 +21,45 @@ pub(super) struct CellArgs {
 }
 
 #[derive(Debug, Args)]
-struct Target {
+pub(super) struct Target {
     /// The cell's base URL: the host itself, or Studio's proxy
-    /// (for example <https://studio.example/api/host>).
+    /// (for example <https://studio.example/api/host>). Falls back to `norn.json` target profile when omitted.
     #[arg(long)]
-    url: String,
+    pub(super) url: Option<String>,
+    /// Organization scope (`scope.orgId`). Falls back to `norn.json` target profile or `scope.orgId` when omitted.
     #[arg(long)]
-    org: String,
+    pub(super) org: Option<String>,
+    /// Environment scope (`scope.environmentId`). Falls back to `norn.json` target profile or `scope.environmentId` when omitted.
     #[arg(long)]
-    env: String,
+    pub(super) env: Option<String>,
+    /// Named target profile in `norn.json` (`targets.<NAME>`); defaults to `defaultTarget` when omitted.
+    #[arg(id = "target", long = "target", value_name = "TARGET")]
+    pub(super) profile: Option<String>,
+    /// `TypeScript` (`.ts`) or Python (`.py`) authoring file or directory to compile in-process and push directly.
+    #[arg(long, conflicts_with = "paths", required_unless_present = "paths")]
+    pub(super) source: Option<PathBuf>,
+    /// Promote `NORN-AUTHORING-UNSAFE-ZEN` warnings to hard errors when compiling `--source`.
+    #[arg(long, requires = "source")]
+    pub(super) forbid_unsafe_zen: bool,
+    /// Optional path to `tools/norn-ts` containing pinned `node_modules/effect` when compiling `--source`.
+    #[arg(long, requires = "source")]
+    pub(super) tool_root: Option<PathBuf>,
     /// Environment variable holding a host bearer token; never a token argument.
     #[arg(long, conflicts_with = "email")]
-    token_env: Option<String>,
+    pub(super) token_env: Option<String>,
     /// Sign in to Studio as this user (with `--password-env`), and call the
     /// cell through Studio's proxy as that user.
     #[arg(long, requires = "password_env")]
-    email: Option<String>,
+    pub(super) email: Option<String>,
     /// Environment variable holding the Studio password; never a password argument.
     #[arg(long, requires = "email")]
-    password_env: Option<String>,
+    pub(super) password_env: Option<String>,
     /// Print the cell's JSON documents instead of the summary.
     #[arg(long)]
-    json: bool,
+    pub(super) json: bool,
     /// Artifact JSON files, or directories of them (every `*.json`, by name).
-    #[arg(required = true)]
-    paths: Vec<PathBuf>,
+    #[arg(conflicts_with = "source", required_unless_present = "source")]
+    pub(super) paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -65,7 +79,7 @@ enum CellCommand {
     },
 }
 
-type Artifact = Box<serde_json::value::RawValue>;
+pub(super) type Artifact = Box<serde_json::value::RawValue>;
 
 /// The pack's artifacts, each file's exact JSON text, in path order. Read
 /// once per command: `apply` plans and applies this one snapshot. At most
@@ -570,7 +584,7 @@ fn check_authority(authority: &ureq::http::uri::Authority) -> Result<(), String>
 }
 
 impl Client {
-    fn new(target: &Target) -> Result<Self, String> {
+    fn new(target: &crate::cell_source::ResolvedTarget) -> Result<Self, String> {
         let base = target.url.trim_end_matches('/').to_owned();
         let endpoint = Endpoint::parse(&base)?;
         if endpoint.has_query() {
@@ -738,11 +752,28 @@ fn body(artifacts: &[Artifact], expected_version: Option<u64>) -> Result<String,
     Ok(body)
 }
 
+fn load_pack(
+    target: &Target,
+    resolved: &crate::cell_source::ResolvedTarget,
+) -> Result<Vec<Artifact>, String> {
+    if let Some(source_path) = &target.source {
+        crate::cell_source::compile_source_artifacts(
+            source_path,
+            resolved,
+            target.forbid_unsafe_zen,
+            target.tool_root.as_deref(),
+        )
+    } else {
+        artifacts(&target.paths)
+    }
+}
+
 pub(super) fn execute(args: &CellArgs) -> Result<(String, bool), String> {
     match &args.command {
         CellCommand::Plan(target) => {
-            let pack = artifacts(&target.paths)?;
-            let client = Client::new(target)?;
+            let resolved = crate::cell_source::resolve_target(target)?;
+            let pack = load_pack(target, &resolved)?;
+            let client = Client::new(&resolved)?;
             let (status, plan) =
                 client.post(norn_api::cell_definitions::PLAN_PATH, &body(&pack, None)?)?;
             Ok(answer(target.json, status, &plan, plan_summary))
@@ -752,8 +783,9 @@ pub(super) fn execute(args: &CellArgs) -> Result<(String, bool), String> {
             expected_version,
         } => {
             // One snapshot: the plan shown is exactly the pack applied.
-            let pack = artifacts(&target.paths)?;
-            let client = Client::new(target)?;
+            let resolved = crate::cell_source::resolve_target(target)?;
+            let pack = load_pack(target, &resolved)?;
+            let client = Client::new(&resolved)?;
             let mut shown = String::new();
             let expected = if let Some(version) = expected_version {
                 *version
@@ -842,12 +874,12 @@ mod tests {
     }
 
     /// A target for `url`, carrying a token or a Studio sign-in when asked.
-    fn target(url: &str, credential: Option<Credential<'_>>) -> Target {
+    fn target(url: &str, credential: Option<Credential<'_>>) -> crate::cell_source::ResolvedTarget {
         let email = credential.and_then(|credential| match credential {
             Credential::SignIn(email) => Some(email.to_owned()),
             Credential::Token => None,
         });
-        Target {
+        crate::cell_source::ResolvedTarget {
             url: url.to_owned(),
             org: "org".to_owned(),
             env: "env".to_owned(),
@@ -857,8 +889,6 @@ mod tests {
                 .as_ref()
                 .map(|_email| "NORN_TEST_UNSET_PASSWORD".to_owned()),
             email,
-            json: false,
-            paths: Vec::new(),
         }
     }
 
