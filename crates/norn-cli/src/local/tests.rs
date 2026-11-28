@@ -706,7 +706,7 @@ fn http_wire_rejects_malformed_framing_and_enforces_deadline() -> TestResult {
             slow_resp.starts_with("HTTP/1.1 408 Request Timeout\r\n"),
             "expected 408 timeout, got `{slow_resp}`"
         );
-        let _ = server.join();
+        assert!(server.join().is_ok(), "server thread panicked");
         Ok(())
     })?;
     Ok(())
