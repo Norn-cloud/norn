@@ -712,7 +712,7 @@ df -h /
 """}
     nextest = {"uses": "taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39",
                "with": {"tool": "nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129,uv@0.13.10,mold@3.0.0"}}
-    cli_publish_condition = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.bundle.id == 'b0' }}"
+    cli_publish_condition = "${{ github.repository == 'Norn-cloud/norn' && github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.bundle.id == 'b0' }}"
     cli_publish = [
         {"name": "Build prebuilt norn-linux-x86_64 CLI",
          "if": cli_publish_condition,
