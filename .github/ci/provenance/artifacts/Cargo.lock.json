@@ -1,5 +1,5 @@
 {
-  "sha256": "c036a3cd65bf6bad5ec1a911872b6eac619a4675f384bd7e837fef619906f735",
+  "sha256": "8f71140a619c6dd41271afc90bdda6afcaa5e4766e136cc6f4662c8a5c4df55c",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -8,6 +8,7 @@
   "parents": [
     "Cargo.toml",
     "crates/norn-api/Cargo.toml",
+    "crates/norn-authoring-py/Cargo.toml",
     "crates/norn-authz/Cargo.toml",
     "crates/norn-canonical/Cargo.toml",
     "crates/norn-cell/Cargo.toml",

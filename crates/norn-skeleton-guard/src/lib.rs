@@ -242,6 +242,13 @@ pub const CRATES: &[CrateRule] = &[
         third_party: &[],
     },
     CrateRule {
+        name: "norn-authoring-py",
+        ring: Ring::One,
+        allowed_norn: &["norn-canonical", "norn-ir"],
+        dev_only_norn: &[],
+        third_party: &[],
+    },
+    CrateRule {
         name: "norn-testkit",
         ring: Ring::TestSupport,
         allowed_norn: &["norn-kernel"],
