@@ -3,9 +3,7 @@
 use ruff_formatter::{IndentWidth, LineWidth};
 use ruff_python_formatter::{FormatModuleError, PyFormatOptions, QuoteStyle, format_module_source};
 
-use crate::error::{
-    CODE_FORMAT, CODE_SYNTAX, CODE_UNBOUNDED, PyAuthoringError, SourceSpan,
-};
+use crate::error::{CODE_FORMAT, CODE_SYNTAX, CODE_UNBOUNDED, PyAuthoringError, SourceSpan};
 use crate::line_table::LineTable;
 use crate::sandbox::MAX_SOURCE_BYTES;
 

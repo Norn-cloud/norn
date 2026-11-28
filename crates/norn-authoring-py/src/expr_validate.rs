@@ -1,8 +1,8 @@
 //! Static AST validation for Python authoring callbacks (`def` and `lambda`).
 
 use ruff_python_ast::{
-    BoolOp, CmpOp, Expr, ExprCall, ExprCompare, ExprLambda, Number, Operator,
-    ParameterWithDefault, Parameters, Stmt, StmtFunctionDef, UnaryOp,
+    BoolOp, CmpOp, Expr, ExprCall, ExprCompare, ExprLambda, Number, Operator, ParameterWithDefault,
+    Parameters, Stmt, StmtFunctionDef, UnaryOp,
 };
 use ruff_python_parser::parse_module;
 use ruff_text_size::Ranged;

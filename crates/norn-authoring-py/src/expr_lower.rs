@@ -108,10 +108,7 @@ pub fn lower_module_callbacks(
                 for item in &class_def.body {
                     if let Stmt::FunctionDef(method) = item {
                         let expr = lower_function_def(method, &lines, ctx)?;
-                        lowered.insert(
-                            format!("{class_name}.{}", method.name.id.as_str()),
-                            expr,
-                        );
+                        lowered.insert(format!("{class_name}.{}", method.name.id.as_str()), expr);
                     }
                 }
             }

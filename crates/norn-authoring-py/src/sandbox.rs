@@ -20,8 +20,8 @@ use ruff_text_size::Ranged;
 
 use crate::error::{
     CODE_FLOAT_LITERAL, CODE_FORBIDDEN_ATTR, CODE_FORBIDDEN_CALL, CODE_FORBIDDEN_CONTROL_FLOW,
-    CODE_FORBIDDEN_IMPORT, CODE_FORBIDDEN_NAME, CODE_FORBIDDEN_SYNTAX, CODE_SYNTAX,
-    CODE_UNBOUNDED, PyAuthoringError, SourceSpan,
+    CODE_FORBIDDEN_IMPORT, CODE_FORBIDDEN_NAME, CODE_FORBIDDEN_SYNTAX, CODE_SYNTAX, CODE_UNBOUNDED,
+    PyAuthoringError, SourceSpan,
 };
 use crate::expr_validate::{validate_function_callback, validate_lambda_callback};
 use crate::line_table::LineTable;
@@ -476,7 +476,10 @@ impl SandboxVisitor<'_> {
         if self.node_count > self.limits.max_ast_nodes {
             self.fail(PyAuthoringError::spanned(
                 CODE_UNBOUNDED,
-                format!("source exceeds {} AST node limit", self.limits.max_ast_nodes),
+                format!(
+                    "source exceeds {} AST node limit",
+                    self.limits.max_ast_nodes
+                ),
                 span,
             ));
             return false;
@@ -628,7 +631,11 @@ impl SandboxVisitor<'_> {
             ));
             return;
         }
-        let Some(module) = import_from.module.as_ref().filter(|_| import_from.level == 0) else {
+        let Some(module) = import_from
+            .module
+            .as_ref()
+            .filter(|_| import_from.level == 0)
+        else {
             self.fail(PyAuthoringError::spanned(
                 CODE_FORBIDDEN_IMPORT,
                 "relative imports are not admitted in Norn authoring modules",
@@ -665,7 +672,11 @@ impl SandboxVisitor<'_> {
             return;
         }
         for kw in class_def.keywords() {
-            if kw.arg.as_ref().is_some_and(|arg| arg.id.as_str() == "metaclass") {
+            if kw
+                .arg
+                .as_ref()
+                .is_some_and(|arg| arg.id.as_str() == "metaclass")
+            {
                 self.fail(PyAuthoringError::spanned(
                     CODE_FORBIDDEN_SYNTAX,
                     "custom `metaclass=` is forbidden in Norn authoring modules",

@@ -3,12 +3,11 @@
 
 use norn_authoring_py::{
     CODE_EXPRESSION, CODE_FLOAT_LITERAL, CODE_FORBIDDEN_ATTR, CODE_FORBIDDEN_CALL,
-    CODE_FORBIDDEN_CONTROL_FLOW, CODE_FORBIDDEN_IMPORT, CODE_FORBIDDEN_NAME,
-    CODE_FORBIDDEN_SYNTAX, CODE_FORMAT, CODE_SYNTAX, CODE_UNBOUNDED, CODE_UNKNOWN_FIELD,
-    FormatConfig, FormatQuoteStyle, LowerContext, SandboxLimits, ZenLiteral, format_exact_decimal,
-    format_python_source, format_python_source_with, is_formatted, lower_callback_source,
-    lower_module_callbacks, preflight_source, preflight_source_with_limits, render_zen_string,
-    validate_callback_source,
+    CODE_FORBIDDEN_CONTROL_FLOW, CODE_FORBIDDEN_IMPORT, CODE_FORBIDDEN_NAME, CODE_FORBIDDEN_SYNTAX,
+    CODE_FORMAT, CODE_SYNTAX, CODE_UNBOUNDED, CODE_UNKNOWN_FIELD, FormatConfig, FormatQuoteStyle,
+    LowerContext, SandboxLimits, ZenLiteral, format_exact_decimal, format_python_source,
+    format_python_source_with, is_formatted, lower_callback_source, lower_module_callbacks,
+    preflight_source, preflight_source_with_limits, render_zen_string, validate_callback_source,
 };
 
 #[test]
@@ -17,7 +16,10 @@ fn sandbox_blocks_forbidden_imports_builtins_dunders_and_syntax() {
         ("import os\n", CODE_FORBIDDEN_IMPORT),
         ("from typing import sys\n", CODE_FORBIDDEN_IMPORT),
         ("from enum import sys\n", CODE_FORBIDDEN_IMPORT),
-        ("from norn_py import elaborate_file\n", CODE_FORBIDDEN_IMPORT),
+        (
+            "from norn_py import elaborate_file\n",
+            CODE_FORBIDDEN_IMPORT,
+        ),
         ("from norn_py import *\n", CODE_FORBIDDEN_IMPORT),
         ("from . import foo\n", CODE_FORBIDDEN_IMPORT),
         ("from dataclasses import dataclass\n", CODE_FORBIDDEN_IMPORT),
@@ -50,7 +52,10 @@ fn sandbox_blocks_forbidden_imports_builtins_dunders_and_syntax() {
             CODE_FORBIDDEN_SYNTAX,
         ),
         ("async def f(s):\n    return s\n", CODE_FORBIDDEN_SYNTAX),
-        ("class Evil(metaclass=int):\n    pass\n", CODE_FORBIDDEN_SYNTAX),
+        (
+            "class Evil(metaclass=int):\n    pass\n",
+            CODE_FORBIDDEN_SYNTAX,
+        ),
         (
             "class Bad:\n    def __init__(self):\n        pass\n",
             CODE_FORBIDDEN_SYNTAX,
@@ -96,12 +101,8 @@ fn sandbox_enforces_source_byte_node_and_depth_budgets() {
         max_ast_depth: 4,
         ..SandboxLimits::default()
     };
-    let err_depth = preflight_source_with_limits(
-        "x = [[[[[1]]]]]\n",
-        "deep.py",
-        tiny_depth_limit,
-    )
-    .unwrap_err();
+    let err_depth =
+        preflight_source_with_limits("x = [[[[[1]]]]]\n", "deep.py", tiny_depth_limit).unwrap_err();
     assert_eq!(err_depth.code(), CODE_UNBOUNDED);
 
     let err_syntax = preflight_source("def broken(:\n", "broken.py").unwrap_err();
@@ -129,11 +130,19 @@ fn sandbox_accepts_hr_pilot_and_lowers_all_callbacks() {
     .unwrap();
 
     assert_eq!(
-        callbacks.get("TimeSpan._proper_interval").unwrap().to_zen().unwrap(),
+        callbacks
+            .get("TimeSpan._proper_interval")
+            .unwrap()
+            .to_zen()
+            .unwrap(),
         "timestamp(self.starts_at) < timestamp(self.ends_at)"
     );
     assert_eq!(
-        callbacks.get("_positive_leave_days").unwrap().to_zen().unwrap(),
+        callbacks
+            .get("_positive_leave_days")
+            .unwrap()
+            .to_zen()
+            .unwrap(),
         "self.days > 0.00"
     );
     assert_eq!(
@@ -231,17 +240,26 @@ fn expr_lowering_matches_norn_py_zen_parity() {
         ("lambda s: +s.hours", "self.hours"),
         ("lambda s: Decimal('24') - s.hours", "24 - self.hours"),
         ("lambda s: 2 * s.hours", "2 * self.hours"),
-        ("lambda s: s.status == LeaveStatus.DRAFT", "self.status == 'draft'"),
+        (
+            "lambda s: s.status == LeaveStatus.DRAFT",
+            "self.status == 'draft'",
+        ),
         ("lambda s: s.hours == Prio.HIGH", "self.hours == 3"),
         ("lambda s: s.name.is_not_null()", "self.name != null"),
         ("lambda s: s.name.is_null()", "self.name == null"),
         ("lambda s: norn_len(s.name) > 0", "len(self.name) > 0"),
-        ("lambda s: contains(s.name, 'hr')", "contains(self.name, 'hr')"),
+        (
+            "lambda s: contains(s.name, 'hr')",
+            "contains(self.name, 'hr')",
+        ),
         (
             "lambda s: when(s.hours > 8, Decimal('1.5'), Decimal('1.0'))",
             "(self.hours > 8) ? 1.5 : 1.0",
         ),
-        ("lambda s: not_(s.status.eq('draft'))", "not (self.status == 'draft')"),
+        (
+            "lambda s: not_(s.status.eq('draft'))",
+            "not (self.status == 'draft')",
+        ),
         (
             "lambda s: days_between(s.start_date, add_days(s.start_date, 5)) == 5",
             "days_between(date(self.start_date), add_days(date(self.start_date), 5)) == 5",
@@ -261,8 +279,8 @@ fn expr_lowering_matches_norn_py_zen_parity() {
         );
     }
 
-    let err_unknown = lower_callback_source("lambda s: s.nonexistent > 0", "unk.py", &ctx)
-        .unwrap_err();
+    let err_unknown =
+        lower_callback_source("lambda s: s.nonexistent > 0", "unk.py", &ctx).unwrap_err();
     assert_eq!(err_unknown.code(), CODE_UNKNOWN_FIELD);
 }
 
@@ -274,7 +292,14 @@ fn exact_decimal_and_zen_string_bounds_enforced() {
     assert_eq!(format_exact_decimal("1e3", None).unwrap(), "1000");
     assert_eq!(format_exact_decimal("1.50e-2", None).unwrap(), "0.0150");
 
-    for bad in ["1e1000000000", "0e-1000000000", "NaN", "Infinity", "-Infinity", "not-a-num"] {
+    for bad in [
+        "1e1000000000",
+        "0e-1000000000",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "not-a-num",
+    ] {
         let err = format_exact_decimal(bad, None).unwrap_err();
         assert_eq!(err.code(), CODE_EXPRESSION, "expected refusal for `{bad}`");
     }
