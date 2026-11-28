@@ -855,88 +855,88 @@ pub fn maintainer_approval(
     approver.ok_or_else(|| format!("no admin commented `{command}` unedited"))
 }
 
+fn artifact_kind_variants(syntax: &syn::File) -> Option<BTreeSet<String>> {
+    syntax.items.iter().find_map(|item| {
+        let syn::Item::Enum(e) = item else {
+            return None;
+        };
+        (e.ident == "ArtifactKind")
+            .then(|| e.variants.iter().map(|v| v.ident.to_string()).collect())
+    })
+}
+
 fn artifact_promotion_variants(root: &Path) -> Result<(), String> {
     let ir = std::fs::read_to_string(root.join("crates/norn-ir/src/lib.rs"))
-        .map_err(|error| format!("artifact promotion IR: {error}"))?;
+        .map_err(|e| format!("artifact promotion IR: {e}"))?;
+    let verus_path = root.join("crates/norn-ir/src/artifact_governance.rs");
+    if verus_path.exists() {
+        let lib = syn::parse_file(&ir).map_err(|e| format!("ArtifactKind syntax: {e}"))?;
+        if artifact_kind_variants(&lib).is_some()
+            || !lib.items.iter().any(|i| {
+                matches!(i, syn::Item::Mod(m) if m.ident == "artifact_governance" && m.content.is_none())
+            })
+        {
+            return Err("lib.rs must declare mod artifact_governance without ArtifactKind".into());
+        }
+        let src = std::fs::read_to_string(verus_path)
+            .map_err(|e| format!("artifact promotion source: {e}"))?;
+        return compare_artifact_variants_verus(&src, &src);
+    }
     let proof = std::fs::read_to_string(
         root.join("verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst"),
     )
-    .map_err(|error| format!("artifact promotion proof: {error}"))?;
-    compare_artifact_variants(&ir, &proof)
+    .map_err(|e| format!("artifact promotion proof: {e}"))?;
+    compare_artifact_variants_fstar(&ir, &proof)
 }
 
-fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
-    let syntax = syn::parse_file(ir).map_err(|error| format!("ArtifactKind syntax: {error}"))?;
-    let expected = syntax
-        .items
-        .into_iter()
-        .find_map(|item| {
-            let syn::Item::Enum(item) = item else {
-                return None;
-            };
-            (item.ident == "ArtifactKind").then(|| {
-                item.variants
-                    .into_iter()
-                    .map(|variant| variant.ident.to_string())
-                    .collect::<BTreeSet<_>>()
-            })
-        })
-        .ok_or("ArtifactKind enum missing")?;
-    if proof.contains("(*") || proof.contains("*)") {
+fn compare_artifact_variants_fstar(ir: &str, proof: &str) -> Result<(), String> {
+    compare_variants_in(ir, proof, false, "let authority_bearing")
+}
+
+fn compare_artifact_variants_verus(ir: &str, proof: &str) -> Result<(), String> {
+    compare_variants_in(ir, proof, true, "pub open spec fn authority_bearing")
+}
+
+fn compare_variants_in(ir: &str, proof: &str, verus: bool, decl: &str) -> Result<(), String> {
+    let syntax = syn::parse_file(ir).map_err(|e| format!("ArtifactKind syntax: {e}"))?;
+    let expected = artifact_kind_variants(&syntax).ok_or("ArtifactKind enum missing")?;
+    let (open, close) = if verus { ("/*", "*/") } else { ("(*", "*)") };
+    if proof.contains(open) || proof.contains(close) {
         return Err("artifact promotion proof contains unsupported block comments".into());
     }
-    let uncommented = proof
+    let lines: Vec<&str> = proof
         .lines()
-        .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let mut declarations = uncommented.lines().enumerate().filter(|(_, line)| {
-        line.strip_prefix("let authority_bearing")
-            .and_then(|suffix| suffix.chars().next())
+        .map(|l| l.split_once("//").map_or(l, |(c, _)| c))
+        .collect();
+    let view = |l: &str| if verus { l.trim_start() } else { l };
+    let mut decls = lines.iter().enumerate().filter(|(_, l)| {
+        view(l)
+            .strip_prefix(decl)
+            .and_then(|s| s.chars().next())
             .is_some_and(|c| c.is_whitespace() || c == '(')
     });
-    let (start, _) = declarations
+    let (start, _) = decls
         .next()
         .ok_or("artifact promotion authority_bearing missing")?;
-    if declarations.next().is_some() {
+    if decls.next().is_some() {
         return Err("duplicate artifact promotion authority_bearing declaration".into());
     }
-    let function = uncommented
-        .lines()
+    let is_next = |l: &str| {
+        if verus {
+            view(l).starts_with("fn ") || view(l).contains(" fn ")
+        } else {
+            l.starts_with("let ")
+        }
+    };
+    let body = lines
+        .into_iter()
         .skip(start)
         .enumerate()
-        .take_while(|(index, line)| *index == 0 || !line.starts_with("let "))
-        .map(|(_, line)| line)
+        .take_while(|(i, l)| *i == 0 || !is_next(l))
+        .map(|(_, l)| l)
         .collect::<Vec<_>>()
         .join("\n");
-    let (_, arms) = function
-        .split_once("match kind with")
-        .ok_or("artifact promotion requires an explicit match on kind")?;
-    let mut patterns = arms.split('|');
-    if patterns
-        .next()
-        .is_none_or(|prefix| !prefix.trim().is_empty())
-    {
-        return Err("artifact promotion requires explicit constructor patterns".into());
-    }
-    let mut actual = BTreeSet::new();
-    for arm in patterns {
-        let pattern = match arm.split_once("->") {
-            Some((pattern, outcome)) if matches!(outcome.trim(), "true" | "false") => pattern,
-            Some(_) => return Err("artifact promotion requires Boolean match arms".into()),
-            None => arm,
-        };
-        let name = pattern
-            .trim()
-            .strip_prefix("ArtifactKind_")
-            .filter(|name| {
-                !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
-            .ok_or("artifact promotion requires explicit constructor patterns")?;
-        if !actual.insert(name.to_owned()) {
-            return Err(format!("duplicate artifact promotion variant {name}"));
-        }
-    }
+    let actual = parse_artifact_arms(&body, verus)?;
     if actual != expected {
         return Err(format!(
             "artifact promotion variants differ from IR: missing={:?}, extra={:?}",
@@ -945,6 +945,56 @@ fn compare_artifact_variants(ir: &str, proof: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn parse_artifact_arms(body: &str, verus: bool) -> Result<BTreeSet<String>, String> {
+    let mut actual = BTreeSet::new();
+    let mut record = |pattern: &str, prefix: &str| -> Result<(), String> {
+        let name = pattern
+            .trim()
+            .strip_prefix(prefix)
+            .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+            .ok_or("artifact promotion requires explicit constructor patterns")?;
+        if !actual.insert(name.to_owned()) {
+            return Err(format!("duplicate artifact promotion variant {name}"));
+        }
+        Ok(())
+    };
+    if verus {
+        let (_, rest) = body
+            .split_once("match kind {")
+            .ok_or("artifact promotion requires an explicit match on kind")?;
+        let (arms, _) = rest
+            .split_once('}')
+            .ok_or("artifact promotion match block is unterminated")?;
+        for arm in arms.split(',').map(str::trim).filter(|a| !a.is_empty()) {
+            let (pats, out) = arm
+                .split_once("=>")
+                .ok_or("artifact promotion requires explicit match arms")?;
+            if !matches!(out.trim(), "true" | "false") {
+                return Err("artifact promotion requires Boolean match arms".into());
+            }
+            pats.split('|')
+                .try_for_each(|p| record(p, "ArtifactKind::"))?;
+        }
+    } else {
+        let (_, arms) = body
+            .split_once("match kind with")
+            .ok_or("artifact promotion requires an explicit match on kind")?;
+        let mut patterns = arms.split('|');
+        if patterns.next().is_none_or(|p| !p.trim().is_empty()) {
+            return Err("artifact promotion requires explicit constructor patterns".into());
+        }
+        for arm in patterns {
+            let pattern = match arm.split_once("->") {
+                Some((p, out)) if matches!(out.trim(), "true" | "false") => p,
+                Some(_) => return Err("artifact promotion requires Boolean match arms".into()),
+                None => arm,
+            };
+            record(pattern, "ArtifactKind_")?;
+        }
+    }
+    Ok(actual)
 }
 
 #[cfg(test)]
@@ -1530,7 +1580,10 @@ mod tests {
         );
     }
 
-    use super::{compare_artifact_variants, contract_errors, maintainer_approval};
+    use super::{
+        artifact_promotion_variants, compare_artifact_variants_fstar as compare_artifact_variants,
+        compare_artifact_variants_verus, contract_errors, maintainer_approval,
+    };
     use serde_json::{Value, json};
 
     const HEAD: &str = "1111111111111111111111111111111111111111";
@@ -1696,5 +1749,161 @@ mod tests {
             let proof = PROOF.replace("-> true", &format!("-> true | {extra} -> true"));
             assert!(compare_artifact_variants(IR, &proof).is_err());
         }
+    }
+
+    const VERUS_17_SOURCE: &str = "\
+pub enum ArtifactKind {
+    Entity,
+    Relation,
+    Action,
+    Rule,
+    Connector,
+    Widget,
+    Customization,
+    Setting,
+    BusinessPack,
+    Policy,
+    Derived,
+    SourceSchema,
+    Mapping,
+    Law,
+    DefinedConcept,
+    Labels,
+    Model,
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+    pub open spec fn authority_bearing(kind: ArtifactKind) -> bool {
+        match kind {
+            ArtifactKind::Entity
+            | ArtifactKind::DefinedConcept
+            | ArtifactKind::Labels
+            | ArtifactKind::Model
+            | ArtifactKind::Relation
+            | ArtifactKind::Action
+            | ArtifactKind::Rule
+            | ArtifactKind::Law
+            | ArtifactKind::Connector
+            | ArtifactKind::Widget
+            | ArtifactKind::Customization
+            | ArtifactKind::Setting
+            | ArtifactKind::BusinessPack
+            | ArtifactKind::Policy
+            | ArtifactKind::Derived
+            | ArtifactKind::Mapping => true,
+            ArtifactKind::SourceSchema => false,
+        }
+    }
+
+    pub open spec fn next() -> bool { true }
+}
+";
+
+    #[test]
+    fn verus_artifact_promotion_covers_the_closed_17_variant_ir_enum() {
+        assert!(compare_artifact_variants_verus(VERUS_17_SOURCE, VERUS_17_SOURCE).is_ok());
+    }
+
+    #[test]
+    fn verus_artifact_promotion_rejects_missing_and_extra_variants() {
+        let missing_arm = VERUS_17_SOURCE.replace("            | ArtifactKind::Law\n", "");
+        assert!(compare_artifact_variants_verus(VERUS_17_SOURCE, &missing_arm).is_err());
+
+        let new_ir_variant = VERUS_17_SOURCE.replace("    Model,\n", "    Model,\n    Future,\n");
+        assert!(compare_artifact_variants_verus(&new_ir_variant, VERUS_17_SOURCE).is_err());
+
+        let extra_match_variant = VERUS_17_SOURCE.replace("    Law,\n", "");
+        assert!(compare_artifact_variants_verus(&extra_match_variant, VERUS_17_SOURCE).is_err());
+    }
+
+    #[test]
+    fn verus_artifact_promotion_rejects_wildcards_duplicates_comments_and_non_bools() {
+        let wildcard = VERUS_17_SOURCE.replace("ArtifactKind::Law", "_");
+        assert!(compare_artifact_variants_verus(VERUS_17_SOURCE, &wildcard).is_err());
+
+        for extra in ["_", "ArtifactKind::Law"] {
+            let same_line =
+                VERUS_17_SOURCE.replace("=> true,", &format!("=> true, {extra} => true,"));
+            assert!(compare_artifact_variants_verus(VERUS_17_SOURCE, &same_line).is_err());
+        }
+
+        let duplicate = VERUS_17_SOURCE.replace(
+            "| ArtifactKind::Law\n",
+            "| ArtifactKind::Law\n            | ArtifactKind::Law\n",
+        );
+        assert!(compare_artifact_variants_verus(VERUS_17_SOURCE, &duplicate).is_err());
+
+        let block_comment = VERUS_17_SOURCE.replace(
+            "| ArtifactKind::Law\n",
+            "/*\n            | ArtifactKind::Law\n*/\n",
+        );
+        assert!(compare_artifact_variants_verus(VERUS_17_SOURCE, &block_comment).is_err());
+
+        let commented_fn = format!(
+            "/*\n{VERUS_17_SOURCE}*/\npub open spec fn authority_bearing(kind: ArtifactKind) -> bool {{ true }}\n"
+        );
+        assert!(compare_artifact_variants_verus(VERUS_17_SOURCE, &commented_fn).is_err());
+
+        let non_bool = VERUS_17_SOURCE.replace("=> false,", "=> other,");
+        assert!(compare_artifact_variants_verus(VERUS_17_SOURCE, &non_bool).is_err());
+
+        let similar = format!(
+            "{}\npub open spec fn authority_bearing(kind: ArtifactKind) -> bool {{ match kind {{ _ => true }} }}\n",
+            VERUS_17_SOURCE.replace(
+                "pub open spec fn authority_bearing(",
+                "pub open spec fn authority_bearing_reference(",
+            )
+        );
+        assert!(compare_artifact_variants_verus(VERUS_17_SOURCE, &similar).is_err());
+    }
+
+    #[test]
+    fn artifact_promotion_variants_dispatches_legacy_and_verus_layouts() {
+        let legacy = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(legacy.path().join("crates/norn-ir/src")).expect("mkdir");
+        std::fs::create_dir_all(
+            legacy
+                .path()
+                .join("verification/stripmine-2026-08-22/proofs/fstar"),
+        )
+        .expect("mkdir");
+        std::fs::write(legacy.path().join("crates/norn-ir/src/lib.rs"), IR).expect("write");
+        std::fs::write(
+            legacy
+                .path()
+                .join("verification/stripmine-2026-08-22/proofs/fstar/ArtifactPromotionProof.fst"),
+            PROOF,
+        )
+        .expect("write");
+        assert!(artifact_promotion_variants(legacy.path()).is_ok());
+
+        let verus = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(verus.path().join("crates/norn-ir/src")).expect("mkdir");
+        std::fs::write(
+            verus.path().join("crates/norn-ir/src/lib.rs"),
+            "mod artifact_governance;\npub use artifact_governance::ArtifactKind;\n",
+        )
+        .expect("write");
+        std::fs::write(
+            verus
+                .path()
+                .join("crates/norn-ir/src/artifact_governance.rs"),
+            VERUS_17_SOURCE,
+        )
+        .expect("write");
+        assert!(artifact_promotion_variants(verus.path()).is_ok());
+
+        // Contradictory lib.rs defining its own ArtifactKind must fail closed.
+        std::fs::write(
+            verus.path().join("crates/norn-ir/src/lib.rs"),
+            format!("mod artifact_governance;\n{IR}\n"),
+        )
+        .expect("write");
+        assert!(artifact_promotion_variants(verus.path()).is_err());
+
+        // Unwired lib.rs without `mod artifact_governance;` must fail closed.
+        std::fs::write(verus.path().join("crates/norn-ir/src/lib.rs"), "").expect("write");
+        assert!(artifact_promotion_variants(verus.path()).is_err());
     }
 }
