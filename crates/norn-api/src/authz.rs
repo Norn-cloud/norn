@@ -300,6 +300,21 @@ impl norn_kernel::ActionAuthorizer for KernelAuthorizer<'_> {
     }
 }
 
+fn enforce_result_scope_and_identity(
+    scope_key: &str,
+    request: &norn_kernel::result_reconciliation::ResultAuthzRequest<'_>,
+) -> Result<(), norn_kernel::result_reconciliation::ResultDenial> {
+    if request.tenant != scope_key
+        || request.authority.id.trim().is_empty()
+        || request.command.trim().is_empty()
+    {
+        return Err(norn_kernel::result_reconciliation::ResultDenial {
+            reason: codes::AUTHZ_DENIED.into(),
+        });
+    }
+    Ok(())
+}
+
 /// Production [`norn_kernel::result_reconciliation::ResultAuthorizer`]
 /// installed on every [`crate::host::DevHost`] cell (`RECEIPT-CONSUME-1`).
 ///
@@ -324,6 +339,13 @@ impl HostResultAuthorizer {
             authorizer,
         }
     }
+
+    pub(crate) fn boxed(
+        scope_key: impl Into<String>,
+        authorizer: std::sync::Arc<dyn Authorizer>,
+    ) -> norn_cell::ResultAuthority {
+        Box::new(Self::new(scope_key, authorizer))
+    }
 }
 
 impl norn_kernel::result_reconciliation::ResultAuthorizer for HostResultAuthorizer {
@@ -331,16 +353,85 @@ impl norn_kernel::result_reconciliation::ResultAuthorizer for HostResultAuthoriz
         &self,
         request: &norn_kernel::result_reconciliation::ResultAuthzRequest<'_>,
     ) -> Result<(), norn_kernel::result_reconciliation::ResultDenial> {
-        let denied = || norn_kernel::result_reconciliation::ResultDenial {
-            reason: codes::AUTHZ_DENIED.into(),
-        };
-        if request.tenant != self.scope_key
-            || request.authority.id.trim().is_empty()
-            || request.command.trim().is_empty()
-        {
-            return Err(denied());
-        }
+        enforce_result_scope_and_identity(&self.scope_key, request)?;
         self.authorizer.result(request)
+    }
+}
+
+/// Scope- and identity-enforcing wrapper around any custom
+/// [`norn_cell::ResultAuthority`] installed on a [`crate::host::DevHost`].
+struct ScopedResultAuthorizer {
+    scope_key: String,
+    inner: norn_cell::ResultAuthority,
+}
+
+impl ScopedResultAuthorizer {
+    fn boxed(
+        scope_key: impl Into<String>,
+        inner: norn_cell::ResultAuthority,
+    ) -> norn_cell::ResultAuthority {
+        Box::new(Self {
+            scope_key: scope_key.into(),
+            inner,
+        })
+    }
+}
+
+impl norn_kernel::result_reconciliation::ResultAuthorizer for ScopedResultAuthorizer {
+    fn authorize(
+        &self,
+        request: &norn_kernel::result_reconciliation::ResultAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::result_reconciliation::ResultDenial> {
+        enforce_result_scope_and_identity(&self.scope_key, request)?;
+        self.inner.authorize(request)
+    }
+}
+
+impl<E: norn_cell::engine::SqlEngine> crate::host::DevHost<E> {
+    pub(crate) fn rebind_result_authorizer(&self, authorizer: &std::sync::Arc<dyn Authorizer>) {
+        if let Ok(mut slot) = self.cell.lock()
+            && let Some(cell) = slot.as_mut()
+        {
+            cell.set_result_authorizer(Some(HostResultAuthorizer::boxed(
+                self.scope.key(),
+                std::sync::Arc::clone(authorizer),
+            )));
+        }
+    }
+
+    /// RECEIPT-CONSUME-1: install a custom Function command-authority recheck
+    /// on this host's underlying cell, always wrapped with tenant-scope and
+    /// non-blank authority/command identity enforcement. Call after
+    /// [`Self::with_authorizer`] when supplying both.
+    #[must_use]
+    pub fn with_result_authorizer(self, authorizer: norn_cell::ResultAuthority) -> Self {
+        if let Ok(mut slot) = self.cell.lock()
+            && let Some(cell) = slot.as_mut()
+        {
+            cell.set_result_authorizer(Some(ScopedResultAuthorizer::boxed(
+                self.scope.key(),
+                authorizer,
+            )));
+        }
+        self
+    }
+
+    /// RECEIPT-CONSUME-1: replace the underlying cell's Function
+    /// command-authority recheck in place, always wrapped with tenant-scope and
+    /// non-blank authority/command identity enforcement.
+    ///
+    /// # Errors
+    /// `host.error` if the cell lock is poisoned or the cell is unavailable.
+    pub fn set_result_authorizer(
+        &self,
+        authorizer: norn_cell::ResultAuthority,
+    ) -> Result<(), Refusal> {
+        self.cell()?
+            .set_result_authorizer(Some(ScopedResultAuthorizer::boxed(
+                self.scope.key(),
+                authorizer,
+            )));
+        Ok(())
     }
 }
 
@@ -612,21 +703,39 @@ mod tests {
             ));
         }
 
-        // Clearing via set_result_authorizer(None) disables receipt resolution.
-        host.set_result_authorizer(None)
-            .expect("clear result authorizer");
-        {
-            let cell = host.cell().expect("cell guard");
-            assert!(
-                cell.resolve_accepted_receipt(&reference, &manifest)
-                    .expect("unset authorizer returns Ok(None)")
-                    .is_none()
-            );
+        // Custom overrides stay wrapped with ScopedResultAuthorizer so tenant
+        // scope and non-blank identity checks are always enforced and the
+        // authorizer is never cleared to None.
+        struct AllowAllResults;
+        impl norn_kernel::result_reconciliation::ResultAuthorizer for AllowAllResults {
+            fn authorize(
+                &self,
+                _request: &norn_kernel::result_reconciliation::ResultAuthzRequest<'_>,
+            ) -> Result<(), norn_kernel::result_reconciliation::ResultDenial> {
+                Ok(())
+            }
         }
-
-        // Rebinding via with_authorizer restores the scope-pinned fail-closed
-        // HostResultAuthorizer, and with_result_authorizer can override it.
-        let host = host.with_authorizer(DenyAll);
+        let scoped_custom =
+            ScopedResultAuthorizer::boxed("org_demo/dev", Box::new(AllowAllResults));
+        let worker = norn_ir::function::Authority {
+            kind: norn_ir::function::AuthorityKind::Service,
+            id: "svc.worker".to_owned(),
+        };
+        assert_eq!(
+            scoped_custom.authorize(&norn_kernel::result_reconciliation::ResultAuthzRequest {
+                tenant: "org_other/dev",
+                authority: &worker,
+                command: "cmd-1",
+                manifest: &manifest,
+                destination: None,
+                now: norn_kernel::LogicalTime::from_millis(1_000),
+            }),
+            Err(norn_kernel::result_reconciliation::ResultDenial {
+                reason: codes::AUTHZ_DENIED.into(),
+            })
+        );
+        host.set_result_authorizer(Box::new(AllowAllResults))
+            .expect("replace result authorizer");
         {
             let cell = host.cell().expect("cell guard");
             assert!(matches!(
@@ -634,14 +743,18 @@ mod tests {
                 Err(ReceiptBindingError::Unknown)
             ));
         }
-        let host = host.with_result_authorizer(None);
+
+        // Rebinding via with_authorizer and with_result_authorizer keeps an
+        // authorizer installed at all times.
+        let host = host
+            .with_authorizer(DenyAll)
+            .with_result_authorizer(Box::new(AllowAllResults));
         {
             let cell = host.cell().expect("cell guard");
-            assert!(
-                cell.resolve_accepted_receipt(&reference, &manifest)
-                    .expect("explicit None override returns Ok(None)")
-                    .is_none()
-            );
+            assert!(matches!(
+                cell.resolve_accepted_receipt(&reference, &manifest),
+                Err(ReceiptBindingError::Unknown)
+            ));
         }
     }
 }

@@ -21,7 +21,7 @@ use std::{
 pub(crate) type ActionCell<E> = norn_cell::SqliteCell<FactEvent, RuntimeObject, RuntimeObject, E>;
 /// A single tenant's cell and definition epoch. Unconfigured authorization denies.
 pub struct DevHost<E: SqlEngine> {
-    scope: CellScope,
+    pub(crate) scope: CellScope,
     pub(crate) authorizer: Arc<dyn Authorizer>,
     definitions: RwLock<()>,
     /// Always `Some` outside [`DevHost::ingest`], which holds the lock while
@@ -214,10 +214,10 @@ impl<E: SqlEngine> DevHost<E> {
         scope.admit(Some(&scope.org_id), Some(&scope.environment_id))?;
         let authorizer: Arc<dyn Authorizer> = Arc::new(DenyAll);
         let mut cell = ActionCell::new(store, scope.key(), responder).map_err(Refusal::host)?;
-        cell.set_result_authorizer(Some(Box::new(HostResultAuthorizer::new(
+        cell.set_result_authorizer(Some(HostResultAuthorizer::boxed(
             scope.key(),
             Arc::clone(&authorizer),
-        ))));
+        )));
         Ok(Self {
             scope,
             authorizer,
@@ -230,48 +230,13 @@ impl<E: SqlEngine> DevHost<E> {
             retained: Mutex::new(None),
         })
     }
-    /// Supply the trusted server policy before sharing this host. Also rebinds
-    /// the underlying cell's Function receipt authorizer (`RECEIPT-CONSUME-1`)
-    /// to a scope-pinned [`HostResultAuthorizer`] delegating to this policy's
-    /// [`Authorizer::result`] check.
+    /// Supply the trusted server policy before sharing this host.
     #[must_use]
     pub fn with_authorizer(mut self, authorizer: impl Authorizer + 'static) -> Self {
         let authorizer: Arc<dyn Authorizer> = Arc::new(authorizer);
-        if let Ok(mut slot) = self.cell.lock()
-            && let Some(cell) = slot.as_mut()
-        {
-            cell.set_result_authorizer(Some(Box::new(HostResultAuthorizer::new(
-                self.scope.key(),
-                Arc::clone(&authorizer),
-            ))));
-        }
+        self.rebind_result_authorizer(&authorizer);
         self.authorizer = authorizer;
         self
-    }
-    /// RECEIPT-CONSUME-1: install (or clear with `None`) an explicit Function
-    /// command-authority recheck on this host's underlying cell, overriding the
-    /// default fail-closed [`HostResultAuthorizer`]. Call after
-    /// [`Self::with_authorizer`] when supplying both.
-    #[must_use]
-    pub fn with_result_authorizer(self, authorizer: Option<norn_cell::ResultAuthority>) -> Self {
-        if let Ok(mut slot) = self.cell.lock()
-            && let Some(cell) = slot.as_mut()
-        {
-            cell.set_result_authorizer(authorizer);
-        }
-        self
-    }
-    /// RECEIPT-CONSUME-1: replace (or clear with `None`) the underlying cell's
-    /// Function command-authority recheck in place.
-    ///
-    /// # Errors
-    /// `host.error` if the cell lock is poisoned or the cell is unavailable.
-    pub fn set_result_authorizer(
-        &self,
-        authorizer: Option<norn_cell::ResultAuthority>,
-    ) -> Result<(), Refusal> {
-        self.cell()?.set_result_authorizer(authorizer);
-        Ok(())
     }
     /// Key this cell's pseudonyms with `secret` (the host's lineage key);
     /// a secret shorter than 32 bytes keys none, and pseudonyms redact.

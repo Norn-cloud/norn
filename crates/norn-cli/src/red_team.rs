@@ -24,10 +24,16 @@ pub(crate) fn check_with_red_team(
     if !admitted {
         return Ok((report, false));
     }
-    let red_team_json = norn_checker_wasm::analyze_red_team_json(artifacts_json)
-        .map_err(|error| error.to_string())?;
-    let red_team: Value =
-        serde_json::from_str(&red_team_json).map_err(|error| error.to_string())?;
+    let red_team = match norn_checker_wasm::analyze_red_team_json(artifacts_json)
+        .map_err(|error| error.to_string())
+        .and_then(|json| serde_json::from_str::<Value>(&json).map_err(|error| error.to_string()))
+    {
+        Ok(report) => report,
+        Err(error) => serde_json::json!({
+            "status": "unavailable",
+            "error": error,
+        }),
+    };
     if let Some(object) = value.as_object_mut() {
         object.insert("redTeam".to_owned(), red_team);
     }

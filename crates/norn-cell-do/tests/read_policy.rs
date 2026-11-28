@@ -500,5 +500,10 @@ fn production_read_policy_and_tenant_wire_fail_closed_result_authorizer() {
 
     let tenant = Tenant::seeded(scope, &DEMO_GRANTS, store, None).unwrap();
     let serving = tenant.serving_host().expect("seeded tenant serves");
-    assert!(serving.set_result_authorizer(None).is_ok());
+    let result_authz: norn_cell::ResultAuthority =
+        Box::new(norn_api::authz::HostResultAuthorizer::new(
+            tenant_key,
+            std::sync::Arc::new(norn_api::authz::DenyAll),
+        ));
+    assert!(serving.set_result_authorizer(result_authz).is_ok());
 }
