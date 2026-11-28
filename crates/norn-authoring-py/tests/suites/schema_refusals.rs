@@ -565,7 +565,7 @@ fn eval_refuses_exponential_value_cloning_and_deep_or_cyclic_inheritance() -> Te
     let mut bomb = String::from("v0 = [0]\n");
     for idx in 1_usize..=30 {
         let prev = idx.saturating_sub(1);
-        let _ = writeln!(bomb, "v{idx} = [v{prev}, v{prev}]");
+        writeln!(bomb, "v{idx} = [v{prev}, v{prev}]")?;
     }
     let err_bomb = expect_err(elaborate_source(&bomb, &opts), "exponential value bomb")?;
     assert_eq!(err_bomb.code(), CODE_UNBOUNDED);
@@ -577,12 +577,12 @@ fn eval_refuses_exponential_value_cloning_and_deep_or_cyclic_inheritance() -> Te
     for idx in 1_usize..=66 {
         let prev = idx.saturating_sub(1);
         if idx == 66 {
-            let _ = writeln!(
+            writeln!(
                 deep_chain,
                 "class C{idx}(C{prev}, name=\"test.DeepLeaf\", title=\"Deep\", version=\"0.1.0\"):\n    leaf: Field[str]"
-            );
+            )?;
         } else {
-            let _ = writeln!(deep_chain, "class C{idx}(C{prev}):\n    pass");
+            writeln!(deep_chain, "class C{idx}(C{prev}):\n    pass")?;
         }
     }
     let err_deep = expect_err(elaborate_source(&deep_chain, &opts), "deep inheritance")?;
@@ -619,14 +619,14 @@ class Huge(Concept, name="test.HugeChain", title="Huge", version="0.1.0"):
     "#,
     );
     for idx in 0_usize..200 {
-        let _ = write!(src, "lc{idx} = ");
+        write!(src, "lc{idx} = ")?;
     }
     src.push_str("lifecycle(\"status\", St, initial=(St.A,), transitions=(");
     for idx in 0_usize..150 {
         if idx > 0 {
             src.push_str(", ");
         }
-        let _ = write!(src, "transition(\"t{idx}\", from_=(St.A,), to=St.B)");
+        write!(src, "transition(\"t{idx}\", from_=(St.A,), to=St.B)")?;
     }
     src.push_str("))\n");
 
@@ -684,7 +684,9 @@ fn read_regular_file_bounded_refuses_symlinks_dirs_and_oversized_files() -> Test
 
     let tmp_dir =
         std::env::temp_dir().join(format!("norn-authoring-py-io-test-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&tmp_dir);
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir)?;
+    }
     fs::create_dir_all(&tmp_dir)?;
 
     let regular = tmp_dir.join("real.py");
@@ -722,6 +724,6 @@ fn read_regular_file_bounded_refuses_symlinks_dirs_and_oversized_files() -> Test
     let ok_src = read_regular_file_bounded(&regular, "real.py", 1024)?;
     assert_eq!(ok_src, "x = 1\n");
 
-    let _ = fs::remove_dir_all(&tmp_dir);
+    fs::remove_dir_all(&tmp_dir)?;
     Ok(())
 }
