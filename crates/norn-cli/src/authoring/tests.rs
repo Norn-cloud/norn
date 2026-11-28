@@ -242,7 +242,7 @@ fn ts_compile_check_profile_on_crm_fixture() -> TestResult {
         .and_then(|item| item.get("diagnostics"))
         .and_then(Value::as_array)
         .ok_or("missing diagnostics array")?;
-    assert!(diags.is_empty());
+    assert_eq!(diags, &Vec::<Value>::new());
     Ok(())
 }
 
@@ -282,7 +282,7 @@ fn ts_question_dashboard_and_profile_refusal() -> TestResult {
         tool_root: None,
     });
     assert_eq!(question_written.exit_code, 0);
-    assert!(question_written.stdout.is_empty());
+    assert_eq!(question_written.stdout, "");
     assert_eq!(
         std::fs::read_to_string(&question_out_path)?,
         question_stdout.stdout
@@ -319,7 +319,7 @@ fn ts_question_dashboard_and_profile_refusal() -> TestResult {
         tool_root: None,
     });
     assert_eq!(dashboard_written.exit_code, 0);
-    assert!(dashboard_written.stdout.is_empty());
+    assert_eq!(dashboard_written.stdout, "");
     assert_eq!(
         std::fs::read_to_string(&dashboard_out_path)?,
         dashboard_stdout.stdout
@@ -339,7 +339,7 @@ fn ts_question_dashboard_and_profile_refusal() -> TestResult {
         .and_then(|item| item.get("diagnostics"))
         .and_then(Value::as_array)
         .ok_or("expected diagnostics array on profile refusal")?;
-    assert!(!bad_diags.is_empty());
+    assert_ne!(bad_diags, &Vec::<Value>::new());
     Ok(())
 }
 
@@ -383,7 +383,7 @@ fn fmt_check_and_write_for_ts_and_py() -> TestResult {
         path: scratch.path().to_path_buf(),
     });
     assert_eq!(check_clean.exit_code, 0);
-    assert!(check_clean.stdout.is_empty());
+    assert_eq!(check_clean.stdout, "");
     Ok(())
 }
 
