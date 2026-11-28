@@ -121,7 +121,7 @@ pub(crate) fn execute_dev(args: &DevArgs) -> CommandOutput {
     } else {
         "in-memory"
     };
-    let token_banner = if auth.from_env() {
+    let token_banner = if auth.is_from_env() {
         "<from NORN_DEV_TOKEN environment>"
     } else {
         auth.token()
@@ -294,7 +294,7 @@ fn health_response(cell: &LocalCell) -> HttpResponse {
 fn route_defs(cell: &LocalCell, req: &HttpRequest) -> HttpResponse {
     let (scope, query_map) = match extract_scope_and_query(req) {
         Ok(pair) => pair,
-        Err(resp) => return resp,
+        Err(err_response) => return err_response,
     };
     let version = match query_map.get("version") {
         None => None,
@@ -342,7 +342,7 @@ fn route_apply(cell: &LocalCell, req: &HttpRequest) -> HttpResponse {
 fn route_action(cell: &LocalCell, req: &HttpRequest, raw_segment: &str) -> HttpResponse {
     let (scope, query_map) = match extract_scope_and_query(req) {
         Ok(pair) => pair,
-        Err(resp) => return resp,
+        Err(err_response) => return err_response,
     };
     let version = match query_map.get("version") {
         None => None,
@@ -379,7 +379,7 @@ fn route_action(cell: &LocalCell, req: &HttpRequest, raw_segment: &str) -> HttpR
 fn route_objects(cell: &LocalCell, req: &HttpRequest, rest: &str) -> HttpResponse {
     let (scope, query_map) = match extract_scope_and_query(req) {
         Ok(pair) => pair,
-        Err(resp) => return resp,
+        Err(err_response) => return err_response,
     };
     let actor = extract_actor(&req.headers);
     let parts: Vec<&str> = rest.split('/').collect();

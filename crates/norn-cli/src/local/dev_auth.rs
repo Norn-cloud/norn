@@ -88,7 +88,7 @@ impl DevAuth {
         &self.session_token
     }
 
-    pub(super) const fn from_env(&self) -> bool {
+    pub(super) const fn is_from_env(&self) -> bool {
         self.from_env
     }
 

@@ -762,7 +762,7 @@ fn load_packs_preserves_layers_refuses_duplicate_base_and_shares_budget() -> Tes
 
     // App artifact with same reserved ID stays in app_artifacts and does not replace base.
     let loaded = load_packs(
-        &[base_a.clone()],
+        std::slice::from_ref(&base_a),
         Some(&PackInput::Artifacts(app_spoof)),
         "org_demo",
         "dev",
@@ -781,7 +781,7 @@ fn load_packs_preserves_layers_refuses_duplicate_base_and_shares_budget() -> Tes
     );
 
     // Aggregate budget shared across repeatable --base packs refuses when combined size exceeds cap.
-    let single_len = u64::try_from(std::fs::metadata(&base_a)?.len())?;
+    let single_len = std::fs::metadata(&base_a)?.len();
     let combined_cap = single_len.saturating_add(10);
     assert!(
         load_packs_with_budget(&[base_a, base_b], None, "org_demo", "dev", combined_cap).is_err(),

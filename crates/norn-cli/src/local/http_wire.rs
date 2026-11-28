@@ -202,10 +202,12 @@ fn parse_content_length(headers: &BTreeMap<String, Vec<String>>) -> Result<usize
     })
 }
 
+type ParsedHead = (String, String, BTreeMap<String, Vec<String>>);
+
 fn read_head(
     reader: &mut BufReader<&TcpStream>,
     deadline: Instant,
-) -> Result<(String, String, BTreeMap<String, Vec<String>>), HttpResponse> {
+) -> Result<ParsedHead, HttpResponse> {
     let mut total = 0_usize;
     let mut line_buf = Vec::new();
     let request_line = read_header_line(reader, &mut line_buf, &mut total, deadline)?;
