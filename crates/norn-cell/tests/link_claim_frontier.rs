@@ -177,6 +177,19 @@ fn referring_parties(artifacts: &mut Vec<ArtifactEnvelope>) {
     });
 }
 
+fn linkless_parties(artifacts: &mut Vec<ArtifactEnvelope>) {
+    edit_artifact(artifacts, "erpnext.three.mapping", |a| {
+        if let Some(maps) = a["payload"]["maps"].as_array_mut() {
+            maps.retain(|m| m["id"] != "party_role");
+            for map in maps {
+                if map["id"] == "party" {
+                    map["links"] = json!([]);
+                }
+            }
+        }
+    });
+}
+
 fn party_ref_row(name: &str, key: &str, label: &str, refers: Option<&str>) -> Value {
     json!({
         "dataset": "Party",
@@ -3272,9 +3285,9 @@ fn tampered_dispute_resolution_on_open_cell_fails_closed_and_keeps_quarantine() 
 fn forged_dispute_resolution_cannot_bypass_stale_delete_guard() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join("forged_res_stale_delete.sqlite");
-    // Use the default model where `canon.Party` declares no links, so ZERO
-    // link claims (not even clear claims) exist in `_norn_link_claim_frontier`.
-    let mut cell = setup(&path);
+    // Use a genuinely linkless `Party` model (no `party_role` map, no links)
+    // so ZERO link claims exist in `_norn_link_claim_frontier`.
+    let mut cell = setup_with(&path, linkless_parties);
 
     let a_v2 = party_ref_row("P-A", "demo/party/a", "A v2", None);
     capture_kind(&mut cell, "erpnext", &a_v2, "e2", "2", "upsert", "p1");
@@ -3451,13 +3464,22 @@ fn forged_dispute_resolution_cannot_bypass_stale_delete_guard() {
 fn hidden_noop_observation_and_tombstone_still_block_stale_delete_and_resurrection() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join("hidden_noop_and_tombstone.sqlite");
-    let mut cell = setup(&path);
+    let mut cell = setup_with(&path, linkless_parties);
 
     // 1. Land v1, then land an identical no-op linkless v2 (eventCount == 0).
     let p_v1 = party_ref_row("P-A", "demo/party/a", "Same", None);
     capture_kind(&mut cell, "erpnext", &p_v1, "e1", "1", "upsert", "p1");
     let p_v2_noop = party_ref_row("P-A", "demo/party/a", "Same", None);
     let obs_v2 = capture_kind(&mut cell, "erpnext", &p_v2_noop, "e2", "2", "upsert", "p1");
+    let fc: i64 = rusqlite::Connection::open(&path)
+        .expect("sqlite")
+        .query_row(
+            "SELECT COUNT(*) FROM \"_norn_link_claim_frontier\"",
+            [],
+            |row| row.get(0),
+        )
+        .expect("frontier count");
+    assert_eq!(fc, 0, "linkless party must emit zero frontier claims");
 
     // Hide v2 from `_norn_inbox/source_event` by mutating its inbox `source_id`.
     {

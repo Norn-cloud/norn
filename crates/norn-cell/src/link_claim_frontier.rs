@@ -76,7 +76,7 @@ pub(crate) const DDL: &[&str] = &[
   "receipt_hash" TEXT NOT NULL
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_ledger/dispute_resolved" ON "_norn_ledger" ("world", json_extract("event", '$.disputeId'), "commit_seq") WHERE json_extract("event", '$.op') = 'dispute_resolved'"#,
-    r#"CREATE INDEX IF NOT EXISTS "_norn_receipt/noop_observation" ON "_norn_receipt" ("world", "commit_seq") WHERE json_extract("receipt", '$.eventCount') = 0 AND json_extract("receipt", '$.consumed.kind') = 'observation'"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_receipt/noop_observation" ON "_norn_receipt" ("world", "commit_seq") WHERE json_extract("receipt", '$.consumed.kind') = 'observation' AND (json_extract("receipt", '$.eventCount') = 0 OR json_extract("receipt", '$.consumed.observationId') LIKE 'mapping-page:%')"#,
 ];
 
 /// One row decoded from `_norn_link_claim_frontier`.
@@ -201,17 +201,19 @@ fn raw_version_kind(raw: &Value) -> VersionKind {
 fn claim_source_meta<E: SqlEngine>(
     conn: &E,
     reader: Option<&StoreReader<'_, E>>,
+    commit_seq: u64,
     observation_id: &str,
 ) -> Result<ClaimSourceMeta, CellError> {
-    let Some(encoded) = conn.query_optional(
-        &format!("SELECT \"observed\" FROM \"{INBOX}\" WHERE \"observation_id\" = ?1"),
-        params![observation_id],
-        |row| row.get::<String>(0),
+    let Some(observed_val) = crate::export_journal::authenticated_claim_observed(
+        conn,
+        reader,
+        commit_seq,
+        observation_id,
     )?
     else {
         return Ok(ClaimSourceMeta::default());
     };
-    let Ok(observed) = serde_json::from_str::<Observed<Value>>(&encoded) else {
+    let Ok(observed) = norn_ir::runtime::decode::<Observed<Value>>(&observed_val) else {
         return Ok(ClaimSourceMeta::default());
     };
     if observation_id.starts_with("mapping-bundle:") {
@@ -240,7 +242,7 @@ pub(crate) fn record_claim_in_tx<E: SqlEngine>(
     values: &BTreeMap<String, Value>,
 ) -> Result<(), CellError> {
     let claim = parse_claim_from_values(key, values)?;
-    let meta = claim_source_meta(reader.conn, Some(reader), &claim.observation_id)?;
+    let meta = claim_source_meta(reader.conn, Some(reader), commit_seq, &claim.observation_id)?;
     insert_claim_row(
         reader.conn,
         commit_seq,
@@ -503,19 +505,25 @@ pub(crate) fn frontier_has_drift<E: SqlEngine>(
     for (id, commit_seq, ordinal, claim) in expected_claims {
         expected_by_id.insert(id, (commit_seq, ordinal, claim));
     }
-    let mut meta_cache: BTreeMap<String, ClaimSourceMeta> = BTreeMap::new();
+    let mut meta_cache: BTreeMap<(u64, String), ClaimSourceMeta> = BTreeMap::new();
     for raw in stored_claims {
         let row = SqlRow(raw);
         let id: String = row.get(0)?;
         let Some((exp_seq, exp_ordinal, exp_claim)) = expected_by_id.get(&id) else {
             return Ok(true);
         };
-        if !meta_cache.contains_key(&exp_claim.observation_id) {
-            let meta = claim_source_meta(reader.conn, Some(reader), &exp_claim.observation_id)?;
-            meta_cache.insert(exp_claim.observation_id.clone(), meta);
+        let meta_key = (*exp_seq, exp_claim.observation_id.clone());
+        if !meta_cache.contains_key(&meta_key) {
+            let meta = claim_source_meta(
+                reader.conn,
+                Some(reader),
+                *exp_seq,
+                &exp_claim.observation_id,
+            )?;
+            meta_cache.insert(meta_key.clone(), meta);
         }
         let exp_meta = meta_cache
-            .get(&exp_claim.observation_id)
+            .get(&meta_key)
             .ok_or_else(|| CellError::Engine("missing cached claim metadata".to_owned()))?;
         let exp_contrib = exp_claim.contribution_id()?;
         let exp_active = i64::from(!expected_superseded.contains(&id));
@@ -727,14 +735,15 @@ fn rebuild_inner<E: SqlEngine>(
     conn.execute(&format!("DELETE FROM \"{DISPUTE_RESOLUTION}\""), params![])?;
 
     let (decoded, superseded_ids) = decode_claims_from_fact_values(conn, reader)?;
-    let mut meta_cache: BTreeMap<String, ClaimSourceMeta> = BTreeMap::new();
+    let mut meta_cache: BTreeMap<(u64, String), ClaimSourceMeta> = BTreeMap::new();
     for (id, commit_seq, ord, claim) in &decoded {
-        if !meta_cache.contains_key(&claim.observation_id) {
-            let meta = claim_source_meta(conn, reader, &claim.observation_id)?;
-            meta_cache.insert(claim.observation_id.clone(), meta);
+        let meta_key = (*commit_seq, claim.observation_id.clone());
+        if !meta_cache.contains_key(&meta_key) {
+            let meta = claim_source_meta(conn, reader, *commit_seq, &claim.observation_id)?;
+            meta_cache.insert(meta_key.clone(), meta);
         }
         let meta = meta_cache
-            .get(&claim.observation_id)
+            .get(&meta_key)
             .ok_or_else(|| CellError::Engine("missing cached claim metadata".to_owned()))?;
         let active = !superseded_ids.contains(id);
         insert_claim_row(conn, *commit_seq, *ord, id, claim, meta, active)?;

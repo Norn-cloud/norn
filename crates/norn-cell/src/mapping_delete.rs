@@ -235,8 +235,9 @@ fn has_newer_subject_history_bundle<E: SqlEngine>(
         &format!(
             "SELECT \"commit_seq\" FROM \"{}\" \
              WHERE \"world\" = ?1 \
-               AND json_extract(\"receipt\", '$.eventCount') = 0 \
-               AND json_extract(\"receipt\", '$.consumed.kind') = 'observation'",
+               AND json_extract(\"receipt\", '$.consumed.kind') = 'observation' \
+               AND (json_extract(\"receipt\", '$.eventCount') = 0 \
+                    OR json_extract(\"receipt\", '$.consumed.observationId') LIKE 'mapping-page:%')",
             crate::system::RECEIPT,
         ),
         crate::engine::params![crate::MAIN_WORLD],
