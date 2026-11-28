@@ -56,6 +56,9 @@ pub mod jcs;
 pub mod kernel_set;
 /// UI-LIVE-1: the typed frames of the live-read protocol (`norn.live.v1`).
 pub mod live;
+/// Embedded native local cell runtime for CLI scenario testing and local dev serving.
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
+pub mod local_cell;
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
 /// NET-ADDR-1: the shared internal-address rules for every outbound call.

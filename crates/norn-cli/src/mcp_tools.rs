@@ -448,6 +448,8 @@ pub(crate) fn call_tool(
         | Command::Eval { .. }
         | Command::Openapi
         | Command::SourceDigest { .. }
-        | Command::Version { .. } => Err(Refusal::invalid("backend unavailable")),
+        | Command::Version { .. }
+        | Command::Test(_)
+        | Command::Dev(_) => Err(Refusal::invalid("backend unavailable")),
     }
 }

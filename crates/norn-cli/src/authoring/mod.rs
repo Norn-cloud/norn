@@ -594,6 +594,16 @@ fn compile_path_to_json(
     }
 }
 
+/// Compiles a `.ts`/`.py` file, directory, or `norn.json` project into a canonical JSON artifact array.
+pub(crate) fn compile_source_artifacts(
+    path: &Path,
+    org: &str,
+    env: &str,
+) -> Result<String, AuthoringFailure> {
+    let mut budget = InvocationBudget::new();
+    compile_path_to_json(path, org, env, false, None, None, &mut budget)
+}
+
 /// Compiles a `.ts`/`.py` authoring file or directory to a canonical JSON artifact array.
 pub(crate) fn compile_source_to_json(
     path: &Path,
@@ -613,7 +623,6 @@ pub(crate) fn compile_source_to_json(
         &mut budget,
     )
 }
-
 /// Executes `norn compile`.
 pub(crate) fn execute_compile(args: &CompileArgs) -> CommandOutput {
     execute_compile_with_boundary(args, None)

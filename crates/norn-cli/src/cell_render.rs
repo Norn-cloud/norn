@@ -152,7 +152,7 @@ fn render_ripple_entries(out: &mut String, ripples: &[Value]) {
     }
 }
 
-pub(super) fn format_witness(witness: &Value) -> String {
+pub(crate) fn format_witness(witness: &Value) -> String {
     if let Some(steps) = witness.get("steps").and_then(Value::as_array) {
         let base = if steps.is_empty() {
             "(initial state, 0 steps)".to_owned()
