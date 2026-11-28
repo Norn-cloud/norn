@@ -184,19 +184,24 @@ fn split_top_level_eq(text: &str) -> Option<(&str, &str)> {
     None
 }
 
-fn collect_top_level_conjuncts<'a>(text: &'a str, depth: usize, out: &mut Vec<&'a str>) {
-    let stripped = strip_outer_parens(text);
-    if depth >= 16 {
-        out.push(stripped);
-        return;
-    }
-    let parts = split_top_level_logic(stripped, "&&", "and");
-    if parts.len() <= 1 {
-        out.push(stripped);
-        return;
-    }
-    for part in parts {
-        collect_top_level_conjuncts(part, depth.saturating_add(1), out);
+fn collect_top_level_conjuncts<'a>(text: &'a str, out: &mut Vec<&'a str>) {
+    let mut stack = vec![text];
+    let mut steps = 0_usize;
+    while let Some(item) = stack.pop() {
+        let stripped = strip_outer_parens(item);
+        steps = steps.saturating_add(1);
+        if steps > 4096 {
+            out.push(stripped);
+            continue;
+        }
+        let parts = split_top_level_logic(stripped, "&&", "and");
+        if parts.len() <= 1 {
+            out.push(stripped);
+            continue;
+        }
+        for part in parts.into_iter().rev() {
+            stack.push(part);
+        }
     }
 }
 
@@ -206,7 +211,7 @@ pub(super) fn precondition_equalities(preconditions: &[ZenExpression]) -> Vec<(S
     let mut out = Vec::new();
     for expr in preconditions {
         let mut conjuncts = Vec::new();
-        collect_top_level_conjuncts(expr.as_str(), 0, &mut conjuncts);
+        collect_top_level_conjuncts(expr.as_str(), &mut conjuncts);
         for conj in conjuncts {
             let first = split_top_level_logic(conj, "||", "or")
                 .into_iter()
@@ -508,7 +513,7 @@ fn create_only_candidates<'p>(
             Some((overlap, action, object_id_field.as_str()))
         })
         .collect();
-    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
     candidates
 }
 
@@ -597,7 +602,9 @@ pub(super) fn seed_update_target_via_creator<H: PackHost>(
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_mul_input_field, is_plain_field, unwrap_operand};
+    use norn_kernel::pack_mbt_support::ZenExpression;
+
+    use super::{extract_mul_input_field, is_plain_field, precondition_equalities, unwrap_operand};
 
     #[test]
     fn operand_unwrapping_and_product_matching_keep_plain_fields() {
@@ -613,6 +620,27 @@ mod tests {
         assert_eq!(
             extract_mul_input_field("(input.avg_weekly_sales_qty * input.sales_weeks)"),
             Some("avg_weekly_sales_qty")
+        );
+    }
+
+    #[test]
+    fn deeply_left_nested_conjunctions_preserve_innermost_equalities() {
+        let mut expr = "input.book_epoch == '1970-01-01T00:00:00Z'".to_owned();
+        for idx in 0..34_usize {
+            expr = format!("({expr}) and (input.f{idx} == 'v{idx}')");
+        }
+        let pairs = precondition_equalities(&[ZenExpression(expr)]);
+        assert_eq!(pairs.len(), 35);
+        assert_eq!(
+            pairs.first(),
+            Some(&(
+                "input.book_epoch".to_owned(),
+                "'1970-01-01T00:00:00Z'".to_owned()
+            ))
+        );
+        assert_eq!(
+            pairs.last(),
+            Some(&("input.f33".to_owned(), "'v33'".to_owned()))
         );
     }
 }
